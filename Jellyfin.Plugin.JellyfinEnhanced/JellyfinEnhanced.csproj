@@ -57,6 +57,8 @@
     <EmbeddedResource Include="Configuration\configPage.html"/>
     <None Remove="Configuration\configPage.css"/>
     <EmbeddedResource Include="Configuration\configPage.css"/>
+    <None Remove="Configuration\config-page.js"/>
+    <EmbeddedResource Include="Configuration\config-page.js"/>
     <None Remove="plugin.js"/>
     <EmbeddedResource Include="js\**" />
   </ItemGroup>

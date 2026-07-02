@@ -67,6 +67,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         // Config-page stylesheet lives in Configuration/ next to configPage.html.
         [HttpGet("Configuration/configPage.css")]
         public ActionResult GetConfigPageStylesheet() => GetScriptResource("Configuration/configPage.css");
+        // Config-page script, externalized from the former inline <script> in configPage.html.
+        // Loaded by the small bootstrap that remains inline there (see that file for why).
+        [HttpGet("Configuration/config-page.js")]
+        public ActionResult GetConfigPageScript() => GetScriptResource("Configuration/config-page.js");
         // [AllowAnonymous]: version is loaded by translations.js cache-buster pre-login.
         // Information disclosure of the plugin version is acceptable — Jellyfin core
         // exposes its own version pre-auth too. CVEs against JE are tracked publicly
