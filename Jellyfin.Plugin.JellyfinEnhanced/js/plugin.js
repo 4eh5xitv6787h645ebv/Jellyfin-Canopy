@@ -626,7 +626,20 @@
                 'enhanced/hidden-content-custom-tab.js',
                 'enhanced/subtitles.js',
                 'enhanced/themer.js',
-                'enhanced/ui.js',
+                // ui modules — order matters: -release-notes.js publishes
+                // GITHUB_REPO + the release-notes panel that the template and
+                // settings wiring consume via JE.internals.enhancedUi;
+                // ui-panel.js hosts JE.showEnhancedPanel and orchestrates the
+                // buildPanelHtml/wire* pieces last.
+                'enhanced/ui-styles.js',
+                'enhanced/ui-entry-points.js',
+                'enhanced/ui-release-notes.js',
+                'enhanced/ui-panel-template.js',
+                'enhanced/ui-panel-shortcut-editor.js',
+                'enhanced/ui-panel-settings.js',
+                'enhanced/ui-panel-hidden-content.js',
+                'enhanced/ui-panel-language.js',
+                'enhanced/ui-panel.js',
                 'enhanced/bookmarks.js',
                 // bookmarks-library modules — order matters: styles/page/render
                 // publish JE.internals.bookmarksLibrary pieces that the later
