@@ -101,34 +101,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         /// <summary>
         /// Pure projection of <see cref="PluginConfiguration"/> to the private-config payload
-        /// (admin-only). Extracted from <see cref="GetPrivateConfig"/> so unit tests can pin the
-        /// exact payload shape; the body is unchanged. The property set is a WHITELIST — a
-        /// setting absent here never reaches the client.
+        /// (admin-only), driven by the <see cref="SettingDescriptors"/> registry. The registry
+        /// is a WHITELIST — a setting without a Private descriptor never reaches the client.
+        /// The exact payload (key set AND values) is pinned by the golden snapshots in
+        /// JellyfinEnhanced.Tests/Snapshots.
         /// </summary>
         internal static object BuildPrivateConfigPayload(PluginConfiguration config)
-        {
-            return new
-            {
-                // For Arr Links (legacy single-instance fields, kept for backward compat)
-                config.SonarrUrl,
-                config.RadarrUrl,
-                config.BazarrUrl,
-                config.SonarrUrlMappings,
-                config.RadarrUrlMappings,
-                config.BazarrUrlMappings,
+            => SettingDescriptors.BuildPayload(
+                SettingExposure.Private,
+                new SettingContext(config, IsAuthenticated: true));
 
-                // Multi-instance Sonarr/Radarr (no API keys exposed). Enabled flag is exposed so
-                // the config page can render a per-instance toggle and arr-links can filter
-                // disabled instances from the dropdown without a round-trip.
-                SonarrInstances = config.GetSonarrInstances().Select(i => new { i.Name, i.Url, i.UrlMappings, i.Enabled }),
-                RadarrInstances = config.GetRadarrInstances().Select(i => new { i.Name, i.Url, i.UrlMappings, i.Enabled }),
-
-                // Corruption flags so the frontend can surface a toast without waiting for an
-                // action endpoint to round-trip a corruption error envelope.
-                SonarrInstancesCorrupt = config.IsSonarrInstancesCorrupt(),
-                RadarrInstancesCorrupt = config.IsRadarrInstancesCorrupt(),
-            };
-        }
         // [AllowAnonymous]: public-config is loaded by `loadLoginImageEarly` before
         // the user logs in, so we cannot gate the whole endpoint on [Authorize].
         // Instead, sensitive Seerr fields (BaseUrl, UrlMappings) are REDACTED for
@@ -153,220 +135,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         /// <summary>
-        /// Pure projection of <see cref="PluginConfiguration"/> to the public-config payload.
-        /// Extracted from <see cref="GetPublicConfig"/> so unit tests can pin the exact payload
-        /// shape; the body is unchanged. The property set is a WHITELIST — a setting absent
-        /// here never reaches the client.
+        /// Pure projection of <see cref="PluginConfiguration"/> to the public-config payload,
+        /// driven by the <see cref="SettingDescriptors"/> registry. The registry is a WHITELIST —
+        /// a setting without a Public descriptor never reaches the client — and caller-dependent
+        /// redaction (Seerr URLs hidden pre-login) lives in the descriptors' value accessors.
+        /// The exact payload (key set AND values) is pinned by the golden snapshots in
+        /// JellyfinEnhanced.Tests/Snapshots.
         /// </summary>
         internal static object BuildPublicConfigPayload(PluginConfiguration config, bool isAuthed)
-        {
-            // Expose whether TMDB is configured as a boolean so all users
-            // (including non-admin) can use TMDB-dependent features like
-            // Reviews and Elsewhere without leaking the actual API key.
-            var tmdbEnabled = !string.IsNullOrWhiteSpace(config.TMDB_API_KEY);
-
-            string jellyseerrBaseUrl = string.Empty;
-            string jellyseerrUrlMappings = string.Empty;
-            if (isAuthed)
-            {
-                try
-                {
-                    if (!string.IsNullOrWhiteSpace(config.JellyseerrUrls))
-                    {
-                        jellyseerrBaseUrl = config.JellyseerrUrls
-                            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                            .Select(u => u.Trim())
-                            .FirstOrDefault() ?? string.Empty;
-                    }
-                }
-                catch { /* ignore */ }
-                jellyseerrUrlMappings = config.JellyseerrUrlMappings ?? string.Empty;
-            }
-
-            return new
-            {
-                // Jellyfin Enhanced Settings
-                TmdbEnabled = tmdbEnabled,
-                config.ToastDuration,
-                config.HelpPanelAutocloseDelay,
-                config.EnableCustomSplashScreen,
-                config.SplashScreenImageUrl,
-
-                // Jellyfin Elsewhere Settings
-                config.ElsewhereEnabled,
-                config.DEFAULT_REGION,
-                config.DEFAULT_PROVIDERS,
-                config.IGNORE_PROVIDERS,
-                config.ElsewhereCustomBrandingText,
-                config.ElsewhereCustomBrandingImageUrl,
-                config.ClearLocalStorageTimestamp,
-                config.ClearTranslationCacheTimestamp,
-
-                // Default User Settings
-                config.AutoPauseEnabled,
-                config.AutoResumeEnabled,
-                config.AutoPipEnabled,
-                config.AutoSkipIntro,
-                config.AutoSkipOutro,
-                config.LongPress2xEnabled,
-                config.RandomButtonEnabled,
-                config.RandomIncludeMovies,
-                config.RandomIncludeShows,
-                config.RandomUnwatchedOnly,
-                config.ShowWatchProgress,
-                config.ShowFileSizes,
-                config.RemoveContinueWatchingEnabled,
-                config.ShowAudioLanguages,
-                config.Shortcuts,
-                config.ShowReviews,
-                config.ShowUserReviews,
-                config.ReviewsExpandedByDefault,
-                config.HideReviewsFromHiddenUsers,
-                config.HideReviewsFromDisabledUsers,
-                config.ShowReleaseDates,
-                config.ShowUserRatingOnPosters,
-                config.ShowUserRatingDash,
-                config.PauseScreenEnabled,
-                config.QualityTagsEnabled,
-                config.ShowResolutionTag,
-                config.ShowSourceTag,
-                config.ShowDynamicRangeTag,
-                config.ShowSpecialFormatTag,
-                config.ShowVideoCodecTag,
-                config.ShowAudioInfoTag,
-                config.ResolutionTagOrder,
-                config.SourceTagOrder,
-                config.DynamicRangeTagOrder,
-                config.SpecialFormatTagOrder,
-                config.VideoCodecTagOrder,
-                config.AudioInfoTagOrder,
-                config.GenreTagsEnabled,
-                config.LanguageTagsEnabled,
-                config.RatingTagsEnabled,
-                config.PeopleTagsEnabled,
-                config.DisableAllShortcuts,
-                config.DefaultSubtitleStyle,
-                config.DefaultSubtitleSize,
-                config.DefaultSubtitleFont,
-                config.DisableCustomSubtitleStyles,
-                config.DefaultLanguage,
-                // Overlay positions
-                config.QualityTagsPosition,
-                config.GenreTagsPosition,
-                config.LanguageTagsPosition,
-                config.RatingTagsPosition,
-                config.ShowRatingInPlayer,
-
-                config.TagsCacheTtlDays,
-                config.DisableTagsOnSearchPage,
-                config.TagsHideOnHover,
-                config.TagCacheServerMode,
-                config.EnableTagsLocalStorageFallback,
-
-                // Seerr Search Settings
-                config.JellyseerrEnabled,
-                config.JellyseerrShowSearchResults,
-                config.JellyseerrShowReportButton,
-                config.JellyseerrShowIssueIndicator,
-                config.JellyseerrEnable4KRequests,
-                config.JellyseerrEnable4KTvRequests,
-                config.ShowCollectionsInSearch,
-                config.JellyseerrShowAdvanced,
-                config.JellyseerrShowQuotaInfo,
-                config.ShowElsewhereOnJellyseerr,
-                config.JellyseerrUseMoreInfoModal,
-                config.AddRequestedMediaToWatchlist,
-                config.SyncJellyseerrWatchlist,
-                config.JellyseerrAutoImportUsers,
-                config.JellyseerrShowSimilar,
-                config.JellyseerrShowRecommended,
-                config.JellyseerrShowRequestMoreOnSeries,
-                config.JellyseerrShowNetworkDiscovery,
-                config.JellyseerrShowGenreDiscovery,
-                config.JellyseerrShowTagDiscovery,
-                config.JellyseerrShowPersonDiscovery,
-                config.JellyseerrExcludeLibraryItems,
-                config.JellyseerrExcludeBlocklistedItems,
-                config.JellyseerrDisableCache,
-                JellyseerrBaseUrl = jellyseerrBaseUrl,
-                JellyseerrUrlMappings = jellyseerrUrlMappings,
-
-                // Bookmarks Settings
-                config.BookmarksEnabled,
-                config.BookmarksUsePluginPages,
-                config.BookmarksUseCustomTabs,
-                config.BookmarksUseNativeTab,
-
-                // Arr Links Settings
-                config.ArrLinksEnabled,
-                config.ShowArrLinksAsText,
-                config.ArrLinksShowStatusSingle,
-
-                // Arr Tags Sync Settings
-                config.ArrTagsSyncEnabled,
-                config.ArrTagsPrefix,
-                config.ArrTagsShowAsLinks,
-                config.ArrTagsLinksFilter,
-                config.ArrTagsLinksHideFilter,
-
-                // Letterboxd Settings
-                config.LetterboxdEnabled,
-                config.ShowLetterboxdLinkAsText,
-                // Metadata Icons (Druidblack)
-                config.MetadataIconsEnabled,
-
-                // Icon Settings
-                config.UseIcons,
-                config.IconStyle,
-
-                // Extras Settings
-                config.ColoredRatingsEnabled,
-                config.ThemeSelectorEnabled,
-                config.ColoredActivityIconsEnabled,
-                config.PluginIconsEnabled,
-                config.EnableLoginImage,
-                config.ActiveStreamsEnabled,
-                config.ActiveStreamsAllUsers,
-
-                // Requests Page Settings
-                config.DownloadsPageEnabled,
-                config.DownloadsPageShowIssues,
-                config.ShowDownloadsInRequests,
-                config.DownloadsUsePluginPages,
-                config.DownloadsUseCustomTabs,
-                config.DownloadsUseNativeTab,
-                config.DownloadsPagePollingEnabled,
-                config.DownloadsPollIntervalSeconds,
-                config.DownloadsFilterByUserRequests,
-
-                // Calendar Page Settings
-                config.CalendarPageEnabled,
-                config.CalendarUseCustomTabs,
-                config.CalendarUsePluginPages,
-                config.CalendarUseNativeTab,
-                config.CalendarFirstDayOfWeek,
-                config.CalendarTimeFormat,
-                config.CalendarHighlightFavorites,
-                config.CalendarHighlightWatchedSeries,
-                config.CalendarFilterByLibraryAccess,
-                config.CalendarShowOnlyRequested,
-                config.CalendarForceOnlyRequested,
-
-                // Hidden Content Settings
-                config.HiddenContentEnabled,
-                config.HiddenContentUsePluginPages,
-                config.HiddenContentUseCustomTabs,
-                config.HiddenContentUseNativeTab,
-                config.HiddenContentAdmin,
-
-                // Maintenance Mode
-                config.MaintenanceModeEnabled,
-                config.MaintenanceModeMessage,
-                config.MaintenanceModeAction,
-                config.MaintenanceModeAffectedUsers,
-
-            };
-        }
+            => SettingDescriptors.BuildPayload(
+                SettingExposure.Public,
+                new SettingContext(config, isAuthed));
 
         [HttpGet("locales")]
         [Authorize]
