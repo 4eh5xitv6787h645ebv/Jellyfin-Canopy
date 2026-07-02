@@ -121,6 +121,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         LanguageTagsEnabled = defaultConfig.LanguageTagsEnabled,
                         RatingTagsEnabled = defaultConfig.RatingTagsEnabled,
                         PeopleTagsEnabled = defaultConfig.PeopleTagsEnabled,
+                        TagsHideOnHover = defaultConfig.TagsHideOnHover,
                         QualityTagsPosition = defaultConfig.QualityTagsPosition,
                         GenreTagsPosition = defaultConfig.GenreTagsPosition,
                         LanguageTagsPosition = defaultConfig.LanguageTagsPosition,
