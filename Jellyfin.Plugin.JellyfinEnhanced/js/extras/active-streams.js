@@ -489,12 +489,9 @@
     // ── API — uses plugin proxy so non-admins don't need Sessions permission ─
     const fetchSessions = async () => {
         try {
-            const token = ApiClient?.accessToken?.() || '';
-            const resp = await fetch(ApiClient.getUrl('/JellyfinEnhanced/active-streams/sessions'), {
-                headers: { 'Authorization': 'MediaBrowser Token="' + token + '"', 'X-MediaBrowser-Token': token }
-            });
-            if (!resp.ok) return null;
-            return await resp.json();
+            // Core throws on non-OK responses — caught below, returning null
+            // exactly like the old !resp.ok branch.
+            return await JE.core.api.plugin('/active-streams/sessions');
         } catch (_) {
             return null;
         }
@@ -1022,31 +1019,24 @@
 
     const sendBroadcast = async (header, text, timeoutMs, resultEl) => {
         try {
-            const token = ApiClient?.accessToken?.() || '';
-            const resp = await fetch(ApiClient.getUrl('/JellyfinEnhanced/active-streams/broadcast'), {
+            // skipRetry: broadcasting is not idempotent — never auto-repeat it.
+            const data = await JE.core.api.plugin('/active-streams/broadcast', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'MediaBrowser Token="' + token + '"',
-                    'X-MediaBrowser-Token': token
-                },
-                body: JSON.stringify({ header: header || null, text, timeoutMs })
+                body: { header: header || null, text, timeoutMs },
+                skipRetry: true
             });
-
-            if (!resp.ok) {
-                const msg = await resp.text().catch(() => resp.statusText);
-                resultEl.className = 'je-as-broadcast-result je-as-broadcast-err';
-                resultEl.textContent = `Error: ${msg}`;
-                return;
-            }
-
-            const data = await resp.json();
             const errNote = data.errors?.length ? ` (${data.errors.length} error${data.errors.length > 1 ? 's' : ''})` : '';
             resultEl.className = 'je-as-broadcast-result je-as-broadcast-ok';
             resultEl.textContent = `Sent to ${data.sent} of ${data.sent + data.skipped} sessions${errNote}`;
         } catch (err) {
             resultEl.className = 'je-as-broadcast-result je-as-broadcast-err';
-            resultEl.textContent = `Failed: ${err.message}`;
+            if (err && err.status) {
+                // HTTP error: surface the response body like the old
+                // `await resp.text()` path did.
+                resultEl.textContent = `Error: ${err.responseText || err.message}`;
+            } else {
+                resultEl.textContent = `Failed: ${err.message}`;
+            }
         }
     };
 
