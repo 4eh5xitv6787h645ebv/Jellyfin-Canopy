@@ -742,6 +742,11 @@
 
             console.log('🪼 Jellyfin Enhanced: All components initialized successfully.');
 
+            // Programmatic boot-complete marker: every component script has executed
+            // and every enabled initializeX() has run. Automation (E2E) waits on this
+            // instead of racing individual JE.* properties that appear mid-boot.
+            JE.initialized = true;
+
             // Final Stage: Hide splash screen
             if (typeof JE.hideSplashScreen === 'function') {
                 JE.hideSplashScreen();
