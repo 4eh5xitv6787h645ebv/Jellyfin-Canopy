@@ -10,7 +10,7 @@
     let _pollTimer = null;
     let _panelOpen = false;
     let _observer = null;
-    let _hashListener = null;
+    let _lifecycle = null;
     let _outsideClickListener = null;
     let _lastUpdated = null;
 
@@ -1212,15 +1212,18 @@
             injectStyles();
             startObserver();
             tryInjectHeader(0);
-            _hashListener = () => applyThemeVars();
-            window.addEventListener('hashchange', _hashListener);
+            // Re-apply theme vars on every navigation (hashchange, popstate
+            // and pushState — the old raw hashchange listener missed the
+            // latter). Tracked via a lifecycle handle so destroy() removes it.
+            _lifecycle = JE.core.lifecycle.register('active-streams');
+            _lifecycle.track(JE.core.navigation.onNavigate(() => applyThemeVars()));
         },
 
         destroy() {
             console.log(`${LOG} Active Streams: destroying.`);
             stopPolling();
             stopObserver();
-            if (_hashListener) { window.removeEventListener('hashchange', _hashListener); _hashListener = null; }
+            if (_lifecycle) { _lifecycle.teardown(); _lifecycle = null; }
             if (_outsideClickListener) { document.removeEventListener('click', _outsideClickListener); _outsideClickListener = null; }
             if (_broadcastCollapseTimer) { clearTimeout(_broadcastCollapseTimer); _broadcastCollapseTimer = null; }
             document.getElementById('je-active-streams')?.remove();
