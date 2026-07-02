@@ -727,19 +727,20 @@
         console.debug(`${logPrefix} Initializing Recommendations and Similar sections`);
         injectRequestMoreStyles();
 
-        // Listen for hash changes (navigation)
-        window.addEventListener('hashchange', () => {
-            cleanup();
-            handleItemDetailsPage();
-        });
+        // Lifecycle: run cleanup() on EVERY navigation — hashchange, popstate
+        // AND the pushState transitions the old raw hashchange listener
+        // missed. Teardown wiring is registered first so cleanup always runs
+        // before handleItemDetailsPage on a navigation.
+        const lifecycle = JE.core.lifecycle.register('jellyseerr-item-details');
+        lifecycle.onTeardown(cleanup);
+        lifecycle.teardownOn('navigate');
+        JE.core.navigation.onNavigate(() => handleItemDetailsPage());
 
         // Check current page on load
         handleItemDetailsPage();
 
-        // Also listen for viewshow events (Jellyfin's custom event)
-        document.addEventListener('viewshow', () => {
-            handleItemDetailsPage();
-        });
+        // Also react to view shows (Jellyfin's custom viewshow event)
+        JE.core.navigation.onViewPage(() => handleItemDetailsPage());
     }
 
     // Initialize when DOM is ready
