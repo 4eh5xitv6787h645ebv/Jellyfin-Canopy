@@ -597,7 +597,16 @@
                 'enhanced/themer.js',
                 'enhanced/ui.js',
                 'enhanced/bookmarks.js',
-                'enhanced/bookmarks-library.js',
+                // bookmarks-library modules — order matters: styles/page/render
+                // publish JE.internals.bookmarksLibrary pieces that the later
+                // files consume; -init.js boots last.
+                'enhanced/bookmarks-library-styles.js',
+                'enhanced/bookmarks-library-page.js',
+                'enhanced/bookmarks-library-render.js',
+                'enhanced/bookmarks-library-items.js',
+                'enhanced/bookmarks-library-modals.js',
+                'enhanced/bookmarks-library-replacements.js',
+                'enhanced/bookmarks-library-init.js',
                 'enhanced/osd-rating.js',
                 'enhanced/pausescreen.js',
 
