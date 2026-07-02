@@ -590,7 +590,18 @@
                 'enhanced/features.js',
                 'enhanced/events.js',
                 'enhanced/playback.js',
-                'enhanced/hidden-content.js',
+                // hidden-content modules — order matters: -data.js owns the
+                // store + lookup sets that the later files consume via
+                // JE.internals.hiddenContent; -init.js exposes the frozen
+                // JE.initializeHiddenContent / JE.hiddenContent surface last.
+                'enhanced/hidden-content-data.js',
+                'enhanced/hidden-content-save.js',
+                'enhanced/hidden-content-styles.js',
+                'enhanced/hidden-content-dialogs.js',
+                'enhanced/hidden-content-panel.js',
+                'enhanced/hidden-content-filter.js',
+                'enhanced/hidden-content-buttons.js',
+                'enhanced/hidden-content-init.js',
                 'enhanced/hidden-content-page.js',
                 'enhanced/hidden-content-custom-tab.js',
                 'enhanced/subtitles.js',
