@@ -1,28 +1,17 @@
 using System;
-using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
-using MediaBrowser.Controller;
+using Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
-using MediaBrowser.Model.Entities;
-using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 {
     // Monitors playback events to automatically request next movies in collections.
-    public class AutoMovieRequestMonitor : IDisposable
+    public class AutoMovieRequestMonitor : PlaybackWatcherBase
     {
-        private readonly ISessionManager _sessionManager;
-        private readonly IUserManager _userManager;
-        private readonly ILibraryManager _libraryManager;
         private readonly AutoMovieRequestService _autoMovieRequestService;
-        private readonly Logger _logger;
-
-        // Track which user+item combinations have already been checked to avoid duplicate checks
-        private readonly Dictionary<string, DateTime> _checkedSessions = new();
-        private readonly object _sessionLock = new();
 
         public AutoMovieRequestMonitor(
             ISessionManager sessionManager,
@@ -30,47 +19,39 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             ILibraryManager libraryManager,
             AutoMovieRequestService autoMovieRequestService,
             Logger logger)
+            : base(sessionManager, userManager, libraryManager, logger)
         {
-            _sessionManager = sessionManager;
-            _userManager = userManager;
-            _libraryManager = libraryManager;
             _autoMovieRequestService = autoMovieRequestService;
-            _logger = logger;
         }
 
-        // Initialize and start monitoring playback events.
-        public void Initialize()
+        protected override string LogPrefix => "[Auto-Movie-Request]";
+
+        protected override string FeatureNoun => "auto-movie-request";
+
+        protected override string DisabledMonitoringName => "Auto-Movie-Request";
+
+        protected override bool IsFeatureEnabled(PluginConfiguration config) => config.AutoMovieRequestEnabled;
+
+        protected override void SubscribeEvents()
         {
-            // Check if auto-movie-request is enabled
-            var config = JellyfinEnhanced.Instance?.Configuration as Configuration.PluginConfiguration;
-            if (config == null)
-            {
-                _logger.Warning("[Auto-Movie-Request] Configuration is null - skipping auto-movie-request monitoring initialization");
-                return;
-            }
-
-            if (!config.AutoMovieRequestEnabled || !config.JellyseerrEnabled)
-            {
-                _logger.Info("[Auto-Movie-Request] Auto-Movie-Request monitoring is disabled in configuration - not subscribing to playback events");
-                return;
-            }
-
-            // _logger.Info("[Auto-Movie-Request] Initializing playback event monitoring");
-
             // Subscribe to playback progress events (to detect when user starts watching)
             _sessionManager.PlaybackProgress += OnPlaybackProgress;
+        }
 
-            _logger.Info("[Auto-Movie-Request] Successfully subscribed to playback events");
+        protected override void UnsubscribeEvents()
+        {
+            _sessionManager.PlaybackProgress -= OnPlaybackProgress;
         }
 
         // Handle playback progress events to detect when user starts watching a movie.
+        // NOTE: async void event handler kept as-is in this mechanical phase (see PlaybackWatcherBase).
         private async void OnPlaybackProgress(object? sender, PlaybackProgressEventArgs e)
         {
             try
             {
                 // Check if auto-movie-request is enabled
-                var config = JellyfinEnhanced.Instance?.Configuration as PluginConfiguration;
-                if (config == null || !config.AutoMovieRequestEnabled || !config.JellyseerrEnabled)
+                var config = GetEnabledConfiguration();
+                if (config == null)
                 {
                     return;
                 }
@@ -118,26 +99,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
                         var sessionItemKey = $"{e.Session.UserId}_{e.Item.Id}";
 
-                        // Thread-safe dictionary access
-                        lock (_sessionLock)
+                        // Skip if we've checked this user+item combination in the last hour
+                        if (!TryMarkChecked(sessionItemKey))
                         {
-                            // Clean up expired cache entries (older than 1 hour)
-                            var expiredKeys = _checkedSessions.Where(kvp => (DateTime.Now - kvp.Value).TotalHours > 1)
-                                .Select(kvp => kvp.Key)
-                                .ToList();
-                            foreach (var key in expiredKeys)
-                            {
-                                _checkedSessions.Remove(key);
-                            }
-
-                            // Skip if we've checked this user+item combination in the last hour
-                            if (_checkedSessions.ContainsKey(sessionItemKey))
-                            {
-                                return;
-                            }
-
-                            // Mark as checked with current timestamp
-                            _checkedSessions[sessionItemKey] = DateTime.Now;
+                            return;
                         }
 
                         _logger.Info($"[Auto-Movie-Request] Movie '{e.Item?.Name ?? "Unknown"}' started by {e.Session?.UserName ?? "Unknown"}, checking for collection");
@@ -153,16 +118,6 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             {
                 _logger.Error($"[Auto-Movie-Request] Error in OnPlaybackProgress: {ex.Message}");
             }
-        }
-
-        // Cleanup when the plugin is disposed.
-        public void Dispose()
-        {
-            _logger.Info("[Auto-Movie-Request] Unsubscribing from playback events");
-
-            _sessionManager.PlaybackProgress -= OnPlaybackProgress;
-
-            GC.SuppressFinalize(this);
         }
     }
 }

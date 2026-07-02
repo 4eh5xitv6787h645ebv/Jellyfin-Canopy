@@ -1,28 +1,17 @@
 using System;
-using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
-using MediaBrowser.Controller;
+using Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
-using MediaBrowser.Model.Entities;
-using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 {
     // Monitors playback events to automatically request next seasons when threshold is reached.
-    public class AutoSeasonRequestMonitor : IDisposable
+    public class AutoSeasonRequestMonitor : PlaybackWatcherBase
     {
-        private readonly ISessionManager _sessionManager;
-        private readonly IUserManager _userManager;
-        private readonly ILibraryManager _libraryManager;
         private readonly AutoSeasonRequestService _autoSeasonRequestService;
-        private readonly Logger _logger;
-
-        // Track which user+item combinations have already been checked to avoid duplicate checks
-        private readonly Dictionary<string, DateTime> _checkedSessions = new();
-        private readonly object _sessionLock = new();
 
         public AutoSeasonRequestMonitor(
             ISessionManager sessionManager,
@@ -30,58 +19,41 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             ILibraryManager libraryManager,
             AutoSeasonRequestService autoSeasonRequestService,
             Logger logger)
+            : base(sessionManager, userManager, libraryManager, logger)
         {
-            _sessionManager = sessionManager;
-            _userManager = userManager;
-            _libraryManager = libraryManager;
             _autoSeasonRequestService = autoSeasonRequestService;
-            _logger = logger;
         }
 
-        // Initialize and start monitoring playback events.
-        public void Initialize()
+        protected override string LogPrefix => "[Auto-Season-Request]";
+
+        protected override string FeatureNoun => "auto-season-request";
+
+        protected override string DisabledMonitoringName => "Auto-request";
+
+        protected override bool IsFeatureEnabled(PluginConfiguration config) => config.AutoSeasonRequestEnabled;
+
+        protected override void SubscribeEvents()
         {
-            // Only initialize if the auto-season-request feature is enabled in plugin configuration.
-            var config = JellyfinEnhanced.Instance?.Configuration as Configuration.PluginConfiguration;
-            if (config == null)
-            {
-                _logger.Warning("[Auto-Season-Request] Configuration is null - skipping auto-season-request monitoring initialization");
-                return;
-            }
-
-            if (!config.AutoSeasonRequestEnabled || !config.JellyseerrEnabled)
-            {
-                _logger.Info("[Auto-Season-Request] Auto-request monitoring is disabled in configuration - not subscribing to playback events");
-                return;
-            }
-
-            // _logger.Info("[Auto-Season-Request] Initializing playback event monitoring");
-
             // Subscribe to playback events
             _sessionManager.PlaybackStopped += OnPlaybackStopped;
             _sessionManager.PlaybackProgress += OnPlaybackProgress;
+        }
 
-            _logger.Info("[Auto-Season-Request] Successfully subscribed to playback events");
+        protected override void UnsubscribeEvents()
+        {
+            _sessionManager.PlaybackStopped -= OnPlaybackStopped;
+            _sessionManager.PlaybackProgress -= OnPlaybackProgress;
         }
 
         // Handle playback stopped events to check if we should request next season.
+        // NOTE: async void event handler kept as-is in this mechanical phase (see PlaybackWatcherBase).
         private async void OnPlaybackStopped(object? sender, PlaybackStopEventArgs e)
         {
             try
             {
                 // Check if auto-season-request is enabled
-                var config = JellyfinEnhanced.Instance?.Configuration as PluginConfiguration;
+                var config = GetEnabledConfiguration();
                 if (config == null)
-                {
-                    return;
-                }
-
-                if (!config.AutoSeasonRequestEnabled)
-                {
-                    return;
-                }
-
-                if (!config.JellyseerrEnabled)
                 {
                     return;
                 }
@@ -114,18 +86,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     }
 
                     var sessionItemKey = $"stopped_{e.Session.UserId}_{e.Item.Id}";
-                    lock (_sessionLock)
+                    if (!TryMarkChecked(sessionItemKey))
                     {
-                        var expiredKeys = _checkedSessions.Where(kvp => (DateTime.Now - kvp.Value).TotalHours > 1)
-                            .Select(kvp => kvp.Key).ToList();
-                        foreach (var key in expiredKeys) _checkedSessions.Remove(key);
-
-                        if (_checkedSessions.ContainsKey(sessionItemKey))
-                        {
-                            _logger.Debug($"[Auto-Season-Request] PlaybackStopped already processed for '{e.Item?.Name}', skipping duplicate");
-                            return;
-                        }
-                        _checkedSessions[sessionItemKey] = DateTime.Now;
+                        _logger.Debug($"[Auto-Season-Request] PlaybackStopped already processed for '{e.Item?.Name}', skipping duplicate");
+                        return;
                     }
 
                     _logger.Info($"[Auto-Season-Request] Episode '{e.Item?.Name ?? "Unknown"}' completed by {e.Session?.UserName ?? "Unknown"}, checking threshold");
@@ -153,13 +117,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         }
 
         // Handle playback progress events to detect when user starts watching a new episode.
+        // NOTE: async void event handler kept as-is in this mechanical phase (see PlaybackWatcherBase).
         private async void OnPlaybackProgress(object? sender, PlaybackProgressEventArgs e)
         {
             try
             {
                 // Check if auto-season-request is enabled
-                var config = JellyfinEnhanced.Instance?.Configuration as PluginConfiguration;
-                if (config == null || !config.AutoSeasonRequestEnabled || !config.JellyseerrEnabled)
+                var config = GetEnabledConfiguration();
+                if (config == null)
                 {
                     return;
                 }
@@ -187,26 +152,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
                         var sessionItemKey = $"{e.Session.UserId}_{e.Item.Id}";
 
-                        // Thread-safe dictionary access
-                        lock (_sessionLock)
+                        // Skip if we've checked this user+item combination in the last hour
+                        if (!TryMarkChecked(sessionItemKey))
                         {
-                            // Clean up expired cache entries (older than 1 hour)
-                            var expiredKeys = _checkedSessions.Where(kvp => (DateTime.Now - kvp.Value).TotalHours > 1)
-                                .Select(kvp => kvp.Key)
-                                .ToList();
-                            foreach (var key in expiredKeys)
-                            {
-                                _checkedSessions.Remove(key);
-                            }
-
-                            // Skip if we've checked this user+item combination in the last hour
-                            if (_checkedSessions.ContainsKey(sessionItemKey))
-                            {
-                                return;
-                            }
-
-                            // Mark as checked with current timestamp
-                            _checkedSessions[sessionItemKey] = DateTime.Now;
+                            return;
                         }
 
                         _logger.Info($"[Auto-Season-Request] Episode '{e.Item?.Name ?? "Unknown"}' started by {e.Session?.UserName ?? "Unknown"}, checking threshold");
@@ -222,17 +171,6 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             {
                 _logger.Error($"[Auto-Season-Request] Error in OnPlaybackProgress: {ex.Message}");
             }
-        }
-
-        // Cleanup when the plugin is disposed.
-        public void Dispose()
-        {
-            _logger.Info("[Auto-Season-Request] Unsubscribing from playback events");
-
-            _sessionManager.PlaybackStopped -= OnPlaybackStopped;
-            _sessionManager.PlaybackProgress -= OnPlaybackProgress;
-
-            GC.SuppressFinalize(this);
         }
     }
 }
