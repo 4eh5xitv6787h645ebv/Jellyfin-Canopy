@@ -35,7 +35,6 @@
     <ItemGroup>
       <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinVersion)" />
       <PackageReference Include="Jellyfin.Model" Version="$(JellyfinVersion)" />
-      <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     </ItemGroup>
 
     <!-- Let the unit-test project exercise internal helpers (e.g. JellyseerrUserResolver). -->
