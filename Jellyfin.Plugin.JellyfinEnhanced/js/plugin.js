@@ -602,7 +602,17 @@
                 'enhanced/hidden-content-filter.js',
                 'enhanced/hidden-content-buttons.js',
                 'enhanced/hidden-content-init.js',
-                'enhanced/hidden-content-page.js',
+                // hidden-content-page modules — order matters: -state.js owns
+                // the shared page state read by the later files via
+                // JE.internals.hiddenContentPage; -init.js exposes the frozen
+                // JE.hiddenContentPage / JE.initializeHiddenContentPage last.
+                'enhanced/hidden-content-page-state.js',
+                'enhanced/hidden-content-page-styles.js',
+                'enhanced/hidden-content-page-admin.js',
+                'enhanced/hidden-content-page-cards.js',
+                'enhanced/hidden-content-page-render.js',
+                'enhanced/hidden-content-page-nav.js',
+                'enhanced/hidden-content-page-init.js',
                 'enhanced/hidden-content-custom-tab.js',
                 'enhanced/subtitles.js',
                 'enhanced/themer.js',
