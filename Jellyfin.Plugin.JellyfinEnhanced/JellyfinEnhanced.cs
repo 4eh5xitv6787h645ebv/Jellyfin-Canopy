@@ -262,7 +262,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             {
                 // AsObject() throws on a non-object root, like JObject.Parse did —
                 // the outer catch turns either into a logged error, never a rewrite.
-                config = JsonNode.Parse(File.ReadAllText(pluginPagesConfig))!.AsObject();
+                // ParseOptions keeps Newtonsoft's tolerance for comments/trailing
+                // commas: this file may be hand-edited or written by other tools,
+                // and JObject.Parse accepted both.
+                config = JsonNode.Parse(
+                    File.ReadAllText(pluginPagesConfig),
+                    documentOptions: PersistedJson.ParseOptions)!.AsObject();
             }
 
             if (!config.ContainsKey("pages"))

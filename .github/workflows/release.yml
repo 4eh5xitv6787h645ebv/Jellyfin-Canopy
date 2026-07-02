@@ -193,6 +193,11 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
             echo "Release for $GITHUB_REF_NAME already exists; attaching assets"
             gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber
+            # A pre-drafted release stays a DRAFT after upload, and draft assets
+            # are not served at releases/download/<tag>/... — the URL the
+            # manifest entry points at. Publish it, or every install polling
+            # the merged manifest would hit a 404.
+            gh release edit "$GITHUB_REF_NAME" --draft=false
           else
             gh release create "$GITHUB_REF_NAME" dist/*.zip \
               --verify-tag \
