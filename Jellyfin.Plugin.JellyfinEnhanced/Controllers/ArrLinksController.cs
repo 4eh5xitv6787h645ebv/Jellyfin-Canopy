@@ -22,7 +22,7 @@ using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
-using Newtonsoft.Json.Linq;
+using System.Text.Json.Nodes;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using MediaBrowser.Controller;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
@@ -323,9 +323,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             public string? Error;
         }
 
-        private static dynamic? SingleItemOrNull(dynamic? data)
+        private static JsonNode? SingleItemOrNull(JsonNode? data)
         {
-            if (data is Newtonsoft.Json.Linq.JArray arr)
+            if (data is JsonArray arr)
                 return arr.Count > 0 ? arr[0] : null;
             return data;
         }
@@ -339,22 +339,23 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 {
                     var item = SingleItemOrNull(data);
                     if (item == null) return null;
-                    var titleSlug = (string?)item.titleSlug;
+                    var titleSlug = (string?)item["titleSlug"];
                     // Treat empty/missing titleSlug as "no match" rather than returning a record
                     // that would render a broken `/series/null` link on the frontend. The legacy
                     // single-instance endpoint already had this guard; preserve it here.
                     if (string.IsNullOrEmpty(titleSlug)) return null;
+                    var statistics = item["statistics"];
                     return new
                     {
                         instanceName = instance.Name,
                         instanceUrl = instance.Url,
                         titleSlug,
                         urlMappings = instance.UrlMappings,
-                        episodeFileCount = (int?)item.statistics?.episodeFileCount ?? 0,
-                        episodeCount = (int?)item.statistics?.episodeCount ?? 0,
-                        percentOfEpisodes = (double?)item.statistics?.percentOfEpisodes ?? 0,
-                        sizeOnDisk = (long?)item.statistics?.sizeOnDisk ?? 0,
-                        rootFolderPath = GetRootFolderFromPath((string?)item.path)
+                        episodeFileCount = (int?)statistics?["episodeFileCount"] ?? 0,
+                        episodeCount = (int?)statistics?["episodeCount"] ?? 0,
+                        percentOfEpisodes = (double?)statistics?["percentOfEpisodes"] ?? 0,
+                        sizeOnDisk = (long?)statistics?["sizeOnDisk"] ?? 0,
+                        rootFolderPath = GetRootFolderFromPath((string?)item["path"])
                     };
                 },
                 emptyResult: null,
@@ -419,9 +420,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         instanceName = instance.Name,
                         instanceUrl = instance.Url,
                         urlMappings = instance.UrlMappings,
-                        hasFile = (bool?)item.hasFile ?? false,
-                        sizeOnDisk = (long?)item.sizeOnDisk ?? 0,
-                        rootFolderPath = GetRootFolderFromPath((string?)item.path)
+                        hasFile = (bool?)item["hasFile"] ?? false,
+                        sizeOnDisk = (long?)item["sizeOnDisk"] ?? 0,
+                        rootFolderPath = GetRootFolderFromPath((string?)item["path"])
                     };
                 },
                 emptyResult: null,

@@ -22,7 +22,7 @@ using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
-using Newtonsoft.Json.Linq;
+using System.Text.Json.Nodes;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using MediaBrowser.Controller;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
@@ -393,19 +393,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 {
                     var items = new List<ArrItem>();
                     if (data == null) return items;
-                    foreach (var episode in data)
+                    foreach (var episode in data.AsArray())
                     {
-                        var airDate = parseDate((string?)episode.airDateUtc ?? (string?)episode.airDate);
+                        var series = episode?["series"];
+                        var airDate = parseDate((string?)episode?["airDateUtc"] ?? (string?)episode?["airDate"]);
                         if (!airDate.HasValue) continue;
 
                         string? seriesPosterUrl = null;
                         string? seriesBackdropUrl = null;
-                        if (episode.series?.images != null)
+                        if (series?["images"] is JsonArray seriesImages)
                         {
-                            foreach (var img in episode.series.images)
+                            foreach (var img in seriesImages)
                             {
-                                var coverType = (string?)img.coverType;
-                                var imageUrl = (string?)img.remoteUrl ?? (string?)img.url;
+                                var coverType = (string?)img?["coverType"];
+                                var imageUrl = (string?)img?["remoteUrl"] ?? (string?)img?["url"];
                                 if (string.IsNullOrWhiteSpace(imageUrl)) continue;
                                 if (seriesBackdropUrl == null && (coverType == "fanart" || coverType == "banner"))
                                     seriesBackdropUrl = imageUrl;
@@ -414,35 +415,35 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             }
                         }
 
-                        var seasonNumber = (int?)episode.seasonNumber ?? 0;
-                        var episodeNumber = (int?)episode.episodeNumber ?? 0;
-                        var episodeTitle = (string?)episode.title ?? "Unknown Episode";
+                        var seasonNumber = (int?)episode?["seasonNumber"] ?? 0;
+                        var episodeNumber = (int?)episode?["episodeNumber"] ?? 0;
+                        var episodeTitle = (string?)episode?["title"] ?? "Unknown Episode";
 
                         items.Add(new ArrItem
                         {
-                            Id = (string?)episode.id?.ToString(),
+                            Id = episode?["id"]?.ToString(),
                             Source = nameof(ArrType.Sonarr),
                             InstanceName = instance.Name,
                             Type = "Series",
-                            Title = (string?)episode.series?.title ?? "Unknown Series",
+                            Title = (string?)series?["title"] ?? "Unknown Series",
                             Subtitle = $"S{seasonNumber:D2}E{episodeNumber:D2} - {episodeTitle}",
                             ReleaseDate = airDate.Value.ToUniversalTime().ToString("o"),
                             ReleaseType = "Episode",
-                            HasFile = (bool?)episode.hasFile ?? false,
-                            Monitored = (bool?)episode.monitored ?? false,
-                            SeriesId = (int?)episode.seriesId,
+                            HasFile = (bool?)episode?["hasFile"] ?? false,
+                            Monitored = (bool?)episode?["monitored"] ?? false,
+                            SeriesId = (int?)episode?["seriesId"],
                             SeasonNumber = seasonNumber,
                             EpisodeNumber = episodeNumber,
                             EpisodeTitle = episodeTitle,
-                            Overview = (string?)episode.overview,
-                            TvdbId = (int?)episode.series?.tvdbId,
-                            ImdbId = (string?)episode.series?.imdbId,
-                            TmdbId = (int?)episode.series?.tmdbId,
+                            Overview = (string?)episode?["overview"],
+                            TvdbId = (int?)series?["tvdbId"],
+                            ImdbId = (string?)series?["imdbId"],
+                            TmdbId = (int?)series?["tmdbId"],
                             PosterUrl = seriesPosterUrl,
                             BackdropUrl = seriesBackdropUrl,
-                            EpisodeTvdbId = (int?)episode.tvdbId,
-                            EpisodeImdbId = (string?)episode.imdbId,
-                            RootFolderPath = GetRootFolderFromPath((string?)episode.series?.path)
+                            EpisodeTvdbId = (int?)episode?["tvdbId"],
+                            EpisodeImdbId = (string?)episode?["imdbId"],
+                            RootFolderPath = GetRootFolderFromPath((string?)series?["path"])
                         });
                     }
                     return items;
@@ -469,18 +470,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 {
                     var items = new List<ArrItem>();
                     if (data == null) return items;
-                    foreach (var movie in data)
+                    foreach (var movie in data.AsArray())
                     {
                         var releaseDates = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 
                         string? posterUrl = null;
                         string? backdropUrl = null;
-                        if (movie.images != null)
+                        if (movie?["images"] is JsonArray movieImages)
                         {
-                            foreach (var img in movie.images)
+                            foreach (var img in movieImages)
                             {
-                                var coverType = (string?)img.coverType;
-                                var imageUrl = (string?)img.remoteUrl ?? (string?)img.url;
+                                var coverType = (string?)img?["coverType"];
+                                var imageUrl = (string?)img?["remoteUrl"] ?? (string?)img?["url"];
                                 if (string.IsNullOrWhiteSpace(imageUrl)) continue;
                                 if (posterUrl == null && coverType == "poster") { posterUrl = imageUrl; continue; }
                                 if (backdropUrl == null && (coverType == "fanart" || coverType == "backdrop"))
@@ -488,17 +489,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             }
                         }
 
-                        addRelease(releaseDates, "CinemaRelease", (string?)movie.inCinemas);
-                        addRelease(releaseDates, "PhysicalRelease", (string?)movie.physicalRelease);
-                        addRelease(releaseDates, "DigitalRelease", (string?)movie.digitalRelease);
+                        addRelease(releaseDates, "CinemaRelease", (string?)movie?["inCinemas"]);
+                        addRelease(releaseDates, "PhysicalRelease", (string?)movie?["physicalRelease"]);
+                        addRelease(releaseDates, "DigitalRelease", (string?)movie?["digitalRelease"]);
 
-                        if (movie.releases != null)
+                        if (movie?["releases"] is JsonArray movieReleases)
                         {
-                            foreach (var release in movie.releases)
+                            foreach (var release in movieReleases)
                             {
-                                var releaseDate = (object?)release.releaseDate ?? release.date;
-                                var type = Convert.ToString(release.type)?.ToLowerInvariant();
-                                var isPhysical = (bool?)release.isPhysical ?? false;
+                                // ParseDate accepts the node's raw text via Convert.ToString.
+                                var releaseDate = (object?)release?["releaseDate"] ?? release?["date"];
+                                var type = release?["type"]?.ToString()?.ToLowerInvariant();
+                                var isPhysical = (bool?)release?["isPhysical"] ?? false;
                                 if (isPhysical) addRelease(releaseDates, "PhysicalRelease", releaseDate);
                                 else if (type == "digital") addRelease(releaseDates, "DigitalRelease", releaseDate);
                                 else if (type == "theatrical" || type == "cinema" || type == "theater")
@@ -508,10 +510,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                         if (releaseDates.Count == 0) continue;
 
-                        var movieTitle = (string?)movie.title ?? (string?)movie.originalTitle ?? "Unknown";
-                        string? movieYear = null;
-                        var yearValue = (object?)movie.year;
-                        if (yearValue != null) movieYear = Convert.ToString(yearValue);
+                        var movieTitle = (string?)movie?["title"] ?? (string?)movie?["originalTitle"] ?? "Unknown";
+                        string? movieYear = movie?["year"]?.ToString();
 
                         foreach (var kvp in releaseDates)
                         {
@@ -519,7 +519,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             if (releaseUtc < startDate || releaseUtc > endDate) continue;
                             items.Add(new ArrItem
                             {
-                                Id = $"{movie.id}-{kvp.Key}",
+                                Id = $"{movie?["id"]}-{kvp.Key}",
                                 Source = nameof(ArrType.Radarr),
                                 InstanceName = instance.Name,
                                 Type = "Movie",
@@ -527,13 +527,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                                 Subtitle = movieYear,
                                 ReleaseDate = releaseUtc.ToString("o"),
                                 ReleaseType = kvp.Key,
-                                HasFile = (bool?)movie.hasFile ?? false,
-                                Monitored = (bool?)movie.monitored ?? false,
+                                HasFile = (bool?)movie?["hasFile"] ?? false,
+                                Monitored = (bool?)movie?["monitored"] ?? false,
                                 PosterUrl = posterUrl,
                                 BackdropUrl = backdropUrl,
-                                TmdbId = (int?)movie.tmdbId,
-                                ImdbId = (string?)movie.imdbId,
-                                RootFolderPath = GetRootFolderFromPath((string?)movie.path)
+                                TmdbId = (int?)movie?["tmdbId"],
+                                ImdbId = (string?)movie?["imdbId"],
+                                RootFolderPath = GetRootFolderFromPath((string?)movie?["path"])
                             });
                         }
                     }

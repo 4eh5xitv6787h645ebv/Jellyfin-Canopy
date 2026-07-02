@@ -22,7 +22,6 @@ using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
-using Newtonsoft.Json.Linq;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using MediaBrowser.Controller;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
@@ -133,7 +132,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             authorizedUserId, "hidden-content.json");
                     }
                     catch (Exception strictEx) when (strictEx is InvalidDataException
-                                                  || strictEx is Newtonsoft.Json.JsonException)
+                                                  || strictEx is System.Text.Json.JsonException)
                     {
                         _logger.LogWarning($"hidden-content.json corrupt for {ResolveUserDisplay(authorizedUserId)} (backed up): {strictEx.Message}");
                         return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
@@ -330,7 +329,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 _logger.LogInformation($"Admin unhid {removed} item(s) for {ResolveUserDisplay(userIdN)}.");
                 return Ok(new { success = true, removed });
             }
-            catch (Exception ex) when (ex is InvalidDataException || ex is Newtonsoft.Json.JsonException)
+            catch (Exception ex) when (ex is InvalidDataException || ex is System.Text.Json.JsonException)
             {
                 _logger.LogWarning($"hidden-content.json corrupt for {ResolveUserDisplay(userIdN)} during admin unhide (backed up): {ex.Message}");
                 return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
@@ -421,7 +420,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 _logger.LogInformation($"Admin hid {added} item(s) for {ResolveUserDisplay(userIdN)}.");
                 return Ok(new { success = true, added });
             }
-            catch (Exception ex) when (ex is InvalidDataException || ex is Newtonsoft.Json.JsonException)
+            catch (Exception ex) when (ex is InvalidDataException || ex is System.Text.Json.JsonException)
             {
                 _logger.LogWarning($"hidden-content.json corrupt for {ResolveUserDisplay(userIdN)} during admin hide (backed up): {ex.Message}");
                 return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
@@ -602,7 +601,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 Services.HiddenContentResponseFilter.InvalidateUser(authorizedUserId);
                 return Ok(new { success = true, key, entry });
             }
-            catch (Exception ex) when (ex is InvalidDataException || ex is Newtonsoft.Json.JsonException)
+            catch (Exception ex) when (ex is InvalidDataException || ex is System.Text.Json.JsonException)
             {
                 return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
             }
@@ -668,7 +667,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 Services.HiddenContentResponseFilter.InvalidateUser(authorizedUserId);
                 return Ok(new { success = true });
             }
-            catch (Exception ex) when (ex is InvalidDataException || ex is Newtonsoft.Json.JsonException)
+            catch (Exception ex) when (ex is InvalidDataException || ex is System.Text.Json.JsonException)
             {
                 return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
             }

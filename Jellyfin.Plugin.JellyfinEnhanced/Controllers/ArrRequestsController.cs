@@ -22,7 +22,7 @@ using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
-using Newtonsoft.Json.Linq;
+using System.Text.Json.Nodes;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using MediaBrowser.Controller;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
@@ -137,13 +137,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             return Ok(new { items, errors });
         }
 
-        private static string? PosterFromImages(dynamic images)
+        private static string? PosterFromImages(JsonNode? images)
         {
-            if (images == null) return null;
-            foreach (var img in images)
+            if (images is not JsonArray imageArray) return null;
+            foreach (var img in imageArray)
             {
-                if ((string?)img.coverType == "poster")
-                    return (string?)img.remoteUrl ?? (string?)img.url;
+                if ((string?)img?["coverType"] == "poster")
+                    return (string?)img?["remoteUrl"] ?? (string?)img?["url"];
             }
             return null;
         }
@@ -156,28 +156,32 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 data =>
                 {
                     var items = new List<object>();
-                    if (data?.records == null) return items;
-                    foreach (var record in data.records)
+                    if (data?["records"] is not JsonArray records) return items;
+                    foreach (var record in records)
                     {
-                        int? tmdbId = record.series?.tmdbId;
+                        var series = record?["series"];
+                        var episode = record?["episode"];
+                        int? tmdbId = (int?)series?["tmdbId"];
                         if (allowedRequests != null && (!tmdbId.HasValue || !allowedRequests.Contains((tmdbId.Value, "tv"))))
                             continue;
 
+                        var seasonNumber = (int?)episode?["seasonNumber"];
+                        var episodeNumber = (int?)episode?["episodeNumber"];
                         items.Add(new
                         {
-                            id = (string?)record.id?.ToString(),
+                            id = record?["id"]?.ToString(),
                             source = nameof(ArrType.Sonarr),
                             instanceName = instance.Name,
-                            title = (string?)record.series?.title ?? "Unknown",
-                            subtitle = $"S{record.episode?.seasonNumber:D2}E{record.episode?.episodeNumber:D2} - {record.episode?.title}",
-                            seasonNumber = (int?)record.episode?.seasonNumber,
-                            episodeNumber = (int?)record.episode?.episodeNumber,
-                            status = (string?)record.status ?? "Unknown",
-                            progress = CalculateProgress((double?)record.size, (double?)record.sizeleft),
-                            totalSize = (long?)record.size,
-                            sizeRemaining = (long?)record.sizeleft,
-                            timeRemaining = (string?)record.timeleft,
-                            posterUrl = PosterFromImages(record.series?.images),
+                            title = (string?)series?["title"] ?? "Unknown",
+                            subtitle = $"S{seasonNumber:D2}E{episodeNumber:D2} - {(string?)episode?["title"]}",
+                            seasonNumber = seasonNumber,
+                            episodeNumber = episodeNumber,
+                            status = (string?)record?["status"] ?? "Unknown",
+                            progress = CalculateProgress((double?)record?["size"], (double?)record?["sizeleft"]),
+                            totalSize = (long?)record?["size"],
+                            sizeRemaining = (long?)record?["sizeleft"],
+                            timeRemaining = (string?)record?["timeleft"],
+                            posterUrl = PosterFromImages(series?["images"]),
                             tmdbId = tmdbId
                         });
                     }
@@ -197,28 +201,29 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 data =>
                 {
                     var items = new List<object>();
-                    if (data?.records == null) return items;
-                    foreach (var record in data.records)
+                    if (data?["records"] is not JsonArray records) return items;
+                    foreach (var record in records)
                     {
-                        int? tmdbId = record.movie?.tmdbId;
+                        var movie = record?["movie"];
+                        int? tmdbId = (int?)movie?["tmdbId"];
                         if (allowedRequests != null && (!tmdbId.HasValue || !allowedRequests.Contains((tmdbId.Value, "movie"))))
                             continue;
 
                         items.Add(new
                         {
-                            id = (string?)record.id?.ToString(),
+                            id = record?["id"]?.ToString(),
                             source = nameof(ArrType.Radarr),
                             instanceName = instance.Name,
-                            title = (string?)record.movie?.title ?? "Unknown",
-                            subtitle = (string?)record.movie?.year?.ToString(),
+                            title = (string?)movie?["title"] ?? "Unknown",
+                            subtitle = movie?["year"]?.ToString(),
                             seasonNumber = (int?)null,
                             episodeNumber = (int?)null,
-                            status = (string?)record.status ?? "Unknown",
-                            progress = CalculateProgress((double?)record.size, (double?)record.sizeleft),
-                            totalSize = (long?)record.size,
-                            sizeRemaining = (long?)record.sizeleft,
-                            timeRemaining = (string?)record.timeleft,
-                            posterUrl = PosterFromImages(record.movie?.images),
+                            status = (string?)record?["status"] ?? "Unknown",
+                            progress = CalculateProgress((double?)record?["size"], (double?)record?["sizeleft"]),
+                            totalSize = (long?)record?["size"],
+                            sizeRemaining = (long?)record?["sizeleft"],
+                            timeRemaining = (string?)record?["timeleft"],
+                            posterUrl = PosterFromImages(movie?["images"]),
                             tmdbId = tmdbId
                         });
                     }
@@ -371,26 +376,26 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     });
                 }
 
-                var data = JObject.Parse(json!);
+                var data = JsonNode.Parse(json!)!.AsObject();
 
                 var requests = new List<object>();
-                var results = data["results"] as JArray;
+                var results = data["results"] as JsonArray;
                 if (results != null)
                 {
                     // Enrich all requests in parallel for better performance
                     var enrichmentTasks = results.Select(async req =>
                     {
-                        var media = req["media"] as JObject;
-                        var requestedBy = req["requestedBy"] as JObject;
+                        var media = req?["media"] as JsonObject;
+                        var requestedBy = req?["requestedBy"] as JsonObject;
 
-                        int? reqStatus = req["status"]?.Value<int>();
-                        int? mediaStatusVal = media?["status"]?.Value<int>();
-                        bool hasActiveDownload = (media?["downloadStatus"] as JArray)?.Count > 0
-                            || (media?["downloadStatus4k"] as JArray)?.Count > 0;
+                        int? reqStatus = (int?)req?["status"];
+                        int? mediaStatusVal = (int?)media?["status"];
+                        bool hasActiveDownload = (media?["downloadStatus"] as JsonArray)?.Count > 0
+                            || (media?["downloadStatus4k"] as JsonArray)?.Count > 0;
                         string mediaStatus = GetMediaStatus(reqStatus, mediaStatusVal, hasActiveDownload);
 
-                        string? type = req["type"]?.Value<string>();
-                        int? tmdbId = media?["tmdbId"]?.Value<int>();
+                        string? type = (string?)req?["type"];
+                        int? tmdbId = (int?)media?["tmdbId"];
 
                         // Enrich with TMDB data to get title and poster
                         string? title = null;
@@ -423,13 +428,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         // Fallback to media object if enrichment didn't work
                         if (string.IsNullOrEmpty(title))
                         {
-                            title = media?["title"]?.Value<string>();
+                            title = (string?)media?["title"];
                             if (string.IsNullOrEmpty(title))
-                                title = media?["name"]?.Value<string>();
+                                title = (string?)media?["name"];
                             if (string.IsNullOrEmpty(title))
-                                title = media?["originalTitle"]?.Value<string>();
+                                title = (string?)media?["originalTitle"];
                             if (string.IsNullOrEmpty(title))
-                                title = media?["originalName"]?.Value<string>();
+                                title = (string?)media?["originalName"];
                             if (string.IsNullOrEmpty(title))
                                 title = "Unknown";
                         }
@@ -437,8 +442,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         // Fallback year from media object
                         if (!year.HasValue)
                         {
-                            string? releaseDate = media?["releaseDate"]?.Value<string>();
-                            string? firstAirDate = media?["firstAirDate"]?.Value<string>();
+                            string? releaseDate = (string?)media?["releaseDate"];
+                            string? firstAirDate = (string?)media?["firstAirDate"];
                             if (!string.IsNullOrEmpty(releaseDate) && releaseDate.Length >= 4)
                                 year = int.TryParse(releaseDate.Substring(0, 4), out var y) ? y : null;
                             else if (!string.IsNullOrEmpty(firstAirDate) && firstAirDate.Length >= 4)
@@ -448,15 +453,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         // Fallback poster from media object
                         if (string.IsNullOrEmpty(posterUrl))
                         {
-                            string? posterPath = media?["posterPath"]?.Value<string>();
+                            string? posterPath = (string?)media?["posterPath"];
                             if (!string.IsNullOrEmpty(posterPath))
                                 posterUrl = $"https://image.tmdb.org/t/p/w300{posterPath}";
                         }
 
                         // Get requester info
-                        string? displayName = requestedBy?["displayName"]?.Value<string>();
-                        string? username = requestedBy?["username"]?.Value<string>();
-                        string? avatar = requestedBy?["avatar"]?.Value<string>();
+                        string? displayName = (string?)requestedBy?["displayName"];
+                        string? username = (string?)requestedBy?["username"];
+                        string? avatar = (string?)requestedBy?["avatar"];
 
                         // Proxy avatar through our backend to avoid CORS/mixed content issues
                         string? avatarUrl = null;
@@ -465,19 +470,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             avatarUrl = $"/JellyfinEnhanced/proxy/avatar?path={Uri.EscapeDataString(avatar)}";
                         }
 
-                        // Handle createdAt - could be string or DateTime
+                        // Seerr's createdAt ISO string is forwarded verbatim. (The old
+                        // Newtonsoft parser auto-promoted it to a Date token and
+                        // re-serialized it in "o" format; JsonNode keeps the original
+                        // text — both are ISO 8601 the frontend parses identically.)
                         string? createdAtStr = null;
-                        var createdAtToken = req["createdAt"];
+                        var createdAtToken = req?["createdAt"];
                         if (createdAtToken != null)
                         {
-                            createdAtStr = createdAtToken.Type == Newtonsoft.Json.Linq.JTokenType.Date
-                                ? createdAtToken.Value<DateTime>().ToString("o")
-                                : createdAtToken.ToString();
+                            createdAtStr = createdAtToken.ToString();
                         }
 
                         return new
                         {
-                            id = req["id"]?.Value<int>(),
+                            id = (int?)req?["id"],
                             type = type,
                             title = title,
                             year = year,
@@ -494,7 +500,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             requestedBy = displayName ?? username ?? "Unknown",
                             requestedByAvatar = avatarUrl,
                             createdAt = createdAtStr,
-                            jellyfinMediaId = media?["jellyfinMediaId"]?.Value<string>(),
+                            jellyfinMediaId = (string?)media?["jellyfinMediaId"],
                             digitalReleaseDate = digitalReleaseDate,
                             theatricalReleaseDate = theatricalReleaseDate,
                             initialAirDate = initialAirDate,
@@ -574,8 +580,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     requests.AddRange(enrichedRequests);
                 }
 
-                var pageInfo = data["pageInfo"] as JObject;
-                var totalResults = isComingSoonFilter ? requests.Count : (pageInfo?["results"]?.Value<int>() ?? 0);
+                var pageInfo = data["pageInfo"] as JsonObject;
+                var totalResults = isComingSoonFilter ? requests.Count : ((int?)pageInfo?["results"] ?? 0);
                 var totalPages = (int)Math.Ceiling((double)totalResults / take);
 
                 var canApproveRequests = IsAdminUser() || JellyseerrPermissionHelper.HasAnyPermission(

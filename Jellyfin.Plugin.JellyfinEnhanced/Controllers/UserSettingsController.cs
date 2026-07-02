@@ -22,7 +22,6 @@ using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
-using Newtonsoft.Json.Linq;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using MediaBrowser.Controller;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
@@ -505,7 +504,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     Services.HiddenContentResponseFilter.InvalidateUser(userId);
                 }
                 catch (Exception ex) when (ex is InvalidDataException
-                                        || ex is Newtonsoft.Json.JsonException
+                                        || ex is System.Text.Json.JsonException
                                         || ex is IOException
                                         || ex is UnauthorizedAccessException)
                 {

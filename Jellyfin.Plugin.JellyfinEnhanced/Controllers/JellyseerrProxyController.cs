@@ -22,7 +22,7 @@ using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
-using Newtonsoft.Json.Linq;
+using System.Text.Json.Nodes;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using MediaBrowser.Controller;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
@@ -314,9 +314,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             {
                 try
                 {
-                    var quota = JObject.Parse(cr.Content ?? "{}");
+                    var quota = JsonNode.Parse(cr.Content ?? "{}")!.AsObject();
                     await EnrichQuotaWithResetAsync(quota, seerrUserId!, _configProvider.Configuration);
-                    return Content(quota.ToString(Newtonsoft.Json.Formatting.None), "application/json");
+                    // Compact output like the old JObject.ToString(Formatting.None).
+                    return Content(quota.ToJsonString(), "application/json");
                 }
                 catch (Exception ex)
                 {
@@ -327,7 +328,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             return quotaResult;
         }
 
-        private async Task EnrichQuotaWithResetAsync(JObject quota, string seerrUserId, PluginConfiguration config)
+        private async Task EnrichQuotaWithResetAsync(JsonObject quota, string seerrUserId, PluginConfiguration config)
         {
             // Parallel: independent HTTP calls, sequential would double worst-case latency.
             var movieTask = ComputeNextResetAsync(quota, "movie", seerrUserId, config);
@@ -335,24 +336,24 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             await Task.WhenAll(movieTask, tvTask);
 
             // Seerr admins / no-policy users return {"movie":null,"tv":null}; cast safely.
-            if (movieTask.Result.HasValue && quota["movie"] is JObject mObj)
+            if (movieTask.Result.HasValue && quota["movie"] is JsonObject mObj)
             {
                 mObj["nextResetAt"] = movieTask.Result.Value.ToString("o");
             }
-            if (tvTask.Result.HasValue && quota["tv"] is JObject tObj)
+            if (tvTask.Result.HasValue && quota["tv"] is JsonObject tObj)
             {
                 tObj["nextResetAt"] = tvTask.Result.Value.ToString("o");
             }
         }
 
-        private async Task<DateTime?> ComputeNextResetAsync(JObject quota, string mediaType, string seerrUserId, PluginConfiguration config)
+        private async Task<DateTime?> ComputeNextResetAsync(JsonObject quota, string mediaType, string seerrUserId, PluginConfiguration config)
         {
-            var side = quota[mediaType] as JObject;
+            var side = quota[mediaType] as JsonObject;
             if (side == null) return null;
 
-            int limit = side["limit"]?.Value<int?>() ?? 0;
-            int used = side["used"]?.Value<int?>() ?? 0;
-            int days = side["days"]?.Value<int?>() ?? 0;
+            int limit = (int?)side["limit"] ?? 0;
+            int used = (int?)side["used"] ?? 0;
+            int days = (int?)side["days"] ?? 0;
 
             // limit=0 is unlimited; no requests means nothing to roll off.
             if (limit <= 0 || used <= 0 || days <= 0) return null;

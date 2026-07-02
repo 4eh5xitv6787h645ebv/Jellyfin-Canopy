@@ -22,7 +22,7 @@ using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
-using Newtonsoft.Json.Linq;
+using System.Text.Json.Nodes;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using MediaBrowser.Controller;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
@@ -1108,7 +1108,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         protected async Task<(T Result, string? Error)> FetchAndMapAsync<T>(
             ArrInstance instance,
             string endpointPath,
-            Func<dynamic?, T> mapper,
+            Func<JsonNode?, T> mapper,
             T emptyResult,
             TimeSpan timeout,
             string contextLabel,
@@ -1152,7 +1152,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
 
                 var json = await response.Content.ReadAsStringAsync(ct);
-                var data = Newtonsoft.Json.JsonConvert.DeserializeObject<dynamic>(json);
+                // Empty body maps like Newtonsoft's DeserializeObject("") — a null
+                // document handed to the mapper, not a parse error.
+                var data = string.IsNullOrWhiteSpace(json) ? null : JsonNode.Parse(json);
                 return (mapper(data), null);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -1166,7 +1168,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 _logger.LogError($"Timeout fetching {contextLabel} from {instance.Name}: {ex.Message}");
                 return (emptyResult, "timeout");
             }
-            catch (Newtonsoft.Json.JsonException ex)
+            catch (JsonException ex)
             {
                 _logger.LogError($"Invalid JSON from {contextLabel} {instance.Name}: {ex.Message}");
                 return (emptyResult, "invalid response");
