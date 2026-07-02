@@ -1882,6 +1882,97 @@
             });
         })();
 
+        // ── Declarative config field binder ────────────────────────────────────────────
+        // Simple checkbox/text/number/select fields carry data-config-key="<PascalCaseProp>"
+        // in configPage.html and are loaded/saved by one generic pass instead of a
+        // hand-written line per field. Type/fallback semantics:
+        //   checkbox            -> load !!v; save .checked
+        //   + data-config-default="true"
+        //                       -> load (v !== false)  (default-on settings)
+        //   text/select         -> load  el.value = v; save el.value
+        //   + data-config-fallback="F"
+        //                       -> load  el.value = v || F; save el.value || F
+        //   + data-config-int   -> save parseInt(el.value, 10)  (|| F when a fallback is set)
+        // Fields whose old save site clamped or special-cased the value keep those exact
+        // semantics via CONFIG_FIELD_OVERRIDES below. Anything more complex (multi-element
+        // enums, validated text, list builders, arr instances) stays hand-written in
+        // loadConfig/buildConfigFromForm.
+        const CONFIG_FIELD_OVERRIDES = {
+            // isNaN/min-max clamps preserved verbatim from the old per-field save sites.
+            AutoMovieRequestMinutesWatched: {
+                save: function (el) {
+                    const minutesValue = parseInt(el.value, 10);
+                    return isNaN(minutesValue) || minutesValue < 1 ? 20 : Math.min(minutesValue, 180);
+                }
+            },
+            WatchlistMemoryRetentionDays: {
+                save: function (el) {
+                    const retentionDays = parseInt(el.value);
+                    return isNaN(retentionDays) || retentionDays < 1 ? 365 : Math.min(retentionDays, 3650);
+                }
+            },
+            SeerrScanDebounceSeconds: {
+                save: function (el) {
+                    const seerrScanDebounce = parseInt(el.value);
+                    return isNaN(seerrScanDebounce) || seerrScanDebounce < 5 ? 60 : Math.min(seerrScanDebounce, 3600);
+                }
+            },
+            DownloadsPollIntervalSeconds: {
+                // Old load site distinguished null/undefined from 0; keep that.
+                load: function (el, v) {
+                    el.value = (v !== undefined && v !== null) ? v : 30;
+                },
+                save: function (el) {
+                    const pollInterval = parseInt(el.value, 10);
+                    return pollInterval >= 30 ? pollInterval : 30;
+                }
+            },
+        };
+
+        function configBoundFields() {
+            return Array.from(document.querySelectorAll('[data-config-key]'));
+        }
+
+        /** load: config -> DOM for every [data-config-key] field. */
+        function applyConfigToBoundFields(config) {
+            configBoundFields().forEach(function (el) {
+                const key = el.dataset.configKey;
+                const override = CONFIG_FIELD_OVERRIDES[key];
+                const v = config[key];
+                if (override && override.load) {
+                    override.load(el, v);
+                } else if (el.type === 'checkbox') {
+                    el.checked = el.dataset.configDefault === 'true' ? v !== false : !!v;
+                } else if ('configFallback' in el.dataset) {
+                    el.value = v || el.dataset.configFallback;
+                } else {
+                    el.value = v;
+                }
+            });
+        }
+
+        /** save: DOM -> config for every [data-config-key] field. */
+        function readBoundFieldsIntoConfig(config) {
+            configBoundFields().forEach(function (el) {
+                const key = el.dataset.configKey;
+                const override = CONFIG_FIELD_OVERRIDES[key];
+                if (override && override.save) {
+                    config[key] = override.save(el);
+                } else if (el.type === 'checkbox') {
+                    config[key] = el.checked;
+                } else if ('configInt' in el.dataset) {
+                    const parsed = parseInt(el.value, 10);
+                    config[key] = 'configFallback' in el.dataset
+                        ? (parsed || parseInt(el.dataset.configFallback, 10))
+                        : parsed;
+                } else if ('configFallback' in el.dataset) {
+                    config[key] = el.value || el.dataset.configFallback;
+                } else {
+                    config[key] = el.value;
+                }
+            });
+        }
+
         function loadConfig() {
             Dashboard.showLoadingMsg();
             checkInstalledPlugins();
@@ -1898,11 +1989,11 @@
                 renderOverrides();
                 populateAddShortcutDropdown();
 
-                // Load all other settings
-                document.querySelector('#devMode').checked = config.DevMode;
-                document.querySelector('#maintenanceModeEnabled').checked = config.MaintenanceModeEnabled || false;
-                document.querySelector('#maintenanceModeMessage').value = config.MaintenanceModeMessage || '';
-                document.querySelector('#maintenanceModeNotificationMessage').value = config.MaintenanceModeNotificationMessage || '';
+                // Simple fields: one generic, type-aware pass over every
+                // [data-config-key] element (see applyConfigToBoundFields above).
+                // Complex editors and multi-element settings stay hand-written below.
+                applyConfigToBoundFields(config);
+
                 // Restore action checkboxes
                 const savedAction = config.MaintenanceModeAction || 'disable_accounts';
                 document.getElementById('mmAction_accounts').checked = savedAction === 'disable_accounts' || savedAction === 'both';
@@ -1919,18 +2010,9 @@
                     document.getElementById('je-mm-user-list').dataset.preselect = savedUsers;
                 }
                 loadMaintenanceUsers();
-                document.querySelector('#enableCustomSplashScreen').checked = config.EnableCustomSplashScreen;
-                document.querySelector('#splashScreenImageUrl').value = config.SplashScreenImageUrl;
-                document.querySelector('#disableAllShortcuts').checked = config.DisableAllShortcuts;
-                document.querySelector('#ToastDuration').value = config.ToastDuration;
-                document.querySelector('#HelpPanelAutocloseDelay').value = config.HelpPanelAutocloseDelay;
-                document.querySelector('#elsewhereEnabled').checked = config.ElsewhereEnabled;
+
+                // One config value behind two synced inputs (Elsewhere + Jellyseerr tabs).
                 document.querySelector('#TMDB_API_KEY').value = config.TMDB_API_KEY;
-                document.querySelector('#DEFAULT_REGION').value = config.DEFAULT_REGION;
-                document.querySelector('#DEFAULT_PROVIDERS').value = config.DEFAULT_PROVIDERS;
-                document.querySelector('#IGNORE_PROVIDERS').value = config.IGNORE_PROVIDERS;
-                document.querySelector('#ElsewhereCustomBrandingText').value = config.ElsewhereCustomBrandingText || '';
-                document.querySelector('#ElsewhereCustomBrandingImageUrl').value = config.ElsewhereCustomBrandingImageUrl || '';
                 document.querySelector('#jellyseerr_TMDB_API_KEY').value = config.TMDB_API_KEY;
 
                 // Set up bidirectional sync between TMDB API key fields
@@ -1944,157 +2026,35 @@
                 jellyseerrTmdbKeyField.addEventListener('input', function() {
                     tmdbKeyField.value = this.value;
                 });
-                document.querySelector('#autoPauseEnabled').checked = config.AutoPauseEnabled;
-                document.querySelector('#autoResumeEnabled').checked = config.AutoResumeEnabled;
-                document.querySelector('#autoPipEnabled').checked = config.AutoPipEnabled;
-                document.querySelector('#autoSkipIntro').checked = config.AutoSkipIntro;
-                document.querySelector('#autoSkipOutro').checked = config.AutoSkipOutro;
-                document.querySelector('#longPress2xEnabled').checked = config.LongPress2xEnabled;
-                document.querySelector('#randomButtonEnabled').checked = config.RandomButtonEnabled;
-                document.querySelector('#randomIncludeMovies').checked = config.RandomIncludeMovies;
-                document.querySelector('#randomIncludeShows').checked = config.RandomIncludeShows;
-                document.querySelector('#randomUnwatchedOnly').checked = config.RandomUnwatchedOnly;
-                document.querySelector('#showWatchProgress').checked = config.ShowWatchProgress;
-                document.querySelector('#watchProgressDefaultMode').value = (config.WatchProgressDefaultMode || 'percentage');
-                document.querySelector('#watchProgressTimeFormat').value = (config.WatchProgressTimeFormat || 'hours');
-                document.querySelector('#showFileSizes').checked = config.ShowFileSizes;
-                document.querySelector('#showAudioLanguages').checked = config.ShowAudioLanguages;
-                document.querySelector('#removeContinueWatchingEnabled').checked = config.RemoveContinueWatchingEnabled;
-                document.querySelector('#qualityTagsEnabled').checked = config.QualityTagsEnabled;
-                document.querySelector('#showResolutionTag').checked = config.ShowResolutionTag !== false;
-                document.querySelector('#showSourceTag').checked = config.ShowSourceTag !== false;
-                document.querySelector('#showDynamicRangeTag').checked = config.ShowDynamicRangeTag !== false;
-                document.querySelector('#showSpecialFormatTag').checked = config.ShowSpecialFormatTag !== false;
-                document.querySelector('#showVideoCodecTag').checked = config.ShowVideoCodecTag !== false;
-                document.querySelector('#showAudioInfoTag').checked = config.ShowAudioInfoTag !== false;
+
                 // Restore stack order: rows are visually reordered to match
                 // current saved order values (ties broken by default order).
                 if (typeof renderQualityCatOrderAdmin === 'function') renderQualityCatOrderAdmin(config);
-                document.querySelector('#genreTagsEnabled').checked = config.GenreTagsEnabled;
-                document.querySelector('#peopleTagsEnabled').checked = config.PeopleTagsEnabled;
-                const qPos = (config.QualityTagsPosition || 'top-left');
-                const gPos = (config.GenreTagsPosition || 'top-right');
-                const lPos = (config.LanguageTagsPosition || 'bottom-left');
-                const rPos = (config.RatingTagsPosition || 'bottom-right');
-                const langEnabled = !!config.LanguageTagsEnabled;
-                const ratingEnabled = !!config.RatingTagsEnabled;
-                const peopleEnabled = !!config.PeopleTagsEnabled;
-                const showRatingInPlayer = config.ShowRatingInPlayer !== false;
-                const qSel = document.querySelector('#qualityTagsPosition');
-                const gSel = document.querySelector('#genreTagsPosition');
-                const lSel = document.querySelector('#languageTagsPosition');
-                const rSel = document.querySelector('#ratingTagsPosition');
-                const lChk = document.querySelector('#languageTagsEnabled');
-                const rChk = document.querySelector('#ratingTagsEnabled');
-                const rPlayerChk = document.querySelector('#showRatingInPlayer');
-                if (qSel) qSel.value = qPos;
-                if (gSel) gSel.value = gPos;
-                if (lSel) lSel.value = lPos;
-                if (rSel) rSel.value = rPos;
-                if (lChk) lChk.checked = langEnabled;
-                if (rChk) rChk.checked = ratingEnabled;
-                const pChk = document.querySelector('#peopleTagsEnabled');
-                if (pChk) pChk.checked = peopleEnabled;
-                if (rPlayerChk) rPlayerChk.checked = showRatingInPlayer;
-                document.querySelector('#disableTagsOnSearchPage').checked = config.DisableTagsOnSearchPage === true;
-                document.querySelector('#tagsHideOnHover').checked = config.TagsHideOnHover === true;
-                document.querySelector('#tagCacheServerMode').checked = config.TagCacheServerMode !== false;
+
+                // Not bound: the save side is conditional on TagCacheServerMode.
                 document.querySelector('#enableTagsLocalStorageFallback').checked = config.EnableTagsLocalStorageFallback === true;
-                document.querySelector('#tagsCacheTtlDays').value = config.TagsCacheTtlDays || 30;
-                document.querySelector('#pauseScreenEnabled').checked = config.PauseScreenEnabled;
-                document.querySelector('#showReviews').checked = config.ShowReviews;
-                document.querySelector('#showUserReviews').checked = !!config.ShowUserReviews;
-                document.querySelector('#reviewsExpandedByDefault').checked = config.ReviewsExpandedByDefault;
-                document.querySelector('#showReleaseDate').checked = !!config.ShowReleaseDates;
-                document.querySelector('#hideReviewsFromHiddenUsers').checked = config.HideReviewsFromHiddenUsers !== false;
-                document.querySelector('#hideReviewsFromDisabledUsers').checked = config.HideReviewsFromDisabledUsers !== false;
-                document.querySelector('#showUserRatingDash').checked = config.ShowUserRatingDash !== false;
-                document.querySelector('#showUserRatingOnPosters').checked = config.ShowUserRatingOnPosters === true;
-                document.querySelector('#jellyseerrEnabled').checked = config.JellyseerrEnabled;
-                document.querySelector('#showCollectionsInSearch').checked = config.ShowCollectionsInSearch !== false;
-                document.querySelector('#jellyseerrShowSearchResults').checked = config.JellyseerrShowSearchResults !== false;
-                document.querySelector('#jellyseerrEnable4kRequests').checked = !!config.JellyseerrEnable4KRequests;
-                document.querySelector('#jellyseerrEnable4kTvRequests').checked = !!config.JellyseerrEnable4KTvRequests;
-                document.querySelector('#jellyseerrUseMoreInfoModal').checked = !!config.JellyseerrUseMoreInfoModal;
-                document.querySelector('#jellyseerrShowAdvanced').checked = config.JellyseerrShowAdvanced;
-                document.querySelector('#jellyseerrShowQuotaInfo').checked = config.JellyseerrShowQuotaInfo !== false;
-                document.querySelector('#jellyseerrShowSimilar').checked = config.JellyseerrShowSimilar !== false;
-                document.querySelector('#jellyseerrShowRecommended').checked = config.JellyseerrShowRecommended !== false;
-                document.querySelector('#jellyseerrShowRequestMoreOnSeries').checked = config.JellyseerrShowRequestMoreOnSeries !== false;
-                document.querySelector('#jellyseerrExcludeLibraryItems').checked = config.JellyseerrExcludeLibraryItems !== false;
-                document.querySelector('#jellyseerrShowNetworkDiscovery').checked = config.JellyseerrShowNetworkDiscovery !== false;
-                document.querySelector('#jellyseerrShowGenreDiscovery').checked = config.JellyseerrShowGenreDiscovery !== false;
-                document.querySelector('#jellyseerrShowTagDiscovery').checked = config.JellyseerrShowTagDiscovery !== false;
-                document.querySelector('#jellyseerrShowPersonDiscovery').checked = config.JellyseerrShowPersonDiscovery !== false;
-                document.querySelector('#jellyseerrShowCollectionDiscovery').checked = config.JellyseerrShowCollectionDiscovery !== false;
-                document.querySelector('#jellyseerrShowReportButton').checked = !!config.JellyseerrShowReportButton;
-                document.querySelector('#jellyseerrShowIssueIndicator').checked = !!config.JellyseerrShowIssueIndicator;
-                document.querySelector('#jellyseerrExcludeBlocklistedItems').checked = !!config.JellyseerrExcludeBlocklistedItems;
-                document.querySelector('#jellyseerrDisableCache').checked = !!config.JellyseerrDisableCache;
-                document.querySelector('#jellyseerrResponseCacheTtlMinutes').value = config.JellyseerrResponseCacheTtlMinutes || 10;
-                document.querySelector('#jellyseerrUserIdCacheTtlMinutes').value = config.JellyseerrUserIdCacheTtlMinutes || 30;
-                document.querySelector('#showElsewhereOnJellyseerr').checked = config.ShowElsewhereOnJellyseerr;
+
+                // Not bound: these fields are validated/normalized by hand on save.
                 document.querySelector('#jellyseerrUrls').value = config.JellyseerrUrls;
                 document.querySelector('#JellyseerrApiKey').value = config.JellyseerrApiKey;
                 document.querySelector('#jellyseerrUrlMappings').value = config.JellyseerrUrlMappings || '';
-                document.querySelector('#jellyseerr_TMDB_API_KEY').value = config.TMDB_API_KEY;
-                document.querySelector('#autoSeasonRequestEnabled').checked = config.AutoSeasonRequestEnabled || false;
-                document.querySelector('#autoSeasonRequestRequireAllWatched').checked = config.AutoSeasonRequestRequireAllWatched || false;
-                document.querySelector('#autoSeasonRequestThresholdValue').value = config.AutoSeasonRequestThresholdValue || 2;
-                document.querySelector('#autoMovieRequestEnabled').checked = config.AutoMovieRequestEnabled || false;
+
+                // One enum expanded into two trigger checkboxes.
                 const triggerType = config.AutoMovieRequestTriggerType || 'OnMinutesWatched';
                 document.querySelector('#autoMovieRequestTriggerOnStart').checked = (triggerType === 'OnStart' || triggerType === 'Both');
                 document.querySelector('#autoMovieRequestTriggerOnMinutesWatched').checked = (triggerType === 'OnMinutesWatched' || triggerType === 'Both');
-                document.querySelector('#autoMovieRequestMinutesWatched').value = config.AutoMovieRequestMinutesWatched || 20;
-                document.querySelector('#autoMovieRequestCheckReleaseDate').checked = config.AutoMovieRequestCheckReleaseDate !== false;
-                document.querySelector('#autoMovieRequestQualityMode').value = config.AutoMovieRequestQualityMode || 'default';
-                document.querySelector('#autoMovieRequestFallbackOn4k').checked = config.AutoMovieRequestFallbackOn4k !== false;
                 if ((config.AutoMovieRequestQualityMode || 'default') === 'custom') {
                     document.querySelector('#autoMovieRequestCustomSettings').style.display = 'block';
                     loadAutoMovieRadarrServers(config);
                 }
-                document.querySelector('#addRequestedMediaToWatchlist').checked = config.AddRequestedMediaToWatchlist || false;
-                document.querySelector('#syncJellyseerrWatchlist').checked = config.SyncJellyseerrWatchlist || false;
-                document.querySelector('#syncJellyfinWatchlistToSeerr').checked = config.SyncJellyfinWatchlistToSeerr || false;
-                document.querySelector('#jellyseerrAutoImportUsers').checked = config.JellyseerrAutoImportUsers || false;
+
+                // Not bound: hidden input kept in sync by the blocked-users list builder.
                 document.querySelector('#jellyseerrImportBlockedUsers').value = config.JellyseerrImportBlockedUsers || '';
                 loadBlockedUsersList(config.JellyseerrImportBlockedUsers || '');
-                document.querySelector('#preventWatchlistReAddition').checked = config.PreventWatchlistReAddition !== false;
-                document.querySelector('#watchlistMemoryRetentionDays').value = config.WatchlistMemoryRetentionDays || 365;
-                document.querySelector('#triggerSeerrScanOnItemAdded').checked = config.TriggerSeerrScanOnItemAdded === true;
-                document.querySelector('#seerrScanDebounceSeconds').value = config.SeerrScanDebounceSeconds || 60;
-                document.querySelector('#bookmarksEnabled').checked = config.BookmarksEnabled !== false;
-                document.querySelector('#bookmarksUsePluginPages').checked = config.BookmarksUsePluginPages === true;
-                document.querySelector('#bookmarksUseNativeTab').checked = config.BookmarksUseNativeTab === true;
-                document.querySelector('#bookmarksUseCustomTabs').checked = config.BookmarksUseCustomTabs === true;
-                var __bAuto = document.querySelector('#bookmarksAutoCreateCustomTab');
-                if (__bAuto) __bAuto.checked = config.BookmarksAutoCreateCustomTab === true;
-                document.querySelector('#useIcons').checked = config.UseIcons !== false;
-                document.querySelector('#iconStyle').value = config.IconStyle || 'emoji';
-                document.querySelector('#arrLinksEnabled').checked = config.ArrLinksEnabled;
-                document.querySelector('#bazarrUrlMappings').value = config.BazarrUrlMappings || '';
-                document.querySelector('#bazarrUrl').value = config.BazarrUrl;
-                document.querySelector('#showArrLinksAsText').checked = config.ShowArrLinksAsText;
-                document.querySelector('#arrLinksShowStatusSingle').checked = config.ArrLinksShowStatusSingle;
-                document.querySelector('#arrTagsSyncEnabled').checked = config.ArrTagsSyncEnabled;
 
                 // Load multi-instance Sonarr/Radarr
                 loadArrInstances(config);
-                document.querySelector('#arrTagsPrefix').value = config.ArrTagsPrefix || 'Requested by: ';
-                document.querySelector('#arrTagsClearOldTags').checked = config.ArrTagsClearOldTags !== false;
-                document.querySelector('#arrTagsShowAsLinks').checked = config.ArrTagsShowAsLinks !== false;
-                document.querySelector('#arrTagsSyncFilter').value = config.ArrTagsSyncFilter || '';
-                document.querySelector('#arrTagsLinksFilter').value = config.ArrTagsLinksFilter || '';
-                document.querySelector('#arrTagsLinksHideFilter').value = config.ArrTagsLinksHideFilter || '';
-                document.querySelector('#DefaultSubtitleStyle').value = config.DefaultSubtitleStyle;
-                document.querySelector('#DefaultSubtitleSize').value = config.DefaultSubtitleSize;
-                document.querySelector('#DefaultSubtitleFont').value = config.DefaultSubtitleFont;
-                document.querySelector('#disableCustomSubtitleStyles').checked = config.DisableCustomSubtitleStyles;
-                document.querySelector('#DefaultLanguage').value = config.DefaultLanguage || '';
-                document.querySelector('#letterboxdEnabled').checked = config.LetterboxdEnabled;
-                document.querySelector('#showLetterboxdLinkAsText').checked = config.ShowLetterboxdLinkAsText;
-                const metadataIconsChk = document.querySelector('#metadataIconsEnabled');
-                if (metadataIconsChk) metadataIconsChk.checked = !!config.MetadataIconsEnabled;
+
                 // Tie icon display settings
                 if (config.MetadataIconsEnabled) {
                     // Force icon display where applicable
@@ -2104,85 +2064,10 @@
                     if (showArrText) showArrText.checked = false;
                 }
 
-                // Load extras settings
-                document.querySelector('#coloredRatingsEnabled').checked = config.ColoredRatingsEnabled;
-                document.querySelector('#themeSelectorEnabled').checked = config.ThemeSelectorEnabled;
-                document.querySelector('#coloredActivityIconsEnabled').checked = config.ColoredActivityIconsEnabled;
-                document.querySelector('#pluginIconsEnabled').checked = config.PluginIconsEnabled;
-                document.querySelector('#activeStreamsEnabled').checked = config.ActiveStreamsEnabled || false;
-                document.querySelector('#activeStreamsAllUsers').checked = config.ActiveStreamsAllUsers || false;
                 document.getElementById('activeStreamsAllUsersContainer').style.display = config.ActiveStreamsEnabled ? '' : 'none';
                 document.querySelector('#activeStreamsEnabled').addEventListener('change', function() {
                     document.getElementById('activeStreamsAllUsersContainer').style.display = this.checked ? '' : 'none';
                 });
-
-                // Requests Page settings
-                document.querySelector('#downloadsPageEnabled').checked = config.DownloadsPageEnabled !== false;
-                document.querySelector('#showDownloadsInRequests').checked = config.ShowDownloadsInRequests !== false;
-                document.querySelector('#downloadsFilterByUserRequests').checked = config.DownloadsFilterByUserRequests !== false;
-                document.querySelector('#downloadsPageShowIssues').checked = config.DownloadsPageShowIssues === true;
-                document.querySelector('#downloadsUsePluginPages').checked = config.DownloadsUsePluginPages !== false;
-                document.querySelector('#downloadsUseNativeTab').checked = config.DownloadsUseNativeTab === true;
-                document.querySelector('#downloadsUseCustomTabs').checked = config.DownloadsUseCustomTabs === true;
-                var __dAuto = document.querySelector('#downloadsAutoCreateCustomTab');
-                if (__dAuto) __dAuto.checked = config.DownloadsAutoCreateCustomTab === true;
-                document.querySelector('#downloadsPagePollingEnabled').checked = config.DownloadsPagePollingEnabled !== false;
-                document.querySelector('#downloadsPollIntervalSeconds').value = (config.DownloadsPollIntervalSeconds !== undefined && config.DownloadsPollIntervalSeconds !== null) ? config.DownloadsPollIntervalSeconds : 30;
-
-                // Calendar Page settings
-                document.querySelector('#calendarPageEnabled').checked = config.CalendarPageEnabled !== false;
-                document.querySelector('#calendarUseCustomTabs').checked = config.CalendarUseCustomTabs === true;
-                document.querySelector('#calendarUseNativeTab').checked = config.CalendarUseNativeTab === true;
-                var __cAuto = document.querySelector('#calendarAutoCreateCustomTab');
-                if (__cAuto) __cAuto.checked = config.CalendarAutoCreateCustomTab === true;
-                document.querySelector('#calendarUsePluginPages').checked = config.CalendarUsePluginPages !== false;
-                document.querySelector('#calendarFirstDayOfWeek').value = config.CalendarFirstDayOfWeek || 'Monday';
-                document.querySelector('#calendarTimeFormat').value = config.CalendarTimeFormat || '5pm/5:30pm';
-                document.querySelector('#calendarHighlightFavorites').checked = config.CalendarHighlightFavorites || false;
-                document.querySelector('#calendarHighlightWatchedSeries').checked = config.CalendarHighlightWatchedSeries || false;
-                document.querySelector('#calendarFilterByLibraryAccess').checked = config.CalendarFilterByLibraryAccess !== false;
-                document.querySelector('#calendarShowOnlyRequested').checked = config.CalendarShowOnlyRequested || false;
-                document.querySelector('#calendarForceOnlyRequested').checked = config.CalendarForceOnlyRequested || false;
-
-                // Hidden Content settings
-                document.querySelector('#hiddenContentEnabled').checked = config.HiddenContentEnabled || false;
-                document.querySelector('#hiddenContentUsePluginPages').checked = config.HiddenContentUsePluginPages === true;
-                document.querySelector('#hiddenContentUseNativeTab').checked = config.HiddenContentUseNativeTab === true;
-                document.querySelector('#hiddenContentUseCustomTabs').checked = config.HiddenContentUseCustomTabs === true;
-                // Admin cross-user view + management; default on for existing configs.
-                document.querySelector('#hiddenContentAdmin').checked = config.HiddenContentAdmin !== false;
-                var __hAuto = document.querySelector('#hiddenContentAutoCreateCustomTab');
-                if (__hAuto) __hAuto.checked = config.HiddenContentAutoCreateCustomTab === true;
-
-                // Hidden Content per-user defaults, same name as on the user side, prefixed HiddenContentDefault*.
-                var __hcDefaults = [
-                    ['hiddenContentDefaultEnabled', 'HiddenContentDefaultEnabled', true],
-                    ['hiddenContentDefaultShowHideButtons', 'HiddenContentDefaultShowHideButtons', true],
-                    ['hiddenContentDefaultShowHideConfirmation', 'HiddenContentDefaultShowHideConfirmation', true],
-                    ['hiddenContentDefaultShowButtonJellyseerr', 'HiddenContentDefaultShowButtonJellyseerr', true],
-                    ['hiddenContentDefaultShowButtonLibrary', 'HiddenContentDefaultShowButtonLibrary', false],
-                    ['hiddenContentDefaultShowButtonDetails', 'HiddenContentDefaultShowButtonDetails', true],
-                    ['hiddenContentDefaultShowButtonCast', 'HiddenContentDefaultShowButtonCast', false],
-                    ['hiddenContentDefaultFilterLibrary', 'HiddenContentDefaultFilterLibrary', true],
-                    ['hiddenContentDefaultFilterDiscovery', 'HiddenContentDefaultFilterDiscovery', true],
-                    ['hiddenContentDefaultFilterSearch', 'HiddenContentDefaultFilterSearch', false],
-                    ['hiddenContentDefaultFilterCalendar', 'HiddenContentDefaultFilterCalendar', true],
-                    ['hiddenContentDefaultFilterUpcoming', 'HiddenContentDefaultFilterUpcoming', true],
-                    ['hiddenContentDefaultFilterRecommendations', 'HiddenContentDefaultFilterRecommendations', true],
-                    ['hiddenContentDefaultFilterRequests', 'HiddenContentDefaultFilterRequests', true],
-                    ['hiddenContentDefaultFilterNextUp', 'HiddenContentDefaultFilterNextUp', true],
-                    ['hiddenContentDefaultFilterContinueWatching', 'HiddenContentDefaultFilterContinueWatching', true],
-                    ['hiddenContentDefaultExperimentalHideCollections', 'HiddenContentDefaultExperimentalHideCollections', false],
-                ];
-                __hcDefaults.forEach(function(t) {
-                    var el = document.querySelector('#' + t[0]);
-                    if (!el) return;
-                    var v = config[t[1]];
-                    el.checked = (v === undefined || v === null) ? t[2] : !!v;
-                });
-
-                document.querySelector('#loginImageEnabled').checked = config.EnableLoginImage || false;
-                document.querySelector('#customPluginLinks').value = config.CustomPluginLinks || '';
 
                 // Set up event handler for watchlist prevention checkbox
                 function toggleWatchlistRetentionVisibility() {
@@ -2218,10 +2103,14 @@
                 if (index !== -1) finalShortcuts[index] = override;
             });
             config.Shortcuts = finalShortcuts;
-            config.DevMode = document.querySelector('#devMode').checked;
-            config.MaintenanceModeEnabled = document.querySelector('#maintenanceModeEnabled').checked;
-            config.MaintenanceModeMessage = document.querySelector('#maintenanceModeMessage').value;
-            config.MaintenanceModeNotificationMessage = document.querySelector('#maintenanceModeNotificationMessage').value;
+
+            // Simple fields: one generic, type-aware pass over every
+            // [data-config-key] element (see readBoundFieldsIntoConfig above).
+            // Everything below preserves the hand-written semantics that do not fit
+            // the binder: enums spanning several inputs, validated/normalized text,
+            // conditional values and the complex editors.
+            readBoundFieldsIntoConfig(config);
+
             const mmAccounts = document.getElementById('mmAction_accounts').checked;
             const mmRemote   = document.getElementById('mmAction_remote').checked;
             config.MaintenanceModeAction = (mmAccounts && mmRemote) ? 'both'
@@ -2234,41 +2123,7 @@
                 const checked = Array.from(document.querySelectorAll('.je-mm-user-cb:checked')).map(cb => cb.value);
                 config.MaintenanceModeAffectedUsers = JSON.stringify(checked);
             }
-            config.EnableCustomSplashScreen = document.querySelector('#enableCustomSplashScreen').checked;
-            config.SplashScreenImageUrl = document.querySelector('#splashScreenImageUrl').value;
-            config.DisableAllShortcuts = document.querySelector('#disableAllShortcuts').checked;
-            config.ToastDuration = parseInt(document.querySelector('#ToastDuration').value, 10);
-            config.HelpPanelAutocloseDelay = parseInt(document.querySelector('#HelpPanelAutocloseDelay').value, 10);
-            config.ElsewhereEnabled = document.querySelector('#elsewhereEnabled').checked;
-            config.TMDB_API_KEY = document.querySelector('#TMDB_API_KEY').value;
-            config.DEFAULT_REGION = document.querySelector('#DEFAULT_REGION').value;
-            config.DEFAULT_PROVIDERS = document.querySelector('#DEFAULT_PROVIDERS').value;
-            config.IGNORE_PROVIDERS = document.querySelector('#IGNORE_PROVIDERS').value;
-            config.ElsewhereCustomBrandingText = document.querySelector('#ElsewhereCustomBrandingText').value;
-            config.ElsewhereCustomBrandingImageUrl = document.querySelector('#ElsewhereCustomBrandingImageUrl').value;
-            config.AutoPauseEnabled = document.querySelector('#autoPauseEnabled').checked;
-            config.AutoResumeEnabled = document.querySelector('#autoResumeEnabled').checked;
-            config.AutoPipEnabled = document.querySelector('#autoPipEnabled').checked;
-            config.AutoSkipIntro = document.querySelector('#autoSkipIntro').checked;
-            config.AutoSkipOutro = document.querySelector('#autoSkipOutro').checked;
-            config.LongPress2xEnabled = document.querySelector('#longPress2xEnabled').checked;
-            config.RandomButtonEnabled = document.querySelector('#randomButtonEnabled').checked;
-            config.RandomIncludeMovies = document.querySelector('#randomIncludeMovies').checked;
-            config.RandomIncludeShows = document.querySelector('#randomIncludeShows').checked;
-            config.RandomUnwatchedOnly = document.querySelector('#randomUnwatchedOnly').checked;
-            config.ShowWatchProgress = document.querySelector('#showWatchProgress').checked;
-            config.WatchProgressDefaultMode = document.querySelector('#watchProgressDefaultMode').value;
-            config.WatchProgressTimeFormat = document.querySelector('#watchProgressTimeFormat').value;
-            config.ShowFileSizes = document.querySelector('#showFileSizes').checked;
-            config.ShowAudioLanguages = document.querySelector('#showAudioLanguages').checked;
-            config.RemoveContinueWatchingEnabled = document.querySelector('#removeContinueWatchingEnabled').checked;
-            config.QualityTagsEnabled = document.querySelector('#qualityTagsEnabled').checked;
-            config.ShowResolutionTag = document.querySelector('#showResolutionTag').checked;
-            config.ShowSourceTag = document.querySelector('#showSourceTag').checked;
-            config.ShowDynamicRangeTag = document.querySelector('#showDynamicRangeTag').checked;
-            config.ShowSpecialFormatTag = document.querySelector('#showSpecialFormatTag').checked;
-            config.ShowVideoCodecTag = document.querySelector('#showVideoCodecTag').checked;
-            config.ShowAudioInfoTag = document.querySelector('#showAudioInfoTag').checked;
+
             // Persist current visual stack order. Each admin row reads its current
             // DOM position (1-based) into the corresponding *Order config key.
             // Skipped if the load-time render failed — otherwise we'd clobber the
@@ -2280,55 +2135,11 @@
                     if (orderKey) config[orderKey] = idx + 1;
                 });
             }
-            config.GenreTagsEnabled = document.querySelector('#genreTagsEnabled').checked;
-            config.LanguageTagsEnabled = document.querySelector('#languageTagsEnabled').checked;
-            config.RatingTagsEnabled = document.querySelector('#ratingTagsEnabled').checked;
-            config.PeopleTagsEnabled = document.querySelector('#peopleTagsEnabled').checked;
-            config.DisableTagsOnSearchPage = document.querySelector('#disableTagsOnSearchPage').checked;
-            config.TagsHideOnHover = document.querySelector('#tagsHideOnHover').checked;
-            config.TagCacheServerMode = document.querySelector('#tagCacheServerMode').checked;
+
             config.EnableTagsLocalStorageFallback = config.TagCacheServerMode
                 ? document.querySelector('#enableTagsLocalStorageFallback').checked
                 : true;
-            config.QualityTagsPosition = document.querySelector('#qualityTagsPosition').value;
-            config.GenreTagsPosition = document.querySelector('#genreTagsPosition').value;
-            config.LanguageTagsPosition = document.querySelector('#languageTagsPosition').value;
-            config.RatingTagsPosition = document.querySelector('#ratingTagsPosition').value;
-            config.ShowRatingInPlayer = document.querySelector('#showRatingInPlayer').checked;
-            config.TagsCacheTtlDays = parseInt(document.querySelector('#tagsCacheTtlDays').value, 10) || 30;
-            config.PauseScreenEnabled = document.querySelector('#pauseScreenEnabled').checked;
-            config.ShowReviews = document.querySelector('#showReviews').checked;
-            config.ShowUserReviews = document.querySelector('#showUserReviews').checked;
-            config.ReviewsExpandedByDefault = document.querySelector('#reviewsExpandedByDefault').checked;
-            config.ShowReleaseDates = document.querySelector('#showReleaseDate').checked;
-            config.HideReviewsFromHiddenUsers = document.querySelector('#hideReviewsFromHiddenUsers').checked;
-            config.HideReviewsFromDisabledUsers = document.querySelector('#hideReviewsFromDisabledUsers').checked;
-            config.ShowUserRatingDash = document.querySelector('#showUserRatingDash').checked;
-            config.ShowUserRatingOnPosters = document.querySelector('#showUserRatingOnPosters').checked;
-            config.JellyseerrEnabled = document.querySelector('#jellyseerrEnabled').checked;
-            config.JellyseerrShowSearchResults = document.querySelector('#jellyseerrShowSearchResults').checked;
-            config.ShowCollectionsInSearch = document.querySelector('#showCollectionsInSearch').checked;
-            config.JellyseerrEnable4KRequests = document.querySelector('#jellyseerrEnable4kRequests').checked;
-            config.JellyseerrEnable4KTvRequests = document.querySelector('#jellyseerrEnable4kTvRequests').checked;
-            config.JellyseerrUseMoreInfoModal = document.querySelector('#jellyseerrUseMoreInfoModal').checked;
-            config.JellyseerrShowAdvanced = document.querySelector('#jellyseerrShowAdvanced').checked;
-            config.JellyseerrShowQuotaInfo = document.querySelector('#jellyseerrShowQuotaInfo').checked;
-            config.JellyseerrShowSimilar = document.querySelector('#jellyseerrShowSimilar').checked;
-            config.JellyseerrShowRecommended = document.querySelector('#jellyseerrShowRecommended').checked;
-            config.JellyseerrShowRequestMoreOnSeries = document.querySelector('#jellyseerrShowRequestMoreOnSeries').checked;
-            config.JellyseerrExcludeLibraryItems = document.querySelector('#jellyseerrExcludeLibraryItems').checked;
-            config.JellyseerrExcludeBlocklistedItems = document.querySelector('#jellyseerrExcludeBlocklistedItems').checked;
-            config.JellyseerrDisableCache = document.querySelector('#jellyseerrDisableCache').checked;
-            config.JellyseerrResponseCacheTtlMinutes = parseInt(document.querySelector('#jellyseerrResponseCacheTtlMinutes').value, 10) || 10;
-            config.JellyseerrUserIdCacheTtlMinutes = parseInt(document.querySelector('#jellyseerrUserIdCacheTtlMinutes').value, 10) || 30;
-            config.JellyseerrShowNetworkDiscovery = document.querySelector('#jellyseerrShowNetworkDiscovery').checked;
-            config.JellyseerrShowGenreDiscovery = document.querySelector('#jellyseerrShowGenreDiscovery').checked;
-            config.JellyseerrShowTagDiscovery = document.querySelector('#jellyseerrShowTagDiscovery').checked;
-            config.JellyseerrShowPersonDiscovery = document.querySelector('#jellyseerrShowPersonDiscovery').checked;
-            config.JellyseerrShowCollectionDiscovery = document.querySelector('#jellyseerrShowCollectionDiscovery').checked;
-            config.JellyseerrShowReportButton = document.querySelector('#jellyseerrShowReportButton').checked;
-            config.JellyseerrShowIssueIndicator = document.querySelector('#jellyseerrShowIssueIndicator').checked;
-            config.ShowElsewhereOnJellyseerr = document.querySelector('#showElsewhereOnJellyseerr').checked;
+
             // validate scheme on save. Lines that don't parse as
             // http(s) are dropped with a warning so we never persist garbage
             // like "seerr.local" (no scheme) — which downstream string-concats
@@ -2363,11 +2174,9 @@
             })();
             config.JellyseerrApiKey = (document.querySelector('#JellyseerrApiKey').value || '').replace(/\s/g, '');
             config.JellyseerrUrlMappings = (document.querySelector('#jellyseerrUrlMappings').value || '').split('\n').map(u => u.trim()).filter(Boolean).join('\n');
+            // Two synced inputs, one config value; the Jellyseerr-tab field wins (as before).
             config.TMDB_API_KEY = document.querySelector('#jellyseerr_TMDB_API_KEY').value;
-            config.AutoSeasonRequestEnabled = document.querySelector('#autoSeasonRequestEnabled').checked;
-            config.AutoSeasonRequestRequireAllWatched = document.querySelector('#autoSeasonRequestRequireAllWatched').checked;
-            config.AutoSeasonRequestThresholdValue = parseInt(document.querySelector('#autoSeasonRequestThresholdValue').value, 10) || 2;
-            config.AutoMovieRequestEnabled = document.querySelector('#autoMovieRequestEnabled').checked;
+
             const onStart = document.querySelector('#autoMovieRequestTriggerOnStart').checked;
             const onMinutes = document.querySelector('#autoMovieRequestTriggerOnMinutesWatched').checked;
             if (onStart && onMinutes) {
@@ -2379,44 +2188,14 @@
             } else {
                 config.AutoMovieRequestTriggerType = 'OnMinutesWatched'; // Default to minutes watched if nothing selected
             }
-            const minutesValue = parseInt(document.querySelector('#autoMovieRequestMinutesWatched').value, 10);
-            config.AutoMovieRequestMinutesWatched = isNaN(minutesValue) || minutesValue < 1 ? 20 : Math.min(minutesValue, 180);
-            config.AutoMovieRequestCheckReleaseDate = document.querySelector('#autoMovieRequestCheckReleaseDate').checked;
-            config.AutoMovieRequestQualityMode = document.querySelector('#autoMovieRequestQualityMode').value || 'default';
-            config.AutoMovieRequestFallbackOn4k = document.querySelector('#autoMovieRequestFallbackOn4k').checked;
             var serverVal = parseInt(document.querySelector('#autoMovieRequestServer').value);
             config.AutoMovieRequestCustomServerId = (!isNaN(serverVal) && serverVal >= 0) ? serverVal : -1;
             var profileVal = parseInt(document.querySelector('#autoMovieRequestProfile').value);
             config.AutoMovieRequestCustomProfileId = (!isNaN(profileVal) && profileVal > 0) ? profileVal : 0;
             config.AutoMovieRequestCustomRootFolder = document.querySelector('#autoMovieRequestRootFolder').value || '';
-            config.AddRequestedMediaToWatchlist = document.querySelector('#addRequestedMediaToWatchlist').checked;
-            config.SyncJellyseerrWatchlist = document.querySelector('#syncJellyseerrWatchlist').checked;
-            config.SyncJellyfinWatchlistToSeerr = document.querySelector('#syncJellyfinWatchlistToSeerr').checked;
-            config.JellyseerrAutoImportUsers = document.querySelector('#jellyseerrAutoImportUsers').checked;
+
             syncBlockedUsersToHiddenInput();
             config.JellyseerrImportBlockedUsers = document.querySelector('#jellyseerrImportBlockedUsers').value || '';
-            config.PreventWatchlistReAddition = document.querySelector('#preventWatchlistReAddition').checked;
-
-            const retentionDays = parseInt(document.querySelector('#watchlistMemoryRetentionDays').value);
-            config.WatchlistMemoryRetentionDays = isNaN(retentionDays) || retentionDays < 1 ? 365 : Math.min(retentionDays, 3650);
-            config.TriggerSeerrScanOnItemAdded = document.querySelector('#triggerSeerrScanOnItemAdded').checked;
-            const seerrScanDebounce = parseInt(document.querySelector('#seerrScanDebounceSeconds').value);
-            config.SeerrScanDebounceSeconds = isNaN(seerrScanDebounce) || seerrScanDebounce < 5 ? 60 : Math.min(seerrScanDebounce, 3600);
-            config.BookmarksEnabled = document.querySelector('#bookmarksEnabled').checked;
-            config.BookmarksUsePluginPages = document.querySelector('#bookmarksUsePluginPages').checked;
-            config.BookmarksUseNativeTab = document.querySelector('#bookmarksUseNativeTab').checked;
-            config.BookmarksUseCustomTabs = document.querySelector('#bookmarksUseCustomTabs').checked;
-            var __bAutoSave = document.querySelector('#bookmarksAutoCreateCustomTab');
-            config.BookmarksAutoCreateCustomTab = !!(__bAutoSave && __bAutoSave.checked);
-            config.UseIcons = document.querySelector('#useIcons').checked;
-            config.IconStyle = document.querySelector('#iconStyle').value;
-
-            config.ArrLinksEnabled = document.querySelector('#arrLinksEnabled').checked;
-            config.BazarrUrlMappings = document.querySelector('#bazarrUrlMappings').value || '';
-            config.BazarrUrl = document.querySelector('#bazarrUrl').value;
-            config.ShowArrLinksAsText = document.querySelector('#showArrLinksAsText').checked;
-            config.ArrLinksShowStatusSingle = document.querySelector('#arrLinksShowStatusSingle').checked;
-            config.ArrTagsSyncEnabled = document.querySelector('#arrTagsSyncEnabled').checked;
 
             // Save multi-instance Sonarr/Radarr
             var arrIncompleteWarnings = saveArrInstances(config);
@@ -2426,100 +2205,12 @@
                     Dashboard.alert({ title: '⚠ Incomplete *arr instance', message: msg });
                 });
             }
-            config.ArrTagsPrefix = document.querySelector('#arrTagsPrefix').value || 'Requested by: ';
-            config.ArrTagsClearOldTags = document.querySelector('#arrTagsClearOldTags').checked;
-            config.ArrTagsShowAsLinks = document.querySelector('#arrTagsShowAsLinks').checked;
-            config.ArrTagsSyncFilter = document.querySelector('#arrTagsSyncFilter').value || '';
-            config.ArrTagsLinksFilter = document.querySelector('#arrTagsLinksFilter').value || '';
-            config.ArrTagsLinksHideFilter = document.querySelector('#arrTagsLinksHideFilter').value || '';
-            config.DefaultSubtitleStyle = parseInt(document.querySelector('#DefaultSubtitleStyle').value, 10);
-            config.DefaultSubtitleSize = parseInt(document.querySelector('#DefaultSubtitleSize').value, 10);
-            config.DefaultSubtitleFont = parseInt(document.querySelector('#DefaultSubtitleFont').value, 10);
-            config.DisableCustomSubtitleStyles = document.querySelector('#disableCustomSubtitleStyles').checked;
-            config.DefaultLanguage = document.querySelector('#DefaultLanguage').value || '';
-            config.LetterboxdEnabled = document.querySelector('#letterboxdEnabled').checked;
-            config.ShowLetterboxdLinkAsText = document.querySelector('#showLetterboxdLinkAsText').checked;
-            config.MetadataIconsEnabled = document.querySelector('#metadataIconsEnabled').checked;
+
             // If metadata icons are enabled, ensure icons are shown for Letterboxd and *arr links
             if (config.MetadataIconsEnabled) {
                 config.ShowLetterboxdLinkAsText = false;
                 config.ShowArrLinksAsText = false;
             }
-
-            // Extras settings
-            config.ColoredRatingsEnabled = document.querySelector('#coloredRatingsEnabled').checked;
-            config.ThemeSelectorEnabled = document.querySelector('#themeSelectorEnabled').checked;
-            config.ColoredActivityIconsEnabled = document.querySelector('#coloredActivityIconsEnabled').checked;
-            config.PluginIconsEnabled = document.querySelector('#pluginIconsEnabled').checked;
-            config.ActiveStreamsEnabled = document.querySelector('#activeStreamsEnabled').checked;
-            config.ActiveStreamsAllUsers = document.querySelector('#activeStreamsAllUsers').checked;
-
-            // Requests Page settings
-            config.DownloadsPageEnabled = document.querySelector('#downloadsPageEnabled').checked;
-            config.ShowDownloadsInRequests = document.querySelector('#showDownloadsInRequests').checked;
-            config.DownloadsFilterByUserRequests = document.querySelector('#downloadsFilterByUserRequests').checked;
-            config.DownloadsPageShowIssues = document.querySelector('#downloadsPageShowIssues').checked;
-            config.DownloadsUsePluginPages = document.querySelector('#downloadsUsePluginPages').checked;
-            config.DownloadsPagePollingEnabled = document.querySelector('#downloadsPagePollingEnabled').checked;
-            const pollInterval = parseInt(document.querySelector('#downloadsPollIntervalSeconds').value, 10);
-            config.DownloadsPollIntervalSeconds = pollInterval >= 30 ? pollInterval : 30;
-            config.DownloadsUseCustomTabs = document.querySelector('#downloadsUseCustomTabs').checked;
-            config.DownloadsUseNativeTab = document.querySelector('#downloadsUseNativeTab').checked;
-            var __dAutoSave = document.querySelector('#downloadsAutoCreateCustomTab');
-            config.DownloadsAutoCreateCustomTab = !!(__dAutoSave && __dAutoSave.checked);
-
-            // Calendar Page settings
-            config.CalendarPageEnabled = document.querySelector('#calendarPageEnabled').checked;
-            config.CalendarUseCustomTabs = document.querySelector('#calendarUseCustomTabs').checked;
-            config.CalendarUseNativeTab = document.querySelector('#calendarUseNativeTab').checked;
-            var __cAutoSave = document.querySelector('#calendarAutoCreateCustomTab');
-            config.CalendarAutoCreateCustomTab = !!(__cAutoSave && __cAutoSave.checked);
-            config.CalendarUsePluginPages = document.querySelector('#calendarUsePluginPages').checked;
-            config.CalendarFirstDayOfWeek = document.querySelector('#calendarFirstDayOfWeek').value || 'Monday';
-            config.CalendarTimeFormat = document.querySelector('#calendarTimeFormat').value || '5pm/5:30pm';
-            config.CalendarHighlightFavorites = document.querySelector('#calendarHighlightFavorites').checked;
-            config.CalendarHighlightWatchedSeries = document.querySelector('#calendarHighlightWatchedSeries').checked;
-            config.CalendarFilterByLibraryAccess = document.querySelector('#calendarFilterByLibraryAccess').checked;
-            config.CalendarShowOnlyRequested = document.querySelector('#calendarShowOnlyRequested').checked;
-            config.CalendarForceOnlyRequested = document.querySelector('#calendarForceOnlyRequested').checked;
-
-            // Hidden Content settings
-            config.HiddenContentEnabled = document.querySelector('#hiddenContentEnabled').checked;
-            config.HiddenContentUsePluginPages = document.querySelector('#hiddenContentUsePluginPages').checked;
-            config.HiddenContentUseNativeTab = document.querySelector('#hiddenContentUseNativeTab').checked;
-            config.HiddenContentUseCustomTabs = document.querySelector('#hiddenContentUseCustomTabs').checked;
-            config.HiddenContentAdmin = document.querySelector('#hiddenContentAdmin').checked;
-            var __hAutoSave = document.querySelector('#hiddenContentAutoCreateCustomTab');
-            config.HiddenContentAutoCreateCustomTab = !!(__hAutoSave && __hAutoSave.checked);
-
-            // Hidden Content per-user defaults
-            [
-                'hiddenContentDefaultEnabled',
-                'hiddenContentDefaultShowHideButtons',
-                'hiddenContentDefaultShowHideConfirmation',
-                'hiddenContentDefaultShowButtonJellyseerr',
-                'hiddenContentDefaultShowButtonLibrary',
-                'hiddenContentDefaultShowButtonDetails',
-                'hiddenContentDefaultShowButtonCast',
-                'hiddenContentDefaultFilterLibrary',
-                'hiddenContentDefaultFilterDiscovery',
-                'hiddenContentDefaultFilterSearch',
-                'hiddenContentDefaultFilterCalendar',
-                'hiddenContentDefaultFilterUpcoming',
-                'hiddenContentDefaultFilterRecommendations',
-                'hiddenContentDefaultFilterRequests',
-                'hiddenContentDefaultFilterNextUp',
-                'hiddenContentDefaultFilterContinueWatching',
-                'hiddenContentDefaultExperimentalHideCollections',
-            ].forEach(function(id) {
-                var el = document.querySelector('#' + id);
-                if (!el) return;
-                var pascal = id.charAt(0).toUpperCase() + id.slice(1);
-                config[pascal] = !!el.checked;
-            });
-
-            config.EnableLoginImage = document.querySelector('#loginImageEnabled').checked;
-            config.CustomPluginLinks = document.querySelector('#customPluginLinks').value || '';
 
             // Carry the cached "JE owns this Custom Tabs entry" flags through any
             // round-trip; sync may overwrite specific keys after computing actions.

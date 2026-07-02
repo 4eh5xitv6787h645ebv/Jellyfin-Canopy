@@ -156,14 +156,14 @@
                     <fieldset>
                         <legend class="sectionTitle">UI Preferences</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="showWatchProgress" is="emby-checkbox" type="checkbox"/><span>Show watch progress</span></label></div>
+                            <div class="checkboxContainer"><label><input id="showWatchProgress" data-config-key="ShowWatchProgress" is="emby-checkbox" type="checkbox"/><span>Show watch progress</span></label></div>
                             <div class="je-setting-description" data-desc-for="showWatchProgress">
                                 <div class="fieldDescription">Show watch progress for items in item details page.</div>
                             </div>
 
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="watchProgressDefaultMode">Watch Progress Default</label>
-                                <select is="emby-select" id="watchProgressDefaultMode" name="watchProgressDefaultMode" class="emby-select">
+                                <select is="emby-select" id="watchProgressDefaultMode" data-config-key="WatchProgressDefaultMode" data-config-fallback="percentage" name="watchProgressDefaultMode" class="emby-select">
                                     <option value="percentage">Percentage</option>
                                     <option value="time">Time Watched</option>
                                     <option value="remaining">Time Remaining</option>
@@ -175,7 +175,7 @@
 
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="watchProgressTimeFormat">Watch Progress Time Format</label>
-                                <select is="emby-select" id="watchProgressTimeFormat" name="watchProgressTimeFormat" class="emby-select">
+                                <select is="emby-select" id="watchProgressTimeFormat" data-config-key="WatchProgressTimeFormat" data-config-fallback="hours" name="watchProgressTimeFormat" class="emby-select">
                                     <option value="hours">h:m</option>
                                     <option value="full">y:mo:d:h:m</option>
                                 </select>
@@ -184,17 +184,17 @@
                                 <div class="fieldDescription">Select how time-based progress is shown.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="showFileSizes" is="emby-checkbox" type="checkbox"/><span>Show file sizes</span></label></div>
+                            <div class="checkboxContainer"><label><input id="showFileSizes" data-config-key="ShowFileSizes" is="emby-checkbox" type="checkbox"/><span>Show file sizes</span></label></div>
                             <div class="je-setting-description" data-desc-for="showFileSizes">
                                 <div class="fieldDescription">Display the file size of each item on item detail pages or collections pages.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="showAudioLanguages" is="emby-checkbox" type="checkbox"/><span>Show available audio languages on item detail page</span></label></div>
+                            <div class="checkboxContainer"><label><input id="showAudioLanguages" data-config-key="ShowAudioLanguages" is="emby-checkbox" type="checkbox"/><span>Show available audio languages on item detail page</span></label></div>
                             <div class="je-setting-description" data-desc-for="showAudioLanguages">
                                 <div class="fieldDescription">List the audio language flags available for each title on its detail page.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="removeContinueWatchingEnabled" is="emby-checkbox" type="checkbox"/><span>Enable "Remove from Continue Watching"</span></label></div>
+                            <div class="checkboxContainer"><label><input id="removeContinueWatchingEnabled" data-config-key="RemoveContinueWatchingEnabled" is="emby-checkbox" type="checkbox"/><span>Enable "Remove from Continue Watching"</span></label></div>
                             <div class="je-setting-description" data-desc-for="removeContinueWatchingEnabled">
                                 <div class="fieldDescription">Adds a "Remove from Continue Watching" option to the right-click / long-press context menu. Hides items non-destructively, so playback position is preserved and entries appear in Hidden Content's management page (look for "Add back to Continue Watching" on each entry). Items also unhide automatically when you resume playback.</div>
                             </div>
@@ -205,10 +205,10 @@
                         <legend class="sectionTitle">Media Tags</legend>
                         <div class="configSection">
                             <div class="je-tag-row">
-                                <div class="checkboxContainer"><label><input id="qualityTagsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Quality Tags</span></label></div>
+                                <div class="checkboxContainer"><label><input id="qualityTagsEnabled" data-config-key="QualityTagsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Quality Tags</span></label></div>
                                 <div class="inputContainer je-tag-position">
                                     <label class="inputLabel" for="qualityTagsPosition">Position</label>
-                                    <select is="emby-select" id="qualityTagsPosition" name="qualityTagsPosition" class="emby-select">
+                                    <select is="emby-select" id="qualityTagsPosition" data-config-key="QualityTagsPosition" data-config-fallback="top-left" name="qualityTagsPosition" class="emby-select">
                                         <option value="top-left">Top Left</option><option value="top-right">Top Right</option><option value="bottom-left">Bottom Left</option><option value="bottom-right">Bottom Right</option>
                                     </select>
                                 </div>
@@ -221,32 +221,32 @@
                                 <div id="qualityCategoriesAdmin" class="je-details-body">
                                     <div class="fieldDescription je-field-desc-sm">Pick which categories of quality tags should appear, and the order they stack within the chosen corner. Use the <i class="material-icons je-cat-arrow-icon" aria-hidden="true">arrow_upward</i> / <i class="material-icons je-cat-arrow-icon" aria-hidden="true">arrow_downward</i> buttons to reorder.</div>
                                     <div class="je-quality-cat-admin-row" data-cat-key="ShowResolutionTag" data-order-key="ResolutionTagOrder" data-default-order="1">
-                                        <div class="checkboxContainer"><label><input id="showResolutionTag" is="emby-checkbox" type="checkbox"/><span>Show resolution (4K, 1080p, ...)</span></label></div>
+                                        <div class="checkboxContainer"><label><input id="showResolutionTag" data-config-key="ShowResolutionTag" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show resolution (4K, 1080p, ...)</span></label></div>
                                         <button type="button" class="raised raised-mini je-cat-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
                                         <button type="button" class="raised raised-mini je-cat-down" aria-label="Move down"><i class="material-icons" aria-hidden="true">arrow_downward</i></button>
                                     </div>
                                     <div class="je-quality-cat-admin-row" data-cat-key="ShowSourceTag" data-order-key="SourceTagOrder" data-default-order="2">
-                                        <div class="checkboxContainer"><label><input id="showSourceTag" is="emby-checkbox" type="checkbox"/><span>Show source (BluRay, DVD, HDTV, VHS, ...)</span></label></div>
+                                        <div class="checkboxContainer"><label><input id="showSourceTag" data-config-key="ShowSourceTag" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show source (BluRay, DVD, HDTV, VHS, ...)</span></label></div>
                                         <button type="button" class="raised raised-mini je-cat-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
                                         <button type="button" class="raised raised-mini je-cat-down" aria-label="Move down"><i class="material-icons" aria-hidden="true">arrow_downward</i></button>
                                     </div>
                                     <div class="je-quality-cat-admin-row" data-cat-key="ShowDynamicRangeTag" data-order-key="DynamicRangeTagOrder" data-default-order="3">
-                                        <div class="checkboxContainer"><label><input id="showDynamicRangeTag" is="emby-checkbox" type="checkbox"/><span>Show HDR (HDR10+, Dolby Vision)</span></label></div>
+                                        <div class="checkboxContainer"><label><input id="showDynamicRangeTag" data-config-key="ShowDynamicRangeTag" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show HDR (HDR10+, Dolby Vision)</span></label></div>
                                         <button type="button" class="raised raised-mini je-cat-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
                                         <button type="button" class="raised raised-mini je-cat-down" aria-label="Move down"><i class="material-icons" aria-hidden="true">arrow_downward</i></button>
                                     </div>
                                     <div class="je-quality-cat-admin-row" data-cat-key="ShowSpecialFormatTag" data-order-key="SpecialFormatTagOrder" data-default-order="4">
-                                        <div class="checkboxContainer"><label><input id="showSpecialFormatTag" is="emby-checkbox" type="checkbox"/><span>Show special format (IMAX, 3D)</span></label></div>
+                                        <div class="checkboxContainer"><label><input id="showSpecialFormatTag" data-config-key="ShowSpecialFormatTag" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show special format (IMAX, 3D)</span></label></div>
                                         <button type="button" class="raised raised-mini je-cat-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
                                         <button type="button" class="raised raised-mini je-cat-down" aria-label="Move down"><i class="material-icons" aria-hidden="true">arrow_downward</i></button>
                                     </div>
                                     <div class="je-quality-cat-admin-row" data-cat-key="ShowVideoCodecTag" data-order-key="VideoCodecTagOrder" data-default-order="5">
-                                        <div class="checkboxContainer"><label><input id="showVideoCodecTag" is="emby-checkbox" type="checkbox"/><span>Show video format (HEVC, H264, AV1, ...)</span></label></div>
+                                        <div class="checkboxContainer"><label><input id="showVideoCodecTag" data-config-key="ShowVideoCodecTag" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show video format (HEVC, H264, AV1, ...)</span></label></div>
                                         <button type="button" class="raised raised-mini je-cat-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
                                         <button type="button" class="raised raised-mini je-cat-down" aria-label="Move down"><i class="material-icons" aria-hidden="true">arrow_downward</i></button>
                                     </div>
                                     <div class="je-quality-cat-admin-row" data-cat-key="ShowAudioInfoTag" data-order-key="AudioInfoTagOrder" data-default-order="6">
-                                        <div class="checkboxContainer"><label><input id="showAudioInfoTag" is="emby-checkbox" type="checkbox"/><span>Show sound (Atmos, DTS, 5.1, 7.1, ...)</span></label></div>
+                                        <div class="checkboxContainer"><label><input id="showAudioInfoTag" data-config-key="ShowAudioInfoTag" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show sound (Atmos, DTS, 5.1, 7.1, ...)</span></label></div>
                                         <button type="button" class="raised raised-mini je-cat-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
                                         <button type="button" class="raised raised-mini je-cat-down" aria-label="Move down"><i class="material-icons" aria-hidden="true">arrow_downward</i></button>
                                     </div>
@@ -254,10 +254,10 @@
                             </details>
 
                             <div class="je-tag-row">
-                                <div class="checkboxContainer"><label><input id="genreTagsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Genre Tags</span></label></div>
+                                <div class="checkboxContainer"><label><input id="genreTagsEnabled" data-config-key="GenreTagsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Genre Tags</span></label></div>
                                 <div class="inputContainer je-tag-position">
                                     <label class="inputLabel" for="genreTagsPosition">Position</label>
-                                    <select is="emby-select" id="genreTagsPosition" name="genreTagsPosition" class="emby-select">
+                                    <select is="emby-select" id="genreTagsPosition" data-config-key="GenreTagsPosition" data-config-fallback="top-right" name="genreTagsPosition" class="emby-select">
                                         <option value="top-left">Top Left</option><option value="top-right">Top Right</option><option value="bottom-left">Bottom Left</option><option value="bottom-right">Bottom Right</option>
                                     </select>
                                 </div>
@@ -267,10 +267,10 @@
                             </div>
 
                             <div class="je-tag-row">
-                                <div class="checkboxContainer"><label><input id="languageTagsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Language Tags</span></label></div>
+                                <div class="checkboxContainer"><label><input id="languageTagsEnabled" data-config-key="LanguageTagsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Language Tags</span></label></div>
                                 <div class="inputContainer je-tag-position">
                                     <label class="inputLabel" for="languageTagsPosition">Position</label>
-                                    <select is="emby-select" id="languageTagsPosition" name="languageTagsPosition" class="emby-select">
+                                    <select is="emby-select" id="languageTagsPosition" data-config-key="LanguageTagsPosition" data-config-fallback="bottom-left" name="languageTagsPosition" class="emby-select">
                                         <option value="top-left">Top Left</option><option value="top-right">Top Right</option><option value="bottom-left">Bottom Left</option><option value="bottom-right">Bottom Right</option>
                                     </select>
                                 </div>
@@ -280,10 +280,10 @@
                             </div>
 
                             <div class="je-tag-row">
-                                <div class="checkboxContainer"><label><input id="ratingTagsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Rating Tags</span></label></div>
+                                <div class="checkboxContainer"><label><input id="ratingTagsEnabled" data-config-key="RatingTagsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Rating Tags</span></label></div>
                                 <div class="inputContainer je-tag-position">
                                     <label class="inputLabel" for="ratingTagsPosition">Position</label>
-                                    <select is="emby-select" id="ratingTagsPosition" name="ratingTagsPosition" class="emby-select">
+                                    <select is="emby-select" id="ratingTagsPosition" data-config-key="RatingTagsPosition" data-config-fallback="bottom-right" name="ratingTagsPosition" class="emby-select">
                                         <option value="top-left">Top Left</option><option value="top-right">Top Right</option><option value="bottom-left">Bottom Left</option><option value="bottom-right">Bottom Right</option>
                                     </select>
                                 </div>
@@ -293,7 +293,7 @@
                             </div>
 
                             <div class="je-tag-row">
-                                <div class="checkboxContainer"><label><input id="peopleTagsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable People Tags</span></label></div>
+                                <div class="checkboxContainer"><label><input id="peopleTagsEnabled" data-config-key="PeopleTagsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable People Tags</span></label></div>
                             </div>
                             <div class="je-setting-description" data-desc-for="peopleTagsEnabled">
                                 <div class="fieldDescription">Display age and birthplace information for cast members on item detail pages.</div>
@@ -301,28 +301,28 @@
 
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="tagsCacheTtlDays">Tags Cache Duration (days)</label>
-                                <input id="tagsCacheTtlDays" is="emby-input" type="number" min="1" max="365" value="30"/>
+                                <input id="tagsCacheTtlDays" data-config-key="TagsCacheTtlDays" data-config-int="" data-config-fallback="30" is="emby-input" type="number" min="1" max="365" value="30"/>
                             </div>
                             <div class="je-setting-description" data-desc-for="tagsCacheTtlDays">
                                 <div class="fieldDescription">How long to cache the above tags data (1–365 days, default: 30).</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="showRatingInPlayer" is="emby-checkbox" type="checkbox"/><span>Show Rating in Video Player</span></label></div>
+                            <div class="checkboxContainer"><label><input id="showRatingInPlayer" data-config-key="ShowRatingInPlayer" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Rating in Video Player</span></label></div>
                             <div class="je-setting-description" data-desc-for="showRatingInPlayer">
                                 <div class="fieldDescription">Display TMDB and Rotten Tomatoes ratings before "Ends at" time in video player.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="disableTagsOnSearchPage" is="emby-checkbox" type="checkbox"/><span>Disable Tags on Search Page</span></label></div>
+                            <div class="checkboxContainer"><label><input id="disableTagsOnSearchPage" data-config-key="DisableTagsOnSearchPage" is="emby-checkbox" type="checkbox"/><span>Disable Tags on Search Page</span></label></div>
                             <div class="je-setting-description" data-desc-for="disableTagsOnSearchPage">
                                 <div class="fieldDescription je-field-desc-sm-font-lg">Prevents quality/language/genre/rating tags from showing on search results. Recommended for compatibility with <b>Gelato</b> plugin.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="tagsHideOnHover" is="emby-checkbox" type="checkbox"/><span>Hide Tags on Hover</span></label></div>
+                            <div class="checkboxContainer"><label><input id="tagsHideOnHover" data-config-key="TagsHideOnHover" is="emby-checkbox" type="checkbox"/><span>Hide Tags on Hover</span></label></div>
                             <div class="je-setting-description" data-desc-for="tagsHideOnHover">
                                 <div class="fieldDescription je-field-desc-sm-font-lg">When enabled, tag overlays fade out when users hover over cards. Users can override this in their personal settings.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="tagCacheServerMode" is="emby-checkbox" type="checkbox"/><span>Server-Side Tag Cache</span></label></div>
+                            <div class="checkboxContainer"><label><input id="tagCacheServerMode" data-config-key="TagCacheServerMode" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Server-Side Tag Cache</span></label></div>
                             <div class="je-setting-description" data-desc-for="tagCacheServerMode">
                                 <div class="fieldDescription je-field-desc-sm-font-lg">Pre-computes tag data on the server and serves it in a single request. Tags load instantly without per-page API calls. Disable to use the legacy per-page batch mode (not recommended).</div>
                             </div>
@@ -346,14 +346,14 @@
                     <fieldset>
                         <legend class="sectionTitle">Icons &amp; Theme</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="useIcons" is="emby-checkbox" type="checkbox"/><span>Use Icons in UI</span></label></div>
+                            <div class="checkboxContainer"><label><input id="useIcons" data-config-key="UseIcons" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Use Icons in UI</span></label></div>
                             <div class="je-setting-description" data-desc-for="useIcons">
                                 <div class="fieldDescription je-field-desc-lg">Display icons throughout the UI (toasts, settings panel headers, etc.)</div>
                             </div>
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="iconStyle">Icon Style</label>
-                                <select id="iconStyle" name="iconStyle" is="emby-select" class="emby-select">
+                                <select id="iconStyle" data-config-key="IconStyle" data-config-fallback="emoji" name="iconStyle" is="emby-select" class="emby-select">
                                     <option value="emoji">Emoji</option>
                                     <option value="lucide">Lucide Icons</option>
                                     <option value="mui">Material UI Icons</option>
@@ -368,22 +368,22 @@
                     <fieldset>
                         <legend class="sectionTitle">Random Button</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer je-main-feature"><label><input id="randomButtonEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Random Button</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="randomButtonEnabled" data-config-key="RandomButtonEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Random Button</span></label></div>
                             <div class="je-setting-description" data-desc-for="randomButtonEnabled">
                                 <div class="fieldDescription">Adds a "Play Random" button to the Jellyfin header that opens a random item from the user's accessible libraries.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="randomUnwatchedOnly" is="emby-checkbox" type="checkbox"/><span>Show unwatched only</span></label></div>
+                            <div class="checkboxContainer"><label><input id="randomUnwatchedOnly" data-config-key="RandomUnwatchedOnly" is="emby-checkbox" type="checkbox"/><span>Show unwatched only</span></label></div>
                             <div class="je-setting-description" data-desc-for="randomUnwatchedOnly">
                                 <div class="fieldDescription">When enabled, the random picker only chooses items the user has not watched yet.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="randomIncludeMovies" is="emby-checkbox" type="checkbox"/><span>Include movies</span></label></div>
+                            <div class="checkboxContainer"><label><input id="randomIncludeMovies" data-config-key="RandomIncludeMovies" is="emby-checkbox" type="checkbox"/><span>Include movies</span></label></div>
                             <div class="je-setting-description" data-desc-for="randomIncludeMovies">
                                 <div class="fieldDescription">Include movies in the random pool.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="randomIncludeShows" is="emby-checkbox" type="checkbox"/><span>Include shows</span></label></div>
+                            <div class="checkboxContainer"><label><input id="randomIncludeShows" data-config-key="RandomIncludeShows" is="emby-checkbox" type="checkbox"/><span>Include shows</span></label></div>
                             <div class="je-setting-description" data-desc-for="randomIncludeShows">
                                 <div class="fieldDescription">Include TV Shows in the random pool.</div>
                             </div>
@@ -395,7 +395,7 @@
                         <div class="configSection">
                             <div class="inputContainer">
                                 <label class="inputLabel" for="DefaultLanguage">Default UI Language</label>
-                                <select is="emby-select" id="DefaultLanguage" name="DefaultLanguage" class="emby-select">
+                                <select is="emby-select" id="DefaultLanguage" data-config-key="DefaultLanguage" data-config-fallback="" name="DefaultLanguage" class="emby-select">
                                     <option value="">System Default</option>
                                 </select>
                             </div>
@@ -410,27 +410,27 @@
                     <fieldset>
                         <legend class="sectionTitle">Playback &amp; Tab Switch</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="autoPauseEnabled" is="emby-checkbox" type="checkbox"/><span>Auto-pause on tab switch</span></label></div>
+                            <div class="checkboxContainer"><label><input id="autoPauseEnabled" data-config-key="AutoPauseEnabled" is="emby-checkbox" type="checkbox"/><span>Auto-pause on tab switch</span></label></div>
                             <div class="je-setting-description" data-desc-for="autoPauseEnabled">
                                 <div class="fieldDescription">Pause playback automatically when you switch to another browser tab.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="autoResumeEnabled" is="emby-checkbox" type="checkbox"/><span>Auto-resume on tab switch</span></label></div>
+                            <div class="checkboxContainer"><label><input id="autoResumeEnabled" data-config-key="AutoResumeEnabled" is="emby-checkbox" type="checkbox"/><span>Auto-resume on tab switch</span></label></div>
                             <div class="je-setting-description" data-desc-for="autoResumeEnabled">
                                 <div class="fieldDescription">Resume playback automatically when you switch back to the player tab.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="autoPipEnabled" is="emby-checkbox" type="checkbox"/><span>Auto Picture-in-Picture on tab switch</span></label></div>
+                            <div class="checkboxContainer"><label><input id="autoPipEnabled" data-config-key="AutoPipEnabled" is="emby-checkbox" type="checkbox"/><span>Auto Picture-in-Picture on tab switch</span></label></div>
                             <div class="je-setting-description" data-desc-for="autoPipEnabled">
                                 <div class="fieldDescription">Enter the browser's Picture-in-Picture mode when switching tabs (browser support required).</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="longPress2xEnabled" is="emby-checkbox" type="checkbox"/><span>Long press/hold for 2x speed <sup> β</sup></span></label></div>
+                            <div class="checkboxContainer"><label><input id="longPress2xEnabled" data-config-key="LongPress2xEnabled" is="emby-checkbox" type="checkbox"/><span>Long press/hold for 2x speed <sup> β</sup></span></label></div>
                             <div class="je-setting-description" data-desc-for="longPress2xEnabled">
                                 <div class="fieldDescription">Long-press anywhere on the player to temporarily play at 2× speed; release to return to normal speed. Beta — touch devices only.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="pauseScreenEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Custom Pause Screen</span></label></div>
+                            <div class="checkboxContainer"><label><input id="pauseScreenEnabled" data-config-key="PauseScreenEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Custom Pause Screen</span></label></div>
                             <div class="je-setting-description" data-desc-for="pauseScreenEnabled">
                                 <div class="fieldDescription je-field-desc-sm">This feature is a modified version of the original script by <a class="sectionTitle" href="https://github.com/BobHasNoSoul/Jellyfin-PauseScreen" target="_blank">BobHasNoSoul</a></div>
                             </div>
@@ -440,12 +440,12 @@
                     <fieldset>
                         <legend class="sectionTitle">Auto-Skip</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="autoSkipIntro" is="emby-checkbox" type="checkbox"/><span>Auto-skip Intro</span></label></div>
+                            <div class="checkboxContainer"><label><input id="autoSkipIntro" data-config-key="AutoSkipIntro" is="emby-checkbox" type="checkbox"/><span>Auto-skip Intro</span></label></div>
                             <div class="je-setting-description" data-desc-for="autoSkipIntro">
                                 <div class="fieldDescription">Automatically skip detected intros. Requires the Intro Skipper plugin.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="autoSkipOutro" is="emby-checkbox" type="checkbox"/><span>Auto-skip Outro</span></label></div>
+                            <div class="checkboxContainer"><label><input id="autoSkipOutro" data-config-key="AutoSkipOutro" is="emby-checkbox" type="checkbox"/><span>Auto-skip Outro</span></label></div>
                             <div class="je-setting-description" data-desc-for="autoSkipOutro">
                                 <div class="fieldDescription">Automatically skip detected outros (end credits). Requires the Intro Skipper plugin.</div>
                             </div>
@@ -455,14 +455,14 @@
                     <fieldset>
                         <legend class="sectionTitle">Subtitles</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="disableCustomSubtitleStyles" is="emby-checkbox" type="checkbox"/><span>Disable Custom Subtitle Styles by default</span></label></div>
+                            <div class="checkboxContainer"><label><input id="disableCustomSubtitleStyles" data-config-key="DisableCustomSubtitleStyles" is="emby-checkbox" type="checkbox"/><span>Disable Custom Subtitle Styles by default</span></label></div>
                             <div class="je-setting-description" data-desc-for="disableCustomSubtitleStyles">
                                 <div class="fieldDescription">Globally disables Jellyfin's custom subtitle style overrides so the source subtitle styling is shown unmodified.</div>
                             </div>
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="DefaultSubtitleStyle">Default Subtitle Style</label>
-                                <select is="emby-select" id="DefaultSubtitleStyle" name="DefaultSubtitleStyle" class="emby-select">
+                                <select is="emby-select" id="DefaultSubtitleStyle" data-config-key="DefaultSubtitleStyle" data-config-int="" name="DefaultSubtitleStyle" class="emby-select">
                                     <option value="0">Clean White</option><option value="1">Classic Black Box</option><option value="2">Netflix Style</option>
                                     <option value="3">Cinema Yellow</option><option value="4">Soft Gray</option><option value="5">High Contrast</option>
                                 </select>
@@ -473,7 +473,7 @@
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="DefaultSubtitleSize">Default Subtitle Size</label>
-                                <select is="emby-select" id="DefaultSubtitleSize" name="DefaultSubtitleSize" class="emby-select">
+                                <select is="emby-select" id="DefaultSubtitleSize" data-config-key="DefaultSubtitleSize" data-config-int="" name="DefaultSubtitleSize" class="emby-select">
                                     <option value="0">Tiny</option><option value="1">Small</option><option value="2">Normal</option>
                                     <option value="3">Large</option><option value="4">Extra Large</option><option value="5">Gigantic</option>
                                 </select>
@@ -484,7 +484,7 @@
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="DefaultSubtitleFont">Default Subtitle Font</label>
-                                <select is="emby-select" id="DefaultSubtitleFont" name="DefaultSubtitleFont" class="emby-select">
+                                <select is="emby-select" id="DefaultSubtitleFont" data-config-key="DefaultSubtitleFont" data-config-int="" name="DefaultSubtitleFont" class="emby-select">
                                     <option value="0">Default</option><option value="1">Noto Sans</option><option value="2">Sans Serif</option>
                                     <option value="3">Typewriter</option><option value="4">Roboto</option>
                                 </select>
@@ -501,7 +501,7 @@
                         <div class="configSection">
                             <div class="inputContainer">
                                 <label class="inputLabel" for="HelpPanelAutocloseDelay">Shortcuts Panel Autoclose Delay (ms)</label>
-                                <input id="HelpPanelAutocloseDelay" is="emby-input" name="HelpPanelAutocloseDelay" type="number"/>
+                                <input id="HelpPanelAutocloseDelay" data-config-key="HelpPanelAutocloseDelay" data-config-int="" is="emby-input" name="HelpPanelAutocloseDelay" type="number"/>
                             </div>
                             <div class="je-setting-description" data-desc-for="HelpPanelAutocloseDelay">
                                 <div class="fieldDescription">How long the Jellyfin Enhanced shortcuts/settings panel (opened with the <kbd>?</kbd> key) stays open without interaction before auto-closing. Default: 15000 ms (15 seconds).</div>
@@ -514,7 +514,7 @@
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="ToastDuration">Toast Notification Duration (ms)</label>
-                                <input id="ToastDuration" is="emby-input" name="ToastDuration" type="number"/>
+                                <input id="ToastDuration" data-config-key="ToastDuration" data-config-int="" is="emby-input" name="ToastDuration" type="number"/>
                             </div>
                             <div class="je-setting-description" data-desc-for="ToastDuration">
                                 <div class="fieldDescription">How long Jellyfin Enhanced's pop-up toast messages (e.g. &ldquo;Shuffle enabled&rdquo;, &ldquo;Bookmark saved&rdquo;) stay on-screen before fading out. Default: 3000 ms (3 seconds).</div>
@@ -552,17 +552,17 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="checkboxContainer je-main-feature"><label><input id="bookmarksEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Bookmarks Feature</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="bookmarksEnabled" data-config-key="BookmarksEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable Bookmarks Feature</span></label></div>
                             <div class="je-setting-description" data-desc-for="bookmarksEnabled">
                                 <div class="fieldDescription je-field-desc-lg">Save custom bookmarks/timestamps while watching videos to quickly jump back to your favorite scenes or moments.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="bookmarksUseNativeTab" is="emby-checkbox" type="checkbox"/><span>Add Bookmarks as a native Home tab</span></label></div>
+                            <div class="checkboxContainer"><label><input id="bookmarksUseNativeTab" data-config-key="BookmarksUseNativeTab" is="emby-checkbox" type="checkbox"/><span>Add Bookmarks as a native Home tab</span></label></div>
                             <div class="je-setting-description" data-desc-for="bookmarksUseNativeTab">
                                 <div class="fieldDescription je-field-desc-xl">Adds Bookmarks as its own tab on the Home page, no external plugin needed.<br/><strong>Recommended on Jellyfin 12's experimental layout</strong> (the default).</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="bookmarksUsePluginPages" is="emby-checkbox" type="checkbox"/><span>Use Plugin Pages for Bookmarks Library</span></label></div>
+                            <div class="checkboxContainer"><label><input id="bookmarksUsePluginPages" data-config-key="BookmarksUsePluginPages" is="emby-checkbox" type="checkbox"/><span>Use Plugin Pages for Bookmarks Library</span></label></div>
                             <div class="je-setting-description" data-desc-for="bookmarksUsePluginPages">
                                 <div class="fieldDescription je-field-desc-xl">
                                     Adds a "Bookmarks" link to the sidebar via <a class="sectionTitle" href="https://github.com/IAmParadox27/jellyfin-plugin-pages" target="_blank">Plugin Pages</a>.<br/>
@@ -571,10 +571,10 @@
                                 </div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="bookmarksUseCustomTabs" is="emby-checkbox" type="checkbox"/><span>Use Custom Tabs for Bookmarks</span></label></div>
+                            <div class="checkboxContainer"><label><input id="bookmarksUseCustomTabs" data-config-key="BookmarksUseCustomTabs" is="emby-checkbox" type="checkbox"/><span>Use Custom Tabs for Bookmarks</span></label></div>
 
                             <div class="checkboxContainer je-customtabs-automanage" data-gated-by="bookmarksUseCustomTabs,bookmarksEnabled">
-                                <label><input id="bookmarksAutoCreateCustomTab" is="emby-checkbox" type="checkbox"/><span>Add the Custom Tabs entry for me</span></label>
+                                <label><input id="bookmarksAutoCreateCustomTab" data-config-key="BookmarksAutoCreateCustomTab" is="emby-checkbox" type="checkbox"/><span>Add the Custom Tabs entry for me</span></label>
                             </div>
                             <div class="je-setting-description je-customtabs-automanage" data-desc-for="bookmarksAutoCreateCustomTab" data-gated-by="bookmarksUseCustomTabs,bookmarksEnabled">
                                 <div class="fieldDescription je-field-desc-md">
@@ -628,17 +628,17 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="checkboxContainer je-main-feature"><label><input id="hiddenContentEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Hidden Content</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="hiddenContentEnabled" data-config-key="HiddenContentEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Hidden Content</span></label></div>
                             <div class="je-setting-description" data-desc-for="hiddenContentEnabled">
                                 <div class="fieldDescription je-field-desc-xl">Enable or disable the Hidden Content feature server-wide. When disabled, hide buttons, filtering, sidebar navigation, and settings panel options are all removed. User data is preserved and restored when re-enabled.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="hiddenContentUseNativeTab" is="emby-checkbox" type="checkbox"/><span>Add Hidden Content as a native Home tab</span></label></div>
+                            <div class="checkboxContainer"><label><input id="hiddenContentUseNativeTab" data-config-key="HiddenContentUseNativeTab" is="emby-checkbox" type="checkbox"/><span>Add Hidden Content as a native Home tab</span></label></div>
                             <div class="je-setting-description" data-desc-for="hiddenContentUseNativeTab">
                                 <div class="fieldDescription je-field-desc-xl">Adds Hidden Content as its own tab on the Home page, no external plugin needed.<br/><strong>Recommended on Jellyfin 12's experimental layout</strong> (the default).</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="hiddenContentUsePluginPages" is="emby-checkbox" type="checkbox"/><span>Use Plugin Pages for Hidden Content</span></label></div>
+                            <div class="checkboxContainer"><label><input id="hiddenContentUsePluginPages" data-config-key="HiddenContentUsePluginPages" is="emby-checkbox" type="checkbox"/><span>Use Plugin Pages for Hidden Content</span></label></div>
                             <div class="je-setting-description" data-desc-for="hiddenContentUsePluginPages">
                                 <div class="fieldDescription je-field-desc-xl">
                                     Replaces the default Hidden Content page with a <a class="sectionTitle" href="https://github.com/IAmParadox27/jellyfin-plugin-pages" target="_blank">Plugin Pages</a> implementation.<br/>
@@ -647,10 +647,10 @@
                                 </div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="hiddenContentUseCustomTabs" is="emby-checkbox" type="checkbox"/><span>Use Custom Tabs for Hidden Content</span></label></div>
+                            <div class="checkboxContainer"><label><input id="hiddenContentUseCustomTabs" data-config-key="HiddenContentUseCustomTabs" is="emby-checkbox" type="checkbox"/><span>Use Custom Tabs for Hidden Content</span></label></div>
 
                             <div class="checkboxContainer je-customtabs-automanage" data-gated-by="hiddenContentUseCustomTabs,hiddenContentEnabled">
-                                <label><input id="hiddenContentAutoCreateCustomTab" is="emby-checkbox" type="checkbox"/><span>Add the Custom Tabs entry for me</span></label>
+                                <label><input id="hiddenContentAutoCreateCustomTab" data-config-key="HiddenContentAutoCreateCustomTab" is="emby-checkbox" type="checkbox"/><span>Add the Custom Tabs entry for me</span></label>
                             </div>
                             <div class="je-setting-description je-customtabs-automanage" data-desc-for="hiddenContentAutoCreateCustomTab" data-gated-by="hiddenContentUseCustomTabs,hiddenContentEnabled">
                                 <div class="fieldDescription je-field-desc-md">
@@ -703,87 +703,87 @@
                                         </div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultEnabled" is="emby-checkbox" type="checkbox"/><span>Hidden Content enabled by default</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultEnabled" data-config-key="HiddenContentDefaultEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Hidden Content enabled by default</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultEnabled">
                                         <div class="fieldDescription">When on, Hidden Content starts active for new users, so they can hide things straight away and the filtering takes effect immediately. When off, users have to turn it on themselves first.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowHideButtons" is="emby-checkbox" type="checkbox"/><span>Show "Hide" buttons by default</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowHideButtons" data-config-key="HiddenContentDefaultShowHideButtons" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "Hide" buttons by default</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultShowHideButtons">
                                         <div class="fieldDescription">When on, the Hide button shows up across the apps so users can hide things they don't want to see. When off, no Hide button appears anywhere, but users can still bring back items they've already hidden from the Hidden Content page.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowHideConfirmation" is="emby-checkbox" type="checkbox"/><span>Show confirmation dialog before hiding</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowHideConfirmation" data-config-key="HiddenContentDefaultShowHideConfirmation" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show confirmation dialog before hiding</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultShowHideConfirmation">
                                         <div class="fieldDescription">When on, clicking Hide asks "are you sure?" first. Turn off for one-click hiding. Items can always be brought back from the Hidden Content page.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowButtonJellyseerr" is="emby-checkbox" type="checkbox"/><span>Show "Hide" button on Seerr search results</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowButtonJellyseerr" data-config-key="HiddenContentDefaultShowButtonJellyseerr" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "Hide" button on Seerr search results</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultShowButtonJellyseerr">
                                         <div class="fieldDescription">Adds a Hide button to Seerr search and discover results, so users can hide a movie or show even before it's been added to their library.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowButtonDetails" is="emby-checkbox" type="checkbox"/><span>Show "Hide" button on item details pages</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowButtonDetails" data-config-key="HiddenContentDefaultShowButtonDetails" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "Hide" button on item details pages</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultShowButtonDetails">
                                         <div class="fieldDescription">Adds a Hide button to the row of action buttons on movie, show, and episode detail pages.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowButtonLibrary" is="emby-checkbox" type="checkbox"/><span>Show "Hide" button on library / home cards</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowButtonLibrary" data-config-key="HiddenContentDefaultShowButtonLibrary" is="emby-checkbox" type="checkbox"/><span>Show "Hide" button on library / home cards</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultShowButtonLibrary">
                                         <div class="fieldDescription">Adds a small eye icon to every poster on the home and library pages, so users can hide an item without opening it first. Off by default because some people find the icon on every poster busy.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowButtonCast" is="emby-checkbox" type="checkbox"/><span>Show "Hide" button on cast / actor cards</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowButtonCast" data-config-key="HiddenContentDefaultShowButtonCast" is="emby-checkbox" type="checkbox"/><span>Show "Hide" button on cast / actor cards</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultShowButtonCast">
                                         <div class="fieldDescription">Adds a Hide button to actor cards. Hiding an actor hides every movie or show they appear in until you bring them back.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterLibrary" is="emby-checkbox" type="checkbox"/><span>Filter Library &amp; details pages</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterLibrary" data-config-key="HiddenContentDefaultFilterLibrary" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Filter Library &amp; details pages</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultFilterLibrary">
                                         <div class="fieldDescription">When on, hidden items don't appear when users browse a library (Movies, Shows, etc.) or in the suggestion rows on a details page. Turn off if users still want to see hidden items while browsing.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterSearch" is="emby-checkbox" type="checkbox"/><span>Filter Search results</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterSearch" data-config-key="HiddenContentDefaultFilterSearch" is="emby-checkbox" type="checkbox"/><span>Filter Search results</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultFilterSearch">
                                         <div class="fieldDescription">When on, hidden items don't appear in search results. Off by default because most people still want to be able to search for something they hid in order to bring it back.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterContinueWatching" is="emby-checkbox" type="checkbox"/><span>Filter Continue Watching</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterContinueWatching" data-config-key="HiddenContentDefaultFilterContinueWatching" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Filter Continue Watching</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultFilterContinueWatching">
                                         <div class="fieldDescription">When on, hidden items don't appear in the Continue Watching row on the home page. Required for the "Remove from Continue Watching" button to actually do anything.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterNextUp" is="emby-checkbox" type="checkbox"/><span>Filter Next Up</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterNextUp" data-config-key="HiddenContentDefaultFilterNextUp" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Filter Next Up</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultFilterNextUp">
                                         <div class="fieldDescription">When on, hidden series don't appear in the Next Up row on the home page. Recommended on so a show users have hidden doesn't keep being suggested as the next thing to watch.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterUpcoming" is="emby-checkbox" type="checkbox"/><span>Filter Upcoming episodes</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterUpcoming" data-config-key="HiddenContentDefaultFilterUpcoming" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Filter Upcoming episodes</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultFilterUpcoming">
                                         <div class="fieldDescription">When on, hidden series don't appear on the Upcoming Episodes page.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterRecommendations" is="emby-checkbox" type="checkbox"/><span>Filter Suggestions / recommendations</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterRecommendations" data-config-key="HiddenContentDefaultFilterRecommendations" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Filter Suggestions / recommendations</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultFilterRecommendations">
                                         <div class="fieldDescription">When on, hidden items don't appear in the "Because you watched..." and "Suggested for you" rows on the home and details pages.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterDiscovery" is="emby-checkbox" type="checkbox"/><span>Filter Discovery</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterDiscovery" data-config-key="HiddenContentDefaultFilterDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Filter Discovery</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultFilterDiscovery">
                                         <div class="fieldDescription">When on, hidden items don't appear on the Discovery page (genre, similar, and recommended sections).</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterCalendar" is="emby-checkbox" type="checkbox"/><span>Filter Calendar</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterCalendar" data-config-key="HiddenContentDefaultFilterCalendar" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Filter Calendar</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultFilterCalendar">
                                         <div class="fieldDescription">When on, hidden series don't show up on the Calendar page's list of upcoming episodes.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterRequests" is="emby-checkbox" type="checkbox"/><span>Filter Requests page</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultFilterRequests" data-config-key="HiddenContentDefaultFilterRequests" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Filter Requests page</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultFilterRequests">
                                         <div class="fieldDescription">When on, hidden items don't appear on the Requests page (the combined view of Sonarr, Radarr, and Seerr requests).</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultExperimentalHideCollections" is="emby-checkbox" type="checkbox"/><span>Allow hiding collections, libraries, and playlists (experimental)</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultExperimentalHideCollections" data-config-key="HiddenContentDefaultExperimentalHideCollections" is="emby-checkbox" type="checkbox"/><span>Allow hiding collections, libraries, and playlists (experimental)</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentDefaultExperimentalHideCollections">
                                         <div class="fieldDescription"><strong>Warning:</strong> Extremely not recommended for average users. Will break things. Only turn this on if you 100% know what you want to use it for. Lets users hide whole collections, libraries, or playlists in addition to individual movies and shows.</div>
                                     </div>
@@ -793,7 +793,7 @@
                             <details class="je-details-section" data-gated-by="hiddenContentEnabled">
                                 <summary>Admin Controls</summary>
                                 <div class="je-details-body">
-                                    <div class="checkboxContainer"><label><input id="hiddenContentAdmin" is="emby-checkbox" type="checkbox"/><span>Let admins view and manage other users' hidden content</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="hiddenContentAdmin" data-config-key="HiddenContentAdmin" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Let admins view and manage other users' hidden content</span></label></div>
                                     <div class="je-setting-description" data-desc-for="hiddenContentAdmin">
                                         <div class="fieldDescription">Adds a "user filter" dropdown on the Hidden Content page so an admin can see what any user has hidden, with an Edit toggle to unhide items or add new ones from the library or Seerr on that user's behalf. Turn this off if you don't want to edit/manage other users' hidden content.</div>
                                     </div>
@@ -817,35 +817,35 @@
                                 </div>
                             </div>
 
-                            <div class="checkboxContainer je-main-feature"><label><input id="downloadsPageEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Requests Page</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="downloadsPageEnabled" data-config-key="DownloadsPageEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable Requests Page</span></label></div>
                             <div class="je-setting-description" data-desc-for="downloadsPageEnabled">
                                 <div class="fieldDescription je-field-desc-xl">Adds a "Requests" link to the navigation showing active downloads and requests.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="showDownloadsInRequests" is="emby-checkbox" type="checkbox"/><span>Show Downloads in Requests Page</span></label></div>
+                            <div class="checkboxContainer"><label><input id="showDownloadsInRequests" data-config-key="ShowDownloadsInRequests" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Downloads in Requests Page</span></label></div>
                             <div class="je-setting-description" data-desc-for="showDownloadsInRequests">
                                 <div class="fieldDescription je-field-desc-xl">Shows active downloads from Sonarr/Radarr on the Requests page. (Requires *arr links and API keys to be configured)</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="downloadsFilterByUserRequests" is="emby-checkbox" type="checkbox"/><span>Filter Downloads by User Requests</span></label></div>
+                            <div class="checkboxContainer"><label><input id="downloadsFilterByUserRequests" data-config-key="DownloadsFilterByUserRequests" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Filter Downloads by User Requests</span></label></div>
                             <div class="je-setting-description" data-desc-for="downloadsFilterByUserRequests">
                                 <div class="fieldDescription je-field-desc-xl">When enabled, non-admin users only see downloads for content they requested. When disabled, all authenticated users can see every item in the download queue, including content requested by other users.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="downloadsPageShowIssues" is="emby-checkbox" type="checkbox"/><span>Show Seerr Issues Section</span></label></div>
+                            <div class="checkboxContainer"><label><input id="downloadsPageShowIssues" data-config-key="DownloadsPageShowIssues" is="emby-checkbox" type="checkbox"/><span>Show Seerr Issues Section</span></label></div>
                             <div class="je-setting-description" data-desc-for="downloadsPageShowIssues">
                                 <div class="fieldDescription je-field-desc-xl">Shows open/resolved Seerr issues beneath Requests.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="downloadsUseNativeTab" is="emby-checkbox" type="checkbox"/><span>Add Requests as a native Home tab</span></label></div>
+                            <div class="checkboxContainer"><label><input id="downloadsUseNativeTab" data-config-key="DownloadsUseNativeTab" is="emby-checkbox" type="checkbox"/><span>Add Requests as a native Home tab</span></label></div>
                             <div class="je-setting-description" data-desc-for="downloadsUseNativeTab">
                                 <div class="fieldDescription je-field-desc-xl">Adds Requests as its own tab on the Home page, no external plugin needed.<br/><strong>Recommended on Jellyfin 12's experimental layout</strong> (the default).</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="downloadsUsePluginPages" is="emby-checkbox" type="checkbox"/><span>Use Plugin Pages for Requests</span></label></div>
+                            <div class="checkboxContainer"><label><input id="downloadsUsePluginPages" data-config-key="DownloadsUsePluginPages" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Use Plugin Pages for Requests</span></label></div>
                             <div class="je-setting-description" data-desc-for="downloadsUsePluginPages">
                                 <div class="fieldDescription je-field-desc-xl">Replaces the default Requests page with a <a class="sectionTitle" href="https://github.com/IAmParadox27/jellyfin-plugin-pages" target="_blank">Plugin Pages</a> implementation.<br/><strong>Note:</strong> Jellyfin must be restarted after enabling this option for the first time for changes to take effect.<span class="je-installed-badge" data-plugin="pluginpages"><i class="material-icons" aria-hidden="true">check_circle</i>Plugin Pages detected</span></div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="downloadsUseCustomTabs" is="emby-checkbox" type="checkbox"/><span>Use Custom Tabs for Requests</span></label></div>
+                            <div class="checkboxContainer"><label><input id="downloadsUseCustomTabs" data-config-key="DownloadsUseCustomTabs" is="emby-checkbox" type="checkbox"/><span>Use Custom Tabs for Requests</span></label></div>
 
                             <div class="checkboxContainer je-customtabs-automanage" data-gated-by="downloadsUseCustomTabs,downloadsPageEnabled">
-                                <label><input id="downloadsAutoCreateCustomTab" is="emby-checkbox" type="checkbox"/><span>Add the Custom Tabs entry for me</span></label>
+                                <label><input id="downloadsAutoCreateCustomTab" data-config-key="DownloadsAutoCreateCustomTab" is="emby-checkbox" type="checkbox"/><span>Add the Custom Tabs entry for me</span></label>
                             </div>
                             <div class="je-setting-description je-customtabs-automanage" data-desc-for="downloadsAutoCreateCustomTab" data-gated-by="downloadsUseCustomTabs,downloadsPageEnabled">
                                 <div class="fieldDescription je-field-desc-md">
@@ -886,14 +886,14 @@
                                 </div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="downloadsPagePollingEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Auto-Refresh</span></label></div>
+                            <div class="checkboxContainer"><label><input id="downloadsPagePollingEnabled" data-config-key="DownloadsPagePollingEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable Auto-Refresh</span></label></div>
                             <div class="je-setting-description" data-desc-for="downloadsPagePollingEnabled">
                                 <div class="fieldDescription">Periodically refresh the Requests page so download progress updates without manual reload.</div>
                             </div>
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="downloadsPollIntervalSeconds">Poll Interval (seconds)</label>
-                                <input id="downloadsPollIntervalSeconds" is="emby-input" type="number" min="30" max="300"/>
+                                <input id="downloadsPollIntervalSeconds" data-config-key="DownloadsPollIntervalSeconds" data-config-int="" is="emby-input" type="number" min="30" max="300"/>
                             </div>
                             <div class="je-setting-description" data-desc-for="downloadsPollIntervalSeconds">
                                 <div class="fieldDescription je-field-desc-xl">How often to refresh download status automatically. Minimum is 30 seconds and applies only when auto-refresh is enabled.</div>
@@ -914,16 +914,16 @@
                                 </div>
                             </div>
 
-                            <div class="checkboxContainer je-main-feature"><label><input id="calendarPageEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Calendar Page</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="calendarPageEnabled" data-config-key="CalendarPageEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable Calendar Page</span></label></div>
                             <div class="je-setting-description" data-desc-for="calendarPageEnabled">
                                 <div class="fieldDescription je-field-desc-xl">Adds a "Calendar" link to the navigation showing upcoming releases from Sonarr/Radarr.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="calendarUseNativeTab" is="emby-checkbox" type="checkbox"/><span>Add Calendar as a native Home tab</span></label></div>
+                            <div class="checkboxContainer"><label><input id="calendarUseNativeTab" data-config-key="CalendarUseNativeTab" is="emby-checkbox" type="checkbox"/><span>Add Calendar as a native Home tab</span></label></div>
                             <div class="je-setting-description" data-desc-for="calendarUseNativeTab">
                                 <div class="fieldDescription je-field-desc-xl">Adds Calendar as its own tab on the Home page, no external plugin needed.<br/><strong>Recommended on Jellyfin 12's experimental layout</strong> (the default).</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="calendarUsePluginPages" is="emby-checkbox" type="checkbox"/><span>Use Plugin Pages</span></label></div>
+                            <div class="checkboxContainer"><label><input id="calendarUsePluginPages" data-config-key="CalendarUsePluginPages" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Use Plugin Pages</span></label></div>
                             <div class="je-setting-description" data-desc-for="calendarUsePluginPages">
                                 <div class="fieldDescription je-field-desc-xl">
                                     Replaces the default Calendar page with a <a class="sectionTitle" href="https://github.com/IAmParadox27/jellyfin-plugin-pages" target="_blank">Plugin Pages</a> implementation.<br/>
@@ -932,10 +932,10 @@
                                 </div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="calendarUseCustomTabs" is="emby-checkbox" type="checkbox"/><span>Use Custom Tabs</span></label></div>
+                            <div class="checkboxContainer"><label><input id="calendarUseCustomTabs" data-config-key="CalendarUseCustomTabs" is="emby-checkbox" type="checkbox"/><span>Use Custom Tabs</span></label></div>
 
                             <div class="checkboxContainer je-customtabs-automanage" data-gated-by="calendarUseCustomTabs,calendarPageEnabled">
-                                <label><input id="calendarAutoCreateCustomTab" is="emby-checkbox" type="checkbox"/><span>Add the Custom Tabs entry for me</span></label>
+                                <label><input id="calendarAutoCreateCustomTab" data-config-key="CalendarAutoCreateCustomTab" is="emby-checkbox" type="checkbox"/><span>Add the Custom Tabs entry for me</span></label>
                             </div>
                             <div class="je-setting-description je-customtabs-automanage" data-desc-for="calendarAutoCreateCustomTab" data-gated-by="calendarUseCustomTabs,calendarPageEnabled">
                                 <div class="fieldDescription je-field-desc-md">
@@ -978,7 +978,7 @@
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="calendarFirstDayOfWeek">First Day of Week</label>
-                                <select id="calendarFirstDayOfWeek" name="calendarFirstDayOfWeek" is="emby-select" class="emby-select">
+                                <select id="calendarFirstDayOfWeek" data-config-key="CalendarFirstDayOfWeek" data-config-fallback="Monday" name="calendarFirstDayOfWeek" is="emby-select" class="emby-select">
                                     <option value="Sunday">Sunday</option><option value="Monday">Monday</option><option value="Tuesday">Tuesday</option>
                                     <option value="Wednesday">Wednesday</option><option value="Thursday">Thursday</option><option value="Friday">Friday</option><option value="Saturday">Saturday</option>
                                 </select>
@@ -989,30 +989,30 @@
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="calendarTimeFormat">Time Format</label>
-                                <select id="calendarTimeFormat" name="calendarTimeFormat" is="emby-select" class="emby-select">
+                                <select id="calendarTimeFormat" data-config-key="CalendarTimeFormat" data-config-fallback="5pm/5:30pm" name="calendarTimeFormat" is="emby-select" class="emby-select">
                                     <option value="5pm/5:30pm">5pm/5:30pm</option><option value="17:00/17:30">17:00/17:30</option>
                                 </select>
                             </div>
                             <div class="je-setting-description" data-desc-for="calendarTimeFormat">
                                 <div class="fieldDescription">Whether release times display in 12-hour (5pm) or 24-hour (17:00) format.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="calendarHighlightFavorites" is="emby-checkbox" type="checkbox"/><span>Highlight Favorites/Watchlist</span></label></div>
+                            <div class="checkboxContainer"><label><input id="calendarHighlightFavorites" data-config-key="CalendarHighlightFavorites" is="emby-checkbox" type="checkbox"/><span>Highlight Favorites/Watchlist</span></label></div>
                             <div class="je-setting-description" data-desc-for="calendarHighlightFavorites">
                                 <div class="fieldDescription je-field-desc-md">Show a golden border on calendar entries for items in your Jellyfin favorites.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="calendarHighlightWatchedSeries" is="emby-checkbox" type="checkbox"/><span>Highlight Watched Series</span></label></div>
+                            <div class="checkboxContainer"><label><input id="calendarHighlightWatchedSeries" data-config-key="CalendarHighlightWatchedSeries" is="emby-checkbox" type="checkbox"/><span>Highlight Watched Series</span></label></div>
                             <div class="je-setting-description" data-desc-for="calendarHighlightWatchedSeries">
                                 <div class="fieldDescription">Show a border on calendar entries for series you have watched episodes from.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="calendarFilterByLibraryAccess" is="emby-checkbox" type="checkbox"/><span>Filter by Library Access</span></label></div>
+                            <div class="checkboxContainer"><label><input id="calendarFilterByLibraryAccess" data-config-key="CalendarFilterByLibraryAccess" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Filter by Library Access</span></label></div>
                             <div class="je-setting-description" data-desc-for="calendarFilterByLibraryAccess">
                                 <div class="fieldDescription">When enabled, the calendar only shows items from libraries the user has access to. Upcoming items not yet in Jellyfin are filtered based on their Sonarr/Radarr root folder.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="calendarShowOnlyRequested" is="emby-checkbox" type="checkbox"/><span>Show Requested Only (Default)</span></label></div>
+                            <div class="checkboxContainer"><label><input id="calendarShowOnlyRequested" data-config-key="CalendarShowOnlyRequested" is="emby-checkbox" type="checkbox"/><span>Show Requested Only (Default)</span></label></div>
                             <div class="je-setting-description" data-desc-for="calendarShowOnlyRequested">
                                 <div class="fieldDescription">When enabled, the calendar will load showing only Requested items by default, but users can still change filters.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="calendarForceOnlyRequested" is="emby-checkbox" type="checkbox"/><span>Force Only Requested Items</span></label></div>
+                            <div class="checkboxContainer"><label><input id="calendarForceOnlyRequested" data-config-key="CalendarForceOnlyRequested" is="emby-checkbox" type="checkbox"/><span>Force Only Requested Items</span></label></div>
                             <div class="je-setting-description" data-desc-for="calendarForceOnlyRequested">
                                 <div class="fieldDescription">When enabled, the calendar always shows only your requested items and the Requests filter is hidden.</div>
                             </div>
@@ -1025,7 +1025,7 @@
                         <legend class="sectionTitle">Seerr Connection Setup</legend>
                         <div class="configSection">
                             <div class="checkboxContainer je-main-feature">
-                                <label><input id="jellyseerrEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Seerr integration</span></label>
+                                <label><input id="jellyseerrEnabled" data-config-key="JellyseerrEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Seerr integration</span></label>
                             </div>
                             <div class="je-setting-description" data-desc-for="jellyseerrEnabled">
                                 <div class="fieldDescription je-field-desc-xl">Enables all Seerr-powered features for this server: Seerr search results, request buttons, the Requests page, auto-requests, and user import. Required for any Seerr feature to work.</div>
@@ -1114,27 +1114,27 @@
                     <fieldset>
                         <legend class="sectionTitle">Search &amp; Requests</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="jellyseerrShowSearchResults" is="emby-checkbox" type="checkbox"/><span>Show Seerr Results in Search</span></label></div>
+                            <div class="checkboxContainer"><label><input id="jellyseerrShowSearchResults" data-config-key="JellyseerrShowSearchResults" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Seerr Results in Search</span></label></div>
                             <div class="je-setting-description" data-desc-for="jellyseerrShowSearchResults">
                                 <div class="fieldDescription je-field-desc-xl">Enhance Jellyfin search by showing results from Seerr.<br/>This allows users to discover and request missing movies and shows directly from Jellyfin.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="showCollectionsInSearch" is="emby-checkbox" type="checkbox"/><span>Show Collections in Seerr Results</span></label></div>
+                            <div class="checkboxContainer"><label><input id="showCollectionsInSearch" data-config-key="ShowCollectionsInSearch" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Collections in Seerr Results</span></label></div>
                             <div class="je-setting-description" data-desc-for="showCollectionsInSearch">
                                 <div class="fieldDescription je-field-desc-xl">Display TMDB collections (e.g., Harry Potter, Marvel Cinematic Universe) in Seerr search results with an option to request the entire collection at once.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="jellyseerrEnable4kRequests" is="emby-checkbox" type="checkbox"/><span>Enable 4K Requests</span></label></div>
+                            <div class="checkboxContainer"><label><input id="jellyseerrEnable4kRequests" data-config-key="JellyseerrEnable4KRequests" is="emby-checkbox" type="checkbox"/><span>Enable 4K Requests</span></label></div>
                             <div class="je-setting-description" data-desc-for="jellyseerrEnable4kRequests">
                                 <div class="fieldDescription je-field-desc-xl">When enabled, movie request buttons include a dropdown to request a 4K version.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="jellyseerrEnable4kTvRequests" is="emby-checkbox" type="checkbox"/><span>Enable 4K TV Requests</span></label></div>
+                            <div class="checkboxContainer"><label><input id="jellyseerrEnable4kTvRequests" data-config-key="JellyseerrEnable4KTvRequests" is="emby-checkbox" type="checkbox"/><span>Enable 4K TV Requests</span></label></div>
                             <div class="je-setting-description" data-desc-for="jellyseerrEnable4kTvRequests">
                                 <div class="fieldDescription je-field-desc-xl">When enabled, TV request buttons include a dropdown that opens the season request modal in 4K mode.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="jellyseerrShowAdvanced" is="emby-checkbox" type="checkbox"/><span>Show advanced request options</span></label></div>
+                            <div class="checkboxContainer"><label><input id="jellyseerrShowAdvanced" data-config-key="JellyseerrShowAdvanced" is="emby-checkbox" type="checkbox"/><span>Show advanced request options</span></label></div>
                             <div class="je-setting-description" data-desc-for="jellyseerrShowAdvanced">
                                 <div class="fieldDescription je-field-desc-xl">Enable this if you want users to be able to choose between Servers, Quality and Paths while requesting. <br/> Note: This will disregard any Override Rules set in Seerr.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="jellyseerrShowQuotaInfo" is="emby-checkbox" type="checkbox"/><span>Show request quota info</span></label></div>
+                            <div class="checkboxContainer"><label><input id="jellyseerrShowQuotaInfo" data-config-key="JellyseerrShowQuotaInfo" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show request quota info</span></label></div>
                             <div class="je-setting-description" data-desc-for="jellyseerrShowQuotaInfo">
                                 <div class="fieldDescription je-field-desc-xl">When enabled, request modals display a chip showing the user's request usage and when their next slot frees up. Quota errors get a detailed dialog instead of a vanishing toast.</div>
                             </div>
@@ -1144,19 +1144,19 @@
                     <fieldset>
                         <legend class="sectionTitle">Discovery &amp; UI Extras</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="jellyseerrUseMoreInfoModal" is="emby-checkbox" type="checkbox"/><span>Open results in "More Info" modal</span></label></div>
+                            <div class="checkboxContainer"><label><input id="jellyseerrUseMoreInfoModal" data-config-key="JellyseerrUseMoreInfoModal" is="emby-checkbox" type="checkbox"/><span>Open results in "More Info" modal</span></label></div>
                             <div class="je-setting-description" data-desc-for="jellyseerrUseMoreInfoModal">
                                 <div class="fieldDescription je-field-desc-xl">When enabled, clicking a Seerr result title or poster opens an in-app More Info modal.<br/>When disabled, clicking will open the item in Seerr.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="jellyseerrShowReportButton" is="emby-checkbox" type="checkbox"/><span>Show "Report Issue" button on items</span></label></div>
+                            <div class="checkboxContainer"><label><input id="jellyseerrShowReportButton" data-config-key="JellyseerrShowReportButton" is="emby-checkbox" type="checkbox"/><span>Show "Report Issue" button on items</span></label></div>
                             <div class="je-setting-description" data-desc-for="jellyseerrShowReportButton">
                                 <div class="fieldDescription je-field-desc-xl">When enabled, a small report icon will be added to item action icons allowing users to report playback/content issues to Seerr.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="jellyseerrShowIssueIndicator" is="emby-checkbox" type="checkbox"/><span>Show open issue indicator</span></label></div>
+                            <div class="checkboxContainer"><label><input id="jellyseerrShowIssueIndicator" data-config-key="JellyseerrShowIssueIndicator" is="emby-checkbox" type="checkbox"/><span>Show open issue indicator</span></label></div>
                             <div class="je-setting-description" data-desc-for="jellyseerrShowIssueIndicator">
                                 <div class="fieldDescription je-field-desc-xl">When enabled, the report issue button turns orange and shows a count badge if the item has open issues in Seerr.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="showElsewhereOnJellyseerr" is="emby-checkbox" type="checkbox"/><span>Show Streaming Providers on Posters</span></label></div>
+                            <div class="checkboxContainer"><label><input id="showElsewhereOnJellyseerr" data-config-key="ShowElsewhereOnJellyseerr" is="emby-checkbox" type="checkbox"/><span>Show Streaming Providers on Posters</span></label></div>
                             <div class="je-setting-description" data-desc-for="showElsewhereOnJellyseerr">
                                 <div class="fieldDescription je-field-desc-xl">Displays icons of available streaming services (from your default region) on Seerr Posters.<br/><br/><b>Requires TMDB API Key to be configured in Elsewhere Settings</b></div>
                             </div>
@@ -1164,23 +1164,23 @@
                             <details class="je-details-section">
                                 <summary>Item Pages Discovery</summary>
                                 <div class="je-details-body">
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowSimilar" is="emby-checkbox" type="checkbox"/><span>Show similar items</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="jellyseerrShowSimilar" data-config-key="JellyseerrShowSimilar" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show similar items</span></label></div>
                                     <div class="je-setting-description" data-desc-for="jellyseerrShowSimilar">
                                         <div class="fieldDescription je-field-desc-xl">Displays similar movies/shows from Seerr on item details pages. Limited to 20 items.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowRecommended" is="emby-checkbox" type="checkbox"/><span>Show recommended items</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="jellyseerrShowRecommended" data-config-key="JellyseerrShowRecommended" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show recommended items</span></label></div>
                                     <div class="je-setting-description" data-desc-for="jellyseerrShowRecommended">
                                         <div class="fieldDescription je-field-desc-xl">Displays recommended movies/shows from Seerr on item details pages. Limited to 20 items.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowRequestMoreOnSeries" is="emby-checkbox" type="checkbox"/><span>Show "Request More" button on Series</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="jellyseerrShowRequestMoreOnSeries" data-config-key="JellyseerrShowRequestMoreOnSeries" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "Request More" button on Series</span></label></div>
                                     <div class="je-setting-description" data-desc-for="jellyseerrShowRequestMoreOnSeries">
                                         <div class="fieldDescription je-field-desc-xl">Adds a "Request More" button beside the Seasons section heading on Series detail pages when the show has unrequested seasons in Seerr. Lets users request additional seasons without going through the search bar.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrExcludeLibraryItems" is="emby-checkbox" type="checkbox"/><span>Exclude items already in library</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="jellyseerrExcludeLibraryItems" data-config-key="JellyseerrExcludeLibraryItems" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Exclude items already in library</span></label></div>
                                     <div class="je-setting-description" data-desc-for="jellyseerrExcludeLibraryItems">
                                         <div class="fieldDescription je-field-desc-xl">Hide similar/recommended items that already exist in your Jellyfin library from the results.<br/>If disabled, the items that are available link to the media item in the library.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrExcludeBlocklistedItems" is="emby-checkbox" type="checkbox"/><span>Exclude blocklisted items</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="jellyseerrExcludeBlocklistedItems" data-config-key="JellyseerrExcludeBlocklistedItems" is="emby-checkbox" type="checkbox"/><span>Exclude blocklisted items</span></label></div>
                                     <div class="je-setting-description" data-desc-for="jellyseerrExcludeBlocklistedItems">
                                         <div class="fieldDescription je-field-desc-xl">When enabled, items marked as blocklisted in Seerr will not appear in similar/recommended suggestions.</div>
                                     </div>
@@ -1190,23 +1190,23 @@
                             <details class="je-details-section">
                                 <summary>"More" Discovery</summary>
                                 <div class="je-details-body">
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowNetworkDiscovery" is="emby-checkbox" type="checkbox"/><span>Show "More from Network"</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="jellyseerrShowNetworkDiscovery" data-config-key="JellyseerrShowNetworkDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More from Network"</span></label></div>
                                     <div class="je-setting-description" data-desc-for="jellyseerrShowNetworkDiscovery">
                                         <div class="fieldDescription je-field-desc-md">When viewing a network page (e.g., Netflix, HBO), displays additional content from that network available in Seerr.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowGenreDiscovery" is="emby-checkbox" type="checkbox"/><span>Show "More Genre"</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="jellyseerrShowGenreDiscovery" data-config-key="JellyseerrShowGenreDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More Genre"</span></label></div>
                                     <div class="je-setting-description" data-desc-for="jellyseerrShowGenreDiscovery">
                                         <div class="fieldDescription je-field-desc-md">When viewing a genre page (e.g., Action, Comedy), displays additional content in that genre from Seerr.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowTagDiscovery" is="emby-checkbox" type="checkbox"/><span>Show "More Tag"</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="jellyseerrShowTagDiscovery" data-config-key="JellyseerrShowTagDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More Tag"</span></label></div>
                                     <div class="je-setting-description" data-desc-for="jellyseerrShowTagDiscovery">
                                         <div class="fieldDescription je-field-desc-md">When viewing a tag page (e.g., cooking, superhero), displays additional content with that keyword from Seerr.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowPersonDiscovery" is="emby-checkbox" type="checkbox"/><span>Show "More from Actor"</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="jellyseerrShowPersonDiscovery" data-config-key="JellyseerrShowPersonDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More from Actor"</span></label></div>
                                     <div class="je-setting-description" data-desc-for="jellyseerrShowPersonDiscovery">
                                         <div class="fieldDescription je-field-desc-md">When viewing an actor/person page, displays their filmography from Seerr including content not in your library.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowCollectionDiscovery" is="emby-checkbox" type="checkbox"/><span>Show missing collection movies</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="jellyseerrShowCollectionDiscovery" data-config-key="JellyseerrShowCollectionDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show missing collection movies</span></label></div>
                                     <div class="je-setting-description" data-desc-for="jellyseerrShowCollectionDiscovery">
                                         <div class="fieldDescription je-field-desc-xl">When viewing a collection/BoxSet page, shows movies from the collection that are not yet in your library with request buttons.</div>
                                     </div>
@@ -1221,14 +1221,14 @@
                             <details class="je-details-section">
                                 <summary>Auto Season Requests</summary>
                                 <div class="je-details-body">
-                                    <div class="checkboxContainer"><label><input id="autoSeasonRequestEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Automatic Advance Season Requests</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="autoSeasonRequestEnabled" data-config-key="AutoSeasonRequestEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Automatic Advance Season Requests</span></label></div>
                                     <div class="je-setting-description" data-desc-for="autoSeasonRequestEnabled">
                                         <div class="fieldDescription je-field-desc-xl">
                                             Automatically request the next season in Seerr when a user about to finish the current season.
                                             <br/><br/>
                                         </div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="autoSeasonRequestRequireAllWatched" is="emby-checkbox" type="checkbox"/><span>Require All Prior Episodes Watched</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="autoSeasonRequestRequireAllWatched" data-config-key="AutoSeasonRequestRequireAllWatched" is="emby-checkbox" type="checkbox"/><span>Require All Prior Episodes Watched</span></label></div>
                                     <div class="je-setting-description" data-desc-for="autoSeasonRequestRequireAllWatched">
                                         <div class="fieldDescription je-field-desc-xl">
                                             Require all episodes before the threshold to be watched. For example, if threshold is 2 and there are 10 episodes, when watching episode 8, all episodes 1-7 must be watched or marked as watched. This prevents accidentally triggering requests by jumping to later episodes. <br/> This might cause requests to not be triggered if users skip episodes.
@@ -1236,7 +1236,7 @@
                                     </div>
                                     <div class="inputContainer">
                                         <label class="inputLabel" for="autoSeasonRequestThresholdValue">Episodes Remaining Threshold</label>
-                                        <input id="autoSeasonRequestThresholdValue" is="emby-input" name="autoSeasonRequestThresholdValue" type="number" min="1" max="20" value="2"/>
+                                        <input id="autoSeasonRequestThresholdValue" data-config-key="AutoSeasonRequestThresholdValue" data-config-int="" data-config-fallback="2" is="emby-input" name="autoSeasonRequestThresholdValue" type="number" min="1" max="20" value="2"/>
                                     </div>
                                         <div class="je-setting-description" data-desc-for="autoSeasonRequestThresholdValue">
                                             <div class="fieldDescription">Request the next season when the number of unwatched episodes is at or below this number. Default: 2 episodes.</div>
@@ -1256,7 +1256,7 @@
                             <details class="je-details-section">
                                 <summary>Auto Movie Requests</summary>
                                 <div class="je-details-body">
-                                    <div class="checkboxContainer"><label><input id="autoMovieRequestEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Auto Movie Requests</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="autoMovieRequestEnabled" data-config-key="AutoMovieRequestEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Auto Movie Requests</span></label></div>
                                     <div class="je-setting-description" data-desc-for="autoMovieRequestEnabled">
                                         <div class="fieldDescription je-field-desc-xl">
                                             Automatically request the next movie in a collection based on configured triggers.
@@ -1280,7 +1280,7 @@
 
                                     <div class="inputContainer">
                                         <label for="autoMovieRequestMinutesWatched" class="inputLabel">Minutes Watched Threshold:</label>
-                                        <input id="autoMovieRequestMinutesWatched" is="emby-input" type="number" min="1" max="180" value="20" />
+                                        <input id="autoMovieRequestMinutesWatched" data-config-key="AutoMovieRequestMinutesWatched" data-config-int="" data-config-fallback="20" is="emby-input" type="number" min="1" max="180" value="20" />
                                     </div>
                                         <div class="je-setting-description" data-desc-for="autoMovieRequestMinutesWatched">
                                             <div class="fieldDescription je-field-desc-mt-sm">
@@ -1288,7 +1288,7 @@
                                             </div>
                                         </div>
 
-                                    <div class="checkboxContainer"><label><input id="autoMovieRequestCheckReleaseDate" is="emby-checkbox" type="checkbox"/><span>Only request if released</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="autoMovieRequestCheckReleaseDate" data-config-key="AutoMovieRequestCheckReleaseDate" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Only request if released</span></label></div>
                                     <div class="je-setting-description" data-desc-for="autoMovieRequestCheckReleaseDate">
                                         <div class="fieldDescription je-field-desc-mt-sm">
                                             When enabled, future releases will be skipped. Only movies that have already been released will be requested.
@@ -1297,7 +1297,7 @@
 
                                     <div class="inputContainer">
                                         <label for="autoMovieRequestQualityMode" class="inputLabel">Quality Profile Mode:</label>
-                                        <select id="autoMovieRequestQualityMode" is="emby-select" class="emby-select">
+                                        <select id="autoMovieRequestQualityMode" data-config-key="AutoMovieRequestQualityMode" data-config-fallback="default" is="emby-select" class="emby-select">
                                             <option value="default">Default</option><option value="original">Original</option><option value="custom">Custom</option>
                                         </select>
                                     </div>
@@ -1309,7 +1309,7 @@
                                             </div>
                                         </div>
 
-                                    <div class="checkboxContainer"><label><input id="autoMovieRequestFallbackOn4k" is="emby-checkbox" type="checkbox"/><span>Use default instead of 4K fallback</span></label></div>
+                                    <div class="checkboxContainer"><label><input id="autoMovieRequestFallbackOn4k" data-config-key="AutoMovieRequestFallbackOn4k" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Use default instead of 4K fallback</span></label></div>
                                     <div class="je-setting-description" data-desc-for="autoMovieRequestFallbackOn4k">
                                         <div class="fieldDescription je-field-desc-lg">
                                             Only applies when Quality Profile Mode is set to "Original". If the watched movie was requested with a 4K profile, the auto-request will use Seerr's default profile instead. This prevents requests from failing or requiring manual approval for users who don't have 4K request permissions in Seerr. Disable this if all your users have 4K request access and you want to preserve the original 4K profile.
@@ -1342,7 +1342,7 @@
                     <fieldset>
                         <legend class="sectionTitle">Recently Added Sync to Seerr</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="triggerSeerrScanOnItemAdded" is="emby-checkbox" type="checkbox"/><span>Trigger Seerr recently-added scan when new Jellyfin items are added</span></label></div>
+                            <div class="checkboxContainer"><label><input id="triggerSeerrScanOnItemAdded" data-config-key="TriggerSeerrScanOnItemAdded" is="emby-checkbox" type="checkbox"/><span>Trigger Seerr recently-added scan when new Jellyfin items are added</span></label></div>
                             <div class="je-setting-description" data-desc-for="triggerSeerrScanOnItemAdded">
                                 <div class="fieldDescription je-field-desc-xl">
                                     When Jellyfin reports new library items added, enabling this triggers the "Jellyfin Recently Added Scan" job so that request statuses are immediately updated instead of waiting till next schedule run. Events are debounced, so a bulk import collapses into a single trigger.<br/><br/>
@@ -1352,7 +1352,7 @@
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="seerrScanDebounceSeconds">Debounce (seconds):</label>
-                                <input id="seerrScanDebounceSeconds" is="emby-input" type="number" min="5" max="3600" step="1"/>
+                                <input id="seerrScanDebounceSeconds" data-config-key="SeerrScanDebounceSeconds" data-config-int="" data-config-fallback="60" is="emby-input" type="number" min="5" max="3600" step="1"/>
                             </div>
                             <div class="je-setting-description" data-desc-for="seerrScanDebounceSeconds">
                                 <div class="fieldDescription je-field-desc-mt-sm je-field-desc-md">
@@ -1375,7 +1375,7 @@
                     <fieldset>
                         <legend class="sectionTitle">Watchlist</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="addRequestedMediaToWatchlist" is="emby-checkbox" type="checkbox"/><span>Add requested media to Watchlist</span></label></div>
+                            <div class="checkboxContainer"><label><input id="addRequestedMediaToWatchlist" data-config-key="AddRequestedMediaToWatchlist" is="emby-checkbox" type="checkbox"/><span>Add requested media to Watchlist</span></label></div>
                             <div class="je-setting-description" data-desc-for="addRequestedMediaToWatchlist">
                                 <div class="fieldDescription je-field-desc-xl">
                                     When enabled, any media requested through Seerr Search via Jellyfin Enhanced will automatically be added to the requesting user's Watchlist.<br/><br/>
@@ -1384,7 +1384,7 @@
                                 </div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="syncJellyseerrWatchlist" is="emby-checkbox" type="checkbox"/><span>Sync Seerr Watchlist → Jellyfin</span></label></div>
+                            <div class="checkboxContainer"><label><input id="syncJellyseerrWatchlist" data-config-key="SyncJellyseerrWatchlist" is="emby-checkbox" type="checkbox"/><span>Sync Seerr Watchlist → Jellyfin</span></label></div>
                             <div class="je-setting-description" data-desc-for="syncJellyseerrWatchlist">
                                 <div class="fieldDescription je-field-desc-xl">
                                     When enabled, items from each user's Seerr watchlist will be automatically synced to their Jellyfin watchlist.<br/><br/>
@@ -1394,7 +1394,7 @@
                                 </div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="syncJellyfinWatchlistToSeerr" is="emby-checkbox" type="checkbox"/><span>Sync Jellyfin Watchlist → Seerr</span></label></div>
+                            <div class="checkboxContainer"><label><input id="syncJellyfinWatchlistToSeerr" data-config-key="SyncJellyfinWatchlistToSeerr" is="emby-checkbox" type="checkbox"/><span>Sync Jellyfin Watchlist → Seerr</span></label></div>
                             <div class="je-setting-description" data-desc-for="syncJellyfinWatchlistToSeerr">
                                 <div class="fieldDescription je-field-desc-xl">
                                     When enabled, items from a user's Jellyfin watchlist (from <a class="je-bold-link" href="https://github.com/ranaldsgift/KefinTweaks" target="_blank">KefinTweaks</a>) will be automatically synced to their Seerr watchlist.<br/><br/>
@@ -1403,7 +1403,7 @@
                                 </div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="preventWatchlistReAddition" is="emby-checkbox" type="checkbox"/><span>Prevent re-adding removed items</span></label></div>
+                            <div class="checkboxContainer"><label><input id="preventWatchlistReAddition" data-config-key="PreventWatchlistReAddition" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Prevent re-adding removed items</span></label></div>
                             <div class="je-setting-description" data-desc-for="preventWatchlistReAddition">
                                 <div class="fieldDescription je-field-desc-md">
                                     When enabled, items will only be added to a user's watchlist once. If a user manually removes an item from their watchlist, it won't be automatically re-added during future sync runs.
@@ -1412,7 +1412,7 @@
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="watchlistMemoryRetentionDays">Memory retention (days):</label>
-                                <input id="watchlistMemoryRetentionDays" is="emby-input" type="number" min="1" max="3650" step="1"/>
+                                <input id="watchlistMemoryRetentionDays" data-config-key="WatchlistMemoryRetentionDays" data-config-int="" data-config-fallback="365" is="emby-input" type="number" min="1" max="3650" step="1"/>
                             </div>
                             <div class="je-setting-description" data-desc-for="watchlistMemoryRetentionDays">
                                 <div class="fieldDescription je-field-desc-mt-sm je-field-desc-md">
@@ -1432,7 +1432,7 @@
                     <fieldset>
                         <legend class="sectionTitle">Users</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="jellyseerrAutoImportUsers" is="emby-checkbox" type="checkbox"/><span>Auto import Jellyfin users to Seerr</span></label></div>
+                            <div class="checkboxContainer"><label><input id="jellyseerrAutoImportUsers" data-config-key="JellyseerrAutoImportUsers" is="emby-checkbox" type="checkbox"/><span>Auto import Jellyfin users to Seerr</span></label></div>
                             <div class="je-setting-description" data-desc-for="jellyseerrAutoImportUsers">
                                 <div class="fieldDescription je-field-desc-xl">
                                     Automatically import Jellyfin users into Seerr so they can use Seerr Search without needing to visit Seerr directly. New users are imported the first time they use Seerr Search; a scheduled task also bulk-imports periodically. Already-imported users are skipped.<br/><br/>
@@ -1477,20 +1477,20 @@
                     <fieldset>
                         <legend class="sectionTitle">Debug</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="jellyseerrDisableCache" is="emby-checkbox" type="checkbox"/><span>Disable server-side response cache</span></label></div>
+                            <div class="checkboxContainer"><label><input id="jellyseerrDisableCache" data-config-key="JellyseerrDisableCache" is="emby-checkbox" type="checkbox"/><span>Disable server-side response cache</span></label></div>
                             <div class="je-setting-description" data-desc-for="jellyseerrDisableCache">
                                 <div class="fieldDescription je-field-desc-xl">When enabled, all Seerr proxy requests bypass the server-side cache and are fetched fresh from Seerr every time. This is useful for testing but will increase load on your Seerr instance. <b>Not recommended for normal use.</b></div>
                             </div>
                             <div class="inputContainer">
                                 <label class="inputLabel" for="jellyseerrResponseCacheTtlMinutes">Response Cache TTL (min)</label>
-                                <input id="jellyseerrResponseCacheTtlMinutes" is="emby-input" type="number" min="1" value="10"/>
+                                <input id="jellyseerrResponseCacheTtlMinutes" data-config-key="JellyseerrResponseCacheTtlMinutes" data-config-int="" data-config-fallback="10" is="emby-input" type="number" min="1" value="10"/>
                             </div>
                                 <div class="je-setting-description" data-desc-for="jellyseerrResponseCacheTtlMinutes">
                                     <div class="fieldDescription">How long Seerr API responses (search, discovery, recommendations) are cached. Default: 10 minutes.</div>
                                 </div>
                             <div class="inputContainer">
                                 <label class="inputLabel" for="jellyseerrUserIdCacheTtlMinutes">User ID Cache TTL (min)</label>
-                                <input id="jellyseerrUserIdCacheTtlMinutes" is="emby-input" type="number" min="1" value="30"/>
+                                <input id="jellyseerrUserIdCacheTtlMinutes" data-config-key="JellyseerrUserIdCacheTtlMinutes" data-config-int="" data-config-fallback="30" is="emby-input" type="number" min="1" value="30"/>
                             </div>
                                 <div class="je-setting-description" data-desc-for="jellyseerrUserIdCacheTtlMinutes">
                                     <div class="fieldDescription">How long the Jellyfin → Seerr user ID mapping is cached. Default: 30 minutes.</div>
@@ -1546,7 +1546,7 @@
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="bazarrUrl">Bazarr URL</label>
-                                <input id="bazarrUrl" is="emby-input" name="bazarrUrl" type="text" placeholder="e.g., http://192.168.100.100:6767"/>
+                                <input id="bazarrUrl" data-config-key="BazarrUrl" is="emby-input" name="bazarrUrl" type="text" placeholder="e.g., http://192.168.100.100:6767"/>
                             </div>
                             <div class="je-setting-description" data-desc-for="bazarrUrl">
                                 <div class="fieldDescription">Note: this links to the main movies/series page — Bazarr does not support direct item-deep-links.<br/>If Bazarr sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here (e.g. <code>http://bazarr:6767</code>) and use the URL Mappings below to redirect user-facing links to the public URL.</div>
@@ -1554,7 +1554,7 @@
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="bazarrUrlMappings">Bazarr URL Mappings</label>
-                                <textarea class="emby-textarea emby-input je-textarea-medium" id="bazarrUrlMappings" name="bazarrUrlMappings" placeholder="jellyfin_url|bazarr_url"></textarea>
+                                <textarea class="emby-textarea emby-input je-textarea-medium" id="bazarrUrlMappings" data-config-key="BazarrUrlMappings" data-config-fallback="" name="bazarrUrlMappings" placeholder="jellyfin_url|bazarr_url"></textarea>
                             </div>
                             <div class="je-setting-description" data-desc-for="bazarrUrlMappings">
                                 <div class="fieldDescription">Map Jellyfin access URLs to Bazarr URLs. Format: <code>jellyfin_url|bazarr_url</code> (one per line).</div>
@@ -1569,15 +1569,15 @@
                     <fieldset>
                         <legend class="sectionTitle"><i class="material-icons je-legend-icon" aria-hidden="true">link</i>*arr UI Links</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer je-main-feature"><label><input id="arrLinksEnabled" is="emby-checkbox" type="checkbox"/><span>Enable *arr Links on Detail Pages</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="arrLinksEnabled" data-config-key="ArrLinksEnabled" is="emby-checkbox" type="checkbox"/><span>Enable *arr Links on Detail Pages</span></label></div>
                             <div class="je-setting-description" data-desc-for="arrLinksEnabled">
                                 <div class="fieldDescription je-field-desc-xl">Show Sonarr, Radarr, and Bazarr links of the items on item detail pages for quick access. <strong>Admins only</strong>.<br/>If no URL is configured for a service , links for that service are not shown.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="showArrLinksAsText" is="emby-checkbox" type="checkbox"/><span>Show links as text</span></label></div>
+                            <div class="checkboxContainer"><label><input id="showArrLinksAsText" data-config-key="ShowArrLinksAsText" is="emby-checkbox" type="checkbox"/><span>Show links as text</span></label></div>
                             <div class="je-setting-description" data-desc-for="showArrLinksAsText">
                                 <div class="fieldDescription">Render the *arr links as plain text labels instead of icon buttons.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="arrLinksShowStatusSingle" is="emby-checkbox" type="checkbox"/><span>Show status badge for single-instance</span></label></div>
+                            <div class="checkboxContainer"><label><input id="arrLinksShowStatusSingle" data-config-key="ArrLinksShowStatusSingle" is="emby-checkbox" type="checkbox"/><span>Show status badge for single-instance</span></label></div>
                             <div class="je-setting-description" data-desc-for="arrLinksShowStatusSingle">
                                 <div class="fieldDescription je-field-desc-xl">When off (default), a single matching Sonarr/Radarr instance renders as a plain icon/text.<br/>When on, it also shows the episode count (e.g. 22/41) and a colored left border indicating download status. Multi-instance dropdowns always show this detail.</div>
                             </div>
@@ -1587,7 +1587,7 @@
                     <fieldset>
                         <legend class="sectionTitle"><i class="material-icons je-legend-icon" aria-hidden="true">label</i>Tags Sync</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer je-main-feature"><label><input id="arrTagsSyncEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Tags Sync</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="arrTagsSyncEnabled" data-config-key="ArrTagsSyncEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Tags Sync</span></label></div>
                             <div class="je-setting-description" data-desc-for="arrTagsSyncEnabled">
                                 <div class="fieldDescription je-field-desc-xl">
                                     Fetches all tags from Radarr and Sonarr instances defined above and adds them as Jellyfin tags.
@@ -1597,16 +1597,16 @@
                             </div>
                             <div class="inputContainer">
                                 <label class="inputLabel" for="arrTagsPrefix">Tag Prefix</label>
-                                <input id="arrTagsPrefix" is="emby-input" name="arrTagsPrefix" type="text" placeholder="JE Arr Tag: "/>
+                                <input id="arrTagsPrefix" data-config-key="ArrTagsPrefix" data-config-fallback="Requested by: " is="emby-input" name="arrTagsPrefix" type="text" placeholder="JE Arr Tag: "/>
                             </div>
                                 <div class="je-setting-description" data-desc-for="arrTagsPrefix">
                                     <div class="fieldDescription">Prefix to add before each tag (e.g., "JE Arr Tag: " will result in "JE Arr Tag: 1 - Jellyfish")</div>
                                 </div>
-                            <div class="checkboxContainer"><label><input id="arrTagsClearOldTags" is="emby-checkbox" type="checkbox"/><span>Clear old tags before sync</span></label></div>
+                            <div class="checkboxContainer"><label><input id="arrTagsClearOldTags" data-config-key="ArrTagsClearOldTags" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Clear old tags before sync</span></label></div>
                             <div class="je-setting-description" data-desc-for="arrTagsClearOldTags">
                                 <div class="fieldDescription je-field-desc-xl">When enabled, removes all existing tags starting with the prefix before adding new ones. This keeps tags in sync with your *arr applications.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="arrTagsShowAsLinks" is="emby-checkbox" type="checkbox"/><span>Show synced tags as links</span></label></div>
+                            <div class="checkboxContainer"><label><input id="arrTagsShowAsLinks" data-config-key="ArrTagsShowAsLinks" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show synced tags as links</span></label></div>
                             <div class="je-setting-description" data-desc-for="arrTagsShowAsLinks">
                                 <div class="fieldDescription je-field-desc-xl">Displays tags with the configured prefix as clickable links on item detail pages. Helpful if your theme hides tags.</div>
                             </div>
@@ -1616,7 +1616,7 @@
                                 <div class="je-details-body">
                                     <div class="inputContainer">
                                         <label class="inputLabel">Sync to Jellyfin Filter</label>
-                                        <textarea class="emby-textarea emby-input je-textarea-medium" id="arrTagsSyncFilter" name="arrTagsSyncFilter" placeholder="One per line"></textarea>
+                                        <textarea class="emby-textarea emby-input je-textarea-medium" id="arrTagsSyncFilter" data-config-key="ArrTagsSyncFilter" data-config-fallback="" name="arrTagsSyncFilter" placeholder="One per line"></textarea>
                                     </div>
                                         <div class="je-setting-description" data-desc-for="arrTagsSyncFilter">
                                             <div class="fieldDescription">
@@ -1629,7 +1629,7 @@
                                         </div>
                                     <div class="inputContainer">
                                         <label class="inputLabel">Show as Links Filter</label>
-                                        <textarea class="emby-textarea emby-input je-textarea-medium" id="arrTagsLinksFilter" name="arrTagsLinksFilter" placeholder="One per line"></textarea>
+                                        <textarea class="emby-textarea emby-input je-textarea-medium" id="arrTagsLinksFilter" data-config-key="ArrTagsLinksFilter" data-config-fallback="" name="arrTagsLinksFilter" placeholder="One per line"></textarea>
                                     </div>
                                         <div class="je-setting-description" data-desc-for="arrTagsLinksFilter">
                                             <div class="fieldDescription">
@@ -1642,7 +1642,7 @@
                                         </div>
                                     <div class="inputContainer">
                                         <label class="inputLabel">Hide Specific Links Filter</label>
-                                        <textarea class="emby-textarea emby-input je-textarea-medium" id="arrTagsLinksHideFilter" name="arrTagsLinksHideFilter" placeholder="One per line"></textarea>
+                                        <textarea class="emby-textarea emby-input je-textarea-medium" id="arrTagsLinksHideFilter" data-config-key="ArrTagsLinksHideFilter" data-config-fallback="" name="arrTagsLinksHideFilter" placeholder="One per line"></textarea>
                                     </div>
                                         <div class="je-setting-description" data-desc-for="arrTagsLinksHideFilter">
                                             <div class="fieldDescription">
@@ -1663,7 +1663,7 @@
                     <fieldset>
                         <legend class="sectionTitle">Elsewhere (Streaming Providers)</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer je-main-feature"><label><input id="elsewhereEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Elsewhere</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="elsewhereEnabled" data-config-key="ElsewhereEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Elsewhere</span></label></div>
                             <div class="je-setting-description" data-desc-for="elsewhereEnabled">
                                 <div class="fieldDescription je-field-desc-xl">Adds an "Elsewhere" panel to item detail pages showing where the title is available on streaming services in the user's region (powered by TMDB watch-provider data).</div>
                             </div>
@@ -1683,21 +1683,21 @@
 
                                 <div class="inputContainer">
                                     <label class="inputLabel" for="DEFAULT_REGION">Default Region</label>
-                                    <input id="DEFAULT_REGION" is="emby-input" type="text" placeholder="e.g., US"/>
+                                    <input id="DEFAULT_REGION" data-config-key="DEFAULT_REGION" is="emby-input" type="text" placeholder="e.g., US"/>
                                 </div>
                                     <div class="je-setting-description" data-desc-for="DEFAULT_REGION">
                                         <div class="fieldDescription">The default two-letter country code for streaming provider lookup. Empty defaults to US. <a class="sectionTitle" href="https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/regions.txt" target="_blank">Full List</a></div>
                                     </div>
                                 <div class="inputContainer">
                                     <label class="inputLabel" for="DEFAULT_PROVIDERS">Default Providers</label>
-                                    <input id="DEFAULT_PROVIDERS" class="emby-input" type="text" placeholder="e.g., Netflix,Hulu"/>
+                                    <input id="DEFAULT_PROVIDERS" data-config-key="DEFAULT_PROVIDERS" class="emby-input" type="text" placeholder="e.g., Netflix,Hulu"/>
                                 </div>
                                     <div class="je-setting-description" data-desc-for="DEFAULT_PROVIDERS">
                                         <div class="fieldDescription">A list of default streaming providers to show. Leave blank to show all. <a class="sectionTitle" href="https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/providers.txt" target="_blank">Full List</a></div>
                                     </div>
                             <div class="inputContainer">
                                 <label class="inputLabel" for="IGNORE_PROVIDERS">Ignore Providers</label>
-                                <input id="IGNORE_PROVIDERS" class="emby-input" type="text" placeholder="e.g., .*with Ads, Hulu"/>
+                                <input id="IGNORE_PROVIDERS" data-config-key="IGNORE_PROVIDERS" class="emby-input" type="text" placeholder="e.g., .*with Ads, Hulu"/>
                             </div>
                                 <div class="je-setting-description" data-desc-for="IGNORE_PROVIDERS">
                                     <div class="fieldDescription">A list of providers to ignore from the default region (supports regex).<a class="sectionTitle" href="https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/providers.txt" target="_blank">Full List</a></div>
@@ -1708,14 +1708,14 @@
                                 <div class="je-details-body">
                                     <div class="inputContainer">
                                         <label class="inputLabel" for="ElsewhereCustomBrandingText">Custom Branding Message</label>
-                                        <input id="ElsewhereCustomBrandingText" is="emby-input" type="text" placeholder="e.g., Only available on My Server"/>
+                                        <input id="ElsewhereCustomBrandingText" data-config-key="ElsewhereCustomBrandingText" data-config-fallback="" is="emby-input" type="text" placeholder="e.g., Only available on My Server"/>
                                     </div>
                                         <div class="je-setting-description" data-desc-for="ElsewhereCustomBrandingText">
                                             <div class="fieldDescription">Custom message to display when content is not available on any streaming providers. Leave blank to disable custom branding.</div>
                                         </div>
                                     <div class="inputContainer">
                                         <label class="inputLabel" for="ElsewhereCustomBrandingImageUrl">Custom Branding Icon URL</label>
-                                        <input id="ElsewhereCustomBrandingImageUrl" is="emby-input" type="text" placeholder="/web/assets/img/icon.png"/>
+                                        <input id="ElsewhereCustomBrandingImageUrl" data-config-key="ElsewhereCustomBrandingImageUrl" data-config-fallback="" is="emby-input" type="text" placeholder="/web/assets/img/icon.png"/>
                                     </div>
                                         <div class="je-setting-description" data-desc-for="ElsewhereCustomBrandingImageUrl">
                                             <div class="fieldDescription">Optional URL for an icon to display next to the custom message. Leave blank for no icon.</div>
@@ -1728,11 +1728,11 @@
                     <fieldset>
                         <legend class="sectionTitle">TMDB Reviews</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer je-main-feature"><label><input id="showReviews" is="emby-checkbox" type="checkbox"/><span>Show TMDB Reviews</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="showReviews" data-config-key="ShowReviews" is="emby-checkbox" type="checkbox"/><span>Show TMDB Reviews</span></label></div>
                             <div class="je-setting-description" data-desc-for="showReviews">
                                 <div class="fieldDescription je-field-desc-sm-font-lg">Requires TMDB API Key to be set</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="reviewsExpandedByDefault" is="emby-checkbox" type="checkbox"/><span>Expand reviews by default</span></label></div>
+                            <div class="checkboxContainer"><label><input id="reviewsExpandedByDefault" data-config-key="ReviewsExpandedByDefault" is="emby-checkbox" type="checkbox"/><span>Expand reviews by default</span></label></div>
                             <div class="je-setting-description" data-desc-for="reviewsExpandedByDefault">
                                 <div class="fieldDescription je-field-desc-sm-font-lg">When enabled, the reviews section opens expanded by default for all users (unless they override in their session).</div>
                             </div>
@@ -1742,7 +1742,7 @@
                     <fieldset>
                         <legend class="sectionTitle">Release Dates</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer je-main-feature"><label><input id="showReleaseDate" is="emby-checkbox" type="checkbox"/><span>Show Release/Air Date</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="showReleaseDate" data-config-key="ShowReleaseDates" is="emby-checkbox" type="checkbox"/><span>Show Release/Air Date</span></label></div>
                             <div class="je-setting-description" data-desc-for="showReleaseDate">
                                 <div class="fieldDescription je-field-desc-sm-font-lg">Requires TMDB API Key to be set. Shows a chip on Movie, Series, Season and Episode detail pages with the cinema/digital/physical release date or next/last air date, sourced from TMDB. Uses the Default Region set under Elsewhere above to pick which country's dates to prefer.</div>
                             </div>
@@ -1756,23 +1756,23 @@
                                 <i class="material-icons je-info-icon" aria-hidden="true">info</i>
                                 <span class="fieldDescription">Completely independent of Elsewhere being enabled and TMDB Reviews being enabled</span>
                             </div>
-                            <div class="checkboxContainer je-main-feature"><label><input id="showUserReviews" is="emby-checkbox" type="checkbox"/><span>Enable User Written Reviews</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="showUserReviews" data-config-key="ShowUserReviews" is="emby-checkbox" type="checkbox"/><span>Enable User Written Reviews</span></label></div>
                             <div class="je-setting-description" data-desc-for="showUserReviews">
                                 <div class="fieldDescription je-field-desc-sm-font-lg">Allows users to write reviews and rate items in the library.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="hideReviewsFromHiddenUsers" is="emby-checkbox" type="checkbox"/><span>Hide reviews from hidden users</span></label></div>
+                            <div class="checkboxContainer"><label><input id="hideReviewsFromHiddenUsers" data-config-key="HideReviewsFromHiddenUsers" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Hide reviews from hidden users</span></label></div>
                             <div class="je-setting-description" data-desc-for="hideReviewsFromHiddenUsers">
                                 <div class="fieldDescription je-field-desc-sm-font-lg">When enabled, reviews written by Jellyfin users marked as "Hide this user from login screens" are hidden from non-admin viewers. Admins always see all reviews.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="hideReviewsFromDisabledUsers" is="emby-checkbox" type="checkbox"/><span>Hide reviews from disabled users</span></label></div>
+                            <div class="checkboxContainer"><label><input id="hideReviewsFromDisabledUsers" data-config-key="HideReviewsFromDisabledUsers" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Hide reviews from disabled users</span></label></div>
                             <div class="je-setting-description" data-desc-for="hideReviewsFromDisabledUsers">
                                 <div class="fieldDescription je-field-desc-sm-font-lg">When enabled, reviews written by Jellyfin users marked as "Disable this user" are hidden from non-admin viewers. Admins always see all reviews.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="showUserRatingOnPosters" is="emby-checkbox" type="checkbox"/><span>Show average user rating on poster cards</span></label></div>
+                            <div class="checkboxContainer"><label><input id="showUserRatingOnPosters" data-config-key="ShowUserRatingOnPosters" is="emby-checkbox" type="checkbox"/><span>Show average user rating on poster cards</span></label></div>
                             <div class="je-setting-description" data-desc-for="showUserRatingOnPosters">
                                 <div class="fieldDescription je-field-desc-sm-font-lg">When Rating Tags are enabled, overlay a <span class="material-symbols-rounded" style="font-size:14px;vertical-align:middle;color:#e91e8c;">person_heart</span> chip on poster cards showing the average rating from all user reviews.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="showUserRatingDash" is="emby-checkbox" type="checkbox"/><span>Show "—" on posters for unrated items</span></label></div>
+                            <div class="checkboxContainer"><label><input id="showUserRatingDash" data-config-key="ShowUserRatingDash" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "—" on posters for unrated items</span></label></div>
                             <div class="je-setting-description" data-desc-for="showUserRatingDash">
                                 <div class="fieldDescription je-field-desc-sm-font-lg">When Rating Tags are enabled, a <span class="material-symbols-rounded" style="font-size:14px;vertical-align:middle;color:#e91e8c;">person_heart</span> chip appears on every poster. Enable this to show "—" for items the user hasn't rated yet. Disable to hide the chip entirely for unrated items.</div>
                             </div>
@@ -1784,7 +1784,7 @@
                     <fieldset>
                         <legend class="sectionTitle">UI Tweaks</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="coloredRatingsEnabled" is="emby-checkbox" type="checkbox"/><span>Colored Ratings Backgrounds</span></label></div>
+                            <div class="checkboxContainer"><label><input id="coloredRatingsEnabled" data-config-key="ColoredRatingsEnabled" is="emby-checkbox" type="checkbox"/><span>Colored Ratings Backgrounds</span></label></div>
                             <div class="je-setting-description" data-desc-for="coloredRatingsEnabled">
                                 <div class="fieldDescription je-field-desc-md">
                                     Applies color-coded backgrounds to media ratings.
@@ -1797,7 +1797,7 @@
                                 If you notice missing or incorrect ratings, please submit a PR to <a class="sectionTitle" href="https://github.com/n00bcodr/Jellyfin-Enhanced/" target="_blank">Jellyfin-Enhanced</a>.
                             </div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="themeSelectorEnabled" is="emby-checkbox" type="checkbox"/><span>Theme Selector (Jellyfish)</span></label></div>
+                            <div class="checkboxContainer"><label><input id="themeSelectorEnabled" data-config-key="ThemeSelectorEnabled" is="emby-checkbox" type="checkbox"/><span>Theme Selector (Jellyfish)</span></label></div>
                             <div class="je-setting-description" data-desc-for="themeSelectorEnabled">
                                 <div class="fieldDescription je-field-desc-md">
                                     Adds a theme selector to quickly switch between Jellyfish color themes.
@@ -1815,7 +1815,7 @@
                                 </div>
                                 </div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="coloredActivityIconsEnabled" is="emby-checkbox" type="checkbox"/><span>Colored Dashboard Icons</span></label></div>
+                            <div class="checkboxContainer"><label><input id="coloredActivityIconsEnabled" data-config-key="ColoredActivityIconsEnabled" is="emby-checkbox" type="checkbox"/><span>Colored Dashboard Icons</span></label></div>
                             <div class="je-setting-description" data-desc-for="coloredActivityIconsEnabled">
                                 <div class="fieldDescription je-field-desc-md">
                                     Replaces Dashboard Activity Icons with Material Design icons and background color.
@@ -1827,7 +1827,7 @@
                                 </details>
                                 </div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="loginImageEnabled" is="emby-checkbox" type="checkbox"/><span>Profile Picture on Login</span></label></div>
+                            <div class="checkboxContainer"><label><input id="loginImageEnabled" data-config-key="EnableLoginImage" is="emby-checkbox" type="checkbox"/><span>Profile Picture on Login</span></label></div>
                             <div class="je-setting-description" data-desc-for="loginImageEnabled">
                                 <div class="fieldDescription je-field-desc-md">
                                     Displays the user's profile picture on the manual login screen instead of the name. When a user is selected, their avatar appears above the password field.
@@ -1839,7 +1839,7 @@
                                 </details>
                                 </div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="pluginIconsEnabled" is="emby-checkbox" type="checkbox"/><span>Custom Plugin Menu Icons</span></label></div>
+                            <div class="checkboxContainer"><label><input id="pluginIconsEnabled" data-config-key="PluginIconsEnabled" is="emby-checkbox" type="checkbox"/><span>Custom Plugin Menu Icons</span></label></div>
                             <div class="je-setting-description" data-desc-for="pluginIconsEnabled">
                                 <div class="fieldDescription je-field-desc-md">
                                     Replaces default plugin folder icons with custom icons on the Dashboard sidebar.
@@ -1860,28 +1860,28 @@
 
                             <hr style="border:0; border-top: 1px solid rgba(255,255,255,0.05); margin: 5px 0;">
 
-                            <div class="checkboxContainer je-main-feature"><label><input id="activeStreamsEnabled" is="emby-checkbox" type="checkbox"/><span>Active Streams Header Widget</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="activeStreamsEnabled" data-config-key="ActiveStreamsEnabled" is="emby-checkbox" type="checkbox"/><span>Active Streams Header Widget</span></label></div>
                             <div class="je-setting-description" data-desc-for="activeStreamsEnabled">
                                 <div class="fieldDescription je-field-desc-md">
                                     Adds a live stream counter to the header. Click it to open a panel showing who is currently playing, what they're watching, playback state, progress, and transcoding details.<br/>By default the widget is only visible to admin accounts.
                                 </div>
                             </div>
-                            <div id="activeStreamsAllUsersContainer" class="checkboxContainer"><label><input id="activeStreamsAllUsers" is="emby-checkbox" type="checkbox"/><span>Show widget to non-admins</span></label></div>
+                            <div id="activeStreamsAllUsersContainer" class="checkboxContainer"><label><input id="activeStreamsAllUsers" data-config-key="ActiveStreamsAllUsers" is="emby-checkbox" type="checkbox"/><span>Show widget to non-admins</span></label></div>
                         </div>
                     </fieldset>
 
                     <fieldset>
                         <legend class="sectionTitle">External Links</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer je-main-feature"><label><input id="letterboxdEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Letterboxd Links</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="letterboxdEnabled" data-config-key="LetterboxdEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Letterboxd Links</span></label></div>
                             <div class="je-setting-description" data-desc-for="letterboxdEnabled">
                                 <div class="fieldDescription je-field-desc-md">Adds Letterboxd links to movie and person details pages.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="showLetterboxdLinkAsText" is="emby-checkbox" type="checkbox"/><span>Show link as text</span></label></div>
+                            <div class="checkboxContainer"><label><input id="showLetterboxdLinkAsText" data-config-key="ShowLetterboxdLinkAsText" is="emby-checkbox" type="checkbox"/><span>Show link as text</span></label></div>
                             <div class="je-setting-description" data-desc-for="showLetterboxdLinkAsText">
                                 <div class="fieldDescription je-field-desc-xl">When enabled, shows "Letterboxd" as text instead of the Letterboxd icon.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="metadataIconsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Metadata Icons (Druidblack)</span></label></div>
+                            <div class="checkboxContainer"><label><input id="metadataIconsEnabled" data-config-key="MetadataIconsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Metadata Icons (Druidblack)</span></label></div>
                             <div class="je-setting-description" data-desc-for="metadataIconsEnabled">
                                 <div class="fieldDescription je-field-desc-md">
                                     Shows metadata icons instead of text. From <a class="sectionTitle" href="https://github.com/Druidblack/jellyfin-icon-metadata" target="_blank">Druidblack/jellyfin-icon-metadata</a>.<br/>
@@ -1891,7 +1891,7 @@
 
                             <div class="inputContainer" style="margin-top: 10px;">
                                 <label class="inputLabel" for="customPluginLinks">Sidebar Custom Links</label>
-                                <textarea id="customPluginLinks" class="emby-textarea emby-input" rows="3" placeholder="Page Name | icon_name"></textarea>
+                                <textarea id="customPluginLinks" data-config-key="CustomPluginLinks" data-config-fallback="" class="emby-textarea emby-input" rows="3" placeholder="Page Name | icon_name"></textarea>
                             </div>
                                 <div class="je-setting-description" data-desc-for="customPluginLinks">
                                     <div class="fieldDescription je-field-desc-mt-sm">
@@ -1920,14 +1920,14 @@
                                 </div>
                             </div>
 
-                            <div class="checkboxContainer je-main-feature"><label><input id="enableCustomSplashScreen" is="emby-checkbox" type="checkbox"/><span>Enable Splash Screen Override</span></label></div>
+                            <div class="checkboxContainer je-main-feature"><label><input id="enableCustomSplashScreen" data-config-key="EnableCustomSplashScreen" is="emby-checkbox" type="checkbox"/><span>Enable Splash Screen Override</span></label></div>
                             <div class="je-setting-description" data-desc-for="enableCustomSplashScreen">
                                 <div class="fieldDescription">Replace Jellyfin's login splash background with a custom image URL specified below.</div>
                             </div>
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="splashScreenImageUrl">Splash Screen Image URL</label>
-                                <input id="splashScreenImageUrl" is="emby-input" type="text" placeholder="/web/assets/banner.png"/>
+                                <input id="splashScreenImageUrl" data-config-key="SplashScreenImageUrl" is="emby-input" type="text" placeholder="/web/assets/banner.png"/>
                             </div>
                                 <div class="je-setting-description" data-desc-for="splashScreenImageUrl">
                                     <div class="fieldDescription">URL for the splash screen image. Defaults to Jellyfin banner.</div>
@@ -2026,7 +2026,7 @@
                             <!-- Enable toggle -->
                             <div class="checkboxContainer">
                                 <label>
-                                    <input id="maintenanceModeEnabled" is="emby-checkbox" type="checkbox"/>
+                                    <input id="maintenanceModeEnabled" data-config-key="MaintenanceModeEnabled" is="emby-checkbox" type="checkbox"/>
                                     <span>Enable Maintenance Mode</span>
                                 </label>
                             </div>
@@ -2039,7 +2039,7 @@
                             <!-- Banner message -->
                             <div class="inputContainer" style="margin-bottom:1.5em;">
                                 <label class="inputLabel inputLabelUnfocused" for="maintenanceModeMessage">Login Page Banner Message</label>
-                                <textarea id="maintenanceModeMessage" is="emby-textarea" class="emby-textarea" rows="2"
+                                <textarea id="maintenanceModeMessage" data-config-key="MaintenanceModeMessage" data-config-fallback="" is="emby-textarea" class="emby-textarea" rows="2"
                                     placeholder="This server is currently undergoing maintenance. Please try again later."
                                     style="width:100%;max-width:640px;box-sizing:border-box;resize:vertical;"></textarea>
                                 <div class="fieldDescription">Shown as a red banner at the top of every page (login + home). Plain text only.</div>
@@ -2048,7 +2048,7 @@
                             <!-- Notification message (broadcast) -->
                             <div class="inputContainer" style="margin-bottom:1.5em;">
                                 <label class="inputLabel inputLabelUnfocused" for="maintenanceModeNotificationMessage">Active Session Notification</label>
-                                <textarea id="maintenanceModeNotificationMessage" is="emby-textarea" class="emby-textarea" rows="2"
+                                <textarea id="maintenanceModeNotificationMessage" data-config-key="MaintenanceModeNotificationMessage" data-config-fallback="" is="emby-textarea" class="emby-textarea" rows="2"
                                     placeholder="Server maintenance is starting. Please finish up and try again later."
                                     style="width:100%;max-width:640px;box-sizing:border-box;resize:vertical;"></textarea>
                                 <div class="fieldDescription">Sent as a native Jellyfin popup to anyone currently watching — reaches all clients (web, mobile, TV apps).</div>
@@ -2105,7 +2105,7 @@
                     <fieldset>
                         <legend class="sectionTitle">Developer Settings</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="devMode" is="emby-checkbox" type="checkbox"/><span>Dev Mode</span></label></div>
+                            <div class="checkboxContainer"><label><input id="devMode" data-config-key="DevMode" is="emby-checkbox" type="checkbox"/><span>Dev Mode</span></label></div>
                             <div class="je-setting-description" data-desc-for="devMode">
                                 <div class="fieldDescription">Enabling Dev Mode disables JS caching so scripts are always re-fetched from the server. <br>Default: OFF. <br>DO NOT CHANGE if you don't know why you are changing it.</div>
                             </div>
@@ -2118,7 +2118,7 @@
                     <fieldset>
                         <legend class="sectionTitle">Keyboard Config</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="disableAllShortcuts" is="emby-checkbox" type="checkbox"/><span>Disable Keyboard Shortcuts</span></label></div>
+                            <div class="checkboxContainer"><label><input id="disableAllShortcuts" data-config-key="DisableAllShortcuts" is="emby-checkbox" type="checkbox"/><span>Disable Keyboard Shortcuts</span></label></div>
                             <div class="je-setting-description" data-desc-for="disableAllShortcuts">
                                 <div class="fieldDescription">Disables all keyboard shortcuts, and hides the 'Shortcuts' tab in enhanced panel</div>
                                 <div class="je-info-banner">
