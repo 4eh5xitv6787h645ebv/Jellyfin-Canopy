@@ -207,7 +207,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             base.UpdateConfiguration(configuration);
             try
             {
-                Controllers.JellyfinEnhancedController.ClearAllSeerrCachesOnConfigChange();
+                Controllers.SeerrCaches.ClearAllSeerrCachesOnConfigChange();
                 _logger.Info("Jellyfin Enhanced: configuration updated — Seerr caches cleared.");
             }
             catch (Exception ex)
