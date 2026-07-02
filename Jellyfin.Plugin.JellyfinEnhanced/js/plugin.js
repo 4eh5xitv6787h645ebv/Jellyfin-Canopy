@@ -667,7 +667,12 @@
                 'arr/arr-links.js',
                 'arr/arr-tag-links.js',
                 'arr/requests-page.js',
-                'arr/calendar-page.js',
+                'arr/calendar-page-styles.js',
+                'arr/calendar-page-data.js',
+                'arr/calendar-page-render-events.js',
+                'arr/calendar-page-render-views.js',
+                'arr/calendar-page-actions.js',
+                'arr/calendar-page-init.js',
                 'arr/requests-custom-tab.js',
                 'arr/calendar-custom-tab.js',
 
