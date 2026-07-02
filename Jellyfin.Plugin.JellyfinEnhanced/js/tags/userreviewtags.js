@@ -24,15 +24,9 @@
 
         const promise = (async () => {
             try {
-                const url = ApiClient.getUrl(`/JellyfinEnhanced/reviews/${mediaType}/${tmdbKey}`);
-                const response = await fetch(url, {
-                    headers: { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"', 'X-Emby-Token': ApiClient.accessToken() }
-                });
-                if (!response.ok) {
-                    _reviewCache.set(tmdbKey, null);
-                    return null;
-                }
-                const data = await response.json();
+                // Core throws on non-OK responses, which lands in the catch below —
+                // same "cache null, return null" outcome as the old !response.ok branch.
+                const data = await JE.core.api.plugin(`/reviews/${mediaType}/${tmdbKey}`);
                 const rated = (data.reviews || []).filter(r => r.rating);
                 if (rated.length === 0) {
                     _reviewCache.set(tmdbKey, null);
