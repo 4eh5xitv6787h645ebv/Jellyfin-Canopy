@@ -15,8 +15,7 @@ using System;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using MediaBrowser.Controller.Configuration;
-using Newtonsoft.Json.Linq;
-using Newtonsoft.Json;
+using System.Text.Json.Nodes;
 using MediaBrowser.Common.Net;
 using System.Reflection;
 using System.Runtime.Loader;
@@ -253,7 +252,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             {
             string pluginPagesConfig = Path.Combine(applicationPaths.PluginConfigurationsPath, "Jellyfin.Plugin.PluginPages", "config.json");
 
-            JObject config = new JObject();
+            JsonObject config = new JsonObject();
             if (!File.Exists(pluginPagesConfig))
             {
                 FileInfo info = new FileInfo(pluginPagesConfig);
@@ -261,24 +260,27 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             }
             else
             {
-                config = JObject.Parse(File.ReadAllText(pluginPagesConfig));
+                // AsObject() throws on a non-object root, like JObject.Parse did —
+                // the outer catch turns either into a logged error, never a rewrite.
+                config = JsonNode.Parse(File.ReadAllText(pluginPagesConfig))!.AsObject();
             }
 
             if (!config.ContainsKey("pages"))
             {
-                config.Add("pages", new JArray());
+                config.Add("pages", new JsonArray());
             }
 
             var namespaceName = typeof(JellyfinEnhanced).Namespace;
+            var pages = config["pages"]!.AsArray();
 
-            JObject? hssPageConfig = config.Value<JArray>("pages")!.FirstOrDefault(x =>
-                x.Value<string>("Id") == namespaceName) as JObject;
+            JsonObject? hssPageConfig = pages.FirstOrDefault(x =>
+                (string?)x?["Id"] == namespaceName) as JsonObject;
 
             if (hssPageConfig != null)
             {
-                if ((hssPageConfig.Value<int?>("Version") ?? 0) < pluginPageConfigVersion)
+                if (((int?)hssPageConfig["Version"] ?? 0) < pluginPageConfigVersion)
                 {
-                    config.Value<JArray>("pages")!.Remove(hssPageConfig);
+                    pages.Remove(hssPageConfig);
                 }
             }
 
@@ -295,22 +297,22 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
 
             var pluginConfig = Configuration;
 
-            bool calendarExists = config.Value<JArray>("pages")!
-                .Any(x => x.Value<string>("Id") == $"{namespaceName}.CalendarPage");
+            bool calendarExists = pages
+                .Any(x => (string?)x?["Id"] == $"{namespaceName}.CalendarPage");
 
-            bool downloadsExists = config.Value<JArray>("pages")!
-                .Any(x => x.Value<string>("Id") == $"{namespaceName}.DownloadsPage");
+            bool downloadsExists = pages
+                .Any(x => (string?)x?["Id"] == $"{namespaceName}.DownloadsPage");
 
-            bool bookmarksExists = config.Value<JArray>("pages")!
-                .Any(x => x.Value<string>("Id") == $"{namespaceName}.BookmarksPage");
+            bool bookmarksExists = pages
+                .Any(x => (string?)x?["Id"] == $"{namespaceName}.BookmarksPage");
 
-            bool hiddenContentExists = config.Value<JArray>("pages")!
-                .Any(x => x.Value<string>("Id") == $"{namespaceName}.HiddenContentPage");
+            bool hiddenContentExists = pages
+                .Any(x => (string?)x?["Id"] == $"{namespaceName}.HiddenContentPage");
 
             // Only add calendar page if it's enabled and using plugin pages
             if (!calendarExists && pluginConfig.CalendarPageEnabled && pluginConfig.CalendarUsePluginPages)
             {
-                config.Value<JArray>("pages")!.Add(new JObject
+                pages.Add(new JsonObject
                 {
                     { "Id", $"{namespaceName}.CalendarPage" },
                     { "Url", $"{(supportsSubUrls ? "" : rootUrl)}/JellyfinEnhanced/calendarPage" },
@@ -322,18 +324,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             // Remove calendar page if it exists but is now disabled or not using plugin pages
             else if (calendarExists && (!pluginConfig.CalendarPageEnabled || !pluginConfig.CalendarUsePluginPages))
             {
-                var calendarPage = config.Value<JArray>("pages")!
-                    .FirstOrDefault(x => x.Value<string>("Id") == $"{namespaceName}.CalendarPage");
+                var calendarPage = pages
+                    .FirstOrDefault(x => (string?)x?["Id"] == $"{namespaceName}.CalendarPage");
                 if (calendarPage != null)
                 {
-                    config.Value<JArray>("pages")!.Remove(calendarPage);
+                    pages.Remove(calendarPage);
                 }
             }
 
             // Only add downloads page if it's enabled and using plugin pages
             if (!downloadsExists && pluginConfig.DownloadsPageEnabled && pluginConfig.DownloadsUsePluginPages)
             {
-                config.Value<JArray>("pages")!.Add(new JObject
+                pages.Add(new JsonObject
                 {
                     { "Id", $"{namespaceName}.DownloadsPage" },
                     { "Url", $"{(supportsSubUrls ? "" : rootUrl)}/JellyfinEnhanced/downloadsPage" },
@@ -345,18 +347,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             // Remove downloads page if it exists but is now disabled or not using plugin pages
             else if (downloadsExists && (!pluginConfig.DownloadsPageEnabled || !pluginConfig.DownloadsUsePluginPages))
             {
-                var downloadsPage = config.Value<JArray>("pages")!
-                    .FirstOrDefault(x => x.Value<string>("Id") == $"{namespaceName}.DownloadsPage");
+                var downloadsPage = pages
+                    .FirstOrDefault(x => (string?)x?["Id"] == $"{namespaceName}.DownloadsPage");
                 if (downloadsPage != null)
                 {
-                    config.Value<JArray>("pages")!.Remove(downloadsPage);
+                    pages.Remove(downloadsPage);
                 }
             }
 
             // Only add bookmarks page if it's enabled and using plugin pages
             if (!bookmarksExists && pluginConfig.BookmarksEnabled && pluginConfig.BookmarksUsePluginPages)
             {
-                config.Value<JArray>("pages")!.Add(new JObject
+                pages.Add(new JsonObject
                 {
                     { "Id", $"{namespaceName}.BookmarksPage" },
                     { "Url", $"{(supportsSubUrls ? "" : rootUrl)}/JellyfinEnhanced/bookmarksPage" },
@@ -368,18 +370,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             // Remove bookmarks page if it exists but is now disabled or not using plugin pages
             else if (bookmarksExists && (!pluginConfig.BookmarksEnabled || !pluginConfig.BookmarksUsePluginPages))
             {
-                var bookmarksPage = config.Value<JArray>("pages")!
-                    .FirstOrDefault(x => x.Value<string>("Id") == $"{namespaceName}.BookmarksPage");
+                var bookmarksPage = pages
+                    .FirstOrDefault(x => (string?)x?["Id"] == $"{namespaceName}.BookmarksPage");
                 if (bookmarksPage != null)
                 {
-                    config.Value<JArray>("pages")!.Remove(bookmarksPage);
+                    pages.Remove(bookmarksPage);
                 }
             }
 
             // Only add hidden content page if it's enabled and using plugin pages
             if (!hiddenContentExists && pluginConfig.HiddenContentEnabled && pluginConfig.HiddenContentUsePluginPages)
             {
-                config.Value<JArray>("pages")!.Add(new JObject
+                pages.Add(new JsonObject
                 {
                     { "Id", $"{namespaceName}.HiddenContentPage" },
                     { "Url", $"{(supportsSubUrls ? "" : rootUrl)}/JellyfinEnhanced/hiddenContentPage" },
@@ -391,15 +393,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             // Remove hidden content page if it exists but is now disabled or not using plugin pages
             else if (hiddenContentExists && (!pluginConfig.HiddenContentEnabled || !pluginConfig.HiddenContentUsePluginPages))
             {
-                var hiddenContentPage = config.Value<JArray>("pages")!
-                    .FirstOrDefault(x => x.Value<string>("Id") == $"{namespaceName}.HiddenContentPage");
+                var hiddenContentPage = pages
+                    .FirstOrDefault(x => (string?)x?["Id"] == $"{namespaceName}.HiddenContentPage");
                 if (hiddenContentPage != null)
                 {
-                    config.Value<JArray>("pages")!.Remove(hiddenContentPage);
+                    pages.Remove(hiddenContentPage);
                 }
             }
 
-            File.WriteAllText(pluginPagesConfig, config.ToString(Formatting.Indented));
+            // PluginPages' config.json is admin-visible on disk: keep the same
+            // human-readable shape JObject.ToString(Formatting.Indented) produced
+            // (2-space indent, raw non-ASCII) via the shared persistence options.
+            File.WriteAllText(pluginPagesConfig, config.ToJsonString(PersistedJson.WriteOptions));
             }
             catch (Exception ex)
             {
