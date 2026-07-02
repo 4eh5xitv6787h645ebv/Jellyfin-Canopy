@@ -161,7 +161,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         // Lets an admin see what other users have hidden, surfaced as a read-only user filter on
         // the Hidden Content page/tab. Both endpoints are admin-gated server-side via IsAdminUser()
         // and never mutate another user's data — the client `isAdmin` flag is a UX convenience only,
-        // never the security boundary. See js/enhanced/hidden-content-page.js for the consuming UI.
+        // never the security boundary. See the js/enhanced/hidden-content-page-* modules for the consuming UI.
 
         /// <summary>
         /// Admin-only: lists users who have hidden at least one item, together with their
