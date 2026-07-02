@@ -36,7 +36,7 @@ using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
-using static Jellyfin.Plugin.JellyfinEnhanced.Controllers.SeerrCaches;
+using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -56,9 +56,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             IHttpClientFactory httpClientFactory,
             Logger logger,
             IUserManager userManager,
+            ISeerrCache seerrCache,
             IUserDataManager userDataManager,
             ILibraryManager libraryManager)
-            : base(httpClientFactory, logger, userManager)
+            : base(httpClientFactory, logger, userManager, seerrCache)
         {
             _userDataManager = userDataManager;
             _libraryManager = libraryManager;
@@ -443,14 +444,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
 
                 // Claim the throttle slot atomically to prevent concurrent imports
-                lock (_importThrottleLock)
+                lock (_seerrCache.ImportThrottleLock)
                 {
-                    if ((DateTime.UtcNow - _lastManualImport).TotalSeconds < 30)
+                    if ((DateTime.UtcNow - _seerrCache.LastManualImport).TotalSeconds < 30)
                     {
                         return StatusCode(429, new { error = "Import was run recently. Please wait before retrying." });
                     }
 
-                    _lastManualImport = DateTime.UtcNow;
+                    _seerrCache.LastManualImport = DateTime.UtcNow;
                 }
 
                 _logger.Info("[Manual User Import] Starting manual Jellyseerr user import...");
@@ -472,7 +473,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 // forcing a stampede on next request.
                 if (importResult.Reached && importResult.Imported > 0)
                 {
-                    ClearUserCaches();
+                    _seerrCache.ClearUserCaches();
                 }
 
                 // Reset the throttle slot when nothing was imported AND we got
@@ -480,9 +481,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 // and retry without waiting 30s.
                 if (importResult.Imported == 0 && importResult.Errors.Count > 0)
                 {
-                    lock (_importThrottleLock)
+                    lock (_seerrCache.ImportThrottleLock)
                     {
-                        _lastManualImport = DateTime.MinValue;
+                        _seerrCache.LastManualImport = DateTime.MinValue;
                     }
                 }
 

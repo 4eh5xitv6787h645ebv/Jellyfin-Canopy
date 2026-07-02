@@ -42,6 +42,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
                     AllowAutoRedirect = false
                 });
             serviceCollection.AddSingleton<Logger>();
+            // Process-wide Seerr/TMDB caches (formerly the static SeerrCaches
+            // holder). Must stay a singleton: controllers, the user-import task
+            // and the plugin's config-change hook all share one instance.
+            serviceCollection.AddSingleton<Services.Jellyseerr.ISeerrCache, Services.Jellyseerr.SeerrCache>();
             serviceCollection.AddSingleton<UserConfigurationManager>();
             serviceCollection.AddSingleton<AutoSeasonRequestService>();
             serviceCollection.AddSingleton<AutoSeasonRequestMonitor>();

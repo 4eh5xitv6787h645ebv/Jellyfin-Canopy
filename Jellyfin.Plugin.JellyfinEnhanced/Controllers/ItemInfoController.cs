@@ -36,7 +36,7 @@ using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
-using static Jellyfin.Plugin.JellyfinEnhanced.Controllers.SeerrCaches;
+using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -56,9 +56,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             IHttpClientFactory httpClientFactory,
             Logger logger,
             IUserManager userManager,
+            ISeerrCache seerrCache,
             ILibraryManager libraryManager,
             IItemRepository itemRepository)
-            : base(httpClientFactory, logger, userManager)
+            : base(httpClientFactory, logger, userManager, seerrCache)
         {
             _libraryManager = libraryManager;
             _itemRepository = itemRepository;
@@ -420,8 +421,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 // Check server-side cache first to avoid hitting upstream Seerr
                 // on every request. This is critical for large avatars (e.g., animated
                 // GIFs) that would otherwise be re-downloaded on every conditional request.
-                if (_avatarCache.TryGetValue(cacheKey, out var cached)
-                    && DateTime.UtcNow - cached.CachedAt < _avatarCacheDuration)
+                if (_seerrCache.AvatarCache.TryGetValue(cacheKey, out var cached)
+                    && DateTime.UtcNow - cached.CachedAt < _seerrCache.AvatarCacheDuration)
                 {
                     // Serve 304 if client already has this version
                     if (Request.Headers.TryGetValue("If-None-Match", out var cachedIfNoneMatch)
@@ -476,15 +477,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 var etag = $"\"{Convert.ToHexString(hash)}\"";
 
                 // Store in server-side cache and evict expired entries periodically
-                _avatarCache[cacheKey] = (content, contentType, etag, DateTime.UtcNow);
-                if (_avatarCache.Count > 50 || _avatarCache.Count % 10 == 0)
+                _seerrCache.AvatarCache[cacheKey] = (content, contentType, etag, DateTime.UtcNow);
+                if (_seerrCache.AvatarCache.Count > 50 || _seerrCache.AvatarCache.Count % 10 == 0)
                 {
-                    foreach (var key in _avatarCache
-                        .Where(kv => DateTime.UtcNow - kv.Value.CachedAt > _avatarCacheDuration)
+                    foreach (var key in _seerrCache.AvatarCache
+                        .Where(kv => DateTime.UtcNow - kv.Value.CachedAt > _seerrCache.AvatarCacheDuration)
                         .Select(kv => kv.Key)
                         .ToList())
                     {
-                        _avatarCache.TryRemove(key, out _);
+                        _seerrCache.AvatarCache.TryRemove(key, out _);
                     }
                 }
 

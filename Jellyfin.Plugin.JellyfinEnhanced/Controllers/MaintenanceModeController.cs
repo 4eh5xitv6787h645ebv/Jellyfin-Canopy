@@ -36,6 +36,7 @@ using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
+using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -55,9 +56,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             IHttpClientFactory httpClientFactory,
             Logger logger,
             IUserManager userManager,
+            ISeerrCache seerrCache,
             MediaBrowser.Controller.Session.ISessionManager sessionManager,
             Services.MaintenanceModeService maintenanceModeService)
-            : base(httpClientFactory, logger, userManager)
+            : base(httpClientFactory, logger, userManager, seerrCache)
         {
             _sessionManager = sessionManager;
             _maintenanceModeService = maintenanceModeService;

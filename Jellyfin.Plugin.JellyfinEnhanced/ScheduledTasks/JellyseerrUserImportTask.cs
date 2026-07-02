@@ -4,9 +4,9 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using Jellyfin.Plugin.JellyfinEnhanced.Controllers;
 using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Tasks;
 
@@ -17,15 +17,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
         private readonly IUserManager _userManager;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly Logger _logger;
+        private readonly ISeerrCache _seerrCache;
 
         public JellyseerrUserImportTask(
             IUserManager userManager,
             IHttpClientFactory httpClientFactory,
-            Logger logger)
+            Logger logger,
+            ISeerrCache seerrCache)
         {
             _userManager = userManager;
             _httpClientFactory = httpClientFactory;
             _logger = logger;
+            _seerrCache = seerrCache;
         }
 
         public string Name => "Import Jellyfin Users to Seerr";
@@ -89,7 +92,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                 // Only flush caches when at least one user was actually
                 // imported — otherwise a 0-imported partial-failure run wipes
                 // every healthy cache entry.
-                SeerrCaches.ClearUserCaches();
+                _seerrCache.ClearUserCaches();
             }
 
             if (importResult.Reached)

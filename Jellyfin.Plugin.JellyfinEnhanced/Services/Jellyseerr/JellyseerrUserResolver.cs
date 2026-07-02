@@ -14,7 +14,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
     /// so both singleton services share one process-wide cache, matching the previous
     /// effective semantics (two identical per-singleton dicts).
     ///
-    /// Note: the controller base's own Seerr user resolution (SeerrCaches) is a
+    /// Note: the controller base's own Seerr user resolution (SeerrCache) is a
     /// separate copy consolidated in a later phase.
     /// </summary>
     internal class JellyseerrUserResolver

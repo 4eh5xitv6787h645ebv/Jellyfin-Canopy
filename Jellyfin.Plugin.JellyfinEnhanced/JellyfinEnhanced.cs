@@ -208,7 +208,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             base.UpdateConfiguration(configuration);
             try
             {
-                Controllers.SeerrCaches.ClearAllSeerrCachesOnConfigChange();
+                // The plugin itself is not DI-resolved; SeerrCache.Instance is the
+                // transitional bridge to the one DI-registered cache singleton the
+                // controllers use. Null only before the first cache consumer is
+                // constructed, i.e. when there is nothing to clear yet.
+                Services.Jellyseerr.SeerrCache.Instance?.ClearAllSeerrCachesOnConfigChange();
                 _logger.Info("Jellyfin Enhanced: configuration updated — Seerr caches cleared.");
             }
             catch (Exception ex)

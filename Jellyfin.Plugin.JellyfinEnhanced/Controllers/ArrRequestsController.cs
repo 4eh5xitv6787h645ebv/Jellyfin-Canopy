@@ -36,7 +36,7 @@ using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
-using static Jellyfin.Plugin.JellyfinEnhanced.Controllers.SeerrCaches;
+using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -52,8 +52,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         public ArrRequestsController(
             IHttpClientFactory httpClientFactory,
             Logger logger,
-            IUserManager userManager)
-            : base(httpClientFactory, logger, userManager)
+            IUserManager userManager,
+            ISeerrCache seerrCache)
+            : base(httpClientFactory, logger, userManager, seerrCache)
         {
         }
 
@@ -661,14 +662,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         private async Task<(string? Title, int? Year, string? PosterUrl, string? DigitalReleaseDate, string? TheatricalReleaseDate, string? InitialAirDate, string? NextAirDate)> EnrichWithTmdbData(HttpClient client, int tmdbId, string type, string jellyseerrUrl, string apiKey)
         {
             var cacheKey = $"{(type == "movie" ? "movie" : "tv")}:{tmdbId}";
-            var cacheTtl = GetTmdbEnrichmentCacheTtl();
+            var cacheTtl = _seerrCache.GetTmdbEnrichmentCacheTtl();
             var cacheEnabled = !(JellyfinEnhanced.Instance?.Configuration?.JellyseerrDisableCache ?? false);
 
             if (cacheEnabled)
             {
-                lock (_tmdbEnrichmentCacheLock)
+                lock (_seerrCache.TmdbEnrichmentCacheLock)
                 {
-                    if (_tmdbEnrichmentCache.TryGetValue(cacheKey, out var cached) &&
+                    if (_seerrCache.TmdbEnrichmentCache.TryGetValue(cacheKey, out var cached) &&
                         DateTime.UtcNow - cached.CachedAt < cacheTtl)
                     {
                         var hit = cached.Data;
@@ -788,14 +789,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             TmdbEnrichmentResult result;
             if (cacheEnabled)
             {
-                var fetchTask = _tmdbEnrichmentInFlight.GetOrAdd(cacheKey, _ => FetchEnrichmentAsync());
+                var fetchTask = _seerrCache.TmdbEnrichmentInFlight.GetOrAdd(cacheKey, _ => FetchEnrichmentAsync());
                 try
                 {
                     result = await fetchTask;
                 }
                 finally
                 {
-                    _tmdbEnrichmentInFlight.TryRemove(cacheKey, out _);
+                    _seerrCache.TmdbEnrichmentInFlight.TryRemove(cacheKey, out _);
                 }
 
                 // don't cache empty enrichment
@@ -809,19 +810,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         && string.IsNullOrEmpty(result.PosterUrl));
                 if (!isEmpty)
                 {
-                    lock (_tmdbEnrichmentCacheLock)
+                    lock (_seerrCache.TmdbEnrichmentCacheLock)
                     {
-                        _tmdbEnrichmentCache[cacheKey] = (result!, DateTime.UtcNow);
+                        _seerrCache.TmdbEnrichmentCache[cacheKey] = (result!, DateTime.UtcNow);
 
-                        if (_tmdbEnrichmentCache.Count > 500 || _tmdbEnrichmentCache.Count % 100 == 0)
+                        if (_seerrCache.TmdbEnrichmentCache.Count > 500 || _seerrCache.TmdbEnrichmentCache.Count % 100 == 0)
                         {
-                            var staleKeys = _tmdbEnrichmentCache
+                            var staleKeys = _seerrCache.TmdbEnrichmentCache
                                 .Where(kv => DateTime.UtcNow - kv.Value.CachedAt > cacheTtl)
                                 .Select(kv => kv.Key)
                                 .ToList();
                             foreach (var staleKey in staleKeys)
                             {
-                                _tmdbEnrichmentCache.Remove(staleKey);
+                                _seerrCache.TmdbEnrichmentCache.Remove(staleKey);
                             }
                         }
                     }

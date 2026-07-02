@@ -36,7 +36,7 @@ using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
-using static Jellyfin.Plugin.JellyfinEnhanced.Controllers.SeerrCaches;
+using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -52,25 +52,28 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         protected readonly IHttpClientFactory _httpClientFactory;
         protected readonly Logger _logger;
         protected readonly IUserManager _userManager;
+        protected readonly ISeerrCache _seerrCache;
 
         protected JellyfinEnhancedControllerBase(
             IHttpClientFactory httpClientFactory,
             Logger logger,
-            IUserManager userManager)
+            IUserManager userManager,
+            ISeerrCache seerrCache)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _userManager = userManager;
+            _seerrCache = seerrCache;
         }
 
         private async Task<bool> IsSeerrReachableCached()
         {
-            lock (_seerrStatusCacheLock)
+            lock (_seerrCache.SeerrStatusCacheLock)
             {
-                if (_seerrStatusCache.HasValue
-                    && DateTime.UtcNow - _seerrStatusCache.Value.CachedAt < _seerrStatusCacheTtl)
+                if (_seerrCache.SeerrStatusCache.HasValue
+                    && DateTime.UtcNow - _seerrCache.SeerrStatusCache.Value.CachedAt < _seerrCache.SeerrStatusCacheTtl)
                 {
-                    return _seerrStatusCache.Value.Active;
+                    return _seerrCache.SeerrStatusCache.Value.Active;
                 }
             }
 
@@ -82,9 +85,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 using var doc = JsonDocument.Parse(statusJson);
                 if (doc.RootElement.TryGetProperty("active", out var a)) active = a.GetBoolean();
             }
-            lock (_seerrStatusCacheLock)
+            lock (_seerrCache.SeerrStatusCacheLock)
             {
-                _seerrStatusCache = (active, DateTime.UtcNow);
+                _seerrCache.SeerrStatusCache = (active, DateTime.UtcNow);
             }
             return active;
         }
@@ -107,13 +110,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             bool cacheEnabled = !config.JellyseerrDisableCache && !bypassCache;
             if (cacheEnabled)
             {
-                lock (_userCacheLock)
+                lock (_seerrCache.UserCacheLock)
                 {
-                    if (_userCache.TryGetValue(jellyfinUserId, out var cached))
+                    if (_seerrCache.UserCache.TryGetValue(jellyfinUserId, out var cached))
                     {
                         // Negative entries use a much shorter TTL so transient
                         // failures don't poison discovery for 30 min after recovery.
-                        var ttl = cached.User == null ? TimeSpan.FromSeconds(60) : GetUserIdCacheTtl();
+                        var ttl = cached.User == null ? TimeSpan.FromSeconds(60) : _seerrCache.GetUserIdCacheTtl();
                         if (DateTime.UtcNow - cached.CachedAt < ttl)
                         {
                             return cached.User;
@@ -156,9 +159,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         {
                             if (cacheEnabled)
                             {
-                                lock (_userCacheLock)
+                                lock (_seerrCache.UserCacheLock)
                                 {
-                                    _userCache[jellyfinUserId] = (user, DateTime.UtcNow);
+                                    _seerrCache.UserCache[jellyfinUserId] = (user, DateTime.UtcNow);
                                 }
                             }
                             return user;
@@ -189,9 +192,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 {
                     if (cacheEnabled)
                     {
-                        lock (_userCacheLock)
+                        lock (_seerrCache.UserCacheLock)
                         {
-                            _userCache[jellyfinUserId] = (importedUser, DateTime.UtcNow);
+                            _seerrCache.UserCache[jellyfinUserId] = (importedUser, DateTime.UtcNow);
                         }
                     }
 
@@ -204,9 +207,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // next request can retry immediately.
             if (cacheEnabled && importDefinite)
             {
-                lock (_userCacheLock)
+                lock (_seerrCache.UserCacheLock)
                 {
-                    _userCache[jellyfinUserId] = (null, DateTime.UtcNow);
+                    _seerrCache.UserCache[jellyfinUserId] = (null, DateTime.UtcNow);
                 }
             }
 
@@ -331,10 +334,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // Check cache first (unless disabled)
             if (cacheEnabled)
             {
-                lock (_userIdCacheLock)
+                lock (_seerrCache.UserIdCacheLock)
                 {
-                    if (_userIdCache.TryGetValue(jellyfinUserId, out var cached) &&
-                        DateTime.UtcNow - cached.CachedAt < GetUserIdCacheTtl())
+                    if (_seerrCache.UserIdCache.TryGetValue(jellyfinUserId, out var cached) &&
+                        DateTime.UtcNow - cached.CachedAt < _seerrCache.GetUserIdCacheTtl())
                     {
                         return cached.JellyseerrUserId;
                     }
@@ -346,9 +349,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
             if (!string.IsNullOrEmpty(jellyseerrUserId) && cacheEnabled)
             {
-                lock (_userIdCacheLock)
+                lock (_seerrCache.UserIdCacheLock)
                 {
-                    _userIdCache[jellyfinUserId] = (jellyseerrUserId, DateTime.UtcNow);
+                    _seerrCache.UserIdCache[jellyfinUserId] = (jellyseerrUserId, DateTime.UtcNow);
                 }
             }
 
@@ -408,7 +411,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             return false;
         }
 
-        private static void EvictMovieTvCacheForRequest(string body)
+        // instance method (was static) because the response cache is now on the injected ISeerrCache
+        private void EvictMovieTvCacheForRequest(string body)
         {
             if (string.IsNullOrEmpty(body)) return;
             try
@@ -425,14 +429,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 // for `/similar`, `/recommendations`, `/season/1`, etc).
                 var bareSuffix = $":/api/v1/{mediaType}/{mediaId}";
                 var subPathInfix = $":/api/v1/{mediaType}/{mediaId}/";
-                lock (_responseCacheLock)
+                lock (_seerrCache.ResponseCacheLock)
                 {
-                    var keys = _responseCache.Keys
+                    var keys = _seerrCache.ResponseCache.Keys
                         .Where(k =>
                             k.EndsWith(bareSuffix, StringComparison.Ordinal)
                             || k.Contains(subPathInfix, StringComparison.Ordinal))
                         .ToList();
-                    foreach (var k in keys) _responseCache.Remove(k);
+                    foreach (var k in keys) _seerrCache.ResponseCache.Remove(k);
                 }
             }
             catch { /* best-effort eviction */ }
@@ -580,10 +584,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 : $"{jellyfinUserId}:{apiPath}";
             if (isCacheable)
             {
-                lock (_responseCacheLock)
+                lock (_seerrCache.ResponseCacheLock)
                 {
-                    if (_responseCache.TryGetValue(cacheKey, out var cached) &&
-                        DateTime.UtcNow - cached.CachedAt < GetResponseCacheTtl())
+                    if (_seerrCache.ResponseCache.TryGetValue(cacheKey, out var cached) &&
+                        DateTime.UtcNow - cached.CachedAt < _seerrCache.GetResponseCacheTtl())
                     {
                         return Content(cached.Content, "application/json");
                     }
@@ -641,18 +645,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         // pages from being cached as JSON for 10 min.
                         if (isCacheable)
                         {
-                            lock (_responseCacheLock)
+                            lock (_seerrCache.ResponseCacheLock)
                             {
-                                _responseCache[cacheKey] = (json, DateTime.UtcNow);
+                                _seerrCache.ResponseCache[cacheKey] = (json, DateTime.UtcNow);
 
-                                if (_responseCache.Count > 200 || _responseCache.Count % 50 == 0)
+                                if (_seerrCache.ResponseCache.Count > 200 || _seerrCache.ResponseCache.Count % 50 == 0)
                                 {
-                                    var staleKeys = _responseCache
-                                        .Where(kv => DateTime.UtcNow - kv.Value.CachedAt > GetResponseCacheTtl())
+                                    var staleKeys = _seerrCache.ResponseCache
+                                        .Where(kv => DateTime.UtcNow - kv.Value.CachedAt > _seerrCache.GetResponseCacheTtl())
                                         .Select(kv => kv.Key)
                                         .ToList();
                                     foreach (var key in staleKeys)
-                                        _responseCache.Remove(key);
+                                        _seerrCache.ResponseCache.Remove(key);
                                 }
                             }
                         }
