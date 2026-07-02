@@ -579,6 +579,7 @@
                 'core/dom-observer.js',
                 'core/ui-kit.js',
                 'core/api-client.js',
+                'core/tag-renderer-base.js',
 
                 // enhanced
                 'enhanced/config.js',
