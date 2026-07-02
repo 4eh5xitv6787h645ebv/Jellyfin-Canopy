@@ -79,6 +79,7 @@
   "JellyseerrExcludeBlocklistedItems": false,
   "JellyseerrExcludeLibraryItems": true,
   "JellyseerrShowAdvanced": false,
+  "JellyseerrShowCollectionDiscovery": true,
   "JellyseerrShowGenreDiscovery": true,
   "JellyseerrShowIssueIndicator": false,
   "JellyseerrShowNetworkDiscovery": true,

@@ -226,6 +226,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 Public("JellyseerrShowGenreDiscovery", c => c.JellyseerrShowGenreDiscovery),
                 Public("JellyseerrShowTagDiscovery", c => c.JellyseerrShowTagDiscovery),
                 Public("JellyseerrShowPersonDiscovery", c => c.JellyseerrShowPersonDiscovery),
+                // Was missing from the hand-written projection: the configPage toggle saved it,
+                // but the client gate `pluginConfig.JellyseerrShowCollectionDiscovery !== false`
+                // never saw the key, so disabling collection discovery had no effect.
+                Public("JellyseerrShowCollectionDiscovery", c => c.JellyseerrShowCollectionDiscovery),
                 Public("JellyseerrExcludeLibraryItems", c => c.JellyseerrExcludeLibraryItems),
                 Public("JellyseerrExcludeBlocklistedItems", c => c.JellyseerrExcludeBlocklistedItems),
                 Public("JellyseerrDisableCache", c => c.JellyseerrDisableCache),
