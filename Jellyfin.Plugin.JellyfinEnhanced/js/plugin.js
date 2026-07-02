@@ -617,6 +617,7 @@
                 'jellyseerr/issue-reporter.js',
                 'jellyseerr/seamless-scroll.js',
                 'jellyseerr/discovery-filter-utils.js',
+                'jellyseerr/discovery-base.js',
                 'jellyseerr/network-discovery.js',
                 'jellyseerr/person-discovery.js',
                 'jellyseerr/genre-discovery.js',
