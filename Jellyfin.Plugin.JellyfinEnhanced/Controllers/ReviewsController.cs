@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -54,7 +55,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         public ReviewsController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<ReviewsController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
@@ -113,7 +114,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 // below will silently no-op, so warn here to give a
                 // diagnostic trail if a hidden user reports the symptom
                 // again with no obvious cause.
-                _logger.Warning($"GetItemReviews: could not resolve viewer user id from claims on {mediaType}:{tmdbId}; self-review bypass disabled.");
+                _logger.LogWarning($"GetItemReviews: could not resolve viewer user id from claims on {mediaType}:{tmdbId}; self-review bypass disabled.");
             }
 
             var suffix = $":{mediaType}:{tmdbId}";
@@ -171,7 +172,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         {
                             if (hideHiddenAuthors || hideDisabledAuthors)
                             {
-                                _logger.Warning($"Hiding orphaned review for unknown userId={review.UserId} on {mediaType}:{tmdbId} from non-admin viewer.");
+                                _logger.LogWarning($"Hiding orphaned review for unknown userId={review.UserId} on {mediaType}:{tmdbId} from non-admin viewer.");
                                 continue;
                             }
                         }
@@ -198,7 +199,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warning($"Skipping review key={kvp.Key} due to filter error: {ex.Message}");
+                    _logger.LogWarning($"Skipping review key={kvp.Key} due to filter error: {ex.Message}");
                 }
             }
 
@@ -239,12 +240,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 var now = DateTime.UtcNow.ToString("o");
                 _userConfigurationManager.UpsertReview(
                     userIdN, mediaType, tmdbId, normalizedContent, payload.Rating, now);
-                _logger.Info($"Saved review for {mediaType}:{tmdbId} by user {ResolveUserDisplay(userIdN)}.");
+                _logger.LogInformation($"Saved review for {mediaType}:{tmdbId} by user {ResolveUserDisplay(userIdN)}.");
                 return Ok(new { success = true });
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to save review for user {ResolveUserDisplay(userIdN)}: {ex.Message}");
+                _logger.LogError($"Failed to save review for user {ResolveUserDisplay(userIdN)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to save review." });
             }
         }
@@ -285,12 +286,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 var now = DateTime.UtcNow.ToString("o");
                 _userConfigurationManager.UpsertReview(
                     userIdN, mediaType, tmdbId, normalizedContent, payload.Rating, now);
-                _logger.Info($"Admin saved review for {mediaType}:{tmdbId} on behalf of {ResolveUserDisplay(userIdN)}.");
+                _logger.LogInformation($"Admin saved review for {mediaType}:{tmdbId} on behalf of {ResolveUserDisplay(userIdN)}.");
                 return Ok(new { success = true });
             }
             catch (Exception ex)
             {
-                _logger.Error($"Admin failed to save review for user {ResolveUserDisplay(userIdN)}: {ex.Message}");
+                _logger.LogError($"Admin failed to save review for user {ResolveUserDisplay(userIdN)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to save review." });
             }
         }
@@ -313,12 +314,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             try
             {
                 if (_userConfigurationManager.DeleteReview(userIdN, mediaType, tmdbId))
-                    _logger.Info($"Deleted review for {mediaType}:{tmdbId} by user {ResolveUserDisplay(userIdN)}.");
+                    _logger.LogInformation($"Deleted review for {mediaType}:{tmdbId} by user {ResolveUserDisplay(userIdN)}.");
                 return Ok(new { success = true });
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to delete review for user {ResolveUserDisplay(userIdN)}: {ex.Message}");
+                _logger.LogError($"Failed to delete review for user {ResolveUserDisplay(userIdN)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to delete review." });
             }
         }
@@ -345,7 +346,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 var removed = _userConfigurationManager.DeleteReview(userIdN, mediaType, tmdbId);
                 if (removed)
                 {
-                    _logger.Info($"Admin deleted review for {mediaType}:{tmdbId} by user {ResolveUserDisplay(userIdN)}.");
+                    _logger.LogInformation($"Admin deleted review for {mediaType}:{tmdbId} by user {ResolveUserDisplay(userIdN)}.");
                     return Ok(new { success = true, removed = true });
                 }
                 // Fail explicitly: nothing to delete means the review was
@@ -357,7 +358,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Error($"Admin failed to delete review for {mediaType}:{tmdbId} user {ResolveUserDisplay(userIdN)}: {ex.Message}");
+                _logger.LogError($"Admin failed to delete review for {mediaType}:{tmdbId} user {ResolveUserDisplay(userIdN)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to delete review." });
             }
         }

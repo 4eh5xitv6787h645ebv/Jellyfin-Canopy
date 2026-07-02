@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -54,7 +55,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         public ActiveStreamsController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<ActiveStreamsController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
@@ -139,7 +140,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to get active sessions: {ex.Message}");
+                _logger.LogError($"Failed to get active sessions: {ex.Message}");
                 return StatusCode(500, "Failed to retrieve sessions.");
             }
         }
@@ -200,7 +201,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warning($"Broadcast: failed to send to session {session.Id} ({session.UserName}): {ex.Message}");
+                    _logger.LogWarning($"Broadcast: failed to send to session {session.Id} ({session.UserName}): {ex.Message}");
                     errors.Add($"{session.UserName}: {ex.Message}");
                     skipped++;
                 }

@@ -4,16 +4,17 @@ using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Model.Tasks;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
 {
     /// Scheduled task that signals all clients to clear cached translations on next page load.
     public partial class ClearTranslationCacheTask : IScheduledTask
     {
-        private readonly Logger _logger;
+        private readonly ILogger<ClearTranslationCacheTask> _logger;
         private readonly IPluginConfigProvider _configProvider;
 
-        public ClearTranslationCacheTask(Logger logger, IPluginConfigProvider configProvider)
+        public ClearTranslationCacheTask(ILogger<ClearTranslationCacheTask> logger, IPluginConfigProvider configProvider)
         {
             _logger = logger;
             _configProvider = configProvider;
@@ -43,7 +44,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             var config = _configProvider.ConfigurationOrNull;
             if (config == null)
             {
-                _logger.Warning("[Clear Translation Cache] Plugin configuration is not available.");
+                _logger.LogWarning("[Clear Translation Cache] Plugin configuration is not available.");
                 progress?.Report(100);
                 return Task.CompletedTask;
             }
@@ -51,7 +52,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             config.ClearTranslationCacheTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             JellyfinEnhanced.Instance!.SaveConfiguration();
 
-            _logger.Info($"[Clear Translation Cache] Translation cache clear signal set at {new DateTimeOffset(DateTimeOffset.FromUnixTimeMilliseconds(config.ClearTranslationCacheTimestamp).DateTime, TimeSpan.Zero):O}. All clients will clear their translation cache on next page load.");
+            _logger.LogInformation($"[Clear Translation Cache] Translation cache clear signal set at {new DateTimeOffset(DateTimeOffset.FromUnixTimeMilliseconds(config.ClearTranslationCacheTimestamp).DateTime, TimeSpan.Zero):O}. All clients will clear their translation cache on next page load.");
 
             progress?.Report(100);
             return Task.CompletedTask;

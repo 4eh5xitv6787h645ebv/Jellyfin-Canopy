@@ -2,6 +2,7 @@ using System;
 using Jellyfin.Data.Enums;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 {
@@ -13,9 +14,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
     {
         private readonly ILibraryManager _libraryManager;
         private readonly TagCacheService _tagCacheService;
-        private readonly Logger _logger;
+        private readonly ILogger<TagCacheMonitor> _logger;
 
-        public TagCacheMonitor(ILibraryManager libraryManager, TagCacheService tagCacheService, Logger logger)
+        public TagCacheMonitor(ILibraryManager libraryManager, TagCacheService tagCacheService, ILogger<TagCacheMonitor> logger)
         {
             _libraryManager = libraryManager;
             _tagCacheService = tagCacheService;
@@ -31,7 +32,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             _libraryManager.ItemAdded += OnItemChanged;
             _libraryManager.ItemUpdated += OnItemChanged;
             _libraryManager.ItemRemoved += OnItemRemoved;
-            _logger.Info("[TagCacheMonitor] Subscribed to ItemAdded, ItemUpdated, and ItemRemoved events");
+            _logger.LogInformation("[TagCacheMonitor] Subscribed to ItemAdded, ItemUpdated, and ItemRemoved events");
         }
 
         /// <summary>
@@ -46,7 +47,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             _libraryManager.ItemAdded += OnItemChanged;
             _libraryManager.ItemUpdated += OnItemChanged;
             _libraryManager.ItemRemoved += OnItemRemoved;
-            _logger.Info("[TagCacheMonitor] Event subscriptions active");
+            _logger.LogInformation("[TagCacheMonitor] Event subscriptions active");
         }
 
         private void OnItemChanged(object? sender, ItemChangeEventArgs e)
@@ -79,7 +80,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             catch (Exception ex)
             {
-                _logger.Warning($"[TagCacheMonitor] Error updating cache for {item.Id}: {ex.Message}");
+                _logger.LogWarning($"[TagCacheMonitor] Error updating cache for {item.Id}: {ex.Message}");
             }
         }
 
@@ -92,7 +93,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             catch (Exception ex)
             {
-                _logger.Warning($"[TagCacheMonitor] Error removing {e.Item.Id} from cache: {ex.Message}");
+                _logger.LogWarning($"[TagCacheMonitor] Error removing {e.Item.Id} from cache: {ex.Message}");
             }
         }
 

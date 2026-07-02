@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -51,14 +52,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     public abstract class JellyfinEnhancedControllerBase : ControllerBase
     {
         protected readonly IHttpClientFactory _httpClientFactory;
-        protected readonly Logger _logger;
+        protected readonly ILogger _logger;
         protected readonly IUserManager _userManager;
         protected readonly ISeerrCache _seerrCache;
         protected readonly IPluginConfigProvider _configProvider;
 
         protected JellyfinEnhancedControllerBase(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider)
@@ -101,7 +102,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
             {
-                _logger.Warning("Seerr configuration is missing. Cannot look up user ID.");
+                _logger.LogWarning("Seerr configuration is missing. Cannot look up user ID.");
                 return null;
             }
 
@@ -129,7 +130,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
             }
 
-            // _logger.Info($"Attempting to find Seerr user for Jellyfin User ID: {jellyfinUserId}");
+            // _logger.LogInformation($"Attempting to find Seerr user for Jellyfin User ID: {jellyfinUserId}");
             var urls = config.JellyseerrUrls.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             var httpClient = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
             httpClient.Timeout = TimeSpan.FromSeconds(15);
@@ -149,7 +150,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     {
                         // Distinct error logging by class lets admins triage
                         // (HTML response = reverse proxy, 401 = key wrong, etc.)
-                        _logger.Warning($"Failed to fetch users from Seerr at {trimmedUrl}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                        _logger.LogWarning($"Failed to fetch users from Seerr at {trimmedUrl}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
                         continue;
                     }
 
@@ -170,12 +171,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             }
                             return user;
                         }
-                        _logger.Info($"No matching Jellyfin User ID found in the {users?.Count ?? 0} users from {trimmedUrl}");
+                        _logger.LogInformation($"No matching Jellyfin User ID found in the {users?.Count ?? 0} users from {trimmedUrl}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error($"Exception while trying to get Seerr user ID from {trimmedUrl}: {ex.Message}");
+                    _logger.LogError($"Exception while trying to get Seerr user ID from {trimmedUrl}: {ex.Message}");
                 }
             }
 
@@ -189,7 +190,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var importDefinite = false;
             if (allowAutoImport && config.JellyseerrAutoImportUsers)
             {
-                _logger.Info($"User not found in Jellyseerr. Attempting just-in-time import for Jellyfin User ID {ResolveUserDisplay(jellyfinUserId)}...");
+                _logger.LogInformation($"User not found in Jellyseerr. Attempting just-in-time import for Jellyfin User ID {ResolveUserDisplay(jellyfinUserId)}...");
                 var (importedUser, definite) = await TryAutoImportJellyseerrUser(jellyfinUserId, urls, httpClient);
                 importDefinite = definite;
                 if (importedUser != null)
@@ -217,7 +218,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
             }
 
-            _logger.Warning($"Could not find or import a matching Seerr user for Jellyfin User ID {ResolveUserDisplay(jellyfinUserId)} after checking all URLs.");
+            _logger.LogWarning($"Could not find or import a matching Seerr user for Jellyfin User ID {ResolveUserDisplay(jellyfinUserId)} after checking all URLs.");
             return null;
         }
 
@@ -253,11 +254,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         if (!string.IsNullOrEmpty(importError.Message)
                             && importError.Message.Contains("UNIQUE constraint failed: user.email", StringComparison.OrdinalIgnoreCase))
                         {
-                            _logger.Warning($"Could not auto-import Jellyfin User ID {ResolveUserDisplay(jellyfinUserId)}: an existing Jellyseerr account has a conflicting email (possibly from a previous user that was renamed or deleted). Remove the conflicting user in Jellyseerr to resolve this.");
+                            _logger.LogWarning($"Could not auto-import Jellyfin User ID {ResolveUserDisplay(jellyfinUserId)}: an existing Jellyseerr account has a conflicting email (possibly from a previous user that was renamed or deleted). Remove the conflicting user in Jellyseerr to resolve this.");
                             return (null, true);
                         }
 
-                        _logger.Warning($"Failed to auto-import user to Jellyseerr at {url}: code={importError.Code} status={importError.HttpStatus} cf-ray={importError.CfRay} — {importError.Message}");
+                        _logger.LogWarning($"Failed to auto-import user to Jellyseerr at {url}: code={importError.Code} status={importError.HttpStatus} cf-ray={importError.CfRay} — {importError.Message}");
                         continue;
                     }
 
@@ -267,13 +268,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     var user = importedUsers?.FirstOrDefault(u => string.Equals(u.JellyfinUserId, normalizedUserId, StringComparison.OrdinalIgnoreCase));
                     if (user != null)
                     {
-                        _logger.Info($"Auto-imported Seerr user ID {user.Id} for Jellyfin User {ResolveUserDisplay(jellyfinUserId)}");
+                        _logger.LogInformation($"Auto-imported Seerr user ID {user.Id} for Jellyfin User {ResolveUserDisplay(jellyfinUserId)}");
                         return (user, true);
                     }
 
                     // Some Jellyseerr versions return an empty array even on success (user already existed
                     // but wasn't in the import response). Fall back to a full user list query to find them.
-                    _logger.Info($"Import succeeded at {url.Trim()} but user not in response. Doing fresh lookup...");
+                    _logger.LogInformation($"Import succeeded at {url.Trim()} but user not in response. Doing fresh lookup...");
                     var lookupUri = $"{url.Trim().TrimEnd('/')}/api/v1/user?take=1000";
                     using var lookupRequest = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
                         HttpMethod.Get, lookupUri, apiKey);
@@ -288,14 +289,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             var found = allUsers?.FirstOrDefault(u => string.Equals(u.JellyfinUserId, normalizedUserId, StringComparison.OrdinalIgnoreCase));
                             if (found != null)
                             {
-                                _logger.Info($"Found Seerr user ID {found.Id} for Jellyfin User {ResolveUserDisplay(jellyfinUserId)} via fresh lookup");
+                                _logger.LogInformation($"Found Seerr user ID {found.Id} for Jellyfin User {ResolveUserDisplay(jellyfinUserId)} via fresh lookup");
                                 return (found, true);
                             }
                         }
                     }
                     else if (lookupError != null)
                     {
-                        _logger.Debug($"Fresh lookup at {url.Trim()} failed: code={lookupError.Code} status={lookupError.HttpStatus} cf-ray={lookupError.CfRay}");
+                        _logger.LogDebug($"Fresh lookup at {url.Trim()} failed: code={lookupError.Code} status={lookupError.HttpStatus} cf-ray={lookupError.CfRay}");
                     }
 
                     // Import succeeded and fresh lookup found nothing — user is genuinely not importable
@@ -304,12 +305,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 catch (HttpRequestException ex)
                 {
                     // Network errors, timeouts, etc. are transient — try the next URL
-                    _logger.Debug($"Connection error during auto-import for Jellyfin User {ResolveUserDisplay(jellyfinUserId)} at {url}: {ex.Message}");
+                    _logger.LogDebug($"Connection error during auto-import for Jellyfin User {ResolveUserDisplay(jellyfinUserId)} at {url}: {ex.Message}");
                 }
                 catch (JsonException ex)
                 {
                     // Invalid Jellyseerr response — log warning but try next URL
-                    _logger.Warning($"Invalid response from Jellyseerr during auto-import for Jellyfin User {ResolveUserDisplay(jellyfinUserId)} at {url}: {ex.Message}");
+                    _logger.LogWarning($"Invalid response from Jellyseerr during auto-import for Jellyfin User {ResolveUserDisplay(jellyfinUserId)} at {url}: {ex.Message}");
                 }
             }
 
@@ -451,7 +452,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.JellyseerrEnabled || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
             {
-                _logger.Warning("Seerr integration is not configured or enabled.");
+                _logger.LogWarning("Seerr integration is not configured or enabled.");
                 return StatusCode(503, "Seerr integration is not configured or enabled.");
             }
 
@@ -459,7 +460,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var jellyfinUserId = UserHelper.GetCurrentUserId(User)?.ToString();
             if (string.IsNullOrEmpty(jellyfinUserId))
             {
-                _logger.Warning("Could not resolve Jellyfin user ID from the authenticated principal.");
+                _logger.LogWarning("Could not resolve Jellyfin user ID from the authenticated principal.");
                 return Forbid();
             }
 
@@ -471,7 +472,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var jellyseerrUserId = seerrUser?.Id.ToString();
             if (string.IsNullOrEmpty(jellyseerrUserId))
             {
-                _logger.Warning($"Could not find a Jellyseerr user for Jellyfin user {ResolveUserDisplay(jellyfinUserId)}. Aborting request.");
+                _logger.LogWarning($"Could not find a Jellyseerr user for Jellyfin user {ResolveUserDisplay(jellyfinUserId)}. Aborting request.");
                 // When GetJellyseerrUserId returns null because every Seerr URL
                 // is returning a Cloudflare/proxy HTML challenge, the generic
                 // "user not linked" message misleads the admin. Do one quick
@@ -630,14 +631,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     if (isIssuePolling)
                         LogPollingRequest(userDisplay, requestUri, $"{jellyfinUserId}:{apiPath}");
                     else
-                        _logger.Info($"Proxying Seerr request for user {userDisplay} to: {requestUri}");
+                        _logger.LogInformation($"Proxying Seerr request for user {userDisplay} to: {requestUri}");
                 }
 
                 try
                 {
                     using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
                         method, requestUri, config.JellyseerrApiKey, jellyseerrUserId, content);
-                    if (content != null) _logger.Debug($"Request body: {content}");
+                    if (content != null) _logger.LogDebug($"Request body: {content}");
 
                     using var response = await httpClient.SendAsync(request);
                     var (json, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
@@ -678,7 +679,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         return Content(json, "application/json");
                     }
 
-                    _logger.Warning($"Seerr request failed for user {ResolveUserDisplay(jellyfinUserId)} at {trimmedUrl}: code={error!.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                    _logger.LogWarning($"Seerr request failed for user {ResolveUserDisplay(jellyfinUserId)} at {trimmedUrl}: code={error!.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
 
                     // Map structured error → HTTP status + structured envelope.
                     // The frontend can switch on `code` to display a meaningful
@@ -698,7 +699,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error($"Failed to connect to Seerr URL for user {ResolveUserDisplay(jellyfinUserId)}: {trimmedUrl}. Error: {ex.Message}");
+                    _logger.LogError($"Failed to connect to Seerr URL for user {ResolveUserDisplay(jellyfinUserId)}: {trimmedUrl}. Error: {ex.Message}");
                     if (IsAdminUser())
                     {
                         lastErrorBody = new { error = true, code = "unreachable", message = $"Failed to reach {trimmedUrl}: {ex.Message}" };
@@ -738,7 +739,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     {
                         return Ok(new { active = true });
                     }
-                    _logger.Warning($"Seerr status check failed at {url}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                    _logger.LogWarning($"Seerr status check failed at {url}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
                 }
                 catch
                 {
@@ -746,7 +747,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
             }
 
-            _logger.Warning("Could not establish a connection with any configured Seerr URL. Status is inactive.");
+            _logger.LogWarning("Could not establish a connection with any configured Seerr URL. Status is inactive.");
             return Ok(new { active = false });
         }
 
@@ -798,19 +799,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         }
                         else if (error != null)
                         {
-                            _logger.Warning($"Failed to get watchlist from {trimmedUrl}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                            _logger.LogWarning($"Failed to get watchlist from {trimmedUrl}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.Warning($"Failed to get watchlist from {trimmedUrl}: {ex.Message}");
+                        _logger.LogWarning($"Failed to get watchlist from {trimmedUrl}: {ex.Message}");
                         continue;
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.Error($"Error getting Seerr watchlist: {ex}");
+                _logger.LogError($"Error getting Seerr watchlist: {ex}");
             }
 
             return null;
@@ -841,7 +842,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         var (content, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
                         if (error != null)
                         {
-                            _logger.Warning($"Failed to get requests from {trimmedUrl}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                            _logger.LogWarning($"Failed to get requests from {trimmedUrl}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
                             continue;
                         }
 
@@ -872,14 +873,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     }
                     catch (Exception ex)
                     {
-                        _logger.Warning($"Failed to get requests from {trimmedUrl}: {ex.Message}");
+                        _logger.LogWarning($"Failed to get requests from {trimmedUrl}: {ex.Message}");
                         continue;
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.Error($"Error getting Seerr requests: {ex}");
+                _logger.LogError($"Error getting Seerr requests: {ex}");
             }
 
             return null;
@@ -1032,7 +1033,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             {
                 // Log at Error so admins can diagnose "instance doesn't return data"
                 // issues caused by a URL that hits the block list (e.g. metadata endpoints, loopback).
-                _logger.Error($"IsAllowedUrl rejected outbound URL: {url}");
+                _logger.LogError($"IsAllowedUrl rejected outbound URL: {url}");
             }
             return allowed;
         }
@@ -1045,7 +1046,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var allowed = await Jellyfin.Plugin.JellyfinEnhanced.Helpers.ArrUrlGuard.IsAllowedUrlAsync(url, ct).ConfigureAwait(false);
             if (!allowed && !string.IsNullOrWhiteSpace(url))
             {
-                _logger.Error($"IsAllowedUrl rejected outbound URL: {url}");
+                _logger.LogError($"IsAllowedUrl rejected outbound URL: {url}");
             }
             return allowed;
         }
@@ -1064,7 +1065,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 bool firstSeen;
                 lock (_loggedCorruptArrConfigLock) firstSeen = _loggedCorruptArrConfig.Add(key);
                 if (firstSeen)
-                    _logger.Error("SonarrInstances config is corrupt JSON — instance list is effectively empty. "
+                    _logger.LogError("SonarrInstances config is corrupt JSON — instance list is effectively empty. "
                         + "Endpoints will return no Sonarr data until the admin opens the config page and resets it. "
                         + $"Raw value (first 200 chars): {(config.SonarrInstances ?? "").Substring(0, Math.Min(200, (config.SonarrInstances ?? "").Length))}");
             }
@@ -1074,7 +1075,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 bool firstSeen;
                 lock (_loggedCorruptArrConfigLock) firstSeen = _loggedCorruptArrConfig.Add(key);
                 if (firstSeen)
-                    _logger.Error("RadarrInstances config is corrupt JSON — instance list is effectively empty. "
+                    _logger.LogError("RadarrInstances config is corrupt JSON — instance list is effectively empty. "
                         + "Endpoints will return no Radarr data until the admin opens the config page and resets it. "
                         + $"Raw value (first 200 chars): {(config.RadarrInstances ?? "").Substring(0, Math.Min(200, (config.RadarrInstances ?? "").Length))}");
             }
@@ -1140,13 +1141,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     // Before the FetchAndMapAsync consolidation this path only surfaced via the
                     // response envelope, so a bad API key would leave no server-side trail. Log
                     // at Error to keep diagnosability on par with the exception branches below.
-                    _logger.Error($"Authentication failed for {contextLabel} from {instance.Name}: HTTP {(int)response.StatusCode}");
+                    _logger.LogError($"Authentication failed for {contextLabel} from {instance.Name}: HTTP {(int)response.StatusCode}");
                     return (emptyResult, $"authentication failed ({(int)response.StatusCode})");
                 }
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.Error($"Upstream error fetching {contextLabel} from {instance.Name}: HTTP {(int)response.StatusCode}");
+                    _logger.LogError($"Upstream error fetching {contextLabel} from {instance.Name}: HTTP {(int)response.StatusCode}");
                     return (emptyResult, $"HTTP {(int)response.StatusCode}");
                 }
 
@@ -1157,22 +1158,22 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (HttpRequestException ex)
             {
-                _logger.Error($"Network error fetching {contextLabel} from {instance.Name}: {ex.Message}");
+                _logger.LogError($"Network error fetching {contextLabel} from {instance.Name}: {ex.Message}");
                 return (emptyResult, "network error");
             }
             catch (TaskCanceledException ex)
             {
-                _logger.Error($"Timeout fetching {contextLabel} from {instance.Name}: {ex.Message}");
+                _logger.LogError($"Timeout fetching {contextLabel} from {instance.Name}: {ex.Message}");
                 return (emptyResult, "timeout");
             }
             catch (Newtonsoft.Json.JsonException ex)
             {
-                _logger.Error($"Invalid JSON from {contextLabel} {instance.Name}: {ex.Message}");
+                _logger.LogError($"Invalid JSON from {contextLabel} {instance.Name}: {ex.Message}");
                 return (emptyResult, "invalid response");
             }
             catch (Exception ex)
             {
-                _logger.Error($"Unexpected error fetching {contextLabel} from {instance.Name}: {ex.Message}");
+                _logger.LogError($"Unexpected error fetching {contextLabel} from {instance.Name}: {ex.Message}");
                 return (emptyResult, "internal error");
             }
         }
@@ -1218,7 +1219,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 _ =>
                 {
                     // First occurrence — log immediately
-                    _logger.Info($"Proxying Seerr request for user {userDisplay} to: {requestUri}");
+                    _logger.LogInformation($"Proxying Seerr request for user {userDisplay} to: {requestUri}");
                     return (requestUri, 0, now);
                 },
                 (_, existing) =>
@@ -1227,7 +1228,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     if (now - existing.LastLogged >= _pollLogInterval)
                     {
                         // Enough time has passed — emit a consolidated summary
-                        _logger.Info($"Proxying Seerr request for user {userDisplay} to: {requestUri} (repeated {newCount}x in last {_pollLogInterval.TotalMinutes:0}m)");
+                        _logger.LogInformation($"Proxying Seerr request for user {userDisplay} to: {requestUri} (repeated {newCount}x in last {_pollLogInterval.TotalMinutes:0}m)");
                         return (requestUri, 0, now);
                     }
                     // Still within the quiet window — suppress

@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -52,7 +53,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     {
         public BrandingController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<BrandingController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider)
@@ -147,17 +148,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     await uploadedFile.CopyToAsync(stream);
                 }
 
-                _logger.Info($"Successfully uploaded branding image: {normalizedFileName} ({uploadedFile.Length} bytes) to {brandingDir}");
+                _logger.LogInformation($"Successfully uploaded branding image: {normalizedFileName} ({uploadedFile.Length} bytes) to {brandingDir}");
                 return Ok("File uploaded successfully");
             }
             catch (UnauthorizedAccessException ex)
             {
-                _logger.Error($"Permission denied when uploading branding image: {ex.Message}");
+                _logger.LogError($"Permission denied when uploading branding image: {ex.Message}");
                 return StatusCode(403, "Permission denied when uploading branding image.");
             }
             catch (Exception ex)
             {
-                _logger.Error($"Error uploading branding image: {ex.Message}");
+                _logger.LogError($"Error uploading branding image: {ex.Message}");
                 return StatusCode(500, "An error occurred while uploading the branding image.");
             }
         }
@@ -218,17 +219,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     return NotFound("File not found");
 
                 System.IO.File.Delete(filePath);
-                _logger.Info($"Deleted branding image: {normalizedFileName} from {brandingDir}");
+                _logger.LogInformation($"Deleted branding image: {normalizedFileName} from {brandingDir}");
                 return Ok("File deleted successfully");
             }
             catch (UnauthorizedAccessException ex)
             {
-                _logger.Error($"Permission denied when deleting branding image: {ex.Message}");
+                _logger.LogError($"Permission denied when deleting branding image: {ex.Message}");
                 return StatusCode(403, "Permission denied when deleting branding image.");
             }
             catch (Exception ex)
             {
-                _logger.Error($"Error deleting branding image: {ex.Message}");
+                _logger.LogError($"Error deleting branding image: {ex.Message}");
                 return StatusCode(500, "An error occurred while deleting the branding image.");
             }
         }

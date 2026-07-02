@@ -22,13 +22,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
     {
         private readonly ILibraryManager _libraryManager;
         private readonly IHttpClientFactory _httpClientFactory;
-        private readonly Logger _logger;
+        private readonly ILogger<ArrTagsSyncTask> _logger;
         private readonly IPluginConfigProvider _configProvider;
 
         public ArrTagsSyncTask(
             ILibraryManager libraryManager,
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<ArrTagsSyncTask> logger,
             IPluginConfigProvider configProvider)
         {
             _libraryManager = libraryManager;
@@ -57,12 +57,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
 
             if (config == null || !config.ArrTagsSyncEnabled)
             {
-                _logger.Info("Arr Tags Sync is disabled in plugin configuration.");
+                _logger.LogInformation("Arr Tags Sync is disabled in plugin configuration.");
                 progress?.Report(100);
                 return;
             }
 
-            _logger.Info("Starting Arr Tags Sync task...");
+            _logger.LogInformation("Starting Arr Tags Sync task...");
             progress?.Report(0);
 
             var arrTagService = new ArrTagService(_httpClientFactory, _logger);
@@ -73,7 +73,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             // Fetch tags from all configured Radarr instances
             if (config.IsRadarrInstancesCorrupt())
             {
-                _logger.Error("RadarrInstances config is corrupt JSON — no Radarr tags will sync this run. "
+                _logger.LogError("RadarrInstances config is corrupt JSON — no Radarr tags will sync this run. "
                     + "Admin must open the Arr Links config page and reset the corrupt value.");
             }
             var radarrInstances = config.GetEnabledRadarrInstances();
@@ -84,9 +84,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                     cancellationToken.ThrowIfCancellationRequested();
                     try
                     {
-                        _logger.Info($"Fetching tags from Radarr instance: {instance.Name}");
+                        _logger.LogInformation($"Fetching tags from Radarr instance: {instance.Name}");
                         var instanceTags = await arrTagService.GetMovieTagsByTmdbId(instance.Url, instance.ApiKey, cancellationToken);
-                        _logger.Info($"Fetched {instanceTags.Count} movie tag mappings from {instance.Name}");
+                        _logger.LogInformation($"Fetched {instanceTags.Count} movie tag mappings from {instance.Name}");
                         foreach (var kvp in instanceTags)
                         {
                             if (radarrTags.TryGetValue(kvp.Key, out var existing))
@@ -106,7 +106,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
                     {
-                        _logger.Error($"Failed to sync tags from Radarr instance {instance.Name}: {ex.Message}");
+                        _logger.LogError($"Failed to sync tags from Radarr instance {instance.Name}: {ex.Message}");
                     }
                 }
             }
@@ -114,9 +114,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             {
                 var allRadarr = config.GetRadarrInstances();
                 if (allRadarr.Count > 0)
-                    _logger.Info($"All {allRadarr.Count} Radarr instances are disabled — skipping Radarr sync");
+                    _logger.LogInformation($"All {allRadarr.Count} Radarr instances are disabled — skipping Radarr sync");
                 else
-                    _logger.Info("No Radarr instances configured, skipping Radarr sync");
+                    _logger.LogInformation("No Radarr instances configured, skipping Radarr sync");
             }
 
             progress?.Report(25);
@@ -125,7 +125,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             // Fetch tags from all configured Sonarr instances
             if (config.IsSonarrInstancesCorrupt())
             {
-                _logger.Error("SonarrInstances config is corrupt JSON — no Sonarr tags will sync this run. "
+                _logger.LogError("SonarrInstances config is corrupt JSON — no Sonarr tags will sync this run. "
                     + "Admin must open the Arr Links config page and reset the corrupt value.");
             }
             var sonarrInstances = config.GetEnabledSonarrInstances();
@@ -136,9 +136,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                     cancellationToken.ThrowIfCancellationRequested();
                     try
                     {
-                        _logger.Info($"Fetching tags from Sonarr instance: {instance.Name}");
+                        _logger.LogInformation($"Fetching tags from Sonarr instance: {instance.Name}");
                         var instanceTags = await arrTagService.GetSeriesTagsByTvdbId(instance.Url, instance.ApiKey, cancellationToken);
-                        _logger.Info($"Fetched {instanceTags.Count} series tag mappings from {instance.Name}");
+                        _logger.LogInformation($"Fetched {instanceTags.Count} series tag mappings from {instance.Name}");
                         foreach (var kvp in instanceTags)
                         {
                             if (sonarrTags.TryGetValue(kvp.Key, out var existing))
@@ -158,7 +158,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
                     {
-                        _logger.Error($"Failed to sync tags from Sonarr instance {instance.Name}: {ex.Message}");
+                        _logger.LogError($"Failed to sync tags from Sonarr instance {instance.Name}: {ex.Message}");
                     }
                 }
             }
@@ -166,9 +166,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             {
                 var allSonarr = config.GetSonarrInstances();
                 if (allSonarr.Count > 0)
-                    _logger.Info($"All {allSonarr.Count} Sonarr instances are disabled — skipping Sonarr sync");
+                    _logger.LogInformation($"All {allSonarr.Count} Sonarr instances are disabled — skipping Sonarr sync");
                 else
-                    _logger.Info("No Sonarr instances configured, skipping Sonarr sync");
+                    _logger.LogInformation("No Sonarr instances configured, skipping Sonarr sync");
             }
 
             progress?.Report(50);
@@ -182,7 +182,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                 Recursive = true
             }).ToList();
 
-            _logger.Info($"Found {allItems.Count} items in Jellyfin library");
+            _logger.LogInformation($"Found {allItems.Count} items in Jellyfin library");
 
             var updatedCount = 0;
             var totalItems = allItems.Count;
@@ -201,7 +201,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                 {
                     syncFilterTags.Add(part.Trim());
                 }
-                _logger.Info($"Filtering tags to sync: {string.Join(", ", syncFilterTags)}");
+                _logger.LogInformation($"Filtering tags to sync: {string.Join(", ", syncFilterTags)}");
             }
 
             foreach (var item in allItems)
@@ -288,7 +288,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                     // Log in batches of 50 items to reduce log spam
                     if (updatedItemNames.Count >= 50)
                     {
-                        _logger.Info($"Updated tags for {updatedItemNames.Count} items: {string.Join(", ", updatedItemNames.Take(10))}...");
+                        _logger.LogInformation($"Updated tags for {updatedItemNames.Count} items: {string.Join(", ", updatedItemNames.Take(10))}...");
                         updatedItemNames.Clear();
                     }
                 }
@@ -303,15 +303,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             {
                 if (updatedItemNames.Count <= 10)
                 {
-                    _logger.Info($"Updated tags for: {string.Join(", ", updatedItemNames)}");
+                    _logger.LogInformation($"Updated tags for: {string.Join(", ", updatedItemNames)}");
                 }
                 else
                 {
-                    _logger.Info($"Updated tags for {updatedItemNames.Count} items: {string.Join(", ", updatedItemNames.Take(10))}...");
+                    _logger.LogInformation($"Updated tags for {updatedItemNames.Count} items: {string.Join(", ", updatedItemNames.Take(10))}...");
                 }
             }
 
-            _logger.Info($"Arr Tags Sync completed. Updated {updatedCount} items out of {totalItems}");
+            _logger.LogInformation($"Arr Tags Sync completed. Updated {updatedCount} items out of {totalItems}");
             progress?.Report(100);
         }
     }

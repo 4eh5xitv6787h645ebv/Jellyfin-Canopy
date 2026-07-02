@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Newtonsoft.Json;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
 {
@@ -16,9 +17,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
         private static readonly object _reviewsFileLock = new object();
 
         private readonly string _configBaseDir;
-        private readonly Logger _logger;
+        private readonly ILogger _logger;
 
-        public ReviewsStore(string configBaseDir, Logger logger)
+        public ReviewsStore(string configBaseDir, ILogger logger)
         {
             _configBaseDir = configBaseDir;
             _logger = logger;
@@ -53,7 +54,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to read shared reviews.json: {ex.Message}");
+                _logger.LogError($"Failed to read shared reviews.json: {ex.Message}");
                 if (throwOnCorruption)
                 {
                     BackupCorruptFileUnlocked(filePath);
@@ -73,7 +74,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 if (string.IsNullOrWhiteSpace(json) ||
                     string.Equals(json.Trim(), "null", StringComparison.Ordinal))
                 {
-                    _logger.Error($"reviews.json exists but is empty or literal-null; refusing to write over it. Length={json?.Length ?? 0}");
+                    _logger.LogError($"reviews.json exists but is empty or literal-null; refusing to write over it. Length={json?.Length ?? 0}");
                     BackupCorruptFileUnlocked(filePath);
                     throw new InvalidDataException("reviews.json is empty or literal null; refusing to overwrite.");
                 }
@@ -91,7 +92,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 {
                     if (throwOnCorruption)
                     {
-                        _logger.Error("reviews.json deserialized to null; refusing to write over it.");
+                        _logger.LogError("reviews.json deserialized to null; refusing to write over it.");
                         BackupCorruptFileUnlocked(filePath);
                         throw new InvalidDataException("reviews.json deserialized to null.");
                     }
@@ -105,7 +106,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to parse shared reviews.json: {ex.Message}");
+                _logger.LogError($"Failed to parse shared reviews.json: {ex.Message}");
                 if (throwOnCorruption)
                 {
                     BackupCorruptFileUnlocked(filePath);
@@ -127,11 +128,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 var backupPath = filePath + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
                 if (!File.Exists(backupPath))
                     File.Copy(filePath, backupPath);
-                _logger.Warning($"Corrupt reviews.json backed up to {backupPath}");
+                _logger.LogWarning($"Corrupt reviews.json backed up to {backupPath}");
             }
             catch (Exception backupEx)
             {
-                _logger.Error($"Failed to back up corrupt reviews.json: {backupEx.Message}");
+                _logger.LogError($"Failed to back up corrupt reviews.json: {backupEx.Message}");
             }
         }
 
@@ -150,7 +151,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to save shared reviews.json: {ex.Message}");
+                _logger.LogError($"Failed to save shared reviews.json: {ex.Message}");
                 throw;
             }
         }

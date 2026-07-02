@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Arr;
-using MediaBrowser.Common.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -12,24 +12,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services;
 /// the SSRF guard must reject bad instance URLs BEFORE any outbound request, and
 /// the tag-mapping logic must key results by the right provider id per *arr type.
 /// </summary>
-public class ArrTagServiceTests : IDisposable
+public class ArrTagServiceTests
 {
-    private readonly string _tempDir;
-    private readonly Logger _logger;
+    private readonly ILogger _logger = NullLogger.Instance;
 
-    public ArrTagServiceTests()
-    {
-        _tempDir = Path.Combine(Path.GetTempPath(), "je-arrtag-tests-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_tempDir);
-        _logger = new Logger(new StubAppPaths(_tempDir), NullLoggerFactory.Instance);
-    }
-
-    public void Dispose()
-    {
-        try { Directory.Delete(_tempDir, recursive: true); } catch { /* best effort */ }
-    }
-
-    private static ArrTagService CreateService(RecordingHandler handler, Logger logger)
+    private static ArrTagService CreateService(RecordingHandler handler, ILogger logger)
         => new ArrTagService(new StubHttpClientFactory(handler), logger);
 
     // ─── SSRF guard ──────────────────────────────────────────────────────────
@@ -186,37 +173,5 @@ public class ArrTagServiceTests : IDisposable
         public StubHttpClientFactory(HttpMessageHandler handler) => _handler = handler;
 
         public HttpClient CreateClient(string name) => new HttpClient(_handler, disposeHandler: false);
-    }
-
-    /// <summary>Minimal IApplicationPaths so the plugin's file Logger can be constructed in tests.</summary>
-    private sealed class StubAppPaths : IApplicationPaths
-    {
-        private readonly string _baseDir;
-
-        public StubAppPaths(string baseDir) => _baseDir = baseDir;
-
-        public string ProgramDataPath => _baseDir;
-        public string WebPath => _baseDir;
-        public string ProgramSystemPath => _baseDir;
-        public string DataPath => _baseDir;
-        public string ImageCachePath => _baseDir;
-        public string PluginsPath => _baseDir;
-        public string PluginConfigurationsPath => _baseDir;
-        public string LogDirectoryPath => _baseDir;
-        public string ConfigurationDirectoryPath => _baseDir;
-        public string SystemConfigurationFilePath => Path.Combine(_baseDir, "system.xml");
-        public string CachePath => _baseDir;
-        public string TempDirectory => _baseDir;
-        public string VirtualDataPath => _baseDir;
-        public string TrickplayPath => _baseDir;
-        public string BackupPath => _baseDir;
-
-        public void MakeSanityCheckOrThrow()
-        {
-        }
-
-        public void CreateAndCheckMarker(string path, string markerName, bool recursive = false)
-        {
-        }
     }
 }

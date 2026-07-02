@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -56,7 +57,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         public TagCacheController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<TagCacheController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,

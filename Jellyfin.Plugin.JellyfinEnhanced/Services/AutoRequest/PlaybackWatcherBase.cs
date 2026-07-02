@@ -3,6 +3,7 @@ using System.Linq;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
 {
@@ -26,7 +27,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
         protected readonly ISessionManager _sessionManager;
         protected readonly IUserManager _userManager;
         protected readonly ILibraryManager _libraryManager;
-        protected readonly Logger _logger;
+        protected readonly ILogger _logger;
         protected readonly IPluginConfigProvider _configProvider;
 
         // Track which user+item combinations have already been checked to avoid duplicate checks
@@ -37,7 +38,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
             ISessionManager sessionManager,
             IUserManager userManager,
             ILibraryManager libraryManager,
-            Logger logger,
+            ILogger logger,
             IPluginConfigProvider configProvider)
         {
             _sessionManager = sessionManager;
@@ -72,19 +73,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
             var config = _configProvider.ConfigurationOrNull as PluginConfiguration;
             if (config == null)
             {
-                _logger.Warning($"{LogPrefix} Configuration is null - skipping {FeatureNoun} monitoring initialization");
+                _logger.LogWarning($"{LogPrefix} Configuration is null - skipping {FeatureNoun} monitoring initialization");
                 return;
             }
 
             if (!IsFeatureEnabled(config) || !config.JellyseerrEnabled)
             {
-                _logger.Info($"{LogPrefix} {DisabledMonitoringName} monitoring is disabled in configuration - not subscribing to playback events");
+                _logger.LogInformation($"{LogPrefix} {DisabledMonitoringName} monitoring is disabled in configuration - not subscribing to playback events");
                 return;
             }
 
             SubscribeEvents();
 
-            _logger.Info($"{LogPrefix} Successfully subscribed to playback events");
+            _logger.LogInformation($"{LogPrefix} Successfully subscribed to playback events");
         }
 
         /// <summary>
@@ -135,7 +136,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
         // Cleanup when the plugin is disposed.
         public void Dispose()
         {
-            _logger.Info($"{LogPrefix} Unsubscribing from playback events");
+            _logger.LogInformation($"{LogPrefix} Unsubscribing from playback events");
 
             UnsubscribeEvents();
 

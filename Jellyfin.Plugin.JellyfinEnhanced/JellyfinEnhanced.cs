@@ -26,15 +26,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
     public class JellyfinEnhanced : BasePlugin<PluginConfiguration>, IHasWebPages
     {
         private readonly IApplicationPaths _applicationPaths;
-        private readonly Logger _logger;
+        private readonly ILogger<JellyfinEnhanced> _logger;
         private const string PluginName = "Jellyfin Enhanced";
 
-        public JellyfinEnhanced(IApplicationPaths applicationPaths, IServerConfigurationManager serverConfigurationManager, IXmlSerializer xmlSerializer, Logger logger) : base(applicationPaths, xmlSerializer)
+        public JellyfinEnhanced(IApplicationPaths applicationPaths, IServerConfigurationManager serverConfigurationManager, IXmlSerializer xmlSerializer, ILogger<JellyfinEnhanced> logger, Logging.JellyfinEnhancedFileLoggerProvider fileLogProvider) : base(applicationPaths, xmlSerializer)
         {
             Instance = this;
             _applicationPaths = applicationPaths;
             _logger = logger;
-            _logger.Info($"{PluginName} v{Version} initialized. Plugin logs will be written to: {_logger.CurrentLogFilePath}");
+            _logger.LogInformation($"{PluginName} v{Version} initialized. Plugin logs will be written to: {fileLogProvider.CurrentLogFilePath}");
             // Set the User-Agent used by every Seerr/TMDB outbound HTTP call.
             // Cloudflare's Browser Integrity Check / Bot Fight Mode flags
             // empty UA as bot.
@@ -84,7 +84,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
 
                 config.Shortcuts = deduped;
                 SaveConfiguration();
-                _logger.Info(
+                _logger.LogInformation(
                     $"Normalized shortcut list: dropped {duplicatesDropped} duplicate(s), " +
                     $"{malformed.Count} malformed entry/entries" +
                     (malformed.Count > 0 ? $" [{string.Join(", ", malformed)}]" : "") +
@@ -94,17 +94,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             catch (IOException ex)
             {
                 RollbackShortcuts(originalShortcuts);
-                _logger.Error($"Failed to save normalized shortcut list to disk (check permissions and free space): {ex}");
+                _logger.LogError($"Failed to save normalized shortcut list to disk (check permissions and free space): {ex}");
             }
             catch (UnauthorizedAccessException ex)
             {
                 RollbackShortcuts(originalShortcuts);
-                _logger.Error($"Permission denied saving normalized shortcut list: {ex}");
+                _logger.LogError($"Permission denied saving normalized shortcut list: {ex}");
             }
             catch (Exception ex)
             {
                 RollbackShortcuts(originalShortcuts);
-                _logger.Error($"Unexpected error normalizing shortcut list: {ex}");
+                _logger.LogError($"Unexpected error normalizing shortcut list: {ex}");
             }
         }
 
@@ -118,7 +118,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to roll back shortcut list after save failure: {ex}");
+                _logger.LogError($"Failed to roll back shortcut list after save failure: {ex}");
             }
         }
 
@@ -169,7 +169,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
                 catch (Exception ex)
                 {
                     // Fall through to the bare version below.
-                    _logger.Debug($"ScriptCacheKey: couldn't read assembly file metadata, using bare version: {ex.Message}");
+                    _logger.LogDebug($"ScriptCacheKey: couldn't read assembly file metadata, using bare version: {ex.Message}");
                 }
 
                 return version;
@@ -213,11 +213,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
                 // controllers use. Null only before the first cache consumer is
                 // constructed, i.e. when there is nothing to clear yet.
                 Services.Jellyseerr.SeerrCache.Instance?.ClearAllSeerrCachesOnConfigChange();
-                _logger.Info("Jellyfin Enhanced: configuration updated — Seerr caches cleared.");
+                _logger.LogInformation("Jellyfin Enhanced: configuration updated — Seerr caches cleared.");
             }
             catch (Exception ex)
             {
-                _logger.Warning($"Jellyfin Enhanced: failed to clear Seerr caches on config update: {ex.Message}");
+                _logger.LogWarning($"Jellyfin Enhanced: failed to clear Seerr caches on config update: {ex.Message}");
             }
         }
         private void CleanupOldScript()
@@ -227,7 +227,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
                 var indexPath = IndexHtmlPath;
                 if (!File.Exists(indexPath))
                 {
-                    _logger.Error($"Could not find index.html at path: {indexPath}");
+                    _logger.LogError($"Could not find index.html at path: {indexPath}");
                     return;
                 }
 
@@ -236,15 +236,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
 
                 if (regex.IsMatch(content))
                 {
-                    _logger.Info("Found old Jellyfin Enhanced script tag in index.html. Removing it now.");
+                    _logger.LogInformation("Found old Jellyfin Enhanced script tag in index.html. Removing it now.");
                     content = regex.Replace(content, string.Empty);
                     File.WriteAllText(indexPath, content);
-                    _logger.Info("Successfully removed old script tag.");
+                    _logger.LogInformation("Successfully removed old script tag.");
                 }
             }
             catch (Exception ex)
             {
-                _logger.Error($"Error during cleanup of old script from index.html: {ex.Message}");
+                _logger.LogError($"Error during cleanup of old script from index.html: {ex.Message}");
             }
         }
         private void CheckPluginPages(IApplicationPaths applicationPaths, IServerConfigurationManager serverConfigurationManager, int pluginPageConfigVersion)
@@ -403,7 +403,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             }
             catch (Exception ex)
             {
-                _logger.Error($"Error while updating Plugin Pages configuration: {ex.Message}");
+                _logger.LogError($"Error while updating Plugin Pages configuration: {ex.Message}");
             }
         }
         private void UpdateIndexHtml(bool inject)
@@ -413,7 +413,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
                 var indexPath = IndexHtmlPath;
                 if (!File.Exists(indexPath))
                 {
-                    _logger.Error($"Could not find index.html at path: {indexPath}");
+                    _logger.LogError($"Could not find index.html at path: {indexPath}");
                     return;
                 }
 
@@ -430,24 +430,24 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
                     if (content.Contains(closingBodyTag))
                     {
                         content = content.Replace(closingBodyTag, $"{scriptTag}\n{closingBodyTag}");
-                        _logger.Info($"Successfully injected/updated the {PluginName} script.");
+                        _logger.LogInformation($"Successfully injected/updated the {PluginName} script.");
                     }
                     else
                     {
-                        _logger.Warning("Could not find </body> tag in index.html. Script not injected.");
+                        _logger.LogWarning("Could not find </body> tag in index.html. Script not injected.");
                         return; // Return early if injection point not found
                     }
                 }
                 else
                 {
-                    _logger.Info($"Successfully removed the {PluginName} script from index.html during uninstall.");
+                    _logger.LogInformation($"Successfully removed the {PluginName} script from index.html during uninstall.");
                 }
 
                 File.WriteAllText(indexPath, content);
             }
             catch (Exception ex)
             {
-                _logger.Error($"Error while trying to update index.html: {ex.Message}");
+                _logger.LogError($"Error while trying to update index.html: {ex.Message}");
             }
         }
 

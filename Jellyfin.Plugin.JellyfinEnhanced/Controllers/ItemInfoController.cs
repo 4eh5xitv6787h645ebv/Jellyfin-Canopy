@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -55,7 +56,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         public ItemInfoController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<ItemInfoController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
@@ -96,7 +97,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to get studio info for {studioId}: {ex.Message}");
+                _logger.LogError($"Failed to get studio info for {studioId}: {ex.Message}");
                 return StatusCode(500, new { message = "Failed to get studio info" });
             }
         }
@@ -130,7 +131,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to get boxset info for {boxsetId}: {ex.Message}");
+                _logger.LogError($"Failed to get boxset info for {boxsetId}: {ex.Message}");
                 return StatusCode(500, new { message = "Failed to get boxset info" });
             }
         }
@@ -165,11 +166,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 {
                     try
                     {
-                        // _logger.Info($"Fetching TMDB data for person {personId} (TMDB ID: {tmdbPersonId})");
+                        // _logger.LogInformation($"Fetching TMDB data for person {personId} (TMDB ID: {tmdbPersonId})");
                         var tmdbPersonData = await GetTmdbPersonData(tmdbPersonId);
                         if (tmdbPersonData != null)
                         {
-                            // _logger.Info($"TMDB data received: BirthPlace={tmdbPersonData.BirthPlace}, BirthDate={tmdbPersonData.BirthDate}, DeathDate={tmdbPersonData.DeathDate}");
+                            // _logger.LogInformation($"TMDB data received: BirthPlace={tmdbPersonData.BirthPlace}, BirthDate={tmdbPersonData.BirthDate}, DeathDate={tmdbPersonData.DeathDate}");
 
                             // Use TMDB death date if Jellyfin doesn't have it
                             if (!endDate.HasValue && tmdbPersonData.DeathDate.HasValue)
@@ -187,23 +188,23 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             if (!string.IsNullOrEmpty(tmdbPersonData.BirthPlace))
                             {
                                 birthPlace = tmdbPersonData.BirthPlace;
-                                // _logger.Debug($"Using TMDB birthplace: {birthPlace}");
+                                // _logger.LogDebug($"Using TMDB birthplace: {birthPlace}");
                             }
                         }
                         else
                         {
-                            _logger.Warning($"No TMDB data returned for person {personId} (TMDB ID: {tmdbPersonId})");
+                            _logger.LogWarning($"No TMDB data returned for person {personId} (TMDB ID: {tmdbPersonId})");
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.Warning($"Failed to enrich person {personId} with TMDB data: {ex.Message}");
+                        _logger.LogWarning($"Failed to enrich person {personId} with TMDB data: {ex.Message}");
                         // Continue with Jellyfin data only
                     }
                 }
                 else
                 {
-                    // _logger.Debug($"No TMDB ID available for person {personId}");
+                    // _logger.LogDebug($"No TMDB ID available for person {personId}");
                 }
 
 
@@ -255,7 +256,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to get person info for {personId}: {ex.Message}");
+                _logger.LogError($"Failed to get person info for {personId}: {ex.Message}");
                 return StatusCode(500, new { message = "Failed to get person info" });
             }
         }
@@ -268,19 +269,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 var config = _configProvider.ConfigurationOrNull;
                 if (config == null || string.IsNullOrEmpty(config.TMDB_API_KEY))
                 {
-                    _logger.Warning("TMDB API key not configured in plugin settings");
+                    _logger.LogWarning("TMDB API key not configured in plugin settings");
                     return null;
                 }
 
                 var httpClient = _httpClientFactory.CreateClient();
                 var tmdbUrl = $"https://api.themoviedb.org/3/person/{tmdbPersonId}?api_key={config.TMDB_API_KEY}";
 
-                // _logger.Debug($"Fetching TMDB person data from: https://api.themoviedb.org/3/person/{tmdbPersonId}");
+                // _logger.LogDebug($"Fetching TMDB person data from: https://api.themoviedb.org/3/person/{tmdbPersonId}");
                 var response = await httpClient.GetAsync(tmdbUrl);
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.Warning($"TMDB API request failed with status {response.StatusCode}");
+                    _logger.LogWarning($"TMDB API request failed with status {response.StatusCode}");
                     return null;
                 }
 
@@ -315,7 +316,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     birthPlace = placeProp.GetString();
                     if (!string.IsNullOrEmpty(birthPlace))
                     {
-                        // _logger.Debug($"Parsed place_of_birth: {birthPlace}");
+                        // _logger.LogDebug($"Parsed place_of_birth: {birthPlace}");
                     }
                 }
 
@@ -328,7 +329,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Warning($"Failed to get TMDB person data for ID {tmdbPersonId}: {ex.Message}");
+                _logger.LogWarning($"Failed to get TMDB person data for ID {tmdbPersonId}: {ex.Message}");
                 return null;
             }
         }
@@ -364,7 +365,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to get genre info for {genreId}: {ex.Message}");
+                _logger.LogError($"Failed to get genre info for {genreId}: {ex.Message}");
                 return StatusCode(500, new { message = "Failed to get genre info" });
             }
         }
@@ -400,7 +401,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 || avatarPath.Contains("%0a", StringComparison.OrdinalIgnoreCase)
                 || avatarPath.Contains("%00"))
             {
-                _logger.Warning("ProxyAvatar: unsafe characters in path blocked");
+                _logger.LogWarning("ProxyAvatar: unsafe characters in path blocked");
                 return BadRequest("Invalid avatar path");
             }
 
@@ -409,7 +410,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 && !avatarPath.StartsWith("/avatarproxy/", StringComparison.OrdinalIgnoreCase)
                 && !avatarPath.StartsWith("/api/v1/avatar/", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.Warning($"ProxyAvatar: path not in allowed list '{avatarPath}'");
+                _logger.LogWarning($"ProxyAvatar: path not in allowed list '{avatarPath}'");
                 return BadRequest("Invalid avatar path");
             }
 
@@ -468,7 +469,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 };
                 if (!allowedAvatarTypes.Contains(contentType))
                 {
-                    _logger.Debug($"ProxyAvatar rejected unsafe content-type: {contentType}");
+                    _logger.LogDebug($"ProxyAvatar rejected unsafe content-type: {contentType}");
                     return NotFound();
                 }
 
@@ -507,7 +508,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Warning($"ProxyAvatar exception: {ex.Message}");
+                _logger.LogWarning($"ProxyAvatar exception: {ex.Message}");
                 return NotFound();
             }
         }

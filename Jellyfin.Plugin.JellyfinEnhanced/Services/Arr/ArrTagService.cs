@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinEnhanced.Model.Arr;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
 {
@@ -52,9 +53,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
     public class ArrTagService
     {
         private readonly IHttpClientFactory _httpClientFactory;
-        private readonly Logger _logger;
+        private readonly ILogger _logger;
 
-        public ArrTagService(IHttpClientFactory httpClientFactory, Logger logger)
+        public ArrTagService(IHttpClientFactory httpClientFactory, ILogger logger)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
@@ -107,7 +108,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
             // cannot be pointed at metadata/loopback targets via instance URL.
             if (!Jellyfin.Plugin.JellyfinEnhanced.Helpers.ArrUrlGuard.IsAllowedUrl(baseUrl))
             {
-                _logger.Error($"Refusing to fetch {serviceName} tags — URL rejected by SSRF guard: {baseUrl}");
+                _logger.LogError($"Refusing to fetch {serviceName} tags — URL rejected by SSRF guard: {baseUrl}");
                 return result;
             }
 
@@ -117,13 +118,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
                 httpClient.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
 
                 // Get all tags first
-                _logger.Info($"Fetching {serviceName} tags from {baseUrl}");
+                _logger.LogInformation($"Fetching {serviceName} tags from {baseUrl}");
                 var tagsUrl = $"{baseUrl.TrimEnd('/')}/api/v3/tag";
                 var tagsResponse = await httpClient.GetAsync(tagsUrl, ct);
 
                 if (!tagsResponse.IsSuccessStatusCode)
                 {
-                    _logger.Error($"Failed to fetch {serviceName} tags. Status: {tagsResponse.StatusCode}");
+                    _logger.LogError($"Failed to fetch {serviceName} tags. Status: {tagsResponse.StatusCode}");
                     return result;
                 }
 
@@ -131,23 +132,23 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
                 var tags = JsonSerializer.Deserialize<List<ArrTag>>(tagsContent) ?? new List<ArrTag>();
                 var tagDictionary = tags.ToDictionary(t => t.Id, t => t.Label);
 
-                _logger.Info($"Found {tags.Count} tags in {serviceName}");
+                _logger.LogInformation($"Found {tags.Count} tags in {serviceName}");
 
                 // Get all media items (series/movies)
-                _logger.Info($"Fetching {serviceName} {itemNoun} from {baseUrl}");
+                _logger.LogInformation($"Fetching {serviceName} {itemNoun} from {baseUrl}");
                 var mediaUrl = $"{baseUrl.TrimEnd('/')}/api/v3/{mediaEndpoint}";
                 var mediaResponse = await httpClient.GetAsync(mediaUrl, ct);
 
                 if (!mediaResponse.IsSuccessStatusCode)
                 {
-                    _logger.Error($"Failed to fetch {serviceName} {itemNoun}. Status: {mediaResponse.StatusCode}");
+                    _logger.LogError($"Failed to fetch {serviceName} {itemNoun}. Status: {mediaResponse.StatusCode}");
                     return result;
                 }
 
                 var mediaContent = await mediaResponse.Content.ReadAsStringAsync(ct);
                 var allItems = JsonSerializer.Deserialize<List<ArrMediaItem>>(mediaContent) ?? new List<ArrMediaItem>();
 
-                _logger.Info($"Found {allItems.Count} {itemNoun} in {serviceName}");
+                _logger.LogInformation($"Found {allItems.Count} {itemNoun} in {serviceName}");
 
                 // Map tags to items - keyed by the provider id Jellyfin uses
                 foreach (var item in allItems)
@@ -170,7 +171,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
                     }
                 }
 
-                _logger.Info($"Mapped tags for {result.Count} {itemNoun}");
+                _logger.LogInformation($"Mapped tags for {result.Count} {itemNoun}");
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -180,19 +181,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
             }
             catch (HttpRequestException ex)
             {
-                _logger.Error($"Network error fetching {serviceName} tags: {ex.Message}");
+                _logger.LogError($"Network error fetching {serviceName} tags: {ex.Message}");
             }
             catch (TaskCanceledException ex)
             {
-                _logger.Error($"Timeout fetching {serviceName} tags: {ex.Message}");
+                _logger.LogError($"Timeout fetching {serviceName} tags: {ex.Message}");
             }
             catch (JsonException ex)
             {
-                _logger.Error($"Invalid JSON from {serviceName} tags endpoint: {ex.Message}");
+                _logger.LogError($"Invalid JSON from {serviceName} tags endpoint: {ex.Message}");
             }
             catch (Exception ex)
             {
-                _logger.Error($"Unexpected error fetching {serviceName} tags: {ex.Message}");
+                _logger.LogError($"Unexpected error fetching {serviceName} tags: {ex.Message}");
             }
 
             return result;

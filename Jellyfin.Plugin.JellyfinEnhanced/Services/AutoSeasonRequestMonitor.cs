@@ -5,6 +5,7 @@ using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 {
@@ -18,7 +19,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             IUserManager userManager,
             ILibraryManager libraryManager,
             AutoSeasonRequestService autoSeasonRequestService,
-            Logger logger,
+            ILogger<AutoSeasonRequestMonitor> logger,
             IPluginConfigProvider configProvider)
             : base(sessionManager, userManager, libraryManager, logger, configProvider)
         {
@@ -65,7 +66,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     return;
                 }
 
-                _logger.Debug($"[Auto-Season-Request] PlaybackStopped event fired for episode: {e.Item?.Name}");
+                _logger.LogDebug($"[Auto-Season-Request] PlaybackStopped event fired for episode: {e.Item?.Name}");
 
                 // Check if the episode was watched (at least 90% completion)
                 var playedToCompletion = e.PlayedToCompletion;
@@ -76,7 +77,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 }
                 //This probably can be removed but leaving it for now as a debug log
 
-                _logger.Info($"[Auto-Season-Request] Episode '{e.Item?.Name ?? "Unknown"}' - PlayedToCompletion: {playedToCompletion}, Completion: {completionPercentage:P1}");
+                _logger.LogInformation($"[Auto-Season-Request] Episode '{e.Item?.Name ?? "Unknown"}' - PlayedToCompletion: {playedToCompletion}, Completion: {completionPercentage:P1}");
 
                 if (playedToCompletion || completionPercentage >= 0.9)
                 {
@@ -89,11 +90,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     var sessionItemKey = $"stopped_{e.Session.UserId}_{e.Item.Id}";
                     if (!TryMarkChecked(sessionItemKey))
                     {
-                        _logger.Debug($"[Auto-Season-Request] PlaybackStopped already processed for '{e.Item?.Name}', skipping duplicate");
+                        _logger.LogDebug($"[Auto-Season-Request] PlaybackStopped already processed for '{e.Item?.Name}', skipping duplicate");
                         return;
                     }
 
-                    _logger.Info($"[Auto-Season-Request] Episode '{e.Item?.Name ?? "Unknown"}' completed by {e.Session?.UserName ?? "Unknown"}, checking threshold");
+                    _logger.LogInformation($"[Auto-Season-Request] Episode '{e.Item?.Name ?? "Unknown"}' completed by {e.Session?.UserName ?? "Unknown"}, checking threshold");
 
                     // Process this episode completion
                     if (e.Item != null && e.Session?.UserId != null)
@@ -102,18 +103,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     }
                     else
                     {
-                        _logger.Warning("[Auto-Season-Request] Item or Session/UserId is null, cannot process");
+                        _logger.LogWarning("[Auto-Season-Request] Item or Session/UserId is null, cannot process");
                     }
                 }
                 //This probably can be removed but leaving it for now as a debug log
                 else
                 {
-                    _logger.Debug($"[Auto-Season-Request] Episode not completed enough ({completionPercentage:P1}), skipping");
+                    _logger.LogDebug($"[Auto-Season-Request] Episode not completed enough ({completionPercentage:P1}), skipping");
                 }
             }
             catch (Exception ex)
             {
-                _logger.Error($"[Auto-Season-Request] Error in OnPlaybackStopped: {ex.Message}");
+                _logger.LogError($"[Auto-Season-Request] Error in OnPlaybackStopped: {ex.Message}");
             }
         }
 
@@ -159,7 +160,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                             return;
                         }
 
-                        _logger.Info($"[Auto-Season-Request] Episode '{e.Item?.Name ?? "Unknown"}' started by {e.Session?.UserName ?? "Unknown"}, checking threshold");
+                        _logger.LogInformation($"[Auto-Season-Request] Episode '{e.Item?.Name ?? "Unknown"}' started by {e.Session?.UserName ?? "Unknown"}, checking threshold");
 
                         if (e.Item != null && e.Session?.UserId != null)
                         {
@@ -170,7 +171,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             catch (Exception ex)
             {
-                _logger.Error($"[Auto-Season-Request] Error in OnPlaybackProgress: {ex.Message}");
+                _logger.LogError($"[Auto-Season-Request] Error in OnPlaybackProgress: {ex.Message}");
             }
         }
     }

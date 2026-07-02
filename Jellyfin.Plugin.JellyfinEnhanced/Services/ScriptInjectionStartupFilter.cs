@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 {
@@ -30,11 +31,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
     /// </summary>
     public class ScriptInjectionStartupFilter : IStartupFilter
     {
-        private readonly Logger _logger;
+        private readonly ILogger<ScriptInjectionStartupFilter> _logger;
         private readonly IPluginConfigProvider _configProvider;
         private int _loggedOnce;
 
-        public ScriptInjectionStartupFilter(Logger logger, IPluginConfigProvider configProvider)
+        public ScriptInjectionStartupFilter(ILogger<ScriptInjectionStartupFilter> logger, IPluginConfigProvider configProvider)
         {
             _logger = logger;
             _configProvider = configProvider;
@@ -139,14 +140,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
                     if (System.Threading.Interlocked.Exchange(ref _loggedOnce, 1) == 0)
                     {
-                        _logger.Info("Jellyfin Enhanced: injected the client script via request-time middleware (IStartupFilter).");
+                        _logger.LogInformation("Jellyfin Enhanced: injected the client script via request-time middleware (IStartupFilter).");
                     }
                 }
             }
             catch (Exception ex)
             {
                 // Never break index.html — serve whatever we have.
-                _logger.Warning($"Script injection middleware error (serving original HTML): {ex.Message}");
+                _logger.LogWarning($"Script injection middleware error (serving original HTML): {ex.Message}");
             }
 
             var bytes = Encoding.UTF8.GetBytes(html);

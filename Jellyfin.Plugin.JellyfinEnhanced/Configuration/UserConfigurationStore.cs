@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
 {
@@ -14,12 +15,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
     internal class UserConfigurationStore
     {
         private readonly string _configBaseDir;
-        private readonly Logger _logger;
+        private readonly ILogger _logger;
 
         // Static so the Singleton ResponseFilter and the Scoped IEventConsumer share one pool.
         private static readonly ConcurrentDictionary<string, object> _userFileLocks = new ConcurrentDictionary<string, object>();
 
-        public UserConfigurationStore(string configBaseDir, Logger logger)
+        public UserConfigurationStore(string configBaseDir, ILogger logger)
         {
             _configBaseDir = configBaseDir;
             _logger = logger;
@@ -72,7 +73,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             }
             catch (Exception ex)
             {
-                _logger.Warning($"Error checking existence for '{fileName}' of user '{userId}': {ex.Message}");
+                _logger.LogWarning($"Error checking existence for '{fileName}' of user '{userId}': {ex.Message}");
                 return false;
             }
         }
@@ -89,7 +90,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                     var json = File.ReadAllText(configPath);
                     if (string.IsNullOrWhiteSpace(json))
                     {
-                        _logger.Warning($"Configuration file '{fileName}' for user '{userId}' is empty. Returning default.");
+                        _logger.LogWarning($"Configuration file '{fileName}' for user '{userId}' is empty. Returning default.");
                         return new T();
                     }
 
@@ -106,7 +107,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
 
                     if (settings == null)
                     {
-                        _logger.Warning($"Deserialization of {fileName} resulted in null. Returning default.");
+                        _logger.LogWarning($"Deserialization of {fileName} resulted in null. Returning default.");
                         return new T();
                     }
 
@@ -114,7 +115,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error($"Error deserializing '{fileName}' for user '{userId}': {ex.Message}. Returning default configuration.");
+                    _logger.LogError($"Error deserializing '{fileName}' for user '{userId}': {ex.Message}. Returning default configuration.");
                     return new T();
                 }
             }
@@ -135,7 +136,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to read '{fileName}' for user '{userId}': {ex.Message}");
+                _logger.LogError($"Failed to read '{fileName}' for user '{userId}': {ex.Message}");
                 BackupCorruptFile(configPath);
                 throw;
             }
@@ -143,7 +144,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             if (string.IsNullOrWhiteSpace(json)
                 || string.Equals(json.Trim(), "null", StringComparison.Ordinal))
             {
-                _logger.Error($"'{fileName}' for user '{userId}' exists but is empty or literal-null; refusing to overwrite.");
+                _logger.LogError($"'{fileName}' for user '{userId}' exists but is empty or literal-null; refusing to overwrite.");
                 BackupCorruptFile(configPath);
                 throw new InvalidDataException($"'{fileName}' is empty or literal null; refusing to overwrite.");
             }
@@ -153,7 +154,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 var parsed = JsonConvert.DeserializeObject<T>(json);
                 if (parsed == null)
                 {
-                    _logger.Error($"'{fileName}' for user '{userId}' deserialized to null; refusing to overwrite.");
+                    _logger.LogError($"'{fileName}' for user '{userId}' deserialized to null; refusing to overwrite.");
                     BackupCorruptFile(configPath);
                     throw new InvalidDataException($"'{fileName}' deserialized to null.");
                 }
@@ -165,7 +166,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to parse '{fileName}' for user '{userId}': {ex.Message}");
+                _logger.LogError($"Failed to parse '{fileName}' for user '{userId}': {ex.Message}");
                 BackupCorruptFile(configPath);
                 throw;
             }
@@ -215,9 +216,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to save user configuration for user '{userId}' to file '{fileName}'. Exception: {ex.Message}");
+                _logger.LogError($"Failed to save user configuration for user '{userId}' to file '{fileName}'. Exception: {ex.Message}");
                 try { if (!string.IsNullOrEmpty(tempPath) && File.Exists(tempPath)) File.Delete(tempPath); }
-                catch (Exception cleanupEx) { _logger.Warning($"Failed to clean up stale .tmp for '{fileName}': {cleanupEx.Message}"); }
+                catch (Exception cleanupEx) { _logger.LogWarning($"Failed to clean up stale .tmp for '{fileName}': {cleanupEx.Message}"); }
                 throw;
             }
         }
@@ -230,15 +231,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 var backupPath = filePath + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
                 if (File.Exists(backupPath))
                 {
-                    _logger.Warning($"Corrupt config backup already exists at {backupPath} — skipping new copy.");
+                    _logger.LogWarning($"Corrupt config backup already exists at {backupPath} — skipping new copy.");
                     return;
                 }
                 File.Copy(filePath, backupPath);
-                _logger.Warning($"Corrupt config backed up to {backupPath}");
+                _logger.LogWarning($"Corrupt config backed up to {backupPath}");
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to back up corrupt config: {ex.Message}");
+                _logger.LogError($"Failed to back up corrupt config: {ex.Message}");
             }
         }
 
@@ -277,7 +278,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to get all user IDs: {ex.Message}");
+                _logger.LogError($"Failed to get all user IDs: {ex.Message}");
                 return Array.Empty<string>();
             }
         }

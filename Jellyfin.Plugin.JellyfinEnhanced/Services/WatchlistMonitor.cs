@@ -25,7 +25,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         private readonly IUserDataManager _userDataManager;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly UserConfigurationManager _userConfigurationManager;
-        private readonly Logger _logger;
+        private readonly ILogger<WatchlistMonitor> _logger;
         private readonly IPluginConfigProvider _configProvider;
         private readonly Dictionary<string, (List<RequestItemWithUser> Items, DateTime CachedAt)> _requestsCache = new();
         private readonly object _requestsCacheLock = new();
@@ -37,7 +37,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             IUserDataManager userDataManager,
             IHttpClientFactory httpClientFactory,
             UserConfigurationManager userConfigurationManager,
-            Logger logger,
+            ILogger<WatchlistMonitor> logger,
             IPluginConfigProvider configProvider)
         {
             _libraryManager = libraryManager;
@@ -66,20 +66,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             var config = _configProvider.ConfigurationOrNull as Configuration.PluginConfiguration;
             if (config == null)
             {
-                _logger.Warning("[Watchlist] Configuration is null - skipping watchlist monitoring initialization");
+                _logger.LogWarning("[Watchlist] Configuration is null - skipping watchlist monitoring initialization");
                 return;
             }
 
             if (!config.AddRequestedMediaToWatchlist || !config.JellyseerrEnabled)
             {
-                _logger.Info("[Watchlist] Watchlist monitoring is disabled in configuration - not subscribing to library events");
+                _logger.LogInformation("[Watchlist] Watchlist monitoring is disabled in configuration - not subscribing to library events");
                 return;
             }
 
-            // _logger.Info("[Watchlist] Initializing library event monitoring");
+            // _logger.LogInformation("[Watchlist] Initializing library event monitoring");
             _libraryManager.ItemAdded += OnItemAdded;
             _libraryManager.ItemUpdated += OnItemUpdated;
-            _logger.Info("[Watchlist] Successfully subscribed to library ItemAdded and ItemUpdated events");
+            _logger.LogInformation("[Watchlist] Successfully subscribed to library ItemAdded and ItemUpdated events");
         }
 
         // Handle library item added events to check if they match pending watchlist items.
@@ -108,55 +108,55 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     return;
                 }
 
-                // _logger.Info($"[Watchlist] {eventType} event triggered for: {e.Item?.Name ?? "Unknown"} (Type: {itemKind})");
+                // _logger.LogInformation($"[Watchlist] {eventType} event triggered for: {e.Item?.Name ?? "Unknown"} (Type: {itemKind})");
 
                 // Check if watchlist feature is enabled
                 var config = _configProvider.ConfigurationOrNull as PluginConfiguration;
                 if (config == null)
                 {
-                    _logger.Warning("[Watchlist] Configuration is null");
+                    _logger.LogWarning("[Watchlist] Configuration is null");
                     return;
                 }
 
                 if (!config.AddRequestedMediaToWatchlist)
                 {
-                    _logger.Debug("[Watchlist] AddRequestedMediaToWatchlist is disabled");
+                    _logger.LogDebug("[Watchlist] AddRequestedMediaToWatchlist is disabled");
                     return;
                 }
 
                 if (!config.JellyseerrEnabled)
                 {
-                    _logger.Debug("[Watchlist] JellyseerrEnabled is disabled");
+                    _logger.LogDebug("[Watchlist] JellyseerrEnabled is disabled");
                     return;
                 }
 
                 // Check if item has TMDB ID
                 if (e.Item?.ProviderIds == null)
                 {
-                    _logger.Debug($"[Watchlist] [{eventType}] Item has no ProviderIds yet: {e.Item?.Name}");
+                    _logger.LogDebug($"[Watchlist] [{eventType}] Item has no ProviderIds yet: {e.Item?.Name}");
                     return;
                 }
 
                 if (!e.Item.ProviderIds.TryGetValue("Tmdb", out var tmdbIdString))
                 {
-                    _logger.Debug($"[Watchlist] [{eventType}] Item has no TMDB ID yet: {e.Item.Name}");
+                    _logger.LogDebug($"[Watchlist] [{eventType}] Item has no TMDB ID yet: {e.Item.Name}");
                     return;
                 }
 
                 if (!int.TryParse(tmdbIdString, out var tmdbId))
                 {
-                    _logger.Warning($"[Watchlist] Invalid TMDB ID format: {tmdbIdString}");
+                    _logger.LogWarning($"[Watchlist] Invalid TMDB ID format: {tmdbIdString}");
                     return;
                 }
 
                 var mediaType = itemKind == BaseItemKind.Movie ? "movie" : "tv";
-                // _logger.Info($"[Watchlist] New {mediaType} added to library: '{e.Item.Name}' (TMDB: {tmdbId})");
+                // _logger.LogInformation($"[Watchlist] New {mediaType} added to library: '{e.Item.Name}' (TMDB: {tmdbId})");
 
                 // Query Jellyseerr for ALL requests in a single API call
                 var jellyseerrUrl = config.JellyseerrUrls?.Split(new[] { '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim().TrimEnd('/');
                 if (string.IsNullOrEmpty(jellyseerrUrl) || string.IsNullOrEmpty(config.JellyseerrApiKey))
                 {
-                    _logger.Warning("[Watchlist] Jellyseerr URL or API key not configured");
+                    _logger.LogWarning("[Watchlist] Jellyseerr URL or API key not configured");
                     return;
                 }
 
@@ -258,12 +258,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 // Only log if we actually added the item to at least one watchlist
                 if (addedCount > 0)
                 {
-                    _logger.Info($"[Watchlist] ✓ Added '{e.Item.Name}' to watchlist for {string.Join(", ", addedUsers)}");
+                    _logger.LogInformation($"[Watchlist] ✓ Added '{e.Item.Name}' to watchlist for {string.Join(", ", addedUsers)}");
                 }
             }
             catch (Exception ex)
             {
-                _logger.Error($"[Watchlist] Error in ProcessItemForWatchlist: {ex.Message}\nStack trace: {ex.StackTrace}");
+                _logger.LogError($"[Watchlist] Error in ProcessItemForWatchlist: {ex.Message}\nStack trace: {ex.StackTrace}");
             }
         }
 
@@ -294,7 +294,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     var (content, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
                     if (error != null)
                     {
-                        _logger.Warning($"[Watchlist] Failed to fetch requests from Jellyseerr: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                        _logger.LogWarning($"[Watchlist] Failed to fetch requests from Jellyseerr: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
                         return null;
                     }
 
@@ -302,7 +302,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
                     if (!json.TryGetProperty("results", out var resultsArray))
                     {
-                        _logger.Warning("[Watchlist] Requests response missing results array");
+                        _logger.LogWarning("[Watchlist] Requests response missing results array");
                         return null;
                     }
 
@@ -320,7 +320,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error($"[Watchlist] Error fetching all requests: {ex.Message}");
+                    _logger.LogError($"[Watchlist] Error fetching all requests: {ex.Message}");
                     return null;
                 }
             }
@@ -394,7 +394,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             catch (Exception ex)
             {
-                _logger.Debug($"[Watchlist] Error parsing request item: {ex.Message}");
+                _logger.LogDebug($"[Watchlist] Error parsing request item: {ex.Message}");
             }
 
             return null;
@@ -404,7 +404,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // Cleanup when the plugin is disposed.
         public void Dispose()
         {
-            _logger.Info("[Watchlist] Unsubscribing from library events");
+            _logger.LogInformation("[Watchlist] Unsubscribing from library events");
             _libraryManager.ItemAdded -= OnItemAdded;
             _libraryManager.ItemUpdated -= OnItemUpdated;
             GC.SuppressFinalize(this);

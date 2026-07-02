@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -52,7 +53,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     {
         public ConfigController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<ConfigController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider)
@@ -381,13 +382,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(fallbackPath);
                 if (stream != null)
                 {
-                    _logger.Info($"Locale file not found for {sanitizedLang}, falling back to base language {baseLang}");
+                    _logger.LogInformation($"Locale file not found for {sanitizedLang}, falling back to base language {baseLang}");
                 }
             }
 
             if (stream == null)
             {
-                _logger.Warning($"Locale file not found for language: {sanitizedLang}");
+                _logger.LogWarning($"Locale file not found for language: {sanitizedLang}");
                 return NotFound();
             }
 

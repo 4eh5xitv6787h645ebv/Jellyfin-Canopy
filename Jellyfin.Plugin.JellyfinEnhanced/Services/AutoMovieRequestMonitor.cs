@@ -5,6 +5,7 @@ using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 {
@@ -18,7 +19,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             IUserManager userManager,
             ILibraryManager libraryManager,
             AutoMovieRequestService autoMovieRequestService,
-            Logger logger,
+            ILogger<AutoMovieRequestMonitor> logger,
             IPluginConfigProvider configProvider)
             : base(sessionManager, userManager, libraryManager, logger, configProvider)
         {
@@ -106,7 +107,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                             return;
                         }
 
-                        _logger.Info($"[Auto-Movie-Request] Movie '{e.Item?.Name ?? "Unknown"}' started by {e.Session?.UserName ?? "Unknown"}, checking for collection");
+                        _logger.LogInformation($"[Auto-Movie-Request] Movie '{e.Item?.Name ?? "Unknown"}' started by {e.Session?.UserName ?? "Unknown"}, checking for collection");
 
                         if (e.Item != null && e.Session?.UserId != null)
                         {
@@ -117,7 +118,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             catch (Exception ex)
             {
-                _logger.Error($"[Auto-Movie-Request] Error in OnPlaybackProgress: {ex.Message}");
+                _logger.LogError($"[Auto-Movie-Request] Error in OnPlaybackProgress: {ex.Message}");
             }
         }
     }

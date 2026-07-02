@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -56,7 +57,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         public ArrCalendarController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<ArrCalendarController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
@@ -112,7 +113,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var requestedRange = (endDate - startDate).TotalDays;
             if (requestedRange > maxCalendarRangeDays)
             {
-                _logger.Info($"Calendar range capped from {(int)requestedRange} days to {maxCalendarRangeDays} days.");
+                _logger.LogInformation($"Calendar range capped from {(int)requestedRange} days to {maxCalendarRangeDays} days.");
                 endDate = startDate.AddDays(maxCalendarRangeDays);
             }
 
@@ -633,7 +634,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Warning($"Failed to get calendar user data: {ex.Message}");
+                _logger.LogWarning($"Failed to get calendar user data: {ex.Message}");
             }
 
             return Ok(new { results });

@@ -12,7 +12,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 {
     public class StartupService : IScheduledTask
     {
-        private readonly Logger _logger;
+        private readonly ILogger<StartupService> _logger;
         private readonly IApplicationPaths _applicationPaths;
         private readonly AutoSeasonRequestMonitor _autoSeasonRequestMonitor;
         private readonly AutoMovieRequestMonitor _autoMovieRequestMonitor;
@@ -27,7 +27,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         public string Description => "Initializes Jellyfin Enhanced background services and performs necessary cleanups. The client script is injected at request time by the injection middleware.";
         public string Category => "Jellyfin Enhanced";
 
-        public StartupService(Logger logger, IApplicationPaths applicationPaths, AutoSeasonRequestMonitor autoSeasonRequestMonitor, AutoMovieRequestMonitor autoMovieRequestMonitor, WatchlistMonitor watchlistMonitor, TagCacheService tagCacheService, TagCacheMonitor tagCacheMonitor, SeerrScanTriggerService seerrScanTriggerService, IPluginConfigProvider configProvider)
+        public StartupService(ILogger<StartupService> logger, IApplicationPaths applicationPaths, AutoSeasonRequestMonitor autoSeasonRequestMonitor, AutoMovieRequestMonitor autoMovieRequestMonitor, WatchlistMonitor watchlistMonitor, TagCacheService tagCacheService, TagCacheMonitor tagCacheMonitor, SeerrScanTriggerService seerrScanTriggerService, IPluginConfigProvider configProvider)
         {
             _logger = logger;
             _applicationPaths = applicationPaths;
@@ -44,7 +44,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         {
             await Task.Run(() =>
             {
-                _logger.Info("Jellyfin Enhanced Startup Task run successfully.");
+                _logger.LogInformation("Jellyfin Enhanced Startup Task run successfully.");
                 EnsureScriptInjected();
 
                 // Initialize auto season request monitoring
@@ -72,16 +72,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     // First install: if no cache exists, build it now so tags work immediately
                     if (_tagCacheService.Count == 0)
                     {
-                        _logger.Info("[TagCache] No cache on disk, building initial cache...");
+                        _logger.LogInformation("[TagCache] No cache on disk, building initial cache...");
                         _tagCacheService.BuildFullCache(null, CancellationToken.None);
                     }
                 }
                 catch (System.Exception ex)
                 {
-                    _logger.Error($"[TagCache] Failed to initialize tag cache (tags will use batch fallback): {ex.Message}");
+                    _logger.LogError($"[TagCache] Failed to initialize tag cache (tags will use batch fallback): {ex.Message}");
                 }
 
-                _logger.Info("Jellyfin Enhanced Startup Task completed successfully.");
+                _logger.LogInformation("Jellyfin Enhanced Startup Task completed successfully.");
             }, cancellationToken);
         }
 
@@ -97,12 +97,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
             if (config != null && config.DisableScriptInjectionMiddleware)
             {
-                _logger.Info("Script injection middleware is disabled; using the legacy on-disk index.html fallback.");
+                _logger.LogInformation("Script injection middleware is disabled; using the legacy on-disk index.html fallback.");
                 JellyfinEnhanced.Instance?.InjectScript();
                 return;
             }
 
-            _logger.Info("Client script will be injected at request time by the injection middleware.");
+            _logger.LogInformation("Client script will be injected at request time by the injection middleware.");
         }
 
 

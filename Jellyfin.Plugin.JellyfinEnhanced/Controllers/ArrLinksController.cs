@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -52,7 +53,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     {
         public ArrLinksController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<ArrLinksController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider)
@@ -110,7 +111,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Warning($"{serviceName} validate failed for {url}: {ex.Message}");
+                _logger.LogWarning($"{serviceName} validate failed for {url}: {ex.Message}");
                 return StatusCode(502, new { ok = false, message = $"Could not reach {serviceName}. Check the URL is correct and the server is running." });
             }
         }

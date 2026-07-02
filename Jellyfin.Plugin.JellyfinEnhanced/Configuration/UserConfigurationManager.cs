@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using MediaBrowser.Common.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
 {
@@ -17,11 +18,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
     public class UserConfigurationManager
     {
         private readonly string _configBaseDir;
-        private readonly Logger _logger;
+        private readonly ILogger<UserConfigurationManager> _logger;
         private readonly UserConfigurationStore _store;
         private readonly ReviewsStore _reviews;
 
-        public UserConfigurationManager(IApplicationPaths appPaths, Logger logger)
+        public UserConfigurationManager(IApplicationPaths appPaths, ILogger<UserConfigurationManager> logger)
         {
             _configBaseDir = Path.Combine(appPaths.PluginsPath, "configurations", "Jellyfin.Plugin.JellyfinEnhanced");
             Directory.CreateDirectory(_configBaseDir);
@@ -35,7 +36,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             // hit different folders, so per-user settings appeared to "drift" — see
             // PR #573 thread. Idempotent; cheap when there's nothing to migrate.
             try { new UserDirMigration(_configBaseDir, logger).MigrateCaseVariantUserDirs(); }
-            catch (Exception ex) { _logger.Error($"Per-user dir case-variant migration failed: {ex}"); }
+            catch (Exception ex) { _logger.LogError($"Per-user dir case-variant migration failed: {ex}"); }
         }
 
         // ─── Per-user settings file IO (UserConfigurationStore) ─────────────────
@@ -119,12 +120,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 {
                     items.Items = itemsToKeep;
                     SaveProcessedWatchlistItems(userId, items);
-                    _logger.Info($"Cleaned up {originalCount - itemsToKeep.Count} old processed watchlist items for user {userId}");
+                    _logger.LogInformation($"Cleaned up {originalCount - itemsToKeep.Count} old processed watchlist items for user {userId}");
                 }
             }
             catch (Exception ex)
             {
-                _logger.Error($"Error cleaning up processed watchlist items for user {userId}: {ex.Message}");
+                _logger.LogError($"Error cleaning up processed watchlist items for user {userId}: {ex.Message}");
             }
         }
     }

@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -52,7 +53,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     {
         public ArrRequestsController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<ArrRequestsController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider)
@@ -273,7 +274,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                 if (string.IsNullOrEmpty(jellyfinUserId))
                 {
-                    _logger.Warning("Could not find Jellyfin User ID in claims.");
+                    _logger.LogWarning("Could not find Jellyfin User ID in claims.");
                     return BadRequest(new { message = "Jellyfin User ID was not provided in claims." });
                 }
 
@@ -281,7 +282,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                 if (jellyseerrUser == null)
                 {
-                    _logger.Warning($"Could not find a Seerr user for Jellyfin user {ResolveUserDisplay(jellyfinUserId)}. Aborting request.");
+                    _logger.LogWarning($"Could not find a Seerr user for Jellyfin user {ResolveUserDisplay(jellyfinUserId)}. Aborting request.");
                     return NotFound(new { message = "Current Jellyfin user is not linked to a Seerr user." });
                 }
 
@@ -333,7 +334,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             break;
                         }
                         lastError = urlError;
-                        _logger.Warning($"Seerr requests fetch failed at {candidateUrl}: code={urlError!.Code} status={urlError.HttpStatus} cf-ray={urlError.CfRay} — {urlError.Message}");
+                        _logger.LogWarning($"Seerr requests fetch failed at {candidateUrl}: code={urlError!.Code} status={urlError.HttpStatus} cf-ray={urlError.CfRay} — {urlError.Message}");
                     }
                     catch (Exception innerEx)
                     {
@@ -345,7 +346,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             Message = $"Failed to reach {candidateUrl}: {innerEx.Message}",
                             UserMessage = "Can't reach Seerr right now. Please try again in a moment."
                         };
-                        _logger.Warning($"Seerr requests fetch threw at {candidateUrl}: {innerEx.Message}");
+                        _logger.LogWarning($"Seerr requests fetch threw at {candidateUrl}: {innerEx.Message}");
                     }
                 }
                 if (json == null)
@@ -597,7 +598,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 // Now we surface a structured 502 so the frontend can render a
                 // banner (and the user knows to fix their config rather than
                 // assume they have no requests).
-                _logger.Warning($"Failed to fetch Seerr requests: {ex.Message}");
+                _logger.LogWarning($"Failed to fetch Seerr requests: {ex.Message}");
                 return StatusCode(502, new
                 {
                     error = true,
@@ -653,7 +654,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
             if (error != null)
             {
-                _logger.Warning($"Seerr {action} request {requestId} failed: {error.Code} {error.HttpStatus}");
+                _logger.LogWarning($"Seerr {action} request {requestId} failed: {error.Code} {error.HttpStatus}");
                 return StatusCode(error.HttpStatus > 0 ? error.HttpStatus : 502,
                     IsAdminUser() ? error.ToAdminResponseShape() : error.ToResponseShape());
             }
@@ -783,7 +784,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warning($"Failed to enrich request with TMDB data: {ex.Message}");
+                    _logger.LogWarning($"Failed to enrich request with TMDB data: {ex.Message}");
                     return new TmdbEnrichmentResult();
                 }
             }

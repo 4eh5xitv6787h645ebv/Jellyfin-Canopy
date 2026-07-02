@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr
 {
@@ -37,7 +38,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr
             string[] urls,
             string apiKey,
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger logger,
             CancellationToken cancellationToken = default)
         {
             var result = new BulkImportResult();
@@ -63,7 +64,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr
                     if (error != null)
                     {
                         var msg = $"Import failed at {trimmedUrl}: {error.Code} {error.HttpStatus} — {error.Message}";
-                        logger.Warning(msg);
+                        logger.LogWarning(msg);
                         result.Errors.Add(msg);
                         continue;
                     }
@@ -79,12 +80,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr
                 }
                 catch (HttpRequestException ex)
                 {
-                    logger.Debug($"Connection error during bulk import at {trimmedUrl}: {ex.Message}");
+                    logger.LogDebug($"Connection error during bulk import at {trimmedUrl}: {ex.Message}");
                     result.Errors.Add($"Connection error at {trimmedUrl}: {ex.Message}");
                 }
                 catch (JsonException ex)
                 {
-                    logger.Warning($"Invalid response from Jellyseerr during bulk import at {trimmedUrl}: {ex.Message}");
+                    logger.LogWarning($"Invalid response from Jellyseerr during bulk import at {trimmedUrl}: {ex.Message}");
                     result.Errors.Add($"Invalid response at {trimmedUrl}: {ex.Message}");
                     result.Reached = true;
                 }

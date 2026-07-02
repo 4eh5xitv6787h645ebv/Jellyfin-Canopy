@@ -41,7 +41,27 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
                 {
                     AllowAutoRedirect = false
                 });
-            serviceCollection.AddSingleton<Logger>();
+            // Dedicated JellyfinEnhanced_*.log sink (a documented product feature)
+            // plus a closed-generic ILogger<T> registration for every plugin type.
+            // Each FileForwardingLogger<T> writes the file AND forwards to the host
+            // (Serilog) logger, exactly like the former custom Logger. Self-wiring
+            // closed generics is deliberate: Jellyfin boots with UseSerilog() and no
+            // LoggerProviderCollection, so a DI-registered ILoggerProvider would
+            // never be invoked; and the closed generics only override ILogger<T>
+            // for this assembly's types, never for Jellyfin core categories.
+            serviceCollection.AddSingleton<Logging.JellyfinEnhancedFileLoggerProvider>();
+            foreach (var consumerType in typeof(PluginServiceRegistrator).Assembly.GetTypes())
+            {
+                if (!consumerType.IsClass || consumerType.IsAbstract || consumerType.IsGenericTypeDefinition || consumerType.IsNested)
+                {
+                    continue;
+                }
+
+                var serviceType = typeof(Microsoft.Extensions.Logging.ILogger<>).MakeGenericType(consumerType);
+                var implementationType = typeof(Logging.FileForwardingLogger<>).MakeGenericType(consumerType);
+                serviceCollection.AddSingleton(serviceType, sp => ActivatorUtilities.CreateInstance(sp, implementationType));
+            }
+
             // Live view over the plugin configuration (re-read per access, never
             // snapshotted) so admin saves take effect immediately in consumers.
             serviceCollection.AddSingleton<Services.IPluginConfigProvider, Services.PluginConfigProvider>();

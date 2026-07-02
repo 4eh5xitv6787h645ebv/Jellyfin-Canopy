@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
 {
@@ -23,9 +24,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
         internal static readonly Regex GuidShapeRe    = new Regex("^[0-9a-fA-F-]{32,36}$", RegexOptions.Compiled);
 
         private readonly string _configBaseDir;
-        private readonly Logger _logger;
+        private readonly ILogger _logger;
 
-        public UserDirMigration(string configBaseDir, Logger logger)
+        public UserDirMigration(string configBaseDir, ILogger logger)
         {
             _configBaseDir = configBaseDir;
             _logger = logger;
@@ -80,7 +81,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                     {
                         Directory.Move(srcDir, dstDir);
                         renamed++;
-                        _logger.Info($"Migrated user dir '{srcName}' -> '{stripped}'");
+                        _logger.LogInformation($"Migrated user dir '{srcName}' -> '{stripped}'");
                         continue;
                     }
 
@@ -99,7 +100,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                         Directory.Move(srcDir, tmp);
                         Directory.Move(tmp, dstDir);
                         renamed++;
-                        _logger.Info($"Case-only rename on case-insensitive FS: '{srcName}' -> '{stripped}'");
+                        _logger.LogInformation($"Case-only rename on case-insensitive FS: '{srcName}' -> '{stripped}'");
                         continue;
                     }
 
@@ -130,19 +131,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                                 var backup = dstFile + ".pre-case-merge-" + MigrationSuffix();
                                 File.Copy(dstFile, backup);
                                 File.Copy(srcFile, dstFile, overwrite: true);
-                                _logger.Info($"Merged '{fileName}' from '{srcName}' (newer) into '{stripped}'");
+                                _logger.LogInformation($"Merged '{fileName}' from '{srcName}' (newer) into '{stripped}'");
                             }
                             else
                             {
                                 // Source data is dropped from the canonical dir but
                                 // preserved under '{srcName}.migrated-{ts}'. Warning
                                 // severity so the admin can spot it in logs.
-                                _logger.Warning($"Kept '{fileName}' from canonical '{stripped}' (newer than '{srcName}'); source-side copy preserved in '.migrated-' sibling");
+                                _logger.LogWarning($"Kept '{fileName}' from canonical '{stripped}' (newer than '{srcName}'); source-side copy preserved in '.migrated-' sibling");
                             }
                         }
                         catch (Exception fileEx)
                         {
-                            _logger.Error($"Failed to migrate file '{fileName}' in '{srcName}': {fileEx.Message}");
+                            _logger.LogError($"Failed to migrate file '{fileName}' in '{srcName}': {fileEx.Message}");
                         }
                     }
 
@@ -150,12 +151,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                     var migratedName = srcDir + ".migrated-" + MigrationSuffix();
                     Directory.Move(srcDir, migratedName);
                     migrated++;
-                    _logger.Info($"Merged user dir '{srcName}' into canonical '{stripped}', source preserved at '{Path.GetFileName(migratedName)}'");
+                    _logger.LogInformation($"Merged user dir '{srcName}' into canonical '{stripped}', source preserved at '{Path.GetFileName(migratedName)}'");
                 }
                 catch (Exception ex)
                 {
                     failed++;
-                    _logger.Error($"Failed to migrate user dir '{srcName}': {ex}");
+                    _logger.LogError($"Failed to migrate user dir '{srcName}': {ex}");
                 }
             }
 
@@ -163,11 +164,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             {
                 if (failed > 0)
                 {
-                    _logger.Warning($"User-dir case migration done with errors: {renamed} renamed, {migrated} merged, {failed} failed (source dirs left intact).");
+                    _logger.LogWarning($"User-dir case migration done with errors: {renamed} renamed, {migrated} merged, {failed} failed (source dirs left intact).");
                 }
                 else
                 {
-                    _logger.Info($"User-dir case migration done: {renamed} renamed, {migrated} merged.");
+                    _logger.LogInformation($"User-dir case migration done: {renamed} renamed, {migrated} merged.");
                 }
             }
         }

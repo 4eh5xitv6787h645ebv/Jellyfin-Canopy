@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -54,7 +55,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         public UserSettingsController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<UserSettingsController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
@@ -134,7 +135,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     };
 
                     _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "settings.json", defaultUserSettings);
-                    _logger.Info($"Saved default settings.json for new user {ResolveUserDisplay(authorizedUserId)} from plugin configuration.");
+                    _logger.LogInformation($"Saved default settings.json for new user {ResolveUserDisplay(authorizedUserId)} from plugin configuration.");
                 }
             }
 
@@ -208,13 +209,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "settings.json", userConfiguration);
 
                 if (changes.Count > 0)
-                    _logger.Info($"Saved user settings for {ResolveUserDisplay(authorizedUserId)}: {string.Join(", ", changes)}");
+                    _logger.LogInformation($"Saved user settings for {ResolveUserDisplay(authorizedUserId)}: {string.Join(", ", changes)}");
 
                 return Ok(new { success = true, file = "settings.json" });
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to save user settings for user {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
+                _logger.LogError($"Failed to save user settings for user {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to save user settings." });
             }
         }
@@ -233,12 +234,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             try
             {
                 _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "shortcuts.json", userConfiguration);
-                _logger.Info($"Saved user shortcuts for {ResolveUserDisplay(authorizedUserId)} to shortcuts.json");
+                _logger.LogInformation($"Saved user shortcuts for {ResolveUserDisplay(authorizedUserId)} to shortcuts.json");
                 return Ok(new { success = true, file = "shortcuts.json" });
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to save user shortcuts for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
+                _logger.LogError($"Failed to save user shortcuts for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to save user shortcuts." });
             }
         }
@@ -272,12 +273,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             try
             {
                 _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "bookmark.json", userConfiguration);
-                _logger.Info($"Saved enhanced bookmarks for {ResolveUserDisplay(authorizedUserId)} to bookmark.json");
+                _logger.LogInformation($"Saved enhanced bookmarks for {ResolveUserDisplay(authorizedUserId)} to bookmark.json");
                 return Ok(new { success = true, file = "bookmark.json" });
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to save enhanced bookmarks for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
+                _logger.LogError($"Failed to save enhanced bookmarks for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to save enhanced bookmarks." });
             }
         }
@@ -332,12 +333,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     };
                     return 1;
                 });
-                _logger.Info($"Added bookmark {bookmarkId} for {ResolveUserDisplay(authorizedUserId)}");
+                _logger.LogInformation($"Added bookmark {bookmarkId} for {ResolveUserDisplay(authorizedUserId)}");
                 return Ok(new { success = true, id = bookmarkId });
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to add bookmark for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
+                _logger.LogError($"Failed to add bookmark for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to add bookmark." });
             }
         }
@@ -372,12 +373,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     return NotFound(new { success = false, removed = false, message = "No matching bookmark to remove." });
                 }
 
-                _logger.Info($"Removed bookmark {bookmarkId} for {ResolveUserDisplay(authorizedUserId)}");
+                _logger.LogInformation($"Removed bookmark {bookmarkId} for {ResolveUserDisplay(authorizedUserId)}");
                 return Ok(new { success = true, removed = true });
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to remove bookmark {bookmarkId} for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
+                _logger.LogError($"Failed to remove bookmark {bookmarkId} for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to remove bookmark." });
             }
         }
@@ -396,12 +397,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             try
             {
                 _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "elsewhere.json", userConfiguration);
-                _logger.Info($"Saved user elsewhere settings for {ResolveUserDisplay(authorizedUserId)} to elsewhere.json");
+                _logger.LogInformation($"Saved user elsewhere settings for {ResolveUserDisplay(authorizedUserId)} to elsewhere.json");
                 return Ok(new { success = true, file = "elsewhere.json" });
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to save user elsewhere settings for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
+                _logger.LogError($"Failed to save user elsewhere settings for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to save user elsewhere settings." });
             }
         }
@@ -487,7 +488,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warning($"Skipping settings.json reset for {ResolveUserDisplay(userId)}: {ex.Message}");
+                    _logger.LogWarning($"Skipping settings.json reset for {ResolveUserDisplay(userId)}: {ex.Message}");
                     skippedSettings.Add(userId);
                 }
 
@@ -507,12 +508,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                                         || ex is IOException
                                         || ex is UnauthorizedAccessException)
                 {
-                    _logger.Warning($"Skipping HC settings reset for {ResolveUserDisplay(userId)}: {ex.Message}");
+                    _logger.LogWarning($"Skipping HC settings reset for {ResolveUserDisplay(userId)}: {ex.Message}");
                     skippedHc.Add(userId);
                 }
             }
 
-            _logger.Info($"Reset settings for {userCount}/{userIds.Count()} users to plugin defaults. Skipped settings: {skippedSettings.Count}, skipped HC: {skippedHc.Count}.");
+            _logger.LogInformation($"Reset settings for {userCount}/{userIds.Count()} users to plugin defaults. Skipped settings: {skippedSettings.Count}, skipped HC: {skippedHc.Count}.");
             return Ok(new
             {
                 success = true,

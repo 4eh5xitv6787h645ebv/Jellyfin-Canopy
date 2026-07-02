@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -55,7 +56,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         public JellyseerrUserController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<JellyseerrUserController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
@@ -153,7 +154,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     // outages. Leave a breadcrumb in the server log so the cause
                     // can be correlated with the preceding WARN/ERROR lines
                     // that GetJellyseerrUser already emits.
-                    _logger.Info($"[audit] user {jfUser.Username} ({userId}): GetJellyseerrUser returned null — see preceding log lines for cause");
+                    _logger.LogInformation($"[audit] user {jfUser.Username} ({userId}): GetJellyseerrUser returned null — see preceding log lines for cause");
                     results.Add(new
                     {
                         jellyfinUsername = jfUser.Username,
@@ -325,7 +326,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     return BadRequest(new { error = "Jellyseerr watchlist sync is not enabled" });
                 }
 
-                _logger.Info("[Manual Watchlist Sync] Starting manual Seerr watchlist sync...");
+                _logger.LogInformation("[Manual Watchlist Sync] Starting manual Seerr watchlist sync...");
 
                 int itemsProcessed = 0;
                 int itemsAdded = 0;
@@ -335,13 +336,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 {
                     try
                     {
-                        _logger.Info($"[Manual Watchlist Sync] Processing user: {user.Username} ({user.Id})");
+                        _logger.LogInformation($"[Manual Watchlist Sync] Processing user: {user.Username} ({user.Id})");
 
                         // Get Seerr user ID for this Jellyfin user
                         var jellyseerrUserId = await GetJellyseerrUserId(user.Id.ToString());
                         if (string.IsNullOrEmpty(jellyseerrUserId))
                         {
-                            _logger.Warning($"[Manual Watchlist Sync] Could not find Seerr user for {user.Username}");
+                            _logger.LogWarning($"[Manual Watchlist Sync] Could not find Seerr user for {user.Username}");
                             continue;
                         }
 
@@ -349,16 +350,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         var watchlistItems = await GetJellyseerrWatchlistForUser(jellyseerrUserId);
                         if (watchlistItems == null || watchlistItems.Count == 0)
                         {
-                            _logger.Info($"[Manual Watchlist Sync] No watchlist items found for {user.Username}");
+                            _logger.LogInformation($"[Manual Watchlist Sync] No watchlist items found for {user.Username}");
                             watchlistItems = new List<WatchlistItem>();
                         }
 
-                        _logger.Info($"[Manual Watchlist Sync] Found {watchlistItems.Count} watchlist items for {user.Username}");
+                        _logger.LogInformation($"[Manual Watchlist Sync] Found {watchlistItems.Count} watchlist items for {user.Username}");
 
                         var requestItems = await GetJellyseerrRequestsForUser(jellyseerrUserId);
                         if (requestItems != null && requestItems.Count > 0)
                         {
-                            _logger.Info($"[Manual Watchlist Sync] Found {requestItems.Count} request items for {user.Username}");
+                            _logger.LogInformation($"[Manual Watchlist Sync] Found {requestItems.Count} request items for {user.Username}");
                             watchlistItems.AddRange(requestItems);
                         }
 
@@ -382,31 +383,31 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                                 var userData = _userDataManager.GetUserData(user, libraryItem);
                                 if (userData == null)
                                 {
-                                    _logger.Warning($"[Manual Watchlist Sync] User data was null for '{libraryItem.Name}' and user {user.Username}; skipping.");
+                                    _logger.LogWarning($"[Manual Watchlist Sync] User data was null for '{libraryItem.Name}' and user {user.Username}; skipping.");
                                 }
                                 else if (userData.Likes != true)
                                 {
                                     userData.Likes = true;
                                     _userDataManager.SaveUserData(user, libraryItem, userData, UserDataSaveReason.UpdateUserRating, default);
                                     itemsAdded++;
-                                    _logger.Info($"[Manual Watchlist Sync] Added '{libraryItem.Name}' to watchlist for {user.Username}");
+                                    _logger.LogInformation($"[Manual Watchlist Sync] Added '{libraryItem.Name}' to watchlist for {user.Username}");
                                 }
                             }
                             else
                             {
                                 // Item not in library yet - WatchlistMonitor will automatically add it when it arrives
-                                _logger.Debug($"[Manual Watchlist Sync] Item TMDB {item.TmdbId} ({item.MediaType}) not in library yet for {user.Username} - will be auto-added by WatchlistMonitor when available");
+                                _logger.LogDebug($"[Manual Watchlist Sync] Item TMDB {item.TmdbId} ({item.MediaType}) not in library yet for {user.Username} - will be auto-added by WatchlistMonitor when available");
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.Error($"[Manual Watchlist Sync] Error processing user {user.Username}: {ex.Message}");
+                        _logger.LogError($"[Manual Watchlist Sync] Error processing user {user.Username}: {ex.Message}");
                         errors.Add("Failed to sync watchlist for a user.");
                     }
                 }
 
-                _logger.Info($"[Manual Watchlist Sync] Sync complete. Processed: {itemsProcessed}, Added: {itemsAdded}");
+                _logger.LogInformation($"[Manual Watchlist Sync] Sync complete. Processed: {itemsProcessed}, Added: {itemsAdded}");
 
                 return Ok(new
                 {
@@ -418,7 +419,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Error($"[Manual Watchlist Sync] Fatal error: {ex}");
+                _logger.LogError($"[Manual Watchlist Sync] Fatal error: {ex}");
                 return StatusCode(500, new { error = "An internal error occurred during watchlist sync." });
             }
         }
@@ -456,7 +457,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     _seerrCache.LastManualImport = DateTime.UtcNow;
                 }
 
-                _logger.Info("[Manual User Import] Starting manual Jellyseerr user import...");
+                _logger.LogInformation("[Manual User Import] Starting manual Jellyseerr user import...");
 
                 var urls = config.JellyseerrUrls.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                 var blockedIds = Helpers.Jellyseerr.JellyseerrUserImportHelper.GetBlockedUserIds(config.JellyseerrImportBlockedUsers);
@@ -464,7 +465,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     .Select(u => u.Id.ToString().Replace("-", ""))
                     .Where(id => !blockedIds.Contains(id))
                     .ToList();
-                _logger.Info($"[Manual User Import] Importing {userIds.Count} Jellyfin users...");
+                _logger.LogInformation($"[Manual User Import] Importing {userIds.Count} Jellyfin users...");
 
                 var importResult = await Helpers.Jellyseerr.JellyseerrUserImportHelper.BulkImportAsync(
                     userIds, urls, config.JellyseerrApiKey, _httpClientFactory, _logger);
@@ -491,7 +492,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                 if (importResult.Reached)
                 {
-                    _logger.Info($"[Manual User Import] Completed. {importResult.Imported} new user(s) imported out of {userIds.Count} sent. Errors: {importResult.Errors.Count}");
+                    _logger.LogInformation($"[Manual User Import] Completed. {importResult.Imported} new user(s) imported out of {userIds.Count} sent. Errors: {importResult.Errors.Count}");
                     return Ok(new
                     {
                         success = true,
@@ -511,12 +512,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (HttpRequestException ex)
             {
-                _logger.Error($"[Manual User Import] Connection error: {ex.Message}");
+                _logger.LogError($"[Manual User Import] Connection error: {ex.Message}");
                 return StatusCode(502, new { error = "Failed to connect to Jellyseerr. Check server logs for details." });
             }
             catch (JsonException ex)
             {
-                _logger.Error($"[Manual User Import] Invalid Jellyseerr response: {ex.Message}");
+                _logger.LogError($"[Manual User Import] Invalid Jellyseerr response: {ex.Message}");
                 return StatusCode(502, new { error = "Invalid response from Jellyseerr. Check server logs for details." });
             }
         }

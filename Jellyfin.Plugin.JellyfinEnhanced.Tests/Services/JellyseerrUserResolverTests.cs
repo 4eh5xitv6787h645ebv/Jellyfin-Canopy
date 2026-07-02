@@ -1,7 +1,6 @@
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Tests.TestDoubles;
-using MediaBrowser.Common.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -78,71 +77,27 @@ public class JellyseerrUserResolverTests
 
     // ─── IPluginConfigProvider seam ──────────────────────────────────────────
 
-    private static JellyseerrUserResolver NewResolver(FakePluginConfigProvider provider, string tempDir)
-    {
-        var logger = new Logger(new SeamStubAppPaths(tempDir), NullLoggerFactory.Instance);
-        return new JellyseerrUserResolver(new ThrowingHttpClientFactory(), logger, provider, "[Test]");
-    }
+    private static JellyseerrUserResolver NewResolver(FakePluginConfigProvider provider)
+        => new(new ThrowingHttpClientFactory(), NullLogger.Instance, provider, "[Test]");
 
     [Fact]
     public async Task GetJellyseerrUserId_ReadsConfigThroughInjectedProvider_AndSkipsWorkWhenUnconfigured()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), "je-resolver-tests-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempDir);
-        try
-        {
-            // Plugin not loaded (provider returns null): resolver must bail out
-            // before any HTTP call — the throwing factory proves no request is made.
-            var provider = new FakePluginConfigProvider(config: null);
-            var resolver = NewResolver(provider, tempDir);
-            Assert.Null(await resolver.GetJellyseerrUserId("abcdef1234567890abcdef1234567890"));
+        // Plugin not loaded (provider returns null): resolver must bail out
+        // before any HTTP call — the throwing factory proves no request is made.
+        var provider = new FakePluginConfigProvider(config: null);
+        var resolver = NewResolver(provider);
+        Assert.Null(await resolver.GetJellyseerrUserId("abcdef1234567890abcdef1234567890"));
 
-            // Live provider re-read: same resolver, config appears but without
-            // URL/API key — the config-gate still short-circuits before HTTP.
-            provider.Current = new PluginConfiguration { JellyseerrUrls = "", JellyseerrApiKey = "" };
-            Assert.Null(await resolver.GetJellyseerrUserId("abcdef1234567890abcdef1234567890"));
-        }
-        finally
-        {
-            try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
-        }
+        // Live provider re-read: same resolver, config appears but without
+        // URL/API key — the config-gate still short-circuits before HTTP.
+        provider.Current = new PluginConfiguration { JellyseerrUrls = "", JellyseerrApiKey = "" };
+        Assert.Null(await resolver.GetJellyseerrUserId("abcdef1234567890abcdef1234567890"));
     }
 
     private sealed class ThrowingHttpClientFactory : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) =>
             throw new InvalidOperationException("Unexpected outbound HTTP call: the config gate should have short-circuited.");
-    }
-
-    /// <summary>Minimal IApplicationPaths so the plugin's file Logger can be constructed in tests.</summary>
-    private sealed class SeamStubAppPaths : IApplicationPaths
-    {
-        private readonly string _baseDir;
-
-        public SeamStubAppPaths(string baseDir) => _baseDir = baseDir;
-
-        public string ProgramDataPath => _baseDir;
-        public string WebPath => _baseDir;
-        public string ProgramSystemPath => _baseDir;
-        public string DataPath => _baseDir;
-        public string ImageCachePath => _baseDir;
-        public string PluginsPath => _baseDir;
-        public string PluginConfigurationsPath => _baseDir;
-        public string LogDirectoryPath => _baseDir;
-        public string ConfigurationDirectoryPath => _baseDir;
-        public string SystemConfigurationFilePath => Path.Combine(_baseDir, "system.xml");
-        public string CachePath => _baseDir;
-        public string TempDirectory => _baseDir;
-        public string VirtualDataPath => _baseDir;
-        public string TrickplayPath => _baseDir;
-        public string BackupPath => _baseDir;
-
-        public void MakeSanityCheckOrThrow()
-        {
-        }
-
-        public void CreateAndCheckMarker(string path, string markerName, bool recursive = false)
-        {
-        }
     }
 }

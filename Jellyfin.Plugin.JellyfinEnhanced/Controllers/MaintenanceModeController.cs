@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -55,7 +56,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         public MaintenanceModeController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<MaintenanceModeController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,

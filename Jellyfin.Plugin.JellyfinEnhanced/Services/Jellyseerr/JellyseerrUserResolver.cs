@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
 {
@@ -24,11 +25,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
         private static readonly object _userIdCacheLock = new();
 
         private readonly IHttpClientFactory _httpClientFactory;
-        private readonly Logger _logger;
+        private readonly ILogger _logger;
         private readonly IPluginConfigProvider _configProvider;
         private readonly string _logPrefix;
 
-        public JellyseerrUserResolver(IHttpClientFactory httpClientFactory, Logger logger, IPluginConfigProvider configProvider, string logPrefix)
+        public JellyseerrUserResolver(IHttpClientFactory httpClientFactory, ILogger logger, IPluginConfigProvider configProvider, string logPrefix)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
@@ -120,17 +121,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
                                     }
                                 }
                             }
-                            _logger.Warning($"{_logPrefix} No Jellyseerr user found for Jellyfin user {jellyfinUserId}");
+                            _logger.LogWarning($"{_logPrefix} No Jellyseerr user found for Jellyfin user {jellyfinUserId}");
                         }
                     }
                     else if (error != null)
                     {
-                        _logger.Warning($"{_logPrefix} Failed to fetch users from Jellyseerr: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                        _logger.LogWarning($"{_logPrefix} Failed to fetch users from Jellyseerr: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error($"{_logPrefix} Exception while trying to get Jellyseerr user ID from {url}: {ex.Message}");
+                    _logger.LogError($"{_logPrefix} Exception while trying to get Jellyseerr user ID from {url}: {ex.Message}");
                 }
             }
 

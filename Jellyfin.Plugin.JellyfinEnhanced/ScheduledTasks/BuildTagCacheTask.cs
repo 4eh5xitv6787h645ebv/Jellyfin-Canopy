@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using MediaBrowser.Model.Tasks;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
 {
@@ -17,9 +18,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
     {
         private readonly TagCacheService _tagCacheService;
         private readonly TagCacheMonitor _tagCacheMonitor;
-        private readonly Logger _logger;
+        private readonly ILogger<BuildTagCacheTask> _logger;
 
-        public BuildTagCacheTask(TagCacheService tagCacheService, TagCacheMonitor tagCacheMonitor, Logger logger)
+        public BuildTagCacheTask(TagCacheService tagCacheService, TagCacheMonitor tagCacheMonitor, ILogger<BuildTagCacheTask> logger)
         {
             _tagCacheService = tagCacheService;
             _tagCacheMonitor = tagCacheMonitor;

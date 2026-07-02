@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -55,7 +56,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         public HiddenContentController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<HiddenContentController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
@@ -91,13 +92,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             // Re-check inside the lock: another writer may have created the file in the meantime.
                             if (hc.Items.Count > 0) return 0;
                             hc.Settings = BuildHcDefaultSettings(defaultConfig);
-                            _logger.Info($"Seeded default hidden-content.json for new user {ResolveUserDisplay(authorizedUserId)} from plugin configuration.");
+                            _logger.LogInformation($"Seeded default hidden-content.json for new user {ResolveUserDisplay(authorizedUserId)} from plugin configuration.");
                             return 1;
                         });
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warning($"Failed to seed hidden-content.json for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
+                    _logger.LogWarning($"Failed to seed hidden-content.json for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
                 }
             }
 
@@ -134,24 +135,24 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     catch (Exception strictEx) when (strictEx is InvalidDataException
                                                   || strictEx is Newtonsoft.Json.JsonException)
                     {
-                        _logger.Warning($"hidden-content.json corrupt for {ResolveUserDisplay(authorizedUserId)} (backed up): {strictEx.Message}");
+                        _logger.LogWarning($"hidden-content.json corrupt for {ResolveUserDisplay(authorizedUserId)} (backed up): {strictEx.Message}");
                         return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
                     }
                     catch (IOException ioEx)
                     {
-                        _logger.Warning($"hidden-content.json temporarily unreadable for {ResolveUserDisplay(authorizedUserId)}: {ioEx.Message}");
+                        _logger.LogWarning($"hidden-content.json temporarily unreadable for {ResolveUserDisplay(authorizedUserId)}: {ioEx.Message}");
                         return StatusCode(500, new { success = false, message = "Hidden-content store is temporarily unavailable. Please retry." });
                     }
 
                     _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "hidden-content.json", userConfiguration);
                 }
                 Services.HiddenContentResponseFilter.InvalidateUser(authorizedUserId);
-                _logger.Info($"Saved hidden content for {ResolveUserDisplay(authorizedUserId)} to hidden-content.json");
+                _logger.LogInformation($"Saved hidden content for {ResolveUserDisplay(authorizedUserId)} to hidden-content.json");
                 return Ok(new { success = true, file = "hidden-content.json" });
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to save hidden content for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
+                _logger.LogError($"Failed to save hidden content for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to save hidden content." });
             }
         }
@@ -220,7 +221,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 catch (Exception ex)
                 {
                     // Per-user guard: one unreadable config must not break the whole list.
-                    _logger.Warning($"Skipping user {ResolveUserDisplay(userIdN)} in hidden-content-users: {ex.Message}");
+                    _logger.LogWarning($"Skipping user {ResolveUserDisplay(userIdN)} in hidden-content-users: {ex.Message}");
                 }
             }
 
@@ -270,7 +271,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Warning($"Admin hidden-content read failed for {ResolveUserDisplay(userId)}: {ex.Message}");
+                _logger.LogWarning($"Admin hidden-content read failed for {ResolveUserDisplay(userId)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to load hidden content." });
             }
         }
@@ -326,22 +327,22 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                 if (removed > 0)
                     Services.HiddenContentResponseFilter.InvalidateUser(userIdN);
-                _logger.Info($"Admin unhid {removed} item(s) for {ResolveUserDisplay(userIdN)}.");
+                _logger.LogInformation($"Admin unhid {removed} item(s) for {ResolveUserDisplay(userIdN)}.");
                 return Ok(new { success = true, removed });
             }
             catch (Exception ex) when (ex is InvalidDataException || ex is Newtonsoft.Json.JsonException)
             {
-                _logger.Warning($"hidden-content.json corrupt for {ResolveUserDisplay(userIdN)} during admin unhide (backed up): {ex.Message}");
+                _logger.LogWarning($"hidden-content.json corrupt for {ResolveUserDisplay(userIdN)} during admin unhide (backed up): {ex.Message}");
                 return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
             }
             catch (IOException ioEx)
             {
-                _logger.Warning($"hidden-content.json temporarily unreadable for {ResolveUserDisplay(userIdN)}: {ioEx.Message}");
+                _logger.LogWarning($"hidden-content.json temporarily unreadable for {ResolveUserDisplay(userIdN)}: {ioEx.Message}");
                 return StatusCode(500, new { success = false, message = "Hidden-content store is temporarily unavailable. Please retry." });
             }
             catch (Exception ex)
             {
-                _logger.Error($"Admin unhide failed for {ResolveUserDisplay(userIdN)}: {ex.Message}");
+                _logger.LogError($"Admin unhide failed for {ResolveUserDisplay(userIdN)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to update hidden content." });
             }
         }
@@ -417,22 +418,22 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                 if (added > 0)
                     Services.HiddenContentResponseFilter.InvalidateUser(userIdN);
-                _logger.Info($"Admin hid {added} item(s) for {ResolveUserDisplay(userIdN)}.");
+                _logger.LogInformation($"Admin hid {added} item(s) for {ResolveUserDisplay(userIdN)}.");
                 return Ok(new { success = true, added });
             }
             catch (Exception ex) when (ex is InvalidDataException || ex is Newtonsoft.Json.JsonException)
             {
-                _logger.Warning($"hidden-content.json corrupt for {ResolveUserDisplay(userIdN)} during admin hide (backed up): {ex.Message}");
+                _logger.LogWarning($"hidden-content.json corrupt for {ResolveUserDisplay(userIdN)} during admin hide (backed up): {ex.Message}");
                 return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
             }
             catch (IOException ioEx)
             {
-                _logger.Warning($"hidden-content.json temporarily unreadable for {ResolveUserDisplay(userIdN)}: {ioEx.Message}");
+                _logger.LogWarning($"hidden-content.json temporarily unreadable for {ResolveUserDisplay(userIdN)}: {ioEx.Message}");
                 return StatusCode(500, new { success = false, message = "Hidden-content store is temporarily unavailable. Please retry." });
             }
             catch (Exception ex)
             {
-                _logger.Error($"Admin hide failed for {ResolveUserDisplay(userIdN)}: {ex.Message}");
+                _logger.LogError($"Admin hide failed for {ResolveUserDisplay(userIdN)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to update hidden content." });
             }
         }
@@ -607,7 +608,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to add {targetScope} hide for user {userId}: {ex.Message}");
+                _logger.LogError($"Failed to add {targetScope} hide for user {userId}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to hide item." });
             }
         }
@@ -673,7 +674,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to remove {targetScope} hide for user {userId}: {ex.Message}");
+                _logger.LogError($"Failed to remove {targetScope} hide for user {userId}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to unhide." });
             }
         }

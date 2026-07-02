@@ -11,6 +11,7 @@ using MediaBrowser.Model.Search;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 {
@@ -51,14 +52,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             { ("Search", "GetSearchHints"),            ("search",          FilterSearchHints) },
         };
 
-        private delegate void ResponseHandler(ActionExecutedContext executed, HideContext hide, string surface, Logger logger);
+        private delegate void ResponseHandler(ActionExecutedContext executed, HideContext hide, string surface, ILogger<HiddenContentResponseFilter> logger);
 
         // Re-warn at most once per hour so a real Jellyfin upgrade isn't permanently invisible after the first warn.
         private static readonly TimeSpan ShapeMismatchReWarnInterval = TimeSpan.FromHours(1);
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _warnedShapeMismatchAt = new();
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _warnedReadFailure = new();
 
-        private static void WarnShapeMismatchOnce(Logger logger, string surface, string handlerName, IActionResult? result)
+        private static void WarnShapeMismatchOnce(ILogger<HiddenContentResponseFilter> logger, string surface, string handlerName, IActionResult? result)
         {
             var now = DateTime.UtcNow;
             // AddOrUpdate returns the stored value. Equality with `now` means our new timestamp won the slot — log.
@@ -68,14 +69,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 (_, last) => (now - last) >= ShapeMismatchReWarnInterval ? now : last);
             if (stored != now) return;
             var actualType = result?.GetType().FullName ?? "(null)";
-            logger.Warning($"HC filter: {handlerName} for surface '{surface}' got an unexpected response shape ({actualType}); filter is no-op for this endpoint. Likely a Jellyfin upgrade changed the response type. Re-warns hourly.");
+            logger.LogWarning($"HC filter: {handlerName} for surface '{surface}' got an unexpected response shape ({actualType}); filter is no-op for this endpoint. Likely a Jellyfin upgrade changed the response type. Re-warns hourly.");
         }
 
         private readonly UserConfigurationManager _configManager;
-        private readonly Logger _logger;
+        private readonly ILogger<HiddenContentResponseFilter> _logger;
         private readonly IPluginConfigProvider _configProvider;
 
-        public HiddenContentResponseFilter(UserConfigurationManager configManager, Logger logger, IPluginConfigProvider configProvider)
+        public HiddenContentResponseFilter(UserConfigurationManager configManager, ILogger<HiddenContentResponseFilter> logger, IPluginConfigProvider configProvider)
         {
             _configManager = configManager;
             _logger = logger;
@@ -136,7 +137,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             catch (Exception ex)
             {
-                _logger.Error($"HC response filter handler failed for surface '{route.Surface}' — entries will pass through unfiltered for this request: {ex.Message}");
+                _logger.LogError($"HC response filter handler failed for surface '{route.Surface}' — entries will pass through unfiltered for this request: {ex.Message}");
             }
         }
 
@@ -201,7 +202,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 // Dedup once per user per process so a corrupt file doesn't spam Error on every matched request.
                 if (_warnedReadFailure.TryAdd(userId, 0))
                 {
-                    _logger.Error($"HC response filter: failed to read hidden-content.json for user {userId} — entries will pass through unfiltered until the file is repaired: {ex.Message}");
+                    _logger.LogError($"HC response filter: failed to read hidden-content.json for user {userId} — entries will pass through unfiltered until the file is repaired: {ex.Message}");
                 }
                 data = null;
             }
@@ -214,7 +215,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             return ctx;
         }
 
-        private static void FilterQueryResult(ActionExecutedContext executed, HideContext hide, string surface, Logger logger)
+        private static void FilterQueryResult(ActionExecutedContext executed, HideContext hide, string surface, ILogger<HiddenContentResponseFilter> logger)
         {
             if (executed.Result is not ObjectResult or || or.Value is not QueryResult<BaseItemDto> qr)
             {
@@ -239,7 +240,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 kept);
         }
 
-        private static void FilterEnumerable(ActionExecutedContext executed, HideContext hide, string surface, Logger logger)
+        private static void FilterEnumerable(ActionExecutedContext executed, HideContext hide, string surface, ILogger<HiddenContentResponseFilter> logger)
         {
             if (executed.Result is not ObjectResult or || or.Value is not IEnumerable<BaseItemDto> raw)
             {
@@ -259,7 +260,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         }
 
         // SearchHint has no SeriesId, so series-scope cascade falls back to the /Items?searchTerm path.
-        private static void FilterSearchHints(ActionExecutedContext executed, HideContext hide, string surface, Logger logger)
+        private static void FilterSearchHints(ActionExecutedContext executed, HideContext hide, string surface, ILogger<HiddenContentResponseFilter> logger)
         {
             if (executed.Result is not ObjectResult or || or.Value is not SearchHintResult sh)
             {

@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -52,7 +53,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     {
         public ViewsController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<ViewsController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider)
@@ -91,7 +92,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
             if (stream == null)
             {
-                _logger.Warning($"Failed to get resource {view.EmbeddedResourcePath}");
+                _logger.LogWarning($"Failed to get resource {view.EmbeddedResourcePath}");
                 return NotFound();
             }
 

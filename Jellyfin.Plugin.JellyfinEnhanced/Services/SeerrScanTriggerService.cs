@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using MediaBrowser.Controller.Library;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 {
@@ -23,7 +24,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
         private readonly ILibraryManager _libraryManager;
         private readonly IHttpClientFactory _httpClientFactory;
-        private readonly Logger _logger;
+        private readonly ILogger<SeerrScanTriggerService> _logger;
         private readonly IPluginConfigProvider _configProvider;
 
         private readonly object _stateLock = new();
@@ -35,7 +36,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         public SeerrScanTriggerService(
             ILibraryManager libraryManager,
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<SeerrScanTriggerService> logger,
             IPluginConfigProvider configProvider)
         {
             _libraryManager = libraryManager;
@@ -56,7 +57,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 _libraryManager.ItemAdded += OnItemAdded;
                 _subscribed = true;
             }
-            _logger.Info("[SeerrScan] Subscribed to library ItemAdded events");
+            _logger.LogInformation("[SeerrScan] Subscribed to library ItemAdded events");
         }
 
         private void OnItemAdded(object? sender, ItemChangeEventArgs e)
@@ -91,7 +92,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             catch (Exception ex)
             {
-                _logger.Warning($"[SeerrScan] OnItemAdded handler threw: {ex.Message}");
+                _logger.LogWarning($"[SeerrScan] OnItemAdded handler threw: {ex.Message}");
             }
         }
 
@@ -123,7 +124,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             {
                 if (_configProvider.ConfigurationOrNull is not PluginConfiguration config)
                 {
-                    _logger.Warning("[SeerrScan] Cannot dispatch: plugin configuration is null");
+                    _logger.LogWarning("[SeerrScan] Cannot dispatch: plugin configuration is null");
                     return results;
                 }
 
@@ -131,7 +132,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 var urls = ParseUrls(config.JellyseerrUrls);
                 if (urls.Count == 0 || string.IsNullOrEmpty(apiKey))
                 {
-                    _logger.Warning("[SeerrScan] Cannot dispatch: Seerr URL(s) or API key not configured");
+                    _logger.LogWarning("[SeerrScan] Cannot dispatch: Seerr URL(s) or API key not configured");
                     return results;
                 }
 
@@ -142,19 +143,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     if (result.Success)
                     {
                         if (batchSize > 0)
-                            _logger.Info($"[SeerrScan] Triggered Seerr recently-added scan after {batchSize} library item(s) — {url}");
+                            _logger.LogInformation($"[SeerrScan] Triggered Seerr recently-added scan after {batchSize} library item(s) — {url}");
                         else
-                            _logger.Info($"[SeerrScan] Triggered Seerr recently-added scan (manual) — {url}");
+                            _logger.LogInformation($"[SeerrScan] Triggered Seerr recently-added scan (manual) — {url}");
                     }
                     else
                     {
-                        _logger.Warning($"[SeerrScan] Trigger failed for {url}: HTTP {result.StatusCode} — {result.Body}");
+                        _logger.LogWarning($"[SeerrScan] Trigger failed for {url}: HTTP {result.StatusCode} — {result.Body}");
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.Error($"[SeerrScan] Dispatch threw: {ex.Message}");
+                _logger.LogError($"[SeerrScan] Dispatch threw: {ex.Message}");
             }
             return results;
         }

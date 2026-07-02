@@ -11,6 +11,7 @@ using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 {
@@ -23,7 +24,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
     {
         private readonly ILibraryManager _libraryManager;
         private readonly IApplicationPaths _applicationPaths;
-        private readonly Logger _logger;
+        private readonly ILogger<TagCacheService> _logger;
         private volatile ConcurrentDictionary<string, TagCacheEntry> _cache = new();
         private readonly object _saveLock = new();
         private long _version;
@@ -44,7 +45,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             BaseItemKind.BoxSet,
         };
 
-        public TagCacheService(ILibraryManager libraryManager, IApplicationPaths applicationPaths, Logger logger)
+        public TagCacheService(ILibraryManager libraryManager, IApplicationPaths applicationPaths, ILogger<TagCacheService> logger)
         {
             _libraryManager = libraryManager;
             _applicationPaths = applicationPaths;
@@ -64,7 +65,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         /// </summary>
         public void BuildFullCache(IProgress<double>? progress, CancellationToken cancellationToken)
         {
-            _logger.Info("[TagCache] Starting full cache build...");
+            _logger.LogInformation("[TagCache] Starting full cache build...");
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             var allItems = _libraryManager.GetItemList(new InternalItemsQuery
@@ -74,7 +75,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 Recursive = true
             }).ToList();
 
-            _logger.Info($"[TagCache] Found {allItems.Count} taggable items");
+            _logger.LogInformation($"[TagCache] Found {allItems.Count} taggable items");
 
             var newCache = new ConcurrentDictionary<string, TagCacheEntry>();
             var processed = 0;
@@ -106,7 +107,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             progress?.Report(100);
 
             sw.Stop();
-            _logger.Info($"[TagCache] Full cache build complete: {_cache.Count} entries in {sw.Elapsed.TotalSeconds:F1}s");
+            _logger.LogInformation($"[TagCache] Full cache build complete: {_cache.Count} entries in {sw.Elapsed.TotalSeconds:F1}s");
 
             SaveToDisk();
         }
@@ -192,7 +193,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             var path = CacheFilePath;
             if (!File.Exists(path))
             {
-                _logger.Info("[TagCache] No cache file found, starting empty");
+                _logger.LogInformation("[TagCache] No cache file found, starting empty");
                 return;
             }
 
@@ -206,12 +207,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     _cache = loaded;
                     Interlocked.Exchange(ref _version, data.Version);
                     Interlocked.Exchange(ref _lastModified, data.LastModified);
-                    _logger.Info($"[TagCache] Loaded {_cache.Count} entries from disk (v{data.Version})");
+                    _logger.LogInformation($"[TagCache] Loaded {_cache.Count} entries from disk (v{data.Version})");
                 }
             }
             catch (Exception ex)
             {
-                _logger.Warning($"[TagCache] Failed to load cache from disk: {ex.Message}");
+                _logger.LogWarning($"[TagCache] Failed to load cache from disk: {ex.Message}");
             }
         }
 
@@ -239,11 +240,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     File.WriteAllText(tempPath, json);
                     File.Move(tempPath, CacheFilePath, overwrite: true);
                     _dirty = false;
-                    _logger.Info($"[TagCache] Saved {_cache.Count} entries to disk");
+                    _logger.LogInformation($"[TagCache] Saved {_cache.Count} entries to disk");
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error($"[TagCache] Failed to save cache to disk: {ex.Message}");
+                    _logger.LogError($"[TagCache] Failed to save cache to disk: {ex.Message}");
                 }
             }
         }
@@ -383,7 +384,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             catch (Exception ex)
             {
-                _logger.Warning($"[TagCache] Failed to build entry for {item.Id}: {ex.Message}");
+                _logger.LogWarning($"[TagCache] Failed to build entry for {item.Id}: {ex.Message}");
                 return null;
             }
         }
@@ -438,7 +439,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             catch (Exception ex)
             {
-                _logger.Warning($"[TagCache] Failed to extract media data for {item.Id}: {ex.Message}");
+                _logger.LogWarning($"[TagCache] Failed to extract media data for {item.Id}: {ex.Message}");
             }
 
             return (streams, sources, languages.ToArray());
@@ -460,7 +461,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             catch (Exception ex)
             {
-                _logger.Warning($"[TagCache] Failed to get first episode for {container.Id}: {ex.Message}");
+                _logger.LogWarning($"[TagCache] Failed to get first episode for {container.Id}: {ex.Message}");
                 return null;
             }
         }
@@ -482,7 +483,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             catch (Exception ex)
             {
-                _logger.Warning($"[TagCache] Failed to get parent series for {item.Id}: {ex.Message}");
+                _logger.LogWarning($"[TagCache] Failed to get parent series for {item.Id}: {ex.Message}");
             }
             return null;
         }

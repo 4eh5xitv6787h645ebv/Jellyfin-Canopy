@@ -38,6 +38,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -52,7 +53,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     {
         public JellyseerrProxyController(
             IHttpClientFactory httpClientFactory,
-            Logger logger,
+            ILogger<JellyseerrProxyController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider)
@@ -128,7 +129,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 var (_, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(resp, requestUri);
                 if (error == null) return Ok(new { ok = true });
 
-                _logger.Warning($"Seerr validate failed for {url}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                _logger.LogWarning($"Seerr validate failed for {url}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
                 int httpCode = error.Code switch
                 {
                     Helpers.Jellyseerr.SeerrErrorCode.HtmlResponse => 502,
@@ -146,7 +147,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Warning($"Seerr validate failed for {url}: {ex.Message}");
+                _logger.LogWarning($"Seerr validate failed for {url}: {ex.Message}");
                 return StatusCode(502, new
                 {
                     ok = false,
@@ -189,11 +190,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 var (_, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(resp, requestUri);
                 if (error == null)
                 {
-                    _logger.Info($"[SeerrScan] Manually triggered Seerr recently-added scan via admin button — {url}");
+                    _logger.LogInformation($"[SeerrScan] Manually triggered Seerr recently-added scan via admin button — {url}");
                     return Ok(new { ok = true });
                 }
 
-                _logger.Warning($"[SeerrScan] Manual trigger failed for {url}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                _logger.LogWarning($"[SeerrScan] Manual trigger failed for {url}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
                 int httpCode = error.Code switch
                 {
                     Helpers.Jellyseerr.SeerrErrorCode.HtmlResponse => 502,
@@ -211,7 +212,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Warning($"[SeerrScan] Manual trigger threw for {url}: {ex.Message}");
+                _logger.LogWarning($"[SeerrScan] Manual trigger threw for {url}: {ex.Message}");
                 return StatusCode(502, new
                 {
                     ok = false,
@@ -319,7 +320,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warning($"Quota enrichment skipped ({ex.GetType().Name}): {ex.Message}");
+                    _logger.LogWarning($"Quota enrichment skipped ({ex.GetType().Name}): {ex.Message}");
                 }
             }
 
@@ -376,7 +377,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     var (content, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
                     if (error != null)
                     {
-                        _logger.Debug($"ComputeNextResetAsync({mediaType}) on {trimmedUrl} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
+                        _logger.LogDebug($"ComputeNextResetAsync({mediaType}) on {trimmedUrl} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
                         continue;
                     }
 
@@ -423,7 +424,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warning($"ComputeNextResetAsync({mediaType}) on {trimmedUrl} failed ({ex.GetType().Name}): {ex.Message}");
+                    _logger.LogWarning($"ComputeNextResetAsync({mediaType}) on {trimmedUrl} failed ({ex.GetType().Name}): {ex.Message}");
                 }
             }
 
@@ -645,7 +646,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 // frontend silently flip the request modal to whole-season
                 // mode. Returns 503 with structured `code` so the frontend
                 // can keep its last-known state instead of regressing.
-                _logger.Warning("Seerr integration is not configured or enabled.");
+                _logger.LogWarning("Seerr integration is not configured or enabled.");
                 return StatusCode(503, new { error = true, code = "disabled", message = "Seerr integration not configured." });
             }
 
@@ -658,7 +659,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 try
                 {
                     var requestUri = $"{trimmedUrl.TrimEnd('/')}/api/v1/settings/main";
-                    _logger.Info($"Fetching Seerr partial requests setting from: {requestUri}");
+                    _logger.LogInformation($"Fetching Seerr partial requests setting from: {requestUri}");
 
                     using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
                         HttpMethod.Get, requestUri, config.JellyseerrApiKey);
@@ -680,22 +681,22 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             enableSpecialEpisodes = specialProp.GetBoolean();
                         }
 
-                        _logger.Info($"Seerr settings — partialRequests: {partialRequestsEnabled}, specialEpisodes: {enableSpecialEpisodes}");
+                        _logger.LogInformation($"Seerr settings — partialRequests: {partialRequestsEnabled}, specialEpisodes: {enableSpecialEpisodes}");
                         return Ok(new { partialRequestsEnabled, enableSpecialEpisodes });
                     }
 
-                    _logger.Warning($"Failed to fetch Seerr settings from {trimmedUrl}: code={error!.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                    _logger.LogWarning($"Failed to fetch Seerr settings from {trimmedUrl}: code={error!.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error($"Failed to connect to Seerr URL: {trimmedUrl}. Error: {ex.Message}");
+                    _logger.LogError($"Failed to connect to Seerr URL: {trimmedUrl}. Error: {ex.Message}");
                 }
             }
 
             // don't silently default to false on outage — that
             // hides admin-configured "partial requests off" UX state. Return
             // 503 so the frontend can keep last-known state.
-            _logger.Warning("Could not fetch Seerr settings from any URL — surfacing as 503 unreachable");
+            _logger.LogWarning("Could not fetch Seerr settings from any URL — surfacing as 503 unreachable");
             return StatusCode(503, new
             {
                 error = true,
@@ -743,7 +744,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Error($"Exception during TMDB API key validation: {ex.Message}");
+                _logger.LogError($"Exception during TMDB API key validation: {ex.Message}");
                 return StatusCode(500, new { ok = false, message = "Could not reach TMDB services." });
             }
         }
@@ -777,7 +778,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
             catch (Exception ex)
             {
-                _logger.Error($"Failed to proxy TMDB request. Error: {ex.Message}");
+                _logger.LogError($"Failed to proxy TMDB request. Error: {ex.Message}");
                 return StatusCode(500, "Failed to connect to TMDB.");
             }
         }
