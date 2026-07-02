@@ -40,47 +40,8 @@
      */
     JE.isDetailsPage = () => window.location.hash.includes('/details?id=');
 
-    /**
-     * Displays a short-lived toast notification.
-     * @param {string} key The localization key for the text to display.
-     * @param {number} [duration=JE.CONFIG.TOAST_DURATION] The duration to show the toast.
-     */
-    JE.toast = (key, duration = JE.CONFIG.TOAST_DURATION) => {
-        // Use the theme system to get appropriate colors
-        const themeVars = JE.themer?.getThemeVariables() || {};
-        const toastBg = themeVars.secondaryBg || 'linear-gradient(135deg, rgba(0,0,0,0.9), rgba(40,40,40,0.9))';
-        const toastBorder = `1px solid ${themeVars.primaryAccent || 'rgba(255,255,255,0.1)'}`;
-        const blurValue = themeVars.blur || '30px';
-
-        const t = document.createElement('div');
-        t.className = 'jellyfin-enhanced-toast';
-        Object.assign(t.style, {
-            position: 'fixed',
-            bottom: '20px',
-            right: '20px',
-            transform: 'translateX(100%)',
-            background: toastBg,
-            color: '#fff',
-            padding: '10px 14px',
-            borderRadius: '8px',
-            zIndex: 99999,
-            fontSize: 'clamp(13px, 2vw, 16px)',
-            textShadow: '-1px -1px 10px black',
-            fontWeight: '500',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
-            backdropFilter: `blur(${blurValue})`,
-            border: toastBorder,
-            transition: 'transform 0.3s ease-out',
-            maxWidth: 'clamp(280px, 80vw, 350px)'
-        });
-        t.innerHTML = key; // Note: The calling function should now pass the localized string
-        document.body.appendChild(t);
-        setTimeout(() => t.style.transform = 'translateX(0)', 10);
-        setTimeout(() => {
-            t.style.transform = 'translateX(100%)';
-            setTimeout(() => t.remove(), 300);
-        }, duration);
-    };
+    // JE.toast moved to js/core/ui-kit.js (JE.core.ui.toast); the JE.toast
+    // alias is assigned there. Callers are unchanged.
 
     /**
      * Fetches the latest GitHub release notes and displays them in a notification panel.

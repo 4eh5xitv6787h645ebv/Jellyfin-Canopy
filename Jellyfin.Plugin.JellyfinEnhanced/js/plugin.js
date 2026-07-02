@@ -4,6 +4,9 @@
 
     // Create the global namespace immediately with placeholders
     window.JellyfinEnhanced = {
+        // Shared core layer, populated by js/core/*.js (navigation, lifecycle,
+        // dom, api, ui). Created here so core modules can attach to it.
+        core: {},
         pluginConfig: {},
         userConfig: { settings: {}, shortcuts: { Shortcuts: [] }, bookmarks: { Bookmarks: {} }, elsewhere: {}, hiddenContent: { items: {}, settings: {} } },
         translations: {},
@@ -61,6 +64,8 @@
         },
         /**
          * Escapes HTML special characters to prevent XSS when interpolating into HTML strings.
+         * Bootstrap copy only — replaced by the canonical JE.core.ui.escapeHtml
+         * as soon as js/core/ui-kit.js loads.
          * @param {string} str - The value to escape.
          * @returns {string} The escaped string safe for HTML interpolation.
          */
@@ -269,6 +274,11 @@
         const promises = scripts.map(scriptName => {
             return new Promise((resolve) => { // Always resolve so one failure doesn't stop others
                 const script = document.createElement('script');
+                // Dynamically-inserted scripts are async by default (execute in
+                // arrival order). async=false keeps parallel download but forces
+                // execution in array order, so js/core/* is guaranteed to run
+                // before every module that depends on it.
+                script.async = false;
                 script.src = ApiClient.getUrl(`${basePath}/${scriptName}?v=${getScriptVersion()}`);
                 script.onload = () => {
                     resolve({ status: 'fulfilled', script: scriptName });
@@ -561,6 +571,15 @@
             // Stage 3: Load ALL component scripts
             const basePath = '/JellyfinEnhanced/js';
             const allComponentScripts = [
+                // core — MUST load first: owns navigation detection, the
+                // lifecycle registry, the shared body observer, the fetch
+                // layer and base UI primitives that everything else builds on.
+                'core/navigation.js',
+                'core/lifecycle.js',
+                'core/dom-observer.js',
+                'core/ui-kit.js',
+                'core/api-client.js',
+
                 // enhanced
                 'enhanced/config.js',
                 'enhanced/helpers.js',

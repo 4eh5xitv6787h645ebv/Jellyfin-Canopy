@@ -16,6 +16,9 @@
         "noImplicitAny": false,
         "skipLibCheck": true
     },
-    "include": ["Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js"],
+    "include": [
+        "Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js",
+        "Jellyfin.Plugin.JellyfinEnhanced/js/**/*.d.ts"
+    ],
     "exclude": ["node_modules", "**/bin", "**/obj"]
 }
