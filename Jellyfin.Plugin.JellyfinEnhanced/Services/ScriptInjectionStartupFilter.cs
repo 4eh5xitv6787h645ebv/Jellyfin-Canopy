@@ -31,11 +31,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
     public class ScriptInjectionStartupFilter : IStartupFilter
     {
         private readonly Logger _logger;
+        private readonly IPluginConfigProvider _configProvider;
         private int _loggedOnce;
 
-        public ScriptInjectionStartupFilter(Logger logger)
+        public ScriptInjectionStartupFilter(Logger logger, IPluginConfigProvider configProvider)
         {
             _logger = logger;
+            _configProvider = configProvider;
         }
 
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
@@ -67,7 +69,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 return;
             }
 
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || config.DisableScriptInjectionMiddleware)
             {
                 await nextMw().ConfigureAwait(false);

@@ -37,6 +37,7 @@ using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -57,9 +58,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             Logger logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider,
             UserConfigurationManager userConfigurationManager,
             ILibraryManager libraryManager)
-            : base(httpClientFactory, logger, userManager, seerrCache)
+            : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _userConfigurationManager = userConfigurationManager;
             _libraryManager = libraryManager;
@@ -77,7 +79,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
 
             // First-time init: seed Settings from admin defaults under RMW so a parallel CW hide can't clobber it.
-            var defaultConfig = JellyfinEnhanced.Instance?.Configuration;
+            var defaultConfig = _configProvider.ConfigurationOrNull;
             if (defaultConfig != null
                 && !_userConfigurationManager.UserConfigurationExists(authorizedUserId, "hidden-content.json"))
             {
@@ -179,7 +181,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 return Forbid();
 
             // Honour the admin config toggle: the whole cross-user feature can be disabled.
-            if (JellyfinEnhanced.Instance?.Configuration?.HiddenContentAdmin != true)
+            if (_configProvider.ConfigurationOrNull?.HiddenContentAdmin != true)
                 return Forbid();
 
             // The caller's own list is reachable through the default "My hidden content" option,
@@ -243,7 +245,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 return Forbid();
 
             // Honour the admin config toggle.
-            if (JellyfinEnhanced.Instance?.Configuration?.HiddenContentAdmin != true)
+            if (_configProvider.ConfigurationOrNull?.HiddenContentAdmin != true)
                 return Forbid();
 
             // Match the AdminUpsertReview contract: expect a 32-char hex (N-format) id. This also
@@ -288,7 +290,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 return Forbid();
 
             // Honour the admin config toggle: cross-user management can be disabled.
-            if (JellyfinEnhanced.Instance?.Configuration?.HiddenContentAdmin != true)
+            if (_configProvider.ConfigurationOrNull?.HiddenContentAdmin != true)
                 return Forbid();
 
             if (string.IsNullOrWhiteSpace(userId) || !Guid.TryParseExact(userId, "N", out var userGuid) || userGuid == Guid.Empty)
@@ -359,7 +361,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 return Forbid();
 
             // Adding is a management operation: gated by the admin config toggle.
-            if (JellyfinEnhanced.Instance?.Configuration?.HiddenContentAdmin != true)
+            if (_configProvider.ConfigurationOrNull?.HiddenContentAdmin != true)
                 return Forbid();
 
             if (string.IsNullOrWhiteSpace(userId) || !Guid.TryParseExact(userId, "N", out var userGuid) || userGuid == Guid.Empty)
@@ -556,7 +558,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 var keyN = itemGuid.ToString("N");
                 // Seed Settings from admin defaults if this RMW creates the file (Remove-from-CW before any HC UI was opened).
                 var preExistedHc = _userConfigurationManager.UserConfigurationExists(authorizedUserId, "hidden-content.json");
-                var hcDefaults = JellyfinEnhanced.Instance?.Configuration;
+                var hcDefaults = _configProvider.ConfigurationOrNull;
 
                 _userConfigurationManager.RmwUserConfiguration<UserHiddenContent>(
                     authorizedUserId, "hidden-content.json", h =>

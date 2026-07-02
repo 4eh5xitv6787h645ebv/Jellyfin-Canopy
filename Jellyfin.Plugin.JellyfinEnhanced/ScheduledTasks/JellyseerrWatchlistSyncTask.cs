@@ -14,6 +14,7 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
 {
@@ -26,6 +27,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly Configuration.UserConfigurationManager _userConfigurationManager;
         private readonly Logger _logger;
+        private readonly IPluginConfigProvider _configProvider;
 
         public JellyseerrWatchlistSyncTask(
             ILibraryManager libraryManager,
@@ -33,13 +35,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             IUserDataManager userDataManager,
             IHttpClientFactory httpClientFactory,
             Configuration.UserConfigurationManager userConfigurationManager,
-            Logger logger)
+            Logger logger,
+            IPluginConfigProvider configProvider)
         {
             _libraryManager = libraryManager;
             _userManager = userManager;
             _userDataManager = userDataManager;
             _httpClientFactory = httpClientFactory;
             _userConfigurationManager = userConfigurationManager;
+            _configProvider = configProvider;
             _logger = logger;
         }
 
@@ -65,7 +69,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
 
         public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
 
             if (config == null || !config.SyncJellyseerrWatchlist || !config.JellyseerrEnabled)
             {
@@ -542,7 +546,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
         {
             try
             {
-                var config = JellyfinEnhanced.Instance?.Configuration;
+                var config = _configProvider.ConfigurationOrNull;
                 if (config?.PreventWatchlistReAddition == true)
                 {
                     // Check if this item was already processed for this user

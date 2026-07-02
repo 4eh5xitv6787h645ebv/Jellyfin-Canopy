@@ -37,6 +37,7 @@ using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -53,8 +54,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             IHttpClientFactory httpClientFactory,
             Logger logger,
             IUserManager userManager,
-            ISeerrCache seerrCache)
-            : base(httpClientFactory, logger, userManager, seerrCache)
+            ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider)
+            : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
         }
 
@@ -62,7 +64,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         [Authorize]
         public async Task<IActionResult> GetDownloadQueue()
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null)
                 return StatusCode(500, "Plugin configuration not available");
 
@@ -241,7 +243,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             take = Math.Clamp(take, 1, 200);
             skip = Math.Max(0, skip);
 
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null)
                 return StatusCode(500, "Plugin configuration not available");
 
@@ -615,7 +617,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         {
             var action = HttpContext.Request.Path.Value?.Contains("/approve", StringComparison.OrdinalIgnoreCase) == true ? "approve" : "decline";
 
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrWhiteSpace(config.JellyseerrUrls) || string.IsNullOrWhiteSpace(config.JellyseerrApiKey))
                 return StatusCode(503, new { error = true, message = "Seerr not configured." });
 
@@ -663,7 +665,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         {
             var cacheKey = $"{(type == "movie" ? "movie" : "tv")}:{tmdbId}";
             var cacheTtl = _seerrCache.GetTmdbEnrichmentCacheTtl();
-            var cacheEnabled = !(JellyfinEnhanced.Instance?.Configuration?.JellyseerrDisableCache ?? false);
+            var cacheEnabled = !(_configProvider.ConfigurationOrNull?.JellyseerrDisableCache ?? false);
 
             if (cacheEnabled)
             {

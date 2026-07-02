@@ -37,6 +37,7 @@ using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -57,9 +58,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             Logger logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider,
             ILibraryManager libraryManager,
             IItemRepository itemRepository)
-            : base(httpClientFactory, logger, userManager, seerrCache)
+            : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _libraryManager = libraryManager;
             _itemRepository = itemRepository;
@@ -263,7 +265,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             try
             {
                 // Get TMDB API key from configuration
-                var config = JellyfinEnhanced.Instance?.Configuration;
+                var config = _configProvider.ConfigurationOrNull;
                 if (config == null || string.IsNullOrEmpty(config.TMDB_API_KEY))
                 {
                     _logger.Warning("TMDB API key not configured in plugin settings");
@@ -371,7 +373,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         [Authorize]
         public async Task<IActionResult> ProxyAvatar([FromQuery] string path)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(path))
             {
                 return NotFound();

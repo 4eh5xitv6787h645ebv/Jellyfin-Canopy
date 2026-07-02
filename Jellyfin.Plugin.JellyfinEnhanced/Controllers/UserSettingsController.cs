@@ -37,6 +37,7 @@ using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -56,8 +57,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             Logger logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider,
             UserConfigurationManager userConfigurationManager)
-            : base(httpClientFactory, logger, userManager, seerrCache)
+            : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _userConfigurationManager = userConfigurationManager;
         }
@@ -75,7 +77,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // Populate defaults from plugin configuration if missing
             if (!_userConfigurationManager.UserConfigurationExists(authorizedUserId, "settings.json"))
             {
-                var defaultConfig = JellyfinEnhanced.Instance?.Configuration;
+                var defaultConfig = _configProvider.ConfigurationOrNull;
                 if (defaultConfig != null)
                 {
                     var defaultUserSettings = new UserSettings
@@ -413,7 +415,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 return Forbid();
             }
 
-            var defaultConfig = JellyfinEnhanced.Instance?.Configuration;
+            var defaultConfig = _configProvider.ConfigurationOrNull;
 
             if (defaultConfig == null)
             {

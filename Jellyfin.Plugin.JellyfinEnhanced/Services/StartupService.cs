@@ -20,13 +20,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         private readonly TagCacheService _tagCacheService;
         private readonly TagCacheMonitor _tagCacheMonitor;
         private readonly SeerrScanTriggerService _seerrScanTriggerService;
+        private readonly IPluginConfigProvider _configProvider;
 
         public string Name => "Jellyfin Enhanced Startup";
         public string Key => "JellyfinEnhancedStartup";
         public string Description => "Initializes Jellyfin Enhanced background services and performs necessary cleanups. The client script is injected at request time by the injection middleware.";
         public string Category => "Jellyfin Enhanced";
 
-        public StartupService(Logger logger, IApplicationPaths applicationPaths, AutoSeasonRequestMonitor autoSeasonRequestMonitor, AutoMovieRequestMonitor autoMovieRequestMonitor, WatchlistMonitor watchlistMonitor, TagCacheService tagCacheService, TagCacheMonitor tagCacheMonitor, SeerrScanTriggerService seerrScanTriggerService)
+        public StartupService(Logger logger, IApplicationPaths applicationPaths, AutoSeasonRequestMonitor autoSeasonRequestMonitor, AutoMovieRequestMonitor autoMovieRequestMonitor, WatchlistMonitor watchlistMonitor, TagCacheService tagCacheService, TagCacheMonitor tagCacheMonitor, SeerrScanTriggerService seerrScanTriggerService, IPluginConfigProvider configProvider)
         {
             _logger = logger;
             _applicationPaths = applicationPaths;
@@ -36,6 +37,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             _tagCacheService = tagCacheService;
             _tagCacheMonitor = tagCacheMonitor;
             _seerrScanTriggerService = seerrScanTriggerService;
+            _configProvider = configProvider;
         }
 
         public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
@@ -91,7 +93,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // rewrite is kept only as an explicit fallback for admins who disable the middleware.
         private void EnsureScriptInjected()
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
 
             if (config != null && config.DisableScriptInjectionMiddleware)
             {

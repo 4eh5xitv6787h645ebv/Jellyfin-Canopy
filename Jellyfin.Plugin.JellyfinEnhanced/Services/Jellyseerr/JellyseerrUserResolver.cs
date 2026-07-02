@@ -25,12 +25,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
 
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly Logger _logger;
+        private readonly IPluginConfigProvider _configProvider;
         private readonly string _logPrefix;
 
-        public JellyseerrUserResolver(IHttpClientFactory httpClientFactory, Logger logger, string logPrefix)
+        public JellyseerrUserResolver(IHttpClientFactory httpClientFactory, Logger logger, IPluginConfigProvider configProvider, string logPrefix)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
+            _configProvider = configProvider;
             _logPrefix = logPrefix;
         }
 
@@ -50,16 +52,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
             return userId.Replace("-", string.Empty).ToLowerInvariant();
         }
 
-        private static TimeSpan GetJellyseerrUserIdCacheTtl()
+        private TimeSpan GetJellyseerrUserIdCacheTtl()
         {
-            var minutes = JellyfinEnhanced.Instance?.Configuration?.JellyseerrUserIdCacheTtlMinutes ?? 30;
+            var minutes = _configProvider.ConfigurationOrNull?.JellyseerrUserIdCacheTtlMinutes ?? 30;
             return TimeSpan.FromMinutes(Math.Max(1, minutes));
         }
 
         // Gets the Jellyseerr user ID for a Jellyfin user
         public async Task<string?> GetJellyseerrUserId(string jellyfinUserId)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
             {
                 return null;

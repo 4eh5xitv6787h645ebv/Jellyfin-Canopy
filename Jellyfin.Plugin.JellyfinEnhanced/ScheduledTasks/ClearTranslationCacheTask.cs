@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Model.Tasks;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
 {
@@ -10,10 +11,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
     public partial class ClearTranslationCacheTask : IScheduledTask
     {
         private readonly Logger _logger;
+        private readonly IPluginConfigProvider _configProvider;
 
-        public ClearTranslationCacheTask(Logger logger)
+        public ClearTranslationCacheTask(Logger logger, IPluginConfigProvider configProvider)
         {
             _logger = logger;
+            _configProvider = configProvider;
         }
 
         public string Name => "Refresh Translation Cache";
@@ -37,7 +40,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
 
         public Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null)
             {
                 _logger.Warning("[Clear Translation Cache] Plugin configuration is not available.");

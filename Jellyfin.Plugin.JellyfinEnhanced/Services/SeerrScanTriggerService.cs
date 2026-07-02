@@ -24,6 +24,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         private readonly ILibraryManager _libraryManager;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly Logger _logger;
+        private readonly IPluginConfigProvider _configProvider;
 
         private readonly object _stateLock = new();
         private readonly Timer _debounceTimer;
@@ -34,11 +35,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         public SeerrScanTriggerService(
             ILibraryManager libraryManager,
             IHttpClientFactory httpClientFactory,
-            Logger logger)
+            Logger logger,
+            IPluginConfigProvider configProvider)
         {
             _libraryManager = libraryManager;
             _httpClientFactory = httpClientFactory;
             _logger = logger;
+            _configProvider = configProvider;
             _debounceTimer = new Timer(OnDebounceElapsed, null, Timeout.Infinite, Timeout.Infinite);
         }
 
@@ -60,7 +63,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         {
             try
             {
-                if (JellyfinEnhanced.Instance?.Configuration is not PluginConfiguration config) return;
+                if (_configProvider.ConfigurationOrNull is not PluginConfiguration config) return;
                 if (!config.TriggerSeerrScanOnItemAdded) return;
                 if (!config.JellyseerrEnabled) return;
 
@@ -118,7 +121,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             var results = new List<DispatchResult>();
             try
             {
-                if (JellyfinEnhanced.Instance?.Configuration is not PluginConfiguration config)
+                if (_configProvider.ConfigurationOrNull is not PluginConfiguration config)
                 {
                     _logger.Warning("[SeerrScan] Cannot dispatch: plugin configuration is null");
                     return results;

@@ -37,6 +37,7 @@ using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -57,9 +58,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             Logger logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider,
             IUserDataManager userDataManager,
             ILibraryManager libraryManager)
-            : base(httpClientFactory, logger, userManager, seerrCache)
+            : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _userDataManager = userDataManager;
             _libraryManager = libraryManager;
@@ -72,7 +74,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // report a typed `reason` so the frontend can display
             // a meaningful banner instead of silently hiding discovery sections.
             // Possible reasons: disabled, no_user, blocked, unlinked, unreachable.
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.JellyseerrEnabled ||
                 string.IsNullOrEmpty(config.JellyseerrApiKey) ||
                 string.IsNullOrEmpty(config.JellyseerrUrls))
@@ -123,7 +125,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         {
             if (!IsAdminUser()) return Forbid();
 
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.JellyseerrEnabled ||
                 string.IsNullOrEmpty(config.JellyseerrApiKey) ||
                 string.IsNullOrEmpty(config.JellyseerrUrls))
@@ -317,7 +319,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
             try
             {
-                var config = JellyfinEnhanced.Instance?.Configuration;
+                var config = _configProvider.ConfigurationOrNull;
                 if (config == null || !config.JellyseerrEnabled || !config.SyncJellyseerrWatchlist)
                 {
                     return BadRequest(new { error = "Jellyseerr watchlist sync is not enabled" });
@@ -432,7 +434,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
             try
             {
-                var config = JellyfinEnhanced.Instance?.Configuration;
+                var config = _configProvider.ConfigurationOrNull;
                 if (config == null || !config.JellyseerrEnabled)
                 {
                     return BadRequest(new { error = "Jellyseerr integration is not enabled" });

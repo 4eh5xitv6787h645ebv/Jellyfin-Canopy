@@ -18,8 +18,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             IUserManager userManager,
             ILibraryManager libraryManager,
             AutoSeasonRequestService autoSeasonRequestService,
-            Logger logger)
-            : base(sessionManager, userManager, libraryManager, logger)
+            Logger logger,
+            IPluginConfigProvider configProvider)
+            : base(sessionManager, userManager, libraryManager, logger, configProvider)
         {
             _autoSeasonRequestService = autoSeasonRequestService;
         }

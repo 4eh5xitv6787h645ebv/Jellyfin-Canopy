@@ -37,6 +37,7 @@ using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -53,8 +54,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             IHttpClientFactory httpClientFactory,
             Logger logger,
             IUserManager userManager,
-            ISeerrCache seerrCache)
-            : base(httpClientFactory, logger, userManager, seerrCache)
+            ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider)
+            : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
         }
 
@@ -76,7 +78,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         [Authorize]
         public ActionResult GetPrivateConfig()
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null)
             {
                 return StatusCode(503);
@@ -124,7 +126,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         [HttpGet("public-config")]
         public ActionResult GetPublicConfig()
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null)
             {
                 return StatusCode(503);
@@ -412,7 +414,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // useful when iterating on JS without bumping the version number.
             // Production: the script URL includes ?v={version}-{dllTimestamp}, so the URL
             // changes on every build and immutable caching is safe.
-            var devMode = JellyfinEnhanced.Instance?.Configuration?.DevMode == true;
+            var devMode = _configProvider.ConfigurationOrNull?.DevMode == true;
             Response.Headers["Cache-Control"] = devMode ? "no-store" : "public, max-age=31536000, immutable";
             return new FileStreamResult(stream, contentType);
         }

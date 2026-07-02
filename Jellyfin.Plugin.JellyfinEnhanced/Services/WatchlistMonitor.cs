@@ -26,6 +26,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly UserConfigurationManager _userConfigurationManager;
         private readonly Logger _logger;
+        private readonly IPluginConfigProvider _configProvider;
         private readonly Dictionary<string, (List<RequestItemWithUser> Items, DateTime CachedAt)> _requestsCache = new();
         private readonly object _requestsCacheLock = new();
         private readonly ConcurrentDictionary<string, Task<List<RequestItemWithUser>?>> _requestsInFlight = new();
@@ -36,13 +37,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             IUserDataManager userDataManager,
             IHttpClientFactory httpClientFactory,
             UserConfigurationManager userConfigurationManager,
-            Logger logger)
+            Logger logger,
+            IPluginConfigProvider configProvider)
         {
             _libraryManager = libraryManager;
             _userManager = userManager;
             _userDataManager = userDataManager;
             _httpClientFactory = httpClientFactory;
             _userConfigurationManager = userConfigurationManager;
+            _configProvider = configProvider;
             _logger = logger;
         }
 
@@ -60,7 +63,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         public void Initialize()
         {
             // Only initialize if the watchlist feature is enabled in plugin configuration.
-            var config = JellyfinEnhanced.Instance?.Configuration as Configuration.PluginConfiguration;
+            var config = _configProvider.ConfigurationOrNull as Configuration.PluginConfiguration;
             if (config == null)
             {
                 _logger.Warning("[Watchlist] Configuration is null - skipping watchlist monitoring initialization");
@@ -108,7 +111,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 // _logger.Info($"[Watchlist] {eventType} event triggered for: {e.Item?.Name ?? "Unknown"} (Type: {itemKind})");
 
                 // Check if watchlist feature is enabled
-                var config = JellyfinEnhanced.Instance?.Configuration as PluginConfiguration;
+                var config = _configProvider.ConfigurationOrNull as PluginConfiguration;
                 if (config == null)
                 {
                     _logger.Warning("[Watchlist] Configuration is null");

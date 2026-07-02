@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Tasks;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
 {
@@ -18,17 +19,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly Logger _logger;
         private readonly ISeerrCache _seerrCache;
+        private readonly IPluginConfigProvider _configProvider;
 
         public JellyseerrUserImportTask(
             IUserManager userManager,
             IHttpClientFactory httpClientFactory,
             Logger logger,
-            ISeerrCache seerrCache)
+            ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider)
         {
             _userManager = userManager;
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _seerrCache = seerrCache;
+            _configProvider = configProvider;
         }
 
         public string Name => "Import Jellyfin Users to Seerr";
@@ -53,7 +57,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
 
         public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
 
             if (config == null || !config.JellyseerrAutoImportUsers || !config.JellyseerrEnabled)
             {

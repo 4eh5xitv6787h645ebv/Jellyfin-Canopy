@@ -73,11 +73,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
         private readonly UserConfigurationManager _configManager;
         private readonly Logger _logger;
+        private readonly IPluginConfigProvider _configProvider;
 
-        public HiddenContentResponseFilter(UserConfigurationManager configManager, Logger logger)
+        public HiddenContentResponseFilter(UserConfigurationManager configManager, Logger logger, IPluginConfigProvider configProvider)
         {
             _configManager = configManager;
             _logger = logger;
+            _configProvider = configProvider;
         }
 
         public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
@@ -88,8 +90,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 return;
             }
 
-            var hcEnabled = JellyfinEnhanced.Instance?.Configuration?.HiddenContentEnabled == true;
-            var rcwEnabled = JellyfinEnhanced.Instance?.Configuration?.RemoveContinueWatchingEnabled == true;
+            var hcEnabled = _configProvider.ConfigurationOrNull?.HiddenContentEnabled == true;
+            var rcwEnabled = _configProvider.ConfigurationOrNull?.RemoveContinueWatchingEnabled == true;
 
             // /Items doubles as library list + search results — searchTerm wins, then fall back to library.
             var surface = (route.Surface == "library" && HasSearchTerm(context))

@@ -23,15 +23,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
         private readonly ILibraryManager _libraryManager;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly Logger _logger;
+        private readonly IPluginConfigProvider _configProvider;
 
         public ArrTagsSyncTask(
             ILibraryManager libraryManager,
             IHttpClientFactory httpClientFactory,
-            Logger logger)
+            Logger logger,
+            IPluginConfigProvider configProvider)
         {
             _libraryManager = libraryManager;
             _httpClientFactory = httpClientFactory;
             _logger = logger;
+            _configProvider = configProvider;
         }
 
         public string Name => "Sync Tags from *arr to Jellyfin";
@@ -50,7 +53,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
 
         public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
 
             if (config == null || !config.ArrTagsSyncEnabled)
             {

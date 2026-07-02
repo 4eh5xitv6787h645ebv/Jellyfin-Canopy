@@ -22,8 +22,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
         // plugin lifecycle itself is DI-aware.
         public static SeerrCache? Instance { get; private set; }
 
-        public SeerrCache()
+        private readonly IPluginConfigProvider _configProvider;
+
+        public SeerrCache(IPluginConfigProvider configProvider)
         {
+            _configProvider = configProvider;
             Instance = this;
         }
 
@@ -71,19 +74,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
 
         public TimeSpan GetResponseCacheTtl()
         {
-            var minutes = JellyfinEnhanced.Instance?.Configuration?.JellyseerrResponseCacheTtlMinutes ?? 10;
+            var minutes = _configProvider.ConfigurationOrNull?.JellyseerrResponseCacheTtlMinutes ?? 10;
             return TimeSpan.FromMinutes(Math.Max(1, minutes));
         }
 
         public TimeSpan GetUserIdCacheTtl()
         {
-            var minutes = JellyfinEnhanced.Instance?.Configuration?.JellyseerrUserIdCacheTtlMinutes ?? 30;
+            var minutes = _configProvider.ConfigurationOrNull?.JellyseerrUserIdCacheTtlMinutes ?? 30;
             return TimeSpan.FromMinutes(Math.Max(1, minutes));
         }
 
         public TimeSpan GetTmdbEnrichmentCacheTtl()
         {
-            var minutes = JellyfinEnhanced.Instance?.Configuration?.JellyseerrResponseCacheTtlMinutes ?? 10;
+            var minutes = _configProvider.ConfigurationOrNull?.JellyseerrResponseCacheTtlMinutes ?? 10;
             return TimeSpan.FromMinutes(Math.Max(1, minutes));
         }
 

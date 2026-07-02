@@ -27,6 +27,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
         protected readonly IUserManager _userManager;
         protected readonly ILibraryManager _libraryManager;
         protected readonly Logger _logger;
+        protected readonly IPluginConfigProvider _configProvider;
 
         // Track which user+item combinations have already been checked to avoid duplicate checks
         private readonly Dictionary<string, DateTime> _checkedSessions = new();
@@ -36,12 +37,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
             ISessionManager sessionManager,
             IUserManager userManager,
             ILibraryManager libraryManager,
-            Logger logger)
+            Logger logger,
+            IPluginConfigProvider configProvider)
         {
             _sessionManager = sessionManager;
             _userManager = userManager;
             _libraryManager = libraryManager;
             _logger = logger;
+            _configProvider = configProvider;
         }
 
         /// <summary>Log prefix including brackets, e.g. "[Auto-Movie-Request]".</summary>
@@ -66,7 +69,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
         public void Initialize()
         {
             // Only initialize if the feature is enabled in plugin configuration.
-            var config = JellyfinEnhanced.Instance?.Configuration as PluginConfiguration;
+            var config = _configProvider.ConfigurationOrNull as PluginConfiguration;
             if (config == null)
             {
                 _logger.Warning($"{LogPrefix} Configuration is null - skipping {FeatureNoun} monitoring initialization");
@@ -90,7 +93,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
         /// </summary>
         protected PluginConfiguration? GetEnabledConfiguration()
         {
-            var config = JellyfinEnhanced.Instance?.Configuration as PluginConfiguration;
+            var config = _configProvider.ConfigurationOrNull as PluginConfiguration;
             if (config == null || !IsFeatureEnabled(config) || !config.JellyseerrEnabled)
             {
                 return null;

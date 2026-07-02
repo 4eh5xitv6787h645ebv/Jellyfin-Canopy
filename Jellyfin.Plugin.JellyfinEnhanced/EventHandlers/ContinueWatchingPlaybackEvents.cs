@@ -10,6 +10,7 @@ using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Events;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Hosting;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.EventHandlers
 {
@@ -34,11 +35,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.EventHandlers
 
         private readonly UserConfigurationManager _configManager;
         private readonly Logger _logger;
+        private readonly IPluginConfigProvider _configProvider;
 
-        public ContinueWatchingPlaybackConsumer(UserConfigurationManager configManager, Logger logger)
+        public ContinueWatchingPlaybackConsumer(UserConfigurationManager configManager, Logger logger, IPluginConfigProvider configProvider)
         {
             _configManager = configManager;
             _logger = logger;
+            _configProvider = configProvider;
         }
 
         public Task OnEvent(PlaybackStartEventArgs eventArgs)
@@ -48,7 +51,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.EventHandlers
                 // Mirror the response filter's HC + RCW gate (HiddenContentResponseFilter.cs). When admin runs
                 // RCW=on / HC=off, the filter still strips continuewatching-scope entries; without this branch
                 // resume would never auto-clear those entries and the user would see them stay hidden forever.
-                var cfg = JellyfinEnhanced.Instance?.Configuration;
+                var cfg = _configProvider.ConfigurationOrNull;
                 var hcEnabled = cfg?.HiddenContentEnabled == true;
                 var rcwEnabled = cfg?.RemoveContinueWatchingEnabled == true;
                 if (!hcEnabled && !rcwEnabled)

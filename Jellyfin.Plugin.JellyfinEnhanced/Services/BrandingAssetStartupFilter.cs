@@ -35,6 +35,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
     public class BrandingAssetStartupFilter : IStartupFilter
     {
         private readonly Logger _logger;
+        private readonly IPluginConfigProvider _configProvider;
         private int _loggedOnce;
 
         private static readonly RegexOptions Opts = RegexOptions.IgnoreCase | RegexOptions.Compiled;
@@ -62,9 +63,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             (new Regex(@"^touchicon\d*(\.[0-9a-f]+)?\.png$", Opts, MatchTimeout), "apple-touch-icon.png"),
         };
 
-        public BrandingAssetStartupFilter(Logger logger)
+        public BrandingAssetStartupFilter(Logger logger, IPluginConfigProvider configProvider)
         {
             _logger = logger;
+            _configProvider = configProvider;
         }
 
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
@@ -85,7 +87,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 return;
             }
 
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || config.DisableBrandingMiddleware)
             {
                 await nextMw().ConfigureAwait(false);

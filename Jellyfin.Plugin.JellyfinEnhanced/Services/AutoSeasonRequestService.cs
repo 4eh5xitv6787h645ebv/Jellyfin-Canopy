@@ -18,6 +18,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
     {
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly Logger _logger;
+        private readonly IPluginConfigProvider _configProvider;
         private readonly IUserManager _userManager;
         private readonly IUserDataManager _userDataManager;
         private readonly ILibraryManager _libraryManager;
@@ -35,14 +36,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             Logger logger,
             IUserManager userManager,
             IUserDataManager userDataManager,
-            ILibraryManager libraryManager)
+            ILibraryManager libraryManager,
+            IPluginConfigProvider configProvider)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _userManager = userManager;
             _userDataManager = userDataManager;
             _libraryManager = libraryManager;
-            _jellyseerrUserResolver = new Jellyseerr.JellyseerrUserResolver(httpClientFactory, logger, "[Auto-Season-Request]");
+            _configProvider = configProvider;
+            _jellyseerrUserResolver = new Jellyseerr.JellyseerrUserResolver(httpClientFactory, logger, configProvider, "[Auto-Season-Request]");
         }
 
         private static string[] GetConfiguredUrls(string? urls)
@@ -50,15 +53,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             return Jellyseerr.JellyseerrUserResolver.GetConfiguredUrls(urls);
         }
 
-        private static TimeSpan GetSeriesDetailsCacheTtl()
+        // instance method (was static) because config is now read through the injected provider
+        private TimeSpan GetSeriesDetailsCacheTtl()
         {
-            var minutes = JellyfinEnhanced.Instance?.Configuration?.JellyseerrResponseCacheTtlMinutes ?? 10;
+            var minutes = _configProvider.ConfigurationOrNull?.JellyseerrResponseCacheTtlMinutes ?? 10;
             return TimeSpan.FromMinutes(Math.Max(1, minutes));
         }
 
         private async Task<string?> GetSeriesDetailsJsonAsync(string tmdbId)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
             {
                 return null;
@@ -144,7 +148,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // Event-driven entry point called when a user finishes or starts watching an episode.
         public async Task CheckEpisodeCompletionAsync(BaseItem episodeItem, Guid userId)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.AutoSeasonRequestEnabled || !config.JellyseerrEnabled)
             {
                 return;
@@ -176,7 +180,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // Checks if a specific season needs its next season requested
         private async Task CheckSeasonForAutoRequest(Series series, int currentSeasonNumber, int currentEpisodeNumber, JUser user)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null)
             {
                 return;
@@ -352,7 +356,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // Gets the total number of episodes in a season from TMDB
         private async Task<int?> GetTotalEpisodesInSeasonFromTmdb(string tmdbId, int seasonNumber)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
             {
                 return null;
@@ -413,7 +417,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // Gets season status from Jellyseerr - always fetches fresh to ensure accurate request/availability state
         private async Task<SeasonStatus?> GetSeasonStatusFromJellyseerr(string tmdbId, int seasonNumber)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
             {
                 return null;
@@ -566,7 +570,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // Requests the next season from Jellyseerr
         private async Task<bool> RequestNextSeason(string tmdbId, int seasonNumber, string jellyfinUserId)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
             {
                 _logger.Warning("[Auto-Season-Request] Jellyseerr configuration is missing");

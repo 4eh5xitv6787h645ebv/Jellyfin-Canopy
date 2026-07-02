@@ -37,6 +37,7 @@ using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -58,10 +59,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             Logger logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider,
             Services.TagCacheService tagCacheService,
             ILibraryManager libraryManager,
             IUserDataManager userDataManager)
-            : base(httpClientFactory, logger, userManager, seerrCache)
+            : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _tagCacheService = tagCacheService;
             _libraryManager = libraryManager;
@@ -73,7 +75,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         [Produces("application/json")]
         public IActionResult GetTagCache(Guid userId, [FromQuery] long? since = null)
         {
-            if (JellyfinEnhanced.Instance?.Configuration?.TagCacheServerMode != true)
+            if (_configProvider.ConfigurationOrNull?.TagCacheServerMode != true)
             {
                 return NotFound();
             }

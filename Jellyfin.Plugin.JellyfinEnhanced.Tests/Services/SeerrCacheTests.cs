@@ -1,5 +1,7 @@
+using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using Jellyfin.Plugin.JellyfinEnhanced.Model.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Tests.TestDoubles;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services;
@@ -12,9 +14,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services;
 /// </summary>
 public class SeerrCacheTests
 {
+    private static SeerrCache NewCache(PluginConfiguration? config = null) =>
+        new(new FakePluginConfigProvider(config));
+
     private static SeerrCache PopulatedCache()
     {
-        var cache = new SeerrCache();
+        var cache = NewCache();
         cache.UserIdCache["jf-user-a"] = ("1", DateTime.UtcNow);
         cache.UserIdCache["jf-user-b"] = ("2", DateTime.UtcNow);
         cache.UserCache["jf-user-a"] = (new JellyseerrUser { Id = 1 }, DateTime.UtcNow);
@@ -64,11 +69,52 @@ public class SeerrCacheTests
         // The plugin's UpdateConfiguration hook clears caches through
         // SeerrCache.Instance; it must point at the most recently constructed
         // (i.e. the DI-singleton) instance.
-        var cache = new SeerrCache();
+        var cache = NewCache();
         Assert.Same(cache, SeerrCache.Instance);
 
         cache.UserIdCache["jf-user-a"] = ("1", DateTime.UtcNow);
         SeerrCache.Instance!.ClearAllSeerrCachesOnConfigChange();
         Assert.Empty(cache.UserIdCache);
+    }
+
+    [Fact]
+    public void CacheTtls_AreReadThroughConfigProvider()
+    {
+        var cache = NewCache(new PluginConfiguration
+        {
+            JellyseerrUserIdCacheTtlMinutes = 45,
+            JellyseerrResponseCacheTtlMinutes = 7,
+        });
+
+        Assert.Equal(TimeSpan.FromMinutes(45), cache.GetUserIdCacheTtl());
+        Assert.Equal(TimeSpan.FromMinutes(7), cache.GetResponseCacheTtl());
+        // enrichment TTL intentionally shares the response-cache setting
+        Assert.Equal(TimeSpan.FromMinutes(7), cache.GetTmdbEnrichmentCacheTtl());
+    }
+
+    [Fact]
+    public void CacheTtls_FallBackToDefaults_WhenPluginNotLoaded()
+    {
+        var cache = NewCache(config: null);
+
+        Assert.Equal(TimeSpan.FromMinutes(30), cache.GetUserIdCacheTtl());
+        Assert.Equal(TimeSpan.FromMinutes(10), cache.GetResponseCacheTtl());
+    }
+
+    [Fact]
+    public void CacheTtls_ClampToOneMinute_AndReReadLiveConfig()
+    {
+        var provider = new FakePluginConfigProvider(new PluginConfiguration
+        {
+            JellyseerrResponseCacheTtlMinutes = 0, // admin typo: clamp, don't disable
+        });
+        var cache = new SeerrCache(provider);
+
+        Assert.Equal(TimeSpan.FromMinutes(1), cache.GetResponseCacheTtl());
+
+        // The provider contract is LIVE reads: an admin save (new config object)
+        // must be visible on the very next access, with no snapshotting.
+        provider.Current = new PluginConfiguration { JellyseerrResponseCacheTtlMinutes = 25 };
+        Assert.Equal(TimeSpan.FromMinutes(25), cache.GetResponseCacheTtl());
     }
 }

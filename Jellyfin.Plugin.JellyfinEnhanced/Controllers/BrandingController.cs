@@ -37,6 +37,7 @@ using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -53,8 +54,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             IHttpClientFactory httpClientFactory,
             Logger logger,
             IUserManager userManager,
-            ISeerrCache seerrCache)
-            : base(httpClientFactory, logger, userManager, seerrCache)
+            ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider)
+            : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
         }
 

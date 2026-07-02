@@ -37,6 +37,7 @@ using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -53,17 +54,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         protected readonly Logger _logger;
         protected readonly IUserManager _userManager;
         protected readonly ISeerrCache _seerrCache;
+        protected readonly IPluginConfigProvider _configProvider;
 
         protected JellyfinEnhancedControllerBase(
             IHttpClientFactory httpClientFactory,
             Logger logger,
             IUserManager userManager,
-            ISeerrCache seerrCache)
+            ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _userManager = userManager;
             _seerrCache = seerrCache;
+            _configProvider = configProvider;
         }
 
         private async Task<bool> IsSeerrReachableCached()
@@ -94,7 +98,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         protected async Task<JellyseerrUser?> GetJellyseerrUser(string jellyfinUserId, bool bypassCache = false, bool allowAutoImport = true)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
             {
                 _logger.Warning("Seerr configuration is missing. Cannot look up user ID.");
@@ -219,7 +223,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         private async Task<(JellyseerrUser? User, bool Definite)> TryAutoImportJellyseerrUser(string jellyfinUserId, string[] urls, HttpClient httpClient)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             var apiKey = config?.JellyseerrApiKey ?? string.Empty;
 
             // Jellyseerr requires dashless UUIDs — dashed format causes empty email and UNIQUE constraint errors
@@ -328,7 +332,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         protected async Task<string?> GetJellyseerrUserId(string jellyfinUserId)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             bool cacheEnabled = config == null || !config.JellyseerrDisableCache;
 
             // Check cache first (unless disabled)
@@ -444,7 +448,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         protected async Task<IActionResult> ProxyJellyseerrRequest(string apiPath, HttpMethod method, string? content = null)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.JellyseerrEnabled || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
             {
                 _logger.Warning("Seerr integration is not configured or enabled.");
@@ -492,7 +496,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         message = unreachableMsg
                     });
                 }
-                if (IsJellyseerrImportBlocked(jellyfinUserId, JellyfinEnhanced.Instance?.Configuration ?? new Configuration.PluginConfiguration()))
+                if (IsJellyseerrImportBlocked(jellyfinUserId, _configProvider.ConfigurationOrNull ?? new Configuration.PluginConfiguration()))
                 {
                     return StatusCode(403, new
                     {
@@ -711,7 +715,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         protected async Task<IActionResult> GetJellyseerrStatus()
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.JellyseerrEnabled || string.IsNullOrEmpty(config.JellyseerrApiKey) || string.IsNullOrEmpty(config.JellyseerrUrls))
             {
                 return Ok(new { active = false });
@@ -750,7 +754,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         {
             try
             {
-                var config = JellyfinEnhanced.Instance?.Configuration;
+                var config = _configProvider.ConfigurationOrNull;
                 if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
                 {
                     return null;
@@ -816,7 +820,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         {
             try
             {
-                var config = JellyfinEnhanced.Instance?.Configuration;
+                var config = _configProvider.ConfigurationOrNull;
                 if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
                 {
                     return null;

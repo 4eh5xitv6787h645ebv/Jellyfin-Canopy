@@ -37,6 +37,7 @@ using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -56,8 +57,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             Logger logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider,
             MediaBrowser.Controller.Session.ISessionManager sessionManager)
-            : base(httpClientFactory, logger, userManager, seerrCache)
+            : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _sessionManager = sessionManager;
         }
@@ -68,7 +70,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         [Authorize]
         public IActionResult GetActiveSessions()
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.ActiveStreamsEnabled)
                 return StatusCode(503, "Active Streams is not enabled.");
 
@@ -152,7 +154,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             if (request == null || string.IsNullOrWhiteSpace(request.Text))
                 return BadRequest("Message text is required.");
 
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.ActiveStreamsEnabled)
                 return StatusCode(503, "Active Streams is not enabled.");
 

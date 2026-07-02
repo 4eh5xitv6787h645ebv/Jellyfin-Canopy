@@ -18,8 +18,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             IUserManager userManager,
             ILibraryManager libraryManager,
             AutoMovieRequestService autoMovieRequestService,
-            Logger logger)
-            : base(sessionManager, userManager, libraryManager, logger)
+            Logger logger,
+            IPluginConfigProvider configProvider)
+            : base(sessionManager, userManager, libraryManager, logger, configProvider)
         {
             _autoMovieRequestService = autoMovieRequestService;
         }

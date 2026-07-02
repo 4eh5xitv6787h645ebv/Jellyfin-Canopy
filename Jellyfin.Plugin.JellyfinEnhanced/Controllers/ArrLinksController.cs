@@ -37,6 +37,7 @@ using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -53,8 +54,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             IHttpClientFactory httpClientFactory,
             Logger logger,
             IUserManager userManager,
-            ISeerrCache seerrCache)
-            : base(httpClientFactory, logger, userManager, seerrCache)
+            ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider)
+            : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
         }
 
@@ -244,7 +246,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             if (tvdbId <= 0)
                 return BadRequest(new { error = "tvdbId must be a positive integer" });
 
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null)
                 return StatusCode(500, new { error = "Plugin configuration not available" });
 
@@ -281,7 +283,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             if (tvdbId <= 0)
                 return BadRequest(new { error = "tvdbId must be a positive integer" });
 
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null)
                 return StatusCode(500, new { error = "Plugin configuration not available" });
 
@@ -371,7 +373,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             if (tmdbId <= 0)
                 return BadRequest(new { error = "tmdbId must be a positive integer" });
 
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null)
                 return StatusCode(500, new { error = "Plugin configuration not available" });
 

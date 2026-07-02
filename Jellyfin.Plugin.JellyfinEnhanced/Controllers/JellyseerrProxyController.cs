@@ -37,6 +37,7 @@ using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -53,8 +54,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             IHttpClientFactory httpClientFactory,
             Logger logger,
             IUserManager userManager,
-            ISeerrCache seerrCache)
-            : base(httpClientFactory, logger, userManager, seerrCache)
+            ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider)
+            : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
         }
 
@@ -312,7 +314,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 try
                 {
                     var quota = JObject.Parse(cr.Content ?? "{}");
-                    await EnrichQuotaWithResetAsync(quota, seerrUserId!, JellyfinEnhanced.Instance!.Configuration);
+                    await EnrichQuotaWithResetAsync(quota, seerrUserId!, _configProvider.Configuration);
                     return Content(quota.ToString(Newtonsoft.Json.Formatting.None), "application/json");
                 }
                 catch (Exception ex)
@@ -636,7 +638,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         [Authorize]
         public async Task<IActionResult> GetJellyseerrPartialRequestsSetting()
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.JellyseerrEnabled || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
             {
                 // previously returned 200+false, which made the
@@ -750,7 +752,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         [Authorize]
         public async Task<IActionResult> ProxyTmdbRequest(string apiPath)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
+            var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.TMDB_API_KEY))
             {
                 return StatusCode(503, "TMDB API key is not configured.");
