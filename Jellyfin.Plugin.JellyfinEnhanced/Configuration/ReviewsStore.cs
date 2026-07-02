@@ -1,6 +1,6 @@
 using System;
 using System.IO;
-using Newtonsoft.Json;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
@@ -87,7 +87,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
 
             try
             {
-                var parsed = JsonConvert.DeserializeObject<AllReviewsStore>(json);
+                // Newtonsoft equivalent: JsonConvert.DeserializeObject<AllReviewsStore>(json)
+                // with default settings (no null-skipping — this store has no
+                // non-nullable members a null could break).
+                var parsed = JsonSerializer.Deserialize<AllReviewsStore>(json, PersistedJson.ReadOptions);
                 if (parsed == null)
                 {
                     if (throwOnCorruption)
@@ -146,7 +149,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
         {
             try
             {
-                var json = JsonConvert.SerializeObject(store, Formatting.Indented);
+                // Newtonsoft equivalent: JsonConvert.SerializeObject(store, Formatting.Indented).
+                var json = JsonSerializer.Serialize(store, PersistedJson.WriteOptions);
                 File.WriteAllText(ReviewsFilePath, json);
             }
             catch (Exception ex)

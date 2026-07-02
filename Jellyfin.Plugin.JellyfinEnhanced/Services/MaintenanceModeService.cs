@@ -8,7 +8,8 @@ using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Library;
-using Newtonsoft.Json;
+using System.Text.Json;
+using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services
@@ -203,7 +204,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             {
                 if (!File.Exists(_stateFilePath)) return new MaintenanceState();
                 var json = File.ReadAllText(_stateFilePath);
-                return JsonConvert.DeserializeObject<MaintenanceState>(json) ?? new MaintenanceState();
+                // Newtonsoft equivalent: JsonConvert.DeserializeObject<MaintenanceState>(json).
+                return JsonSerializer.Deserialize<MaintenanceState>(json, PersistedJson.ReadOptions) ?? new MaintenanceState();
             }
             catch (Exception ex)
             {
@@ -216,7 +218,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         {
             try
             {
-                File.WriteAllText(_stateFilePath, JsonConvert.SerializeObject(state, Formatting.Indented));
+                // Newtonsoft equivalent: JsonConvert.SerializeObject(state, Formatting.Indented).
+                File.WriteAllText(_stateFilePath, JsonSerializer.Serialize(state, PersistedJson.WriteOptions));
             }
             catch (Exception ex)
             {

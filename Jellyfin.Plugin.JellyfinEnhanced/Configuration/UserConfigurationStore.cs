@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Concurrent;
 using System.IO;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
@@ -94,16 +94,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                         return new T();
                     }
 
-                    var settings = JsonConvert.DeserializeObject<T>(json, new JsonSerializerSettings
-                    {
-                        // Silently skip JSON null values rather than throwing when the target
-                        // C# property is a non-nullable type (e.g. bool). This handles the case
-                        // where a field was previously bool? (stored as null on disk) and has
-                        // since been changed to bool — without this the deserialization throws,
-                        // GetUserConfiguration returns new T(), and the first subsequent save
-                        // overwrites the user's real data with defaults.
-                        NullValueHandling = NullValueHandling.Ignore
-                    });
+                    // Silently skip JSON null values rather than throwing when the target
+                    // C# property is a non-nullable type (e.g. bool). This handles the case
+                    // where a field was previously bool? (stored as null on disk) and has
+                    // since been changed to bool — without this the deserialization throws,
+                    // GetUserConfiguration returns new T(), and the first subsequent save
+                    // overwrites the user's real data with defaults.
+                    // (Newtonsoft equivalent: NullValueHandling.Ignore on deserialization,
+                    // reproduced by the StripNullMembers pre-pass — see PersistedJson.)
+                    var node = JsonNode.Parse(json, documentOptions: PersistedJson.ParseOptions);
+                    var settings = PersistedJson.StripNullMembers(node) is JsonNode stripped
+                        ? stripped.Deserialize<T>(PersistedJson.ReadOptions)
+                        : default;
 
                     if (settings == null)
                     {
@@ -151,7 +153,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
 
             try
             {
-                var parsed = JsonConvert.DeserializeObject<T>(json);
+                // Strict path: no null-stripping — a JSON null on a non-nullable
+                // property is corruption here (Newtonsoft's default settings threw
+                // for that too) and must back up + throw rather than bind partially.
+                var parsed = JsonSerializer.Deserialize<T>(json, PersistedJson.ReadOptions);
                 if (parsed == null)
                 {
                     _logger.LogError($"'{fileName}' for user '{userId}' deserialized to null; refusing to overwrite.");
@@ -198,18 +203,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 // Per-call random suffix avoids collisions between concurrent non-RMW writers on a shared .tmp.
                 tempPath = configPath + ".tmp." + Guid.NewGuid().ToString("N");
 
-                JToken token;
-                if (config is System.Text.Json.JsonElement jsonElement)
-                {
-                    var rawJson = jsonElement.GetRawText();
-                    token = JToken.Parse(rawJson);
-                }
-                else
-                {
-                    token = JToken.FromObject(config);
-                }
-
-                var jsonToSave = JsonConvert.SerializeObject(token, Formatting.Indented);
+                // Serialize with the runtime type: callers pass both typed DTOs and
+                // raw JsonElement payloads (client JSON pass-through). JsonElement is
+                // written verbatim — unlike the old JToken.Parse round-trip, which
+                // re-parsed and normalized ISO date strings and exponent numbers.
+                // Both forms read identically; pinned by RawClientJson_* tests.
+                var jsonToSave = JsonSerializer.Serialize(config, config.GetType(), PersistedJson.WriteOptions);
 
                 File.WriteAllText(tempPath, jsonToSave);
                 File.Move(tempPath, configPath, overwrite: true);
