@@ -23,4 +23,10 @@
     <ProjectReference Include="..\Jellyfin.Plugin.JellyfinEnhanced\JellyfinEnhanced.csproj" />
   </ItemGroup>
 
+  <!-- Golden snapshots for the public/private config payload contract
+       (see Controllers/ConfigPayloadGoldenTests.cs). -->
+  <ItemGroup>
+    <None Include="Snapshots\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -1,0 +1,32 @@
+{
+  "BazarrUrl": "",
+  "BazarrUrlMappings": "",
+  "RadarrInstances": [
+    {
+      "Enabled": true,
+      "Name": "Radarr Main",
+      "Url": "http://radarr:7878",
+      "UrlMappings": ""
+    }
+  ],
+  "RadarrInstancesCorrupt": false,
+  "RadarrUrl": "",
+  "RadarrUrlMappings": "",
+  "SonarrInstances": [
+    {
+      "Enabled": true,
+      "Name": "Sonarr Main",
+      "Url": "http://sonarr:8989",
+      "UrlMappings": "internal=external"
+    },
+    {
+      "Enabled": false,
+      "Name": "Sonarr 4K",
+      "Url": "http://sonarr-4k:8989",
+      "UrlMappings": ""
+    }
+  ],
+  "SonarrInstancesCorrupt": false,
+  "SonarrUrl": "",
+  "SonarrUrlMappings": ""
+}

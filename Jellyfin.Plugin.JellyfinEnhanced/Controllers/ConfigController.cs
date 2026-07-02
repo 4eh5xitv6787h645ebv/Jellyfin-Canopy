@@ -96,7 +96,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // still see a server-side error entry on private-config load.
             WarnIfArrInstancesCorrupt(config);
 
-            return new JsonResult(new
+            return new JsonResult(BuildPrivateConfigPayload(config));
+        }
+
+        /// <summary>
+        /// Pure projection of <see cref="PluginConfiguration"/> to the private-config payload
+        /// (admin-only). Extracted from <see cref="GetPrivateConfig"/> so unit tests can pin the
+        /// exact payload shape; the body is unchanged. The property set is a WHITELIST — a
+        /// setting absent here never reaches the client.
+        /// </summary>
+        internal static object BuildPrivateConfigPayload(PluginConfiguration config)
+        {
+            return new
             {
                 // For Arr Links (legacy single-instance fields, kept for backward compat)
                 config.SonarrUrl,
@@ -116,7 +127,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 // action endpoint to round-trip a corruption error envelope.
                 SonarrInstancesCorrupt = config.IsSonarrInstancesCorrupt(),
                 RadarrInstancesCorrupt = config.IsRadarrInstancesCorrupt(),
-            });
+            };
         }
         // [AllowAnonymous]: public-config is loaded by `loadLoginImageEarly` before
         // the user logs in, so we cannot gate the whole endpoint on [Authorize].
@@ -133,15 +144,26 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 return StatusCode(503);
             }
 
-            // Expose whether TMDB is configured as a boolean so all users
-            // (including non-admin) can use TMDB-dependent features like
-            // Reviews and Elsewhere without leaking the actual API key.
-            var tmdbEnabled = !string.IsNullOrWhiteSpace(config.TMDB_API_KEY);
-
             // Only authenticated callers see internal Seerr URLs — they're used by
             // client-side deep links and would otherwise leak network topology to
             // unauthenticated visitors hitting the login page.
             bool isAuthed = User?.Identity?.IsAuthenticated == true;
+
+            return new JsonResult(BuildPublicConfigPayload(config, isAuthed));
+        }
+
+        /// <summary>
+        /// Pure projection of <see cref="PluginConfiguration"/> to the public-config payload.
+        /// Extracted from <see cref="GetPublicConfig"/> so unit tests can pin the exact payload
+        /// shape; the body is unchanged. The property set is a WHITELIST — a setting absent
+        /// here never reaches the client.
+        /// </summary>
+        internal static object BuildPublicConfigPayload(PluginConfiguration config, bool isAuthed)
+        {
+            // Expose whether TMDB is configured as a boolean so all users
+            // (including non-admin) can use TMDB-dependent features like
+            // Reviews and Elsewhere without leaking the actual API key.
+            var tmdbEnabled = !string.IsNullOrWhiteSpace(config.TMDB_API_KEY);
 
             string jellyseerrBaseUrl = string.Empty;
             string jellyseerrUrlMappings = string.Empty;
@@ -161,7 +183,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 jellyseerrUrlMappings = config.JellyseerrUrlMappings ?? string.Empty;
             }
 
-            return new JsonResult(new
+            return new
             {
                 // Jellyfin Enhanced Settings
                 TmdbEnabled = tmdbEnabled,
@@ -343,7 +365,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 config.MaintenanceModeAction,
                 config.MaintenanceModeAffectedUsers,
 
-            });
+            };
         }
 
         [HttpGet("locales")]

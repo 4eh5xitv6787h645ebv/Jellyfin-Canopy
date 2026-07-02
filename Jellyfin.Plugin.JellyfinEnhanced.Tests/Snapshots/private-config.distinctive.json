@@ -1,0 +1,12 @@
+{
+  "BazarrUrl": "cfg-BazarrUrl",
+  "BazarrUrlMappings": "cfg-BazarrUrlMappings",
+  "RadarrInstances": [],
+  "RadarrInstancesCorrupt": true,
+  "RadarrUrl": "cfg-RadarrUrl",
+  "RadarrUrlMappings": "cfg-RadarrUrlMappings",
+  "SonarrInstances": [],
+  "SonarrInstancesCorrupt": true,
+  "SonarrUrl": "cfg-SonarrUrl",
+  "SonarrUrlMappings": "cfg-SonarrUrlMappings"
+}
