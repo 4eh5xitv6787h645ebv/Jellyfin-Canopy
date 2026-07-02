@@ -571,11 +571,10 @@
             const currentUserId = (currentUser?.Id) || ApiClient.getCurrentUserId() || '';
             const viewerIsAdmin = currentUser?.Policy?.IsAdministrator === true;
             const ownReview = userReviews.find(r => r.userId.replace(/-/g, '') === currentUserId.replace(/-/g, ''));
-            const hasReviews = (reviews && reviews.length > 0) || userReviews.length > 0;
-
             let reviewsSection;
 
-            if (hasReviews || true /* always show so users can add their own */) {
+            // Always build the section, even with zero reviews, so users can add their own.
+            {
                 reviewsSection = document.createElement('details');
                 reviewsSection.className = 'detailSection tmdb-reviews-section';
                 if (JE.currentSettings?.reviewsExpandedByDefault) {

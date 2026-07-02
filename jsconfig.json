@@ -1,0 +1,21 @@
+{
+    // Type-checking for the plain-JS client scripts.
+    //
+    // checkJs is OFF globally: the legacy modules predate type checking and
+    // would drown the signal. Files opt in with a leading `// @ts-check`
+    // comment — required for all NEW modules (and for legacy files as they
+    // get refactored), so coverage only ever grows.
+    "compilerOptions": {
+        "allowJs": true,
+        "checkJs": false,
+        "noEmit": true,
+        "target": "es2022",
+        "module": "none",
+        "lib": ["es2022", "dom", "dom.iterable"],
+        "strict": false,
+        "noImplicitAny": false,
+        "skipLibCheck": true
+    },
+    "include": ["Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js"],
+    "exclude": ["node_modules", "**/bin", "**/obj"]
+}

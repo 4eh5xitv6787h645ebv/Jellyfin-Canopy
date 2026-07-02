@@ -1269,6 +1269,7 @@
                 }
 
                 // For external Seerr links the <a> has is="emby-linkbutton" — let default run.
+                const isPlainLeftClick = e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
                 if (isExternalJellyseerrLink && isPlainLeftClick) {
                     return;
                 }

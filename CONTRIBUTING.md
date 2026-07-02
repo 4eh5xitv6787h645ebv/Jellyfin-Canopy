@@ -150,6 +150,27 @@ Key directories:
 
 ## 🧪 Testing
 
+### Automated checks (run these locally — CI enforces them)
+
+```bash
+# One-time setup
+npm install
+
+# Client scripts: parse check, lint, and type check
+npm run syntax               # node --check on every served js/ file
+npm run lint                 # ESLint (errors gate CI; warnings are advisory)
+npm run typecheck            # tsc over files opting in with // @ts-check
+
+# Plugin: both runtime targets must compile, and unit tests must pass
+dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release -p:JellyfinTarget=jf10   # Jellyfin 10.11 / net9.0
+dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release -p:JellyfinTarget=jf12   # Jellyfin 12 / net10.0
+dotnet test                  # xUnit tests in Jellyfin.Plugin.JellyfinEnhanced.Tests
+```
+
+New JavaScript modules should start with `// @ts-check` so the type checker covers them; existing files opt in as they get touched. New C# logic that can be tested without a running Jellyfin server should come with unit tests.
+
+### Manual checklist
+
 Before submitting a PR, ensure you've tested:
 
 - [ ] Feature works as expected
