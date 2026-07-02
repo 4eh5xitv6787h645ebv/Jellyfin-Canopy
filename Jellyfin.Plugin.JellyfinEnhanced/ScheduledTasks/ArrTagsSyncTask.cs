@@ -12,6 +12,7 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Tasks;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
+using Jellyfin.Plugin.JellyfinEnhanced.Services.Arr;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
@@ -61,8 +62,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             _logger.Info("Starting Arr Tags Sync task...");
             progress?.Report(0);
 
-            var radarrService = new RadarrService(_httpClientFactory, _logger);
-            var sonarrService = new SonarrService(_httpClientFactory, _logger);
+            var arrTagService = new ArrTagService(_httpClientFactory, _logger);
 
             var radarrTags = new Dictionary<int, List<string>>();
             var sonarrTags = new Dictionary<string, List<string>>();
@@ -82,7 +82,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                     try
                     {
                         _logger.Info($"Fetching tags from Radarr instance: {instance.Name}");
-                        var instanceTags = await radarrService.GetMovieTagsByTmdbId(instance.Url, instance.ApiKey, cancellationToken);
+                        var instanceTags = await arrTagService.GetMovieTagsByTmdbId(instance.Url, instance.ApiKey, cancellationToken);
                         _logger.Info($"Fetched {instanceTags.Count} movie tag mappings from {instance.Name}");
                         foreach (var kvp in instanceTags)
                         {
@@ -134,7 +134,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                     try
                     {
                         _logger.Info($"Fetching tags from Sonarr instance: {instance.Name}");
-                        var instanceTags = await sonarrService.GetSeriesTagsByTvdbId(instance.Url, instance.ApiKey, cancellationToken);
+                        var instanceTags = await arrTagService.GetSeriesTagsByTvdbId(instance.Url, instance.ApiKey, cancellationToken);
                         _logger.Info($"Fetched {instanceTags.Count} series tag mappings from {instance.Name}");
                         foreach (var kvp in instanceTags)
                         {
