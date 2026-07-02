@@ -25,8 +25,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // In-memory cache of recently requested seasons to avoid duplicates (keyed by tmdbId_seasonNumber, global across all users)
         private readonly Dictionary<string, DateTime> _requestedSeasons = new();
         private readonly object _requestCacheLock = new();
-        private readonly Dictionary<string, (string JellyseerrUserId, DateTime CachedAt)> _jellyseerrUserIdCache = new();
-        private readonly object _userIdCacheLock = new();
+        private readonly Jellyseerr.JellyseerrUserResolver _jellyseerrUserResolver;
         private readonly Dictionary<string, (string Content, DateTime CachedAt)> _seriesDetailsCache = new();
         private readonly object _seriesDetailsCacheLock = new();
         private readonly ConcurrentDictionary<string, Task<string?>> _seriesDetailsInFlight = new();
@@ -43,26 +42,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             _userManager = userManager;
             _userDataManager = userDataManager;
             _libraryManager = libraryManager;
+            _jellyseerrUserResolver = new Jellyseerr.JellyseerrUserResolver(httpClientFactory, logger, "[Auto-Season-Request]");
         }
 
         private static string[] GetConfiguredUrls(string? urls)
         {
-            return (urls ?? string.Empty)
-                .Split(new[] { '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(url => url.Trim().TrimEnd('/'))
-                .Where(url => !string.IsNullOrWhiteSpace(url))
-                .ToArray();
-        }
-
-        private static string NormalizeUserId(string userId)
-        {
-            return userId.Replace("-", string.Empty).ToLowerInvariant();
-        }
-
-        private static TimeSpan GetJellyseerrUserIdCacheTtl()
-        {
-            var minutes = JellyfinEnhanced.Instance?.Configuration?.JellyseerrUserIdCacheTtlMinutes ?? 30;
-            return TimeSpan.FromMinutes(Math.Max(1, minutes));
+            return Jellyseerr.JellyseerrUserResolver.GetConfiguredUrls(urls);
         }
 
         private static TimeSpan GetSeriesDetailsCacheTtl()
@@ -635,82 +620,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         }
 
         // Gets the Jellyseerr user ID for a Jellyfin user
-        private async Task<string?> GetJellyseerrUserId(string jellyfinUserId)
+        private Task<string?> GetJellyseerrUserId(string jellyfinUserId)
         {
-            var config = JellyfinEnhanced.Instance?.Configuration;
-            if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
-            {
-                return null;
-            }
-
-            var normalizedJellyfinUserId = NormalizeUserId(jellyfinUserId);
-
-            lock (_userIdCacheLock)
-            {
-                if (_jellyseerrUserIdCache.TryGetValue(normalizedJellyfinUserId, out var cached) &&
-                    DateTime.UtcNow - cached.CachedAt < GetJellyseerrUserIdCacheTtl())
-                {
-                    return cached.JellyseerrUserId;
-                }
-            }
-
-            var urls = GetConfiguredUrls(config.JellyseerrUrls);
-            var httpClient = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
-
-            foreach (var url in urls)
-            {
-                try
-                {
-                    var requestUri = $"{url.Trim().TrimEnd('/')}/api/v1/user?take=1000";
-                    using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
-                        HttpMethod.Get, requestUri, config.JellyseerrApiKey);
-                    using var response = await httpClient.SendAsync(request);
-                    var (content, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
-
-                    if (error == null && content != null)
-                    {
-                        var usersResponse = JsonSerializer.Deserialize<JsonElement>(content);
-
-                        if (usersResponse.TryGetProperty("results", out var usersArray))
-                        {
-                            foreach (var userElement in usersArray.EnumerateArray())
-                            {
-                                if (userElement.TryGetProperty("jellyfinUserId", out var jfUserId) &&
-                                    userElement.TryGetProperty("id", out var id))
-                                {
-                                    var jellyseerrJfUserId = jfUserId.GetString();
-                                    if (!string.IsNullOrEmpty(jellyseerrJfUserId))
-                                    {
-                                        // Normalize both IDs for comparison (remove dashes)
-                                        var normalizedJellyseerrId = jellyseerrJfUserId.Replace("-", "").ToLowerInvariant();
-
-                                        if (normalizedJellyseerrId == normalizedJellyfinUserId)
-                                        {
-                                            var jellyseerrUserId = id.GetInt32().ToString();
-                                            lock (_userIdCacheLock)
-                                            {
-                                                _jellyseerrUserIdCache[normalizedJellyfinUserId] = (jellyseerrUserId, DateTime.UtcNow);
-                                            }
-                                            return jellyseerrUserId;
-                                        }
-                                    }
-                                }
-                            }
-                            _logger.Warning($"[Auto-Season-Request] No Jellyseerr user found for Jellyfin user {jellyfinUserId}");
-                        }
-                    }
-                    else if (error != null)
-                    {
-                        _logger.Warning($"[Auto-Season-Request] Failed to fetch users from Jellyseerr: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Error($"[Auto-Season-Request] Exception while trying to get Jellyseerr user ID from {url}: {ex.Message}");
-                }
-            }
-
-            return null;
+            return _jellyseerrUserResolver.GetJellyseerrUserId(jellyfinUserId);
         }
     }
 }
