@@ -1,0 +1,8 @@
+{
+  "Items": {
+    "kept": { "ItemId": "1", "Name": "Kept — 映画", "Type": "Movie", "TmdbId": 27205, "HideScope": "global" },
+    "nulled": null
+  },
+  "Settings": null,
+  "FutureUnknownField": { "a": [1, 2] }
+}

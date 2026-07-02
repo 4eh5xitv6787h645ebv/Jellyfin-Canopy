@@ -1,0 +1,16 @@
+{
+  "Shortcuts": [
+    {
+      "Name": "PlayPause",
+      "Key": "Space",
+      "Label": "Play / Pause",
+      "Category": "Playback"
+    },
+    {
+      "Name": "Sück",
+      "Key": "ü",
+      "Label": "Ümlaut-Kürzel",
+      "Category": "Größe"
+    }
+  ]
+}

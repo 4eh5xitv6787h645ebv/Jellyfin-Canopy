@@ -1,0 +1,8 @@
+{
+  "Items": [
+    { "TmdbId": 1, "MediaType": "movie", "ProcessedAt": "2025-01-02T03:04:05Z", "Source": "sync" },
+    { "TmdbId": 2, "MediaType": "tv", "ProcessedAt": "2025-01-02T03:04:05.123Z", "Source": "monitor" },
+    { "TmdbId": 3, "MediaType": "movie", "ProcessedAt": "2025-01-02T03:04:05", "Source": "sync" },
+    { "TmdbId": 4, "MediaType": "tv", "ProcessedAt": "2025-01-02T05:04:05+02:00", "Source": "existing" }
+  ]
+}

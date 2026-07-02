@@ -1,0 +1,17 @@
+{
+  "autoPauseEnabled": true,
+  "pauseScreenDelaySeconds": 7,
+  "customLabel": "Amélie — 映画",
+  "someRatio": 0.75,
+  "wholeDecimal": 5.0,
+  "releaseDay": "2024-05-01",
+  "unknownExtra": {
+    "nested": [
+      1,
+      2.5,
+      null,
+      "drei"
+    ]
+  },
+  "nullField": null
+}

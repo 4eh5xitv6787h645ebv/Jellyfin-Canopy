@@ -1,0 +1,12 @@
+{
+  "Region": "DE",
+  "Regions": [
+    "DE",
+    "FR",
+    "US"
+  ],
+  "Services": [
+    "Netflix",
+    "Crunchyroll"
+  ]
+}

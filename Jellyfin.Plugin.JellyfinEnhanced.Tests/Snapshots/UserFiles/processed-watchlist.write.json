@@ -1,0 +1,28 @@
+{
+  "Items": [
+    {
+      "TmdbId": 100,
+      "MediaType": "movie",
+      "ProcessedAt": "2025-01-02T03:04:05Z",
+      "Source": "sync"
+    },
+    {
+      "TmdbId": 200,
+      "MediaType": "tv",
+      "ProcessedAt": "2025-01-02T03:04:05.123Z",
+      "Source": "monitor"
+    },
+    {
+      "TmdbId": 300,
+      "MediaType": "movie",
+      "ProcessedAt": "2024-12-31T09:36:07.8912345Z",
+      "Source": "existing"
+    },
+    {
+      "TmdbId": 400,
+      "MediaType": "tv",
+      "ProcessedAt": "2025-06-07T08:09:10",
+      "Source": "sync"
+    }
+  ]
+}

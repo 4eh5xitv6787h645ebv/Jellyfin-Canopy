@@ -1,0 +1,11 @@
+{
+  "IsActive": true,
+  "Message": "Wartung aktualisiert — 更新",
+  "Action": "both",
+  "StartedAt": "2025-03-04T05:06:07Z",
+  "EndsAt": null,
+  "AccountDisabledUserIds": [
+    "3f2504e04f8941d39a0c0305e82c3301"
+  ],
+  "RemoteDisabledUserIds": []
+}

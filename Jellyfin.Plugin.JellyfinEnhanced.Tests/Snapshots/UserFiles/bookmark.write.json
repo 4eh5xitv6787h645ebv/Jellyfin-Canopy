@@ -1,0 +1,28 @@
+{
+  "Bookmarks": {
+    "item-1:12.25": {
+      "ItemId": "item-1",
+      "TmdbId": "603",
+      "TvdbId": "",
+      "MediaType": "movie",
+      "Name": "Amélie — 映画",
+      "Timestamp": 12.25,
+      "Label": "Café scene ☕",
+      "CreatedAt": "2024-01-15T10:30:00.000Z",
+      "UpdatedAt": "2024-01-16T11:31:01.500Z",
+      "SyncedFrom": ""
+    },
+    "item-2:99.5": {
+      "ItemId": "item-2",
+      "TmdbId": "",
+      "TvdbId": "",
+      "MediaType": "tv",
+      "Name": "Plain",
+      "Timestamp": 99.5,
+      "Label": "",
+      "CreatedAt": "",
+      "UpdatedAt": "",
+      "SyncedFrom": ""
+    }
+  }
+}

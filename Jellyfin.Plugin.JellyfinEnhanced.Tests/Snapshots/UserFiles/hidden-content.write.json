@@ -1,0 +1,49 @@
+{
+  "Items": {
+    "movie-27205": {
+      "ItemId": "27205",
+      "Name": "Inception",
+      "Type": "Movie",
+      "TmdbId": "27205",
+      "HiddenAt": "2024-06-01T08:00:00.000Z",
+      "PosterPath": "/poster.jpg",
+      "SeriesId": "",
+      "SeriesName": "",
+      "SeasonNumber": null,
+      "EpisodeNumber": null,
+      "HideScope": "global"
+    },
+    "episode-42": {
+      "ItemId": "42",
+      "Name": "Épisode spécial",
+      "Type": "Episode",
+      "TmdbId": "",
+      "HiddenAt": "",
+      "PosterPath": "",
+      "SeriesId": "7",
+      "SeriesName": "Série télé",
+      "SeasonNumber": 2,
+      "EpisodeNumber": 5,
+      "HideScope": "series"
+    }
+  },
+  "Settings": {
+    "Enabled": true,
+    "FilterLibrary": true,
+    "FilterDiscovery": true,
+    "FilterUpcoming": true,
+    "FilterCalendar": true,
+    "FilterSearch": true,
+    "FilterRecommendations": true,
+    "FilterRequests": true,
+    "FilterNextUp": true,
+    "FilterContinueWatching": true,
+    "ShowHideButtons": true,
+    "ShowHideConfirmation": false,
+    "ShowButtonJellyseerr": true,
+    "ShowButtonLibrary": true,
+    "ShowButtonDetails": true,
+    "ShowButtonCast": false,
+    "ExperimentalHideCollections": false
+  }
+}

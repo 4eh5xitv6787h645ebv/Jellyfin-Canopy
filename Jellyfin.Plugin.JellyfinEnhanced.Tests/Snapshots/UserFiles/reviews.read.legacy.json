@@ -1,0 +1,22 @@
+{
+  "Reviews": {
+    "abc:movie:603": {
+      "UserId": "abc",
+      "TmdbId": "603",
+      "MediaType": "movie",
+      "Content": "Ancien avis — 素晴らしい",
+      "Rating": null,
+      "CreatedAt": "2023-01-01T00:00:00.000Z"
+    },
+    "def:tv:1399": {
+      "userId": "def",
+      "tmdbId": "1399",
+      "mediaType": "tv",
+      "content": "case-variant keys",
+      "rating": 3,
+      "createdAt": "2023-02-02T00:00:00.000Z",
+      "updatedAt": "2023-02-03T00:00:00.000Z",
+      "legacyExtra": true
+    }
+  }
+}
