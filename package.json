@@ -4,8 +4,8 @@
   "private": true,
   "description": "Development tooling for the Jellyfin Enhanced plugin (lint, type-check, translation validation). The plugin itself ships as embedded resources from the C# project.",
   "scripts": {
-    "lint": "eslint \"Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js\" \"scripts/**/*.js\"",
-    "lint:fix": "eslint --fix \"Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js\" \"scripts/**/*.js\"",
+    "lint": "eslint \"Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js\" \"Jellyfin.Plugin.JellyfinEnhanced/Configuration/*.js\" \"scripts/**/*.js\"",
+    "lint:fix": "eslint --fix \"Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js\" \"Jellyfin.Plugin.JellyfinEnhanced/Configuration/*.js\" \"scripts/**/*.js\"",
     "typecheck": "tsc -p jsconfig.json",
     "syntax": "node scripts/check-syntax.js",
     "validate-translations": "node scripts/validate-translations.js validate"

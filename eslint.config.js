@@ -30,7 +30,7 @@ module.exports = [
         ignores: ['node_modules/**', 'docs/**', 'site/**', '**/bin/**', '**/obj/**'],
     },
     {
-        files: ['Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js'],
+        files: ['Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js', 'Jellyfin.Plugin.JellyfinEnhanced/Configuration/*.js'],
         languageOptions: {
             ecmaVersion: 2022,
             sourceType: 'script',

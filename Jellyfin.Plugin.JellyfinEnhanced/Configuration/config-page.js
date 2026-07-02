@@ -4276,6 +4276,9 @@
         });
 
         var originalTestTmdb = testTmdbConnection;
+        // eslint-disable-next-line no-func-assign -- intentional wrap: the click
+        // handler is registered later by name, and this extends it to refresh
+        // dependency toggles after a TMDB connection test.
         testTmdbConnection = async function(event) {
             await originalTestTmdb(event);
             updateAllDependencies();
