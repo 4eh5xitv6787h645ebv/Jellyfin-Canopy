@@ -60,6 +60,8 @@ ProgramData-UI*/
 
 [Dd]ebug/
 [Rr]elease/
+# ...but the release tooling is source, not build output
+!scripts/release/
 build/
 [Bb]in/
 [Oo]bj/

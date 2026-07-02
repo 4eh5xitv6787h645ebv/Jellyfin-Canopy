@@ -92,3 +92,25 @@ jobs:
 
       - name: Type check (opt-in @ts-check files)
         run: npm run typecheck
+
+  manifest:
+    name: Manifest validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      # The committed manifest.json is the plugin catalog every install polls
+      # for updates — a malformed entry bricks in-app updates for all users.
+      # No dependencies needed; the validator is a self-contained Node script.
+      - name: Validate manifest.json
+        run: node scripts/release/validate-manifest.js manifest.json
