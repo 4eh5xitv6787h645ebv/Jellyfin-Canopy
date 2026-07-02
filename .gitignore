@@ -322,3 +322,6 @@ auth.json
 /.vscode
 /site
 /.kiro
+
+# Generated client bundle (esbuild output; built by the csproj BuildClientBundle target)
+Jellyfin.Plugin.JellyfinEnhanced/dist/

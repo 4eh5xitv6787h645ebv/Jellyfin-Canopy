@@ -8,9 +8,11 @@
     "lint:fix": "eslint --fix \"Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js\" \"Jellyfin.Plugin.JellyfinEnhanced/Configuration/*.js\" \"scripts/**/*.js\"",
     "typecheck": "tsc -p jsconfig.json",
     "syntax": "node scripts/check-syntax.js",
+    "build:bundle": "node scripts/build-bundle.js",
     "validate-translations": "node scripts/validate-translations.js validate"
   },
   "devDependencies": {
+    "esbuild": "0.28.1",
     "eslint": "^9.39.0",
     "typescript": "^5.9.3"
   }

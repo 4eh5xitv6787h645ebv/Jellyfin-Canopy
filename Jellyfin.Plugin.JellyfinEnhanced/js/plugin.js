@@ -294,6 +294,30 @@
         return Promise.allSettled(promises);
     }
 
+    /**
+     * Loads the production client bundle (all component scripts concatenated
+     * in load order, minified) as a single script. The bundle is generated at
+     * build time from the allComponentScripts array below, so its execution
+     * is identical to loading the individual files — just one request.
+     * @returns {Promise<boolean>} true when the bundle loaded, false when it is
+     * unavailable (e.g. a build without the bundle resource) and the caller
+     * should fall back to loading the individual files.
+     */
+    function loadBundle() {
+        return new Promise((resolve) => {
+            const script = document.createElement('script');
+            script.async = false;
+            script.src = ApiClient.getUrl(`/JellyfinEnhanced/dist/je.bundle.js?v=${getScriptVersion()}`);
+            script.onload = () => resolve(true);
+            script.onerror = () => {
+                console.warn('🪼 Jellyfin Enhanced: Production bundle unavailable, falling back to individual module files.');
+                script.remove();
+                resolve(false);
+            };
+            document.head.appendChild(script);
+        });
+    }
+
      /**
      * Loads the splash screen script early.
      */
@@ -731,7 +755,16 @@
                 // others
                 'others/letterboxd-links.js',
             ];
-            await loadScripts(allComponentScripts, basePath);
+            // Production: one minified bundle replaces the ~120 individual requests.
+            // DevMode (dev="true" on the injected script tag): keep per-file loading
+            // so changes are picked up without a bundle rebuild and stack traces map
+            // to real files. If the bundle resource is missing (e.g. a build made
+            // without the bundle step), fall back to per-file loading transparently.
+            const devMode = document.querySelector('script[plugin="Jellyfin Enhanced"]')?.getAttribute('dev') === 'true';
+            const bundleLoaded = devMode ? false : await loadBundle();
+            if (!bundleLoaded) {
+                await loadScripts(allComponentScripts, basePath);
+            }
             console.log('🪼 Jellyfin Enhanced: All component scripts loaded.');
 
             // Stage 4: Initialize core settings/shortcuts using potentially defined functions
