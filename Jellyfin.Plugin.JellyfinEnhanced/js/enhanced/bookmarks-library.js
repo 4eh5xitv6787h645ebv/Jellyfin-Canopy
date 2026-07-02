@@ -1237,12 +1237,23 @@
         if (!isPluginPagesActive() && !JE.pluginConfig?.BookmarksUseCustomTabs && !JE.pluginConfig?.BookmarksUseNativeTab) {
           injectNavigation();
           setupNavigationWatcher();
-          window.addEventListener('hashchange', interceptNavigation, true);
-          window.addEventListener('popstate', interceptNavigation, true);
-          document.addEventListener('viewshow', handleViewShow);
-          document.addEventListener('click', handleNavClick);
-          window.addEventListener('hashchange', handleNavigation);
-          window.addEventListener('popstate', handleNavigation);
+          const lifecycle = JE.core.lifecycle.register('bookmarks-standalone-page');
+          // The capture-phase intercepts need the raw events (they call
+          // stopImmediatePropagation before Jellyfin's router reacts), so they
+          // stay real listeners — added via the lifecycle handle so they are
+          // tracked and removable.
+          lifecycle.addListener(window, 'hashchange', interceptNavigation, true);
+          lifecycle.addListener(window, 'popstate', interceptNavigation, true);
+          lifecycle.addListener(document, 'click', handleNavClick);
+          // handleViewShow inspects the raw viewshow event's target; rawEvent
+          // is null for router-internal notifications, matching the old
+          // document-level listener which only fired on real events.
+          JE.core.navigation.onViewPage((view, element, hash, itemPromise, rawEvent) => {
+            if (rawEvent) handleViewShow(rawEvent);
+          });
+          // Show/hide the standalone page on every nav path — hashchange,
+          // popstate AND pushState transitions the raw listeners missed.
+          JE.core.navigation.onNavigate(handleNavigation);
           handleNavigation();
         }
 
@@ -1339,7 +1350,12 @@
    * Bind to viewshow so CustomTabs triggers render
    */
   function hookViewEvents() {
-    document.addEventListener('viewshow', (e) => {
+    JE.core.navigation.onViewPage((v, el, hash, itemPromise, rawEvent) => {
+      // Only real viewshow events carry the shown view element on
+      // e.detail.view; router-internal notifications (rawEvent == null) were
+      // never seen by the old document-level listener either.
+      const e = rawEvent;
+      if (!e) return;
       if (isRendering) return;
       // CustomTabs provides a view element on e.detail.view
       const view = e.detail?.view || document;
