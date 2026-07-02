@@ -30,12 +30,8 @@ using Jellyfin.Plugin.JellyfinEnhanced.Model.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model;
-using MediaBrowser.Controller.Persistence;
 using Jellyfin.Plugin.JellyfinEnhanced.Model.Arr;
-using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
-using Jellyfin.Database.Implementations;
-using Jellyfin.Database.Implementations.Enums;
-using Microsoft.EntityFrameworkCore;
+using Jellyfin.Plugin.JellyfinEnhanced.Data;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using Microsoft.Extensions.Logging;
@@ -52,7 +48,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     public class ItemInfoController : JellyfinEnhancedControllerBase
     {
         private readonly ILibraryManager _libraryManager;
-        private readonly IItemRepository _itemRepository;
+        private readonly IItemLookupService _itemLookup;
 
         public ItemInfoController(
             IHttpClientFactory httpClientFactory,
@@ -61,11 +57,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
             ILibraryManager libraryManager,
-            IItemRepository itemRepository)
+            IItemLookupService itemLookup)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _libraryManager = libraryManager;
-            _itemRepository = itemRepository;
+            _itemLookup = itemLookup;
         }
 
         [HttpGet("studio/{studioId}")]
@@ -517,7 +513,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         [HttpGet("items/by-providers")]
         public ActionResult<Guid?> GetItemIdByProviders([FromQuery] Dictionary<string, string>? providers)
         {
-            var itemIds = _itemRepository.GetItemIdsByProviders(providers);
+            var itemIds = _itemLookup.GetItemIdsByProviders(providers);
 
             if (itemIds.Count == 0)
                 return BadRequest("No provider ids supplied or no items found");

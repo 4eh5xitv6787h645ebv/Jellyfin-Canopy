@@ -65,6 +65,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             // Live view over the plugin configuration (re-read per access, never
             // snapshotted) so admin saves take effect immediately in consumers.
             serviceCollection.AddSingleton<Services.IPluginConfigProvider, Services.PluginConfigProvider>();
+            // Provider-id → item lookups via the supported ILibraryManager query
+            // surface (replaces the former raw EF access to Jellyfin's internal DB).
+            serviceCollection.AddSingleton<Data.IItemLookupService, Data.ItemLookupService>();
             // Process-wide Seerr/TMDB caches (formerly the static SeerrCaches
             // holder). Must stay a singleton: controllers, the user-import task
             // and the plugin's config-change hook all share one instance.

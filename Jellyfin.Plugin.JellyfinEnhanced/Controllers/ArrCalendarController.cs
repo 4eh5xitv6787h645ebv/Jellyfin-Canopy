@@ -32,10 +32,7 @@ using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model;
 using MediaBrowser.Controller.Persistence;
 using Jellyfin.Plugin.JellyfinEnhanced.Model.Arr;
-using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
-using Jellyfin.Database.Implementations;
-using Jellyfin.Database.Implementations.Enums;
-using Microsoft.EntityFrameworkCore;
+using Jellyfin.Plugin.JellyfinEnhanced.Data;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using Microsoft.Extensions.Logging;
@@ -53,7 +50,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     {
         private readonly ILibraryManager _libraryManager;
         private readonly IUserDataManager _userDataManager;
-        private readonly IDbContextFactory<JellyfinDbContext> _dbContextFactory;
+        private readonly IItemLookupService _itemLookup;
 
         public ArrCalendarController(
             IHttpClientFactory httpClientFactory,
@@ -63,12 +60,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             IPluginConfigProvider configProvider,
             ILibraryManager libraryManager,
             IUserDataManager userDataManager,
-            IDbContextFactory<JellyfinDbContext> dbContextFactory)
+            IItemLookupService itemLookup)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _libraryManager = libraryManager;
             _userDataManager = userDataManager;
-            _dbContextFactory = dbContextFactory;
+            _itemLookup = itemLookup;
         }
 
         [HttpGet("arr/calendar")]
@@ -219,7 +216,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 .Distinct()
                 .ToList();
 
-            var itemMap = await _dbContextFactory.GetItemIdsByProvidersBatchAsync(providerKeys);
+            var itemMap = _itemLookup.GetItemIdsByProvidersBatch(providerKeys);
 
             foreach (var evt in events)
             {
