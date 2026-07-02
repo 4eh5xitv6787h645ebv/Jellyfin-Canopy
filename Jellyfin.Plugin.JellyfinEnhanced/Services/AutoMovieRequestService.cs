@@ -199,7 +199,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
             try
             {
-                var httpClient = _httpClientFactory.CreateClient();
+                var httpClient = Helpers.PluginHttpClients.CreateTmdbClient(_httpClientFactory);
                 var requestUrl = $"https://api.themoviedb.org/3/movie/{tmdbId}?api_key={config.TMDB_API_KEY}";
 
                 var response = await httpClient.GetAsync(requestUrl);

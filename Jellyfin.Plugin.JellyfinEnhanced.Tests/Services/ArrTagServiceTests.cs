@@ -1,6 +1,7 @@
 using System.Net;
-using System.Text;
+using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Arr;
+using Jellyfin.Plugin.JellyfinEnhanced.Tests.TestDoubles;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -9,15 +10,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services;
 
 /// <summary>
 /// Covers the merged Sonarr/Radarr tag-fetch logic in <see cref="ArrTagService"/>:
-/// the SSRF guard must reject bad instance URLs BEFORE any outbound request, and
-/// the tag-mapping logic must key results by the right provider id per *arr type.
+/// the SSRF guard must reject bad instance URLs BEFORE any outbound request, the
+/// tag-mapping logic must key results by the right provider id per *arr type, and
+/// the HTTP plumbing must use the named arr client with per-request auth headers.
 /// </summary>
 public class ArrTagServiceTests
 {
     private readonly ILogger _logger = NullLogger.Instance;
 
-    private static ArrTagService CreateService(RecordingHandler handler, ILogger logger)
-        => new ArrTagService(new StubHttpClientFactory(handler), logger);
+    private static ArrTagService CreateService(RecordingHttpMessageHandler handler, ILogger logger)
+        => new ArrTagService(new RecordingHttpClientFactory(handler), logger);
 
     // ─── SSRF guard ──────────────────────────────────────────────────────────
 
@@ -31,7 +33,7 @@ public class ArrTagServiceTests
     [InlineData("")]
     public async Task GetMovieTags_BlockedUrl_ReturnsEmptyWithoutAnyRequest(string url)
     {
-        var handler = new RecordingHandler();
+        var handler = new RecordingHttpMessageHandler();
         var service = CreateService(handler, _logger);
 
         var result = await service.GetMovieTagsByTmdbId(url, "key");
@@ -43,7 +45,7 @@ public class ArrTagServiceTests
     [Fact]
     public async Task GetSeriesTags_BlockedUrl_ReturnsEmptyWithoutAnyRequest()
     {
-        var handler = new RecordingHandler();
+        var handler = new RecordingHttpMessageHandler();
         var service = CreateService(handler, _logger);
 
         var result = await service.GetSeriesTagsByTvdbId("http://169.254.169.254:8989", "key");
@@ -57,7 +59,7 @@ public class ArrTagServiceTests
     [Fact]
     public async Task GetMovieTags_MapsLabelsByTmdbId_AndSkipsUnkeyedOrUntaggedItems()
     {
-        var handler = new RecordingHandler();
+        var handler = new RecordingHttpMessageHandler();
         handler.AddResponse("/api/v3/tag", """[{"id":1,"label":"alice"},{"id":2,"label":"bob"}]""");
         handler.AddResponse("/api/v3/movie", """
             [
@@ -84,7 +86,7 @@ public class ArrTagServiceTests
     [Fact]
     public async Task GetSeriesTags_MapsLabelsByImdbId_UsingSeriesEndpoint()
     {
-        var handler = new RecordingHandler();
+        var handler = new RecordingHttpMessageHandler();
         handler.AddResponse("/api/v3/tag", """[{"id":1,"label":"alice"}]""");
         handler.AddResponse("/api/v3/series", """
             [
@@ -105,7 +107,7 @@ public class ArrTagServiceTests
     [Fact]
     public async Task GetMovieTags_TagEndpointFails_ReturnsEmptyAndSkipsMediaFetch()
     {
-        var handler = new RecordingHandler();
+        var handler = new RecordingHttpMessageHandler();
         handler.AddResponse("/api/v3/tag", "boom", HttpStatusCode.InternalServerError);
         var service = CreateService(handler, _logger);
 
@@ -118,7 +120,7 @@ public class ArrTagServiceTests
     [Fact]
     public async Task GetMovieTags_InvalidJson_ReturnsEmptyInsteadOfThrowing()
     {
-        var handler = new RecordingHandler();
+        var handler = new RecordingHttpMessageHandler();
         handler.AddResponse("/api/v3/tag", "<html>not json</html>");
         var service = CreateService(handler, _logger);
 
@@ -127,51 +129,30 @@ public class ArrTagServiceTests
         Assert.Empty(result);
     }
 
-    // ─── Test doubles ────────────────────────────────────────────────────────
+    // ─── HTTP plumbing hygiene ───────────────────────────────────────────────
 
-    private sealed class RecordingHandler : HttpMessageHandler
+    [Fact]
+    public async Task GetMovieTags_UsesNamedArrClient_WithPerRequestApiKey_AndNoDefaultHeaders()
     {
-        private readonly Dictionary<string, (string Body, HttpStatusCode Status)> _responses = new();
+        var handler = new RecordingHttpMessageHandler();
+        handler.AddResponse("/api/v3/tag", """[{"id":1,"label":"alice"}]""");
+        handler.AddResponse("/api/v3/movie", """[{"id":10,"title":"Keyed","tmdbId":100,"tags":[1]}]""");
+        var factory = new RecordingHttpClientFactory(handler);
+        var service = new ArrTagService(factory, _logger);
 
-        public List<HttpRequestMessage> Requests { get; } = new();
-        public List<string> ApiKeyHeaders { get; } = new();
+        await service.GetMovieTagsByTmdbId("http://localhost:7878", "api-key");
 
-        public void AddResponse(string pathSuffix, string body, HttpStatusCode status = HttpStatusCode.OK)
-            => _responses[pathSuffix] = (body, status);
+        // The service must ask for the named arr client, not the unnamed default.
+        Assert.Equal(PluginHttpClients.ArrClient, Assert.Single(factory.RequestedNames.Distinct()));
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            Requests.Add(request);
-            if (request.Headers.TryGetValues("X-Api-Key", out var values))
-            {
-                ApiKeyHeaders.AddRange(values);
-            }
+        // The API key must land on each request at send time...
+        Assert.Equal(new[] { "api-key", "api-key" }, handler.ApiKeyHeaders);
 
-            var path = request.RequestUri!.AbsolutePath;
-            foreach (var (suffix, response) in _responses)
-            {
-                if (path.EndsWith(suffix, StringComparison.Ordinal))
-                {
-                    return Task.FromResult(new HttpResponseMessage(response.Status)
-                    {
-                        Content = new StringContent(response.Body, Encoding.UTF8, "application/json"),
-                    });
-                }
-            }
+        // ...and NEVER on the factory client's DefaultRequestHeaders.
+        Assert.All(factory.CreatedClients, c => Assert.Empty(c.DefaultRequestHeaders));
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
-            {
-                Content = new StringContent("{}", Encoding.UTF8, "application/json"),
-            });
-        }
-    }
-
-    private sealed class StubHttpClientFactory : IHttpClientFactory
-    {
-        private readonly HttpMessageHandler _handler;
-
-        public StubHttpClientFactory(HttpMessageHandler handler) => _handler = handler;
-
-        public HttpClient CreateClient(string name) => new HttpClient(_handler, disposeHandler: false);
+        // Timeout deviation check: this service relies on the named client's
+        // default (100s) rather than setting a shorter ad-hoc value.
+        Assert.All(factory.CreatedClients, c => Assert.Equal(TimeSpan.FromSeconds(100), c.Timeout));
     }
 }

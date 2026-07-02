@@ -725,7 +725,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 return BadRequest(new { ok = false, message = "API key is missing" });
             }
 
-            var httpClient = _httpClientFactory.CreateClient();
+            var httpClient = Helpers.PluginHttpClients.CreateTmdbClient(_httpClientFactory);
             try
             {
                 var requestUri = $"https://api.themoviedb.org/3/configuration?api_key={Uri.EscapeDataString(apiKey)}";
@@ -760,7 +760,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 return StatusCode(503, "TMDB API key is not configured.");
             }
 
-            var httpClient = _httpClientFactory.CreateClient();
+            var httpClient = Helpers.PluginHttpClients.CreateTmdbClient(_httpClientFactory);
             var queryString = HttpContext.Request.QueryString;
             var separator = queryString.HasValue ? "&" : "?";
             var requestUri = $"https://api.themoviedb.org/3/{apiPath}{queryString}{separator}api_key={config.TMDB_API_KEY}";

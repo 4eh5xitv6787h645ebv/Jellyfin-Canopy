@@ -114,13 +114,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
 
             try
             {
-                var httpClient = _httpClientFactory.CreateClient();
-                httpClient.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
+                // Named arr client; the API key rides on each request instead of on
+                // the DefaultRequestHeaders of a factory client. Timeout stays at the
+                // client default (100s) — full-library fetches can be large.
+                var httpClient = Helpers.PluginHttpClients.CreateArrClient(_httpClientFactory);
 
                 // Get all tags first
                 _logger.LogInformation($"Fetching {serviceName} tags from {baseUrl}");
                 var tagsUrl = $"{baseUrl.TrimEnd('/')}/api/v3/tag";
-                var tagsResponse = await httpClient.GetAsync(tagsUrl, ct);
+                using var tagsRequest = Helpers.PluginHttpClients.BuildArrRequest(HttpMethod.Get, tagsUrl, apiKey);
+                var tagsResponse = await httpClient.SendAsync(tagsRequest, ct);
 
                 if (!tagsResponse.IsSuccessStatusCode)
                 {
@@ -137,7 +140,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
                 // Get all media items (series/movies)
                 _logger.LogInformation($"Fetching {serviceName} {itemNoun} from {baseUrl}");
                 var mediaUrl = $"{baseUrl.TrimEnd('/')}/api/v3/{mediaEndpoint}";
-                var mediaResponse = await httpClient.GetAsync(mediaUrl, ct);
+                using var mediaRequest = Helpers.PluginHttpClients.BuildArrRequest(HttpMethod.Get, mediaUrl, apiKey);
+                var mediaResponse = await httpClient.SendAsync(mediaRequest, ct);
 
                 if (!mediaResponse.IsSuccessStatusCode)
                 {

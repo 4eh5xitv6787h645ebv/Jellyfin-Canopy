@@ -88,14 +88,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             if (!IsAllowedUrl(url))
                 return BadRequest(new { ok = false, message = "Invalid URL" });
 
+            // Deliberately the no-redirect Seerr client (not the arr client): during
+            // setup validation a 302 — e.g. a forward-auth proxy bouncing to a login
+            // page — must surface as a failure the admin can see, not be silently
+            // followed. The API key is attached per-request, never via
+            // DefaultRequestHeaders on a factory client.
             var http = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
-            http.DefaultRequestHeaders.Clear();
-            http.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
             http.Timeout = TimeSpan.FromSeconds(10);
 
             try
             {
-                using var resp = await http.GetAsync($"{url.TrimEnd('/')}/api/v3/system/status");
+                using var request = Helpers.PluginHttpClients.BuildArrRequest(
+                    HttpMethod.Get, $"{url.TrimEnd('/')}/api/v3/system/status", apiKey);
+                using var resp = await http.SendAsync(request);
                 if (resp.IsSuccessStatusCode)
                     return Ok(new { ok = true });
 

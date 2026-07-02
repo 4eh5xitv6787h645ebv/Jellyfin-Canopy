@@ -1120,19 +1120,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             try
             {
                 var url = instance.Url.TrimEnd('/');
-                // Arr (Sonarr/Radarr) instances are commonly fronted by reverse proxies that
-                // 301/302 between http↔https or trailing-slash variants. Use the default
-                // factory client so redirects are followed — the Seerr-specific named client
-                // (SeerrHttpHelper.NamedClient, AllowAutoRedirect=false) is only appropriate
-                // for Seerr where a 302 to a login URL is a security signal, not a normal
-                // canonicalization.
-                // DefaultRequestHeaders mutations remain thread-unsafe for pooled instances,
-                // so the API key continues to be set per-request via HttpRequestMessage below.
-                var client = _httpClientFactory.CreateClient();
+                // Named arr client (redirects followed — see PluginHttpClients for why
+                // that differs from the Seerr client). The API key rides on the request,
+                // never on DefaultRequestHeaders. The caller-supplied timeout is applied
+                // to this factory-created instance (instance-scoped, so this is safe) to
+                // keep each endpoint's historical deadline (10s links/requests, 15s calendar).
+                var client = Helpers.PluginHttpClients.CreateArrClient(_httpClientFactory);
                 client.Timeout = timeout;
 
-                var request = new HttpRequestMessage(HttpMethod.Get, $"{url}{endpointPath}");
-                request.Headers.TryAddWithoutValidation("X-Api-Key", instance.ApiKey);
+                using var request = Helpers.PluginHttpClients.BuildArrRequest(HttpMethod.Get, $"{url}{endpointPath}", instance.ApiKey);
                 var response = await client.SendAsync(request, ct);
 
                 if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized

@@ -268,7 +268,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     return null;
                 }
 
-                var httpClient = _httpClientFactory.CreateClient();
+                var httpClient = Helpers.PluginHttpClients.CreateTmdbClient(_httpClientFactory);
                 var tmdbUrl = $"https://api.themoviedb.org/3/person/{tmdbPersonId}?api_key={config.TMDB_API_KEY}";
 
                 // _logger.LogDebug($"Fetching TMDB person data from: https://api.themoviedb.org/3/person/{tmdbPersonId}");

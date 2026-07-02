@@ -34,13 +34,21 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             // forward-auth proxies (Authelia / Pangolin / Authentik) returning
             // 302 to a login URL are detected as `UpstreamRedirect` instead of
             // silently followed and producing a 200 + login HTML body.
-            // SeerrHttpHelper.UseClientName(name) selects this for outbound
-            // Seerr/TMDB calls.
+            // SeerrHttpHelper.CreateClient(factory) selects this for outbound
+            // Seerr calls.
             serviceCollection.AddHttpClient(Helpers.Jellyseerr.SeerrHttpHelper.NamedClient)
                 .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
                 {
                     AllowAutoRedirect = false
                 });
+
+            // Named clients for the remaining upstreams (see PluginHttpClients for
+            // the per-upstream rationale). Both use the default handler — redirects
+            // followed — and keep the .NET default 100s timeout; call sites that need
+            // a shorter deadline set it per factory-created instance. API keys are
+            // attached per-request (HttpRequestMessage), never via DefaultRequestHeaders.
+            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.ArrClient);
+            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.TmdbClient);
             // Dedicated JellyfinEnhanced_*.log sink (a documented product feature)
             // plus a closed-generic ILogger<T> registration for every plugin type.
             // Each FileForwardingLogger<T> writes the file AND forwards to the host
