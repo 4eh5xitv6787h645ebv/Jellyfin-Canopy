@@ -8,15 +8,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
 {
     /// <summary>
     /// Tests for the pure query-building / mapping core of <see cref="ItemLookupService"/>.
-    /// The service itself is a thin glue over ILibraryManager; these tests pin down the
-    /// exact InternalItemsQuery contents produced for given inputs and the exact
-    /// (case-sensitive, first-wins) pair→item mapping semantics that replaced the old
-    /// raw BaseItemProviders SQL.
+    /// The tests run against the jf12 (net10.0) build, which uses the supported
+    /// ILibraryManager batch path; they pin down the exact InternalItemsQuery contents
+    /// produced for given inputs and the exact (case-sensitive, first-wins) pair→item
+    /// mapping semantics that mirror the raw BaseItemProviders SQL kept on the
+    /// Jellyfin 10.11 target.
     /// </summary>
     public class ItemLookupServiceTests
     {
         // ---------------------------------------------------------------------
-        // BuildProviderQuery (items/by-providers endpoint)
+        // BuildProviderQuery (items/by-providers endpoint, both targets)
         // ---------------------------------------------------------------------
 
         [Fact]
@@ -38,7 +39,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
         }
 
         // ---------------------------------------------------------------------
-        // NormalizePairs
+        // NormalizePairs (guards both the jf12 query and the jf10 raw SQL)
         // ---------------------------------------------------------------------
 
         [Fact]
@@ -48,7 +49,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
             {
                 ("Tvdb", "123"),
                 ("Tvdb", "123"),      // duplicate
-                ("Tvdb", ""),         // blank value: must never reach HasAnyProviderId
+                ("Tvdb", ""),         // blank value: must never reach HasAnyProviderIds
                 ("Tvdb", "   "),      // whitespace value
                 ("", "999"),          // blank provider
                 ("Imdb", "tt1"),
@@ -60,12 +61,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
         }
 
         // ---------------------------------------------------------------------
-        // BuildBatchQueries — tests compile/run against the jf12 (net10.0) build,
-        // which uses the single-query HasAnyProviderIds shape.
+        // BuildBatchQuery (Jellyfin 12 batch shape: one HasAnyProviderIds query)
         // ---------------------------------------------------------------------
 
         [Fact]
-        public void BuildBatchQueries_GroupsValuesPerProvider_SingleQuery()
+        public void BuildBatchQuery_GroupsValuesPerProvider()
         {
             var pairs = new List<(string Provider, string Value)>
             {
@@ -76,9 +76,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
                 ("Imdb", "tt1"),
             };
 
-            var queries = ItemLookupService.BuildBatchQueries(pairs);
+            var query = ItemLookupService.BuildBatchQuery(pairs);
 
-            var query = Assert.Single(queries);
             Assert.True(query.Recursive);
             Assert.NotNull(query.HasAnyProviderIds);
             Assert.Equal(3, query.HasAnyProviderIds!.Count);
@@ -92,7 +91,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
         }
 
         [Fact]
-        public void BuildBatchQueries_ProviderKeysAreCaseSensitive()
+        public void BuildBatchQuery_ProviderKeysAreCaseSensitive()
         {
             var pairs = new List<(string Provider, string Value)>
             {
@@ -100,71 +99,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
                 ("tvdb", "123"), // different casing = different provider key (BINARY collation parity)
             };
 
-            var queries = ItemLookupService.BuildBatchQueries(pairs);
+            var query = ItemLookupService.BuildBatchQuery(pairs);
 
-            var query = Assert.Single(queries);
             Assert.Equal(2, query.HasAnyProviderIds!.Count);
             Assert.True(query.HasAnyProviderIds.ContainsKey("Tvdb"));
             Assert.True(query.HasAnyProviderIds.ContainsKey("tvdb"));
         }
 
         // ---------------------------------------------------------------------
-        // BuildSingleValueChunks (the jf10 / Jellyfin 10.11 query shape;
-        // compiled on both targets so it stays testable here)
-        // ---------------------------------------------------------------------
-
-        [Fact]
-        public void BuildSingleValueChunks_RoundRobinsOneValuePerProviderPerChunk()
-        {
-            var pairs = new List<(string Provider, string Value)>
-            {
-                ("Tvdb", "123"),
-                ("Tvdb", "456"),
-                ("Tvdb", "789"),
-                ("Tmdb", "999"),
-                ("Imdb", "tt1"),
-                ("Imdb", "tt2"),
-            };
-
-            var chunks = ItemLookupService.BuildSingleValueChunks(pairs);
-
-            // Chunk count = max distinct values of any provider (Tvdb: 3).
-            Assert.Equal(3, chunks.Count);
-            Assert.Equal(
-                new Dictionary<string, string> { ["Tvdb"] = "123", ["Tmdb"] = "999", ["Imdb"] = "tt1" },
-                chunks[0]);
-            Assert.Equal(
-                new Dictionary<string, string> { ["Tvdb"] = "456", ["Imdb"] = "tt2" },
-                chunks[1]);
-            Assert.Equal(
-                new Dictionary<string, string> { ["Tvdb"] = "789" },
-                chunks[2]);
-        }
-
-        [Fact]
-        public void BuildSingleValueChunks_EmptyInput_NoChunks()
-        {
-            var chunks = ItemLookupService.BuildSingleValueChunks(new List<(string, string)>());
-            Assert.Empty(chunks);
-        }
-
-        [Fact]
-        public void BuildSingleValueChunks_DuplicateValuesCollapse()
-        {
-            var pairs = new List<(string Provider, string Value)>
-            {
-                ("Tvdb", "123"),
-                ("Tvdb", "123"),
-            };
-
-            var chunks = ItemLookupService.BuildSingleValueChunks(pairs);
-
-            var chunk = Assert.Single(chunks);
-            Assert.Equal("123", chunk["Tvdb"]);
-        }
-
-        // ---------------------------------------------------------------------
-        // MapProviderPairs
+        // MapProviderPairs (Jellyfin 12 in-memory pair→item mapping)
         // ---------------------------------------------------------------------
 
         private static Movie MovieWith(Guid id, params (string Key, string Value)[] providerIds)
@@ -193,7 +136,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
             Assert.Equal(movieId, map[("Tmdb", "603")]);
             Assert.Equal(movieId, map[("Imdb", "tt0133093")]);
             Assert.Equal(otherId, map[("Tmdb", "604")]);
-            Assert.False(map.ContainsKey(("Tvdb", "1"))); // unmatched pair absent, like the old SQL result
+            Assert.False(map.ContainsKey(("Tvdb", "1"))); // unmatched pair absent, like the raw SQL result
         }
 
         [Fact]
@@ -221,8 +164,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
                 items,
                 new List<(string, string)> { ("imdb", "tt0133093"), ("Imdb", "TT0133093") });
 
-            // Old pipeline was case-sensitive end-to-end (BINARY collation match +
-            // ordinal tuple-key dictionary); the replacement must not loosen that.
+            // The 10.11 raw pipeline is case-sensitive end-to-end (BINARY collation
+            // match + ordinal tuple-key dictionary); the jf12 path must not loosen that.
             Assert.Empty(map);
         }
 

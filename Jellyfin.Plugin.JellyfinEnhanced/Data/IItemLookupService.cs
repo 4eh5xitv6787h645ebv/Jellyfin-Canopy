@@ -4,10 +4,11 @@ using System.Collections.Generic;
 namespace Jellyfin.Plugin.JellyfinEnhanced.Data
 {
     /// <summary>
-    /// Resolves Jellyfin library items from external provider IDs (Tvdb/Tmdb/Imdb/...)
-    /// using only the supported <c>ILibraryManager</c> query surface — never Jellyfin's
-    /// internal EF Core database (whose schema is not a plugin API and changes between
-    /// server releases).
+    /// Resolves Jellyfin library items from external provider IDs (Tvdb/Tmdb/Imdb/...).
+    /// On Jellyfin 12 (whose internal DB schema is reworked and not a plugin API) this
+    /// uses only the supported <c>ILibraryManager</c> query surface; on Jellyfin 10.11
+    /// the batch lookup keeps the proven raw query against the frozen 10.11 schema for
+    /// performance. See <see cref="ItemLookupService"/> for the per-target split.
     /// </summary>
     public interface IItemLookupService
     {

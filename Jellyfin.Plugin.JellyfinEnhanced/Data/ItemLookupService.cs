@@ -1,44 +1,63 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+#if NET10_0_OR_GREATER
+using MediaBrowser.Controller.Dto;
 using MediaBrowser.Model.Querying;
+#else
+using Jellyfin.Database.Implementations;
+using Jellyfin.Database.Implementations.Entities;
+using Microsoft.EntityFrameworkCore;
+#endif
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Data
 {
     /// <summary>
-    /// <see cref="IItemLookupService"/> implementation on top of
-    /// <see cref="ILibraryManager"/> + <see cref="InternalItemsQuery"/>.
+    /// <see cref="IItemLookupService"/> implementation.
     ///
-    /// This replaces the plugin's former raw EF Core access to Jellyfin's internal
-    /// database (querying the BaseItemProviders table via
-    /// IDbContextFactory&lt;JellyfinDbContext&gt;), which was the plugin's biggest
-    /// Jellyfin-12 breakage risk — the internal schema is not a plugin API.
-    ///
-    /// Query shape per target:
+    /// Batch provider lookups are split per target:
     /// <list type="bullet">
-    ///   <item>Jellyfin 12 (net10.0 artifact): a single query using
+    ///   <item>Jellyfin 12 (net10.0 artifact): a single supported
+    ///     <see cref="ILibraryManager"/> query using
     ///     <c>InternalItemsQuery.HasAnyProviderIds</c> (multi-value per provider,
-    ///     new in 12).</item>
-    ///   <item>Jellyfin 10.11 (net9.0 artifact): <c>HasAnyProviderId</c> only allows
-    ///     one value per provider key, so the pairs are round-robin chunked into
-    ///     dictionaries with at most one value per provider and one query is issued
-    ///     per chunk (query count = the largest per-provider value count).</item>
+    ///     new in 12). Jellyfin 12 reworks the internal DB schema, so raw EF access
+    ///     is not an option there.</item>
+    ///   <item>Jellyfin 10.11 (net9.0 artifact): the proven raw EF query against the
+    ///     BaseItemProviders table (one indexed IN-query per provider). 10.11's
+    ///     schema is frozen — it gets no schema rework — and the supported 10.11
+    ///     surface (<c>HasAnyProviderId</c>, single value per provider) would need
+    ///     one query per provider value, which live-tested ~30s for a 10-day
+    ///     calendar window vs sub-second for the raw path.</item>
     /// </list>
-    /// Both server translations match on the exact "Provider:Value" string
-    /// (case-sensitive under SQLite's default BINARY collation), the same semantics
-    /// the old raw SQL had.
+    /// Both paths match on the exact provider key/value strings (case-sensitive
+    /// under SQLite's default BINARY collation) and never receive empty values
+    /// (see <see cref="NormalizePairs"/>).
+    ///
+    /// The single-pair lookup (items/by-providers) uses <see cref="ILibraryManager"/>
+    /// on both targets — A/B-verified byte-identical and fast on 10.11.
     /// </summary>
     public class ItemLookupService : IItemLookupService
     {
         private readonly ILibraryManager _libraryManager;
 
+#if NET10_0_OR_GREATER
         public ItemLookupService(ILibraryManager libraryManager)
         {
             _libraryManager = libraryManager;
         }
+#else
+        private readonly IDbContextFactory<JellyfinDbContext> _dbContextFactory;
+
+        public ItemLookupService(
+            ILibraryManager libraryManager,
+            IDbContextFactory<JellyfinDbContext> dbContextFactory)
+        {
+            _libraryManager = libraryManager;
+            _dbContextFactory = dbContextFactory;
+        }
+#endif
 
         /// <inheritdoc />
         public IReadOnlyList<Guid> GetItemIdsByProviders(IDictionary<string, string>? providers)
@@ -57,18 +76,42 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Data
             if (pairs.Count == 0)
                 return new Dictionary<(string, string), Guid>();
 
-            // Collect all matched items first (dedup by id — on 10.11 an item can be
-            // returned by several chunk queries), then map pairs in a single pass.
+#if NET10_0_OR_GREATER
+            // Jellyfin 12: one supported query resolves the whole batch; matched
+            // items are mapped back to their (Provider, Value) pairs in memory.
             var matchedItems = new Dictionary<Guid, BaseItem>();
-            foreach (var query in BuildBatchQueries(pairs))
+            foreach (var item in _libraryManager.GetItemList(BuildBatchQuery(pairs)))
             {
-                foreach (var item in _libraryManager.GetItemList(query))
-                {
-                    matchedItems.TryAdd(item.Id, item);
-                }
+                matchedItems.TryAdd(item.Id, item);
             }
 
             return MapProviderPairs(matchedItems.Values, pairs);
+#else
+            // Jellyfin 10.11: raw indexed query on the (frozen) BaseItemProviders
+            // table — one IN-query per provider group, first row wins per pair.
+            var providerGroups = pairs
+                .GroupBy(p => p.Provider, StringComparer.Ordinal)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.Select(p => p.Value).ToList(),
+                    StringComparer.Ordinal);
+
+            using var db = _dbContextFactory.CreateDbContext();
+
+            var results = new List<BaseItemProvider>();
+            foreach (var group in providerGroups)
+            {
+                var provider = group.Key;
+                var values = group.Value;
+                results.AddRange(db.BaseItemProviders
+                    .Where(p => p.ProviderId == provider && values.Contains(p.ProviderValue))
+                    .ToList());
+            }
+
+            return results
+                .DistinctBy(p => (p.ProviderId, p.ProviderValue))
+                .ToDictionary(p => (p.ProviderId, p.ProviderValue), p => p.ItemId);
+#endif
         }
 
         /// <summary>
@@ -86,9 +129,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Data
 
         /// <summary>
         /// Drops pairs with a blank provider or value and de-duplicates. Blank values
-        /// must never reach HasAnyProviderId: there an empty value means "has this
-        /// provider at all" (existence match), which would explode the result set;
-        /// the old raw SQL simply never matched them.
+        /// must never reach the queries: HasAnyProviderIds treats an empty value as
+        /// "has this provider at all" (existence match), and the raw 10.11 SQL simply
+        /// never matched them.
         /// </summary>
         internal static List<(string Provider, string Value)> NormalizePairs(
             IReadOnlyCollection<(string Provider, string Value)> providers)
@@ -99,16 +142,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Data
                 .ToList();
         }
 
+#if NET10_0_OR_GREATER
         /// <summary>
-        /// Builds the query list for a batch lookup. See class remarks for the
-        /// per-target shape. Pairs must already be normalized.
+        /// Builds the single Jellyfin-12 batch query: HasAnyProviderIds takes multiple
+        /// values per provider, so the whole batch resolves at once. Pairs must
+        /// already be normalized.
         /// </summary>
-        internal static IReadOnlyList<InternalItemsQuery> BuildBatchQueries(
+        internal static InternalItemsQuery BuildBatchQuery(
             IReadOnlyCollection<(string Provider, string Value)> pairs)
         {
-#if NET10_0_OR_GREATER
-            // Jellyfin 12 target: HasAnyProviderIds takes multiple values per provider,
-            // so the whole batch resolves in one query.
             var grouped = pairs
                 .GroupBy(p => p.Provider, StringComparer.Ordinal)
                 .ToDictionary(
@@ -116,67 +158,28 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Data
                     g => g.Select(p => p.Value).Distinct(StringComparer.Ordinal).ToArray(),
                     StringComparer.Ordinal);
 
-            return new[]
+            return new InternalItemsQuery
             {
-                new InternalItemsQuery
+                HasAnyProviderIds = grouped,
+                Recursive = true,
+                // Lean options: only the ProviderIds field is needed (it drives the
+                // Provider navigation include that hydrates BaseItem.ProviderIds);
+                // skip images/user-data joins.
+                DtoOptions = new DtoOptions(false)
                 {
-                    HasAnyProviderIds = grouped,
-                    Recursive = true,
-                    DtoOptions = ProviderIdsDtoOptions()
+                    Fields = new[] { ItemFields.ProviderIds },
+                    EnableImages = false,
+                    EnableUserData = false
                 }
             };
-#else
-            // Jellyfin 10.11 target: HasAnyProviderId allows one value per provider key.
-            return BuildSingleValueChunks(pairs)
-                .Select(chunk => new InternalItemsQuery
-                {
-                    HasAnyProviderId = chunk,
-                    Recursive = true,
-                    DtoOptions = ProviderIdsDtoOptions()
-                })
-                .ToList();
-#endif
-        }
-
-        /// <summary>
-        /// Round-robin chunks (Provider, Value) pairs into dictionaries holding at most
-        /// one value per provider: chunk i holds the i-th distinct value of every
-        /// provider. Chunk count = max distinct values of any single provider.
-        /// Compiled (and unit-tested) on both targets; only the 10.11 artifact uses it.
-        /// </summary>
-        internal static List<Dictionary<string, string>> BuildSingleValueChunks(
-            IReadOnlyCollection<(string Provider, string Value)> pairs)
-        {
-            var groups = pairs
-                .GroupBy(p => p.Provider, StringComparer.Ordinal)
-                .ToDictionary(
-                    g => g.Key,
-                    g => g.Select(p => p.Value).Distinct(StringComparer.Ordinal).ToList(),
-                    StringComparer.Ordinal);
-
-            var chunks = new List<Dictionary<string, string>>();
-            var chunkCount = groups.Count == 0 ? 0 : groups.Values.Max(v => v.Count);
-            for (var i = 0; i < chunkCount; i++)
-            {
-                var chunk = new Dictionary<string, string>(StringComparer.Ordinal);
-                foreach (var group in groups)
-                {
-                    if (i < group.Value.Count)
-                        chunk[group.Key] = group.Value[i];
-                }
-
-                chunks.Add(chunk);
-            }
-
-            return chunks;
         }
 
         /// <summary>
         /// Maps each requested (Provider, Value) pair to the first matched item that
         /// carries exactly that provider id. Comparison is ordinal (case-sensitive) on
-        /// both key and value — the same net behavior as the old raw SQL, whose BINARY
-        /// collation match + case-sensitive dictionary lookup was case-sensitive
-        /// end-to-end.
+        /// both key and value — the same net behavior as the 10.11 raw SQL, whose
+        /// BINARY collation match + case-sensitive dictionary lookup was
+        /// case-sensitive end-to-end.
         /// </summary>
         internal static Dictionary<(string Provider, string Value), Guid> MapProviderPairs(
             IEnumerable<BaseItem> items,
@@ -203,21 +206,6 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Data
 
             return map;
         }
-
-        /// <summary>
-        /// Lean DtoOptions for the batch lookup: only the ProviderIds field is needed
-        /// (it drives the Provider navigation include that hydrates
-        /// <see cref="BaseItem.ProviderIds"/>); skip images/user-data joins. The old
-        /// raw SQL read only the providers table, so this keeps the query light.
-        /// </summary>
-        private static DtoOptions ProviderIdsDtoOptions()
-        {
-            return new DtoOptions(false)
-            {
-                Fields = new[] { ItemFields.ProviderIds },
-                EnableImages = false,
-                EnableUserData = false
-            };
-        }
+#endif
     }
 }
