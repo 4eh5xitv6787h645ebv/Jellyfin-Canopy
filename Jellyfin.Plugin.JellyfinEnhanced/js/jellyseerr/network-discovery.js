@@ -828,13 +828,18 @@
      * Initialize
      */
     function initialize() {
-        window.addEventListener('hashchange', () => {
-            cleanup();
-            handlePageNavigation();
-        });
+        // Lifecycle: run cleanup() on EVERY navigation — hashchange, popstate
+        // AND the pushState transitions the old raw hashchange listener
+        // missed. Registration order matters: the teardown wiring is
+        // registered first so cleanup always runs before handlePageNavigation
+        // on a navigation.
+        const lifecycle = JE.core.lifecycle.register('jellyseerr-network-discovery');
+        lifecycle.onTeardown(cleanup);
+        lifecycle.teardownOn('navigate');
+        JE.core.navigation.onNavigate(handlePageNavigation);
 
         handlePageNavigation();
-        document.addEventListener('viewshow', handlePageNavigation);
+        JE.core.navigation.onViewPage(handlePageNavigation);
     }
 
     if (document.readyState === 'loading') {
