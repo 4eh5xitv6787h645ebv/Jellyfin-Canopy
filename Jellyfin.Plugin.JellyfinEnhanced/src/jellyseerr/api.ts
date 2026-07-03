@@ -8,35 +8,35 @@ import { JE } from '../globals';
  * legacy Seerr payloads — typed loosely until the typed-model phase.
  */
 export interface JellyseerrApi {
-    checkUserStatus(): Promise<any>;
-    surfaceUserStatusBanner(status: any): void;
-    clearUserStatusCache(): void;
-    search(query: string, page?: number, options?: any): Promise<any>;
-    fetchMovieCollection(tmdbId: any): Promise<any>;
-    addCollections(results: any[]): Promise<any[]>;
-    fetchTvShowDetails(tmdbId: any): Promise<any>;
-    fetchTvSeasonDetails(tmdbId: any, seasonNumber: any): Promise<any>;
-    fetchTmdbTvDetails(tmdbId: any): Promise<any>;
-    fetchOverrideRules(): Promise<any[]>;
-    getCurrentJellyseerrUserId(): Promise<string | null>;
-    evaluateOverrideRules(mediaData: any, mediaType: any, is4k?: boolean): Promise<any>;
-    requestMedia(tmdbId: any, mediaType: any, advancedSettings?: any, is4k?: boolean, mediaData?: any): Promise<any>;
-    requestTvSeasons(tmdbId: any, seasonNumbers: any[], advancedSettings?: any, mediaData?: any, is4k?: boolean): Promise<any>;
-    fetchIssuesForMedia(tmdbId: any, mediaType: any, options?: any): Promise<any>;
-    fetchIssueById(issueId: any): Promise<any>;
+    checkUserStatus: () => Promise<any>;
+    surfaceUserStatusBanner: (status: any) => void;
+    clearUserStatusCache: () => void;
+    search: (query: string, page?: number, options?: any) => Promise<any>;
+    fetchMovieCollection: (tmdbId: any) => Promise<any>;
+    addCollections: (results: any[]) => Promise<any[]>;
+    fetchTvShowDetails: (tmdbId: any) => Promise<any>;
+    fetchTvSeasonDetails: (tmdbId: any, seasonNumber: any) => Promise<any>;
+    fetchTmdbTvDetails: (tmdbId: any) => Promise<any>;
+    fetchOverrideRules: () => Promise<any[]>;
+    getCurrentJellyseerrUserId: () => Promise<string | null>;
+    evaluateOverrideRules: (mediaData: any, mediaType: any, is4k?: boolean) => Promise<any>;
+    requestMedia: (tmdbId: any, mediaType: any, advancedSettings?: any, is4k?: boolean, mediaData?: any) => Promise<any>;
+    requestTvSeasons: (tmdbId: any, seasonNumbers: any[], advancedSettings?: any, mediaData?: any, is4k?: boolean) => Promise<any>;
+    fetchIssuesForMedia: (tmdbId: any, mediaType: any, options?: any) => Promise<any>;
+    fetchIssueById: (issueId: any) => Promise<any>;
     fetchAdvancedRequestData(mediaType: any): Promise<{ servers: any[]; tags: any[] }>;
-    fetchUserQuota(options?: any): Promise<any>;
+    fetchUserQuota: (options?: any) => Promise<any>;
     fetchRequestSettings(): Promise<{ partialRequestsEnabled: boolean; enableSpecialEpisodes: boolean }>;
-    addToWatchlist(tmdbId: any, mediaType: any): Promise<boolean>;
-    reportIssue(mediaId: any, mediaType: any, problemType: any, message?: string, problemSeason?: any, problemEpisode?: any): Promise<any>;
-    fetchSimilarMovies(tmdbId: any, pageOrOptions?: any): Promise<any>;
-    fetchRecommendedMovies(tmdbId: any, pageOrOptions?: any): Promise<any>;
-    fetchSimilarTvShows(tmdbId: any, pageOrOptions?: any): Promise<any>;
-    fetchRecommendedTvShows(tmdbId: any, pageOrOptions?: any): Promise<any>;
-    fetchMovieDetails(tmdbId: any): Promise<any>;
-    fetchCollectionDetails(collectionId: any): Promise<any>;
-    fetchGenreSlider(mediaType: any): Promise<any[]>;
-    resolveJellyseerrBaseUrl(): string;
+    addToWatchlist: (tmdbId: any, mediaType: any) => Promise<boolean>;
+    reportIssue: (mediaId: any, mediaType: any, problemType: any, message?: string, problemSeason?: any, problemEpisode?: any) => Promise<any>;
+    fetchSimilarMovies: (tmdbId: any, pageOrOptions?: any) => Promise<any>;
+    fetchRecommendedMovies: (tmdbId: any, pageOrOptions?: any) => Promise<any>;
+    fetchSimilarTvShows: (tmdbId: any, pageOrOptions?: any) => Promise<any>;
+    fetchRecommendedTvShows: (tmdbId: any, pageOrOptions?: any) => Promise<any>;
+    fetchMovieDetails: (tmdbId: any) => Promise<any>;
+    fetchCollectionDetails: (collectionId: any) => Promise<any>;
+    fetchGenreSlider: (mediaType: any) => Promise<any[]>;
+    resolveJellyseerrBaseUrl: () => string;
 }
 
 declare module '../types/je' {

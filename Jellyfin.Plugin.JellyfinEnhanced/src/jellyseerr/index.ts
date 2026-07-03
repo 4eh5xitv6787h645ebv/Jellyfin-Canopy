@@ -6,3 +6,4 @@
 // scripts/build-bundle.js.
 import './request-manager';
 import './api';
+import './jellyseerr';
