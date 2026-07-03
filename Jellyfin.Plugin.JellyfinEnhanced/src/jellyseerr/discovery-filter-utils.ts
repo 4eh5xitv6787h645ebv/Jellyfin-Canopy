@@ -20,8 +20,8 @@ export interface DiscoveryFilterApi {
     hasBothTypes: (tvResults: any[], movieResults: any[]) => boolean;
     resultHasBothTypes: (results: any[]) => boolean;
     createFilterControl: (moduleName: string, onFilterChange: (mode: string) => void) => HTMLElement;
-    createSortControl: (moduleName: string, onSortChange: (sort: string) => void) => HTMLElement;
-    createSectionHeader: (title: string, moduleName: string, showFilter: boolean, onFilterChange: (mode: string) => void, onSortChange?: (sort: string) => void) => HTMLElement;
+    createSortControl: (moduleName: string, onSortChange: (sort: string) => void | Promise<void>) => HTMLElement;
+    createSectionHeader: (title: string, moduleName: string, showFilter: boolean, onFilterChange: (mode: string) => void, onSortChange?: (sort: string) => void | Promise<void>) => HTMLElement;
     fetchWithManagedRequest: (path: string, cachePrefix: string, options?: any) => Promise<any>;
     createCardsFragment: (results: any[], options?: any) => DocumentFragment;
     waitForPageReady: (signal?: AbortSignal, options?: any) => Promise<any>;
@@ -292,7 +292,7 @@ function createFilterControl(moduleName: string, onFilterChange: (mode: string) 
  * @param {Function} onSortChange - Callback: (newSort) => void
  * @returns {HTMLElement}
  */
-function createSortControl(moduleName: string, onSortChange: (sort: string) => void): HTMLElement {
+function createSortControl(moduleName: string, onSortChange: (sort: string) => void | Promise<void>): HTMLElement {
     const currentSort = getSortMode(moduleName);
 
     const container = document.createElement('div');
@@ -330,7 +330,7 @@ function createSortControl(moduleName: string, onSortChange: (sort: string) => v
     select.addEventListener('change', () => {
         const newSort = select.value;
         setSortMode(moduleName, newSort);
-        if (onSortChange) onSortChange(newSort);
+        if (onSortChange) void onSortChange(newSort);
     });
 
     container.appendChild(select);
@@ -346,7 +346,7 @@ function createSortControl(moduleName: string, onSortChange: (sort: string) => v
  * @param {Function} [onSortChange] - Callback when sort changes
  * @returns {HTMLElement} - The header element
  */
-function createSectionHeader(title: string, moduleName: string, showFilter: boolean, onFilterChange: (mode: string) => void, onSortChange?: (sort: string) => void): HTMLElement {
+function createSectionHeader(title: string, moduleName: string, showFilter: boolean, onFilterChange: (mode: string) => void, onSortChange?: (sort: string) => void | Promise<void>): HTMLElement {
     const header = document.createElement('div');
     header.className = 'jellyseerr-discovery-header';
     header.style.cssText = 'display:flex;align-items:baseline;gap:1em;margin-bottom:1em;flex-wrap:wrap;width:100%;';

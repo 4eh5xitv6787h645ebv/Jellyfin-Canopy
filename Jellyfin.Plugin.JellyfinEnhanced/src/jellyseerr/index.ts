@@ -13,3 +13,4 @@ import './item-details';
 import './issue-reporter';
 import './seamless-scroll';
 import './discovery-filter-utils';
+import './discovery-base';

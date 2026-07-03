@@ -31,8 +31,6 @@ declare module '../types/je' {
         // ── jellyseerr area, not yet converted (deleted as families land) ──
         /** jellyseerr/jellyseerr.js entry point (legacy). */
         initializeJellyseerrScript?: any;
-        /** jellyseerr/discovery-base.js shared discovery chassis (legacy). */
-        discoveryBase?: any;
         /** jellyseerr/more-info-modal-* surface (legacy). */
         jellyseerrMoreInfo?: any;
         /** jellyseerr/ui-* surface (legacy). */
