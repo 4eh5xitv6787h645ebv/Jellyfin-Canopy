@@ -1,19 +1,13 @@
-/**
- * @file Hidden Content Page — page CSS and its injector.
- * Split from hidden-content-page.js (code motion; CSS verbatim).
- */
-(function () {
-  "use strict";
+// src/enhanced/hidden-content-page-styles.ts
+//
+// Hidden Content Page — page CSS and its injector.
+// (Converted from js/enhanced/hidden-content-page-styles.js — CSS verbatim.)
 
-  const JE = window.JellyfinEnhanced;
-  JE.internals = JE.internals || {};
-  const internal = JE.internals.hiddenContentPage = JE.internals.hiddenContentPage || {};
+// ============================================================
+// CSS Styles
+// ============================================================
 
-  // ============================================================
-  // CSS Styles
-  // ============================================================
-
-  const CSS_STYLES = `
+const CSS_STYLES = `
     .je-hidden-content-page {
       padding: 2em;
       max-width: 95vw;
@@ -525,18 +519,14 @@
     }
   `;
 
-  /**
-   * Injects the page CSS styles into the document head.
-   * No-ops if already injected.
-   */
-  function injectStyles() {
+/**
+ * Injects the page CSS styles into the document head.
+ * No-ops if already injected.
+ */
+export function injectStyles(): void {
     if (document.getElementById("je-hidden-content-page-styles")) return;
     const style = document.createElement("style");
     style.id = "je-hidden-content-page-styles";
     style.textContent = CSS_STYLES;
     document.head.appendChild(style);
-  }
-
-  Object.assign(internal, { injectStyles });
-
-})();
+}

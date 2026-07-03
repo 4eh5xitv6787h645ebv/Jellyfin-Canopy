@@ -583,20 +583,6 @@
             // and importing it from src/ instead.
             // eslint-disable-next-line no-unused-vars -- build-time manifest parsed by scripts/build-bundle.js
             const allComponentScripts = [
-                // enhanced
-                // hidden-content-page modules — order matters: -state.js owns
-                // the shared page state read by the later files via
-                // JE.internals.hiddenContentPage; -init.js exposes the frozen
-                // JE.hiddenContentPage / JE.initializeHiddenContentPage last.
-                'enhanced/hidden-content-page-state.js',
-                'enhanced/hidden-content-page-styles.js',
-                'enhanced/hidden-content-page-admin.js',
-                'enhanced/hidden-content-page-cards.js',
-                'enhanced/hidden-content-page-render.js',
-                'enhanced/hidden-content-page-nav.js',
-                'enhanced/hidden-content-page-init.js',
-                'enhanced/hidden-content-custom-tab.js',
-
                 // elsewhere
                 'elsewhere/elsewhere.js',
                 'elsewhere/reviews.js',
