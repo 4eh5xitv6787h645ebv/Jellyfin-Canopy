@@ -710,9 +710,6 @@
                 'arr/calendar-page-init.js',
                 'arr/requests-custom-tab.js',
                 'arr/calendar-custom-tab.js',
-
-                // others
-                'others/letterboxd-links.js',
             ];
             // One bundle for every mode. Production serves it immutable behind a
             // versioned URL; DevMode serves the same route with no-store + a fresh
