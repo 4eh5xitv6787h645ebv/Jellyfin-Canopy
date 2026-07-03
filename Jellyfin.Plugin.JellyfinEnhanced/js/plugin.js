@@ -610,8 +610,6 @@
                 'enhanced/hidden-content-page-nav.js',
                 'enhanced/hidden-content-page-init.js',
                 'enhanced/hidden-content-custom-tab.js',
-                'enhanced/subtitles.js',
-                'enhanced/themer.js',
                 // ui modules — order matters: -release-notes.js publishes
                 // GITHUB_REPO + the release-notes panel that the template and
                 // settings wiring consume via JE.internals.enhancedUi;
