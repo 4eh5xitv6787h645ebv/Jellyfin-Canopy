@@ -34,5 +34,17 @@ import './hidden-content-buttons';
 import './hidden-content-init';
 import './subtitles';
 import './themer';
+// ui modules — order matters: -release-notes exports GITHUB_REPO + the release-
+// notes panel the template/settings wiring import; ui-panel hosts
+// JE.showEnhancedPanel and orchestrates the buildPanelHtml/wire* pieces last.
+import './ui-styles';
+import './ui-entry-points';
+import './ui-release-notes';
+import './ui-panel-template';
+import './ui-panel-shortcut-editor';
+import './ui-panel-settings';
+import './ui-panel-hidden-content';
+import './ui-panel-language';
+import './ui-panel';
 import './osd-rating';
 import './pausescreen';

@@ -1,19 +1,20 @@
-/**
- * @file Global CSS injected once for plugin features (JE.injectGlobalStyles).
- * Split from ui.js (code motion; bodies verbatim).
- */
-(function(JE) {
-    'use strict';
+// src/enhanced/ui-styles.ts
+//
+// Global CSS injected once for plugin features (JE.injectGlobalStyles).
+// Split from ui.js (code motion; bodies verbatim).
+// (Converted from js/enhanced/ui-styles.js — bodies semantically identical.)
 
-    /**
-     * Injects custom CSS for plugin features.
-     */
-    JE.injectGlobalStyles = () => {
-        const styleId = 'jellyfin-enhanced-styles';
-        if (document.getElementById(styleId)) return;
-        const style = document.createElement('style');
-        style.id = styleId;
-        style.innerHTML = `
+import { JE } from '../globals';
+
+/**
+ * Injects custom CSS for plugin features.
+ */
+JE.injectGlobalStyles = (): void => {
+    const styleId = 'jellyfin-enhanced-styles';
+    if (document.getElementById(styleId)) return;
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.innerHTML = `
             @keyframes dice { 0%, 100% { transform: rotate(0deg) scale(1); } 10%, 30%, 50% { transform: rotate(-10deg) scale(1.1); } 20%, 40% { transform: rotate(10deg) scale(1.1); } 60% { transform: rotate(360deg) scale(1); } }
             button#randomItemButton:not(.loading):hover .material-icons { animation: dice 1.5s; }
             .layout-desktop #enhancedSettingsBtn { display: none !important; }
@@ -197,6 +198,5 @@
                 cursor: not-allowed;
             }
         `;
-        document.head.appendChild(style);
-    };
-})(window.JellyfinEnhanced);
+    document.head.appendChild(style);
+};
