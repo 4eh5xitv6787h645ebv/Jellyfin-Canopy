@@ -8,11 +8,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
 {
     /// <summary>
     /// Tests for the pure query-building / mapping core of <see cref="ItemLookupService"/>.
-    /// The tests run against the jf12 (net10.0) build, which uses the supported
-    /// ILibraryManager batch path; they pin down the exact InternalItemsQuery contents
-    /// produced for given inputs and the exact (case-sensitive, first-wins) pair→item
-    /// mapping semantics that mirror the raw BaseItemProviders SQL kept on the
-    /// Jellyfin 10.11 target.
+    /// They pin down the exact InternalItemsQuery contents produced for given inputs
+    /// and the exact (case-sensitive, first-wins) pair→item mapping semantics.
     /// </summary>
     public class ItemLookupServiceTests
     {
@@ -39,7 +36,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
         }
 
         // ---------------------------------------------------------------------
-        // NormalizePairs (guards both the jf12 query and the jf10 raw SQL)
+        // NormalizePairs (guards the batch query against blank existence-matches)
         // ---------------------------------------------------------------------
 
         [Fact]
@@ -61,7 +58,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
         }
 
         // ---------------------------------------------------------------------
-        // BuildBatchQuery (Jellyfin 12 batch shape: one HasAnyProviderIds query)
+        // BuildBatchQuery (batch shape: one HasAnyProviderIds query)
         // ---------------------------------------------------------------------
 
         [Fact]
@@ -107,7 +104,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
         }
 
         // ---------------------------------------------------------------------
-        // MapProviderPairs (Jellyfin 12 in-memory pair→item mapping)
+        // MapProviderPairs (in-memory pair→item mapping)
         // ---------------------------------------------------------------------
 
         private static Movie MovieWith(Guid id, params (string Key, string Value)[] providerIds)
@@ -164,8 +161,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Data
                 items,
                 new List<(string, string)> { ("imdb", "tt0133093"), ("Imdb", "TT0133093") });
 
-            // The 10.11 raw pipeline is case-sensitive end-to-end (BINARY collation
-            // match + ordinal tuple-key dictionary); the jf12 path must not loosen that.
+            // The lookup is case-sensitive end-to-end (BINARY-collation storage +
+            // ordinal tuple-key dictionary); the mapping must not loosen that.
             Assert.Empty(map);
         }
 
