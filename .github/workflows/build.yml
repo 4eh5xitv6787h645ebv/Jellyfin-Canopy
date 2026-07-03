@@ -1,9 +1,9 @@
 name: Build & Test
 
-# The quality gate for every change: both plugin runtimes must compile
-# (Jellyfin 10.11 / net9.0 and Jellyfin 12 / net10.0), unit tests must pass,
-# and the client scripts must parse and lint cleanly. Before this workflow a
-# PR could break compilation and still merge green.
+# The quality gate for every change: the plugin must compile (Jellyfin 12 /
+# net10.0), unit tests must pass, and the client scripts must parse and lint
+# cleanly. Before this workflow a PR could break compilation and still merge
+# green.
 on:
   push:
     branches: [main, master]
@@ -16,14 +16,8 @@ permissions:
 
 jobs:
   build-plugin:
-    name: Plugin (${{ matrix.target.name }})
+    name: Plugin (Jellyfin 12 / net10.0)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - { name: jf10, tfm: net9.0 }
-          - { name: jf12, tfm: net10.0 }
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
@@ -35,15 +29,13 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
-          dotnet-version: |
-            9.0.x
-            10.0.x
+          dotnet-version: 10.0.x
 
-      - name: Build (Release, ${{ matrix.target.name }})
-        run: dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release -p:JellyfinTarget=${{ matrix.target.name }}
+      - name: Build (Release)
+        run: dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release
 
       - name: Assert DLL produced
-        run: test -f "Jellyfin.Plugin.JellyfinEnhanced/bin/Release/${{ matrix.target.tfm }}/Jellyfin.Plugin.JellyfinEnhanced.dll"
+        run: test -f "Jellyfin.Plugin.JellyfinEnhanced/bin/Release/net10.0/Jellyfin.Plugin.JellyfinEnhanced.dll"
 
   unit-tests:
     name: Unit tests

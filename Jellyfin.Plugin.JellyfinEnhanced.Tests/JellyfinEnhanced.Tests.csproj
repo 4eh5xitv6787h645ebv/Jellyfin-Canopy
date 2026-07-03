@@ -1,10 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!--
-    Unit tests for the plugin. The test project always runs against the default
-    (jf12 / net10.0) build of the plugin; the jf10 (net9.0) target is compiled
-    separately in CI for compile-safety. Logic under test here is runtime-agnostic.
-  -->
+  <!-- Unit tests for the plugin (Jellyfin 12 / net10.0 — the only target). -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>

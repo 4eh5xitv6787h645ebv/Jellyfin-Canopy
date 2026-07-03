@@ -161,9 +161,8 @@ npm run syntax               # node --check on every served js/ file
 npm run lint                 # ESLint (errors gate CI; warnings are advisory)
 npm run typecheck            # tsc over files opting in with // @ts-check
 
-# Plugin: both runtime targets must compile, and unit tests must pass
-dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release -p:JellyfinTarget=jf10   # Jellyfin 10.11 / net9.0
-dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release -p:JellyfinTarget=jf12   # Jellyfin 12 / net10.0
+# Plugin: must compile (Jellyfin 12 / net10.0), and unit tests must pass
+dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release
 dotnet test                  # xUnit tests in Jellyfin.Plugin.JellyfinEnhanced.Tests
 ```
 
