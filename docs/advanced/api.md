@@ -69,7 +69,7 @@ Checks if the plugin can connect to any of the configured Seerr URLs using the p
 
 ```bash
 curl -X GET \
-  -H "X-Emby-Token: <API_KEY>" \
+  -H "Authorization: MediaBrowser Token=\"<API_KEY>\"" \
   "<JELLYFIN_URL>/JellyfinEnhanced/jellyseerr/status"
 ```
 
@@ -79,7 +79,7 @@ Verifies that the currently logged-in Jellyfin user is successfully linked to a 
 
 ```bash
 curl -X GET \
-  -H "X-Emby-Token: <JELLYFIN_API_KEY>" \
+  -H "Authorization: MediaBrowser Token=\"<JELLYFIN_API_KEY>\"" \
   -H "X-Jellyfin-User-Id: <JELLYFIN_USER_ID>" \
   "<JELLYFIN_ADDRESS>/JellyfinEnhanced/jellyseerr/user-status"
 ```
@@ -90,7 +90,7 @@ Executes a search query through the Seerr instance for the specified user.
 
 ```bash
 curl -X GET \
-  -H "X-Emby-Token: <API_KEY>" \
+  -H "Authorization: MediaBrowser Token=\"<API_KEY>\"" \
   -H "X-Jellyfin-User-Id: <USER_ID>" \
   "<JELLYFIN_URL>/JellyfinEnhanced/jellyseerr/search?query=Inception"
 ```
@@ -104,7 +104,7 @@ Submits a media request to Seerr on behalf of the specified user.
 
 ```bash
 curl -X POST \
-  -H "X-Emby-Token: <API_KEY>" \
+  -H "Authorization: MediaBrowser Token=\"<API_KEY>\"" \
   -H "X-Jellyfin-User-Id: <USER_ID>" \
   -H "Content-Type: application/json" \
   -d '{"mediaType": "movie", "mediaId": 27205}' \
@@ -121,7 +121,7 @@ Returns each user (except the caller) who has hidden at least one item, with the
 
 ```bash
 curl -X GET \
-  -H "X-Emby-Token: <ADMIN_API_KEY>" \
+  -H "Authorization: MediaBrowser Token=\"<ADMIN_API_KEY>\"" \
   "<JELLYFIN_URL>/JellyfinEnhanced/admin/hidden-content-users"
 ```
 
@@ -131,7 +131,7 @@ Returns a single user's hidden content (read-only).
 
 ```bash
 curl -X GET \
-  -H "X-Emby-Token: <ADMIN_API_KEY>" \
+  -H "Authorization: MediaBrowser Token=\"<ADMIN_API_KEY>\"" \
   "<JELLYFIN_URL>/JellyfinEnhanced/admin/hidden-content/<USER_ID>"
 ```
 
@@ -141,7 +141,7 @@ Removes one or more items from a user's hidden list. The body is a JSON array of
 
 ```bash
 curl -X POST \
-  -H "X-Emby-Token: <ADMIN_API_KEY>" \
+  -H "Authorization: MediaBrowser Token=\"<ADMIN_API_KEY>\"" \
   -H "Content-Type: application/json" \
   -d '["a1b2c3d4e5f6...", "tmdb-27205"]' \
   "<JELLYFIN_URL>/JellyfinEnhanced/admin/hidden-content/<USER_ID>/unhide"
@@ -153,7 +153,7 @@ Adds one or more items to a user's hidden list (max 200 per call; an item the us
 
 ```bash
 curl -X POST \
-  -H "X-Emby-Token: <ADMIN_API_KEY>" \
+  -H "Authorization: MediaBrowser Token=\"<ADMIN_API_KEY>\"" \
   -H "Content-Type: application/json" \
   -d '[{"TmdbId": "27205", "Name": "Inception", "Type": "Movie", "PosterPath": "/edv5CZvWj09upOsy2Y6IwDhK8bt.jpg"}]' \
   "<JELLYFIN_URL>/JellyfinEnhanced/admin/hidden-content/<USER_ID>/hide"

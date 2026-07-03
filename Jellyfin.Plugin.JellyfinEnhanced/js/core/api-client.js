@@ -477,16 +477,15 @@
 
     /**
      * Build the standard Jellyfin auth headers.
-     * Jellyfin 12 authenticates from the Authorization header; the legacy
-     * X-Emby-Token is kept for 10.11 back-compat. X-Jellyfin-User-Id lets the
-     * plugin's server side resolve the acting user.
+     * Jellyfin 12 authenticates from the Authorization header (legacy token
+     * headers are ignored). X-Jellyfin-User-Id lets the plugin's server side
+     * resolve the acting user.
      * @returns {Record<string, string>}
      */
     function authHeaders() {
         return {
             'X-Jellyfin-User-Id': ApiClient.getCurrentUserId(),
             'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
-            'X-Emby-Token': ApiClient.accessToken(),
             'Accept': 'application/json'
         };
     }
