@@ -24,6 +24,10 @@ export interface ArrInstanceConfig {
 export interface ArrPluginConfig extends PluginConfig {
     ArrLinksEnabled?: boolean;
     ArrLinksShowStatusSingle?: boolean;
+    ArrTagsShowAsLinks?: boolean;
+    ArrTagsPrefix?: string;
+    ArrTagsLinksFilter?: string;
+    ArrTagsLinksHideFilter?: string;
     ShowArrLinksAsText?: boolean;
     SonarrInstancesCorrupt?: boolean;
     RadarrInstancesCorrupt?: boolean;
@@ -105,8 +109,11 @@ export interface ArrJE extends JEGlobal {
     t?: (key: string) => string;
     /** Full user object pre-fetched by js/plugin.js during init (Stage 2). */
     currentUser?: JellyfinUser | null;
-    loadSettings?(): ArrUserSettings;
-    saveUserSettings?(file: string, settings: unknown): Promise<unknown>;
+    loadSettings?: () => ArrUserSettings;
+    saveUserSettings?: (file: string, settings: unknown) => Promise<unknown>;
+    /** Shared SVG icon helper + icon-name map (js/enhanced/icons.js). */
+    icon?: (name: string) => string;
+    IconName?: Record<string, string>;
     /** Hidden-content filtering surface (js/enhanced/hidden-content-*). */
     hiddenContent?: {
         filterRequestItems?<T>(items: T[]): T[];
@@ -118,6 +125,7 @@ export interface ArrJE extends JEGlobal {
     //    Stage 6 and the PluginPages HTML files call these by name) ──────────
     initializeArrLinksScript?: () => Promise<void>;
     _arrLinksObserver?: MutationObserver | ObserverProxy | null;
+    initializeArrTagLinksScript?: () => Promise<void>;
 }
 
 /**

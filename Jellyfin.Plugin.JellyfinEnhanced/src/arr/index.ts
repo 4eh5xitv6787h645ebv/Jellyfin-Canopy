@@ -3,3 +3,4 @@
 // allComponentScripts arr section). Owned by the arr conversion wave; main.ts
 // imports this barrel once, so conversions never edit main.ts itself.
 import './arr-links';
+import './arr-tag-links';

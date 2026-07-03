@@ -705,7 +705,6 @@
                 'tags/userreviewtags.js',
 
                 // arr
-                'arr/arr-tag-links.js',
                 'arr/requests-page-styles.js',
                 'arr/requests-page-data.js',
                 'arr/requests-page-render-helpers.js',
