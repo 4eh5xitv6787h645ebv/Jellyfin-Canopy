@@ -584,11 +584,6 @@
             // eslint-disable-next-line no-unused-vars -- build-time manifest parsed by scripts/build-bundle.js
             const allComponentScripts = [
                 // enhanced
-                'enhanced/config.js',
-                'enhanced/helpers.js',
-                'enhanced/native-tabs.js',
-                'enhanced/tag-pipeline.js',
-                'enhanced/icons.js',
                 // features modules — order matters: -details-media-info.js and
                 // -release-dates.js publish the chip renderers that
                 // -details-page.js consumes via JE.internals.features, and
