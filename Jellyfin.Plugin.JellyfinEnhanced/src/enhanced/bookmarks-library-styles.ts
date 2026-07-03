@@ -1,22 +1,18 @@
-/**
- * Bookmarks Library View — styles.
- * Split from bookmarks-library.js (code motion; CSS block verbatim).
- * Creates <div class="sections bookmarks"></div> for CustomTabs plugin
- * (see bookmarks-library-init.js for the boot sequence).
- */
-(function (JE) {
-  'use strict';
+// src/enhanced/bookmarks-library-styles.ts
+//
+// Bookmarks Library View — styles.
+// Split from bookmarks-library.js (code motion; CSS block verbatim).
+// Creates <div class="sections bookmarks"></div> for CustomTabs plugin
+// (see bookmarks-library-init.ts for the boot sequence).
+// (Converted from js/enhanced/bookmarks-library-styles.js — bodies semantically identical.)
 
-  JE.internals = JE.internals || {};
-  JE.internals.bookmarksLibrary = JE.internals.bookmarksLibrary || {};
+import { JE } from "../globals";
 
-  if (!JE?.pluginConfig?.BookmarksEnabled) {
-    console.log('🪼 Jellyfin Enhanced: Bookmarks library feature is disabled');
-    return;
-  }
-
+if (!JE.pluginConfig?.BookmarksEnabled) {
+  console.log("🪼 Jellyfin Enhanced: Bookmarks library feature is disabled");
+} else {
   // Inject custom styles
-  const style = document.createElement('style');
+  const style = document.createElement("style");
   style.textContent = `
     .je-bookmarks-wrapper {
       display: flex;
@@ -886,5 +882,4 @@
     }
   `;
   document.head.appendChild(style);
-
-})(window.JellyfinEnhanced);
+}

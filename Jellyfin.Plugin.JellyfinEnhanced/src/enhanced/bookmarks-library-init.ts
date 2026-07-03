@@ -1,33 +1,33 @@
-/**
- * Bookmarks Library View — initialization / boot.
- * Split from bookmarks-library.js (code motion; bodies verbatim).
- * Loads last: wires navigation, lifecycle listeners, the CustomTabs body
- * observer, and the optional native tab, then triggers the first render.
- */
-(function (JE) {
-  'use strict';
+// src/enhanced/bookmarks-library-init.ts
+//
+// Bookmarks Library View — initialization / boot.
+// Split from bookmarks-library.js (code motion; bodies verbatim).
+// Loads last: wires navigation, lifecycle listeners, the CustomTabs body
+// observer, and the optional native tab, then triggers the first render.
+// (Converted from js/enhanced/bookmarks-library-init.js — bodies semantically identical.)
 
-  JE.internals = JE.internals || {};
-  const internal = JE.internals.bookmarksLibrary = JE.internals.bookmarksLibrary || {};
+import { JE } from '../globals';
+import { createObserver } from '../core/dom-observer';
+import { register as registerLifecycle } from '../core/lifecycle';
+import { onViewPage, onNavigate } from '../core/navigation';
+import {
+  isPluginPagesActive,
+  injectNavigation,
+  setupNavigationWatcher,
+  handleNavigation,
+  interceptNavigation,
+  handleViewShow,
+  handleNavClick,
+} from './bookmarks-library-page';
+import { renderIfSectionExists, hookViewEvents } from './bookmarks-library-render';
 
-  if (!JE?.pluginConfig?.BookmarksEnabled) return;
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
-  // All earlier-loaded module exports (this file loads last).
-  const {
-    isPluginPagesActive,
-    injectNavigation,
-    setupNavigationWatcher,
-    handleNavigation,
-    interceptNavigation,
-    handleViewShow,
-    handleNavClick,
-    renderIfSectionExists,
-    hookViewEvents,
-  } = internal;
+if (JE.pluginConfig?.BookmarksEnabled) {
 
   const logPrefix = '🪼 Jellyfin Enhanced: Bookmarks Library:';
 
-  function getJE() {
+  const getJE = (): any => {
     // Try common globals first
     if (window.JE) return window.JE;
     if (window.JellyfinEnhanced) return window.JellyfinEnhanced;
@@ -39,16 +39,16 @@
     if (window.top?.JellyfinEnhanced) return window.top.JellyfinEnhanced;
 
     return null;
-  }
+  };
 
   /**
    * Initialize
    */
-  function init() {
+  const init = (): void => {
     console.log(`${logPrefix} Initializing (build id: ${Date.now()})...`);
 
     let attempts = 0;
-    const checkReady = setInterval(() => {
+    const checkReady = window.setInterval(() => {
       attempts += 1;
       const je = getJE();
       const ready = !!(je && je.userConfig && je.bookmarks);
@@ -71,7 +71,7 @@
         if (!isPluginPagesActive() && !JE.pluginConfig?.BookmarksUseCustomTabs && !JE.pluginConfig?.BookmarksUseNativeTab) {
           injectNavigation();
           setupNavigationWatcher();
-          const lifecycle = JE.core.lifecycle.register('bookmarks-standalone-page');
+          const lifecycle = registerLifecycle('bookmarks-standalone-page');
           // The capture-phase intercepts need the raw events (they call
           // stopImmediatePropagation before Jellyfin's router reacts), so they
           // stay real listeners — added via the lifecycle handle so they are
@@ -82,12 +82,12 @@
           // handleViewShow inspects the raw viewshow event's target; rawEvent
           // is null for router-internal notifications, matching the old
           // document-level listener which only fired on real events.
-          JE.core.navigation.onViewPage((view, element, hash, itemPromise, rawEvent) => {
+          onViewPage((view, element, hash, itemPromise, rawEvent) => {
             if (rawEvent) handleViewShow(rawEvent);
           });
           // Show/hide the standalone page on every nav path — hashchange,
           // popstate AND pushState transitions the raw listeners missed.
-          JE.core.navigation.onNavigate(handleNavigation);
+          onNavigate(handleNavigation);
           handleNavigation();
         }
 
@@ -97,7 +97,7 @@
         // any ".sections.bookmarks" wrapped in an ".is-active" tabContent as
         // valid, so it picks up our own panel unmodified.
         if (JE.pluginConfig?.BookmarksUseNativeTab) {
-          JE.nativeTabs.register('bookmarks', 'Bookmarks', (panel) => {
+          JE.nativeTabs!.register('bookmarks', 'Bookmarks', (panel) => {
             const marker = document.createElement('div');
             marker.className = 'sections bookmarks';
             panel.appendChild(marker);
@@ -110,7 +110,7 @@
         // element would become orphaned after returning to home (issue 536).
         // Routes to the shared multiplexed body observer.
         let mountPending = false;
-        JE.helpers.createObserver('bookmarks-library-custom-tab', () => {
+        createObserver('bookmarks-library-custom-tab', () => {
           if (!mountPending) {
             mountPending = true;
             requestAnimationFrame(() => {
@@ -125,7 +125,7 @@
         console.log(`${logPrefix} ✓ Ready`);
       }
     }, 100);
-  }
+  };
 
   // Initialize
   if (document.readyState === 'loading') {
@@ -134,4 +134,4 @@
     init();
   }
 
-})(window.JellyfinEnhanced);
+}

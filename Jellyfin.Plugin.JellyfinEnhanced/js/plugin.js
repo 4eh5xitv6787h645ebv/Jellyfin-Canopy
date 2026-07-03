@@ -596,17 +596,6 @@
                 'enhanced/hidden-content-page-nav.js',
                 'enhanced/hidden-content-page-init.js',
                 'enhanced/hidden-content-custom-tab.js',
-                'enhanced/bookmarks.js',
-                // bookmarks-library modules — order matters: styles/page/render
-                // publish JE.internals.bookmarksLibrary pieces that the later
-                // files consume; -init.js boots last.
-                'enhanced/bookmarks-library-styles.js',
-                'enhanced/bookmarks-library-page.js',
-                'enhanced/bookmarks-library-render.js',
-                'enhanced/bookmarks-library-items.js',
-                'enhanced/bookmarks-library-modals.js',
-                'enhanced/bookmarks-library-replacements.js',
-                'enhanced/bookmarks-library-init.js',
 
                 // elsewhere
                 'elsewhere/elsewhere.js',
