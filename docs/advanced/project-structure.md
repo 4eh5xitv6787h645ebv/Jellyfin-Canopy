@@ -68,7 +68,7 @@ Jellyfin.Plugin.JellyfinEnhanced/
 │   └── configPage.html + config-page.js  # Admin page; simple fields bind via data-config-key
 ├── Services/                  # Seerr cache/scan/watchlist, auto-request watchers, arr tag sync,
 │                              # maintenance mode, startup filters (script injection, branding)
-├── Data/ItemLookupService.cs  # Provider-id lookups: ILibraryManager on Jellyfin 12, raw EF on 10.11
+├── Data/ItemLookupService.cs  # Provider-id lookups via the supported ILibraryManager query surface
 ├── ScheduledTasks/ · Helpers/ · Model/ · Logging/ · PluginPages/
 └── dist/                      # esbuild output (generated at build time, never committed)
 ```

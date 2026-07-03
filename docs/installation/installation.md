@@ -5,7 +5,7 @@
 
     **Prerequisites:**
 
-    - Jellyfin server version 10.11.x
+    - Jellyfin server version 12.x
     - Admin access to your Jellyfin server
     - Modern web browser (Chrome, Firefox, Edge, Safari)
 

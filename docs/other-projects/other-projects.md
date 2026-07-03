@@ -165,7 +165,7 @@ https://raw.githubusercontent.com/n00bcodr/jellyfin-plugins/main/10.11/manifest.
 
 | Plugin | Jellyfin 10.11 | Jellyfin 10.10 | Notes |
 |--------|----------------|----------------|-------|
-| Jellyfin Enhanced | ✅ | ❌ | Use 10.11 manifest |
+| Jellyfin Enhanced | ✅ (final 11.x release only) | ❌ | New releases (v12+) require Jellyfin 12 |
 | Jellyfin Tweaks | ✅ | ✅ | |
 | JS Injector | ✅ | ✅ |  |
 
