@@ -5,7 +5,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Data;
 using Jellyfin.Database.Implementations.Enums;
-using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Library;
 using System.Text.Json;
@@ -74,7 +73,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             bool doRemote   = action == "disable_remote"   || action == "both";
 
             // Build the target user set: all non-admin users, filtered to the selection
-            var allNonAdmin = _userManager.GetAllUsers()
+            var allNonAdmin = _userManager.GetUsers()
                 .Where(u => !u.HasPermission(PermissionKind.IsAdministrator))
                 .ToList();
 

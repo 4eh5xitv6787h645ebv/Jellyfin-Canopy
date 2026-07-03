@@ -31,7 +31,6 @@ using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model;
 using MediaBrowser.Controller.Persistence;
 using Jellyfin.Plugin.JellyfinEnhanced.Model.Arr;
-using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -114,7 +113,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         public IActionResult GetMaintenanceModeUsers()
         {
             if (!IsAdminUser()) return Forbid();
-            var users = _userManager.GetAllUsers()
+            var users = _userManager.GetUsers()
                 .Where(u => !u.HasPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator))
                 .Select(u => new { Id = u.Id.ToString(), u.Username })
                 .OrderBy(u => u.Username)

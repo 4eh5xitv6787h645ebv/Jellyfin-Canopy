@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
-using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
@@ -107,7 +106,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
 
             var blockedIds = Helpers.Jellyseerr.JellyseerrUserImportHelper
                 .GetBlockedUserIds(config.JellyseerrImportBlockedUsers);
-            var allUsers = _userManager.GetAllUsers().ToList();
+            var allUsers = _userManager.GetUsers().ToList();
             var jellyfinUsers = allUsers
                 .Where(u => !blockedIds.Contains(u.Id.ToString().Replace("-", ""), StringComparer.OrdinalIgnoreCase))
                 .ToList();

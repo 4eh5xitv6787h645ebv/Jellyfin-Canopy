@@ -5,7 +5,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
-using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Events;
 using MediaBrowser.Controller.Library;
@@ -173,7 +172,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.EventHandlers
                 var idStr = id.ToString();
 
                 // Snapshot users sync (EventArgs/userManager not safe past handler return); offload the per-user loop.
-                var userIds = _userManager.GetAllUsers().Select(u => u.Id).ToArray();
+                var userIds = _userManager.GetUsers().Select(u => u.Id).ToArray();
 
                 _ = Task.Run(() =>
                 {

@@ -32,7 +32,6 @@ using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model;
 using MediaBrowser.Controller.Persistence;
 using Jellyfin.Plugin.JellyfinEnhanced.Model.Arr;
-using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;

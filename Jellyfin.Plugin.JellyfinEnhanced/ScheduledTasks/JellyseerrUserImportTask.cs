@@ -4,7 +4,6 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using MediaBrowser.Controller.Library;
@@ -78,7 +77,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             progress?.Report(0);
 
             var urls = config.JellyseerrUrls.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            var jellyfinUsers = _userManager.GetAllUsers().ToList();
+            var jellyfinUsers = _userManager.GetUsers().ToList();
             var blockedIds = JellyseerrUserImportHelper.GetBlockedUserIds(config.JellyseerrImportBlockedUsers);
             var userIds = jellyfinUsers
                 .Select(u => u.Id.ToString().Replace("-", ""))

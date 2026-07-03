@@ -31,7 +31,6 @@ using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model;
 using MediaBrowser.Controller.Persistence;
 using Jellyfin.Plugin.JellyfinEnhanced.Model.Arr;
-using Jellyfin.Plugin.JellyfinEnhanced.Extensions;
 using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -131,7 +130,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 string.IsNullOrEmpty(config.JellyseerrUrls))
                 return StatusCode(503, "Seerr integration is not configured or enabled.");
 
-            var jellyfinUsers = _userManager.GetAllUsers()
+            var jellyfinUsers = _userManager.GetUsers()
                 .GroupBy(u => u.Id)
                 .Select(g => g.First())
                 .ToList();
@@ -331,7 +330,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 int itemsAdded = 0;
                 var errors = new List<string>();
 
-                foreach (var user in _userManager.GetAllUsers())
+                foreach (var user in _userManager.GetUsers())
                 {
                     try
                     {
@@ -460,7 +459,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                 var urls = config.JellyseerrUrls.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                 var blockedIds = Helpers.Jellyseerr.JellyseerrUserImportHelper.GetBlockedUserIds(config.JellyseerrImportBlockedUsers);
-                var userIds = _userManager.GetAllUsers()
+                var userIds = _userManager.GetUsers()
                     .Select(u => u.Id.ToString().Replace("-", ""))
                     .Where(id => !blockedIds.Contains(id))
                     .ToList();
