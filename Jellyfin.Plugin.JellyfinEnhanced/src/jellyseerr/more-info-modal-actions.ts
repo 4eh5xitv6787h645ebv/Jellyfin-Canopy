@@ -4,7 +4,7 @@
 import { JE } from '../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
-/* eslint-disable @typescript-eslint/no-misused-promises, @typescript-eslint/require-await -- legacy async event listeners with fire-and-forget bodies; semantics preserved verbatim */
+/* eslint-disable @typescript-eslint/no-misused-promises -- legacy async event listeners with fire-and-forget bodies; semantics preserved verbatim */
 
 
 import { internal } from './more-info-modal-internal';
@@ -32,7 +32,7 @@ button.addEventListener('click', async (e: any) => {
     } catch (error: any) {
         // Quota errors get a themed dialog; restore button to idle.
         if (JE.jellyseerrUI?.isQuotaError?.(error)) {
-            await JE.jellyseerrUI!.showQuotaErrorDialog(error, 'movie');
+            await JE.jellyseerrUI.showQuotaErrorDialog(error, 'movie');
             button.disabled = false;
             button.innerHTML = `${JE.jellyseerrUIIcons?.request || '<span class="material-icons">download</span>'}<span>${JE.t!('jellyseerr_btn_request_4k') || 'Request in 4K'}</span>`;
             return;
@@ -90,7 +90,7 @@ if (show4kOption) {
         } catch (error: any) {
             // Quota errors get a themed dialog; restore button to idle.
             if (JE.jellyseerrUI?.isQuotaError?.(error)) {
-                await JE.jellyseerrUI!.showQuotaErrorDialog(error, 'movie');
+                await JE.jellyseerrUI.showQuotaErrorDialog(error, 'movie');
                 mainButton.disabled = false;
                 mainButton.innerHTML = `${JE.jellyseerrUIIcons?.request || '<span class="material-icons">download</span>'}<span>${JE.t!('jellyseerr_btn_request')}</span>`;
                 return;
@@ -164,7 +164,7 @@ const handleDocClick = (ev: any) => {
             } catch (error: any) {
                 // Quota errors get a themed dialog; restore option to idle.
                 if (JE.jellyseerrUI?.isQuotaError?.(error)) {
-                    await JE.jellyseerrUI!.showQuotaErrorDialog(error, 'movie');
+                    await JE.jellyseerrUI.showQuotaErrorDialog(error, 'movie');
                     option.disabled = false;
                     option.textContent = 'Request in 4K';
                     return;
@@ -208,7 +208,7 @@ const handleDocClick = (ev: any) => {
         } catch (error: any) {
             // Quota errors get a themed dialog; restore button to idle.
             if (JE.jellyseerrUI?.isQuotaError?.(error)) {
-                await JE.jellyseerrUI!.showQuotaErrorDialog(error, 'movie');
+                await JE.jellyseerrUI.showQuotaErrorDialog(error, 'movie');
                 requestButton.disabled = false;
                 requestButton.innerHTML = `${JE.jellyseerrUIIcons?.request || '<span class="material-icons">download</span>'}<span>${JE.t!('jellyseerr_btn_request')}</span>`;
                 return;

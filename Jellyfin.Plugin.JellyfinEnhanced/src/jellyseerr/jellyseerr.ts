@@ -581,7 +581,7 @@ JE.initializeJellyseerrScript = function() {
                 button.innerHTML = `<span>${JE.t!('jellyseerr_btn_requesting')}</span><span class="jellyseerr-button-spinner"></span>`;
                 try {
                     await requestMedia(tmdbId, mediaType, {}, false, searchResultItem); // Pass searchResultItem for override rules
-                    button.innerHTML = `<span>${JE.t!('jellyseerr_btn_requested')}</span>${JE.jellyseerrUI.icons.requested}`;
+                    button.innerHTML = `<span>${JE.t!('jellyseerr_btn_requested')}</span>${JE.jellyseerrUI!.icons.requested}`;
                     button.classList.remove('jellyseerr-button-request');
                     button.classList.add('jellyseerr-button-pending');
                 } catch (error: any) {
@@ -601,7 +601,7 @@ JE.initializeJellyseerrScript = function() {
                         errorMessage = JE.t!('jellyseerr_btn_error');
                     }
                     // Escape API error before innerHTML to prevent reflected XSS
-                    button.innerHTML = `<span>${escapeHtml(errorMessage)}</span>${JE.jellyseerrUI.icons.error}`;
+                    button.innerHTML = `<span>${escapeHtml(errorMessage)}</span>${JE.jellyseerrUI!.icons.error}`;
                     button.classList.add('jellyseerr-button-error');
                 }
             }

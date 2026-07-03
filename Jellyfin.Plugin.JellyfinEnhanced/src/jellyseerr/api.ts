@@ -24,9 +24,9 @@ export interface JellyseerrApi {
     requestTvSeasons: (tmdbId: any, seasonNumbers: any[], advancedSettings?: any, mediaData?: any, is4k?: boolean) => Promise<any>;
     fetchIssuesForMedia: (tmdbId: any, mediaType: any, options?: any) => Promise<any>;
     fetchIssueById: (issueId: any) => Promise<any>;
-    fetchAdvancedRequestData(mediaType: any): Promise<{ servers: any[]; tags: any[] }>;
+    fetchAdvancedRequestData: (mediaType: any) => Promise<{ servers: any[]; tags: any[] }>;
     fetchUserQuota: (options?: any) => Promise<any>;
-    fetchRequestSettings(): Promise<{ partialRequestsEnabled: boolean; enableSpecialEpisodes: boolean }>;
+    fetchRequestSettings: () => Promise<{ partialRequestsEnabled: boolean; enableSpecialEpisodes: boolean }>;
     addToWatchlist: (tmdbId: any, mediaType: any) => Promise<boolean>;
     reportIssue: (mediaId: any, mediaType: any, problemType: any, message?: string, problemSeason?: any, problemEpisode?: any) => Promise<any>;
     fetchSimilarMovies: (tmdbId: any, pageOrOptions?: any) => Promise<any>;

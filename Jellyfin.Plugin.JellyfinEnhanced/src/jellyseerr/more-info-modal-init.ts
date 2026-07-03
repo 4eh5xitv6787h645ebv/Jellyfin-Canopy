@@ -4,7 +4,7 @@
 import { JE } from '../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
-/* eslint-disable @typescript-eslint/no-misused-promises, @typescript-eslint/require-await -- legacy async event listeners with fire-and-forget bodies; semantics preserved verbatim */
+/* eslint-disable @typescript-eslint/no-misused-promises -- legacy async event listeners with fire-and-forget bodies; semantics preserved verbatim */
 
 
 const moreInfoModal: any = JE.jellyseerrMoreInfo = JE.jellyseerrMoreInfo || {};

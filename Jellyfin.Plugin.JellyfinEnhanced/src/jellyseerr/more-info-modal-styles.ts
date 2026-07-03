@@ -2,7 +2,7 @@
 // CSS for the Jellyseerr more-info modal, injected once at load.
 import { JE } from '../globals';
 
-/* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
+ 
 
 
 

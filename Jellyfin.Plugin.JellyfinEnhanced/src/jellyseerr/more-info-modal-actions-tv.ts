@@ -53,7 +53,7 @@ if (show4kOption) {
         e.preventDefault();
         e.stopPropagation();
         if (JE.jellyseerrUI?.showSeasonSelectionModal) {
-            JE.jellyseerrUI!.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data, false);
+            JE.jellyseerrUI.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data, false);
         }
     });
 
@@ -106,7 +106,7 @@ if (show4kOption) {
                 ev.stopPropagation();
                 close4k();
                 if (JE.jellyseerrUI?.showSeasonSelectionModal) {
-                    JE.jellyseerrUI!.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data, true);
+                    JE.jellyseerrUI.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data, true);
                 }
             });
         }
@@ -137,7 +137,7 @@ requestButton.addEventListener('click', async (e: any) => {
 
     // TV always shows season selection modal
     if (JE.jellyseerrUI?.showSeasonSelectionModal) {
-        JE.jellyseerrUI!.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data);
+        JE.jellyseerrUI.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data);
     }
 });
 
@@ -153,7 +153,7 @@ button.addEventListener('click', async (e: any) => {
     e.preventDefault();
     e.stopPropagation();
     if (JE.jellyseerrUI?.showSeasonSelectionModal) {
-        JE.jellyseerrUI!.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data, true);
+        JE.jellyseerrUI.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data, true);
     }
 });
 return button;
@@ -179,7 +179,7 @@ if (show4kOption) {
         e.preventDefault();
         e.stopPropagation();
         if (JE.jellyseerrUI?.showSeasonSelectionModal) {
-            JE.jellyseerrUI!.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data, false);
+            JE.jellyseerrUI.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data, false);
         }
     });
 
@@ -228,7 +228,7 @@ if (show4kOption) {
                 ev.stopPropagation();
                 close4k();
                 if (JE.jellyseerrUI?.showSeasonSelectionModal) {
-                    JE.jellyseerrUI!.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data, true);
+                    JE.jellyseerrUI.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data, true);
                 }
             });
         }
@@ -259,7 +259,7 @@ requestButton.addEventListener('click', async (e: any) => {
 
     // Show season selection modal for partially available shows
     if (JE.jellyseerrUI?.showSeasonSelectionModal) {
-        JE.jellyseerrUI!.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data);
+        JE.jellyseerrUI.showSeasonSelectionModal(data.id, 'tv', data.title || data.name, data);
     }
 });
 

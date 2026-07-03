@@ -1137,7 +1137,7 @@ issueReporter.initialize = async function () {
     const handleViewShow = async () => {
         try {
             // Small delay to ensure DOM is ready
-            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- legacy fire-and-forget timeout
+             
             setTimeout(async () => {
                 await issueReporter.tryAddButton();
             }, 100);

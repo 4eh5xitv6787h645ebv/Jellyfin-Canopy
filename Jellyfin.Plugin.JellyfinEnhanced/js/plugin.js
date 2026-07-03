@@ -661,16 +661,6 @@
                 'elsewhere/reviews.js',
 
                 // jellyseerr
-                'jellyseerr/ui-icons.js',
-                'jellyseerr/ui-styles.js',
-                'jellyseerr/ui-popover.js',
-                'jellyseerr/ui-badges.js',
-                'jellyseerr/ui-cards.js',
-                'jellyseerr/ui-buttons.js',
-                'jellyseerr/ui-quota.js',
-                'jellyseerr/ui-results.js',
-                'jellyseerr/ui-request-modals.js',
-                'jellyseerr/ui-season-modal.js',
 
                 // tags
                 'tags/genretags.js',

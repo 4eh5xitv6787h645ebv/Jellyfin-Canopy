@@ -24,6 +24,8 @@ declare module '../types/je' {
         t?(key: string, ...args: any[]): string;
         /** Admin hidden-content filtering surface (legacy). */
         hiddenContent?: any;
+        /** Legacy Seerr search-integration controller alias. */
+        jellyseerr?: any;
         /** Icon helper + icon-name enum (enhanced/icons.js, legacy). */
         icon?: (name: any) => string;
         IconName?: any;
@@ -33,8 +35,6 @@ declare module '../types/je' {
         initializeJellyseerrScript?: any;
         /** jellyseerr/more-info-modal-* surface (legacy). */
         jellyseerrMoreInfo?: any;
-        /** jellyseerr/ui-* surface (legacy). */
-        jellyseerrUI?: any;
         /** jellyseerr/ui-icons.js icon map (legacy). */
         jellyseerrUIIcons?: any;
         /** Elsewhere user-config surface (legacy). */
