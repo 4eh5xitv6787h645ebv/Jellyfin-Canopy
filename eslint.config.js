@@ -153,6 +153,29 @@ module.exports = [
         },
     },
     {
+        // Feature-area TS (converted legacy modules): tsc-strict is the hard
+        // gate; the typed-lint unsafe-* rules are warnings here as a ratchet —
+        // legacy shapes get typed incrementally. src/core and src/types stay
+        // fully strict via the block above.
+        files: [
+            'Jellyfin.Plugin.JellyfinEnhanced/src/enhanced/**/*.ts',
+            'Jellyfin.Plugin.JellyfinEnhanced/src/jellyseerr/**/*.ts',
+            'Jellyfin.Plugin.JellyfinEnhanced/src/arr/**/*.ts',
+            'Jellyfin.Plugin.JellyfinEnhanced/src/tags/**/*.ts',
+            'Jellyfin.Plugin.JellyfinEnhanced/src/elsewhere/**/*.ts',
+            'Jellyfin.Plugin.JellyfinEnhanced/src/extras/**/*.ts',
+            'Jellyfin.Plugin.JellyfinEnhanced/src/others/**/*.ts',
+        ],
+        rules: {
+            '@typescript-eslint/no-unsafe-assignment': 'warn',
+            '@typescript-eslint/no-unsafe-member-access': 'warn',
+            '@typescript-eslint/no-unsafe-call': 'warn',
+            '@typescript-eslint/no-unsafe-argument': 'warn',
+            '@typescript-eslint/no-unsafe-return': 'warn',
+            '@typescript-eslint/no-explicit-any': 'warn',
+        },
+    },
+    {
         // Node-side tooling scripts (translation validation etc.)
         files: ['scripts/**/*.js', 'eslint.config.js'],
         languageOptions: {
