@@ -4,9 +4,11 @@
   "private": true,
   "description": "Development tooling for the Jellyfin Enhanced plugin (lint, type-check, translation validation). The plugin itself ships as embedded resources from the C# project.",
   "scripts": {
-    "lint": "eslint \"Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js\" \"Jellyfin.Plugin.JellyfinEnhanced/Configuration/*.js\" \"scripts/**/*.js\"",
-    "lint:fix": "eslint --fix \"Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js\" \"Jellyfin.Plugin.JellyfinEnhanced/Configuration/*.js\" \"scripts/**/*.js\"",
+    "lint": "eslint \"Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js\" \"Jellyfin.Plugin.JellyfinEnhanced/src/**/*.ts\" \"Jellyfin.Plugin.JellyfinEnhanced/Configuration/*.js\" \"scripts/**/*.js\"",
+    "lint:fix": "eslint --fix \"Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js\" \"Jellyfin.Plugin.JellyfinEnhanced/src/**/*.ts\" \"Jellyfin.Plugin.JellyfinEnhanced/Configuration/*.js\" \"scripts/**/*.js\"",
     "typecheck": "tsc -p jsconfig.json",
+    "typecheck:src": "tsc -p tsconfig.src.json",
+    "test:client": "vitest run",
     "syntax": "node scripts/check-syntax.js",
     "build:bundle": "node scripts/build-bundle.js",
     "validate-translations": "node scripts/validate-translations.js validate"
@@ -14,6 +16,9 @@
   "devDependencies": {
     "esbuild": "0.28.1",
     "eslint": "^9.39.0",
-    "typescript": "^5.9.3"
+    "jsdom": "29.1.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "8.62.1",
+    "vitest": "4.1.9"
   }
 }

@@ -14,6 +14,7 @@
  */
 
 const js = require('@eslint/js');
+const tseslint = require('typescript-eslint');
 
 /** Globals provided by the browser + jellyfin-web at runtime. */
 const jellyfinWebGlobals = {
@@ -123,6 +124,32 @@ module.exports = [
             'no-fallthrough': 'warn',
             'no-redeclare': 'warn',
             'no-inner-declarations': 'off',
+        },
+    },
+    // TypeScript module tree (Jellyfin.Plugin.JellyfinEnhanced/src/): typed
+    // linting over the tsconfig.src.json program. Strict rules from day one —
+    // src/ is the post-migration world; the legacy js/ tree keeps the looser
+    // classic-script config above.
+    ...tseslint.configs.recommendedTypeChecked.map((config) => ({
+        ...config,
+        files: ['Jellyfin.Plugin.JellyfinEnhanced/src/**/*.ts'],
+    })),
+    {
+        files: ['Jellyfin.Plugin.JellyfinEnhanced/src/**/*.ts'],
+        languageOptions: {
+            parserOptions: {
+                project: './tsconfig.src.json',
+                tsconfigRootDir: __dirname,
+            },
+        },
+        rules: {
+            // The frozen window.JellyfinEnhanced contract still has untyped
+            // corners (legacy feature surfaces); unused args follow the same
+            // policy as the js/ tree.
+            '@typescript-eslint/no-unused-vars': ['warn', { args: 'none', caughtErrors: 'none', varsIgnorePattern: '^_' }],
+            // Module-level wiring (fire-and-forget promises from the host
+            // client) is deliberate in a few places; require explicit `void`.
+            '@typescript-eslint/no-floating-promises': ['error', { ignoreVoid: true }],
         },
     },
     {

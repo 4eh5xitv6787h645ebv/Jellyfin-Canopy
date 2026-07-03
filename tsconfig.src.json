@@ -1,0 +1,26 @@
+{
+    // Type-checking for the TypeScript module tree (Jellyfin.Plugin.JellyfinEnhanced/src/).
+    //
+    // Strict from day one — src/ is the post-migration world. The legacy js/
+    // tree keeps its own looser program (jsconfig.json, opt-in // @ts-check)
+    // until every file has moved here.
+    //
+    // noEmit: esbuild transpiles (scripts/build-bundle.js); tsc is the type
+    // gate only (`npm run typecheck:src`).
+    "compilerOptions": {
+        "strict": true,
+        "target": "es2022",
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "lib": ["es2022", "dom", "dom.iterable"],
+        "noEmit": true,
+        "skipLibCheck": true,
+        "isolatedModules": true,
+        "forceConsistentCasingInFileNames": true,
+        "noFallthroughCasesInSwitch": true,
+        "noImplicitOverride": true,
+        "types": []
+    },
+    "include": ["Jellyfin.Plugin.JellyfinEnhanced/src/**/*.ts"],
+    "exclude": ["node_modules", "**/bin", "**/obj"]
+}

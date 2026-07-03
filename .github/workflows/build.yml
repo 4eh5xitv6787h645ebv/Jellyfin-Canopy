@@ -91,6 +91,13 @@ jobs:
       - name: Client bundle (esbuild)
         run: npm run build:bundle
 
+      # TypeScript module tree (src/): strict type check + unit tests.
+      - name: Type check (src TypeScript modules, strict)
+        run: npm run typecheck:src
+
+      - name: Client unit tests (vitest)
+        run: npm run test:client
+
   manifest:
     name: Manifest validation
     runs-on: ubuntu-latest
