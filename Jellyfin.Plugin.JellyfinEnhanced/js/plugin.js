@@ -593,18 +593,19 @@
             }
 
             // Stage 3: Load ALL component scripts
+            //
+            // The core layer (navigation detection, lifecycle registry, shared
+            // body observer, fetch layer, base UI primitives) lives in the
+            // TypeScript tree (src/core/*, entry src/main.ts) and executes
+            // FIRST in the bundle — before every script listed here.
+            //
+            // This array is the load-order source of truth for the files NOT
+            // yet converted to src/. It is consumed at BUILD time by
+            // scripts/build-bundle.js (which appends these files after
+            // src/main.ts in the bundle) — converting a file to TypeScript
+            // means removing its entry here and importing it from src/ instead.
             const basePath = '/JellyfinEnhanced/js';
             const allComponentScripts = [
-                // core — MUST load first: owns navigation detection, the
-                // lifecycle registry, the shared body observer, the fetch
-                // layer and base UI primitives that everything else builds on.
-                'core/navigation.js',
-                'core/lifecycle.js',
-                'core/dom-observer.js',
-                'core/ui-kit.js',
-                'core/api-client.js',
-                'core/tag-renderer-base.js',
-
                 // enhanced
                 'enhanced/config.js',
                 'enhanced/helpers.js',

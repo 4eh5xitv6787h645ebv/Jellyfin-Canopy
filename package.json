@@ -11,6 +11,7 @@
     "test:client": "vitest run",
     "syntax": "node scripts/check-syntax.js",
     "build:bundle": "node scripts/build-bundle.js",
+    "watch": "node scripts/build-bundle.js --watch",
     "validate-translations": "node scripts/validate-translations.js validate"
   },
   "devDependencies": {
