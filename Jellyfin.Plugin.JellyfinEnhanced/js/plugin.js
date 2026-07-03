@@ -656,10 +656,6 @@
                 'enhanced/osd-rating.js',
                 'enhanced/pausescreen.js',
 
-                // elsewhere
-                'elsewhere/elsewhere.js',
-                'elsewhere/reviews.js',
-
                 // jellyseerr
                 'jellyseerr/seerr-status.js',
                 'jellyseerr/request-manager.js',
