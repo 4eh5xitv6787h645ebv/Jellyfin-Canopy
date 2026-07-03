@@ -10,3 +10,12 @@ import './helpers';
 import './native-tabs';
 import './tag-pipeline';
 import './icons';
+// features modules — order matters: -details-media-info and -release-dates
+// export the chip renderers that -details-page imports, and -remove-home
+// exports the action-sheet/remove helpers that -remove-multiselect imports.
+import './features-random-button';
+import './features-details-media-info';
+import './features-release-dates';
+import './features-details-page';
+import './features-remove-home';
+import './features-remove-multiselect';

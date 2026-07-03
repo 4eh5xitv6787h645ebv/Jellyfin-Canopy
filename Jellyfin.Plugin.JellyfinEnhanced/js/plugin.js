@@ -584,17 +584,6 @@
             // eslint-disable-next-line no-unused-vars -- build-time manifest parsed by scripts/build-bundle.js
             const allComponentScripts = [
                 // enhanced
-                // features modules — order matters: -details-media-info.js and
-                // -release-dates.js publish the chip renderers that
-                // -details-page.js consumes via JE.internals.features, and
-                // -remove-home.js publishes the action-sheet/remove helpers
-                // that -remove-multiselect.js consumes.
-                'enhanced/features-random-button.js',
-                'enhanced/features-details-media-info.js',
-                'enhanced/features-release-dates.js',
-                'enhanced/features-details-page.js',
-                'enhanced/features-remove-home.js',
-                'enhanced/features-remove-multiselect.js',
                 'enhanced/events.js',
                 'enhanced/playback.js',
                 // hidden-content modules — order matters: -data.js owns the

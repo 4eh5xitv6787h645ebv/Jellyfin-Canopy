@@ -13,7 +13,11 @@ import type {} from '../types/je';
 declare global {
     interface Window {
         /** Legacy dashboard helper exposed by jellyfin-web. */
-        Dashboard?: { navigate?: (url: string) => void; [key: string]: unknown };
+        Dashboard?: {
+            navigate?: (url: string) => void;
+            alert?: (message: string) => void;
+            [key: string]: unknown;
+        };
     }
 }
 
