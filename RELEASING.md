@@ -12,22 +12,21 @@ updates, and a malformed entry bricks in-app updates for all users.
    4-part version (a `v` prefix with 3 parts also works):
 
    ```bash
-   git tag 11.13.0.0
-   git push origin 11.13.0.0
+   git tag 12.0.0.0
+   git push origin 12.0.0.0
    ```
 
 3. The **Release** workflow then:
-   - runs the full quality gates (both plugin targets, unit tests, JS
+   - runs the full quality gates (plugin build, unit tests, JS
      syntax/lint/type checks) — any failure aborts the release;
-   - builds both flavors with the tag stamped as `AssemblyVersion`/
+   - builds the plugin with the tag stamped as `AssemblyVersion`/
      `FileVersion` (the tag is the single source of truth — the version in
      the csproj is never bumped by CI);
-   - packages one ZIP per Jellyfin major, with exactly the plugin DLL at the
-     zip root, using the established asset names:
-     - `Jellyfin.Plugin.JellyfinEnhanced_10.11.0.zip` (Jellyfin 10.11, net9.0)
+   - packages one ZIP, with exactly the plugin DLL at the zip root, using
+     the established asset name:
      - `Jellyfin.Plugin.JellyfinEnhanced_12.0.0.zip` (Jellyfin 12, net10.0)
    - creates the GitHub Release with a changelog generated from the commit
-     subjects since the previous tag, and attaches both ZIPs;
+     subjects since the previous tag, and attaches the ZIP;
    - regenerates `manifest.json` (new entry prepended, MD5 checksum computed
      from the real ZIP, timestamped) and opens a PR with the change.
 
@@ -43,13 +42,12 @@ your notes as the body) *before* pushing the tag, or push the tag from the
 release UI. When a release for the tag already exists, the workflow reuses
 its body as the manifest changelog and only attaches the ZIPs.
 
-### Jellyfin 12 in the catalog
+### Manifest ABI streams
 
-The manifest has only ever carried the Jellyfin 10.11 flavor
-(`targetAbi: 10.11.0.0`). The Jellyfin 12 ZIP is always attached to the
-release for sideloading, but a `targetAbi: 12.0.0.0` manifest entry is only
-generated once `INCLUDE_JF12_IN_MANIFEST` is flipped to `'true'` at the top
-of `release.yml`.
+New releases publish only `targetAbi: 12.0.0.0` manifest entries. The
+manifest's existing `targetAbi: 10.11.0.0` entries are frozen history: they
+keep serving the final Jellyfin 10.11-compatible release line and must never
+be edited or removed.
 
 ## Tooling (`scripts/release/`)
 

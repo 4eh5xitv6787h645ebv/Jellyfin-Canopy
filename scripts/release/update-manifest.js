@@ -7,12 +7,12 @@
  * produce the manifest — the git tag is the single source of truth for the
  * version, and checksums are computed from the actual zip files.
  *
- * One entry is added per packaged flavor (targetAbi), mirroring the existing
+ * One entry is added per packaged asset (targetAbi), mirroring the existing
  * schema exactly:
  *
  *   {
  *     "changelog":  <text from --changelog-file, verbatim>,
- *     "targetAbi":  <the flavor's ABI, e.g. "10.11.0.0">,
+ *     "targetAbi":  <the asset's ABI, e.g. "12.0.0.0">,
  *     "version":    <tag normalized to 4 parts, e.g. "11.13.0.0">,
  *     "sourceUrl":  https://github.com/<repo>/releases/download/<tag>/<zip>,
  *     "checksum":   <uppercase MD5 of the zip — Jellyfin manifests use MD5>,
@@ -31,11 +31,13 @@
  * Usage:
  *   node scripts/release/update-manifest.js \
  *     --manifest manifest.json \
- *     --tag 11.13.0.0 \
+ *     --tag 12.0.0.0 \
  *     --repo n00bcodr/Jellyfin-Enhanced \
  *     --changelog-file /tmp/changelog.txt \
- *     --asset 10.11.0.0=dist/Jellyfin.Plugin.JellyfinEnhanced_10.11.0.zip \
- *     [--asset 12.0.0.0=dist/Jellyfin.Plugin.JellyfinEnhanced_12.0.0.zip]
+ *     --asset 12.0.0.0=dist/Jellyfin.Plugin.JellyfinEnhanced_12.0.0.zip
+ *
+ * New releases carry only the Jellyfin 12 asset (targetAbi 12.0.0.0); the
+ * manifest's existing 10.11.0.0 entries are frozen history and stay as-is.
  *
  * The generated entries are printed to stdout as JSON for use in workflow
  * summaries.
