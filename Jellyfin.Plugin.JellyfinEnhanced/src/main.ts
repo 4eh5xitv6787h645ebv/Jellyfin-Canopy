@@ -27,3 +27,17 @@ import './core/dom-observer';
 import './core/ui-kit';
 import './core/api-client';
 import './core/tag-renderer-base';
+
+// Area barrels — each imports that area's converted modules in execution
+// order. Areas convert independently (one wave per area) without touching
+// this file; unconverted files still ride in via the legacy array appended
+// by scripts/build-bundle.js. NOTE: all src imports execute BEFORE all
+// legacy-array files — conversions must move whole prefix-families at once
+// so intra-family eager ordering survives.
+import './enhanced/index';
+import './jellyseerr/index';
+import './arr/index';
+import './tags/index';
+import './elsewhere/index';
+import './extras/index';
+import './others/index';
