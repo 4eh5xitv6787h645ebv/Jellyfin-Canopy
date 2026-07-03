@@ -621,8 +621,6 @@
                 'enhanced/bookmarks-library-modals.js',
                 'enhanced/bookmarks-library-replacements.js',
                 'enhanced/bookmarks-library-init.js',
-                'enhanced/osd-rating.js',
-                'enhanced/pausescreen.js',
 
                 // elsewhere
                 'elsewhere/elsewhere.js',

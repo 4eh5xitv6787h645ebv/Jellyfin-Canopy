@@ -34,3 +34,5 @@ import './hidden-content-buttons';
 import './hidden-content-init';
 import './subtitles';
 import './themer';
+import './osd-rating';
+import './pausescreen';
