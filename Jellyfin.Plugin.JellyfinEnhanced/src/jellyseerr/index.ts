@@ -4,6 +4,7 @@
 // Relative order mirrors the former js/plugin.js allComponentScripts jellyseerr
 // block; unconverted files still ride in via the legacy array appended by
 // scripts/build-bundle.js.
+import './seerr-status';
 import './request-manager';
 import './api';
 import './jellyseerr';

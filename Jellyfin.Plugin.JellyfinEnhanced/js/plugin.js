@@ -661,7 +661,6 @@
                 'elsewhere/reviews.js',
 
                 // jellyseerr
-                'jellyseerr/seerr-status.js',
                 'jellyseerr/ui-icons.js',
                 'jellyseerr/ui-styles.js',
                 'jellyseerr/ui-popover.js',
