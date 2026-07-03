@@ -8,3 +8,4 @@ import './seerr-status';
 import './request-manager';
 import './api';
 import './jellyseerr';
+import './modal';

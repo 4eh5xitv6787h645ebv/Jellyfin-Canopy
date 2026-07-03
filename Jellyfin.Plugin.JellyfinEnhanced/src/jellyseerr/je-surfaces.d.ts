@@ -19,8 +19,6 @@ declare module '../types/je' {
         // ── jellyseerr area, not yet converted (deleted as families land) ──
         /** jellyseerr/jellyseerr.js entry point (legacy). */
         initializeJellyseerrScript?: any;
-        /** jellyseerr/modal.js generic request modal (legacy). */
-        jellyseerrModal?: any;
         /** jellyseerr/issue-reporter.js surface (legacy). */
         jellyseerrIssueReporter?: any;
         /** jellyseerr/seamless-scroll.js infinite-scroll utility (legacy). */

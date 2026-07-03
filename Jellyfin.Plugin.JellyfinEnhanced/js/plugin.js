@@ -671,7 +671,6 @@
                 'jellyseerr/ui-results.js',
                 'jellyseerr/ui-request-modals.js',
                 'jellyseerr/ui-season-modal.js',
-                'jellyseerr/modal.js',
                 'jellyseerr/more-info-modal-styles.js',
                 'jellyseerr/more-info-modal-data.js',
                 'jellyseerr/more-info-modal-seasons.js',

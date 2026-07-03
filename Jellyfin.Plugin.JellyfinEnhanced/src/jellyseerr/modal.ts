@@ -1,0 +1,314 @@
+// src/jellyseerr/modal.ts
+import { JE } from '../globals';
+
+/* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
+
+/** Options for the generic Seerr request modal. */
+export interface JellyseerrModalOptions {
+    title: string;
+    subtitle: string;
+    bodyHtml: string;
+    backdropPath?: string | null;
+    backdropUrl?: string | null;
+    onSave: (modalElement: HTMLElement, primaryBtn: HTMLButtonElement, close: () => void) => void;
+    onClose?: () => void;
+    buttonText?: string;
+}
+
+/** Handle returned by JellyseerrModalApi.create. */
+export interface JellyseerrModalHandle {
+    modalElement: HTMLElement;
+    show: () => void;
+    close: () => void;
+}
+
+/** Generic Seerr request modal factory (JE.jellyseerrModal). */
+export interface JellyseerrModalApi {
+    create: (options: JellyseerrModalOptions) => JellyseerrModalHandle;
+    createAdvancedOptionsHTML: (idPrefix: string) => string;
+    populateAdvancedOptions: (modalElement: HTMLElement, data: any, idPrefix: string) => void;
+}
+
+declare module '../types/je' {
+    interface JEGlobal {
+        /** Generic Seerr request modal (src/jellyseerr/modal.ts). */
+        jellyseerrModal?: JellyseerrModalApi;
+    }
+}
+
+const logPrefix = '🪼 Jellyfin Enhanced: Jellyseerr Modal:';
+const modal = {} as JellyseerrModalApi;
+
+const escapeHtml = JE.escapeHtml;
+
+/**
+ * Creates and manages a generic modal for Jellyseerr requests.
+ * @param {object} options - Configuration for the modal.
+ * @param {string} options.title - The main title of the modal.
+ * @param {string} options.subtitle - The subtitle (usually the movie/show name).
+ * @param {string} options.bodyHtml - The HTML content for the modal body.
+ * @param {string} options.backdropPath - TMDB backdrop image path (e.g., '/abc123.jpg').
+ * @param {string} options.backdropUrl - Full backdrop image URL (alternative to backdropPath).
+ * @param {function} options.onSave - The callback function to execute when the primary button is clicked.
+ * @param {function} [options.onClose] - Optional cleanup callback invoked before the modal is removed.
+ * @param {string} [options.buttonText] - Optional custom text for the primary button (defaults to localized 'Request').
+ * @returns {object} - An object with methods to show and close the modal.
+ */
+modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, onSave, onClose, buttonText }) {
+    const modalElement = document.createElement('div');
+    modalElement.className = 'jellyseerr-season-modal';
+    modalElement.setAttribute('role', 'dialog');
+    modalElement.setAttribute('aria-modal', 'true');
+    modalElement.setAttribute('tabindex', '-1');
+
+    // Support both backdropUrl (full URL) and backdropPath (TMDB path)
+    let backdropImage;
+    if (backdropUrl) {
+        backdropImage = `url('${escapeHtml(backdropUrl)}')`;
+    } else if (backdropPath) {
+        backdropImage = `url('https://image.tmdb.org/t/p/w1280${escapeHtml(backdropPath)}')`;
+    } else {
+        backdropImage = 'linear-gradient(45deg, #3b82f6, #8b5cf6)';
+    }
+
+    // Build modal structure — bodyHtml is intentionally trusted HTML from internal callers
+    const contentEl = document.createElement('div');
+    contentEl.className = 'jellyseerr-season-content';
+    contentEl.setAttribute('role', 'document');
+    contentEl.setAttribute('aria-labelledby', 'jellyseerr-modal-title');
+
+    const headerEl = document.createElement('div');
+    headerEl.className = 'jellyseerr-season-header';
+    headerEl.style.cssText = `background-image: ${backdropImage}; background-size: cover; background-position: center;`;
+
+    const titleEl = document.createElement('div');
+    titleEl.id = 'jellyseerr-modal-title';
+    titleEl.className = 'jellyseerr-season-title';
+    titleEl.textContent = title;
+
+    const subtitleEl = document.createElement('div');
+    subtitleEl.className = 'jellyseerr-season-subtitle';
+    subtitleEl.textContent = subtitle;
+
+    headerEl.appendChild(titleEl);
+    headerEl.appendChild(subtitleEl);
+
+    const bodyEl = document.createElement('div');
+    bodyEl.className = 'jellyseerr-modal-body';
+    bodyEl.style.cssText = 'padding: 24px; max-height: calc(80vh - 200px); overflow-y: auto;';
+    bodyEl.innerHTML = bodyHtml;
+
+    const footerEl = document.createElement('div');
+    footerEl.className = 'jellyseerr-modal-footer';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'jellyseerr-modal-button jellyseerr-modal-button-secondary';
+    cancelBtn.setAttribute('aria-label', JE.t!('jellyseerr_modal_cancel'));
+    cancelBtn.textContent = JE.t!('jellyseerr_modal_cancel');
+
+    const primaryBtn = document.createElement('button');
+    primaryBtn.className = 'jellyseerr-modal-button jellyseerr-modal-button-primary';
+    primaryBtn.setAttribute('aria-label', buttonText || JE.t!('jellyseerr_modal_request'));
+    primaryBtn.textContent = buttonText || JE.t!('jellyseerr_modal_request');
+
+    footerEl.appendChild(cancelBtn);
+    footerEl.appendChild(primaryBtn);
+
+    contentEl.appendChild(headerEl);
+    contentEl.appendChild(bodyEl);
+    contentEl.appendChild(footerEl);
+
+    modalElement.appendChild(contentEl);
+
+    // Handle keyboard navigation
+    const handleKeydown = (e: KeyboardEvent) => {
+        // Close on Escape
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            history.back();
+            return;
+        }
+
+        // Tab key focus trap
+        if (e.key === 'Tab') {
+            const focusableElements = modalElement.querySelectorAll(
+                'button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            );
+            const focusableArray = Array.from(focusableElements);
+
+            if (focusableArray.length === 0) return;
+
+            const firstElement = focusableArray[0];
+            const lastElement = focusableArray[focusableArray.length - 1];
+
+            if (e.shiftKey) {
+                // Shift+Tab: if on first element, wrap to last
+                if (document.activeElement === firstElement || document.activeElement === modalElement) {
+                    e.preventDefault();
+                    (lastElement as HTMLElement).focus();
+                }
+            } else {
+                // Tab: if on last element, wrap to first
+                if (document.activeElement === lastElement) {
+                    e.preventDefault();
+                    (firstElement as HTMLElement).focus();
+                }
+            }
+        }
+    };
+
+    const show = () => {
+        document.body.appendChild(modalElement);
+        document.body.classList.add('jellyseerr-modal-is-open');
+        // Add a state to history to handle back button for closing
+        history.pushState(null, '', location.href);
+        window.addEventListener('popstate', close);
+        document.addEventListener('keydown', handleKeydown);
+        setTimeout(() => {
+            modalElement.classList.add('show');
+            // Focus the first interactive element in the modal
+            const firstFocusable = modalElement.querySelector('button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex="0"]');
+            if (firstFocusable) {
+                (firstFocusable as HTMLElement).focus();
+            } else {
+                modalElement.focus();
+            }
+        }, 10);
+    };
+
+    let isClosing = false;
+
+    const close = () => {
+        if (isClosing) return;
+        isClosing = true;
+
+        if (typeof onClose === 'function') {
+            try {
+                onClose();
+            } catch (err) {
+                console.error(`${logPrefix} onClose handler failed:`, err);
+            }
+        }
+
+        window.removeEventListener('popstate', close);
+        document.removeEventListener('keydown', handleKeydown);
+        modalElement.classList.remove('show');
+        document.body.classList.remove('jellyseerr-modal-is-open');
+        setTimeout(() => {
+            if (document.body.contains(modalElement)) {
+                document.body.removeChild(modalElement);
+            }
+            isClosing = false;
+        }, 300);
+    };
+
+    // Event listeners for closing the modal
+    cancelBtn.addEventListener('click', () => history.back());
+    modalElement.addEventListener('click', (e: MouseEvent) => { if (e.target === modalElement) history.back(); });
+
+    // Event listener for the primary action button
+    primaryBtn.addEventListener('click', () => onSave(modalElement, primaryBtn, close));
+
+    return { modalElement, show, close };
+};
+
+/**
+ * Generates the HTML string for the advanced request options form.
+ * @param {string} idPrefix - A prefix ('movie' or 'tv') to ensure unique element IDs.
+ * @returns {string} - The HTML content for the form.
+ */
+modal.createAdvancedOptionsHTML = function(idPrefix) {
+    return `
+        <div class="jellyseerr-advanced-options">
+            <h3>${JE.t!('jellyseerr_advanced_options')}</h3>
+            <div class="jellyseerr-form-row">
+                <div class="jellyseerr-form-group">
+                    <label for="${idPrefix}-server">${JE.t!('jellyseerr_server_select')}</label>
+                    <select is="emby-select" id="${idPrefix}-server" class="emby-select"></select>
+                </div>
+                <div class="jellyseerr-form-group">
+                    <label for="${idPrefix}-quality">${JE.t!('jellyseerr_quality_select')}</label>
+                    <select is="emby-select" id="${idPrefix}-quality" class="emby-select"></select>
+                </div>
+            </div>
+            <div class="jellyseerr-form-row">
+                <div class="jellyseerr-form-group">
+                    <label for="${idPrefix}-folder">${JE.t!('jellyseerr_folder_select')}</label>
+                    <select is="emby-select" id="${idPrefix}-folder" class="emby-select"></select>
+                </div>
+            </div>
+        </div>
+    `;
+};
+
+/**
+ * Populates the select dropdowns in the advanced options form.
+ * @param {HTMLElement} modalElement - The root element of the modal.
+ * @param {object} data - The data fetched from the API, containing servers, profiles, and folders.
+ * @param {string} idPrefix - The prefix ('movie' or 'tv') used for the element IDs.
+ */
+modal.populateAdvancedOptions = function(modalElement, data, idPrefix) {
+    // Use a timer to ensure emby-select elements are ready
+    let attempts = 0;
+    const maxAttempts = 50; // 5 seconds
+    const interval = setInterval(() => {
+        const serverSelect = modalElement.querySelector<HTMLSelectElement>(`#${idPrefix}-server`);
+        const qualitySelect = modalElement.querySelector<HTMLSelectElement>(`#${idPrefix}-quality`);
+        const folderSelect = modalElement.querySelector<HTMLSelectElement>(`#${idPrefix}-folder`);
+
+        if (serverSelect && qualitySelect && folderSelect) {
+            clearInterval(interval);
+
+            serverSelect.innerHTML = '<option value="">Select Server...</option>';
+            qualitySelect.innerHTML = '<option value="">Select Quality...</option>';
+            folderSelect.innerHTML = '<option value="">Select Folder...</option>';
+
+            data.servers.forEach((server: any) => {
+                const option = document.createElement('option');
+                option.value = server.id;
+                option.textContent = server.name || `Server ${server.id}`;
+                if (server.isDefault) option.selected = true;
+                serverSelect.appendChild(option);
+            });
+
+            function updateServerDependentOptions() {
+                const selectedServer = data.servers.find((s: any) => s.id == serverSelect!.value);
+                qualitySelect!.innerHTML = '<option value="">Select Quality...</option>';
+                folderSelect!.innerHTML = '<option value="">Select Folder...</option>';
+                if (!selectedServer) return;
+
+                selectedServer.qualityProfiles.forEach((profile: any) => {
+                    const option = document.createElement('option');
+                    option.value = profile.id;
+                    option.textContent = profile.name || `Profile ${profile.id}`;
+                    if (profile.id === selectedServer.activeProfileId) option.selected = true;
+                    qualitySelect!.appendChild(option);
+                });
+                selectedServer.rootFolders.forEach((folder: any) => {
+                    const option = document.createElement('option');
+                    option.value = folder.path;
+                    option.textContent = folder.path;
+                    if (folder.path === selectedServer.activeDirectory) option.selected = true;
+                    folderSelect!.appendChild(option);
+                });
+            }
+
+            serverSelect.addEventListener('change', updateServerDependentOptions);
+            // Trigger initial population if a default server is selected
+            if (serverSelect.value) {
+                updateServerDependentOptions();
+            }
+
+        } else {
+            attempts++;
+            if (attempts > maxAttempts) {
+                clearInterval(interval);
+                console.error(`${logPrefix} Could not find advanced options elements in modal after ${maxAttempts} attempts.`);
+            }
+        }
+    }, 100);
+};
+
+// Expose the modal module on the global JE object
+JE.jellyseerrModal = modal;
