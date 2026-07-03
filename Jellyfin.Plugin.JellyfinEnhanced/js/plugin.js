@@ -662,8 +662,6 @@
 
                 // jellyseerr
                 'jellyseerr/seerr-status.js',
-                'jellyseerr/request-manager.js',
-                'jellyseerr/api.js',
                 'jellyseerr/jellyseerr.js',
                 'jellyseerr/ui-icons.js',
                 'jellyseerr/ui-styles.js',

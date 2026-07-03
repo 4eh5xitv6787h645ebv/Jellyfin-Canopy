@@ -1,5 +1,8 @@
 // src/jellyseerr/index.ts — area barrel: imports this area's converted modules in
 // their required execution order. Owned by the jellyseerr conversion wave; main.ts
 // imports this barrel once, so conversions never edit main.ts itself.
-// (Empty until the area converts; esbuild treats an empty module as a no-op.)
-export {};
+// Relative order mirrors the former js/plugin.js allComponentScripts jellyseerr
+// block; unconverted files still ride in via the legacy array appended by
+// scripts/build-bundle.js.
+import './request-manager';
+import './api';
