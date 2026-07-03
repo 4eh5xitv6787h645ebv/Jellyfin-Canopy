@@ -680,11 +680,6 @@
                 'jellyseerr/more-info-modal-actions.js',
                 'jellyseerr/more-info-modal-init.js',
                 'jellyseerr/hss-discovery-handler.js',
-                'jellyseerr/network-discovery.js',
-                'jellyseerr/person-discovery.js',
-                'jellyseerr/genre-discovery.js',
-                'jellyseerr/tag-discovery.js',
-                'jellyseerr/collection-discovery.js',
 
                 // tags
                 'tags/genretags.js',

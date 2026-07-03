@@ -14,3 +14,8 @@ import './issue-reporter';
 import './seamless-scroll';
 import './discovery-filter-utils';
 import './discovery-base';
+import './network-discovery';
+import './person-discovery';
+import './genre-discovery';
+import './tag-discovery';
+import './collection-discovery';
