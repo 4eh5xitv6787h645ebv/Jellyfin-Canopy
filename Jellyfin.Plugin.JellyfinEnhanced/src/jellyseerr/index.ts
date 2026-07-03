@@ -12,3 +12,4 @@ import './modal';
 import './item-details';
 import './issue-reporter';
 import './seamless-scroll';
+import './discovery-filter-utils';

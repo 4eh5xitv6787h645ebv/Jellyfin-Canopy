@@ -12,6 +12,8 @@ declare global {
     interface JellyfinApiClient {
         /** Overload merge: jellyfin-web's getUrl accepts an optional params object. */
         getUrl(path: string, params?: Record<string, unknown>): string;
+        /** Overload merge: ajax accepts request headers. */
+        ajax(options: { type: string; url: string; dataType?: string; data?: unknown; contentType?: string; headers?: Record<string, string>; signal?: AbortSignal }): Promise<any>;
     }
 }
 
@@ -29,8 +31,6 @@ declare module '../types/je' {
         // ── jellyseerr area, not yet converted (deleted as families land) ──
         /** jellyseerr/jellyseerr.js entry point (legacy). */
         initializeJellyseerrScript?: any;
-        /** jellyseerr/discovery-filter-utils.js filter helpers (legacy). */
-        discoveryFilter?: any;
         /** jellyseerr/discovery-base.js shared discovery chassis (legacy). */
         discoveryBase?: any;
         /** jellyseerr/more-info-modal-* surface (legacy). */
