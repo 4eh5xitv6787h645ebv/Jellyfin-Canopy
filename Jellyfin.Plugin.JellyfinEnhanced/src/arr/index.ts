@@ -4,3 +4,11 @@
 // imports this barrel once, so conversions never edit main.ts itself.
 import './arr-links';
 import './arr-tag-links';
+import './requests-page-styles';
+import './requests-page-data';
+import './requests-page-render-helpers';
+import './requests-page-render-cards';
+import './requests-page-render';
+import './requests-page-actions';
+import './requests-page-init';
+import './requests-custom-tab';

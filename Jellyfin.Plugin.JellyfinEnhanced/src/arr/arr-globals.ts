@@ -39,6 +39,15 @@ export interface ArrPluginConfig extends PluginConfig {
     RadarrUrlMappings?: string;
     BazarrUrl?: string;
     BazarrUrlMappings?: string;
+    JellyseerrEnabled?: boolean;
+    ShowDownloadsInRequests?: boolean;
+    DownloadsPageEnabled?: boolean;
+    DownloadsPageShowIssues?: boolean;
+    DownloadsPagePollingEnabled?: boolean;
+    DownloadsPollIntervalSeconds?: number;
+    DownloadsUseCustomTabs?: boolean;
+    DownloadsUseNativeTab?: boolean;
+    DownloadsUsePluginPages?: boolean;
 }
 
 /** The per-user settings keys the arr modules read/write, typed. */
@@ -116,8 +125,18 @@ export interface ArrJE extends JEGlobal {
     IconName?: Record<string, string>;
     /** Hidden-content filtering surface (js/enhanced/hidden-content-*). */
     hiddenContent?: {
-        filterRequestItems?<T>(items: T[]): T[];
-        filterCalendarEvents?<T>(events: T[]): T[];
+        filterRequestItems?: <T>(items: T[]) => T[];
+        filterCalendarEvents?: <T>(events: T[]) => T[];
+        [key: string]: unknown;
+    };
+    /** Native home-tab registry (js/enhanced/native-tabs.js — legacy half). */
+    nativeTabs?: {
+        register: (id: string, title: string, onMount: (panel: HTMLElement) => void, icon?: string) => void;
+        unregister: (id: string) => void;
+    };
+    /** Jellyseerr issue-report modal (js/jellyseerr/issue-reporter.js). */
+    jellyseerrIssueReporter?: {
+        showReportModal?: (tmdbId: string, title: string, mediaType: string, seasonNumber: unknown, episodeNumber: unknown) => void;
         [key: string]: unknown;
     };
 
@@ -126,6 +145,8 @@ export interface ArrJE extends JEGlobal {
     initializeArrLinksScript?: () => Promise<void>;
     _arrLinksObserver?: MutationObserver | ObserverProxy | null;
     initializeArrTagLinksScript?: () => Promise<void>;
+    downloadsPage?: import('./requests-page-init').DownloadsPageApi;
+    initializeDownloadsPage?: () => void;
 }
 
 /**
