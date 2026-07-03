@@ -48,6 +48,17 @@ export interface ArrPluginConfig extends PluginConfig {
     DownloadsUseCustomTabs?: boolean;
     DownloadsUseNativeTab?: boolean;
     DownloadsUsePluginPages?: boolean;
+    CalendarPageEnabled?: boolean;
+    CalendarFirstDayOfWeek?: string;
+    CalendarTimeFormat?: string;
+    CalendarHighlightFavorites?: boolean;
+    CalendarHighlightWatchedSeries?: boolean;
+    CalendarFilterByLibraryAccess?: boolean;
+    CalendarShowOnlyRequested?: boolean;
+    CalendarForceOnlyRequested?: boolean;
+    CalendarUseCustomTabs?: boolean;
+    CalendarUseNativeTab?: boolean;
+    CalendarUsePluginPages?: boolean;
 }
 
 /** The per-user settings keys the arr modules read/write, typed. */
@@ -147,6 +158,8 @@ export interface ArrJE extends JEGlobal {
     initializeArrTagLinksScript?: () => Promise<void>;
     downloadsPage?: import('./requests-page-init').DownloadsPageApi;
     initializeDownloadsPage?: () => void;
+    calendarPage?: import('./calendar-page-init').CalendarPageApi;
+    initializeCalendarPage?: () => void;
 }
 
 /**

@@ -704,15 +704,6 @@
                 'tags/ratingtags.js',
                 'tags/userreviewtags.js',
 
-                // arr
-                'arr/calendar-page-styles.js',
-                'arr/calendar-page-data.js',
-                'arr/calendar-page-render-events.js',
-                'arr/calendar-page-render-views.js',
-                'arr/calendar-page-actions.js',
-                'arr/calendar-page-init.js',
-                'arr/calendar-custom-tab.js',
-
                 // extras
                 'extras/colored-activity-icons.js',
                 'extras/colored-ratings.js',
