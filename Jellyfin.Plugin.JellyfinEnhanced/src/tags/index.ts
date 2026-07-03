@@ -1,5 +1,10 @@
 // src/tags/index.ts — area barrel: imports this area's converted modules in
-// their required execution order. Owned by the tags conversion wave; main.ts
-// imports this barrel once, so conversions never edit main.ts itself.
-// (Empty until the area converts; esbuild treats an empty module as a no-op.)
-export {};
+// their required execution order (the former allComponentScripts order).
+// Owned by the tags conversion wave; main.ts imports this barrel once, so
+// conversions never edit main.ts itself.
+import './genretags';
+import './languagetags';
+import './peopletags';
+import './qualitytags';
+import './ratingtags';
+import './userreviewtags';

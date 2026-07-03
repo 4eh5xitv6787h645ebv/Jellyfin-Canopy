@@ -696,14 +696,6 @@
                 'jellyseerr/tag-discovery.js',
                 'jellyseerr/collection-discovery.js',
 
-                // tags
-                'tags/genretags.js',
-                'tags/languagetags.js',
-                'tags/peopletags.js',
-                'tags/qualitytags.js',
-                'tags/ratingtags.js',
-                'tags/userreviewtags.js',
-
                 // arr
                 'arr/arr-links.js',
                 'arr/arr-tag-links.js',
