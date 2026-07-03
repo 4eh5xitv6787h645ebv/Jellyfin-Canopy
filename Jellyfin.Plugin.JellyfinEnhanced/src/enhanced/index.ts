@@ -19,5 +19,7 @@ import './features-release-dates';
 import './features-details-page';
 import './features-remove-home';
 import './features-remove-multiselect';
+import './events';
+import './playback';
 import './subtitles';
 import './themer';

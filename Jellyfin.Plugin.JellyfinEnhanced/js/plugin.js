@@ -584,8 +584,6 @@
             // eslint-disable-next-line no-unused-vars -- build-time manifest parsed by scripts/build-bundle.js
             const allComponentScripts = [
                 // enhanced
-                'enhanced/events.js',
-                'enhanced/playback.js',
                 // hidden-content modules — order matters: -data.js owns the
                 // store + lookup sets that the later files consume via
                 // JE.internals.hiddenContent; -init.js exposes the frozen
