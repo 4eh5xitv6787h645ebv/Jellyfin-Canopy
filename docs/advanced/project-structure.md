@@ -1,23 +1,39 @@
 ## Project Structure
 
-The plugin architecture uses a single entry point (`plugin.js`) that loads all other feature modules — individually in development mode, or as one minified bundle in production (built by esbuild at compile time and embedded in the plugin DLL).
+The plugin architecture uses a single entry point (`plugin.js`) that boots the shared `JE` namespace, loads config, and then loads all component code as **one esbuild bundle** (`dist/je.bundle.js`, built at compile time and embedded in the plugin DLL — minified in production, served fresh with a sourcemap in dev mode).
 
-### Client scripts (`Jellyfin.Plugin.JellyfinEnhanced/js/`)
+The client code is mid-migration to TypeScript ES modules: the shared core layer already lives in `src/` (real imports define its execution order), while feature modules remain classic scripts under `js/` until their conversion wave.
 
-Every module is a classic script (an IIFE over the shared `window.JellyfinEnhanced` global, aliased `JE`). `plugin.js` owns the load order; scripts execute strictly in array order. Large features are split into flat, prefixed module files (for example `hidden-content-*.js`) that share private state through `JE.internals.<feature>` — folder names must not contain dashes (embedded-resource naming), file names may.
+### TypeScript modules (`Jellyfin.Plugin.JellyfinEnhanced/src/`)
+
+Strict TypeScript (own program: `tsconfig.src.json`, `npm run typecheck:src`), unit-tested with vitest (`npm run test:client`). Modules import each other directly AND still assign their frozen public surface onto `window.JellyfinEnhanced` (`JE.core.*`, `JE.escapeHtml`, `JE.toast`) for the unconverted scripts and user scripts.
+
+```text
+Jellyfin.Plugin.JellyfinEnhanced/
+└── src/
+    ├── main.ts              # Bundle entry: imports the core modules in dependency order
+    ├── globals.ts           # The one place src/ obtains window.JellyfinEnhanced
+    ├── core/                # Shared infrastructure — executes before every feature module
+    │   ├── navigation.ts    # One place for SPA navigation events (pushState patch, hashchange/viewshow dedup)
+    │   ├── lifecycle.ts     # Per-feature teardown registry (observers, intervals, listeners, AbortControllers)
+    │   ├── dom-observer.ts  # Multiplexed body MutationObserver, waitForElement, createObserver
+    │   ├── api-client.ts    # One fetch wrapper: auth headers, retry/dedup/concurrency, JE.core.api.{fetch,jf,plugin}
+    │   ├── ui-kit.ts        # escapeHtml, toast, injectCss — the single copies
+    │   ├── tag-renderer-base.ts  # Factory owning the shared tag-module plumbing (cache, mark, reinit)
+    │   └── *.test.ts        # Vitest unit tests, colocated
+    ├── types/               # JEGlobal (the typed window.JellyfinEnhanced contract), PluginConfig placeholder, host globals
+    └── test/setup.ts        # Vitest bootstrap stub (what plugin.js provides in the real client)
+```
+
+### Legacy client scripts (`Jellyfin.Plugin.JellyfinEnhanced/js/`)
+
+Every module here is still a classic script (an IIFE over the shared `window.JellyfinEnhanced` global, aliased `JE`). The `allComponentScripts` array in `plugin.js` is the load-order source of truth for these files — consumed at build time by `scripts/build-bundle.js`, which appends them after `src/main.ts` in the bundle. Converting a file means removing its array entry and importing it from `src/` instead. Large features are split into flat, prefixed module files (for example `hidden-content-*.js`) that share private state through `JE.internals.<feature>` — folder names must not contain dashes (embedded-resource naming), file names may.
 
 ```text
 Jellyfin.Plugin.JellyfinEnhanced/
 └── js/
-    ├── plugin.js            # Entry point: boots JE, loads config, then all modules (or dist/je.bundle.js in production)
-    ├── core/                # Shared infrastructure — loads before every feature module
-    │   ├── navigation.js    # One place for SPA navigation events (pushState patch, hashchange/viewshow dedup)
-    │   ├── lifecycle.js     # Per-feature teardown registry (observers, intervals, listeners, AbortControllers)
-    │   ├── dom-observer.js  # Multiplexed body MutationObserver, waitForElement, createObserver
-    │   ├── api-client.js    # One fetch wrapper: auth headers, retry/dedup/concurrency, JE.core.api.{fetch,jf,plugin}
-    │   ├── ui-kit.js        # escapeHtml, toast, injectCss — the single copies
-    │   ├── tag-renderer-base.js  # Factory owning the shared tag-module plumbing (cache, mark, reinit)
-    │   └── globals.d.ts     # Ambient types for // @ts-check modules
+    ├── plugin.js            # Entry point: boots JE, loads config, then dist/je.bundle.js
+    ├── core/globals.d.ts    # Ambient types for the remaining // @ts-check scripts (implementation moved to src/core/)
     ├── enhanced/            # Core features
     │   ├── config.js / helpers.js / events.js / icons.js / translations.js / themer.js
     │   ├── playback.js / subtitles.js / pausescreen.js / osd-rating.js / native-tabs.js
@@ -37,7 +53,7 @@ Jellyfin.Plugin.JellyfinEnhanced/
     │   ├── arr-links.js / arr-tag-links.js
     │   ├── calendar-page-*.js + calendar-custom-tab.js     # Calendar page (styles/data/render/actions/init)
     │   └── requests-page-*.js + requests-custom-tab.js     # Downloads/requests page (styles/data/render/actions/init)
-    ├── tags/                # Tag renderer specs over core/tag-renderer-base.js + tag-pipeline.js
+    ├── tags/                # Tag renderer specs over src/core/tag-renderer-base.ts + tag-pipeline.js
     │   └── genretags.js / languagetags.js / qualitytags.js / ratingtags.js / peopletags.js / userreviewtags.js
     ├── elsewhere/           # Streaming-availability + reviews
     ├── extras/              # Active streams, colored ratings/icons, theme selector, plugin icons, login image
@@ -75,7 +91,8 @@ Jellyfin.Plugin.JellyfinEnhanced/
 
 ### Development tooling
 
-- `npm run syntax` / `npm run lint` / `npm run typecheck` — gates for every served script (see CONTRIBUTING.md)
-- `npm run build:bundle` — the production bundle (also run automatically by the C# build)
+- `npm run syntax` / `npm run lint` / `npm run typecheck` — gates for every legacy `js/` script (see CONTRIBUTING.md)
+- `npm run typecheck:src` / `npm run test:client` — strict type check + vitest unit tests for the `src/` TypeScript tree
+- `npm run build:bundle` — the client bundle (also run automatically by the C# build); `npm run watch` rebuilds it (unminified) on every source change
 - `Jellyfin.Plugin.JellyfinEnhanced.Tests/` — xUnit tests, including golden snapshots for the config payloads and on-disk user-file formats
 - `scripts/release/` — release packaging + manifest generation/validation (see RELEASING.md)

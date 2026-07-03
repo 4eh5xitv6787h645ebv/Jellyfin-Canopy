@@ -265,43 +265,13 @@
 
 
     /**
-     * Loads an array of scripts dynamically.
-     * @param {string[]} scripts - Array of script filenames.
-     * @param {string} basePath - The base URL path for the scripts.
-     * @returns {Promise<void>} - A promise that resolves when all scripts attempt to load.
-     */
-    function loadScripts(scripts, basePath) {
-        const promises = scripts.map(scriptName => {
-            return new Promise((resolve) => { // Always resolve so one failure doesn't stop others
-                const script = document.createElement('script');
-                // Dynamically-inserted scripts are async by default (execute in
-                // arrival order). async=false keeps parallel download but forces
-                // execution in array order, so js/core/* is guaranteed to run
-                // before every module that depends on it.
-                script.async = false;
-                script.src = ApiClient.getUrl(`${basePath}/${scriptName}?v=${getScriptVersion()}`);
-                script.onload = () => {
-                    resolve({ status: 'fulfilled', script: scriptName });
-                };
-                script.onerror = (e) => {
-                    console.error(`🪼 Jellyfin Enhanced: Failed to load script '${scriptName}'`, e);
-                    resolve({ status: 'rejected', script: scriptName, error: e }); // Resolve even on error
-                };
-                document.head.appendChild(script);
-            });
-        });
-        // Wait for all promises to settle (either fulfilled or rejected)
-        return Promise.allSettled(promises);
-    }
-
-    /**
-     * Loads the production client bundle (all component scripts concatenated
-     * in load order, minified) as a single script. The bundle is generated at
-     * build time from the allComponentScripts array below, so its execution
-     * is identical to loading the individual files — just one request.
-     * @returns {Promise<boolean>} true when the bundle loaded, false when it is
-     * unavailable (e.g. a build without the bundle resource) and the caller
-     * should fall back to loading the individual files.
+     * Loads the client bundle (src/main.ts + all remaining component scripts,
+     * concatenated in load order) as a single script. The bundle is generated
+     * at build time by scripts/build-bundle.js and embedded in the DLL, so it
+     * is present in every build; it is the ONLY way component code is loaded
+     * (dev mode included — DevMode serves it with no-store + a fresh
+     * cache-buster, and with a sourcemap for real-file stack traces).
+     * @returns {Promise<boolean>} true when the bundle loaded, false on failure.
      */
     function loadBundle() {
         return new Promise((resolve) => {
@@ -309,8 +279,14 @@
             script.async = false;
             script.src = ApiClient.getUrl(`/JellyfinEnhanced/dist/je.bundle.js?v=${getScriptVersion()}`);
             script.onload = () => resolve(true);
-            script.onerror = () => {
-                console.warn('🪼 Jellyfin Enhanced: Production bundle unavailable, falling back to individual module files.');
+            script.onerror = (e) => {
+                console.error(
+                    '🪼 Jellyfin Enhanced: FATAL — the client bundle (/JellyfinEnhanced/dist/je.bundle.js) ' +
+                    'failed to load. The plugin cannot start without it; no per-file fallback exists. ' +
+                    'This usually means the plugin DLL was built without the bundle step (dotnet build ' +
+                    'runs scripts/build-bundle.js automatically) or the server failed to serve the resource.',
+                    e
+                );
                 script.remove();
                 resolve(false);
             };
@@ -592,7 +568,7 @@
                 JE.initializeSplashScreen();
             }
 
-            // Stage 3: Load ALL component scripts
+            // Stage 3: Load ALL component scripts (one bundle).
             //
             // The core layer (navigation detection, lifecycle registry, shared
             // body observer, fetch layer, base UI primitives) lives in the
@@ -602,9 +578,10 @@
             // This array is the load-order source of truth for the files NOT
             // yet converted to src/. It is consumed at BUILD time by
             // scripts/build-bundle.js (which appends these files after
-            // src/main.ts in the bundle) — converting a file to TypeScript
-            // means removing its entry here and importing it from src/ instead.
-            const basePath = '/JellyfinEnhanced/js';
+            // src/main.ts in the bundle); nothing reads it at runtime —
+            // converting a file to TypeScript means removing its entry here
+            // and importing it from src/ instead.
+            // eslint-disable-next-line no-unused-vars -- build-time manifest parsed by scripts/build-bundle.js
             const allComponentScripts = [
                 // enhanced
                 'enhanced/config.js',
@@ -756,15 +733,14 @@
                 // others
                 'others/letterboxd-links.js',
             ];
-            // Production: one minified bundle replaces the ~120 individual requests.
-            // DevMode (dev="true" on the injected script tag): keep per-file loading
-            // so changes are picked up without a bundle rebuild and stack traces map
-            // to real files. If the bundle resource is missing (e.g. a build made
-            // without the bundle step), fall back to per-file loading transparently.
-            const devMode = document.querySelector('script[plugin="Jellyfin Enhanced"]')?.getAttribute('dev') === 'true';
-            const bundleLoaded = devMode ? false : await loadBundle();
+            // One bundle for every mode. Production serves it immutable behind a
+            // versioned URL; DevMode serves the same route with no-store + a fresh
+            // cache-buster per load (getScriptVersion() returns Date.now() in dev)
+            // and the linked sourcemap keeps stack traces on real source files.
+            const bundleLoaded = await loadBundle();
             if (!bundleLoaded) {
-                await loadScripts(allComponentScripts, basePath);
+                if (typeof JE.hideSplashScreen === 'function') JE.hideSplashScreen();
+                return;
             }
             console.log('🪼 Jellyfin Enhanced: All component scripts loaded.');
 

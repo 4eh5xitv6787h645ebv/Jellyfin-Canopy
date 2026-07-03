@@ -157,16 +157,18 @@ Key directories:
 npm install
 
 # Client scripts: parse check, lint, and type check
-npm run syntax               # node --check on every served js/ file
-npm run lint                 # ESLint (errors gate CI; warnings are advisory)
-npm run typecheck            # tsc over files opting in with // @ts-check
+npm run syntax               # node --check on every legacy js/ file
+npm run lint                 # ESLint over js/ + src/ (errors gate CI; warnings are advisory)
+npm run typecheck            # tsc over legacy js/ files opting in with // @ts-check
+npm run typecheck:src        # tsc --strict over the TypeScript module tree (src/)
+npm run test:client          # vitest unit tests for src/ modules
 
 # Plugin: must compile (Jellyfin 12 / net10.0), and unit tests must pass
 dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release
 dotnet test                  # xUnit tests in Jellyfin.Plugin.JellyfinEnhanced.Tests
 ```
 
-New JavaScript modules should start with `// @ts-check` so the type checker covers them; existing files opt in as they get touched. New C# logic that can be tested without a running Jellyfin server should come with unit tests.
+New client modules should be written as TypeScript ES modules under `Jellyfin.Plugin.JellyfinEnhanced/src/` (strict mode, real imports, unit tests where the logic is pure); the legacy `js/` tree is frozen except for conversions and bug fixes, and its remaining files opt in to `// @ts-check` as they get touched. New C# logic that can be tested without a running Jellyfin server should come with unit tests.
 
 ### Manual checklist
 
