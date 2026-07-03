@@ -35,6 +35,7 @@ declare module '../types/je' {
 
     /** Legacy helper aliases (enhanced/helpers.js) the Seerr modules call. */
     interface JELegacyHelpers {
+        getItemCached?(itemId: string, options?: any): Promise<unknown>;
         onBodyMutation?(id: string, callback: (mutations?: MutationRecord[]) => void, options?: any): any;
         onNavigate?(callback: (event?: Event) => void): () => void;
         waitForElement?(selector: string, timeout?: number): Promise<Element | null>;

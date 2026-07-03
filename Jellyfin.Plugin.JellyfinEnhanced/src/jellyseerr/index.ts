@@ -9,3 +9,4 @@ import './request-manager';
 import './api';
 import './jellyseerr';
 import './modal';
+import './item-details';
