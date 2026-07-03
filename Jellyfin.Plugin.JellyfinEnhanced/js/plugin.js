@@ -679,7 +679,6 @@
                 'jellyseerr/more-info-modal-actions-tv.js',
                 'jellyseerr/more-info-modal-actions.js',
                 'jellyseerr/more-info-modal-init.js',
-                'jellyseerr/hss-discovery-handler.js',
 
                 // tags
                 'tags/genretags.js',

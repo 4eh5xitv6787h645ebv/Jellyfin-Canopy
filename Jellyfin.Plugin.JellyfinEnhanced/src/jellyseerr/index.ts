@@ -19,3 +19,4 @@ import './person-discovery';
 import './genre-discovery';
 import './tag-discovery';
 import './collection-discovery';
+import './hss-discovery-handler';
