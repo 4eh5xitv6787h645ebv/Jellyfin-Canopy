@@ -711,13 +711,6 @@
                 'arr/requests-custom-tab.js',
                 'arr/calendar-custom-tab.js',
 
-                // extras
-                'extras/colored-activity-icons.js',
-                'extras/colored-ratings.js',
-                'extras/plugin-icons.js',
-                'extras/theme-selector.js',
-                'extras/active-streams.js',
-
                 // others
                 'others/letterboxd-links.js',
             ];
