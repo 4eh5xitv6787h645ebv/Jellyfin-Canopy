@@ -10,7 +10,7 @@ export interface JellyseerrModalOptions {
     bodyHtml: string;
     backdropPath?: string | null;
     backdropUrl?: string | null;
-    onSave: (modalElement: HTMLElement, primaryBtn: HTMLButtonElement, close: () => void) => void;
+    onSave: (modalElement: HTMLElement, primaryBtn: HTMLButtonElement, close: () => void) => void | Promise<void>;
     onClose?: () => void;
     buttonText?: string;
 }
@@ -208,7 +208,7 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
     modalElement.addEventListener('click', (e: MouseEvent) => { if (e.target === modalElement) history.back(); });
 
     // Event listener for the primary action button
-    primaryBtn.addEventListener('click', () => onSave(modalElement, primaryBtn, close));
+    primaryBtn.addEventListener('click', () => { void onSave(modalElement, primaryBtn, close); });
 
     return { modalElement, show, close };
 };

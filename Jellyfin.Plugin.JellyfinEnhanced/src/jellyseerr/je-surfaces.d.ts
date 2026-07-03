@@ -8,6 +8,13 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy shapes; typed by their owning conversion waves */
 
+declare global {
+    interface JellyfinApiClient {
+        /** Overload merge: jellyfin-web's getUrl accepts an optional params object. */
+        getUrl(path: string, params?: Record<string, unknown>): string;
+    }
+}
+
 declare module '../types/je' {
     interface JEGlobal {
         // ── Foreign areas (loose until their conversion wave) ──────────────
@@ -15,12 +22,13 @@ declare module '../types/je' {
         t?(key: string, ...args: any[]): string;
         /** Admin hidden-content filtering surface (legacy). */
         hiddenContent?: any;
+        /** Icon helper + icon-name enum (enhanced/icons.js, legacy). */
+        icon?: (name: any) => string;
+        IconName?: any;
 
         // ── jellyseerr area, not yet converted (deleted as families land) ──
         /** jellyseerr/jellyseerr.js entry point (legacy). */
         initializeJellyseerrScript?: any;
-        /** jellyseerr/issue-reporter.js surface (legacy). */
-        jellyseerrIssueReporter?: any;
         /** jellyseerr/seamless-scroll.js infinite-scroll utility (legacy). */
         seamlessScroll?: any;
         /** jellyseerr/discovery-filter-utils.js filter helpers (legacy). */

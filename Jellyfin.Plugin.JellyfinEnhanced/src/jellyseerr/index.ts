@@ -10,3 +10,4 @@ import './api';
 import './jellyseerr';
 import './modal';
 import './item-details';
+import './issue-reporter';
