@@ -29,8 +29,6 @@ declare module '../types/je' {
         // ── jellyseerr area, not yet converted (deleted as families land) ──
         /** jellyseerr/jellyseerr.js entry point (legacy). */
         initializeJellyseerrScript?: any;
-        /** jellyseerr/seamless-scroll.js infinite-scroll utility (legacy). */
-        seamlessScroll?: any;
         /** jellyseerr/discovery-filter-utils.js filter helpers (legacy). */
         discoveryFilter?: any;
         /** jellyseerr/discovery-base.js shared discovery chassis (legacy). */

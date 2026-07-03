@@ -680,7 +680,6 @@
                 'jellyseerr/more-info-modal-actions.js',
                 'jellyseerr/more-info-modal-init.js',
                 'jellyseerr/hss-discovery-handler.js',
-                'jellyseerr/seamless-scroll.js',
                 'jellyseerr/discovery-filter-utils.js',
                 'jellyseerr/discovery-base.js',
                 'jellyseerr/network-discovery.js',
