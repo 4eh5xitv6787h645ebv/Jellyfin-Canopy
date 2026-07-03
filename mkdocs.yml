@@ -169,6 +169,7 @@ nav:
     - CSS Customization: advanced/css-customization.md
     - API: advanced/api.md
     - Project Structure: advanced/project-structure.md
+    - Jellyfin 12 Platform: v12-platform.md
   - FAQ + Support:
     - FAQ: faq-support/faq.md
     - Report issues: faq-support/report-issues.md
