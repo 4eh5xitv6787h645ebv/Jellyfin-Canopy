@@ -1,0 +1,50 @@
+// src/enhanced/hidden-content-surface.d.ts
+// JEGlobal surface owned by the hidden-content modules (frozen public contract).
+// Legacy js/ areas (hidden-content-page-*, ui-panel-hidden-content, etc.) and
+// user scripts keep reading JE.hiddenContent / calling JE.initializeHiddenContent
+// by these exact names.
+import type {} from '../types/je';
+import type { HiddenItem, HideItemParams, HiddenContentSettings } from './hidden-content-data';
+import type { HideDialogOptions } from './hidden-content-dialogs';
+import type { HiddenContentUser } from './hidden-content-save';
+
+declare module '../types/je' {
+    /** The frozen public JE.hiddenContent surface. */
+    interface HiddenContentApi {
+        isHidden(jellyfinItemId: string): boolean;
+        isHiddenByTmdbId(tmdbId: string | number): boolean;
+        isHiddenOnSurface(itemId: string, surface: string): boolean;
+        hideItem(params: HideItemParams): void;
+        unhideItem(itemId: string): void;
+        confirmAndHide(itemData: HideItemParams, onHidden?: (() => void) | null, dialogOptions?: HideDialogOptions): void;
+        getSettings(): HiddenContentSettings;
+        updateSettings(partial: Record<string, unknown>): void;
+        getAllHiddenItems(): HiddenItem[];
+        getHiddenCount(): number;
+        filterJellyseerrResults(results: unknown[], surface: string): unknown[];
+        filterCalendarEvents(events: unknown[]): unknown[];
+        filterRequestItems(items: unknown[]): unknown[];
+        filterNativeCards(): void;
+        showUndoToast(itemName: string, itemId: string): void;
+        showManagementPanel(): void;
+        createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLElement;
+        unhideAll(): void;
+        addLibraryHideButtons(): void;
+        removeLibraryHideButtons(): void;
+        refresh(): Promise<boolean>;
+        markScopedHidden(itemId: string, scope?: string): void;
+        flushPendingSave(): Promise<void>;
+        // Admin-only cross-user visibility + editing
+        fetchHiddenContentUsers(): Promise<HiddenContentUser[] | null>;
+        fetchUserHiddenItemsForAdmin(targetUserId: string): Promise<HiddenItem[] | null>;
+        adminUnhideForUser(targetUserId: string, keys: string[]): Promise<boolean>;
+        adminHideForUser(targetUserId: string, items: HiddenItem[]): Promise<number | boolean>;
+    }
+
+    interface JEGlobal {
+        /** Boots the hidden-content feature; assigns JE.hiddenContent. */
+        initializeHiddenContent?: () => void;
+        /** The hidden-content public API (created by initializeHiddenContent). */
+        hiddenContent?: HiddenContentApi;
+    }
+}

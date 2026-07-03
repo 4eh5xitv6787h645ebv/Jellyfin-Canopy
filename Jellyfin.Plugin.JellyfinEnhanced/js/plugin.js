@@ -584,18 +584,6 @@
             // eslint-disable-next-line no-unused-vars -- build-time manifest parsed by scripts/build-bundle.js
             const allComponentScripts = [
                 // enhanced
-                // hidden-content modules — order matters: -data.js owns the
-                // store + lookup sets that the later files consume via
-                // JE.internals.hiddenContent; -init.js exposes the frozen
-                // JE.initializeHiddenContent / JE.hiddenContent surface last.
-                'enhanced/hidden-content-data.js',
-                'enhanced/hidden-content-save.js',
-                'enhanced/hidden-content-styles.js',
-                'enhanced/hidden-content-dialogs.js',
-                'enhanced/hidden-content-panel.js',
-                'enhanced/hidden-content-filter.js',
-                'enhanced/hidden-content-buttons.js',
-                'enhanced/hidden-content-init.js',
                 // hidden-content-page modules — order matters: -state.js owns
                 // the shared page state read by the later files via
                 // JE.internals.hiddenContentPage; -init.js exposes the frozen
