@@ -807,8 +807,20 @@
             return false;
         }
 
-        // Check if we already added the button (either active or unavailable)
-        if (itemDetailPage.querySelector('.jellyseerr-report-issue-icon, .jellyseerr-report-unavailable-icon')) {
+        // True when this detail page already carries our button — either the
+        // active reporter or the disabled "unavailable" variant.
+        const hasReportButton = () =>
+            !!itemDetailPage.querySelector('.jellyseerr-report-issue-icon, .jellyseerr-report-unavailable-icon');
+
+        // Fast path: bail before doing any async work if the button is already
+        // there. NOTE: this check is necessary but NOT sufficient on its own.
+        // tryAddButton is async and everything below runs across several awaits
+        // (item fetch + the /jellyseerr/status round-trip + TMDB resolution). On
+        // Jellyfin 12 the React client fires 'viewshow' more than once per
+        // navigation, so two tryAddButton() calls can both clear this guard while
+        // the first is still awaiting — hence the second, synchronous re-check
+        // right before each DOM insert below.
+        if (hasReportButton()) {
             console.debug(`${logPrefix} Report button already exists`);
             return true;
         }
@@ -919,6 +931,14 @@
                 if (buttonContainerUnavail) {
                     const unavailButton = issueReporter.createUnavailableButton(buttonContainerUnavail, '', '', availability);
                     if (unavailButton) {
+                        // Re-check synchronously, with no await before the insert: a
+                        // concurrent tryAddButton() may have added the button while we
+                        // awaited the status check above. Closes the check-then-insert
+                        // (TOCTOU) window behind the intermittent double button on JF12.
+                        if (hasReportButton()) {
+                            console.debug(`${logPrefix} Report button appeared during async work, skipping duplicate (unavailable)`);
+                            return true;
+                        }
                         const moreButton = buttonContainerUnavail.querySelector('.btnMoreCommands');
                         if (moreButton) {
                             buttonContainerUnavail.insertBefore(unavailButton, moreButton);
@@ -1037,6 +1057,17 @@
             );
 
             if (button) {
+                // Re-check synchronously, with no await before the insert: the guard
+                // at the top of tryAddButton() ran before we awaited the item fetch,
+                // the Jellyseerr status check and TMDB resolution. On Jellyfin 12 the
+                // React client can fire 'viewshow' more than once per navigation,
+                // letting two tryAddButton() calls both clear that guard. This mirrors
+                // the final-dedup re-check item-details.js does before appending its
+                // "Request More" button.
+                if (hasReportButton()) {
+                    console.debug(`${logPrefix} Report button appeared during async work, skipping duplicate`);
+                    return true;
+                }
                 // Try to insert before btnMoreCommands, otherwise append
                 const moreButton = buttonContainer.querySelector('.btnMoreCommands');
                 if (moreButton) {
