@@ -35,6 +35,10 @@ declare module '../types/je' {
         jellyseerrMoreInfo?: any;
         /** jellyseerr/ui-* surface (legacy). */
         jellyseerrUI?: any;
+        /** jellyseerr/ui-icons.js icon map (legacy). */
+        jellyseerrUIIcons?: any;
+        /** Elsewhere user-config surface (legacy). */
+        userConfig?: any;
     }
 
     /** Legacy helper aliases (enhanced/helpers.js) the Seerr modules call. */

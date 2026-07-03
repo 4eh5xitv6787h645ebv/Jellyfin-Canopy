@@ -671,14 +671,6 @@
                 'jellyseerr/ui-results.js',
                 'jellyseerr/ui-request-modals.js',
                 'jellyseerr/ui-season-modal.js',
-                'jellyseerr/more-info-modal-styles.js',
-                'jellyseerr/more-info-modal-data.js',
-                'jellyseerr/more-info-modal-seasons.js',
-                'jellyseerr/more-info-modal-badges.js',
-                'jellyseerr/more-info-modal-render.js',
-                'jellyseerr/more-info-modal-actions-tv.js',
-                'jellyseerr/more-info-modal-actions.js',
-                'jellyseerr/more-info-modal-init.js',
 
                 // tags
                 'tags/genretags.js',
