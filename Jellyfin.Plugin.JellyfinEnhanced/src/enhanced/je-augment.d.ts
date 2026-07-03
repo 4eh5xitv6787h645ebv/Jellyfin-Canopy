@@ -10,6 +10,13 @@
 
 import type {} from '../types/je';
 
+declare global {
+    interface Window {
+        /** Legacy dashboard helper exposed by jellyfin-web. */
+        Dashboard?: { navigate?: (url: string) => void; [key: string]: unknown };
+    }
+}
+
 declare module '../types/je' {
     interface EnhancedRemoveContext {
         itemId: string | null;
@@ -33,6 +40,10 @@ declare module '../types/je' {
     }
 
     interface JEGlobal {
+        // js/plugin.js bootstrap surface (created before the bundle loads)
+        /** Translation lookup — returns the key itself when no translation exists. */
+        t?: (key: string, params?: Record<string, unknown>) => string;
+
         // enhanced/config
         state?: EnhancedState;
         userConfig?: {
