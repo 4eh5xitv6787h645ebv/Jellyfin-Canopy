@@ -110,13 +110,6 @@
             container.style.removeProperty('max-width');
             container.style.removeProperty('text-align');
         });
-        // Remove legacy ::cue overrides
-        const styleElement = document.getElementById('je-html-videoplayer-cuestyle');
-        if (styleElement?.sheet) {
-            try {
-                while (styleElement.sheet.cssRules.length > 0) styleElement.sheet.deleteRule(0);
-            } catch (e) { /* ignore */ }
-        }
         // Stop the observer — no point watching when styles are disabled
         if (subtitleObserver) {
             subtitleObserver.unsubscribe();
@@ -129,7 +122,8 @@
 
     /**
      * Directly modifies the inline style of a subtitle element to ensure overrides.
-     * This function is the core of the fix for Jellyfin 10.11+.
+     * Jellyfin renders subtitles into .videoSubtitlesInner DOM elements; inline
+     * !important styles win over the client's own stylesheet.
      */
     function forceApplyInlineStyles(element) {
         if (!element || JE.currentSettings.disableCustomSubtitleStyles) return;
@@ -197,33 +191,6 @@
 
         // Start the observer to catch any new subtitle elements
         startSubtitleObserver();
-
-        // Also apply styles to the legacy ::cue for Jellyfin versions <10.11
-        const oldStyleElement = document.getElementById('htmlvideoplayer-cuestyle');
-        if (oldStyleElement?.sheet) {
-            let styleElement = document.getElementById('je-html-videoplayer-cuestyle');
-            if (!styleElement?.sheet) {
-                styleElement = document.createElement('style');
-                styleElement.id = 'je-html-videoplayer-cuestyle'
-                document.head.appendChild(styleElement)
-            }
-
-            try {
-                while (styleElement.sheet.cssRules.length > 0) styleElement.sheet.deleteRule(0);
-                if (JE.currentSettings.disableCustomSubtitleStyles) return;
-                const cueRule = `
-                video.htmlvideoplayer::cue {
-                    background-color: ${bgColor} !important;
-                    color: ${textColor} !important;
-                    font-size: ${fontSize}vw !important;
-                    font-family: ${fontFamily} !important;
-                    text-shadow: ${textShadow || 'none'} !important;
-                }`;
-                styleElement.sheet.insertRule(cueRule, 0);
-            } catch (e) {
-                console.error("🪼 Jellyfin Enhanced: Failed to apply legacy ::cue styles:", e);
-            }
-        }
     };
 
     /**

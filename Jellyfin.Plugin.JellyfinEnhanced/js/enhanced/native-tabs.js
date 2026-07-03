@@ -11,9 +11,9 @@
 // This is the exact mechanism the Custom Tabs plugin uses internally, just
 // run from JE's own already-injected script instead of a separate plugin.
 //
-// Works unmodified on Jellyfin 10.11 and on Jellyfin 12 in stable layout,
-// where `.emby-tabs-slider` is part of the normal, visible header. On
-// Jellyfin 12's experimental layout the tab *button* itself is invisible
+// Works on Jellyfin 12's legacy layout, where `.emby-tabs-slider` is part
+// of the normal, visible header. On
+// Jellyfin 12's modern (React/MUI) layout the tab *button* itself is invisible
 // (it lives inside `.skinHeader`, which that layout hides, see
 // getHeaderRightContainer in this same file for the equivalent header-button
 // problem), but the tab *panel* is not inside `.skinHeader` and stays fully
