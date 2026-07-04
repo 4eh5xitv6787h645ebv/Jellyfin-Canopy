@@ -2,11 +2,13 @@
 // Applies color-coded backgrounds to media ratings on item details page
 
 import { JE as JEBase } from '../globals';
+import { onBodyMutation } from '../core/dom-observer';
+import { onNavigate } from '../core/navigation';
 import type { PluginConfig } from '../types/je';
 
 /**
  * Local view of the shared namespace adding the public members this module
- * OWNS plus the legacy helper/config members it reads.
+ * OWNS plus the legacy config members it reads.
  */
 const JE = JEBase as typeof JEBase & {
     initializeColoredRatings?: () => void;
@@ -14,25 +16,20 @@ const JE = JEBase as typeof JEBase & {
     resumeRatingsPolling?: () => void;
     isVideoPage?: () => boolean;
     pluginConfig: PluginConfig & { ColoredRatingsEnabled?: boolean };
-    helpers?: {
-        onBodyMutation?: (id: string, cb: (mutations: MutationRecord[]) => void) => { unsubscribe(): void };
-        createObserver?: (id: string, cb: MutationCallback, target: Node, config: MutationObserverInit) => MutationObserver;
-    };
 };
 
 const CONFIG = {
     targetSelector: '.mediaInfoOfficialRating',
     attributeName: 'rating',
-    fallbackInterval: 1000,
     debounceDelay: 100,
-    maxRetries: 3,
+    navSettleDelay: 500,
     cssUrl: 'https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Enhanced@main/css/ratings.css',
     cssId: 'jellyfin-ratings-style'
 };
 
-let observer: MutationObserver | { unsubscribe(): void } | null = null;
-let urlObserverHandle: { unsubscribe(): void } | null = null;
-let fallbackTimer: ReturnType<typeof setInterval> | null = null;
+let observerHandle: { unsubscribe(): void } | null = null;
+let navUnsubscribe: (() => void) | null = null;
+let navSettleTimer: ReturnType<typeof setTimeout> | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let processedElements = new WeakSet<Element>();
 
@@ -59,7 +56,6 @@ function injectCSS(): void {
 function processRatingElements(): void {
     try {
         const elements = document.querySelectorAll<HTMLElement>(CONFIG.targetSelector);
-        let processedCount = 0;
 
         elements.forEach((element) => {
             if (processedElements.has(element)) {
@@ -77,7 +73,6 @@ function processRatingElements(): void {
                 if (element.getAttribute(CONFIG.attributeName) !== normalizedRating) {
                     element.setAttribute(CONFIG.attributeName, normalizedRating);
                     processedElements.add(element);
-                    processedCount++;
 
                     if (!element.getAttribute('aria-label')) {
                         element.setAttribute('aria-label', `Content rated ${normalizedRating}`);
@@ -118,133 +113,98 @@ function debouncedProcess(): void {
     debounceTimer = setTimeout(processRatingElements, CONFIG.debounceDelay);
 }
 
+/**
+ * Decides whether a structural mutation batch can contain (or affect) rating
+ * elements. Only inspects the mutation records themselves — the full-document
+ * query runs solely inside the debounced processing pass.
+ * @param mutations - The structural mutation batch from the shared body observer.
+ * @returns True when a rating element was added or its subtree changed.
+ */
+export function mutationsTouchRatings(mutations: MutationRecord[]): boolean {
+    for (const mutation of mutations) {
+        if (mutation.type !== 'childList') continue;
+
+        for (const node of mutation.addedNodes) {
+            if (node.nodeType !== Node.ELEMENT_NODE) continue;
+            const el = node as Element;
+            if (el.matches?.(CONFIG.targetSelector) || el.querySelector?.(CONFIG.targetSelector)) {
+                return true;
+            }
+        }
+
+        const target = mutation.target as Element;
+        if (target.nodeType === Node.ELEMENT_NODE &&
+            (target.matches(CONFIG.targetSelector) || target.closest(CONFIG.targetSelector))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function setupMutationObserver(): boolean {
     if (!window.MutationObserver) return false;
 
     try {
-        const callback = (mutations: MutationRecord[]): void => {
-            let shouldProcess = false;
-
-            mutations.forEach((mutation) => {
-                if (mutation.type === 'childList') {
-                    mutation.addedNodes.forEach((node) => {
-                        if (node.nodeType === Node.ELEMENT_NODE) {
-                            const el = node as Element;
-                            if (el.matches && el.matches(CONFIG.targetSelector)) {
-                                shouldProcess = true;
-                            } else if (el.querySelector && el.querySelector(CONFIG.targetSelector)) {
-                                shouldProcess = true;
-                            }
-                        }
-                    });
-                }
-
-                if (mutation.type === 'characterData' || mutation.type === 'childList') {
-                    const target = mutation.target as Element;
-                    if (target.nodeType === Node.ELEMENT_NODE &&
-                        (target.matches(CONFIG.targetSelector) || target.closest(CONFIG.targetSelector))) {
-                        shouldProcess = true;
-                    }
-                }
-            });
-
-            if (shouldProcess) {
+        // PERF: rides the shared structural body observer instead of a
+        // dedicated characterData:true body observer — that one fired on the
+        // OSD clock's text updates every second during playback. Rating text
+        // only ever (re)renders via childList mutations, and the
+        // per-navigation pass below covers cached-page re-shows.
+        observerHandle = onBodyMutation('colored-ratings', (mutations) => {
+            if (mutationsTouchRatings(mutations)) {
                 debouncedProcess();
             }
-        };
-
-        // Uses characterData so needs a dedicated observer via createObserver
-        if (JE?.helpers?.createObserver) {
-            observer = JE.helpers.createObserver(
-                'colored-ratings',
-                callback,
-                document.body,
-                { childList: true, subtree: true, characterData: true, characterDataOldValue: false }
-            );
-        } else {
-            const mo = new MutationObserver(callback);
-            mo.observe(document.body, {
-                childList: true,
-                subtree: true,
-                characterData: true,
-                characterDataOldValue: false
-            });
-            observer = mo;
-        }
-
+        });
         return true;
-
     } catch (error) {
         console.error('🪼 Jellyfin Enhanced: Failed to setup ratings observer', error);
         return false;
     }
 }
 
-function setupFallbackPolling(): void {
-    // Don't start polling if we're actively playing video
-    if (isVideoPlaying()) {
-        return;
-    }
-    fallbackTimer = setInterval(processRatingElements, CONFIG.fallbackInterval);
+function setupNavigationWatcher(): void {
+    if (navUnsubscribe) return;
+    // PERF: replaces both the permanent 1Hz full-document polling interval and
+    // the per-mutation location.href watcher — one debounced pass per
+    // navigation plus a settle pass for late-arriving page content.
+    navUnsubscribe = onNavigate(() => {
+        if (!isFeatureEnabled()) return;
+        debouncedProcess();
+        if (navSettleTimer) clearTimeout(navSettleTimer);
+        navSettleTimer = setTimeout(processRatingElements, CONFIG.navSettleDelay);
+    });
 }
 
-function isOnVideoPage(): boolean {
-    // Check if we're on the video player page
-    if (typeof JE?.isVideoPage === 'function') {
-        return JE.isVideoPage();
-    }
-    // Fallback check
-    return window.location.hash.startsWith('#/video') || !!document.querySelector('.videoPlayerContainer');
-}
-
-function isVideoPlaying(): boolean {
-    // Check if we're on the video player page AND the video is actively playing
-    if (!isOnVideoPage()) {
-        return false;
-    }
-
-    // Check if pause screen is visible (pause screen has osdInfo visible)
-    const pauseScreen = document.querySelector('.videoOsdBottom');
-    if (pauseScreen && getComputedStyle(pauseScreen).display !== 'none' && getComputedStyle(pauseScreen).opacity !== '0') {
-        // Pause screen is visible - allow polling
-        return false;
-    }
-
-    // Check if video element exists and is playing
-    const video = document.querySelector('video');
-    if (!video) {
-        return false;
-    }
-
-    return !video.paused;
-}
-
+/**
+ * Legacy hook kept for pausescreen.ts: there is no polling interval anymore,
+ * so pausing is a no-op.
+ */
 function pausePolling(): void {
-    if (fallbackTimer) {
-        clearInterval(fallbackTimer);
-        fallbackTimer = null;
-    }
+    // Intentionally empty — detection is mutation/navigation driven now.
 }
 
+/**
+ * Legacy hook kept for pausescreen.ts: schedules one processing pass so the
+ * pause screen's rating element is colored as soon as it is shown.
+ */
 function resumePolling(): void {
-    if (!fallbackTimer && isFeatureEnabled() && !isVideoPlaying()) {
-        fallbackTimer = setInterval(processRatingElements, CONFIG.fallbackInterval);
+    if (isFeatureEnabled()) {
+        debouncedProcess();
     }
 }
 
 function cleanup(): void {
-    if (observer) {
-        if ('disconnect' in observer) observer.disconnect();
-        else observer.unsubscribe();
-        observer = null;
+    if (observerHandle) {
+        observerHandle.unsubscribe();
+        observerHandle = null;
     }
-    if (urlObserverHandle) {
-        urlObserverHandle.unsubscribe();
-        urlObserverHandle = null;
+    if (navUnsubscribe) {
+        navUnsubscribe();
+        navUnsubscribe = null;
     }
-    if (fallbackTimer) {
-        clearInterval(fallbackTimer);
-        fallbackTimer = null;
+    if (navSettleTimer) {
+        clearTimeout(navSettleTimer);
+        navSettleTimer = null;
     }
     if (debounceTimer) {
         clearTimeout(debounceTimer);
@@ -262,7 +222,7 @@ function initialize(): void {
     injectCSS();
     processRatingElements();
     setupMutationObserver();
-    setupFallbackPolling();
+    setupNavigationWatcher();
 }
 
 if (typeof document.visibilityState !== 'undefined') {
@@ -271,30 +231,6 @@ if (typeof document.visibilityState !== 'undefined') {
             setTimeout(processRatingElements, 100);
         }
     });
-}
-
-let lastUrl = location.href;
-
-if (JE?.helpers?.onBodyMutation) {
-    urlObserverHandle = JE.helpers.onBodyMutation('colored-ratings-url-watcher', () => {
-        const url = location.href;
-        if (url !== lastUrl) {
-            lastUrl = url;
-            if (isFeatureEnabled()) {
-                setTimeout(initialize, 500);
-            }
-        }
-    });
-} else {
-    new MutationObserver(() => {
-        const url = location.href;
-        if (url !== lastUrl) {
-            lastUrl = url;
-            if (isFeatureEnabled()) {
-                setTimeout(initialize, 500);
-            }
-        }
-    }).observe(document, { subtree: true, childList: true });
 }
 
 window.addEventListener('beforeunload', cleanup);
