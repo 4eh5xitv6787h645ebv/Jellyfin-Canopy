@@ -30,24 +30,65 @@ test.describe('admin authorization', () => {
         expect(anonymous.status).toBe(401);
     });
 
-    test('hidden-content page: admin gets the cross-user filter', async ({ page, consoleErrors }) => {
-        await loginAs(page, 'admin', consoleErrors);
+    test('hidden-content page: admin gets the cross-user filter', async ({ page, consoleErrors, baseURL }) => {
+        // The filter only renders when at least one OTHER user has hidden
+        // items — seed one via the admin hide endpoint (exercising it too)
+        // and restore it afterwards.
+        const admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
+        const user = await authenticate(baseURL!, USERS.user.username, USERS.user.password);
+        const items = await apiRaw(
+            baseURL!,
+            `/Items?Recursive=true&IncludeItemTypes=Movie&Limit=1&userId=${user.userId}`,
+            admin.token
+        ).then((response) => response.json() as Promise<{ Items: Array<{ Id: string; Name: string }> }>);
+        const movie = items.Items?.[0];
+        expect(movie, 'server must have at least one movie').toBeTruthy();
 
-        // Enter via the page module's own public surface (the same call the
-        // drawer link performs) — direct hash writes race the native router.
-        await page.evaluate(() => {
-            void (window as any).JellyfinEnhanced.hiddenContentPage.showPage();
-        });
-        await page.waitForSelector('#je-hidden-content-container', { state: 'visible', timeout: 30_000 });
-        await page.waitForSelector('.je-hidden-content-page-grid, .je-hidden-content-page-empty', { timeout: 30_000 });
+        const hide = await apiRaw(
+            baseURL!,
+            `/JellyfinEnhanced/admin/hidden-content/${user.userId}/hide`,
+            admin.token,
+            {
+                method: 'POST',
+                body: JSON.stringify([{
+                    ItemId: movie!.Id,
+                    Name: movie!.Name,
+                    Type: 'Movie',
+                    HiddenAt: new Date().toISOString(),
+                    HideScope: 'global',
+                }]),
+            }
+        );
+        expect(hide.status).toBe(200);
 
-        // The cross-user filter is populated from the RequiresElevation-gated
-        // admin endpoint — it must appear for an admin.
-        await page.waitForSelector('.je-hidden-admin-user-filter', { timeout: 30_000 });
-        const optionCount = await page.locator('.je-hidden-admin-user-filter option').count();
-        expect(optionCount).toBeGreaterThan(0);
+        try {
+            await loginAs(page, 'admin', consoleErrors);
 
-        expect(consoleErrors.real()).toEqual([]);
+            // Enter via the page module's own public surface (the same call the
+            // drawer link performs) — direct hash writes race the native router.
+            await page.evaluate(() => {
+                void (window as any).JellyfinEnhanced.hiddenContentPage.showPage();
+            });
+            await page.waitForSelector('#je-hidden-content-container', { state: 'visible', timeout: 30_000 });
+            await page.waitForSelector('.je-hidden-content-page-grid, .je-hidden-content-page-empty', { timeout: 30_000 });
+
+            // The cross-user filter is populated from the RequiresElevation-gated
+            // admin endpoint — it must appear for an admin.
+            await page.waitForSelector('.je-hidden-admin-user-filter', { timeout: 30_000 });
+            const optionCount = await page.locator('.je-hidden-admin-user-filter option').count();
+            // "View own" + at least the seeded user.
+            expect(optionCount).toBeGreaterThan(1);
+
+            expect(consoleErrors.real()).toEqual([]);
+        } finally {
+            // Leave the user's hidden-content store as found.
+            await apiRaw(
+                baseURL!,
+                `/JellyfinEnhanced/admin/hidden-content/${user.userId}/unhide`,
+                admin.token,
+                { method: 'POST', body: JSON.stringify([movie!.Id]) }
+            );
+        }
     });
 
     test('hidden-content page: non-admin degrades gracefully', async ({ page, consoleErrors }) => {

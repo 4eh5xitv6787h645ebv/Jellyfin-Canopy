@@ -1,0 +1,30 @@
+# Throwaway Jellyfin 12 for the E2E suite (CI and local dry-runs).
+#
+# Everything lives under e2e/docker/{config,cache,media} (gitignored) and is
+# (re)created by seed.sh — never point these volumes at a real server's state.
+#
+#   bash e2e/docker/seed.sh          # build dirs, start, wizard, users, library
+#   JF_BASE_URL=http://localhost:8100 npm run e2e
+#   docker compose -f e2e/docker/compose.yml down -v
+#
+# Image pin: 12.0-rc2 is the newest Jellyfin 12 image published; it reports
+# server version 12.0.0. Bump to the stable 12.0.0 tag once it exists.
+# (Do NOT use 12.0-rc1 — it hangs on the splash logo in headless Chromium.)
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:12.0-rc2
+    container_name: je-e2e-jellyfin
+    # Run as the invoking user so seed.sh can clean config/cache without sudo.
+    user: "${JF_UID:-1000}:${JF_GID:-1000}"
+    ports:
+      - "${JF_PORT:-8100}:8096"
+    volumes:
+      - ./config:/config
+      - ./cache:/cache
+      - ./media:/media:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8096/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 15s
