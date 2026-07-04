@@ -9,6 +9,15 @@
 
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+
+        <!-- Analyzer ratchet (v12 Phase 4): the build is warning-free — keep it
+             that way. Every compiler warning (including the CS86xx nullable set
+             from Nullable=enable) and every .editorconfig code-style diagnostic
+             promoted to warning now fails the build. Tighten further only in
+             zero-diff steps (bump one rule at a time, fix, commit). -->
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
         <AssemblyVersion>11.12.0.0</AssemblyVersion>
         <FileVersion>11.12.0.0</FileVersion>
         <RootNamespace>Jellyfin.Plugin.JellyfinEnhanced</RootNamespace>
@@ -20,7 +29,7 @@
       <PackageReference Include="Jellyfin.Model" Version="$(JellyfinVersion)" />
     </ItemGroup>
 
-    <!-- Let the unit-test project exercise internal helpers (e.g. JellyseerrUserResolver). -->
+    <!-- Let the unit-test project exercise internal helpers (e.g. LiveNotifierService internals). -->
     <ItemGroup>
       <InternalsVisibleTo Include="JellyfinEnhanced.Tests" />
     </ItemGroup>

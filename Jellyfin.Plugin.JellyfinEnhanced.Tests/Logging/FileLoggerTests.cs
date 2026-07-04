@@ -74,7 +74,13 @@ public sealed class FileLoggerTests : IDisposable
         // the host logger's own filtering.
         var logger = new FileForwardingLogger<FileLoggerTests>(_provider, NullLoggerFactory.Instance);
 
+        // CA2017 flags {braces} as a placeholder without an argument — that is
+        // exactly what this test asserts: brace-bearing messages (e.g. logged
+        // JSON payloads) must pass through as literal text, not be treated as
+        // structured-logging templates.
+#pragma warning disable CA2017
         logger.LogDebug("dbg with {braces} and JSON {\"mediaId\":42}");
+#pragma warning restore CA2017
 
         var content = ReadLogFile();
         Assert.Contains("[DEBUG] dbg with {braces} and JSON {\"mediaId\":42}", content);

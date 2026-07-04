@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
+    <!-- Same analyzer ratchet as the plugin project: warning-free stays warning-free. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <RootNamespace>Jellyfin.Plugin.JellyfinEnhanced.Tests</RootNamespace>
   </PropertyGroup>
 
