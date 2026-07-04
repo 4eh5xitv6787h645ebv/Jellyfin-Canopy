@@ -42,15 +42,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
         private static string TvDetail(string cert) =>
             $@"{{ ""contentRatings"": {{ ""results"": [ {{ ""iso_3166_1"": ""US"", ""rating"": ""{cert}"" }} ] }} }}";
 
-        private static async Task<System.Text.Json.Nodes.JsonObject> RunAsync(
-            string body,
-            string apiPath,
+        private static SeerrParentalFilter BuildFilter(
             int? maxScore,
             int? maxSub,
             UnratedItem[] block,
-            bool isAdmin = false,
-            bool featureEnabled = true,
-            Action<RecordingHttpMessageHandler>? seed = null)
+            bool featureEnabled,
+            Action<RecordingHttpMessageHandler>? seed)
         {
             var handler = new RecordingHttpMessageHandler();
             // Fixture titles used across the cases.
@@ -77,16 +74,43 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
             };
             var policy = new UserPolicy { BlockUnratedItems = block };
 
-            var filter = new SeerrParentalFilter(
+            return new SeerrParentalFilter(
                 new RecordingHttpClientFactory(handler),
                 NullLogger<SeerrParentalFilter>.Instance,
                 new StubUserManager(user, policy),
                 new FakeLocalization(),
                 new SeerrCache(provider),
                 provider);
+        }
 
-            var result = await filter.FilterListBodyAsync(body, apiPath, new JellyseerrCaller(CallerGuid, isAdmin));
-            return (System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse(result)!;
+        private static Task<SeerrParentalResult> ApplyAsync(
+            string body,
+            string apiPath,
+            int? maxScore,
+            int? maxSub,
+            UnratedItem[] block,
+            bool isAdmin = false,
+            bool featureEnabled = true,
+            Action<RecordingHttpMessageHandler>? seed = null)
+        {
+            var filter = BuildFilter(maxScore, maxSub, block, featureEnabled, seed);
+            return filter.ApplyAsync(body, apiPath, new JellyseerrCaller(CallerGuid, isAdmin));
+        }
+
+        // Convenience for list cases: run ApplyAsync, assert not wholesale-blocked, return the parsed body.
+        private static async Task<System.Text.Json.Nodes.JsonObject> RunAsync(
+            string body,
+            string apiPath,
+            int? maxScore,
+            int? maxSub,
+            UnratedItem[] block,
+            bool isAdmin = false,
+            bool featureEnabled = true,
+            Action<RecordingHttpMessageHandler>? seed = null)
+        {
+            var result = await ApplyAsync(body, apiPath, maxScore, maxSub, block, isAdmin, featureEnabled, seed);
+            Assert.False(result.Block, "list endpoints are never wholesale-blocked");
+            return (System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse(result.Body)!;
         }
 
         private static List<int> Ids(System.Text.Json.Nodes.JsonObject obj, string container, string field = "id")
@@ -198,12 +222,132 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
         }
 
         [Fact]
-        public async Task NonListEndpoint_PassesThrough()
+        public async Task DetailEndpoint_BlocksOverLimitTitle()
         {
-            // A movie detail body is the certification source, never a filtered list.
-            const string body = @"{ ""id"": 200, ""mediaType"": ""movie"", ""title"": ""x"" }";
-            var result = await RunAsync(body, "/api/v1/movie/200", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
-            Assert.Equal(200, result["id"]!.GetValue<int>());
+            // Direct fetch of a blocked title's detail body -> 403 (the body is the
+            // cert source, so the rating is read from it in place).
+            var blocked = await ApplyAsync(MovieDetail("R"), "/api/v1/movie/200", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+            Assert.True(blocked.Block);
+
+            var allowed = await ApplyAsync(MovieDetail("PG-13"), "/api/v1/movie/100", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+            Assert.False(allowed.Block);
+        }
+
+        [Fact]
+        public async Task DetailEndpoint_AdminNotBlocked()
+        {
+            var result = await ApplyAsync(MovieDetail("R"), "/api/v1/movie/200", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>(), isAdmin: true);
+            Assert.False(result.Block);
+        }
+
+        [Fact]
+        public async Task SeasonEndpoint_BlockedByParentShowRating()
+        {
+            // Season body carries no rating; gate by the parent show's certification (tv/200 = TV-MA).
+            var seasonBody = @"{ ""episodes"": [ { ""id"": 1 } ] }";
+            var blocked = await ApplyAsync(seasonBody, "/api/v1/tv/200/season/1", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+            Assert.True(blocked.Block);
+
+            var allowed = await ApplyAsync(seasonBody, "/api/v1/tv/100/season/1", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+            Assert.False(allowed.Block);
+        }
+
+        [Fact]
+        public async Task RatingsEndpoint_IsNotGated()
+        {
+            // /ratingscombined is not a detail body and must pass through untouched.
+            const string body = @"{ ""rt"": 90 }";
+            var result = await ApplyAsync(body, "/api/v1/movie/200/ratingscombined", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+            Assert.False(result.Block);
+            Assert.Equal(body, result.Body);
+        }
+
+        [Fact]
+        public async Task RequestList_FiltersRowsByNestedMedia()
+        {
+            // Requests carry the identifying fields under a nested `media` object.
+            const string body = @"{ ""results"": [
+                { ""id"": 1, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
+                { ""id"": 2, ""media"": { ""tmdbId"": 200, ""mediaType"": ""movie"" } },
+                { ""id"": 3 } ] }";
+
+            var result = await RunAsync(body, "/api/v1/request?take=100", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+
+            var rowIds = ((System.Text.Json.Nodes.JsonArray)result["results"]!)
+                .Select(n => n!["id"]!.GetValue<int>()).ToList();
+            // Row 2 (R-rated media) removed; row 1 (PG-13) and row 3 (no media) kept.
+            Assert.Equal(new[] { 1, 3 }, rowIds);
+        }
+
+        [Fact]
+        public async Task IsBlockedAsync_GatesRequestsByRating()
+        {
+            var filter = BuildFilter(maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>(), featureEnabled: true, seed: null);
+            var restricted = new JellyseerrCaller(CallerGuid, false);
+
+            Assert.True(await filter.IsBlockedAsync("movie", 200, restricted));   // R -> blocked
+            Assert.False(await filter.IsBlockedAsync("movie", 100, restricted));  // PG-13 -> allowed
+            Assert.True(await filter.IsBlockedAsync("movie", 999, restricted));   // unverifiable -> fail closed
+        }
+
+        [Fact]
+        public async Task Search_FiltersKnownForOnPersonResults()
+        {
+            // A person result is kept, but its nested knownFor films are filtered so a
+            // restricted user can't recover R-rated titles from the response body.
+            const string body = @"{ ""results"": [
+                { ""id"": 5, ""mediaType"": ""person"", ""knownFor"": [
+                    { ""id"": 100, ""mediaType"": ""movie"" },
+                    { ""id"": 200, ""mediaType"": ""movie"" } ] } ] }";
+
+            var result = await RunAsync(body, "/api/v1/search?query=actor", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+
+            var person = (System.Text.Json.Nodes.JsonObject)((System.Text.Json.Nodes.JsonArray)result["results"]!)[0]!;
+            var knownFor = ((System.Text.Json.Nodes.JsonArray)person["knownFor"]!)
+                .Select(n => n!["id"]!.GetValue<int>()).ToList();
+            Assert.Equal(new[] { 100 }, knownFor); // R-rated 200 stripped from knownFor
+        }
+
+        [Fact]
+        public async Task NonStringMediaType_DoesNotFailOpen()
+        {
+            // A malformed (numeric) mediaType must not throw and dump the whole
+            // unfiltered list; the well-formed R-rated item is still removed.
+            const string body = @"{ ""results"": [
+                { ""id"": 5, ""mediaType"": 999 },
+                { ""id"": 200, ""mediaType"": ""movie"" } ] }";
+
+            var result = await RunAsync(body, "/api/v1/search?query=x", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+
+            // Unclassifiable item kept (like a person); R-rated movie 200 dropped.
+            Assert.Equal(new[] { 5 }, Ids(result, "results"));
+        }
+
+        [Theory]
+        [InlineData("/api/v1/discover/tv?page=1", "tv")]
+        [InlineData("/api/v1/movie/500/recommendations?page=1", "movie")]
+        [InlineData("/api/v1/tv/500/similar?page=1", "tv")]
+        public async Task DiscoverAndRelated_UseMediaTypeHint(string apiPath, string mediaType)
+        {
+            // Items carry no per-item mediaType; the plan's hint drives classification.
+            const string body = @"{ ""results"": [ { ""id"": 100 }, { ""id"": 200 } ] }";
+
+            var result = await RunAsync(body, apiPath, maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+
+            // 100 is PG-13/TV-PG (allowed at 13); 200 is R/TV-MA (removed).
+            Assert.Equal(new[] { 100 }, Ids(result, "results"));
+            Assert.Contains(mediaType, new[] { "movie", "tv" });
+        }
+
+        [Fact]
+        public async Task IsBlockedAsync_AdminAndFeatureOff_NeverBlock()
+        {
+            var admin = new JellyseerrCaller(CallerGuid, true);
+            var filterOn = BuildFilter(13, 0, Array.Empty<UnratedItem>(), featureEnabled: true, seed: null);
+            Assert.False(await filterOn.IsBlockedAsync("movie", 200, admin));
+
+            var filterOff = BuildFilter(13, 0, Array.Empty<UnratedItem>(), featureEnabled: false, seed: null);
+            Assert.False(await filterOff.IsBlockedAsync("movie", 200, new JellyseerrCaller(CallerGuid, false)));
         }
 
         // ── Minimal fakes ────────────────────────────────────────────────────

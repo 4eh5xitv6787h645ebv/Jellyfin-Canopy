@@ -1,5 +1,5 @@
-// Issue #581: Seerr search/discovery results must respect each Jellyfin user's
-// own parental-rating limit, server-side. A restricted account must not even be
+// Seerr search/discovery results must respect each Jellyfin user's own
+// parental-rating limit, server-side. A restricted account must not even be
 // sent titles above its limit (a client-only hide would still deliver them and
 // be trivially bypassed via devtools). Administrators and users with no limit
 // see everything unchanged.
@@ -32,6 +32,38 @@ async function searchIds(page: any): Promise<{ movies: number[]; all: number[] }
     }, QUERY);
 }
 
+/** GET a proxy path in the current user's context, returning the HTTP status. */
+async function getStatus(page: any, path: string): Promise<number> {
+    return page.evaluate(async (p: string) => {
+        const api = (window as any).ApiClient;
+        try {
+            await api.ajax({ type: 'GET', url: api.getUrl(p), dataType: 'json' });
+            return 200;
+        } catch (e: any) {
+            return e?.status || 0;
+        }
+    }, path);
+}
+
+/** POST a Seerr request in the current user's context, returning the HTTP status. */
+async function postRequestStatus(page: any, mediaType: string, tmdbId: number): Promise<number> {
+    return page.evaluate(async (args: { mediaType: string; tmdbId: number }) => {
+        const api = (window as any).ApiClient;
+        try {
+            await api.ajax({
+                type: 'POST',
+                url: api.getUrl('/JellyfinEnhanced/jellyseerr/request'),
+                data: JSON.stringify({ mediaType: args.mediaType, mediaId: args.tmdbId }),
+                contentType: 'application/json',
+                dataType: 'json',
+            });
+            return 200;
+        } catch (e: any) {
+            return e?.status || 0;
+        }
+    }, { mediaType, tmdbId });
+}
+
 /** Find je_arruser's id (non-admin) via the admin session. */
 async function findRestrictedUserId(page: any, username: string): Promise<string> {
     return page.evaluate(async (name: string) => {
@@ -59,7 +91,7 @@ async function setMaxParentalRating(page: any, userId: string, score: number | n
     }, { userId, score });
 }
 
-test.describe('seerr parental-rating filter (#581)', () => {
+test.describe('seerr parental-rating filter', () => {
     test('restricted user is filtered server-side; admin and no-limit are not', async ({ page, consoleErrors }) => {
         // ── Admin: discover the restricted user and impose a PG-13 (13) limit ──
         await loginAs(page, 'admin', consoleErrors);
@@ -73,11 +105,15 @@ test.describe('seerr parental-rating filter (#581)', () => {
             expect(admin.movies, 'admin baseline should include the R-rated Deadpool').toContain(DEADPOOL_R);
             expect(admin.movies).toContain(DEADPOOL2_R);
 
+            // Admin can also open any title's detail (no gate).
+            expect(await getStatus(page, `/JellyfinEnhanced/jellyseerr/movie/${DEADPOOL_R}`),
+                'admin detail fetch is not gated').toBe(200);
+
             // ── Restricted user: R titles removed, subset of admin, person kept ──
             await loginAs(page, 'user', consoleErrors);
             const user = await searchIds(page);
 
-            // The core of #581: R-rated titles a PG-13 user can't watch are gone.
+            // The core requirement: R-rated titles a PG-13 user can't watch are gone.
             expect(user.movies, 'restricted user must not see R-rated Deadpool').not.toContain(DEADPOOL_R);
             expect(user.movies, 'restricted user must not see R-rated Deadpool 2').not.toContain(DEADPOOL2_R);
 
@@ -89,6 +125,13 @@ test.describe('seerr parental-rating filter (#581)', () => {
 
             // Non movie/tv results (people) are never rating-gated.
             expect(user.all, 'person results are never filtered').toContain(DEADPOOL_PERSON);
+
+            // The same restriction gates the detail endpoint and the request POST, so a
+            // restricted user can neither open nor request a blocked title by tmdbId.
+            expect(await getStatus(page, `/JellyfinEnhanced/jellyseerr/movie/${DEADPOOL_R}`),
+                'restricted user is blocked from a blocked title detail').toBe(403);
+            expect(await postRequestStatus(page, 'movie', DEADPOOL_R),
+                'restricted user cannot request a blocked title').toBe(403);
 
             // ── No-limit path: clear the limit, user sees everything again ──
             await loginAs(page, 'admin', consoleErrors);
