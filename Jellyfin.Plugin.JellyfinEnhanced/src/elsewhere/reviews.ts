@@ -1152,10 +1152,16 @@ JE.initializeReviewsScript = function () {
             return;
         }
 
-        // Wait for the page to be visible
-        await new Promise(resolve => setTimeout(resolve, 150));
-
-        const visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
+        // PERF: no unconditional 150ms sleep — process immediately when the
+        // detail page is already visible (the common case); keep one 150ms
+        // retry for clients that fire viewshow before the page unhides. The
+        // section itself is built fully off-DOM in addReviewsToPage and
+        // inserted once, post-fetch (single insert, below the fold).
+        let visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
+        if (!visiblePage) {
+            await new Promise(resolve => setTimeout(resolve, 150));
+            visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
+        }
         if (visiblePage) {
             void processPage(visiblePage);
         }

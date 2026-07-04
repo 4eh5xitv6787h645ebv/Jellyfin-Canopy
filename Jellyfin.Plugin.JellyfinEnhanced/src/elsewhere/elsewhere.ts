@@ -1094,14 +1094,16 @@ JE.initializeElsewhereScript = function() {
         return container;
     }
 
-    // Auto-load streaming data on page load (default region only)
-    function autoLoadStreamingData(tmdbId: string, mediaType: string, container: HTMLElement): void {
+    // Auto-load streaming data (default region only), filling the DETACHED
+    // container and signalling readiness so the caller can insert it once.
+    function autoLoadStreamingData(tmdbId: string, mediaType: string, container: HTMLElement, onReady: () => void): void {
         fetchStreamingData(tmdbId, mediaType, (error, data) => {
             if (error) {
                 const errorDiv = document.createElement('div');
                 errorDiv.style.cssText = 'font-size: 13px; margin-top: 8px; color: #ff6b6b;';
                 errorDiv.textContent = JE.t('elsewhere_panel_error', { error });
                 container.appendChild(errorDiv);
+                onReady();
                 return;
             }
 
@@ -1110,16 +1112,22 @@ JE.initializeElsewhereScript = function() {
             if (defaultResult) {
                 container.appendChild(defaultResult);
             }
+            onReady();
         });
     }
+
+    // Sections whose Elsewhere panel is still being fetched (off-DOM), so a
+    // concurrent observer pass doesn't start a duplicate build for them.
+    const pendingElsewhereSections = new WeakSet<Element>();
 
     // Add buttons to detail pages
     function addStreamingLookup(): void {
         const detailSections = document.querySelectorAll('.detailSectionContent');
 
         detailSections.forEach(section => {
-            // Skip if already processed
+            // Skip if already processed or in flight
             if (section.querySelector('.streaming-lookup-container')) return;
+            if (pendingElsewhereSections.has(section)) return;
 
             // Look for TMDB link to get ID and media type
             const tmdbLinks = section.querySelectorAll<HTMLAnchorElement>('a[href*="themoviedb.org"]');
@@ -1132,21 +1140,32 @@ JE.initializeElsewhereScript = function() {
             const mediaType = match[1];
             const tmdbId = match[2];
 
-            // Create container
+            // Create container — held OFF-DOM until its content is ready.
             const container = document.createElement('div');
             container.className = 'streaming-lookup-container';
             container.style.cssText = 'margin: 16px 0;';
 
-            // Auto-load streaming data for default region
-            autoLoadStreamingData(tmdbId, mediaType, container);
+            // PERF: single insert with content. The old flow inserted the empty
+            // container immediately (its 16px margins alone shifted the page)
+            // and filled it after the fetch — a second, larger shift. Now the
+            // panel is built and filled off-DOM and inserted ONCE, with its
+            // margin as part of the inserted block, so the page below the
+            // external links moves exactly once.
+            pendingElsewhereSections.add(section);
+            autoLoadStreamingData(tmdbId, mediaType, container, () => {
+                pendingElsewhereSections.delete(section);
+                if (!section.isConnected) return; // user navigated away
+                if (section.querySelector('.streaming-lookup-container')) return; // dedupe race
+                if (container.childNodes.length === 0) return; // nothing to show
 
-            // Insert after external links or at the end
-            const externalLinks = section.querySelector('.itemExternalLinks');
-            if (externalLinks) {
-                externalLinks.parentNode!.insertBefore(container, externalLinks.nextSibling);
-            } else {
-                section.appendChild(container);
-            }
+                // Insert after external links or at the end
+                const externalLinks = section.querySelector('.itemExternalLinks');
+                if (externalLinks) {
+                    externalLinks.parentNode!.insertBefore(container, externalLinks.nextSibling);
+                } else {
+                    section.appendChild(container);
+                }
+            });
         });
     }
     // --- Initialization ---

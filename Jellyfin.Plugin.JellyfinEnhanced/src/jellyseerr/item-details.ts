@@ -369,6 +369,9 @@ async function renderSimilarAndRecommended(itemId: string) {
         // Remove any existing Jellyseerr sections to avoid duplicates
         detailPageContent.querySelectorAll('.jellyseerr-details-section').forEach((el: Element) => el.remove());
 
+        // PERF: sections are built fully off-DOM (cards included) and inserted
+        // once, below the fold — no empty-shell insert, no incremental fill.
+
         // Create and insert sections
         if (filteredRecommendedResults.length > 0) {
             const recommendedTitle = JE.t ? (JE.t('jellyseerr_recommended_title') || 'Recommended') : 'Recommended';
@@ -604,6 +607,18 @@ async function renderSeriesRequestMoreButton(itemId: string) {
         if (signal.aborted) return;
         if (!tvDetails) return;
 
+        // PERF: resolve the Seasons heading in parallel with the checker and
+        // PRE-APPLY the flex layout class as soon as the heading renders — not
+        // when the button lands. Flipping the h2 from block to flex at button
+        // time nudged the heading's baseline right as the user read it; doing
+        // it at section-render time makes the (visually identical) layout the
+        // heading's first painted state, and the later button append displaces
+        // nothing but trailing free space.
+        const headingPromise = waitForSeasonsHeading(signal);
+        void headingPromise.then((h: any) => {
+            if (h && !signal.aborted) h.classList.add('je-series-request-more-heading');
+        });
+
         // Wait for the checker to become available — the Jellyseerr
         // modules load in parallel via dynamically-inserted <script>
         // tags, so more-info-modal.js may still be parsing when we get
@@ -628,7 +643,7 @@ async function renderSeriesRequestMoreButton(itemId: string) {
             return;
         }
 
-        const heading = await waitForSeasonsHeading(signal);
+        const heading = await headingPromise;
         if (signal.aborted) return;
         if (!heading) {
             console.debug(`${requestMoreLogPrefix} Seasons heading not found, skipping`);
@@ -641,12 +656,10 @@ async function renderSeriesRequestMoreButton(itemId: string) {
             return;
         }
 
-        // Lay the button out inline next to the heading text via a class
-        // (instead of mutating heading.style directly) so the override is
-        // discoverable in CSS, easy to remove, and doesn't permanently
-        // overwrite Jellyfin's inline display value on the heading.
-        heading.classList.add('je-series-request-more-heading');
-
+        // The flex layout class was pre-applied when the heading rendered (see
+        // headingPromise above). PERF: appending at the heading's flow end
+        // displaces nothing but trailing free space — single insert, content
+        // fully built (no empty-shell insert).
         const button = buildSeriesRequestMoreButton(tvDetails);
         heading.appendChild(button);
 

@@ -567,6 +567,12 @@ JE.initializeArrLinksScript = async function () {
 
             isAddingLinks = true;
             try {
+                // PERF: all link buttons collect into this fragment and attach
+                // with ONE appendChild at the end — the row is built off-DOM
+                // after every instance lookup resolves, so the external-links
+                // row reflows exactly once instead of per-service.
+                const linksFragment = document.createDocumentFragment();
+
                 const itemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
                 if (!itemId) return;
 
@@ -614,8 +620,8 @@ JE.initializeArrLinksScript = async function () {
                         if (size) tipParts.push(size);
                         if (m.rootFolderPath) tipParts.push(m.rootFolderPath);
                         const tip = tipParts.join('\n');
-                        anchorElement.appendChild(document.createTextNode(' '));
-                        anchorElement.appendChild(createLinkButton('Sonarr', url, 'arr-link-sonarr', status, badge, tip));
+                        linksFragment.appendChild(document.createTextNode(' '));
+                        linksFragment.appendChild(createLinkButton('Sonarr', url, 'arr-link-sonarr', status, badge, tip));
                     } else if (validMatches.length > 1) {
                         const items = validMatches.map((m): DropdownItem => {
                             const status = m.episodeFileCount < 0 ? null : getStatus(m.episodeFileCount, m.episodeCount);
@@ -628,8 +634,8 @@ JE.initializeArrLinksScript = async function () {
                                 status, badge, size, tip
                             };
                         });
-                        anchorElement.appendChild(document.createTextNode(' '));
-                        anchorElement.appendChild(createDropdown('Sonarr', 'arr-link-sonarr', items));
+                        linksFragment.appendChild(document.createTextNode(' '));
+                        linksFragment.appendChild(createDropdown('Sonarr', 'arr-link-sonarr', items));
                     }
                 }
 
@@ -648,8 +654,8 @@ JE.initializeArrLinksScript = async function () {
                         // Tooltip keeps the "Downloaded/Missing" detail regardless, so info
                         // isn't lost when the visible badge is suppressed.
                         const tip = [m.name, badgeValue, size, m.rootFolderPath].filter(Boolean).join('\n');
-                        anchorElement.appendChild(document.createTextNode(' '));
-                        anchorElement.appendChild(createLinkButton('Radarr', url, 'arr-link-radarr', status, badge, tip));
+                        linksFragment.appendChild(document.createTextNode(' '));
+                        linksFragment.appendChild(createLinkButton('Radarr', url, 'arr-link-radarr', status, badge, tip));
                     } else if (validMatches.length > 1) {
                         const items = validMatches.map((m): DropdownItem => {
                             const status = m.hasFile ? 'complete' : 'missing';
@@ -662,19 +668,25 @@ JE.initializeArrLinksScript = async function () {
                                 status, badge, size, tip
                             };
                         });
-                        anchorElement.appendChild(document.createTextNode(' '));
-                        anchorElement.appendChild(createDropdown('Radarr', 'arr-link-radarr', items));
+                        linksFragment.appendChild(document.createTextNode(' '));
+                        linksFragment.appendChild(createDropdown('Radarr', 'arr-link-radarr', items));
                     }
                 }
 
                 if (item.Type === 'Series' && bazarrUrl) {
                     const url = `${bazarrUrl}/series/`;
-                    anchorElement.appendChild(document.createTextNode(' '));
-                    anchorElement.appendChild(createLinkButton('Bazarr', url, 'arr-link-bazarr'));
+                    linksFragment.appendChild(document.createTextNode(' '));
+                    linksFragment.appendChild(createLinkButton('Bazarr', url, 'arr-link-bazarr'));
                 } else if (item.Type === 'Movie' && bazarrUrl) {
                     const url = `${bazarrUrl}/movies/`;
-                    anchorElement.appendChild(document.createTextNode(' '));
-                    anchorElement.appendChild(createLinkButton('Bazarr', url, 'arr-link-bazarr'));
+                    linksFragment.appendChild(document.createTextNode(' '));
+                    linksFragment.appendChild(createLinkButton('Bazarr', url, 'arr-link-bazarr'));
+                }
+
+                // PERF: single insert — the whole row lands in one reflow, only
+                // after every lookup resolved and the page is still the same.
+                if (linksFragment.childNodes.length > 0 && isStillValidTarget()) {
+                    anchorElement.appendChild(linksFragment);
                 }
             } finally {
                 isAddingLinks = false;

@@ -10,7 +10,7 @@ export interface JellyseerrIssueReporterApi {
     createReportButton: (container: any, tmdbId: any, itemName: string, mediaType: string, backdropUrl?: string | null, item?: any) => HTMLButtonElement | null;
     createUnavailableButton: (container: any, itemName: string, mediaType: string, reason?: string) => HTMLButtonElement | null;
     getTmdbIdFallback: (itemName: string, mediaType: string, item: any) => Promise<string | null>;
-    applyIssueIndicator: (button: any, tmdbId: any, mediaType: string) => Promise<void>;
+    applyIssueIndicator: (button: any, tmdbId: any, mediaType: string, prefetched?: Promise<any> | null) => Promise<void>;
     tryAddButton: () => Promise<boolean>;
     initialize: () => Promise<void>;
 }
@@ -767,11 +767,18 @@ issueReporter.getTmdbIdFallback = async function (itemName, mediaType, item) {
 /**
  * Fetches open issues for the item and applies an orange indicator + count badge
  * to the report button. No-op if JellyseerrShowIssueIndicator is off.
+ * PERF: the badge is a position:absolute overlay on the (position:relative)
+ * button, so applying it never reflows the detail-button row — zero shift even
+ * when it lands after the button. `prefetched` lets tryAddButton start the
+ * issues fetch in parallel with its container lookup so the badge usually
+ * paints in the same frame as the button.
  */
-issueReporter.applyIssueIndicator = async function (button, tmdbId, mediaType) {
+issueReporter.applyIssueIndicator = async function (button, tmdbId, mediaType, prefetched = null) {
     if (!JE.pluginConfig?.JellyseerrShowIssueIndicator) return;
     try {
-        const result = await JE.jellyseerrAPI!.fetchIssuesForMedia(tmdbId, mediaType, { take: 50, filter: 'open' });
+        const result = prefetched
+            ? await prefetched
+            : await JE.jellyseerrAPI!.fetchIssuesForMedia(tmdbId, mediaType, { take: 50, filter: 'open' });
         const openIssues = result?.results || [];
         if (openIssues.length === 0) return;
 
@@ -965,6 +972,9 @@ issueReporter.tryAddButton = async function () {
                     } else {
                         buttonContainerUnavail.appendChild(unavailButton);
                     }
+                    // PERF: post-paint in-flow insert — same one-time width
+                    // expansion as the active report button (no snap-shift).
+                    JE.core.ui?.expandIn(unavailButton, {});
                     console.log(`${logPrefix} Added unavailable report button (${availability})`);
                     return true;
                 }
@@ -1017,6 +1027,14 @@ issueReporter.tryAddButton = async function () {
                 console.log(`${logPrefix} Found TMDB ID via fallback: ${tmdbId}`);
             }
         }
+
+        // PERF: start the open-issues fetch NOW, in parallel with the container
+        // lookup below, so the count badge is usually ready when the button
+        // inserts — one visual change instead of button-then-badge. (The badge
+        // is an absolute overlay either way, so a late badge never reflows.)
+        const prefetchedIssues = JE.pluginConfig?.JellyseerrShowIssueIndicator
+            ? JE.jellyseerrAPI!.fetchIssuesForMedia(tmdbId, mediaType, { take: 50, filter: 'open' }).catch(() => null)
+            : null;
 
         // Find the appropriate container for the button - check multiple locations
         let buttonContainer = null;
@@ -1095,9 +1113,15 @@ issueReporter.tryAddButton = async function () {
             } else {
                 buttonContainer.appendChild(button);
             }
+            // PERF (doctrine: reserved-space entrance): the insert is always
+            // post-paint (viewshow + several awaits), so expand the slot with
+            // the one-time 150ms width ease instead of snap-shifting the row.
+            JE.core.ui?.expandIn(button, {});
             console.log(`${logPrefix} ✓ Report issue button added to ${item.Name} (${mediaType}, TMDB: ${tmdbId})`);
-            // Fire-and-forget: colour button orange + count badge when open issues exist
-            void issueReporter.applyIssueIndicator(button, tmdbId, mediaType);
+            // Fire-and-forget: colour button orange + count badge when open
+            // issues exist. The fetch was started in parallel above; the badge
+            // itself is an absolute overlay (no reflow when it lands).
+            void issueReporter.applyIssueIndicator(button, tmdbId, mediaType, prefetchedIssues);
             return true;
         }
     } catch (error: any) {
