@@ -1,0 +1,75 @@
+// Authorization contract ([Authorize(Policy = RequiresElevation)] endpoints)
+// and the hidden-content admin page's role-dependent rendering.
+//
+// The v12 policy error contract (docs/v12-platform.md §5): policy failure with
+// a valid non-admin token -> bare 403 with an EMPTY body; missing/garbage
+// token -> 401. Client code branches on status alone, so the specs pin both
+// the codes and the empty-body shape.
+import { test, expect, loginAs, USERS } from './fixtures/auth';
+import { apiRaw, authenticate } from './fixtures/api';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+const ADMIN_ENDPOINT = '/JellyfinEnhanced/admin/hidden-content-users';
+
+test.describe('admin authorization', () => {
+    test('authz matrix: 200 admin / 403 empty non-admin / 401 anonymous', async ({ baseURL }) => {
+        const admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
+        const user = await authenticate(baseURL!, USERS.user.username, USERS.user.password);
+
+        const asAdmin = await apiRaw(baseURL!, ADMIN_ENDPOINT, admin.token);
+        expect(asAdmin.status).toBe(200);
+        const body = (await asAdmin.json()) as { users: unknown[] };
+        expect(Array.isArray(body.users)).toBe(true);
+
+        const asUser = await apiRaw(baseURL!, ADMIN_ENDPOINT, user.token);
+        expect(asUser.status).toBe(403);
+        expect(await asUser.text()).toBe('');
+
+        const anonymous = await apiRaw(baseURL!, ADMIN_ENDPOINT);
+        expect(anonymous.status).toBe(401);
+    });
+
+    test('hidden-content page: admin gets the cross-user filter', async ({ page, consoleErrors }) => {
+        await loginAs(page, 'admin', consoleErrors);
+
+        // Enter via the page module's own public surface (the same call the
+        // drawer link performs) — direct hash writes race the native router.
+        await page.evaluate(() => {
+            void (window as any).JellyfinEnhanced.hiddenContentPage.showPage();
+        });
+        await page.waitForSelector('#je-hidden-content-container', { state: 'visible', timeout: 30_000 });
+        await page.waitForSelector('.je-hidden-content-page-grid, .je-hidden-content-page-empty', { timeout: 30_000 });
+
+        // The cross-user filter is populated from the RequiresElevation-gated
+        // admin endpoint — it must appear for an admin.
+        await page.waitForSelector('.je-hidden-admin-user-filter', { timeout: 30_000 });
+        const optionCount = await page.locator('.je-hidden-admin-user-filter option').count();
+        expect(optionCount).toBeGreaterThan(0);
+
+        expect(consoleErrors.real()).toEqual([]);
+    });
+
+    test('hidden-content page: non-admin degrades gracefully', async ({ page, consoleErrors }) => {
+        await loginAs(page, 'user', consoleErrors);
+
+        await page.evaluate(() => {
+            void (window as any).JellyfinEnhanced.hiddenContentPage.showPage();
+        });
+        await page.waitForSelector('#je-hidden-content-container', { state: 'visible', timeout: 30_000 });
+        await page.waitForSelector('.je-hidden-content-page-grid, .je-hidden-content-page-empty', { timeout: 30_000 });
+
+        // The bare-403 responses from admin endpoints must degrade silently:
+        // no admin surface leaks in and nothing is left spinning.
+        await page.waitForTimeout(4_000);
+        const state = await page.evaluate(() => ({
+            adminFilter: !!document.querySelector('.je-hidden-admin-user-filter'),
+            stuckSpinners: [...document.querySelectorAll('.docspinner, .mdl-spinner, .loading-spinner')]
+                .filter((el) => (el as HTMLElement).offsetParent !== null).length,
+        }));
+        expect(state.adminFilter).toBe(false);
+        expect(state.stuckSpinners).toBe(0);
+
+        expect(consoleErrors.real()).toEqual([]);
+    });
+});

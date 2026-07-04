@@ -1,0 +1,4 @@
+test-results/
+playwright-report/
+docker/media/
+docker/config/
