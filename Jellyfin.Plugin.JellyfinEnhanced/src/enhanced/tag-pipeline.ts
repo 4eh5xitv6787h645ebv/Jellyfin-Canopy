@@ -211,11 +211,26 @@ async function loadServerCache(): Promise<void> {
         const userId = ApiClient.getCurrentUserId();
         if (!userId) return;
 
-        const resp: any = await ApiClient.ajax({
-            type: 'GET',
-            url: ApiClient.getUrl(`/JellyfinEnhanced/tag-cache/${userId}`),
-            dataType: 'json'
-        });
+        // PERF(R7): js/plugin.js starts this fetch as soon as public config
+        // lands (boot Stage 1) and parks the in-flight promise on
+        // JE._tagCachePrefetch — consume it instead of starting a second
+        // request serialized behind bundle boot. One-shot: cleared here so a
+        // later reload (cache rebuild, refresh retry) fetches fresh data.
+        // The prefetch resolves null on failure, which falls through to the
+        // pipeline's own fetch below.
+        let resp: any = null;
+        const prefetch = JE._tagCachePrefetch;
+        if (prefetch) {
+            JE._tagCachePrefetch = null;
+            resp = await prefetch;
+        }
+        if (!resp) {
+            resp = await ApiClient.ajax({
+                type: 'GET',
+                url: ApiClient.getUrl(`/JellyfinEnhanced/tag-cache/${userId}`),
+                dataType: 'json'
+            });
+        }
 
         if (resp && resp.items && resp.count > 0) {
             serverCache = new Map(Object.entries(resp.items));

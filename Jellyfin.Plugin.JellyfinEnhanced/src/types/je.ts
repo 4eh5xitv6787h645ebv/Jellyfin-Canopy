@@ -535,6 +535,14 @@ export interface JEGlobal extends JellyfinEnhancedPublicApi {
     requestManager?: RequestManagerApi;
     _cacheManager?: CacheManager;
     _hotCache?: HotCache;
+    /**
+     * PERF(R7): in-flight tag-cache GET started by js/plugin.js as soon as
+     * public config lands (boot Stage 1), so the tag pipeline's init awaits an
+     * ALREADY-STARTED fetch instead of serializing it behind bundle boot.
+     * Consumed (and cleared) once by src/enhanced/tag-pipeline.ts, which falls
+     * back to its own fetch when absent. Resolves null on fetch failure.
+     */
+    _tagCachePrefetch?: Promise<unknown> | null;
     CONFIG?: { TOAST_DURATION?: number; [key: string]: unknown };
     themer?: {
         getThemeVariables?: () => { secondaryBg?: string; primaryAccent?: string; blur?: string };

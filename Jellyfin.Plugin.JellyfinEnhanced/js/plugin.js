@@ -513,6 +513,23 @@
                 Object.assign(JE.pluginConfig, privateConfig);
             }
 
+            // PERF(R7): warm the server tag-cache fetch NOW — its only gates are
+            // auth/userId and the TagCacheServerMode flag, which public config
+            // (this stage) just delivered. Cold-boot first tags used to wait for
+            // bundle download + full feature init before the tag pipeline even
+            // STARTED this request; handing the in-flight promise to
+            // src/enhanced/tag-pipeline.ts (which falls back to its own fetch
+            // when absent) takes the whole bundle-boot serialization out of the
+            // first-tag latency. Resolves null on failure so the pipeline's
+            // fallback path handles errors exactly as before.
+            if (JE.pluginConfig?.TagCacheServerMode) {
+                JE._tagCachePrefetch = ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl(`/JellyfinEnhanced/tag-cache/${userId}`),
+                    dataType: 'json'
+                }).catch(() => null);
+            }
+
             // Clear stale UseCustomTabs / UsePluginPages config flags when those
             // plugins are not installed.  Settings persist after uninstall, which
             // causes sidebar injection to be skipped even though the delivery
