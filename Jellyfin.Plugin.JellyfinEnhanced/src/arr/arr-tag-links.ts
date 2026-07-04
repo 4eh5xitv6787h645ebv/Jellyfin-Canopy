@@ -3,9 +3,9 @@
 // page. Public surface (frozen): JE.initializeArrTagLinksScript (called by
 // js/plugin.js Stage 6).
 
-import { createObserver } from '../core/dom-observer';
+import { onBodyMutation } from '../core/dom-observer';
 import { register as registerLifecycle } from '../core/lifecycle';
-import { onNavigate } from '../core/navigation';
+import { onNavigate, onViewPage } from '../core/navigation';
 import { JE } from './arr-globals';
 
 // eslint-disable-next-line @typescript-eslint/require-await -- frozen contract: initializer has always been async (plugin.js Stage 6 may rely on the Promise)
@@ -197,10 +197,21 @@ JE.initializeArrTagLinksScript = async function () {
         }
     }
 
-    createObserver('arr-tag-links', () => {
+    // PERF(R3): this used to be a dedicated body-wide MutationObserver with
+    // attributes + attributeFilter:['class'] — the filter opted it out of the
+    // multiplexer and made it fire on every hover/focus/class write on EVERY
+    // page. Structural changes (the external-links section mounting) now
+    // arrive via the shared multiplexed body observer behind a cheap O(1)
+    // details-page gate, and the cached-page re-show (a class flip with no
+    // structural mutation — the only thing the attribute filter actually
+    // caught) is covered by the navigation/viewshow probes below.
+    const lifecycle = registerLifecycle('arr-tag-links');
+    lifecycle.track(onBodyMutation('arr-tag-links', () => {
         if (!JE?.pluginConfig?.ArrTagsShowAsLinks) {
             return;
         }
+        const page = document.getElementById('itemDetailPage');
+        if (!page || page.classList.contains('hide')) return;
 
         // Debounce to avoid excessive processing on rapid DOM changes
         if (debounceTimer) {
@@ -208,18 +219,17 @@ JE.initializeArrTagLinksScript = async function () {
         }
 
         debounceTimer = setTimeout(checkAndAddLinks, 100);
-    }, document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['class']
-    });
+    }));
 
     // Also check immediately on navigation — the shared deduplicated
     // pipeline covers hashchange, popstate and pushState transitions the
-    // old raw hashchange listener missed. Lifecycle-tracked for teardown.
-    const lifecycle = registerLifecycle('arr-tag-links');
+    // old raw hashchange listener missed — and on viewshow, which covers
+    // legacy-layout cached-page re-shows. Lifecycle-tracked for teardown.
     lifecycle.track(onNavigate(() => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(checkAndAddLinks, 200);
+    }));
+    lifecycle.track(onViewPage(() => {
         if (debounceTimer) clearTimeout(debounceTimer);
         debounceTimer = setTimeout(checkAndAddLinks, 200);
     }));

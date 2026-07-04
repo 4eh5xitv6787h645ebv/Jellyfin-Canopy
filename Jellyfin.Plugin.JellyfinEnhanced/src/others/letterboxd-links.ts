@@ -2,6 +2,8 @@
 
 import { JE as JEBase } from '../globals';
 import { assetUrl } from '../core/asset-urls';
+import { onBodyMutation } from '../core/dom-observer';
+import { onNavigate, onViewPage } from '../core/navigation';
 import type { JELegacyHelpers, PluginConfig } from '../types/je';
 
 /** Options accepted by helpers.createExternalLink (and its local fallback). */
@@ -21,7 +23,6 @@ const JE = JEBase as typeof JEBase & {
     pluginConfig: PluginConfig & { LetterboxdEnabled?: boolean; ShowLetterboxdLinkAsText?: boolean };
     helpers: JELegacyHelpers & {
         createExternalLink?: (url: string, options?: ExternalLinkOptions) => HTMLAnchorElement;
-        createObserver: (id: string, cb: MutationCallback, target: Node, config: MutationObserverInit) => { disconnect(): void };
         getItemCached?: (itemId: string) => Promise<unknown>;
     };
 };
@@ -198,33 +199,48 @@ JE.initializeLetterboxdLinksScript = async function () {
         return button;
     }
 
-    // Replace polling with MutationObserver for better performance
+    // Coalesced, idle-scheduled lookup pass shared by every trigger below.
     let processingLetterboxd = false;
-    const letterboxdObserver = JE.helpers.createObserver('letterboxd-links', () => {
+    function scheduleLetterboxdLinks(): void {
+        if (processingLetterboxd) return;
+        processingLetterboxd = true;
+        if (typeof requestIdleCallback !== 'undefined') {
+            requestIdleCallback(() => {
+                void addLetterboxdLinks();
+                processingLetterboxd = false;
+            }, { timeout: 500 });
+        } else {
+            setTimeout(() => {
+                void addLetterboxdLinks();
+                processingLetterboxd = false;
+            }, 100);
+        }
+    }
+
+    // PERF(R3): this used to be a dedicated body-wide MutationObserver with
+    // attributeFilter:['class'] — the filter opted it out of the multiplexer
+    // and made it fire on every hover/focus/class write on EVERY page.
+    // Structural changes (the external-links section mounting) now arrive via
+    // the shared multiplexed body observer behind a cheap O(1) details-page
+    // gate, and the cached-page re-show (a class flip with no structural
+    // mutation — the only thing the attribute filter actually caught) is
+    // covered by the navigation/viewshow probes below. addLetterboxdLinks
+    // re-validates page visibility and de-dupes per item itself.
+    const letterboxdSubscription = onBodyMutation('letterboxd-links', () => {
         if (!JE?.pluginConfig?.LetterboxdEnabled) {
-            letterboxdObserver.disconnect();
+            letterboxdSubscription.unsubscribe();
             console.log(`${logPrefix} Stopped - feature disabled`);
             return;
         }
-
-        if (!processingLetterboxd) {
-            processingLetterboxd = true;
-            if (typeof requestIdleCallback !== 'undefined') {
-                requestIdleCallback(() => {
-                    void addLetterboxdLinks();
-                    processingLetterboxd = false;
-                }, { timeout: 500 });
-            } else {
-                setTimeout(() => {
-                    void addLetterboxdLinks();
-                    processingLetterboxd = false;
-                }, 100);
-            }
-        }
-    }, document.body, {
-        childList: true,
-        subtree: true,
-        attributeFilter: ['class']
+        const page = document.getElementById('itemDetailPage');
+        if (!page || page.classList.contains('hide')) return;
+        scheduleLetterboxdLinks();
+    });
+    onNavigate(() => {
+        if (JE?.pluginConfig?.LetterboxdEnabled) scheduleLetterboxdLinks();
+    });
+    onViewPage(() => {
+        if (JE?.pluginConfig?.LetterboxdEnabled) scheduleLetterboxdLinks();
     });
 
     // Initial check

@@ -5,6 +5,8 @@
 
 import { JE as JEBase } from '../globals';
 import { assetUrl } from '../core/asset-urls';
+import { onBodyMutation } from '../core/dom-observer';
+import { onNavigate, onViewPage } from '../core/navigation';
 import type { ApiApi, JELegacyHelpers, PluginConfig } from '../types/je';
 
 /** Options accepted by helpers.createExternalLink (and its local fallback). */
@@ -37,7 +39,6 @@ const JE = JEBase as typeof JEBase & {
     helpers: JELegacyHelpers & {
         createExternalLink?: (url: string, options?: ExternalLinkOptions) => HTMLAnchorElement;
         debounce?: <T extends (...args: any[]) => void>(fn: T, wait: number) => T;
-        createObserver: (id: string, cb: MutationCallback, target: Node, config: MutationObserverInit) => unknown;
     };
 };
 
@@ -1181,28 +1182,40 @@ JE.initializeElsewhereScript = function() {
         setTimeout(createSettingsModal, 2000);
     }
 
-    // Replace polling with MutationObserver for better performance
+    // Coalesced, idle-scheduled lookup pass shared by every trigger below.
     let processingElsewhere = false;
-    JE.helpers.createObserver('elsewhere', () => {
-        if (!processingElsewhere) {
-            processingElsewhere = true;
-            if (typeof requestIdleCallback !== 'undefined') {
-                requestIdleCallback(() => {
-                    addStreamingLookup();
-                    processingElsewhere = false;
-                }, { timeout: 500 });
-            } else {
-                setTimeout(() => {
-                    addStreamingLookup();
-                    processingElsewhere = false;
-                }, 100);
-            }
+    function scheduleStreamingLookup(): void {
+        if (processingElsewhere) return;
+        processingElsewhere = true;
+        if (typeof requestIdleCallback !== 'undefined') {
+            requestIdleCallback(() => {
+                addStreamingLookup();
+                processingElsewhere = false;
+            }, { timeout: 500 });
+        } else {
+            setTimeout(() => {
+                addStreamingLookup();
+                processingElsewhere = false;
+            }, 100);
         }
-    }, document.body, {
-        childList: true,
-        subtree: true,
-        attributeFilter: ['class']
+    }
+
+    // PERF(R3): this used to be a dedicated body-wide MutationObserver with
+    // attributeFilter:['class'] — the filter opted it out of the multiplexer
+    // and made it fire on every hover/focus/class write on EVERY page.
+    // Structural changes (the detail section / external links mounting) now
+    // arrive via the shared multiplexed body observer behind a cheap O(1)
+    // details-page gate, and the cached-page re-show (a class flip with no
+    // structural mutation — the only thing the attribute filter actually
+    // caught) is covered by the navigation/viewshow probes below.
+    // addStreamingLookup re-validates and de-dupes per section itself.
+    onBodyMutation('elsewhere', () => {
+        const page = document.getElementById('itemDetailPage');
+        if (!page || page.classList.contains('hide')) return;
+        scheduleStreamingLookup();
     });
+    onNavigate(() => scheduleStreamingLookup());
+    onViewPage(() => scheduleStreamingLookup());
 
     // Initial check
     if (typeof requestIdleCallback !== 'undefined') {
