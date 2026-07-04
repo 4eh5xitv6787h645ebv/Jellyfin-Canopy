@@ -246,20 +246,21 @@
 
     /**
      * Fetches sensitive configuration from the authenticated endpoint.
-     * @returns {Promise<void>}
+     * Returns the config object (instead of merging it here) so the fetch can
+     * run in parallel with the public-config fetch — the caller merges it into
+     * JE.pluginConfig once that object exists.
+     * @returns {Promise<object|null>} The private config, or null on failure.
      */
     async function loadPrivateConfig() {
         try {
-            const privateConfig = await ApiClient.ajax({
+            return await ApiClient.ajax({
                 type: 'GET',
                 url: ApiClient.getUrl('/JellyfinEnhanced/private-config'),
                 dataType: 'json'
             });
-            // Merge the sensitive keys into the main config object
-            Object.assign(JE.pluginConfig, privateConfig);
         } catch (error) {
             console.warn('🪼 Jellyfin Enhanced: Could not load private configuration. Some features may be limited.', error);
-            // Don't assign anything if it fails
+            return null; // Don't merge anything if it fails
         }
     }
 
@@ -411,6 +412,20 @@
     let mismatchRetryCount = 0;
     const MAX_MISMATCH_RETRIES = 100; // ~30s at 300ms intervals
 
+    let readyRetryCount = 0;
+
+    /**
+     * Delay before the next ApiClient-readiness poll.
+     * PERF: snappy boot — poll fast (50ms) for the first ~half second while
+     * ApiClient typically appears, then back off to 250ms instead of a flat
+     * 300ms that used to add up to ~300ms of dead time to every boot.
+     * @returns {number} Milliseconds to wait before retrying initialize().
+     */
+    function nextReadyPollDelay() {
+        readyRetryCount++;
+        return readyRetryCount <= 10 ? 50 : 250;
+    }
+
     /**
      * Main initialization function.
      */
@@ -429,7 +444,7 @@
 
         // Normal retry logic (no mismatch)
         if (typeof ApiClient === 'undefined' || !ApiClient.getCurrentUserId?.()) {
-            setTimeout(initialize, 300);
+            setTimeout(initialize, nextReadyPollDelay());
             return;
         }
 
@@ -437,28 +452,67 @@
         mismatchRetryCount = 0;
 
         try {
+            // PERF: single parallel fetch wave. Every boot request that only
+            // needs auth/userId starts immediately instead of one-per-await —
+            // the old chain was four network round-trips deep (public config →
+            // private config → /Plugins → 5 user-settings files) even though
+            // none of those responses feed the next request.
+            const userId = ApiClient.getCurrentUserId();
+
+            // Prefetch full user object once (needed for admin check in arr-links etc.)
+            // Fire-and-forget alongside the fetch wave; result available as JE.currentUser
+            ApiClient.getCurrentUser().then(u => { JE.currentUser = u; }).catch(() => {});
+
+            const pluginsListPromise = ApiClient.ajax({
+                type: 'GET', url: ApiClient.getUrl('/Plugins'), dataType: 'json'
+            }).catch(e => {
+                console.warn('🪼 Jellyfin Enhanced: Could not verify installed plugins:', e);
+                return null;
+            });
+
+            const fetchPromises = [
+                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinEnhanced/user-settings/${userId}/settings.json?_=${Date.now()}`), dataType: 'json' })
+                         .then(data => ({ name: 'settings', status: 'fulfilled', value: data }))
+                         .catch(e => ({ name: 'settings', status: 'rejected', reason: e })),
+                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinEnhanced/user-settings/${userId}/shortcuts.json?_=${Date.now()}`), dataType: 'json' })
+                         .then(data => ({ name: 'shortcuts', status: 'fulfilled', value: data }))
+                         .catch(e => ({ name: 'shortcuts', status: 'rejected', reason: e })),
+                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinEnhanced/user-settings/${userId}/bookmark.json?_=${Date.now()}`), dataType: 'json' })
+                         .then(data => ({ name: 'bookmark', status: 'fulfilled', value: data }))
+                         .catch(e => ({ name: 'bookmark', status: 'rejected', reason: e })),
+                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinEnhanced/user-settings/${userId}/elsewhere.json?_=${Date.now()}`), dataType: 'json' })
+                         .then(data => ({ name: 'elsewhere', status: 'fulfilled', value: data }))
+                         .catch(e => ({ name: 'elsewhere', status: 'rejected', reason: e })),
+                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinEnhanced/user-settings/${userId}/hidden-content.json?_=${Date.now()}`), dataType: 'json' })
+                         .then(data => ({ name: 'hiddenContent', status: 'fulfilled', value: data }))
+                         .catch(e => ({ name: 'hiddenContent', status: 'rejected', reason: e }))
+            ];
+            // Use allSettled to get results even if some fetches fail
+            const userSettingsPromise = Promise.allSettled(fetchPromises);
+
             // Stage 1: Load base configs and translations
             await loadTranslationsModule();
-            const [[config, version], translations] = await Promise.all([
+            const [[config, version], translations, privateConfig] = await Promise.all([
                 loadPluginData(),
-                loadTranslations() // Load translations first
+                loadTranslations(), // Load translations first
+                loadPrivateConfig()
             ]);
 
             JE.pluginConfig = config && typeof config === 'object' ? config : {};
             JE.pluginVersion = version || 'unknown';
             JE.translations = translations || {};
             JE.t = window.JellyfinEnhanced.t; // Ensure the real function is assigned
-            await loadPrivateConfig();
+            // Merge the sensitive keys into the main config object
+            if (privateConfig && typeof privateConfig === 'object') {
+                Object.assign(JE.pluginConfig, privateConfig);
+            }
 
             // Clear stale UseCustomTabs / UsePluginPages config flags when those
             // plugins are not installed.  Settings persist after uninstall, which
             // causes sidebar injection to be skipped even though the delivery
             // plugin is no longer present.
-            try {
-                const installedPlugins = await ApiClient.ajax({
-                    type: 'GET', url: ApiClient.getUrl('/Plugins'), dataType: 'json'
-                });
-                if (!Array.isArray(installedPlugins)) throw new Error('Unexpected /Plugins response');
+            const installedPlugins = await pluginsListPromise;
+            if (Array.isArray(installedPlugins)) {
                 const hasCustomTabs = installedPlugins.some(p => p.Name === 'Custom Tabs');
                 const hasPluginPages = installedPlugins.some(p => p.Name === 'Plugin Pages');
                 if (!hasCustomTabs) {
@@ -473,8 +527,8 @@
                     JE.pluginConfig.DownloadsUsePluginPages = false;
                     JE.pluginConfig.CalendarUsePluginPages = false;
                 }
-            } catch (e) {
-                console.warn('🪼 Jellyfin Enhanced: Could not verify installed plugins:', e);
+            } else if (installedPlugins !== null) {
+                console.warn('🪼 Jellyfin Enhanced: Could not verify installed plugins: unexpected /Plugins response');
             }
 
             // Check if server has triggered a translation cache clear
@@ -501,32 +555,9 @@
                 console.warn('🪼 Jellyfin Enhanced: Failed to inject Metadata icons CSS', e);
             }
 
-            // Stage 2: Fetch user-specific settings
-            const userId = ApiClient.getCurrentUserId();
-
-            // Prefetch full user object once (needed for admin check in arr-links etc.)
-            // Fire-and-forget alongside stage-2 network calls; result available as JE.currentUser
-            ApiClient.getCurrentUser().then(u => { JE.currentUser = u; }).catch(() => {});
-
-            const fetchPromises = [
-                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinEnhanced/user-settings/${userId}/settings.json?_=${Date.now()}`), dataType: 'json' })
-                         .then(data => ({ name: 'settings', status: 'fulfilled', value: data }))
-                         .catch(e => ({ name: 'settings', status: 'rejected', reason: e })),
-                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinEnhanced/user-settings/${userId}/shortcuts.json?_=${Date.now()}`), dataType: 'json' })
-                         .then(data => ({ name: 'shortcuts', status: 'fulfilled', value: data }))
-                         .catch(e => ({ name: 'shortcuts', status: 'rejected', reason: e })),
-                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinEnhanced/user-settings/${userId}/bookmark.json?_=${Date.now()}`), dataType: 'json' })
-                         .then(data => ({ name: 'bookmark', status: 'fulfilled', value: data }))
-                         .catch(e => ({ name: 'bookmark', status: 'rejected', reason: e })),
-                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinEnhanced/user-settings/${userId}/elsewhere.json?_=${Date.now()}`), dataType: 'json' })
-                         .then(data => ({ name: 'elsewhere', status: 'fulfilled', value: data }))
-                         .catch(e => ({ name: 'elsewhere', status: 'rejected', reason: e })),
-                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinEnhanced/user-settings/${userId}/hidden-content.json?_=${Date.now()}`), dataType: 'json' })
-                         .then(data => ({ name: 'hiddenContent', status: 'fulfilled', value: data }))
-                         .catch(e => ({ name: 'hiddenContent', status: 'rejected', reason: e }))
-            ];
-            // Use allSettled to get results even if some fetches fail
-            const results = await Promise.allSettled(fetchPromises);
+            // Stage 2: Collect the user-specific settings started in the
+            // parallel fetch wave above.
+            const results = await userSettingsPromise;
 
             JE.userConfig = { settings: {}, shortcuts: { Shortcuts: [] }, bookmark: { bookmarks: {} }, elsewhere: {}, hiddenContent: { items: {}, settings: {} } };
             results.forEach(result => {
