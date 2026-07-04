@@ -2,14 +2,16 @@
 // Calendar Page — date-range helpers, event formatting and single-event /
 // agenda-event / card rendering (split from calendar-page.js).
 
+import { assetUrl } from '../core/asset-urls';
 import { JE } from './arr-globals';
 import { state, STATUS_COLORS } from './calendar-page-data';
 import type { CalendarEvent } from './calendar-page-data';
 
 const escapeHtml = JE.escapeHtml;
 
-const SONARR_ICON_URL = 'https://cdn.jsdelivr.net/gh/selfhst/icons/svg/sonarr.svg';
-const RADARR_ICON_URL = 'https://cdn.jsdelivr.net/gh/selfhst/icons/svg/radarr-light-hybrid-light.svg';
+// PERF: no remote assets — arr icons served from the local asset cache.
+const SONARR_ICON_URL = assetUrl('icons/sonarr.svg');
+const RADARR_ICON_URL = assetUrl('icons/radarr-light-hybrid-light.svg');
 
 // Get start and end dates for current view
 export function getRangeForView(anchorDate: Date, viewMode: string): { start: Date; end: Date } {

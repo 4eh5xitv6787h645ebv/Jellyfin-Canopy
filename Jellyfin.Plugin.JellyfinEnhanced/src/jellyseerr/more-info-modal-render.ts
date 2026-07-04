@@ -2,6 +2,8 @@
 // Static HTML builders for the more-info modal body (header, panels,
 // crew/cast, trailers, keywords, collection card).
 import { JE } from '../globals';
+// PERF: no remote assets — flag/icon images served from the local asset cache.
+import { assetUrl, flagPngUrl } from '../core/asset-urls';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -173,7 +175,7 @@ return `
                     <div class="je-more-info-stat-value">${data.productionCountries.map((c: any) => {
                         const disp = c?.name === 'United States of America' ? 'United States' : (c?.name || '');
                         const code = (c?.iso_3166_1 || '').toLowerCase();
-                        return `<div><img src="https://flagcdn.com/w20/${code}.png" alt="${escapeHtml(disp)}" title="${escapeHtml(disp)}" style="margin-right: 6px; vertical-align: middle;" /> ${escapeHtml(disp)}</div>`;
+                        return `<div><img src="${flagPngUrl(code)}" alt="${escapeHtml(disp)}" title="${escapeHtml(disp)}" style="margin-right: 6px; vertical-align: middle;" /> ${escapeHtml(disp)}</div>`;
                     }).join('')}</div>
                 </div>
             ` : ''}
@@ -344,7 +346,7 @@ return `
                 const thumbnailUrl = trailer.site === 'YouTube'
                     ? `https://img.youtube.com/vi/${trailer.key}/mqdefault.jpg`
                     : '';
-                const youtubeIcon = trailer.site === 'YouTube' ? '<img src="https://cdn.jsdelivr.net/gh/selfhst/icons@main/png/youtube.png" alt="YouTube" class="trailer-youtube-icon" />' : '';
+                const youtubeIcon = trailer.site === 'YouTube' ? `<img src="${assetUrl('icons/youtube.png')}" alt="YouTube" class="trailer-youtube-icon" />` : '';
 
                 return `
                     <a is="emby-linkbutton" href="${escapeHtml(trailer.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(trailer.name)}" class="trailer-item">

@@ -2,6 +2,7 @@
 // Applies color-coded backgrounds to media ratings on item details page
 
 import { JE as JEBase } from '../globals';
+import { assetUrl } from '../core/asset-urls';
 import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate } from '../core/navigation';
 import type { PluginConfig } from '../types/je';
@@ -23,7 +24,6 @@ const CONFIG = {
     attributeName: 'rating',
     debounceDelay: 100,
     navSettleDelay: 500,
-    cssUrl: 'https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Enhanced@main/css/ratings.css',
     cssId: 'jellyfin-ratings-style'
 };
 
@@ -45,7 +45,8 @@ function injectCSS(): void {
         linkElement.id = CONFIG.cssId;
         linkElement.rel = 'stylesheet';
         linkElement.type = 'text/css';
-        linkElement.href = CONFIG.cssUrl;
+        // PERF: no remote assets — ratings.css served from the local asset cache.
+        linkElement.href = assetUrl('ratings/ratings.css');
         document.head.appendChild(linkElement);
     } catch (error) {
         console.error('🪼 Jellyfin Enhanced: Failed to inject ratings CSS', error);

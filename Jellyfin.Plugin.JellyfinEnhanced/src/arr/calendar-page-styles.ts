@@ -3,19 +3,12 @@
 // Owns the single injection site for the feature's styles; all former call
 // sites import injectStyles, deduped by style id via core injectCss.
 
-import { injectCss } from '../core/ui-kit';
+import { ensureMaterialSymbolsFont, injectCss } from '../core/ui-kit';
 import { JE } from './arr-globals';
 
-// CSS Styles
+// CSS Styles. The shared Material Symbols @font-face lives in core/ui-kit
+// (local asset cache) and is injected by injectStyles() below, not re-declared here.
 const CSS_STYLES = `
-    @font-face {
-      font-family: 'Material Symbols Rounded';
-      font-style: normal;
-      font-weight: 100 700;
-      font-display: block;
-      src: url(https://fonts.gstatic.com/s/materialsymbolsrounded/v258/syl0-zNym6YjUruM-QrEh7-nyTnjDwKNJ_190FjpZIvDmUSVOK7BDB_Qb9vUSzq3wzLK-P0J-V_Zs-QtQth3-jOcbTCVpeRL2w5rwZu2rIelXxc.woff2) format('woff2');
-    }
-
     .material-symbols-rounded {
       font-family: 'Material Symbols Rounded';
       font-weight: normal;
@@ -1085,6 +1078,8 @@ const CSS_STYLES = `
 
 // Inject CSS styles into page
 export function injectStyles(): void {
+    // Shared icon font (consolidated @font-face; served from the local asset cache).
+    ensureMaterialSymbolsFont();
     if (document.getElementById("je-calendar-styles")) return;
     injectCss("je-calendar-styles", CSS_STYLES);
 

@@ -5,7 +5,7 @@
 // ShowUserRatingDash is false in admin config).
 
 import { JE as JEBase } from '../globals';
-import { injectCss } from '../core/ui-kit';
+import { ensureMaterialSymbolsFont, injectCss } from '../core/ui-kit';
 import type { ApiApi } from '../types/je';
 
 /**
@@ -142,14 +142,9 @@ JE.initializeUserReviewTags = function() {
         return;
     }
 
+    // Shared @font-face lives in core/ui-kit (local asset cache), not here.
+    ensureMaterialSymbolsFont();
     injectCss('je-userreview-tags-css', `
-        @font-face {
-            font-family: 'Material Symbols Rounded';
-            font-style: normal;
-            font-weight: 100 700;
-            font-display: block;
-            src: url(https://fonts.gstatic.com/s/materialsymbolsrounded/v258/syl0-zNym6YjUruM-QrEh7-nyTnjDwKNJ_190FjpZIvDmUSVOK7BDB_Qb9vUSzq3wzLK-P0J-V_Zs-QtQth3-jOcbTCVpeRL2w5rwZu2rIelXxc.woff2) format('woff2');
-        }
         .je-userreview-tag { color: #e91e8c !important; }
         .je-userreview-icon {
             font-family: 'Material Symbols Rounded';

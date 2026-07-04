@@ -26,6 +26,8 @@ export interface PluginConfig {
     EnableTagsLocalStorageFallback?: boolean;
     TagsCacheTtlDays?: number;
     ClearLocalStorageTimestamp?: number;
+    /** Serve third-party assets from the local plugin cache (default true); see core/asset-urls.ts. */
+    AssetCacheEnabled?: boolean;
     [key: string]: unknown;
 }
 

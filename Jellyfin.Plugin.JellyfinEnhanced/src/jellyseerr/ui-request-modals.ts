@@ -1,6 +1,8 @@
 // src/jellyseerr/ui-request-modals.ts
 // Advanced request modals for movies and collections.
 import { JE } from '../globals';
+// PERF: no remote assets — poster placeholder embedded in the plugin DLL.
+import { assetUrl } from '../core/asset-urls';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -140,7 +142,7 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
         const year = movie.releaseDate ? new Date(movie.releaseDate).getFullYear() : '';
         const poster = movie.posterPath
             ? `https://image.tmdb.org/t/p/w92${movie.posterPath}`
-            : 'https://i.ibb.co/fdbkXQdP/jellyseerr-poster-not-found.png';
+            : assetUrl('jellyseerr/poster-fallback.svg');
 
         return `
             <div class="jellyseerr-collection-movie-row">

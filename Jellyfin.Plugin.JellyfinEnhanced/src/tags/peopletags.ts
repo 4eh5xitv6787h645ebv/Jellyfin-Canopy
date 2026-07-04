@@ -7,7 +7,8 @@
 // factory does not apply here.
 
 import { JE as JEBase } from '../globals';
-import { injectCss } from '../core/ui-kit';
+import { flagPngUrl } from '../core/asset-urls';
+import { ensureMaterialSymbolsFont, injectCss } from '../core/ui-kit';
 import type { JELegacyHelpers, PluginConfig, UserSettings } from '../types/je';
 
 /**
@@ -99,16 +100,10 @@ JE.initializePeopleTags = function() {
     let peopleTagsComplete = false; // Set true after all cast members tagged for current item
     let isProcessing = false;
 
-    // Styles for deceased indicators, overlay positioning, and material-symbols-rounded font
+    // Styles for deceased indicators, overlay positioning, and material-symbols-rounded font.
+    // Shared @font-face lives in core/ui-kit (local asset cache), not here.
+    ensureMaterialSymbolsFont();
     injectCss('je-people-tags-styles', `
-        @font-face {
-            font-family: 'Material Symbols Rounded';
-            font-style: normal;
-            font-weight: 100 700;
-            font-display: block;
-            src: url(https://fonts.gstatic.com/s/materialsymbolsrounded/v258/syl0-zNym6YjUruM-QrEh7-nyTnjDwKNJ_190FjpZIvDmUSVOK7BDB_Qb9vUSzq3wzLK-P0J-V_Zs-QtQth3-jOcbTCVpeRL2w5rwZu2rIelXxc.woff2) format('woff2');
-        }
-
         .material-symbols-rounded {
             font-family: 'Material Symbols Rounded';
             font-weight: normal;
@@ -329,11 +324,11 @@ JE.initializePeopleTags = function() {
             // Extract country code from birthplace
             const countryCode = getCountryCodeFromBirthPlace(personData.birthPlace);
 
-            // Use flagcdn for country flags
+            // Country flag PNG — PERF: no remote assets, served from the local asset cache.
             if (countryCode) {
                 const flagImg = document.createElement('img');
                 flagImg.className = 'je-people-flag';
-                flagImg.src = `https://flagcdn.com/w20/${countryCode.toLowerCase()}.png`;
+                flagImg.src = flagPngUrl(countryCode);
                 flagImg.style.cssText = 'width: 16px; height: 12px; border-radius: 2px; object-fit: cover;';
                 flagImg.alt = countryCode;
                 placeContainer.appendChild(flagImg);

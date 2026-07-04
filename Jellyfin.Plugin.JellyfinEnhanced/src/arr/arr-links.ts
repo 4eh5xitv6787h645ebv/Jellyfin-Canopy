@@ -3,6 +3,7 @@
 // Public surface (frozen): JE.initializeArrLinksScript (called by js/plugin.js
 // Stage 6), JE._arrLinksObserver.
 
+import { assetUrl } from '../core/asset-urls';
 import { createObserver } from '../core/dom-observer';
 import { JE } from './arr-globals';
 import type { ExternalLinkOptions } from './arr-globals';
@@ -212,9 +213,10 @@ JE.initializeArrLinksScript = async function () {
     }
 
     try {
-        const SONARR_ICON_URL = 'https://cdn.jsdelivr.net/gh/selfhst/icons/svg/sonarr.svg';
-        const RADARR_ICON_URL = 'https://cdn.jsdelivr.net/gh/selfhst/icons/svg/radarr-light-hybrid-light.svg';
-        const BAZARR_ICON_URL = 'https://cdn.jsdelivr.net/gh/selfhst/icons/svg/bazarr.svg';
+        // PERF: no remote assets — arr icons served from the local asset cache.
+        const SONARR_ICON_URL = assetUrl('icons/sonarr.svg');
+        const RADARR_ICON_URL = assetUrl('icons/radarr-light-hybrid-light.svg');
+        const BAZARR_ICON_URL = assetUrl('icons/bazarr.svg');
 
         // Multi-instance support: read instance arrays from private-config, drop disabled
         // entries so the dropdown never offers a link to an instance the admin has toggled

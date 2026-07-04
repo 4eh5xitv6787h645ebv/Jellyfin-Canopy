@@ -2,6 +2,7 @@
 // Replaces default plugin icons with custom icons on the dashboard
 
 import { JE as JEBase } from '../globals';
+import { assetUrl } from '../core/asset-urls';
 import type { LifecycleApi, LifecycleHandle, NavigationApi } from '../types/je';
 
 /** Icon override descriptor for a built-in plugin link. */
@@ -229,18 +230,19 @@ async function processPluginIcons(): Promise<void> {
         const existingTestLinks = pluginsSection.querySelectorAll('[data-jellyfin-enhanced-plugin-id^="test-"]');
         existingTestLinks.forEach(link => link.remove());
 
-        // Replace built-in plugin icons
+        // Replace built-in plugin icons.
+        // PERF: no remote assets — image icons served from the local asset cache.
         const iconConfigs: IconConfig[] = [
             {
                 selector: 'a[href*="Jellyfin%20Enhanced"]',
                 type: 'image',
-                src: 'https://cdn.jsdelivr.net/gh/n00bcodr/jellyfish/logos/favicon.ico',
+                src: assetUrl('icons/jellyfish-favicon.ico'),
                 alt: 'Jellyfin Enhanced'
             },
             {
                 selector: 'a[href*="JavaScript%20Injector"]',
                 type: 'image',
-                src: 'https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/javascript.svg',
+                src: assetUrl('icons/javascript.svg'),
                 alt: 'JavaScript'
             },
             {
@@ -281,7 +283,7 @@ async function processPluginIcons(): Promise<void> {
             {
                 selector: 'a[href*="Jellyfin%20Helper"]',
                 type: 'image',
-                src: 'https://cdn.jsdelivr.net/gh/JellyPlugins/jellyfin-helper@2.0.0.2/media/favicon.ico',
+                src: assetUrl('icons/jellyfin-helper-favicon.ico'),
                 alt: 'Jellyfin Helper'
             }
         ];

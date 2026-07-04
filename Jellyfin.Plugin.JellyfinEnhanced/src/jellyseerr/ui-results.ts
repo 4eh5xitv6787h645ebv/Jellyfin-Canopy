@@ -2,6 +2,8 @@
 // Search-page result rendering: Seerr section, header icon, season
 // status analysis and in-place result updates.
 import { JE } from '../globals';
+// PERF: no remote assets — Seerr icon served from the local asset cache.
+import { assetUrl } from '../core/asset-urls';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -75,7 +77,7 @@ ui.updateJellyseerrIcon = function (isJellyseerrActive: any, jellyseerrUserFound
         icon = document.createElement('img');
         icon.id = 'jellyseerr-search-icon';
         icon.className = 'jellyseerr-icon';
-        icon.src = 'https://cdn.jsdelivr.net/gh/selfhst/icons/svg/seerr.svg';
+        icon.src = assetUrl('icons/seerr.svg');
         icon.alt = 'Seerr';
 
         let tapCount = 0;

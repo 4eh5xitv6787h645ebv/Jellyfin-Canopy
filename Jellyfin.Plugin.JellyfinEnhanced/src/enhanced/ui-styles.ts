@@ -5,11 +5,15 @@
 // (Converted from js/enhanced/ui-styles.js — bodies semantically identical.)
 
 import { JE } from '../globals';
+import { ensureMaterialSymbolsFont } from '../core/ui-kit';
 
 /**
  * Injects custom CSS for plugin features.
  */
 JE.injectGlobalStyles = (): void => {
+    // Shared icon font: ONE @font-face for all features, woff2 served from the
+    // local asset cache (see core/asset-urls.ts) instead of fonts.gstatic.com.
+    ensureMaterialSymbolsFont();
     const styleId = 'jellyfin-enhanced-styles';
     if (document.getElementById(styleId)) return;
     const style = document.createElement('style');
@@ -39,13 +43,6 @@ JE.injectGlobalStyles = (): void => {
                 font-size: 0.9em;
                 font-family: inherit;
                 box-shadow: 0 1px 1px rgba(0,0,0,0.2);
-            }
-            @font-face {
-              font-family: 'Material Symbols Rounded';
-              font-style: normal;
-              font-weight: 100 700;
-              font-display: block;
-              src: url(https://fonts.gstatic.com/s/materialsymbolsrounded/v258/syl0-zNym6YjUruM-QrEh7-nyTnjDwKNJ_190FjpZIvDmUSVOK7BDB_Qb9vUSzq3wzLK-P0J-V_Zs-QtQth3-jOcbTCVpeRL2w5rwZu2rIelXxc.woff2) format('woff2');
             }
             .mediaInfoItem-fileSize .material-icons,
             .mediaInfoItem-watchProgress .material-icons,

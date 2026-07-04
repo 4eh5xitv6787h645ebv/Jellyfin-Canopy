@@ -1,6 +1,7 @@
 // src/elsewhere/reviews.ts
 
 import { JE as JEBase } from '../globals';
+import { ensureMaterialSymbolsFont } from '../core/ui-kit';
 import type { ApiApi, JELegacyHelpers, UserSettings } from '../types/je';
 
 /**
@@ -859,19 +860,14 @@ JE.initializeReviewsScript = function () {
     }
 
     function injectCss(): void {
+        // Shared @font-face lives in core/ui-kit (local asset cache), not here.
+        ensureMaterialSymbolsFont();
         const styleId = 'tmdb-reviews-enhanced-styles';
         if (document.getElementById(styleId)) return;
 
         const style = document.createElement('style');
         style.id = styleId;
         style.textContent = `
-            @font-face {
-                font-family: 'Material Symbols Rounded';
-                font-style: normal;
-                font-weight: 100 700;
-                font-display: block;
-                src: url(https://fonts.gstatic.com/s/materialsymbolsrounded/v258/syl0-zNym6YjUruM-QrEh7-nyTnjDwKNJ_190FjpZIvDmUSVOK7BDB_Qb9vUSzq3wzLK-P0J-V_Zs-QtQth3-jOcbTCVpeRL2w5rwZu2rIelXxc.woff2) format('woff2');
-            }
             .material-symbols-rounded {
                 font-family: 'Material Symbols Rounded';
                 font-weight: normal;

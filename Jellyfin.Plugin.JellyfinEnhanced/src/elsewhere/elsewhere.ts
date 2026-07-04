@@ -4,6 +4,7 @@
  */
 
 import { JE as JEBase } from '../globals';
+import { assetUrl } from '../core/asset-urls';
 import type { ApiApi, JELegacyHelpers, PluginConfig } from '../types/je';
 
 /** Options accepted by helpers.createExternalLink (and its local fallback). */
@@ -83,9 +84,10 @@ JE.initializeElsewhereScript = function() {
 
     console.log('🪼 Jellyfin Enhanced: 🎬 Jellyfin Elsewhere starting...');
 
-    // Load regions and providers from GitHub repo
+    // Load regions and providers (mirrored from the Jellyfin-Elsewhere repo).
+    // PERF: no remote assets — both .txt files are served from the local asset cache.
     function loadRegionsAndProviders(): void {
-        fetch(`https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/regions.txt`)
+        fetch(assetUrl('elsewhere/regions.txt'))
             .then(response => response.ok ? response.text() : Promise.reject(new Error(`HTTP ${response.status}`)))
             .then(text => {
                 const lines = text.trim().split('\n');
@@ -109,7 +111,7 @@ JE.initializeElsewhereScript = function() {
             });
 
              // Load providers
-        fetch(`https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/providers.txt`)
+        fetch(assetUrl('elsewhere/providers.txt'))
             .then(response => response.ok ? response.text() : Promise.reject(new Error(`HTTP ${response.status}`)))
             .then(text => {
                 availableProviders = text.trim().split('\n')

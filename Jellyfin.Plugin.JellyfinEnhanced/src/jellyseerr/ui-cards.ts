@@ -1,6 +1,9 @@
 // src/jellyseerr/ui-cards.ts
 // Seerr search-result card construction.
 import { JE } from '../globals';
+// PERF: no remote assets — Seerr icon + poster placeholder served from the
+// local asset cache (the placeholder is embedded in the plugin DLL).
+import { assetUrl } from '../core/asset-urls';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -27,7 +30,7 @@ function createJellyseerrCard(item: any, isJellyseerrActive: any, jellyseerrUser
         && /^\/[A-Za-z0-9_\-\.]+\.(jpg|jpeg|png|webp|avif)$/i.test(p);
     const posterUrl = isSafePosterPath(item.posterPath)
         ? `https://image.tmdb.org/t/p/w400${item.posterPath}`
-        : 'https://i.ibb.co/fdbkXQdP/jellyseerr-poster-not-found.png';
+        : assetUrl('jellyseerr/poster-fallback.svg');
     const rating = item.voteAverage ? item.voteAverage.toFixed(1) : 'N/A';
     // Escape API-sourced values before interpolation into search card HTML
     const titleText = escapeHtml(item.title || item.name);
@@ -86,7 +89,7 @@ function createJellyseerrCard(item: any, isJellyseerrActive: any, jellyseerrUser
                    title="${jellyfinHref ? titleText : (useMoreInfoModal ? titleText : (jellyseerrUrl ? (JE.t!('jellyseerr_card_view_on_jellyseerr') || 'View on Jellyseerr') : titleText))}"><bdi>${titleText}</bdi></a>
             </div>
             <div class="cardText cardTextCentered cardText-secondary jellyseerr-meta">
-                <img src="https://cdn.jsdelivr.net/gh/selfhst/icons/svg/seerr.svg" class="jellyseerr-icon-on-card" alt="Seerr"/>
+                <img src="${assetUrl('icons/seerr.svg')}" class="jellyseerr-icon-on-card" alt="Seerr"/>
                 <bdi>${year}</bdi>
                 <div class="jellyseerr-rating">${icons.star}<span>${rating}</span></div>
             </div>

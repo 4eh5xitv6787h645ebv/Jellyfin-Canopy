@@ -154,6 +154,10 @@
 
     /**
      * Injects Druidblack metadata icons CSS.
+     * PERF: no remote assets — served from the local asset cache (the server
+     * rewrites the CSS's internal icon urls to local copies too). The original
+     * CDN URL is only used when the admin disabled the asset cache. Called
+     * after loadConfig(), so JE.pluginConfig is populated here.
      * @param {boolean} enabled
      */
     function injectMetadataIcons(enabled) {
@@ -162,7 +166,9 @@
             const link = document.createElement('link');
             link.id = 'metadataIconsCss';
             link.rel = 'stylesheet';
-            link.href = 'https://cdn.jsdelivr.net/gh/Druidblack/jellyfin-icon-metadata/public-icon.css';
+            link.href = JE.pluginConfig?.AssetCacheEnabled !== false
+                ? ApiClient.getUrl('/JellyfinEnhanced/assets/metadata-icons/public-icon.css')
+                : 'https://cdn.jsdelivr.net/gh/Druidblack/jellyfin-icon-metadata/public-icon.css';
             document.head.appendChild(link);
         } else if (!enabled && existing) {
             existing.remove();

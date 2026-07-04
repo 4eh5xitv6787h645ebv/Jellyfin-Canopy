@@ -5,6 +5,7 @@
 // parts: the language→country map, audio-stream extraction and flag markup.
 
 import { JE as JEBase } from '../globals';
+import { flagSvgUrl } from '../core/asset-urls';
 import { register, reinitialize, resolvePosition } from '../core/tag-renderer-base';
 import type { TagRendererContext, TagSpec } from '../types/je';
 
@@ -170,7 +171,8 @@ function insertLanguageTags(ctx: TagRendererContext, container: HTMLElement, lan
 
     uniqueFlags.slice(0, maxToShow).forEach(flagInfo => {
         const img = document.createElement('img');
-        img.src = `https://cdnjs.cloudflare.com/ajax/libs/flag-icons/7.2.1/flags/4x3/${flagInfo.countryCode.toLowerCase()}.svg`;
+        // PERF: no remote assets — flag served from the local asset cache.
+        img.src = flagSvgUrl(flagInfo.countryCode);
         img.className = flagClass;
         img.alt = flagInfo.allLanguages.join(', ');
         img.title = flagInfo.allLanguages.join(', ');

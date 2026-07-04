@@ -5,6 +5,7 @@
 // identical; the JE.internals.features pieces are now real module exports.)
 
 import { JE } from '../globals';
+import { ensureMaterialSymbolsFont } from '../core/ui-kit';
 import { addCSS, getItemCached } from './helpers';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -240,14 +241,9 @@ let releaseDateIconFontInjected = false;
 function ensureReleaseDateIconFont(): void {
     if (releaseDateIconFontInjected) return;
     releaseDateIconFontInjected = true;
+    // Shared @font-face lives in core/ui-kit (local asset cache), not here.
+    ensureMaterialSymbolsFont();
     addCSS('je-release-date-symbols', `
-        @font-face {
-            font-family: 'Material Symbols Rounded';
-            font-style: normal;
-            font-weight: 100 700;
-            font-display: block;
-            src: url(https://fonts.gstatic.com/s/materialsymbolsrounded/v258/syl0-zNym6YjUruM-QrEh7-nyTnjDwKNJ_190FjpZIvDmUSVOK7BDB_Qb9vUSzq3wzLK-P0J-V_Zs-QtQth3-jOcbTCVpeRL2w5rwZu2rIelXxc.woff2) format('woff2');
-        }
         .je-release-date-icon {
             font-family: 'Material Symbols Rounded';
             font-weight: normal;

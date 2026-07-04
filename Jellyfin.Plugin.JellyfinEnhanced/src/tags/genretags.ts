@@ -5,6 +5,7 @@
 // the genre→icon map, genre extraction fallbacks and the icon-chip markup.
 
 import { JE as JEBase } from '../globals';
+import { assetUrl } from '../core/asset-urls';
 import { register, reinitialize, resolvePosition } from '../core/tag-renderer-base';
 import type { TagRendererContext, TagSpec } from '../types/je';
 
@@ -313,12 +314,14 @@ const spec: TagSpec = {
 };
 
 JE.initializeGenreTags = function() {
-    // Ensure Material Symbols font is loaded
+    // Ensure Material Symbols font is loaded.
+    // PERF: no remote assets — the Google Fonts stylesheet is served from the
+    // local asset cache, its @font-face urls rewritten to local woff2 copies.
     if (!document.getElementById('mat-sym')) {
         const link = document.createElement('link');
         link.id = 'mat-sym';
         link.rel = 'stylesheet';
-        link.href = 'https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@48,400,0,0';
+        link.href = assetUrl('fonts/material-symbols-outlined.css');
         document.head.appendChild(link);
     }
 

@@ -5,6 +5,7 @@
 // identical; the JE.internals.features pieces are now real module exports.)
 
 import { JE } from '../globals';
+import { flagSvgUrl } from '../core/asset-urls';
 import { getItemCached } from './helpers';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -499,7 +500,8 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
             const countryCode = languageToCountryMap[lang.name] || languageToCountryMap[lang.code];
             if (countryCode) {
                 const flag = document.createElement('img');
-                flag.src = `https://cdnjs.cloudflare.com/ajax/libs/flag-icons/7.2.1/flags/4x3/${countryCode.toLowerCase()}.svg`;
+                // PERF: no remote assets — flag served from the local asset cache.
+                flag.src = flagSvgUrl(countryCode);
                 flag.alt = `${lang.name} flag`;
                 // PERF: explicit width AND height (attributes + styles) so the
                 // slot is fully reserved before the SVG loads — no row reflow

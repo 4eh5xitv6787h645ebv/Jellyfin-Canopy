@@ -1,6 +1,7 @@
 // src/others/letterboxd-links.ts
 
 import { JE as JEBase } from '../globals';
+import { assetUrl } from '../core/asset-urls';
 import type { JELegacyHelpers, PluginConfig } from '../types/je';
 
 /** Options accepted by helpers.createExternalLink (and its local fallback). */
@@ -40,7 +41,8 @@ JE.initializeLetterboxdLinksScript = async function () {
     const processedItemIds = new Set<string>(); // Cache of items we've already processed
     let lastVisibleItemId: string | null = null; // Track the currently visible item
 
-    const LETTERBOXD_ICON_URL = 'https://cdn.jsdelivr.net/gh/selfhst/icons/svg/letterboxd.svg';
+    // PERF: no remote assets — icon served from the local asset cache.
+    const LETTERBOXD_ICON_URL = assetUrl('icons/letterboxd.svg');
 
     // Safe fallback for helpers.js Stage-3 load-order races.
     const extLink = JE.helpers?.createExternalLink || ((u: string, o?: ExternalLinkOptions) => {

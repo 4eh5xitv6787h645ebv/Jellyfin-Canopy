@@ -8,6 +8,7 @@
 // Aliases kept: JE.escapeHtml, JE.toast, JE.helpers.addCSS/removeCSS/escHtml.
 
 import { JE } from '../globals';
+import { assetUrl } from './asset-urls';
 import type {
     ExpandInOptions,
     MuiIconButtonOptions,
@@ -57,6 +58,30 @@ export function injectCss(id: string, css: string): void {
     document.head.appendChild(style);
 
     console.log(`🪼 Jellyfin Enhanced: Added CSS: ${id}`);
+}
+
+/**
+ * Injects the ONE shared 'Material Symbols Rounded' @font-face for every
+ * feature that renders those icons (media-info chips, release dates, people
+ * tags, user-review tags, reviews, calendar). Replaces the six per-feature
+ * duplicates of the same @font-face — call this next to each feature's own
+ * style injection instead of re-declaring it.
+ *
+ * PERF: no remote assets — the woff2 is served from the local asset cache
+ * (same font-display: block as before, but same-origin = fast + private).
+ */
+export function ensureMaterialSymbolsFont(): void {
+    const id = 'je-material-symbols-rounded';
+    if (document.getElementById(id)) return;
+    injectCss(id, `
+        @font-face {
+            font-family: 'Material Symbols Rounded';
+            font-style: normal;
+            font-weight: 100 700;
+            font-display: block;
+            src: url(${assetUrl('fonts/material-symbols-rounded.woff2')}) format('woff2');
+        }
+    `);
 }
 
 /**

@@ -2,6 +2,7 @@
 // Requests Page — download, request, issue and season-pack card rendering
 // (split from requests-page.js).
 
+import { assetUrl } from '../core/asset-urls';
 import { JE } from './arr-globals';
 import { richApiClient, state, getIssueMediaType, getIssueTmdbId } from './requests-page-data';
 import {
@@ -17,8 +18,9 @@ import type { DownloadGroup } from './requests-page-render-helpers';
 
 const escapeHtml = JE.escapeHtml;
 
-const SONARR_ICON_URL = 'https://cdn.jsdelivr.net/gh/selfhst/icons/svg/sonarr.svg';
-const RADARR_ICON_URL = 'https://cdn.jsdelivr.net/gh/selfhst/icons/svg/radarr-light-hybrid-light.svg';
+// PERF: no remote assets — arr icons served from the local asset cache.
+const SONARR_ICON_URL = assetUrl('icons/sonarr.svg');
+const RADARR_ICON_URL = assetUrl('icons/radarr-light-hybrid-light.svg');
 
 /**
  * Render a download card

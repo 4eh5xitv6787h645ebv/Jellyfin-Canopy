@@ -2,6 +2,7 @@
 // Theme selector for Jellyfish theme color variants
 
 import { JE as JEBase } from '../globals';
+import { themeCssUrl } from '../core/asset-urls';
 
 /**
  * Local view of the shared namespace adding the public member this module
@@ -31,7 +32,6 @@ const THEMES: Readonly<Record<string, string>> = Object.freeze({
     'Watermelon': 'watermelon.css'
 });
 
-const THEME_BASE_URL = 'https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfish/colors/';
 const RANDOM_THEME_DEFAULT = false;
 const CSS_STYLE_ID = 'jellyfin-theme-selector-css';
 const SELECTOR_ID = 'jellyfin-theme-selector';
@@ -40,7 +40,9 @@ const NOTIFICATION_DELAY = 1000;
 const DEBOUNCE_DELAY = 100;
 const TRANSITION_DURATION = 300;
 
-const getThemeImport = (filename: string): string => filename ? `@import url("${THEME_BASE_URL}${filename}");` : '';
+// PERF: no remote assets — Jellyfish theme CSS served from the local asset
+// cache (with its logo/background image urls rewritten to local copies).
+const getThemeImport = (filename: string): string => filename ? `@import url("${themeCssUrl(filename)}");` : '';
 
 const getStorageKey = (userId: string, key: string): string => `${userId}-${key}`;
 
