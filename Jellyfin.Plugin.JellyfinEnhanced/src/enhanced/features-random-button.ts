@@ -179,14 +179,27 @@ JE.addRandomButton = (): void => {
         return;
     }
 
+    // PERF (doctrine: reserved-space entrance + pre-paint re-mounts): the
+    // button keeps its designed slot (prepend = leading position in the tray),
+    // but the injection can no longer shift the native buttons:
+    //  - Boot / feature-toggle-on is necessarily POST-paint (JE loads after the
+    //    native header paints), so the first injection expands from width 0
+    //    over 150ms (ui-kit expandIn) instead of snap-shifting the tray.
+    //  - Re-mounts (the /video round trip, React re-renders) run through the
+    //    prePaint path: the button attaches synchronously in the mutation batch
+    //    that rebuilt the toolbar, before its first paint — inserted instantly,
+    //    no animation, indistinguishable from a native tray button.
+    let firstBuild = true;
     randomButtonHandle = JE.core.dom!.ensureInjected(
         'je-random-button',
         () => getHeaderRightContainer(),
-        (headerRight) => {
+        (headerRight, ctx) => {
             const container = buildRandomButton(headerRight);
             headerRight.prepend(container);
+            JE.core.ui!.expandIn(container, { instant: ctx?.prePaint === true || !firstBuild });
+            firstBuild = false;
             return container;
         },
-        { headerTray: true }
+        { headerTray: true, prePaint: true }
     );
 };

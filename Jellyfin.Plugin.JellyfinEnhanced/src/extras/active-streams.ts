@@ -2,7 +2,7 @@
 // Shows a live Active Streams counter in the Jellyfin header.
 
 import { JE as JEBase } from '../globals';
-import type { ApiApi, LifecycleApi, LifecycleHandle, NavigationApi, PluginConfig } from '../types/je';
+import type { ApiApi, LifecycleApi, LifecycleHandle, NavigationApi, PluginConfig, UiApi } from '../types/je';
 
 /**
  * Local view of the shared namespace adding the public member this module
@@ -13,7 +13,7 @@ const JE = JEBase as typeof JEBase & {
     t?: (key: string, params?: Record<string, unknown>) => string;
     currentUser?: { Policy?: { IsAdministrator?: boolean } };
     pluginConfig: PluginConfig & { ActiveStreamsEnabled?: boolean; ActiveStreamsAllUsers?: boolean };
-    core: { api: ApiApi; navigation: NavigationApi; lifecycle: LifecycleApi };
+    core: { api: ApiApi; navigation: NavigationApi; lifecycle: LifecycleApi; ui?: UiApi };
     themer?: { getThemeVariables?: () => { primaryAccent?: string } };
     helpers: {
         getHeaderRightContainer: () => HTMLElement | null;
@@ -30,6 +30,10 @@ let _observer: { unsubscribe(): void } | null = null;
 let _lifecycle: LifecycleHandle | null = null;
 let _outsideClickListener: ((e: MouseEvent) => void) | null = null;
 let _lastUpdated: Date | null = null;
+// PERF: true once the header button has been injected in this enable cycle —
+// the first injection (boot / toggle-on, post-paint by architecture) gets the
+// one-time width-expand entrance; re-mount re-injections attach instantly.
+let _headerInjectedOnce = false;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 const ticksToTime = (ticks: number): string => {
@@ -1182,6 +1186,15 @@ const tryInjectHeader = (attempts = 0): void => {
     btn.addEventListener('click', (e) => { e.stopPropagation(); togglePanel(); });
 
     headerRight.insertBefore(btn, headerRight.firstChild);
+    // PERF (doctrine: reserved-space entrance + pre-paint re-mounts): the
+    // button keeps its designed leading slot. Boot/toggle-on injection is
+    // post-paint (JE loads after the native header paints) so the first
+    // injection expands from width 0 over 150ms instead of snap-shifting the
+    // tray. Re-mounts re-inject synchronously from the shared body-observer
+    // callback — inside the mutation batch that rebuilt the toolbar, before
+    // its first paint — so they attach instantly with no animation.
+    JE.core?.ui?.expandIn(btn, { instant: _headerInjectedOnce });
+    _headerInjectedOnce = true;
     injectPanel();
     applyThemeVars();
     startPolling();
@@ -1239,5 +1252,6 @@ JE.activeStreams = {
         document.getElementById('je-active-streams-styles')?.remove();
         _panelOpen = false;
         _broadcastFormOpen = false;
+        _headerInjectedOnce = false; // next enable cycle re-animates its boot injection
     }
 };

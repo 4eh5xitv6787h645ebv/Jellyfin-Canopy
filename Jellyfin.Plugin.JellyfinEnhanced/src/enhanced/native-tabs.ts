@@ -44,6 +44,10 @@ interface NativeTabEntry {
 /** Ordered list of {id, title, onMount, index}. Order determines data-index assignment. */
 let entries: NativeTabEntry[] = [];
 let injectPending = false;
+// PERF: link ids that already had their one-time boot entrance animation.
+// Re-injections (header re-mounts) attach instantly — they run rAF-coalesced
+// off the remount mutation, i.e. before the rebuilt header's first paint.
+const animatedLinkIds = new Set<string>();
 
 function isOnHomePage(): boolean {
     const hash = window.location.hash;
@@ -191,6 +195,7 @@ function ensureDiscoverable(entry: NativeTabEntry): void {
     const headerRight = getHeaderRightContainer();
     if (!headerRight) return;
 
+    const groupExisted = document.getElementById('je-native-tabs-group') !== null;
     const group = getOrCreateGroup(headerRight);
     const separator = document.getElementById('je-native-tabs-separator');
 
@@ -211,6 +216,17 @@ function ensureDiscoverable(entry: NativeTabEntry): void {
     });
 
     group.insertBefore(link, separator);
+    // PERF (doctrine: reserved-space entrance): the group keeps its designed
+    // slot (flex order:-1, always first in the tray). At boot the tray painted
+    // long before JE loaded, so the FIRST appearance of each link expands from
+    // width 0 over 150ms instead of snap-shifting the native buttons; header
+    // re-mounts re-inject rAF-coalesced before the rebuilt tray's first paint,
+    // so they attach instantly with no animation. When the group already
+    // existed only the new link animates, otherwise the whole group (link +
+    // separator) expands as one block.
+    const firstAppearance = !animatedLinkIds.has(entry.id);
+    animatedLinkIds.add(entry.id);
+    JE.core.ui!.expandIn(groupExisted ? link : group, { instant: !firstAppearance });
     console.log('🪼 Jellyfin Enhanced: [native-tabs] tab button for "' + entry.title + '" is hidden (experimental layout), added header-tray fallback link');
 }
 
