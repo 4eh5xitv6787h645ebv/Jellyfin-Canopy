@@ -9,6 +9,8 @@
     - Admin access to your Jellyfin server
     - Modern web browser (Chrome, Firefox, Edge, Safari)
 
+    On Jellyfin 10.11? Stay on the plugin's final 11.x release — see [Migrating to v12](migrating-to-v12.md).
+
 
 ## Standard Installation
 

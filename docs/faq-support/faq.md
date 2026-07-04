@@ -40,7 +40,7 @@ The userscript has been discontinued as the plugin functionality has grown signi
 
 | Plugin | Jellyfin 12 | Jellyfin 10.11 | Notes |
 |--------|-------------|----------------|-------|
-| Jellyfin Enhanced | ✅ | ❌ | Jellyfin 10.11 users: install the final 11.x release |
+| Jellyfin Enhanced | ✅ | ❌ | Jellyfin 10.11 users: install the final 11.x release — see [Migrating to v12](../installation/migrating-to-v12.md) |
 
 ### Plugin not appearing after installation?
 
