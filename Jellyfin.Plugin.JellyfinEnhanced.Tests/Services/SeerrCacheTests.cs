@@ -64,20 +64,6 @@ public class SeerrCacheTests
     }
 
     [Fact]
-    public void Constructor_PublishesTransitionalStaticInstance()
-    {
-        // The plugin's UpdateConfiguration hook clears caches through
-        // SeerrCache.Instance; it must point at the most recently constructed
-        // (i.e. the DI-singleton) instance.
-        var cache = NewCache();
-        Assert.Same(cache, SeerrCache.Instance);
-
-        cache.UserIdCache["jf-user-a"] = ("1", DateTime.UtcNow);
-        SeerrCache.Instance!.ClearAllSeerrCachesOnConfigChange();
-        Assert.Empty(cache.UserIdCache);
-    }
-
-    [Fact]
     public void CacheTtls_AreReadThroughConfigProvider()
     {
         var cache = NewCache(new PluginConfiguration

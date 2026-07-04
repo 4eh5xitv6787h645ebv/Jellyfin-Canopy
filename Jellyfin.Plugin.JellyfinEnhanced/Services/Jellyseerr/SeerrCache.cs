@@ -15,19 +15,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
     /// </summary>
     public sealed class SeerrCache : ISeerrCache
     {
-        // TRANSITIONAL: JellyfinEnhanced (BasePlugin) is not DI-resolved, but its
-        // UpdateConfiguration override must clear the same cache instance the
-        // controllers use. The single DI registration constructs exactly one
-        // SeerrCache, whose constructor publishes itself here. Remove once the
-        // plugin lifecycle itself is DI-aware.
-        public static SeerrCache? Instance { get; private set; }
-
         private readonly IPluginConfigProvider _configProvider;
 
         public SeerrCache(IPluginConfigProvider configProvider)
         {
             _configProvider = configProvider;
-            Instance = this;
         }
 
         // Server-side cache for proxied avatar images to avoid re-fetching from

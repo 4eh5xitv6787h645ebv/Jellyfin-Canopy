@@ -1,0 +1,172 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
+using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
+using MediaBrowser.Common.Plugins;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Session;
+using MediaBrowser.Model.Plugins;
+using MediaBrowser.Model.Session;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+namespace Jellyfin.Plugin.JellyfinEnhanced.Services
+{
+    /// <summary>
+    /// DI hosted service that turns an admin config save into a live push to open
+    /// browser sessions, so a toggled setting hot-reloads with no manual refresh.
+    ///
+    /// Replaces the former <c>SeerrCache.Instance</c> static bridge + the plugin's
+    /// <c>UpdateConfiguration</c> override (v12-platform.md §4 S3(f)): the plugin
+    /// is not DI-registered, but this service reaches its instance via
+    /// <see cref="IPluginManager"/> and subscribes to
+    /// <see cref="BasePlugin{T}.ConfigurationChanged"/> — the event raised by the
+    /// dashboard/API save path. On each change it (1) flushes the Seerr caches
+    /// (the behaviour the removed override used to provide) and (2) pushes a
+    /// JE-marked <see cref="SessionMessageType.GeneralCommand"/> to every user
+    /// session. The client's live hub (src/core/live.ts) filters GeneralCommands
+    /// for the marker and refetches public-config; native clients ignore the
+    /// carrier command (it hits the default branch of serverNotifications.js).
+    /// </summary>
+    public sealed class LiveNotifierService : IHostedService
+    {
+        /// <summary>Arguments key stamped on JE's own GeneralCommands; the client keys off it.</summary>
+        internal const string MarkerKey = "JellyfinEnhanced";
+
+        /// <summary>Marker value for a config-changed push (also the client live-event name).</summary>
+        internal const string ConfigChangedValue = "config-changed";
+
+        /// <summary>
+        /// Carrier command for JE pushes. Chosen because it is NOT handled by the
+        /// web client's GeneralCommand switch (serverNotifications.js) — it hits the
+        /// default (debug-log) branch and does nothing — so native clients ignore
+        /// the message while JE's subscriber keys off <see cref="MarkerKey"/>.
+        /// </summary>
+        internal const GeneralCommandType CarrierCommand = GeneralCommandType.SetPlaybackOrder;
+
+        private static readonly Guid PluginId = Guid.Parse("f69e946a-4b3c-4e9a-8f0a-8d7c1b2c4d9b");
+
+        private readonly IPluginManager _pluginManager;
+        private readonly ISessionManager _sessionManager;
+        private readonly IUserManager _userManager;
+        private readonly ISeerrCache _seerrCache;
+        private readonly ILogger<LiveNotifierService> _logger;
+
+        private BasePlugin<PluginConfiguration>? _plugin;
+        private EventHandler<BasePluginConfiguration>? _handler;
+
+        public LiveNotifierService(
+            IPluginManager pluginManager,
+            ISessionManager sessionManager,
+            IUserManager userManager,
+            ISeerrCache seerrCache,
+            ILogger<LiveNotifierService> logger)
+        {
+            _pluginManager = pluginManager;
+            _sessionManager = sessionManager;
+            _userManager = userManager;
+            _seerrCache = seerrCache;
+            _logger = logger;
+        }
+
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                _plugin = ResolvePlugin();
+                if (_plugin == null)
+                {
+                    _logger.LogWarning("LiveNotifier: could not locate the Jellyfin Enhanced plugin instance; config hot-reload push disabled.");
+                    return Task.CompletedTask;
+                }
+
+                _handler = (_, _) => OnConfigurationChanged();
+                _plugin.ConfigurationChanged += _handler;
+                _logger.LogInformation("LiveNotifier: subscribed to plugin ConfigurationChanged for config hot-reload push.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "LiveNotifier: failed to subscribe to ConfigurationChanged.");
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            if (_plugin != null && _handler != null)
+            {
+                _plugin.ConfigurationChanged -= _handler;
+                _handler = null;
+            }
+
+            return Task.CompletedTask;
+        }
+
+        // Reach the (non-DI) plugin instance through IPluginManager, then cast to
+        // the typed BasePlugin to expose ConfigurationChanged.
+        private BasePlugin<PluginConfiguration>? ResolvePlugin()
+        {
+            var id = JellyfinEnhanced.Instance?.Id ?? PluginId;
+            var local = _pluginManager.GetPlugin(id);
+            return local?.Instance as BasePlugin<PluginConfiguration>;
+        }
+
+        // ConfigurationChanged is a synchronous event fired on the save path;
+        // never block it or let an exception escape into the host.
+        private void OnConfigurationChanged()
+            => _ = HandleConfigurationChangedAsync(CancellationToken.None);
+
+        /// <summary>
+        /// Flush Seerr caches (preserving the removed override's behaviour) and push
+        /// the JE config-changed message to every user session. Internal so a unit
+        /// test can drive it directly. Never throws.
+        /// </summary>
+        internal async Task HandleConfigurationChangedAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                _seerrCache.ClearAllSeerrCachesOnConfigChange();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "LiveNotifier: failed to flush Seerr caches on config change.");
+            }
+
+            try
+            {
+                var version = JellyfinEnhanced.Instance?.Version?.ToString() ?? string.Empty;
+                var command = BuildConfigChangedCommand(version);
+                var userIds = _userManager.GetUsers().Select(u => u.Id).ToList();
+                if (userIds.Count > 0)
+                {
+                    await _sessionManager
+                        .SendMessageToUserSessions(userIds, SessionMessageType.GeneralCommand, command, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
+                _logger.LogInformation("LiveNotifier: pushed config-changed to {Count} user session group(s).", userIds.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "LiveNotifier: failed to push config-changed to sessions.");
+            }
+        }
+
+        /// <summary>
+        /// Build the JE config-changed GeneralCommand. Pure (no host dependencies)
+        /// so it is directly unit-testable: asserts the marker, value and version
+        /// the client filters on.
+        /// </summary>
+        internal static GeneralCommand BuildConfigChangedCommand(string version)
+        {
+            var command = new GeneralCommand { Name = CarrierCommand };
+            command.Arguments[MarkerKey] = ConfigChangedValue;
+            command.Arguments["Version"] = version ?? string.Empty;
+            return command;
+        }
+    }
+}

@@ -197,28 +197,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             base.OnUninstalling();
         }
 
-        // Flush every Seerr-related cache the moment the admin saves config.
-        // Without this, fixing a bad URL/key/blocklist takes 10-30 minutes to
-        // take effect because of the user-id and response caches — admins see
-        // "still broken" after their fix and assume it didn't work
-        //.
-        public override void UpdateConfiguration(BasePluginConfiguration configuration)
-        {
-            base.UpdateConfiguration(configuration);
-            try
-            {
-                // The plugin itself is not DI-resolved; SeerrCache.Instance is the
-                // transitional bridge to the one DI-registered cache singleton the
-                // controllers use. Null only before the first cache consumer is
-                // constructed, i.e. when there is nothing to clear yet.
-                Services.Jellyseerr.SeerrCache.Instance?.ClearAllSeerrCachesOnConfigChange();
-                _logger.LogInformation("Jellyfin Enhanced: configuration updated — Seerr caches cleared.");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning($"Jellyfin Enhanced: failed to clear Seerr caches on config update: {ex.Message}");
-            }
-        }
+        // Seerr caches are flushed the moment the admin saves config by
+        // Services.LiveNotifierService, a DI hosted service that subscribes to
+        // BasePlugin<T>.ConfigurationChanged (raised here by base.UpdateConfiguration)
+        // and reaches the one cache singleton the controllers use via DI — no static
+        // bridge, and it ALSO pushes a live "config-changed" message to open
+        // sessions so admin saves hot-reload with no manual refresh.
         private void CleanupOldScript()
         {
             try
