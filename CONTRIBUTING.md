@@ -62,6 +62,19 @@ It generates a typed client module, a controller, an e2e spec stub and a docs st
 5. **Proof = an `e2e/` spec.**
    Extend the stub: log in with the `loginAs` fixture, drive the feature, assert what the user sees, and assert `consoleErrors.real()` is empty. Specs must be idempotent and restore any server state they touch.
 
+### Performance rules
+
+Injected UI must never jank the host client. The full doctrine — each rule with its reasoning and the pattern to copy — is [docs/advanced/performance-rules.md](docs/advanced/performance-rules.md); the implementation sites are marked `// PERF(Rn):` in the source. Check your PR against all eight:
+
+- [ ] **R1** Injected UI is pre-paint (`ensureInjected(..., { prePaint: true })`) or occupies reserved dimensions (`min-width` chips / `expandIn`). No insert-then-move, no placeholder-then-swap-width.
+- [ ] **R2** Decorations on existing content (tags, badges, buttons on cards) are `position:absolute` overlays — they cannot shift layout.
+- [ ] **R3** No new body-wide `MutationObserver` — use `JE.core.dom.onBodyMutation` or navigation events; page-scoped observers tear down via lifecycle. Never observe attributes/characterData body-wide.
+- [ ] **R4** Layout reads are cached per navigation (the `getHeaderRightContainer` pattern); none inside observer ticks; reads and writes never interleave in loops.
+- [ ] **R5** No `setInterval` for DOM detection; data polls are page-scoped + visibility-gated + push-nudged via `JE.core.live`.
+- [ ] **R6** No remote assets: every third-party asset goes through `src/core/asset-urls.ts` + the `AssetCacheManifest` mirror. A CDN URL anywhere else fails review (content images and user-clicked links exempt).
+- [ ] **R7** Feature DOM is built off-DOM and inserted once, content ready; late async data gets a compositor-only fade, never a layout-affecting swap.
+- [ ] **R8** Synchronous per-mutation-batch work stays under ~2 ms (`performance.now()` guard) and overflows to the async path.
+
 ## 📝 Code Contribution Guidelines
 
 ### Code Style
