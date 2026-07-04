@@ -6,6 +6,7 @@
 // identical; the JE.internals.hiddenContentPage bag is now real module imports.)
 
 import { JE } from '../globals';
+import { onSidebarRebuild } from '../core/dom-observer';
 import { state, sidebar, pluginPagesExists } from './hidden-content-page-state';
 import { injectStyles } from './hidden-content-page-styles';
 // Cross-module reference (defined in hidden-content-page-render.ts). ES-module
@@ -339,7 +340,9 @@ export function setupNavigationWatcher(): void {
     if (config.HiddenContentUseCustomTabs) return;
     if (config.HiddenContentUseNativeTab) return;
 
-    const observer = new MutationObserver(() => {
+    // PERF: shared sidebar-rebuild subscriber on the multiplexed body observer
+    // instead of a dedicated (body-fallback) MutationObserver per nav feature.
+    onSidebarRebuild('hidden-content-nav', () => {
         const currentConfig = JE.pluginConfig || {};
         if (currentConfig.HiddenContentUseCustomTabs) return;
         if (currentConfig.HiddenContentUseNativeTab) return;
@@ -353,9 +356,4 @@ export function setupNavigationWatcher(): void {
             }
         }
     });
-
-    const navDrawer = document.querySelector('.mainDrawer, .navDrawer, body');
-    if (navDrawer) {
-        observer.observe(navDrawer, { childList: true, subtree: true });
-    }
 }

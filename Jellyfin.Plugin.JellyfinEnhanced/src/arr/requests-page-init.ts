@@ -8,6 +8,7 @@
 
 import { register as registerLifecycle } from '../core/lifecycle';
 import { LIVE } from '../core/live';
+import { onSidebarRebuild } from '../core/dom-observer';
 import { JE } from './arr-globals';
 import { clearAvatarObjectUrlCache, loadAllData, state } from './requests-page-data';
 import { createPageContainer, renderPage } from './requests-page-render';
@@ -321,8 +322,9 @@ function setupNavigationWatcher(): void {
     if (config.DownloadsUseCustomTabs) return; // Don't watch if using custom tabs
     if (config.DownloadsUseNativeTab) return; // Don't watch if using the native tab
 
-    // Use MutationObserver to watch for sidebar changes, but disconnect after re-injection
-    const observer = new MutationObserver(() => {
+    // PERF: shared sidebar-rebuild subscriber on the multiplexed body observer
+    // instead of a dedicated (body-fallback) MutationObserver per nav feature.
+    onSidebarRebuild('downloads-nav', () => {
         // Re-check config each time to avoid injecting when settings change
         const currentConfig = JE.pluginConfig || {};
         if (currentConfig.DownloadsUseCustomTabs) return;
@@ -337,12 +339,6 @@ function setupNavigationWatcher(): void {
             }
         }
     });
-
-    // Observe the main drawer
-    const navDrawer = document.querySelector('.mainDrawer, .navDrawer, body');
-    if (navDrawer) {
-        observer.observe(navDrawer, { childList: true, subtree: true });
-    }
 }
 
 /**

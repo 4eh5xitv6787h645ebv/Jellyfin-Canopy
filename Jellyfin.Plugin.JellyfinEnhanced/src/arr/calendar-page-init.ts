@@ -6,6 +6,7 @@
 // called by js/plugin.js Stage 6 and PluginPages/CalendarPage.html.
 
 import { register as registerLifecycle } from '../core/lifecycle';
+import { onSidebarRebuild } from '../core/dom-observer';
 import { JE } from './arr-globals';
 import { loadSettings, state } from './calendar-page-data';
 import { createPageContainer, renderPage } from './calendar-page-render-views';
@@ -322,8 +323,9 @@ function setupNavigationWatcher(): void {
     if (config.CalendarUseCustomTabs) return; // Don't watch if using custom tabs
     if (config.CalendarUseNativeTab) return; // Don't watch if using the native tab
 
-    // Use MutationObserver to watch for sidebar changes, but disconnect after re-injection
-    const observer = new MutationObserver(() => {
+    // PERF: shared sidebar-rebuild subscriber on the multiplexed body observer
+    // instead of a dedicated (body-fallback) MutationObserver per nav feature.
+    onSidebarRebuild('calendar-nav', () => {
         // Re-check config each time to avoid injecting when settings change
         const currentConfig = JE.pluginConfig || {};
         if (currentConfig.CalendarUseCustomTabs) return;
@@ -338,12 +340,6 @@ function setupNavigationWatcher(): void {
             }
         }
     });
-
-    // Observe the main drawer
-    const navDrawer = document.querySelector('.mainDrawer, .navDrawer, body');
-    if (navDrawer) {
-        observer.observe(navDrawer, { childList: true, subtree: true });
-    }
 }
 
 /**

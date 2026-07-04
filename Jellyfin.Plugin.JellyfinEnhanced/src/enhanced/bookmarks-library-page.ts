@@ -5,6 +5,7 @@
 // (Converted from js/enhanced/bookmarks-library-page.js — bodies semantically identical.)
 
 import { JE } from '../globals';
+import { onSidebarRebuild } from '../core/dom-observer';
 import { renderIfSectionExists } from './bookmarks-library-render';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -310,15 +311,12 @@ export function setupNavigationWatcher(): void {
   if (JE?.pluginConfig?.BookmarksUseCustomTabs) return;
   if (JE?.pluginConfig?.BookmarksUseNativeTab) return;
 
-  const observer = new MutationObserver(() => {
+  // PERF: shared sidebar-rebuild subscriber on the multiplexed body observer
+  // instead of a dedicated (body-fallback) MutationObserver per nav feature.
+  onSidebarRebuild('bookmarks-nav', () => {
     if (isPluginPagesActive()) return;
     if (!document.querySelector('.je-nav-bookmarks-item') && document.querySelector('.jellyfinEnhancedSection')) {
       injectNavigation();
     }
   });
-
-  const navDrawer = document.querySelector('.mainDrawer, .navDrawer, body');
-  if (navDrawer) {
-    observer.observe(navDrawer, { childList: true, subtree: true });
-  }
 }

@@ -414,6 +414,51 @@ export function ensureInjected(
     };
 }
 
+// --- Shared sidebar-rebuild watcher -----------------------------------------
+//
+// PERF: sidebar nav features (requests, calendar, hidden content, bookmarks)
+// each used to run their own MutationObserver — typically falling back to
+// document.body — just to re-inject their nav link when Jellyfin rebuilds the
+// drawer. They now share ONE subscriber on the multiplexed body observer that
+// fans out to lightweight presence checks.
+
+const sidebarRebuildChecks = new Map<string, () => void>();
+let sidebarRebuildHandle: BodySubscriberHandle | null = null;
+
+/**
+ * Register a lightweight presence check that re-runs after structural body
+ * mutations (drawer rebuilds included). All checks share a single body
+ * subscriber; each check should be cheap (query + early return) and re-inject
+ * its own nav item when missing.
+ * @param id - Unique identifier for this check (used for replacement warnings).
+ * @param check - The presence check / re-injection callback.
+ * @returns Unregister function.
+ */
+export function onSidebarRebuild(id: string, check: () => void): () => void {
+    if (sidebarRebuildChecks.has(id)) {
+        console.warn(`🪼 Jellyfin Enhanced: Replacing sidebar rebuild check: ${id}`);
+    }
+    sidebarRebuildChecks.set(id, check);
+    if (!sidebarRebuildHandle) {
+        sidebarRebuildHandle = onBodyMutation('je-sidebar-rebuild', () => {
+            sidebarRebuildChecks.forEach((fn, checkId) => {
+                try {
+                    fn();
+                } catch (err) {
+                    console.error(`🪼 Jellyfin Enhanced: Error in sidebar rebuild check "${checkId}":`, err);
+                }
+            });
+        });
+    }
+    return () => {
+        sidebarRebuildChecks.delete(id);
+        if (sidebarRebuildChecks.size === 0 && sidebarRebuildHandle) {
+            sidebarRebuildHandle.unsubscribe();
+            sidebarRebuildHandle = null;
+        }
+    };
+}
+
 // Cleanup on page unload
 window.addEventListener('beforeunload', () => {
     disconnectAllObservers();

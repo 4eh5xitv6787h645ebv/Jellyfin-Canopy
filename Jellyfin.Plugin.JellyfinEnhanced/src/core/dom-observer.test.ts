@@ -1,8 +1,11 @@
 // Unit tests for src/core/dom-observer.ts ensureInjected — the idempotent,
 // keyed injection that survives React re-renders and the /video header-tray
-// round trip (v12-platform.md §3 survival matrix, §6.5, §6.8).
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ensureInjected } from './dom-observer';
+// round trip (v12-platform.md §3 survival matrix, §6.5, §6.8) — and the
+// shared sidebar-rebuild watcher (PERF: one body subscriber for all nav
+// re-injection checks instead of one MutationObserver per feature).
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { JE } from '../globals';
+import { ensureInjected, onSidebarRebuild } from './dom-observer';
 
 describe('ensureInjected', () => {
     beforeEach(() => {
@@ -133,5 +136,70 @@ describe('ensureInjected', () => {
         expect(builds).toBe(1);
 
         handle.remove();
+    });
+});
+
+describe('onSidebarRebuild', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    /** Flush the shared body observer's async mutation callback. */
+    const flushMutations = async (): Promise<void> => {
+        document.body.appendChild(document.createElement('div'));
+        await Promise.resolve(); // MutationObserver callbacks run as microtasks
+        await Promise.resolve();
+    };
+
+    it('shares a single body subscriber across all registered checks', async () => {
+        const before = JE.core.dom!.getBodySubscriberCount();
+
+        const a = vi.fn();
+        const b = vi.fn();
+        const c = vi.fn();
+        const offA = onSidebarRebuild('test-nav-a', a);
+        const offB = onSidebarRebuild('test-nav-b', b);
+        const offC = onSidebarRebuild('test-nav-c', c);
+
+        // The whole point: N checks, ONE subscriber (and zero dedicated observers).
+        expect(JE.core.dom!.getBodySubscriberCount()).toBe(before + 1);
+
+        await flushMutations();
+        expect(a).toHaveBeenCalled();
+        expect(b).toHaveBeenCalled();
+        expect(c).toHaveBeenCalled();
+
+        offA();
+        offB();
+        offC();
+        // Last unregister releases the shared subscriber.
+        expect(JE.core.dom!.getBodySubscriberCount()).toBe(before);
+    });
+
+    it('keeps dispatching to remaining checks when one throws', async () => {
+        const throwing = vi.fn(() => { throw new Error('boom'); });
+        const healthy = vi.fn();
+        const offThrowing = onSidebarRebuild('test-nav-throwing', throwing);
+        const offHealthy = onSidebarRebuild('test-nav-healthy', healthy);
+
+        await flushMutations();
+        expect(throwing).toHaveBeenCalled();
+        expect(healthy).toHaveBeenCalled();
+
+        offThrowing();
+        offHealthy();
+    });
+
+    it('stops invoking a check after its unregister function runs', async () => {
+        const check = vi.fn();
+        const off = onSidebarRebuild('test-nav-off', check);
+
+        await flushMutations();
+        const callsWhileRegistered = check.mock.calls.length;
+        expect(callsWhileRegistered).toBeGreaterThan(0);
+
+        off();
+        await flushMutations();
+        expect(check.mock.calls.length).toBe(callsWhileRegistered);
     });
 });
