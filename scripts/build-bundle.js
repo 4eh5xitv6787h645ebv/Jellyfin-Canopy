@@ -61,9 +61,10 @@ const devMode = watchMode || args.includes('--dev');
 
 /**
  * Extracts the allComponentScripts array literal from plugin.js.
- * Fails loudly if the array cannot be found or looks implausibly small, so a
- * refactor of plugin.js that breaks the parse breaks the build instead of
- * silently shipping an empty bundle.
+ * Fails loudly only if the array literal cannot be found at all (a broken
+ * parse). The array shrinks toward empty as legacy modules migrate into the
+ * src/ TypeScript tree — an empty array is the valid end state, at which point
+ * every component is a src/ import and this legacy list is retired entirely.
  * @returns {string[]} script paths relative to js/, in load order.
  */
 function parseComponentScripts() {
@@ -73,12 +74,6 @@ function parseComponentScripts() {
         throw new Error(`Could not find the allComponentScripts array in ${PLUGIN_JS}`);
     }
     const scripts = [...match[1].matchAll(/(["'])([^"']+\.js)\1/g)].map((m) => m[2]);
-    if (scripts.length < 50) {
-        throw new Error(
-            `Parsed only ${scripts.length} entries from allComponentScripts — ` +
-            'that is implausibly few; the parse is probably broken.'
-        );
-    }
     const missing = scripts.filter((s) => !fs.existsSync(path.join(JS_ROOT, s)));
     if (missing.length > 0) {
         throw new Error(`allComponentScripts references missing files:\n  ${missing.join('\n  ')}`);

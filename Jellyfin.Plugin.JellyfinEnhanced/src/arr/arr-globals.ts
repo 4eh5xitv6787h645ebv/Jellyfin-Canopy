@@ -116,8 +116,17 @@ export interface ArrThemeVariables {
     textColor?: string;
 }
 
-/** The JE global as seen from the arr area. */
-export interface ArrJE extends JEGlobal {
+/**
+ * The JE global as seen from the arr area. Omits the members it re-views with
+ * area-local types before re-adding them, so it never clashes with the (now
+ * richer, cross-area-augmented) JEGlobal declarations of the same members.
+ */
+export type ArrJE = Omit<
+    JEGlobal,
+    | 'pluginConfig' | 'currentSettings' | 'helpers' | 'themer' | 't'
+    | 'currentUser' | 'loadSettings' | 'saveUserSettings' | 'icon' | 'IconName'
+    | 'hiddenContent' | 'nativeTabs' | 'jellyseerrIssueReporter'
+> & {
     pluginConfig: ArrPluginConfig;
     currentSettings?: ArrUserSettings;
     helpers?: ArrLegacyHelpers;
@@ -160,10 +169,10 @@ export interface ArrJE extends JEGlobal {
     initializeDownloadsPage?: () => void;
     calendarPage?: import('./calendar-page-init').CalendarPageApi;
     initializeCalendarPage?: () => void;
-}
+};
 
 /**
  * The shared window.JellyfinEnhanced namespace, widened for the arr area.
  * Same object as '../globals' JE — only the compile-time view differs.
  */
-export const JE: ArrJE = JEBase;
+export const JE = JEBase as unknown as ArrJE;

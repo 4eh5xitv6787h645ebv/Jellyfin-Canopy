@@ -335,7 +335,7 @@ function createJellyseerrCard(item: any, isJellyseerrActive: any, jellyseerrUser
                 hideBtn.onclick = (e: any) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    JE.hiddenContent.unhideItem(unhideKey);
+                    JE.hiddenContent?.unhideItem(unhideKey);
                     setHideState();
                 };
             }
@@ -352,7 +352,10 @@ function createJellyseerrCard(item: any, isJellyseerrActive: any, jellyseerrUser
                 hideBtn.onclick = (e: any) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    JE.hiddenContent.confirmAndHide({
+                    // The hide button is only added when hidden-content is enabled,
+                    // so JE.hiddenContent is present here; optional-chain to satisfy
+                    // the type without changing behavior.
+                    JE.hiddenContent?.confirmAndHide({
                         itemId: jellyfinMediaId || '',
                         name: titleText,
                         type: item.mediaType === 'tv' ? 'Series' : 'Movie',

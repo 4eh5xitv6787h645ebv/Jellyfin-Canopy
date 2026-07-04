@@ -202,7 +202,7 @@ if (!JE?.pluginConfig?.TmdbEnabled) {
 }
 
 // Resolve region: prefer Elsewhere user setting → plugin fallback → US
-const region = (JE?.userConfig?.elsewhere?.Region || JE?.pluginConfig?.DEFAULT_REGION || 'US')?.toUpperCase();
+const region = ((JE?.userConfig?.elsewhere as any)?.Region || JE?.pluginConfig?.DEFAULT_REGION || 'US')?.toUpperCase();
 
 // watchProviders is already the array of region objects
 if (!Array.isArray(data.watchProviders)) return '';

@@ -346,6 +346,9 @@ JE.helpers = {
     getHandlerCount: () => JE.core.navigation!.getViewHandlerCount(), // (core)
     getObserverCount: () => JE.core.dom!.getObserverCount(), // (core)
     getBodySubscriberCount: () => JE.core.dom!.getBodySubscriberCount() // (core)
-};
+// JE.helpers is the frozen legacy alias surface (JELegacyHelpers, an index
+// type); cast the whole literal so members like throttle/debounce assign
+// against the index signature rather than being contextually re-typed.
+} as typeof JE.helpers;
 
 console.log('🪼 Jellyfin Enhanced: Helpers initialized successfully');
