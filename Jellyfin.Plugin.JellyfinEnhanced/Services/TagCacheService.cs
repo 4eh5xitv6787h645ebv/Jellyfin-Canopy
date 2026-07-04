@@ -133,7 +133,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         public void EnqueueUpdate(Guid itemId)
         {
             if (itemId == Guid.Empty) return;
-            _pending.Record(itemId, removed: false);
+            _pending.Record(itemId, removed: false); // PERF(S1): O(1) record-and-defer, safe on the scan thread
             ScheduleFlush();
         }
 

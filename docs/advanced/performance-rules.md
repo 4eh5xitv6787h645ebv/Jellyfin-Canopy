@@ -19,6 +19,8 @@ grep -rn "PERF(R3" Jellyfin.Plugin.JellyfinEnhanced/src/
 | R7 | Single insert | Build off-DOM, insert once with content ready; late async data fades in (compositor-only), never swaps layout. |
 | R8 | Sync work budget | Pre-paint hooks stay under ~2 ms per mutation batch (`performance.now()` guard); overflow goes async. |
 
+Those eight are client-side (jank). There is also one **server-side** rule — [S1](#s1-never-block-jellyfins-synchronous-threads) — for plugin code that runs on Jellyfin's own threads (library-scan event handlers).
+
 ---
 
 ## R1 — Pre-paint or reserved space
@@ -180,6 +182,49 @@ for (const card of addedCards) {
 ```
 
 **In the tree:** `src/enhanced/tag-pipeline.ts` (`SYNC_SCAN_BUDGET_MS`, the budgeted sync pass and its queued overflow), `src/enhanced/hidden-content-filter.ts` (synchronous hide inside the batch so forbidden cards never paint), `src/enhanced/playback.ts` (one presence probe per batch, not per record).
+
+---
+
+## Server-side rules
+
+R1–R8 are about client jank. One rule governs the **server** — plugin code that runs on threads Jellyfin owns, where the cost lands on the host, not the browser.
+
+## S1 — Never block Jellyfin's synchronous threads
+
+**Rule.** A handler for a Jellyfin event that fires on a hot host thread — above all `ILibraryManager.ItemAdded` / `ItemUpdated` / `ItemRemoved`, which are raised **synchronously, one item at a time, on the library-scan thread** — must do only **O(1) record-and-defer** work: cheap in-memory checks, then record an id (or bump a counter) and return. No DB query (`GetItemList`, `GetItemById`), no media probe (`GetMediaSources`), no file or network I/O. The real work runs on a debounced, off-thread worker that **coalesces** by id.
+
+**Why.** Jellyfin invokes these handlers inline in the scan loop and waits for each to return before moving to the next item (`LibraryManager` raises them in a `foreach` on the calling thread). Whatever the handler does is added to the scan. The tag cache learned this the hard way: its handler rebuilt the changed item *and* re-resolved and rebuilt the parent Series and Season on every episode event — each a sorted "first episode" DB query — i.e. **~1.5 s of work per episode**, on the scan thread, for a library with 100k+ episodes. Measured before/after on the same items: **~1660 ms → ~113 ms per event** once the work moved off-thread.
+
+**The pattern to copy** (`TagCacheMonitor` → `TagCachePendingChanges` → `TagCacheService`):
+
+```csharp
+// Handler runs ON the scan thread — only record ids, never resolve them here.   // PERF(S1)
+private void OnItemChanged(object? sender, ItemChangeEventArgs e)
+{
+    var item = e.Item;
+    if (item is null || !TaggableTypes.Contains(item.GetBaseItemKind())) return;
+    _service.EnqueueUpdate(item.Id);            // O(1): record id + arm a debounced timer
+    if (item is Episode ep)                      // SeriesId/SeasonId are in-memory props, no DB
+    {
+        _service.EnqueueUpdate(ep.SeriesId);
+        _service.EnqueueUpdate(ep.SeasonId);
+    }
+}
+
+// A debounced Timer drains the coalesced batch OFF the scan thread, resolves each id
+// (GetItemById), rebuilds the entry and persists once — so a burst for one series collapses
+// to a single rebuild instead of one per episode.
+```
+
+Use a short debounce with a hard max-wait cap so a continuous scan still flushes periodically, and drain any queued work on `Dispose` so a shutdown mid-window doesn't lose it.
+
+**Enforced.** `LibraryScanEventGuardTests` fails the build when a new file subscribes to these events without being reviewed onto its allowlist, and when `TagCacheMonitor`'s handler regains an inline `GetItemById` / `GetMediaSources` / `GetItemList` / `GetFirstEpisode` call. Grep the record-and-defer sites:
+
+```bash
+grep -rn "PERF(S1)" Jellyfin.Plugin.JellyfinEnhanced/
+```
+
+**In the tree:** `Services/TagCacheMonitor.cs` (record-and-defer handler), `Services/TagCachePendingChanges.cs` (coalescing set), `Services/TagCacheService.cs` (debounced off-thread flush + `Dispose` drain), `Services/SeerrScanTriggerService.cs` (counter + debounce timer).
 
 ---
 
