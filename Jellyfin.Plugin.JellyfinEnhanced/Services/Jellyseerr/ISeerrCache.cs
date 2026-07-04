@@ -78,7 +78,21 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
 
         ConcurrentDictionary<string, Task<TmdbEnrichmentResult>> TmdbEnrichmentInFlight { get; }
 
+        /// <summary>
+        /// User-independent cache of a title's resolved parental score, keyed
+        /// <c>"{mediaType}:{tmdbId}:{region}"</c>. A <c>null</c> <c>Score</c> means the
+        /// title is unrated/unknown. Populated by the Seerr parental-rating filter
+        /// from per-item detail lookups. Certifications rarely change, so this uses a
+        /// deliberately long TTL (<see cref="GetParentalRatingCacheTtl"/>). Because the
+        /// value depends only on the title (not the caller), it is safe to share
+        /// across users.
+        /// </summary>
+        ConcurrentDictionary<string, (int? Score, int? SubScore, DateTime CachedAt)> CertScoreCache { get; }
+
         TimeSpan GetResponseCacheTtl();
+
+        /// <summary>TTL for <see cref="CertScoreCache"/> (default 24h, config-driven).</summary>
+        TimeSpan GetParentalRatingCacheTtl();
 
         TimeSpan GetUserIdCacheTtl();
 

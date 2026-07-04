@@ -34,19 +34,22 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
         private readonly IUserManager _userManager;
         private readonly ISeerrCache _seerrCache;
         private readonly IPluginConfigProvider _configProvider;
+        private readonly ISeerrParentalFilter _parentalFilter;
 
         public JellyseerrClient(
             IHttpClientFactory httpClientFactory,
             ILogger<JellyseerrClient> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
-            IPluginConfigProvider configProvider)
+            IPluginConfigProvider configProvider,
+            ISeerrParentalFilter parentalFilter)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _userManager = userManager;
             _seerrCache = seerrCache;
             _configProvider = configProvider;
+            _parentalFilter = parentalFilter;
         }
 
         // ── URL / id helpers (hoisted from JellyseerrUserResolver) ───────────
@@ -627,13 +630,23 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
                 : $"{jellyfinUserId}:{apiPath}";
             if (isCacheable)
             {
+                string? cachedContent = null;
                 lock (_seerrCache.ResponseCacheLock)
                 {
                     if (_seerrCache.ResponseCache.TryGetValue(cacheKey, out var cached) &&
                         DateTime.UtcNow - cached.CachedAt < _seerrCache.GetResponseCacheTtl())
                     {
-                        return new ContentResult { Content = cached.Content, ContentType = "application/json" };
+                        cachedContent = cached.Content;
                     }
+                }
+
+                if (cachedContent != null)
+                {
+                    // Filter per-caller on the way out; the cached body itself stays
+                    // user-neutral (never store a per-user-filtered view under a
+                    // possibly-shared public: cache key).
+                    var filteredCached = await _parentalFilter.FilterListBodyAsync(cachedContent, apiPath, caller);
+                    return new ContentResult { Content = filteredCached, ContentType = "application/json" };
                 }
             }
 
@@ -714,7 +727,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
                             EvictMovieTvCacheForRequest(content);
                         }
 
-                        return new ContentResult { Content = json, ContentType = "application/json" };
+                        // Cache above stores the raw, user-neutral body; the parental
+                        // filter runs per-caller on the way out.
+                        var filteredJson = await _parentalFilter.FilterListBodyAsync(json, apiPath, caller);
+                        return new ContentResult { Content = filteredJson, ContentType = "application/json" };
                     }
 
                     _logger.LogWarning($"Seerr request failed for user {ResolveUserDisplay(jellyfinUserId)} at {url}: code={error!.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
