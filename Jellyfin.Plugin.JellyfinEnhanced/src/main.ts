@@ -35,6 +35,9 @@ import './core/dom-observer';
 import './core/ui-kit';
 import './core/api-client';
 import './core/tag-renderer-base';
+// live builds on navigation + lifecycle (nav-surviving SDK subscription) and,
+// once config hot-reload lands, on api-client + ui-kit — so it imports last.
+import './core/live';
 
 // Area barrels — each imports that area's converted modules in execution
 // order. Areas own their own ordering without touching this file: main.ts

@@ -19,6 +19,16 @@ declare global {
         getCurrentUser(): Promise<unknown>;
         getItem(userId: string, itemId: string): Promise<unknown>;
         ajax(options: { type: string; url: string; dataType?: string; data?: unknown; contentType?: string }): Promise<unknown>;
+        /**
+         * v12 SDK socket subscription: register a callback for one or more
+         * SessionMessageType names, receiving `{ MessageType, Data }` envelopes.
+         * Returns an unsubscribe function. Optional: absent on older hosts and
+         * when the SDK socket bridge is unavailable (JE.core.live fails soft).
+         */
+        subscribe?(
+            types: string[],
+            callback: (message: { MessageType: string; Data?: unknown }) => void
+        ): () => void;
         [key: string]: unknown;
     }
 
