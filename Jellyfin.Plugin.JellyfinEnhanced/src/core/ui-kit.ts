@@ -9,6 +9,7 @@
 
 import { JE } from '../globals';
 import type {
+    ExpandInOptions,
     MuiIconButtonOptions,
     MuiMenuItemOptions,
     SectionContainerOptions,
@@ -259,6 +260,47 @@ export function sectionContainer(options: SectionContainerOptions = {}): HTMLDiv
     return section;
 }
 
+/**
+ * PERF: shift-free entrance for a node just inserted in-flow into an
+ * ALREADY-PAINTED container (e.g. a header tray at plugin boot, which by
+ * architecture paints seconds before JE loads). Instead of snap-shifting its
+ * siblings, the node expands from width 0 to its natural width over a short
+ * eased transition, then every inline style is removed so the final layout is
+ * exactly what a plain insert would have produced.
+ *
+ * Call synchronously right after attaching the node (same task, before the
+ * next paint — the natural width is measured before collapsing, so the node
+ * never paints full-size first). Pass `instant: true` when the injection is
+ * known to run in the same mutation batch that mounted the container
+ * (pre-paint re-mounts): the node is then part of the container's first
+ * painted frame and animating would only draw attention to it.
+ * @param el - The just-attached element.
+ * @param options - See {@link ExpandInOptions}.
+ */
+export function expandIn(el: HTMLElement, options: ExpandInOptions = {}): void {
+    if (options.instant) return;
+    if (!el.isConnected) return;
+    const targetWidth = el.getBoundingClientRect().width;
+    if (targetWidth <= 0) return; // hidden / not laid out — nothing to animate
+    const duration = options.durationMs ?? 150;
+    const prevOverflow = el.style.overflow;
+    el.style.overflow = 'hidden';
+    el.style.width = '0px';
+    void el.offsetWidth; // flush so the transition starts from the collapsed width
+    el.style.transition = `width ${duration}ms ease`;
+    el.style.width = `${targetWidth}px`;
+    let cleaned = false;
+    const cleanup = (): void => {
+        if (cleaned) return;
+        cleaned = true;
+        el.style.transition = '';
+        el.style.width = '';
+        el.style.overflow = prevOverflow;
+    };
+    el.addEventListener('transitionend', cleanup, { once: true });
+    setTimeout(cleanup, duration + 100); // safety net if transitionend never fires
+}
+
 const ui: UiApi = {
     escapeHtml,
     toast,
@@ -266,7 +308,8 @@ const ui: UiApi = {
     removeCss,
     muiIconButton,
     muiMenuItem,
-    sectionContainer
+    sectionContainer,
+    expandIn
 };
 
 JE.core.ui = ui;

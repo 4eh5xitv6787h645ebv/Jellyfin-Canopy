@@ -152,6 +152,27 @@ export interface EnsureInjectedOptions {
      * hidden/cached container.
      */
     isPresent?: () => boolean;
+    /**
+     * PERF: also run this injector SYNCHRONOUSLY inside the shared body-observer
+     * structural callback (before the rAF-coalesced pass), so the node attaches
+     * in the same mutation batch that remounted its anchor — before the anchor's
+     * first paint (the events.ts action-sheet doctrine, generalized). Keep the
+     * buildFn cheap; when the keyed node is missing it runs on every structural
+     * mutation batch.
+     */
+    prePaint?: boolean;
+}
+
+/** Context passed to a {@link DomApi.ensureInjected} buildFn. */
+export interface EnsureInjectedBuildContext {
+    /**
+     * True when this pass runs synchronously inside the body-observer mutation
+     * batch (`options.prePaint`) — the anchor has NOT painted yet, so the built
+     * node is part of its first frame. False for the registration-time,
+     * navigation, viewshow and rAF-coalesced passes, where the anchor may have
+     * been on screen for a while (e.g. plugin boot after native paint).
+     */
+    prePaint: boolean;
 }
 
 /** Handle returned by {@link DomApi.ensureInjected}. */
@@ -172,7 +193,7 @@ export interface DomApi {
     ensureInjected(
         key: string,
         anchorFn: () => HTMLElement | null,
-        buildFn: (anchor: HTMLElement) => HTMLElement | null | void,
+        buildFn: (anchor: HTMLElement, ctx?: EnsureInjectedBuildContext) => HTMLElement | null | void,
         options?: EnsureInjectedOptions
     ): EnsureInjectedHandle;
     createObserver(
@@ -241,6 +262,21 @@ export interface UiApi {
     muiMenuItem(options: MuiMenuItemOptions): HTMLLIElement;
     /** A `.verticalSection` matching the home-sections markup; append content into it. */
     sectionContainer(options?: SectionContainerOptions): HTMLDivElement;
+    /**
+     * PERF: shift-free entrance for a node just inserted in-flow into an
+     * already-painted container (width 0 → natural width over ~150ms, then all
+     * inline styles removed). Call synchronously right after attaching; pass
+     * `instant: true` for pre-paint injections (no animation needed).
+     */
+    expandIn(el: HTMLElement, options?: ExpandInOptions): void;
+}
+
+/** Options for {@link UiApi.expandIn}. */
+export interface ExpandInOptions {
+    /** Skip the animation entirely (pre-paint injections). */
+    instant?: boolean;
+    /** Width transition duration in ms. Defaults to 150. */
+    durationMs?: number;
 }
 
 // ── api-client contracts ────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ import { onNavigate } from './navigation';
 import type {
     BodySubscriberHandle,
     DomApi,
+    EnsureInjectedBuildContext,
     EnsureInjectedHandle,
     EnsureInjectedOptions,
     ObserverProxy
@@ -285,13 +286,16 @@ export function waitForElement(selector: string, timeout = 10000): Promise<Eleme
 interface InjectorEntry {
     key: string;
     anchorFn: () => HTMLElement | null;
-    buildFn: (anchor: HTMLElement) => HTMLElement | null | void;
+    buildFn: (anchor: HTMLElement, ctx?: EnsureInjectedBuildContext) => HTMLElement | null | void;
     options: EnsureInjectedOptions;
 }
 
 const injectors = new Map<string, InjectorEntry>();
 let injectorsWired = false;
 let runAllScheduled = false;
+// Count of registered pre-paint injectors so the (hot) body-mutation callback
+// can skip the synchronous pass entirely when nothing opted in.
+let prePaintInjectorCount = 0;
 
 const raf: (cb: () => void) => void =
     typeof requestAnimationFrame === 'function'
@@ -336,8 +340,14 @@ function isKeyedPresent(key: string, headerTray: boolean): boolean {
     return false;
 }
 
-/** Run one injector pass: no-op if present, else anchor → build → tag. */
-function runInjector(entry: InjectorEntry): void {
+/**
+ * Run one injector pass: no-op if present, else anchor → build → tag.
+ * @param entry - The registered injector.
+ * @param prePaint - True when running synchronously inside the body-observer
+ *   mutation batch (before the anchor's first paint); surfaced to the buildFn
+ *   so it can pick an instant vs animated entrance.
+ */
+function runInjector(entry: InjectorEntry, prePaint = false): void {
     try {
         const present = entry.options.isPresent
             ? entry.options.isPresent()
@@ -347,7 +357,7 @@ function runInjector(entry: InjectorEntry): void {
         const anchor = entry.anchorFn();
         if (!anchor) return; // host not mounted yet — a later re-run will retry
 
-        const node = entry.buildFn(anchor);
+        const node = entry.buildFn(anchor, { prePaint });
         if (node instanceof HTMLElement && !node.dataset.jeKey) {
             node.dataset.jeKey = entry.key;
         }
@@ -356,8 +366,19 @@ function runInjector(entry: InjectorEntry): void {
     }
 }
 
+/**
+ * PERF: run every `prePaint` injector synchronously — called from inside the
+ * shared body-observer callback so nodes attach in the same mutation batch
+ * that remounted their anchor, before that anchor's first paint.
+ */
+function runPrePaintInjectors(): void {
+    injectors.forEach((entry) => {
+        if (entry.options.prePaint) runInjector(entry, true);
+    });
+}
+
 function runAllInjectors(): void {
-    injectors.forEach(runInjector);
+    injectors.forEach((entry) => runInjector(entry));
 }
 
 /** Coalesce re-runs of every injector to once per frame. */
@@ -380,7 +401,15 @@ function ensureInjectorsWired(): void {
     document.addEventListener('viewshow', () => scheduleRunAll(), true);
     // Catch-all: re-attach once a remounted host (toolbar after /video, a fresh
     // React page) appears, even without an accompanying nav/viewshow.
-    onBodyMutation('je-ensure-injected', () => scheduleRunAll());
+    onBodyMutation('je-ensure-injected', () => {
+        // PERF: pre-paint injectors run synchronously inside this mutation
+        // batch (a microtask after the DOM change, before render steps), so a
+        // remounted anchor never paints a frame without its injected node.
+        // The rest keep the rAF-coalesced pass (also pre-paint for same-frame
+        // mutations, but cheaper when many mutations land in one frame).
+        if (prePaintInjectorCount > 0) runPrePaintInjectors();
+        scheduleRunAll();
+    });
 }
 
 /**
@@ -397,18 +426,22 @@ function ensureInjectorsWired(): void {
 export function ensureInjected(
     key: string,
     anchorFn: () => HTMLElement | null,
-    buildFn: (anchor: HTMLElement) => HTMLElement | null | void,
+    buildFn: (anchor: HTMLElement, ctx?: EnsureInjectedBuildContext) => HTMLElement | null | void,
     options: EnsureInjectedOptions = {}
 ): EnsureInjectedHandle {
+    const prior = injectors.get(key);
+    if (prior?.options.prePaint) prePaintInjectorCount--;
     const entry: InjectorEntry = { key, anchorFn, buildFn, options };
     injectors.set(key, entry);
+    if (options.prePaint) prePaintInjectorCount++;
     ensureInjectorsWired();
     runInjector(entry); // inject synchronously so first paint doesn't wait a frame
     return {
         // Inert once removed or replaced by a later ensureInjected(sameKey).
         run: () => { if (injectors.get(key) === entry) runInjector(entry); },
         remove: () => {
-            injectors.delete(key);
+            const current = injectors.get(key);
+            if (current && injectors.delete(key) && current.options.prePaint) prePaintInjectorCount--;
             document.querySelectorAll(`[data-je-key="${escapeKey(key)}"]`).forEach((n) => n.remove());
         }
     };

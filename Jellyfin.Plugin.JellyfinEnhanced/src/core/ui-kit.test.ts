@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     escapeHtml,
+    expandIn,
     injectCss,
     muiIconButton,
     muiMenuItem,
@@ -131,5 +132,69 @@ describe('sectionContainer', () => {
     it('omits the heading when no title is given', () => {
         const section = sectionContainer();
         expect(section.querySelector('.sectionTitle')).toBeNull();
+    });
+});
+
+describe('expandIn', () => {
+    it('is a no-op when instant is set (pre-paint injection)', () => {
+        const el = document.createElement('div');
+        document.body.appendChild(el);
+        expandIn(el, { instant: true });
+        expect(el.style.width).toBe('');
+        expect(el.style.overflow).toBe('');
+        expect(el.style.transition).toBe('');
+        el.remove();
+    });
+
+    it('is a no-op for detached or zero-width elements', () => {
+        const detached = document.createElement('div');
+        expandIn(detached);
+        expect(detached.style.width).toBe('');
+
+        // jsdom has no layout, so an attached element measures 0 wide — the
+        // guard must leave it untouched rather than pinning width to 0.
+        const attached = document.createElement('div');
+        document.body.appendChild(attached);
+        expandIn(attached);
+        expect(attached.style.width).toBe('');
+        expect(attached.style.overflow).toBe('');
+        attached.remove();
+    });
+
+    it('collapses to width 0 then transitions to the measured natural width', () => {
+        const el = document.createElement('div');
+        document.body.appendChild(el);
+        el.getBoundingClientRect = () => ({ width: 48 } as DOMRect);
+
+        expandIn(el);
+        expect(el.style.width).toBe('48px');
+        expect(el.style.overflow).toBe('hidden');
+        expect(el.style.transition).toContain('width 150ms');
+        el.remove();
+    });
+
+    it('removes every inline style once the transition ends', () => {
+        const el = document.createElement('div');
+        document.body.appendChild(el);
+        el.getBoundingClientRect = () => ({ width: 48 } as DOMRect);
+
+        expandIn(el, { durationMs: 20 });
+        el.dispatchEvent(new Event('transitionend'));
+        expect(el.style.width).toBe('');
+        expect(el.style.overflow).toBe('');
+        expect(el.style.transition).toBe('');
+        el.remove();
+    });
+
+    it('falls back to the timeout when transitionend never fires', async () => {
+        const el = document.createElement('div');
+        document.body.appendChild(el);
+        el.getBoundingClientRect = () => ({ width: 48 } as DOMRect);
+
+        expandIn(el, { durationMs: 10 });
+        await new Promise((r) => setTimeout(r, 150));
+        expect(el.style.width).toBe('');
+        expect(el.style.transition).toBe('');
+        el.remove();
     });
 });

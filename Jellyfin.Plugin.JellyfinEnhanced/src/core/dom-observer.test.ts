@@ -137,6 +137,78 @@ describe('ensureInjected', () => {
 
         handle.remove();
     });
+
+    it('passes prePaint:false context on the registration-time pass', () => {
+        const anchor = document.createElement('div');
+        document.body.appendChild(anchor);
+
+        const contexts: Array<boolean | undefined> = [];
+        const handle = ensureInjected('t-ctx-initial', () => anchor, (a, ctx) => {
+            contexts.push(ctx?.prePaint);
+            const node = document.createElement('span');
+            a.appendChild(node);
+            return node;
+        }, { headerTray: true, prePaint: true });
+
+        // The initial synchronous pass is a registration-time run, NOT a
+        // mutation-batch run — the anchor may have painted long ago (boot).
+        expect(contexts).toEqual([false]);
+
+        handle.remove();
+    });
+
+    it('prePaint injector re-attaches synchronously inside the mutation batch with prePaint:true', async () => {
+        const tray = document.createElement('div');
+        document.body.appendChild(tray);
+
+        const contexts: Array<boolean | undefined> = [];
+        const handle = ensureInjected('t-prepaint', () => tray, (a, ctx) => {
+            contexts.push(ctx?.prePaint);
+            const node = document.createElement('button');
+            a.appendChild(node);
+            return node;
+        }, { headerTray: true, prePaint: true });
+
+        expect(contexts).toEqual([false]); // boot pass
+
+        // Simulate the /video round trip: node destroyed, then a structural
+        // mutation (host remount) lands. The pre-paint path must rebuild the
+        // node from the MutationObserver callback with prePaint:true.
+        tray.querySelector('[data-je-key="t-prepaint"]')!.remove();
+        tray.appendChild(document.createElement('div')); // structural mutation
+
+        // MutationObserver callbacks are delivered on a microtask; the rAF
+        // catch-all pass is a frame later — flush both.
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(contexts.length).toBeGreaterThanOrEqual(2);
+        expect(contexts[1]).toBe(true);
+        expect(tray.querySelector('[data-je-key="t-prepaint"]')).not.toBeNull();
+
+        handle.remove();
+    });
+
+    it('non-prePaint injectors never run with prePaint:true', async () => {
+        const tray = document.createElement('div');
+        document.body.appendChild(tray);
+
+        const contexts: Array<boolean | undefined> = [];
+        const handle = ensureInjected('t-noprepaint', () => tray, (a, ctx) => {
+            contexts.push(ctx?.prePaint);
+            const node = document.createElement('button');
+            a.appendChild(node);
+            return node;
+        }, { headerTray: true });
+
+        tray.querySelector('[data-je-key="t-noprepaint"]')!.remove();
+        tray.appendChild(document.createElement('div'));
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(contexts.every((c) => c === false)).toBe(true);
+        expect(tray.querySelector('[data-je-key="t-noprepaint"]')).not.toBeNull();
+
+        handle.remove();
+    });
 });
 
 describe('onSidebarRebuild', () => {
