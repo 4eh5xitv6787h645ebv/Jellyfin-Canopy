@@ -2228,28 +2228,40 @@
         });
 
         // Cache-buster: GetScriptResource serves with immutable caching outside
-        // DevMode, so the URL must change when the plugin updates. The version
-        // endpoint is cheap and anonymous; fall back to Date.now() (always fresh)
-        // if it fails so the page still works.
-        fetch(ApiClient.getUrl('/JellyfinEnhanced/version'))
-            .then(function (r) { return r.ok ? r.text() : ''; })
-            .catch(function () { return ''; })
-            .then(function (version) {
-                var script = document.createElement('script');
-                script.src = ApiClient.getUrl('/JellyfinEnhanced/Configuration/config-page.js')
-                    + '?v=' + encodeURIComponent(version || String(Date.now()));
-                script.onload = function () {
-                    externalLoaded = true;
-                    if (shownBeforeLoad) {
-                        shownBeforeLoad = false;
-                        page.dispatchEvent(new CustomEvent('pageshow'));
-                    }
-                };
-                script.onerror = function () {
-                    console.error('[JE] Failed to load config-page.js from ' + script.src);
-                };
-                page.appendChild(script);
-            });
+        // DevMode, so the URL must change when the plugin updates. The BARE
+        // /version endpoint only changes on a version bump — config-page.js edits
+        // shipped within a version would stay stale in the browser. Prefer the
+        // full cacheKey (version + DLL timestamp) baked into the injected plugin
+        // <script> tag at server startup — the same key the main bundle uses, so
+        // every rebuild busts the cache. Fall back to the /version endpoint, then
+        // Date.now() (always fresh) so the page still works if neither is present.
+        var loadConfigScript = function (version) {
+            var script = document.createElement('script');
+            script.src = ApiClient.getUrl('/JellyfinEnhanced/Configuration/config-page.js')
+                + '?v=' + encodeURIComponent(version || String(Date.now()));
+            script.onload = function () {
+                externalLoaded = true;
+                if (shownBeforeLoad) {
+                    shownBeforeLoad = false;
+                    page.dispatchEvent(new CustomEvent('pageshow'));
+                }
+            };
+            script.onerror = function () {
+                console.error('[JE] Failed to load config-page.js from ' + script.src);
+            };
+            page.appendChild(script);
+        };
+
+        var pluginScript = document.querySelector('script[plugin="Jellyfin Enhanced"]');
+        var bakedCacheKey = pluginScript && pluginScript.getAttribute('version');
+        if (bakedCacheKey) {
+            loadConfigScript(bakedCacheKey);
+        } else {
+            fetch(ApiClient.getUrl('/JellyfinEnhanced/version'))
+                .then(function (r) { return r.ok ? r.text() : ''; })
+                .catch(function () { return ''; })
+                .then(loadConfigScript);
+        }
     })();
 </script>
 </div>

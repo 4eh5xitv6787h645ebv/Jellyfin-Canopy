@@ -172,6 +172,9 @@ function setupInfiniteScroll(state: any, sectionSelector: string, loadMoreFn: ()
     let retryCount = 0;
     let retryRow: HTMLElement | null = null;
 
+    // Re-arm hook (IntersectionObserver path only). See the note in wrappedLoad.
+    let rearmObserver: (() => void) | null = null;
+
     const removeRetryRow = () => {
         if (retryRow) {
             retryRow.remove();
@@ -227,6 +230,16 @@ function setupInfiniteScroll(state: any, sectionSelector: string, loadMoreFn: ()
         try {
             await loadMoreFn();
             retryCount = 0;
+            // PERF(R4): re-arm the IntersectionObserver instead of polling geometry.
+            // IO fires only on an intersection *transition*. When the sentinel stays
+            // inside the prefetch margin after a load (short lists, or a chunk smaller
+            // than the ~2-viewport margin — the common case for "More with"/person and
+            // other client-paged sections) no further callback ever arrives, so loading
+            // stalls after the first auto-load and scrolling can't resume it. Re-observing
+            // the sentinel forces a fresh initial notification, so we keep loading until
+            // it clears the margin or there are no more pages. Replaces the per-scroll-tick
+            // getBoundingClientRect() read that used to mask this.
+            if (rearmObserver) rearmObserver();
         } catch (error: any) {
             if (error.name === 'AbortError') return;
 
@@ -254,7 +267,7 @@ function setupInfiniteScroll(state: any, sectionSelector: string, loadMoreFn: ()
     // is now strictly a fallback for hosts without IntersectionObserver.
     if (typeof IntersectionObserver !== 'undefined') {
         // Create observer with prefetch threshold
-        state.activeScrollObserver = new IntersectionObserver(
+        const observer = new IntersectionObserver(
             (entries) => {
                 if (entries[0].isIntersecting && hasMoreCheck() && !isLoadingCheck()) {
                     void wrappedLoad();
@@ -263,8 +276,16 @@ function setupInfiniteScroll(state: any, sectionSelector: string, loadMoreFn: ()
             { rootMargin: `${CONFIG.prefetchThresholdPx}px` }
         );
 
-        state.activeScrollObserver.observe(sentinel);
+        state.activeScrollObserver = observer;
+        observer.observe(sentinel);
         state._scrollHandler = null;
+        // unobserve+observe guarantees a fresh initial intersection notification even
+        // when isIntersecting hasn't changed — the mechanism wrappedLoad uses to keep
+        // filling the viewport without a per-scroll layout read.
+        rearmObserver = () => {
+            observer.unobserve(sentinel);
+            observer.observe(sentinel);
+        };
     } else {
         // Scroll event fallback (use JE.helpers.throttle if available, otherwise inline)
         // eslint-disable-next-line @typescript-eslint/unbound-method -- throttle is a stateless free function on the helpers bag
