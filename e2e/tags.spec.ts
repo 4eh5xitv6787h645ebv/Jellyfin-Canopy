@@ -47,4 +47,68 @@ test.describe('tags', () => {
 
         expect(consoleErrors.real()).toEqual([]);
     });
+
+    // Regression: "Hide Tags on Hover" must hide the tags on the detail-page
+    // primary poster too. That poster is a `.card` with NO `.cardOverlayContainer`,
+    // so its tags render straight into `.cardScalable` with no `.je-tag-host`
+    // wrapper — the old `.card:hover .je-tag-host` rule never matched it, so the
+    // poster tags stayed visible on hover (movie/series/episode posters). The
+    // broadened rule targets the overlay containers directly.
+    test('hide-on-hover fades the detail-page primary poster tags', async ({ page, consoleErrors }) => {
+        await loginAs(page, 'admin', consoleErrors);
+
+        const anyTagsEnabled = await page.evaluate(() => {
+            const settings = (window as any).JellyfinEnhanced?.currentSettings || {};
+            return ['qualityTagsEnabled', 'genreTagsEnabled', 'languageTagsEnabled', 'ratingTagsEnabled']
+                .some((key) => settings[key] === true);
+        });
+        test.skip(!anyTagsEnabled, 'no tag renderer enabled for this user');
+
+        // Open the detail page of the first available movie.
+        const movieId = await page.evaluate(async () => {
+            const uid = (window as any).ApiClient.getCurrentUserId();
+            const res = await (window as any).ApiClient.getItems(uid, {
+                IncludeItemTypes: 'Movie', Recursive: true, Limit: 1, SortBy: 'DateCreated', SortOrder: 'Descending',
+            });
+            return res?.Items?.[0]?.Id || null;
+        });
+        test.skip(!movieId, 'no movie available to open');
+
+        await page.evaluate((id) => { window.location.hash = `#/details?id=${id}`; }, movieId);
+
+        // The primary poster is the `.card` in the detail header that carries a JE
+        // overlay container but NOT a `.je-tag-host` (no hover menu on that card).
+        const POSTER = '.detailPagePrimaryContainer .card, .detailImageContainer .card';
+        const isPosterTagged = (sel: string) => [...document.querySelectorAll(sel)]
+            .some((c) => c.querySelector('[class*="-overlay-container"]') && !c.querySelector('.je-tag-host'));
+
+        await page.waitForFunction(isPosterTagged, POSTER, { timeout: 60_000 }).catch(() => {});
+        const posterTagged = await page.evaluate(isPosterTagged, POSTER);
+        test.skip(!posterTagged, 'primary poster carries no JE tags (no media info)');
+
+        // Enable "Hide Tags on Hover" (the body class the setting toggles).
+        await page.evaluate(() => document.body.classList.add('je-tags-hide-on-hover'));
+
+        // Mark the poster, then wait for its tag layer to SETTLE at full opacity.
+        // The overlay containers fade in via a 150ms `je-tag-fadein` intro, so a
+        // one-shot read of the baseline would race that animation and flake.
+        await page.evaluate((sel) => {
+            const card = [...document.querySelectorAll(sel)]
+                .find((c) => c.querySelector('[class*="-overlay-container"]') && !c.querySelector('.je-tag-host'));
+            card!.setAttribute('data-je-test-poster', '1');
+        }, POSTER);
+        await page.waitForFunction(() => {
+            const oc = document.querySelector('[data-je-test-poster] [class*="-overlay-container"]') as HTMLElement | null;
+            return !!oc && getComputedStyle(oc).opacity === '1';
+        }, undefined, { timeout: 10_000 });
+
+        // Hovering the poster must fade its (fully-visible) tag layer to transparent.
+        await page.hover('[data-je-test-poster]');
+        await page.waitForFunction(() => {
+            const oc = document.querySelector('[data-je-test-poster] [class*="-overlay-container"]') as HTMLElement | null;
+            return !!oc && getComputedStyle(oc).opacity === '0';
+        }, undefined, { timeout: 5_000 });
+
+        expect(consoleErrors.real()).toEqual([]);
+    });
 });

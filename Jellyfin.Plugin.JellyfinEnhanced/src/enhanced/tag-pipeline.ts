@@ -865,8 +865,24 @@ function initialize(): void {
     // "Hide Tags on Hover" setting: fully hides the tag layer on hover.
     // Without this, Jellyfin's overlay already covers tags (they're behind it).
     // This setting makes them completely invisible for users who want zero clutter.
+    //
+    // The tag layer lives in one of three shapes depending on the card context
+    // (see resolveRenderTarget): a `.je-tag-host` wrapper on cards that have a
+    // `.cardOverlayContainer` (library grid, home rows, similar-items, season
+    // posters), OR the bare `*-overlay-container` elements rendered straight into
+    // `.cardScalable` (the primary detail-page poster — a `.card` with no hover
+    // menu) or into `.listItemImage` (list-view episode rows — a `.listItem`,
+    // NOT a `.card`). Keying only on `.card:hover .je-tag-host` matched the first
+    // group but missed the poster and the episode rows, so their tags never hid.
+    // Match the overlay containers directly under BOTH hover roots.
+    // `[class*="-overlay-container"]` hits exactly the four JE containers — the
+    // native `cardOverlayContainer` has no hyphen, so nothing else is affected.
+    // PERF(R2): compositor-only opacity transition on absolutely-positioned
+    // overlays — no layout/reflow on hover.
     addCSS('je-tag-hover-fade', `
-        body.je-tags-hide-on-hover .card:hover .je-tag-host {
+        body.je-tags-hide-on-hover .card:hover .je-tag-host,
+        body.je-tags-hide-on-hover .card:hover [class*="-overlay-container"],
+        body.je-tags-hide-on-hover .listItem:hover [class*="-overlay-container"] {
             opacity: 0 !important;
             transition: opacity 0.15s ease;
         }

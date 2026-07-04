@@ -61,6 +61,13 @@ Most features can be enabled/disabled individually:
 2. Enable and configure tags you want *(Eg: `Quality Tags`)*
 3. Adjust position (top-left, top-right, etc.)
 
+### Hide Tags on Hover
+Enable **Hide Tags on Hover** to fade the poster tag overlays (Quality, Genre,
+Language, Rating) out while you hover a card, so the artwork and Jellyfin's own
+hover buttons stay unobstructed. This applies everywhere those overlays are
+drawn — library grids, home rows, similar-items and season rows, the **primary
+poster on a detail page**, and **episodes in list view**.
+
 !!! tip
 
     [Custom CSS available](../advanced/css-customization.md#tags)
