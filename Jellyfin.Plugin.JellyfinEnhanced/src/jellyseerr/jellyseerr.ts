@@ -356,10 +356,26 @@ JE.initializeJellyseerrScript = function() {
          * Idempotent — sets data-jellyseerr-listener on the input to prevent
          * duplicate attachment, and adds a permanent 'input' event handler.
          */
-        function tryAttachSearchListener() {
-            updateJellyseerrIcon(isJellyseerrActive, jellyseerrUserFound, isJellyseerrOnlyMode, toggleJellyseerrOnlyMode);
+        // Last icon state written by tryAttachSearchListener, so unchanged
+        // mutation batches skip the icon writes entirely.
+        let lastIconState: string | null = null;
 
-            const searchInput = document.querySelector<HTMLInputElement>('#searchPage #searchTextInput');
+        function tryAttachSearchListener() {
+            // PERF: this runs on every structural body-mutation batch — gate on
+            // a cheap search-page probe first, and only touch the icon when its
+            // state changed or the icon got detached (page rebuild). The old
+            // path re-queried anchors and rewrote classList/title per batch.
+            const searchPage = document.getElementById('searchPage');
+            if (!searchPage) return;
+
+            const iconState = `${isJellyseerrActive}|${jellyseerrUserFound}|${isJellyseerrOnlyMode}`;
+            const icon = document.getElementById('jellyseerr-search-icon');
+            if (iconState !== lastIconState || !icon || !icon.isConnected) {
+                updateJellyseerrIcon(isJellyseerrActive, jellyseerrUserFound, isJellyseerrOnlyMode, toggleJellyseerrOnlyMode);
+                lastIconState = iconState;
+            }
+
+            const searchInput = searchPage.querySelector<HTMLInputElement>('#searchTextInput');
             if (searchInput && !searchInput.dataset.jellyseerrListener) {
                 console.debug(`${logPrefix} Search input found, attaching listener.`);
                 searchInput.addEventListener('input', handleSearch);
