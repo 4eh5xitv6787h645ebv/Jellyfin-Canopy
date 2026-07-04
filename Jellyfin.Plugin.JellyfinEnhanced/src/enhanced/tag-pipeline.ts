@@ -482,7 +482,10 @@ function syncScanAddedCards(mutations: MutationRecord[]): void {
             if (node.nodeType !== 1) continue;
             const elNode = node as HTMLElement;
             if (elNode.matches('.cardImageContainer, div.listItemImage')) {
-                if (performance.now() - start > SYNC_SCAN_BUDGET_MS) return;
+                if (performance.now() - start > SYNC_SCAN_BUDGET_MS) {
+                    scheduleFetchIfQueued();
+                    return;
+                }
                 processCard(elNode, false);
             }
             const nested = elNode.querySelectorAll<HTMLElement>('.cardImageContainer, div.listItemImage');
