@@ -117,10 +117,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr
 
         private static bool TryGetResultsArray(JsonElement detail, string container, out JsonElement results)
         {
+            // Seerr's detail body wraps the data under `releases`/`contentRatings`;
+            // TMDB's dedicated `/movie/{id}/release_dates` and `/tv/{id}/content_ratings`
+            // endpoints return `{ results: [...] }` directly. Accept both so the
+            // filter can use the lighter TMDB endpoints without a shape mismatch.
             results = default;
-            return detail.TryGetProperty(container, out var containerEl)
+            if (detail.TryGetProperty(container, out var containerEl)
                 && containerEl.ValueKind == JsonValueKind.Object
                 && containerEl.TryGetProperty("results", out results)
+                && results.ValueKind == JsonValueKind.Array)
+            {
+                return true;
+            }
+
+            return detail.TryGetProperty("results", out results)
                 && results.ValueKind == JsonValueKind.Array;
         }
 

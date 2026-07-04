@@ -104,6 +104,29 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Helpers.Jellyseerr
         }
 
         [Fact]
+        public void Movie_ReadsTmdbNativeReleaseDatesShape()
+        {
+            // TMDB's /movie/{id}/release_dates returns { results: [...] } directly,
+            // without Seerr's `releases` wrapper — the extractor must handle both.
+            const string json = @"{ ""id"": 1, ""results"": [
+                { ""iso_3166_1"": ""US"", ""release_dates"": [ { ""type"": 3, ""certification"": ""R"" } ] } ] }";
+            var result = SeerrCertificationExtractor.Extract(Parse(json), "movie", "US");
+            Assert.Equal("R", result.Certification);
+            Assert.Equal("US", result.Iso);
+        }
+
+        [Fact]
+        public void Tv_ReadsTmdbNativeContentRatingsShape()
+        {
+            // TMDB's /tv/{id}/content_ratings returns { results: [...] } directly.
+            const string json = @"{ ""id"": 1, ""results"": [
+                { ""iso_3166_1"": ""US"", ""rating"": ""TV-MA"" } ] }";
+            var result = SeerrCertificationExtractor.Extract(Parse(json), "tv", "US");
+            Assert.Equal("TV-MA", result.Certification);
+            Assert.Equal("US", result.Iso);
+        }
+
+        [Fact]
         public void NonObject_ReturnsDefault()
         {
             var result = SeerrCertificationExtractor.Extract(Parse("[]"), "movie", "US");

@@ -46,7 +46,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
         // Bound per-request fan-out and total time so a cold combined_credits view
         // (whole cast+crew, easily 100-300 items) can't stall the proxy response or
         // open hundreds of sockets. Unresolved items past the deadline fail closed.
-        private const int MaxConcurrentFetches = 8;
+        // Sized so a typical ~20-item discovery/search page resolves in one wave;
+        // certifications are tiny and cached for 24h, so the burst is cheap.
+        private const int MaxConcurrentFetches = 20;
         private static readonly TimeSpan OverallBudget = TimeSpan.FromSeconds(12);
         private static readonly TimeSpan PerFetchTimeout = TimeSpan.FromSeconds(8);
 
@@ -598,7 +600,60 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
             return resolved;
         }
 
+        // Resolves the certification source for a title. Prefers TMDB's dedicated
+        // release_dates/content_ratings endpoints (tiny payload, one hop) and only
+        // falls back to Seerr's heavy full-detail proxy when no TMDB key is set or
+        // the direct call fails. Both feed the same extractor (which accepts the
+        // wrapped and unwrapped shapes).
         private async Task<JsonElement?> FetchDetailAsync(string mediaType, int tmdbId, PluginConfiguration config, CancellationToken ct)
+        {
+            if (!string.IsNullOrEmpty(config.TMDB_API_KEY))
+            {
+                var fromTmdb = await FetchCertFromTmdbAsync(mediaType, tmdbId, config, ct).ConfigureAwait(false);
+                if (fromTmdb is not null)
+                {
+                    return fromTmdb;
+                }
+            }
+
+            return await FetchDetailFromSeerrAsync(mediaType, tmdbId, config, ct).ConfigureAwait(false);
+        }
+
+        private async Task<JsonElement?> FetchCertFromTmdbAsync(string mediaType, int tmdbId, PluginConfiguration config, CancellationToken ct)
+        {
+            var subResource = mediaType == "tv" ? "content_ratings" : "release_dates";
+            var requestUri = $"https://api.themoviedb.org/3/{(mediaType == "tv" ? "tv" : "movie")}/{tmdbId.ToString(CultureInfo.InvariantCulture)}/{subResource}?api_key={config.TMDB_API_KEY}";
+            try
+            {
+                var httpClient = Helpers.PluginHttpClients.CreateTmdbClient(_httpClientFactory);
+                httpClient.Timeout = PerFetchTimeout;
+                using var response = await httpClient.GetAsync(requestUri, ct).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                if (string.IsNullOrEmpty(body))
+                {
+                    return null;
+                }
+
+                using var parsed = JsonDocument.Parse(body);
+                return parsed.RootElement.Clone();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "TMDB certification fetch failed for {MediaType}/{TmdbId}; falling back to Seerr.", mediaType, tmdbId);
+                return null;
+            }
+        }
+
+        private async Task<JsonElement?> FetchDetailFromSeerrAsync(string mediaType, int tmdbId, PluginConfiguration config, CancellationToken ct)
         {
             var urls = JellyseerrClient.GetConfiguredUrls(config.JellyseerrUrls);
             if (urls.Length == 0 || string.IsNullOrEmpty(config.JellyseerrApiKey))
