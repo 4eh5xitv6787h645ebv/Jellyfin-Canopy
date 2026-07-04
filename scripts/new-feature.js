@@ -100,11 +100,31 @@ function clientModule(name, area) {
 //   - typed module over JE.core: lifecycle handle + durable ensureInjected
 //   - config: JE.pluginConfig (admin defaults) / JE.currentSettings (per-user)
 //   - live updates: JE.core.live channels (LIVE.*) instead of polling
+//
+// Performance rules (docs/advanced/performance-rules.md — grep 'PERF(Rn' for
+// the implementation sites; the checklist in CONTRIBUTING.md gates review):
+//   R1  Pre-paint or reserved space: ensureInjected {prePaint:true} or
+//       min-width/expandIn — never insert-then-move.
+//   R2  Decorations on existing content are position:absolute overlays.
+//   R3  No own body-wide MutationObserver — JE.core.dom.onBodyMutation or
+//       navigation events; never observe attributes body-wide.
+//   R4  Cache layout reads per navigation; none inside observer ticks.
+//   R5  No setInterval for DOM detection; data polls are page-scoped +
+//       visibility-gated + push-nudged (JE.core.live).
+//   R6  No remote assets: use assetUrl() from core/asset-urls (example
+//       below) — never a CDN URL.
+//   R7  Build DOM off-DOM, insert once with content ready; late async data
+//       fades in (opacity only).
+//   R8  Sync work in a mutation batch stays under ~2ms; overflow to async.
 
 import { JE } from '../globals';
 import { register } from '../core/lifecycle';
 import { ensureInjected } from '../core/dom-observer';
 import { LIVE, on } from '../core/live';
+// R6: third-party assets are served from the local asset cache — resolve any
+// icon/font/css through assetUrl() instead of hardcoding a remote URL, e.g.:
+//   import { assetUrl } from '../core/asset-urls';
+//   icon.src = assetUrl('icons/sonarr.svg');
 
 /** Public surface exposed as window.JellyfinEnhanced.${camel}. */
 export interface ${pascal}Api {
