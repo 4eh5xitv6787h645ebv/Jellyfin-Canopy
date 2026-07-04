@@ -3,10 +3,11 @@
 // Hidden Content — the client-side filter engine: scope-aware surface
 // detection, native card filtering, parent-series cascading, and the
 // navigation/mutation observers that drive it.
-// (Converted from js/enhanced/hidden-content-filter.js — bodies semantically identical.)
-// This module is jank-sensitive: injection/observation timing is identical to the
-// original — debouncedFilterNative is built at module load time and setupNativeObserver
-// registers the same onViewPage hook and priority-10 body-mutation subscriber.
+// (Converted from js/enhanced/hidden-content-filter.js.)
+// This module is jank-sensitive: new-card batches are filtered SYNCHRONOUSLY
+// inside the priority-10 body-mutation callback so forbidden cards never paint
+// (see the PERF notes below); debouncedFilterNative remains as the safety-net
+// pass, and setupNativeObserver keeps the same onViewPage hook.
 
 import { JE } from '../globals';
 import { debounce } from './helpers';
@@ -312,9 +313,14 @@ export function refreshNativeCardVisibility(): void {
 
 /**
  * Filters only newly-added (not yet scanned) native cards.
- * Called by the debounced MutationObserver callback.
+ * Called synchronously from the body-observer callback (pre-paint) and by the
+ * debounced safety-net pass.
+ * @param syncApply - PERF: apply the je-hidden class changes synchronously
+ *   instead of deferring to requestAnimationFrame. Used by the pre-paint path
+ *   so forbidden cards are display:none BEFORE their first paint — no flash,
+ *   no visible row collapse.
  */
-export function filterNativeCards(): void {
+export function filterNativeCards(syncApply = false): void {
     const nativeSurface = getCurrentNativeSurface();
     if (!shouldFilterSurface(nativeSurface)) return;
     const settings = getSettings();
@@ -364,10 +370,11 @@ export function filterNativeCards(): void {
 
     // Batch apply visibility changes
     if (toHide.length > 0 || toShow.length > 0) {
-        requestAnimationFrame(() => {
+        const applyVisibility = (): void => {
             for (let i = 0; i < toHide.length; i++) toHide[i].classList.add('je-hidden');
             for (let i = 0; i < toShow.length; i++) toShow[i].classList.remove('je-hidden');
-        });
+        };
+        if (syncApply) applyVisibility(); else requestAnimationFrame(applyVisibility);
     }
 
     // Batch parent series checks
@@ -443,7 +450,7 @@ export function filterAllNativeCards(): void {
 // Native observer setup
 // ============================================================
 
-const debouncedFilterNative = debounce(() => { requestAnimationFrame(filterNativeCards); }, NATIVE_FILTER_DEBOUNCE_MS);
+const debouncedFilterNative = debounce(() => { requestAnimationFrame(() => filterNativeCards()); }, NATIVE_FILTER_DEBOUNCE_MS);
 
 /**
  * Sets up page-navigation and MutationObserver hooks to trigger card
@@ -489,7 +496,17 @@ export function setupNativeObserver(): void {
             if (hasNewItems) break;
         }
         if (hasNewItems) {
-            if (shouldFilter) debouncedFilterNative();
+            if (shouldFilter) {
+                // PERF: filter SYNCHRONOUSLY inside this mutation batch — the
+                // hidden-ids set is in memory (a Set lookup per new card), so
+                // forbidden cards are display:none BEFORE their first paint:
+                // no flash, no visible row collapse. Runs at priority 10, ahead
+                // of every other subscriber (tags, prefetch) in the same batch.
+                filterNativeCards(true);
+                // Debounced pass kept as the safety net (late parent-series
+                // data, user-data changes, anything the sync pass missed).
+                debouncedFilterNative();
+            }
             if (shouldAddButtons) addLibraryHideButtons();
         }
     }, { priority: 10 });
