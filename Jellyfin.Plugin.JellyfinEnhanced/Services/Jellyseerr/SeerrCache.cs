@@ -64,9 +64,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
 
         public ConcurrentDictionary<string, Task<TmdbEnrichmentResult>> TmdbEnrichmentInFlight { get; } = new();
 
+        // User-independent cache of a title's resolved parental score
+        // ("{mediaType}:{tmdbId}:{region}" -> score). Null Score = unrated/unknown.
+        public ConcurrentDictionary<string, (int? Score, int? SubScore, DateTime CachedAt)> CertScoreCache { get; } = new();
+
         public TimeSpan GetResponseCacheTtl()
         {
             var minutes = _configProvider.ConfigurationOrNull?.JellyseerrResponseCacheTtlMinutes ?? 10;
+            return TimeSpan.FromMinutes(Math.Max(1, minutes));
+        }
+
+        public TimeSpan GetParentalRatingCacheTtl()
+        {
+            var minutes = _configProvider.ConfigurationOrNull?.JellyseerrParentalRatingCacheTtlMinutes ?? 1440;
             return TimeSpan.FromMinutes(Math.Max(1, minutes));
         }
 
@@ -106,6 +116,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
             {
                 TmdbEnrichmentCache.Clear();
             }
+            // Certification scores are user-independent, but flush on config change
+            // anyway so a changed DEFAULT_REGION re-resolves ratings immediately.
+            CertScoreCache.Clear();
             // Avatar cache may reference the OLD Seerr URL — clear it too.
             AvatarCache.Clear();
             // also flush the cached status probe so admins see fresh

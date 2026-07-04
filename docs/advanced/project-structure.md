@@ -93,7 +93,8 @@ Jellyfin.Plugin.JellyfinEnhanced/
 │   ├── UserConfiguration.cs / UserConfigurationManager.cs (+ store/migration/reviews classes)
 │   ├── PersistedJson.cs       # System.Text.Json options replicating the legacy on-disk tolerances
 │   └── configPage.html + config-page.js  # Admin page; simple fields bind via data-config-key
-├── Services/                  # Seerr cache/scan/watchlist, auto-request watchers, arr tag sync,
+├── Services/                  # Seerr cache/scan/watchlist, Seerr parental-rating result filter,
+│   │                          # auto-request watchers, arr tag sync,
 │   │                          # maintenance mode, startup filters (script injection, branding)
 │   └── LiveNotifierService.cs # Pushes live updates (config-changed etc.) to open sessions
 │                              # via ISessionManager (see docs/advanced/live-updates.md)

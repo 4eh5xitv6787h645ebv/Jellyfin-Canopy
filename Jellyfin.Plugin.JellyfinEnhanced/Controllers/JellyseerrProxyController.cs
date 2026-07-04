@@ -52,6 +52,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     public class JellyseerrProxyController : JellyfinEnhancedControllerBase
     {
         private readonly IJellyseerrClient _jellyseerr;
+        private readonly ISeerrParentalFilter _parentalFilter;
 
         public JellyseerrProxyController(
             IHttpClientFactory httpClientFactory,
@@ -59,10 +60,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
-            IJellyseerrClient jellyseerr)
+            IJellyseerrClient jellyseerr,
+            ISeerrParentalFilter parentalFilter)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _jellyseerr = jellyseerr;
+            _parentalFilter = parentalFilter;
         }
 
         // Thin delegation kept so the ~35 proxy endpoints below read unchanged;
@@ -751,6 +754,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 return StatusCode(503, "TMDB API key is not configured.");
             }
 
+            // The raw TMDB passthrough bypasses the Seerr proxy, so gate movie/tv
+            // detail lookups here too — otherwise a restricted user could recover a
+            // blocked title's metadata via /tmdb/movie/{id} despite the Seerr detail
+            // endpoint being blocked. (No-op unless Seerr is configured + the caller
+            // is rating-limited.)
+            if (TryGetTmdbDetailPath(apiPath, out var detailMediaType, out var detailTmdbId)
+                && await _parentalFilter.IsBlockedAsync(detailMediaType, detailTmdbId, SeerrCaller()))
+            {
+                return new StatusCodeResult(403);
+            }
+
             var httpClient = Helpers.PluginHttpClients.CreateTmdbClient(_httpClientFactory);
             var queryString = HttpContext.Request.QueryString;
             var separator = queryString.HasValue ? "&" : "?";
@@ -773,6 +787,35 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 _logger.LogError($"Failed to proxy TMDB request. Error: {ex.Message}");
                 return StatusCode(500, "Failed to connect to TMDB.");
             }
+        }
+
+        // Matches a bare TMDB detail path ("movie/{id}" or "tv/{id}", no further
+        // segment) so the parental gate applies only to full-title metadata, not to
+        // sub-resources (watch/providers), search, or list endpoints.
+        private static bool TryGetTmdbDetailPath(string apiPath, out string mediaType, out int tmdbId)
+        {
+            mediaType = "movie";
+            tmdbId = 0;
+            if (string.IsNullOrEmpty(apiPath))
+            {
+                return false;
+            }
+
+            var segments = apiPath.Trim('/').Split('/');
+            if (segments.Length != 2)
+            {
+                return false;
+            }
+
+            if (!string.Equals(segments[0], "movie", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(segments[0], "tv", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            mediaType = segments[0].ToLowerInvariant();
+            return int.TryParse(segments[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out tmdbId)
+                && tmdbId > 0;
         }
 
         [HttpGet("jellyseerr/issue")]

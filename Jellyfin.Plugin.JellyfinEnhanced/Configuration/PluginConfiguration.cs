@@ -155,6 +155,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             JellyseerrDisableCache = false;
             JellyseerrResponseCacheTtlMinutes = 10;
             JellyseerrUserIdCacheTtlMinutes = 30;
+            JellyseerrRespectParentalRatings = true;
+            JellyseerrParentalRatingCacheTtlMinutes = 1440;
             TriggerSeerrScanOnItemAdded = false;
             SeerrScanDebounceSeconds = 60;
 
@@ -439,6 +441,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
         public bool JellyseerrDisableCache { get; set; }
         public int JellyseerrResponseCacheTtlMinutes { get; set; }
         public int JellyseerrUserIdCacheTtlMinutes { get; set; }
+
+        // When true, Seerr search/discover results are filtered server-side to
+        // respect each Jellyfin user's own parental-rating limit
+        // (MaxParentalRatingScore + block-unrated). Users with no limit set and
+        // administrators are never filtered. Default true — it only ever hides
+        // content from accounts that already have a Jellyfin rating restriction.
+        public bool JellyseerrRespectParentalRatings { get; set; }
+
+        // How long a resolved TMDB certification -> parental score is cached
+        // (user-independent). Certifications are effectively immutable metadata,
+        // so this is deliberately long (default 24h) to keep the parental filter
+        // cheap. Independent of JellyseerrResponseCacheTtlMinutes.
+        public int JellyseerrParentalRatingCacheTtlMinutes { get; set; }
 
         // Arr Links Settings
         public bool ArrLinksEnabled { get; set; }

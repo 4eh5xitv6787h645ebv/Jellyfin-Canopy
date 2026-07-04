@@ -81,6 +81,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             // holder). Must stay a singleton: controllers, the user-import task
             // and the plugin's config-change hook all share one instance.
             serviceCollection.AddSingleton<Services.Jellyseerr.ISeerrCache, Services.Jellyseerr.SeerrCache>();
+            // Server-side parental-rating filter for Seerr search/discovery results.
+            // Injected into JellyseerrClient; must NOT depend on IJellyseerrClient
+            // (that would be a DI cycle) — it fetches per-item certifications via the
+            // low-level SeerrHttpHelper instead.
+            serviceCollection.AddSingleton<Services.Jellyseerr.ISeerrParentalFilter, Services.Jellyseerr.SeerrParentalFilter>();
             // All Seerr plumbing (user resolution + auto-import, proxy core,
             // watchlist/request helpers) extracted from the controller base.
             // Singleton: stateless besides the injected ISeerrCache.

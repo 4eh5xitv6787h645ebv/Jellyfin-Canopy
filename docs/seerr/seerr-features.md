@@ -59,6 +59,53 @@ Search, request, and discover media directly from Jellyfin using your Seerr inst
 - **Declined** - Request was declined by an admin
 - **Not Requested** - Click to request
 
+### Parental-Rating Filtering
+
+Hide Seerr search and discovery results a user could not watch once requested,
+based on that user's own Jellyfin content-rating restriction. This keeps a
+child account on a PG limit from ever seeing (or requesting) an R-rated title.
+
+Filtering happens **server-side**: restricted titles are removed from the
+response before it reaches the browser, so they can't be recovered by
+inspecting network traffic — a client-side hide would only conceal the cards.
+
+#### Behavior
+
+- Uses each user's own **Maximum Parental Rating** and **Block unrated items**
+  settings from their Jellyfin account (Dashboard → Users → *user* → Access).
+  Nothing is duplicated in the plugin — Jellyfin remains the single source of
+  truth for what each user may watch.
+- Applies to search results, discovery rows (genre/network/keyword/studio),
+  similar/recommended sections, collections, watchlists, person filmographies
+  (including the films listed under a person), and the requests list.
+- A restricted user also cannot **open** a blocked title's detail/season or
+  **request** it by id — both are rejected server-side, not just hidden.
+- A title's certification is read the same way the More Info modal shows it
+  (region → US → first available), using your **Default Region** (Elsewhere
+  setting) to choose the certification system.
+- **Administrators are never filtered**, and **users with no rating limit set
+  see everything** — matching how Jellyfin treats parental controls for the
+  library. `adult` titles are always hidden from restricted users.
+
+#### Configure
+
+1. Enable **"Respect parental ratings"** in Seerr search settings (on by default).
+2. Set each restricted user's **Maximum Parental Rating** (and, optionally,
+   **Block unrated items**) in their Jellyfin account. Users with no limit are
+   unaffected.
+
+!!! note "Limitations"
+
+    - **Tag-based restrictions don't apply.** Jellyfin's blocked/allowed *tag*
+      rules can't be evaluated against Seerr results because those titles aren't
+      in your library yet and carry no Jellyfin tags. Only the rating limit and
+      block-unrated settings are enforced.
+    - **Unrated titles** (no certification on TMDB) follow the user's
+      **Block unrated items** setting, exactly as in the library.
+    - Certifications are fetched per title and cached (see
+      [Advanced Configuration](#advanced-configuration)); the first search that
+      surfaces a new title for a restricted user is slightly slower.
+
 ### Item Details
 
 View Seerr recommendations and similar items on detail pages.
@@ -359,3 +406,13 @@ Automatically request media based on viewing behavior.
 - Trigger on playback start
 - Trigger after X minutes watched
 - Check release date (only request if released)
+
+### Caching
+
+- **Response Cache TTL** — how long Seerr search/discovery responses are cached
+  (default 10 minutes).
+- **Parental Rating Cache TTL** — how long a title's resolved content rating is
+  cached for the [parental-rating filter](#parental-rating-filtering). Ratings
+  rarely change, so this is long by default (1440 minutes = 24 hours) and shared
+  across all users, keeping the filter cheap after the first lookup of a title.
+- Both caches are flushed automatically whenever plugin settings are saved.

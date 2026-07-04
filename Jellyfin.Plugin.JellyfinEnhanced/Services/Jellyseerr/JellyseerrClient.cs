@@ -34,19 +34,22 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
         private readonly IUserManager _userManager;
         private readonly ISeerrCache _seerrCache;
         private readonly IPluginConfigProvider _configProvider;
+        private readonly ISeerrParentalFilter _parentalFilter;
 
         public JellyseerrClient(
             IHttpClientFactory httpClientFactory,
             ILogger<JellyseerrClient> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
-            IPluginConfigProvider configProvider)
+            IPluginConfigProvider configProvider,
+            ISeerrParentalFilter parentalFilter)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _userManager = userManager;
             _seerrCache = seerrCache;
             _configProvider = configProvider;
+            _parentalFilter = parentalFilter;
         }
 
         // ── URL / id helpers (hoisted from JellyseerrUserResolver) ───────────
@@ -480,6 +483,60 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
             catch { /* best-effort eviction */ }
         }
 
+        /// <summary>
+        /// Applies the parental-rating filter to a response body and turns the
+        /// outcome into a result: a bare 403 when a restricted caller reached a
+        /// blocked detail/season body, otherwise the (possibly list-filtered) JSON.
+        /// </summary>
+        private async Task<IActionResult> ApplyParentalFilterAsync(string body, string apiPath, JellyseerrCaller caller)
+        {
+            var result = await _parentalFilter.ApplyAsync(body, apiPath, caller);
+            return result.Block
+                ? new StatusCodeResult(403)
+                : new ContentResult { Content = result.Body, ContentType = "application/json" };
+        }
+
+        /// <summary>Reads mediaType + tmdbId (the <c>mediaId</c> field) from a Seerr request POST body.</summary>
+        private static bool TryGetRequestMedia(string content, out string mediaType, out int tmdbId)
+        {
+            mediaType = "movie";
+            tmdbId = 0;
+            try
+            {
+                using var doc = JsonDocument.Parse(content);
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
+                {
+                    return false;
+                }
+
+                if (root.TryGetProperty("mediaType", out var mt) && mt.ValueKind == JsonValueKind.String)
+                {
+                    mediaType = string.Equals(mt.GetString(), "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movie";
+                }
+
+                if (root.TryGetProperty("mediaId", out var mediaId))
+                {
+                    if (mediaId.ValueKind == JsonValueKind.Number && mediaId.TryGetInt32(out tmdbId))
+                    {
+                        return tmdbId > 0;
+                    }
+
+                    if (mediaId.ValueKind == JsonValueKind.String
+                        && int.TryParse(mediaId.GetString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out tmdbId))
+                    {
+                        return tmdbId > 0;
+                    }
+                }
+
+                return false;
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
         public async Task<IActionResult> ProxyRequestAsync(string apiPath, HttpMethod method, string? content, JellyseerrCaller caller)
         {
             var config = _configProvider.ConfigurationOrNull;
@@ -614,6 +671,25 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
                 }
             }
 
+            // Parental-rating gate on request POSTs: a rating-limited user must not
+            // be able to request a title above their limit even by tmdbId (the
+            // whole point of the filter — "media they can't watch once requested").
+            // Admins / no-limit users are passed through inside the filter. A body
+            // we cannot parse resolves to tmdbId 0, which IsBlockedAsync fails closed
+            // for restricted callers — so an unrecognized request shape can't bypass.
+            if (method == HttpMethod.Post
+                && apiPath.StartsWith("/api/v1/request", StringComparison.OrdinalIgnoreCase)
+                && content != null)
+            {
+                var reqMediaType = TryGetRequestMedia(content, out var mt, out var id) ? mt : "movie";
+                var reqTmdbId = id;
+                if (await _parentalFilter.IsBlockedAsync(reqMediaType, reqTmdbId, caller))
+                {
+                    _logger.LogInformation($"Blocked a Seerr request for {reqMediaType}/{reqTmdbId} by user {ResolveUserDisplay(jellyfinUserId)} — exceeds their parental rating limit or could not be verified.");
+                    return new StatusCodeResult(403);
+                }
+            }
+
             // Check server-side response cache for cacheable endpoints.
             // bifurcate cache key. Public discovery
             // endpoints return identical content for all users, so include the
@@ -627,13 +703,22 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
                 : $"{jellyfinUserId}:{apiPath}";
             if (isCacheable)
             {
+                string? cachedContent = null;
                 lock (_seerrCache.ResponseCacheLock)
                 {
                     if (_seerrCache.ResponseCache.TryGetValue(cacheKey, out var cached) &&
                         DateTime.UtcNow - cached.CachedAt < _seerrCache.GetResponseCacheTtl())
                     {
-                        return new ContentResult { Content = cached.Content, ContentType = "application/json" };
+                        cachedContent = cached.Content;
                     }
+                }
+
+                if (cachedContent != null)
+                {
+                    // Filter per-caller on the way out; the cached body itself stays
+                    // user-neutral (never store a per-user-filtered view under a
+                    // possibly-shared public: cache key).
+                    return await ApplyParentalFilterAsync(cachedContent, apiPath, caller);
                 }
             }
 
@@ -714,7 +799,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
                             EvictMovieTvCacheForRequest(content);
                         }
 
-                        return new ContentResult { Content = json, ContentType = "application/json" };
+                        // Cache above stores the raw, user-neutral body; the parental
+                        // filter runs per-caller on the way out.
+                        return await ApplyParentalFilterAsync(json, apiPath, caller);
                     }
 
                     _logger.LogWarning($"Seerr request failed for user {ResolveUserDisplay(jellyfinUserId)} at {url}: code={error!.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");

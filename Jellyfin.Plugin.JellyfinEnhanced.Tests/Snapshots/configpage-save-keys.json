@@ -121,6 +121,8 @@
   "JellyseerrExcludeBlocklistedItems",
   "JellyseerrExcludeLibraryItems",
   "JellyseerrImportBlockedUsers",
+  "JellyseerrParentalRatingCacheTtlMinutes",
+  "JellyseerrRespectParentalRatings",
   "JellyseerrResponseCacheTtlMinutes",
   "JellyseerrShowAdvanced",
   "JellyseerrShowCollectionDiscovery",
