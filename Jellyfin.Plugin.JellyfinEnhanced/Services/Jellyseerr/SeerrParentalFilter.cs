@@ -177,6 +177,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
                 return null;
             }
 
+            // The gate resolves certifications through Seerr; if Seerr isn't
+            // configured it cannot verify anything, so it stays inactive rather
+            // than fail-closed-blocking every title (which would break the raw
+            // TMDB passthrough for Elsewhere-only setups).
+            if (string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
+            {
+                return null;
+            }
+
             // Administrators bypass parental controls, matching Jellyfin core.
             if (caller.IsAdmin)
             {

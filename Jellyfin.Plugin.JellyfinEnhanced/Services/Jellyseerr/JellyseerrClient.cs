@@ -674,15 +674,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
             // Parental-rating gate on request POSTs: a rating-limited user must not
             // be able to request a title above their limit even by tmdbId (the
             // whole point of the filter — "media they can't watch once requested").
-            // Admins / no-limit users are passed through inside the filter.
+            // Admins / no-limit users are passed through inside the filter. A body
+            // we cannot parse resolves to tmdbId 0, which IsBlockedAsync fails closed
+            // for restricted callers — so an unrecognized request shape can't bypass.
             if (method == HttpMethod.Post
                 && apiPath.StartsWith("/api/v1/request", StringComparison.OrdinalIgnoreCase)
-                && content != null
-                && TryGetRequestMedia(content, out var reqMediaType, out var reqTmdbId)
-                && await _parentalFilter.IsBlockedAsync(reqMediaType, reqTmdbId, caller))
+                && content != null)
             {
-                _logger.LogInformation($"Blocked a Seerr request for {reqMediaType}/{reqTmdbId} by user {ResolveUserDisplay(jellyfinUserId)} — exceeds their parental rating limit.");
-                return new StatusCodeResult(403);
+                var reqMediaType = TryGetRequestMedia(content, out var mt, out var id) ? mt : "movie";
+                var reqTmdbId = id;
+                if (await _parentalFilter.IsBlockedAsync(reqMediaType, reqTmdbId, caller))
+                {
+                    _logger.LogInformation($"Blocked a Seerr request for {reqMediaType}/{reqTmdbId} by user {ResolveUserDisplay(jellyfinUserId)} — exceeds their parental rating limit or could not be verified.");
+                    return new StatusCodeResult(403);
+                }
             }
 
             // Check server-side response cache for cacheable endpoints.
