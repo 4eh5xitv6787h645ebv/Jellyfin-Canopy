@@ -41,6 +41,7 @@ import './core/tag-renderer-base';
 import './core/live';
 import './core/live-config';
 import './core/live-rows';
+import './core/live-update';
 
 // Area barrels — each imports that area's converted modules in execution
 // order. Areas own their own ordering without touching this file: main.ts
