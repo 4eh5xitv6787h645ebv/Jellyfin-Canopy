@@ -21,6 +21,14 @@ import { onNavigate } from '../core/navigation';
 
 const MEDIA_TYPES = new Set(['Movie', 'Episode', 'Series', 'Season', 'BoxSet']);
 const FETCH_DEBOUNCE_MS = 150; // Debounce only the batch API call, not the scan
+// PERF: the FIRST batch after a navigation uses a much shorter debounce — the
+// user is staring at a fresh page of untagged posters, so waiting the full
+// coalescing window just delays the first tags for no benefit.
+const FIRST_FETCH_DEBOUNCE_MS = 50;
+// PERF: per-mutation-batch budget for the synchronous (pre-paint) card pass.
+// Cache-resident tags render inside this budget; everything else overflows to
+// the idle-scheduled async scan.
+const SYNC_SCAN_BUDGET_MS = 2;
 const logPrefix = '🪼 Jellyfin Enhanced [TagPipeline]:';
 let serverCache: Map<string, any> | null = null; // Map<itemId, TagCacheEntry> loaded from server
 let serverCacheVersion = 0;
@@ -77,6 +85,7 @@ let fetchTimer: number | null = null;
 let isProcessing = false;
 let batchGeneration = 0; // Incremented on navigation to cancel stale in-flight batches
 let requestQueue: QueueEntry[] = []; // { el, itemId, itemType }
+let firstFetchAfterNav = true; // PERF: shortens the debounce for the first batch of a navigation
 
 // ── Pipeline-level exclusions ─────────────────────────────────────
 // Elements matching these selectors are skipped before any renderer runs.
@@ -293,7 +302,10 @@ function hasAnyEnabledRenderer(): boolean {
 }
 
 let scanScheduled = false;
-const CARDS_PER_CHUNK = 5; // ~2.5ms per card with cache render, 5 cards = ~12ms (under 16ms frame budget)
+// PERF: 20 cards/chunk (was 5). Cache-resident renders are plain DOM writes;
+// the old 5-card chunks stretched a fully-cached page over many idle slices,
+// which read as tags trickling in long after the posters.
+const CARDS_PER_CHUNK = 20;
 let scanGeneration = 0; // Incremented on each new scan to cancel stale chunk chains
 
 /**
@@ -302,8 +314,10 @@ let scanGeneration = 0; // Incremented on each new scan to cancel stale chunk ch
 // Use requestIdleCallback for all tag work so it never competes with
 // user interactions (hover, scroll, click). Falls back to setTimeout
 // for browsers without requestIdleCallback support.
+// PERF: idle timeout 100ms (was 500ms) — the first scan after cards mount must
+// not sit behind half a second of idle waiting while the posters are visible.
 const scheduleIdle: (fn: () => void) => unknown = typeof requestIdleCallback === 'function'
-    ? (fn: () => void) => requestIdleCallback(fn, { timeout: 500 })
+    ? (fn: () => void) => requestIdleCallback(fn, { timeout: 100 })
     : (fn: () => void) => setTimeout(fn, 16);
 
 function scheduleScan(): void {
@@ -313,6 +327,175 @@ function scheduleScan(): void {
         scanScheduled = false;
         runScan();
     });
+}
+
+/**
+ * PERF: mark overlay containers added by an async (post-paint) render pass so
+ * they fade in via a compositor-only opacity animation instead of popping.
+ * Snapshots the renderTarget's direct children before the render and tags the
+ * diff — renderer markup itself is untouched (purely additive class).
+ * @param renderTarget - The tag host / card element the renderers draw into.
+ * @param renderFn - Callback that performs the renderer fan-out.
+ */
+function withFadeIn(renderTarget: HTMLElement, renderFn: () => void): void {
+    const before = new Set(renderTarget.children);
+    renderFn();
+    const after = renderTarget.children;
+    for (let i = 0; i < after.length; i++) {
+        if (!before.has(after[i])) after[i].classList.add('je-tag-fadein');
+    }
+}
+
+/**
+ * Schedule the debounced batch fetch when the request queue is non-empty.
+ * PERF: the first batch after a navigation uses FIRST_FETCH_DEBOUNCE_MS so
+ * fresh pages get their uncached tags sooner; later batches keep the wider
+ * coalescing window.
+ */
+function scheduleFetchIfQueued(): void {
+    if (requestQueue.length === 0 || isProcessing) return;
+    if (fetchTimer) clearTimeout(fetchTimer);
+    const debounceMs = firstFetchAfterNav ? FIRST_FETCH_DEBOUNCE_MS : FETCH_DEBOUNCE_MS;
+    firstFetchAfterNav = false;
+    fetchTimer = window.setTimeout(() => {
+        fetchTimer = null;
+        void processQueue();
+    }, debounceMs);
+}
+
+/**
+ * Resolve where a card's tags render. Renders into cardScalable but INSERTS
+ * BEFORE the overlay container so Jellyfin's hover overlay naturally covers
+ * tags (DOM order). Never renders into cardImageContainer — that triggers
+ * Jellyfin's lazy-load to reset opacity:0, breaking image display.
+ * @param el - The cardImageContainer/listItemImage element.
+ */
+function resolveRenderTarget(el: HTMLElement): HTMLElement {
+    const scalable = el.closest<HTMLElement>('.cardScalable');
+    let renderTarget: HTMLElement = scalable || el;
+    if (scalable) {
+        const overlay = scalable.querySelector('.cardOverlayContainer');
+        if (overlay) {
+            // Create a tag container BEFORE the overlay
+            let tagHost = scalable.querySelector<HTMLElement>('.je-tag-host');
+            if (!tagHost) {
+                tagHost = document.createElement('div');
+                tagHost.className = 'je-tag-host';
+                scalable.insertBefore(tagHost, overlay);
+            }
+            renderTarget = tagHost;
+        }
+    }
+    return renderTarget;
+}
+
+/**
+ * Process a single card: skip checks, render-target resolution, cache render
+ * (server cache first, then localStorage/hot cache), queueing misses for the
+ * batch fetch. Shared by the idle-scheduled chunk scan and the synchronous
+ * pre-paint pass.
+ * @param el - The cardImageContainer/listItemImage element.
+ * @param fadeIn - True for async (post-paint) passes: newly added overlays get
+ *   the compositor-only fade so late tags appear smoothly. The pre-paint pass
+ *   passes false — its tags are part of the card's first frame.
+ */
+function processCard(el: HTMLElement, fadeIn: boolean): void {
+    if (processedCards.has(el)) return;
+    // Skip elements no longer in the DOM (page changed)
+    if (!document.contains(el)) return;
+
+    const card = el.closest('.card');
+    if (card && card.classList.contains('je-hidden')) return;
+    const listItem = el.closest('.listItem');
+    if (listItem && listItem.classList.contains('je-hidden')) return;
+
+    // Skip contexts that should never have tags
+    if (shouldSkipElement(el)) {
+        processedCards.add(el);
+        return;
+    }
+
+    const itemId = getItemId(el);
+    if (!itemId) return;
+
+    const itemType = getItemType(el);
+    if (itemType && !MEDIA_TYPES.has(itemType)) {
+        processedCards.add(el);
+        return;
+    }
+
+    processedCards.add(el);
+    const renderTarget = resolveRenderTarget(el);
+
+    // Try server cache first (all tag data pre-computed in one object)
+    const serverEntry = serverCache?.get(itemId);
+    if (serverEntry) {
+        const renderAll = (): void => {
+            for (const [, renderer] of renderers) {
+                if (!renderer.isEnabled()) continue;
+                if (renderer.renderFromServerCache) {
+                    try { renderer.renderFromServerCache(renderTarget, serverEntry, itemId); } catch {}
+                }
+            }
+        };
+        if (fadeIn) withFadeIn(renderTarget, renderAll); else renderAll();
+        return; // Fully rendered from server cache, skip queue
+    }
+
+    // Fall back to localStorage/hot cache, then batch fetch for misses
+    let allCacheHits = true;
+    const renderCached = (): void => {
+        for (const [, renderer] of renderers) {
+            if (!renderer.isEnabled()) continue;
+            if (renderer.renderFromCache) {
+                if (!renderer.renderFromCache(renderTarget, itemId)) allCacheHits = false;
+            } else {
+                allCacheHits = false;
+            }
+        }
+    };
+    if (fadeIn) withFadeIn(renderTarget, renderCached); else renderCached();
+
+    if (!allCacheHits) {
+        requestQueue.push({ el, renderTarget, itemId, itemType });
+    }
+}
+
+/**
+ * PERF (pre-paint tag render): process cards added in the CURRENT mutation
+ * batch synchronously — inside the body-observer callback, before the cards'
+ * first paint — so cache-resident tags appear in the same frame as the
+ * posters instead of popping in 300ms-2s later. Budget-guarded: after
+ * SYNC_SCAN_BUDGET_MS the rest overflows to the idle async scan (they stay
+ * unprocessed, so scheduleScan picks them up).
+ * @param mutations - The structural mutation batch that added the cards.
+ */
+function syncScanAddedCards(mutations: MutationRecord[]): void {
+    if (!hasAnyEnabledRenderer()) return;
+    if (typeof ApiClient === 'undefined') return;
+
+    const start = performance.now();
+    for (let i = 0; i < mutations.length; i++) {
+        const added = mutations[i].addedNodes;
+        for (let j = 0; j < added.length; j++) {
+            const node = added[j];
+            if (node.nodeType !== 1) continue;
+            const elNode = node as HTMLElement;
+            if (elNode.matches('.cardImageContainer, div.listItemImage')) {
+                if (performance.now() - start > SYNC_SCAN_BUDGET_MS) return;
+                processCard(elNode, false);
+            }
+            const nested = elNode.querySelectorAll<HTMLElement>('.cardImageContainer, div.listItemImage');
+            for (let k = 0; k < nested.length; k++) {
+                if (performance.now() - start > SYNC_SCAN_BUDGET_MS) {
+                    scheduleFetchIfQueued();
+                    return;
+                }
+                processCard(nested[k], false);
+            }
+        }
+    }
+    scheduleFetchIfQueued();
 }
 
 /**
@@ -343,78 +526,8 @@ function runScan(): void {
         const end = Math.min(index + CARDS_PER_CHUNK, unprocessed.length);
 
         for (; index < end; index++) {
-            const el = unprocessed[index];
-            if (processedCards.has(el)) continue;
-            // Skip elements no longer in the DOM (page changed)
-            if (!document.contains(el)) continue;
-
-            const card = el.closest('.card');
-            if (card && card.classList.contains('je-hidden')) continue;
-            const listItem = el.closest('.listItem');
-            if (listItem && listItem.classList.contains('je-hidden')) continue;
-
-            // Skip contexts that should never have tags
-            if (shouldSkipElement(el)) {
-                processedCards.add(el);
-                continue;
-            }
-
-            const itemId = getItemId(el);
-            if (!itemId) continue;
-
-            const itemType = getItemType(el);
-            if (itemType && !MEDIA_TYPES.has(itemType)) {
-                processedCards.add(el);
-                continue;
-            }
-
-            processedCards.add(el);
-            // Render into cardScalable but INSERT BEFORE the overlay container
-            // so Jellyfin's hover overlay naturally covers tags (DOM order).
-            // Don't render into cardImageContainer — it triggers Jellyfin's
-            // lazy-load to reset opacity:0, breaking image display.
-            const scalable = el.closest<HTMLElement>('.cardScalable');
-            let renderTarget: HTMLElement = scalable || el;
-            if (scalable) {
-                const overlay = scalable.querySelector('.cardOverlayContainer');
-                if (overlay) {
-                    // Create a tag container BEFORE the overlay
-                    let tagHost = scalable.querySelector<HTMLElement>('.je-tag-host');
-                    if (!tagHost) {
-                        tagHost = document.createElement('div');
-                        tagHost.className = 'je-tag-host';
-                        scalable.insertBefore(tagHost, overlay);
-                    }
-                    renderTarget = tagHost;
-                }
-            }
-
-            // Try server cache first (all tag data pre-computed in one object)
-            const serverEntry = serverCache?.get(itemId);
-            if (serverEntry) {
-                for (const [, renderer] of renderers) {
-                    if (!renderer.isEnabled()) continue;
-                    if (renderer.renderFromServerCache) {
-                        try { renderer.renderFromServerCache(renderTarget, serverEntry, itemId); } catch {}
-                    }
-                }
-                continue; // Fully rendered from server cache, skip queue
-            }
-
-            // Fall back to localStorage/hot cache, then batch fetch for misses
-            let allCacheHits = true;
-            for (const [, renderer] of renderers) {
-                if (!renderer.isEnabled()) continue;
-                if (renderer.renderFromCache) {
-                    if (!renderer.renderFromCache(renderTarget, itemId)) allCacheHits = false;
-                } else {
-                    allCacheHits = false;
-                }
-            }
-
-            if (!allCacheHits) {
-                requestQueue.push({ el, renderTarget, itemId, itemType });
-            }
+            // PERF: this is an async (post-paint) pass — fade late tags in.
+            processCard(unprocessed[index], true);
         }
 
         if (index < unprocessed.length) {
@@ -422,13 +535,7 @@ function runScan(): void {
             scheduleIdle(processChunk);
         } else {
             // All cards processed — schedule batch fetch for cache misses
-            if (requestQueue.length > 0 && !isProcessing) {
-                if (fetchTimer) clearTimeout(fetchTimer);
-                fetchTimer = window.setTimeout(() => {
-                    fetchTimer = null;
-                    void processQueue();
-                }, FETCH_DEBOUNCE_MS);
-            }
+            scheduleFetchIfQueued();
         }
     }
 
@@ -574,14 +681,17 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
             for (const entry of batchEntries) {
                 const { renderTarget } = entry;
                 const extras = { firstEpisode, parentSeries, ratingParentSeries, renderTarget };
-                for (const [name, renderer] of renderers) {
-                    if (!renderer.isEnabled()) continue;
-                    try {
-                        renderer.render(renderTarget, item, extras);
-                    } catch (err) {
-                        console.warn(`${logPrefix} Renderer "${name}" failed for item ${itemId}:`, err);
+                // PERF: batch-fetched tags land post-paint by definition — fade them in.
+                withFadeIn(renderTarget, () => {
+                    for (const [name, renderer] of renderers) {
+                        if (!renderer.isEnabled()) continue;
+                        try {
+                            renderer.render(renderTarget, item, extras);
+                        } catch (err) {
+                            console.warn(`${logPrefix} Renderer "${name}" failed for item ${itemId}:`, err);
+                        }
                     }
-                }
+                });
             }
         };
 
@@ -623,10 +733,13 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
                     ? await getFirstEpisode(userId, item.Id) : null;
                 const extras = { firstEpisode, parentSeries: null, ratingParentSeries: null, renderTarget };
 
-                for (const [, renderer] of renderers) {
-                    if (!renderer.isEnabled()) continue;
-                    try { renderer.render(renderTarget, item, extras); } catch {}
-                }
+                // PERF: post-paint fallback render — fade late tags in.
+                withFadeIn(renderTarget, () => {
+                    for (const [, renderer] of renderers) {
+                        if (!renderer.isEnabled()) continue;
+                        try { renderer.render(renderTarget, item, extras); } catch {}
+                    }
+                });
             } catch {}
         }
     }
@@ -668,6 +781,11 @@ function initialize(): void {
     onBodyMutation('tag-pipeline', (mutations) => {
         for (let i = 0; i < mutations.length; i++) {
             if (mutations[i].addedNodes.length > 0) {
+                // PERF: cache-resident tags render synchronously in this same
+                // mutation batch — before the new cards' first paint (budget-
+                // guarded, see syncScanAddedCards). The async scan remains the
+                // catch-all for budget overflow and cache misses.
+                syncScanAddedCards(mutations);
                 scheduleScan();
                 return;
             }
@@ -682,6 +800,7 @@ function initialize(): void {
         firstEpisodeCache.clear();
         parentSeriesCache.clear();
         requestQueue = [];
+        firstFetchAfterNav = true; // PERF: fast-track the next batch fetch
         // Pick up any new items added since last load
         void refreshServerCache();
         scheduleScan();
@@ -708,6 +827,16 @@ function initialize(): void {
             contain: layout style;
             pointer-events: none;
             z-index: auto !important;
+        }
+        /* PERF: overlays added by an async (post-paint) pass fade in instead of
+           popping. Compositor-only (opacity), overlays are position:absolute so
+           no layout work either way. */
+        .je-tag-fadein {
+            animation: je-tag-fadein 150ms ease-out both;
+        }
+        @keyframes je-tag-fadein {
+            from { opacity: 0; }
+            to   { opacity: 1; }
         }
         /* Offset top-right positioned tag containers when card has visible indicators
            (unwatched count badge, played checkmark). Indicators are always top-right in Jellyfin.
