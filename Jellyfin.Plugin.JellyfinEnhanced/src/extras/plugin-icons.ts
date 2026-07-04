@@ -231,7 +231,7 @@ async function processPluginIcons(): Promise<void> {
         existingTestLinks.forEach(link => link.remove());
 
         // Replace built-in plugin icons.
-        // PERF: no remote assets — image icons served from the local asset cache.
+        // PERF(R6): no remote assets — image icons served from the local asset cache.
         const iconConfigs: IconConfig[] = [
             {
                 selector: 'a[href*="Jellyfin%20Enhanced"]',

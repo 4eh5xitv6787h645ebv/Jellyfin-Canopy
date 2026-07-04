@@ -30,7 +30,7 @@ let _observer: { unsubscribe(): void } | null = null;
 let _lifecycle: LifecycleHandle | null = null;
 let _outsideClickListener: ((e: MouseEvent) => void) | null = null;
 let _lastUpdated: Date | null = null;
-// PERF: true once the header button has been injected in this enable cycle —
+// PERF(R1): true once the header button has been injected in this enable cycle —
 // the first injection (boot / toggle-on, post-paint by architecture) gets the
 // one-time width-expand entrance; re-mount re-injections attach instantly.
 let _headerInjectedOnce = false;
@@ -1186,7 +1186,7 @@ const tryInjectHeader = (attempts = 0): void => {
     btn.addEventListener('click', (e) => { e.stopPropagation(); togglePanel(); });
 
     headerRight.insertBefore(btn, headerRight.firstChild);
-    // PERF (doctrine: reserved-space entrance + pre-paint re-mounts): the
+    // PERF(R1, doctrine: reserved-space entrance + pre-paint re-mounts): the
     // button keeps its designed leading slot. Boot/toggle-on injection is
     // post-paint (JE loads after the native header paints) so the first
     // injection expands from width 0 over 150ms instead of snap-shifting the

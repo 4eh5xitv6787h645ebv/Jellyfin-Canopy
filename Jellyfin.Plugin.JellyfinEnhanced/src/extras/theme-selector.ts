@@ -40,7 +40,7 @@ const NOTIFICATION_DELAY = 1000;
 const DEBOUNCE_DELAY = 100;
 const TRANSITION_DURATION = 300;
 
-// PERF: no remote assets — Jellyfish theme CSS served from the local asset
+// PERF(R6): no remote assets — Jellyfish theme CSS served from the local asset
 // cache (with its logo/background image urls rewritten to local copies).
 const getThemeImport = (filename: string): string => filename ? `@import url("${themeCssUrl(filename)}");` : '';
 

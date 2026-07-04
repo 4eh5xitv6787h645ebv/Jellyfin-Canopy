@@ -171,7 +171,7 @@ function insertLanguageTags(ctx: TagRendererContext, container: HTMLElement, lan
 
     uniqueFlags.slice(0, maxToShow).forEach(flagInfo => {
         const img = document.createElement('img');
-        // PERF: no remote assets — flag served from the local asset cache.
+        // PERF(R6): no remote assets — flag served from the local asset cache.
         img.src = flagSvgUrl(flagInfo.countryCode);
         img.className = flagClass;
         img.alt = flagInfo.allLanguages.join(', ');

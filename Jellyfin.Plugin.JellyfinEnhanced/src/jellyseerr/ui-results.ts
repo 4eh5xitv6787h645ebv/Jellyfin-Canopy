@@ -2,7 +2,7 @@
 // Search-page result rendering: Seerr section, header icon, season
 // status analysis and in-place result updates.
 import { JE } from '../globals';
-// PERF: no remote assets — Seerr icon served from the local asset cache.
+// PERF(R6): no remote assets — Seerr icon served from the local asset cache.
 import { assetUrl } from '../core/asset-urls';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
@@ -168,7 +168,7 @@ function analyzeSeasonStatuses(seasons: any) {
     return { overallStatus, statusSummary, total, availableCount };
 }
 
-// PERF: pending detached-placement watcher for the Seerr section. A newer
+// PERF(R7): pending detached-placement watcher for the Seerr section. A newer
 // render supersedes (cancels) it so a stale keystroke never inserts late.
 let pendingSectionPlacement: { cancel: () => void } | null = null;
 // How long to hold the built section detached waiting for the native
@@ -200,7 +200,7 @@ ui.renderJellyseerrResults = function (results: any, query: any, isJellyseerrOnl
 
     const sectionToInject = createJellyseerrSection(results, isJellyseerrOnlyMode, isJellyseerrActive, jellyseerrUserFound);
 
-    // PERF: per-keystroke re-render PATCHES the existing section in place —
+    // PERF(R7): per-keystroke re-render PATCHES the existing section in place —
     // one replaceChildren() swap inside the same container node — instead of
     // tearing the section down and re-inserting/repositioning it, which
     // visibly jumped the page on every keystroke. Card build is identical;
@@ -255,7 +255,7 @@ ui.renderJellyseerrResults = function (results: any, query: any, isJellyseerrOnl
         return false;
     }
 
-    // PERF: determine the insertion point BEFORE injecting. If the anchor
+    // PERF(R1): determine the insertion point BEFORE injecting. If the anchor
     // exists, this is a single insert at the final position. Otherwise the
     // built section stays DETACHED (off-DOM) until the native sections render,
     // then inserts once — inside the same mutation batch that added them, so

@@ -1,7 +1,7 @@
 // src/jellyseerr/ui-cards.ts
 // Seerr search-result card construction.
 import { JE } from '../globals';
-// PERF: no remote assets — Seerr icon + poster placeholder served from the
+// PERF(R6): no remote assets — Seerr icon + poster placeholder served from the
 // local asset cache (the placeholder is embedded in the plugin DLL).
 import { assetUrl } from '../core/asset-urls';
 

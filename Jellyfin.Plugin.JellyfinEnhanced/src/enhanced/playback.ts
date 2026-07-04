@@ -498,7 +498,7 @@ JE.initializeAutoSkipObserver = () => {
     if (skipButtonObserver) {
         return; // Observer is already running
     }
-    // PERF: one presence probe per mutation BATCH — the old callback ran
+    // PERF(R8): one presence probe per mutation BATCH — the old callback ran
     // document.querySelector once per mutation record inside the loop. The
     // observer itself is playback-scoped: events.ts attaches it on video-page
     // entry and JE.stopAutoSkip disconnects it on leave.

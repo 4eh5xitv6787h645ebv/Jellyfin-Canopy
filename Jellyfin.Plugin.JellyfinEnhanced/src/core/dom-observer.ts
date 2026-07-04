@@ -367,7 +367,7 @@ function runInjector(entry: InjectorEntry, prePaint = false): void {
 }
 
 /**
- * PERF: run every `prePaint` injector synchronously — called from inside the
+ * PERF(R1): run every `prePaint` injector synchronously — called from inside the
  * shared body-observer callback so nodes attach in the same mutation batch
  * that remounted their anchor, before that anchor's first paint.
  */
@@ -402,7 +402,7 @@ function ensureInjectorsWired(): void {
     // Catch-all: re-attach once a remounted host (toolbar after /video, a fresh
     // React page) appears, even without an accompanying nav/viewshow.
     onBodyMutation('je-ensure-injected', () => {
-        // PERF: pre-paint injectors run synchronously inside this mutation
+        // PERF(R1): pre-paint injectors run synchronously inside this mutation
         // batch (a microtask after the DOM change, before render steps), so a
         // remounted anchor never paints a frame without its injected node.
         // The rest keep the rAF-coalesced pass (also pre-paint for same-frame
@@ -449,7 +449,7 @@ export function ensureInjected(
 
 // --- Shared sidebar-rebuild watcher -----------------------------------------
 //
-// PERF: sidebar nav features (requests, calendar, hidden content, bookmarks)
+// PERF(R3): sidebar nav features (requests, calendar, hidden content, bookmarks)
 // each used to run their own MutationObserver — typically falling back to
 // document.body — just to re-inject their nav link when Jellyfin rebuilds the
 // drawer. They now share ONE subscriber on the multiplexed body observer that

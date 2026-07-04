@@ -72,7 +72,7 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
     placeholder.style.alignItems = 'center';
     placeholder.style.margin = '0 1em 0 0 !important';
     placeholder.style.cursor = 'pointer';
-    // PERF: reserve the typical final width (progress ring + "100%") so the
+    // PERF(R1): reserve the typical final width (progress ring + "100%") so the
     // value swap doesn't resize the chip and reflow the row the user is
     // reading. The row reflows exactly once — at insertion.
     placeholder.style.minWidth = '6ch';
@@ -251,7 +251,7 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
         }
     };
 
-    // PERF: fetch immediately (was requestIdleCallback with a 2s timeout). The
+    // PERF(R7): fetch immediately (was requestIdleCallback with a 2s timeout). The
     // fetch is async network work that never blocks rendering, and a cache hit
     // now fills the chip in the SAME task as the insertion — one reflow total
     // instead of hourglass-then-swap several frames later.
@@ -283,7 +283,7 @@ export function displayItemSize(itemId: string, container: HTMLElement): void {
     placeholder.style.display = 'flex';
     placeholder.style.alignItems = 'center';
     placeholder.style.margin = '0 1em 0 0 !important';
-    // PERF: reserve the typical final width (save icon + "12.34 GB") so the
+    // PERF(R1): reserve the typical final width (save icon + "12.34 GB") so the
     // value swap doesn't resize the chip and reflow the row.
     placeholder.style.minWidth = '8ch';
     // Show loading indicator
@@ -332,7 +332,7 @@ export function displayItemSize(itemId: string, container: HTMLElement): void {
         }
     };
 
-    // PERF: fetch immediately (was requestIdleCallback, up to 2s late) — cache
+    // PERF(R7): fetch immediately (was requestIdleCallback, up to 2s late) — cache
     // hits fill the chip in the same task as the insertion, one reflow total.
     void performFetch();
 }
@@ -406,7 +406,7 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
     placeholder.style.verticalAlign = 'middle';
     placeholder.style.alignItems = 'center';
     placeholder.style.margin = '0 1em 0 0 !important';
-    // PERF: reserve the typical final width (translate icon + one flag +
+    // PERF(R1): reserve the typical final width (translate icon + one flag +
     // language name) so the value swap doesn't resize the chip.
     placeholder.style.minWidth = '6ch';
     // Show loading indicator
@@ -500,10 +500,10 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
             const countryCode = languageToCountryMap[lang.name] || languageToCountryMap[lang.code];
             if (countryCode) {
                 const flag = document.createElement('img');
-                // PERF: no remote assets — flag served from the local asset cache.
+                // PERF(R6): no remote assets — flag served from the local asset cache.
                 flag.src = flagSvgUrl(countryCode);
                 flag.alt = `${lang.name} flag`;
-                // PERF: explicit width AND height (attributes + styles) so the
+                // PERF(R1): explicit width AND height (attributes + styles) so the
                 // slot is fully reserved before the SVG loads — no row reflow
                 // when the flag image arrives. 4x3 flags at 18px wide = 13.5px.
                 flag.width = 18;
@@ -597,7 +597,7 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
         }
     };
 
-    // PERF: fetch immediately (was requestIdleCallback, up to 2s late) — cache
+    // PERF(R7): fetch immediately (was requestIdleCallback, up to 2s late) — cache
     // hits fill the chip in the same task as the insertion, one reflow total.
     void performFetch();
 }

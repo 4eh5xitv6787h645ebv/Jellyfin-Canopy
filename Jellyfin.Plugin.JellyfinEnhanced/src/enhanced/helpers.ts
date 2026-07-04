@@ -16,7 +16,7 @@ import type { NavigateCallback, ViewPageCallback, ViewPageOptions } from '../typ
 // getHeaderRightContainer below) so it's only added once.
 let muiHeaderButtonCSSInjected = false;
 
-// PERF: per-navigation cache for getHeaderRightContainer. Resolving the
+// PERF(R4): per-navigation cache for getHeaderRightContainer. Resolving the
 // container reads legacy.offsetParent — a forced layout read — and callers
 // (keyed injectors, observer ticks) may probe many times per second while
 // content streams in. Cache the successful resolution and invalidate on

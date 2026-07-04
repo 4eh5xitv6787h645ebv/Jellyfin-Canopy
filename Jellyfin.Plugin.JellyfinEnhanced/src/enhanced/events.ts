@@ -193,7 +193,7 @@ JE.keyListener = (e: KeyboardEvent) => {
  * Sets up listeners for DOM changes to inject UI elements dynamically.
  */
 function setupDOMObserver(): void {
-    // PERF: track the video-page state across ticks so the leave-page teardown
+    // PERF(R8): track the video-page state across ticks so the leave-page teardown
     // (stopAutoSkip) runs once on the transition instead of on every mutation
     // batch of every non-video page.
     let wasVideoPage = false;
@@ -213,7 +213,7 @@ function setupDOMObserver(): void {
         }
     };
 
-    // PERF: the random button registers a keyed ensureInjected injector that
+    // PERF(R4): the random button registers a keyed ensureInjected injector that
     // re-attaches itself on navigation/viewshow/body mutation — calling it once
     // here is enough. The old per-tick call re-resolved the header container
     // (a layout read via offsetParent) on every mutation batch (~10x/s while

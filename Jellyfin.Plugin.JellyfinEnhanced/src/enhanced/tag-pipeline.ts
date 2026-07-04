@@ -21,11 +21,11 @@ import { onNavigate } from '../core/navigation';
 
 const MEDIA_TYPES = new Set(['Movie', 'Episode', 'Series', 'Season', 'BoxSet']);
 const FETCH_DEBOUNCE_MS = 150; // Debounce only the batch API call, not the scan
-// PERF: the FIRST batch after a navigation uses a much shorter debounce — the
+// PERF(R7): the FIRST batch after a navigation uses a much shorter debounce — the
 // user is staring at a fresh page of untagged posters, so waiting the full
 // coalescing window just delays the first tags for no benefit.
 const FIRST_FETCH_DEBOUNCE_MS = 50;
-// PERF: per-mutation-batch budget for the synchronous (pre-paint) card pass.
+// PERF(R8): per-mutation-batch budget for the synchronous (pre-paint) card pass.
 // Cache-resident tags render inside this budget; everything else overflows to
 // the idle-scheduled async scan.
 const SYNC_SCAN_BUDGET_MS = 2;
@@ -85,7 +85,7 @@ let fetchTimer: number | null = null;
 let isProcessing = false;
 let batchGeneration = 0; // Incremented on navigation to cancel stale in-flight batches
 let requestQueue: QueueEntry[] = []; // { el, itemId, itemType }
-let firstFetchAfterNav = true; // PERF: shortens the debounce for the first batch of a navigation
+let firstFetchAfterNav = true; // PERF(R7): shortens the debounce for the first batch of a navigation
 
 // ── Pipeline-level exclusions ─────────────────────────────────────
 // Elements matching these selectors are skipped before any renderer runs.
@@ -302,7 +302,7 @@ function hasAnyEnabledRenderer(): boolean {
 }
 
 let scanScheduled = false;
-// PERF: 20 cards/chunk (was 5). Cache-resident renders are plain DOM writes;
+// PERF(R8): 20 cards/chunk (was 5). Cache-resident renders are plain DOM writes;
 // the old 5-card chunks stretched a fully-cached page over many idle slices,
 // which read as tags trickling in long after the posters.
 const CARDS_PER_CHUNK = 20;
@@ -314,7 +314,7 @@ let scanGeneration = 0; // Incremented on each new scan to cancel stale chunk ch
 // Use requestIdleCallback for all tag work so it never competes with
 // user interactions (hover, scroll, click). Falls back to setTimeout
 // for browsers without requestIdleCallback support.
-// PERF: idle timeout 100ms (was 500ms) — the first scan after cards mount must
+// PERF(R8): idle timeout 100ms (was 500ms) — the first scan after cards mount must
 // not sit behind half a second of idle waiting while the posters are visible.
 const scheduleIdle: (fn: () => void) => unknown = typeof requestIdleCallback === 'function'
     ? (fn: () => void) => requestIdleCallback(fn, { timeout: 100 })
@@ -330,7 +330,7 @@ function scheduleScan(): void {
 }
 
 /**
- * PERF: mark overlay containers added by an async (post-paint) render pass so
+ * PERF(R7): mark overlay containers added by an async (post-paint) render pass so
  * they fade in via a compositor-only opacity animation instead of popping.
  * Snapshots the renderTarget's direct children before the render and tags the
  * diff — renderer markup itself is untouched (purely additive class).
@@ -348,7 +348,7 @@ function withFadeIn(renderTarget: HTMLElement, renderFn: () => void): void {
 
 /**
  * Schedule the debounced batch fetch when the request queue is non-empty.
- * PERF: the first batch after a navigation uses FIRST_FETCH_DEBOUNCE_MS so
+ * PERF(R7): the first batch after a navigation uses FIRST_FETCH_DEBOUNCE_MS so
  * fresh pages get their uncached tags sooner; later batches keep the wider
  * coalescing window.
  */
@@ -462,7 +462,7 @@ function processCard(el: HTMLElement, fadeIn: boolean): void {
 }
 
 /**
- * PERF (pre-paint tag render): process cards added in the CURRENT mutation
+ * PERF(R1/R8, pre-paint tag render): process cards added in the CURRENT mutation
  * batch synchronously — inside the body-observer callback, before the cards'
  * first paint — so cache-resident tags appear in the same frame as the
  * posters instead of popping in 300ms-2s later. Budget-guarded: after
@@ -529,7 +529,7 @@ function runScan(): void {
         const end = Math.min(index + CARDS_PER_CHUNK, unprocessed.length);
 
         for (; index < end; index++) {
-            // PERF: this is an async (post-paint) pass — fade late tags in.
+            // PERF(R7): this is an async (post-paint) pass — fade late tags in.
             processCard(unprocessed[index], true);
         }
 
@@ -684,7 +684,7 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
             for (const entry of batchEntries) {
                 const { renderTarget } = entry;
                 const extras = { firstEpisode, parentSeries, ratingParentSeries, renderTarget };
-                // PERF: batch-fetched tags land post-paint by definition — fade them in.
+                // PERF(R7): batch-fetched tags land post-paint by definition — fade them in.
                 withFadeIn(renderTarget, () => {
                     for (const [name, renderer] of renderers) {
                         if (!renderer.isEnabled()) continue;
@@ -736,7 +736,7 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
                     ? await getFirstEpisode(userId, item.Id) : null;
                 const extras = { firstEpisode, parentSeries: null, ratingParentSeries: null, renderTarget };
 
-                // PERF: post-paint fallback render — fade late tags in.
+                // PERF(R7): post-paint fallback render — fade late tags in.
                 withFadeIn(renderTarget, () => {
                     for (const [, renderer] of renderers) {
                         if (!renderer.isEnabled()) continue;
@@ -784,7 +784,7 @@ function initialize(): void {
     onBodyMutation('tag-pipeline', (mutations) => {
         for (let i = 0; i < mutations.length; i++) {
             if (mutations[i].addedNodes.length > 0) {
-                // PERF: cache-resident tags render synchronously in this same
+                // PERF(R1): cache-resident tags render synchronously in this same
                 // mutation batch — before the new cards' first paint (budget-
                 // guarded, see syncScanAddedCards). The async scan remains the
                 // catch-all for budget overflow and cache misses.
@@ -803,7 +803,7 @@ function initialize(): void {
         firstEpisodeCache.clear();
         parentSeriesCache.clear();
         requestQueue = [];
-        firstFetchAfterNav = true; // PERF: fast-track the next batch fetch
+        firstFetchAfterNav = true; // PERF(R7): fast-track the next batch fetch
         // Pick up any new items added since last load
         void refreshServerCache();
         scheduleScan();
@@ -831,7 +831,7 @@ function initialize(): void {
             pointer-events: none;
             z-index: auto !important;
         }
-        /* PERF: overlays added by an async (post-paint) pass fade in instead of
+        /* PERF(R7): overlays added by an async (post-paint) pass fade in instead of
            popping. Compositor-only (opacity), overlays are position:absolute so
            no layout work either way. */
         .je-tag-fadein {

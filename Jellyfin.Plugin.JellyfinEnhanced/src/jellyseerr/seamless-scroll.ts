@@ -248,7 +248,7 @@ function setupInfiniteScroll(state: any, sectionSelector: string, loadMoreFn: ()
         }
     };
 
-    // PERF: IntersectionObserver ONLY — it exists precisely to avoid layout
+    // PERF(R4): IntersectionObserver ONLY — it exists precisely to avoid layout
     // reads. The old code ALSO attached a throttled scroll listener calling
     // sentinel.getBoundingClientRect() every 150ms during scrolling; that path
     // is now strictly a fallback for hosts without IntersectionObserver.

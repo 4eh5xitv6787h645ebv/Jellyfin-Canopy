@@ -1,5 +1,5 @@
 // Unit tests for src/enhanced/helpers.ts — the per-navigation cache in
-// getHeaderRightContainer (PERF fix: offsetParent is a forced layout read and
+// getHeaderRightContainer (PERF(R4) fix: offsetParent is a forced layout read and
 // used to be re-read on every observer tick; it must now be read at most once
 // per navigation).
 import { beforeEach, describe, expect, it } from 'vitest';

@@ -179,7 +179,7 @@ JE.addRandomButton = (): void => {
         return;
     }
 
-    // PERF (doctrine: reserved-space entrance + pre-paint re-mounts): the
+    // PERF(R1, doctrine: reserved-space entrance + pre-paint re-mounts): the
     // button keeps its designed slot (prepend = leading position in the tray),
     // but the injection can no longer shift the native buttons:
     //  - Boot / feature-toggle-on is necessarily POST-paint (JE loads after the

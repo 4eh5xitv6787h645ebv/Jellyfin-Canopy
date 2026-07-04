@@ -322,7 +322,7 @@ function setupNavigationWatcher(): void {
     if (config.DownloadsUseCustomTabs) return; // Don't watch if using custom tabs
     if (config.DownloadsUseNativeTab) return; // Don't watch if using the native tab
 
-    // PERF: shared sidebar-rebuild subscriber on the multiplexed body observer
+    // PERF(R3): shared sidebar-rebuild subscriber on the multiplexed body observer
     // instead of a dedicated (body-fallback) MutationObserver per nav feature.
     onSidebarRebuild('downloads-nav', () => {
         // Re-check config each time to avoid injecting when settings change

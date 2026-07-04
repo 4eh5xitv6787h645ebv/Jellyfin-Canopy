@@ -41,7 +41,7 @@ JE.initializeLetterboxdLinksScript = async function () {
     const processedItemIds = new Set<string>(); // Cache of items we've already processed
     let lastVisibleItemId: string | null = null; // Track the currently visible item
 
-    // PERF: no remote assets — icon served from the local asset cache.
+    // PERF(R6): no remote assets — icon served from the local asset cache.
     const LETTERBOXD_ICON_URL = assetUrl('icons/letterboxd.svg');
 
     // Safe fallback for helpers.js Stage-3 load-order races.

@@ -118,7 +118,7 @@ import type { JEGlobal } from '../types/je';
             console.warn('🪼 Jellyfin Enhanced: Bundled translations failed, falling back to GitHub:', (bundledError as Error).message);
         }
 
-        // PERF: no remote assets — with the asset cache enabled (default; also the
+        // PERF(R6): no remote assets — with the asset cache enabled (default; also the
         // pre-config assumption, since this loader can run before public-config)
         // the GitHub-raw fallback is skipped so the browser never contacts a
         // third-party host: the server already fell back base-language → English

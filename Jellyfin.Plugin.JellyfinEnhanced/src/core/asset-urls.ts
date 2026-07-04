@@ -1,6 +1,6 @@
 // src/core/asset-urls.ts
 //
-// PERF: no remote assets — served from the local asset cache.
+// PERF(R6): no remote assets — served from the local asset cache.
 //
 // The single client-side map between the plugin's locally served assets
 // (/JellyfinEnhanced/assets/<key>, mirrored server-side by AssetCacheService

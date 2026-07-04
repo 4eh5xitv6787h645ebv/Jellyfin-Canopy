@@ -85,7 +85,7 @@ JE.initializeElsewhereScript = function() {
     console.log('🪼 Jellyfin Enhanced: 🎬 Jellyfin Elsewhere starting...');
 
     // Load regions and providers (mirrored from the Jellyfin-Elsewhere repo).
-    // PERF: no remote assets — both .txt files are served from the local asset cache.
+    // PERF(R6): no remote assets — both .txt files are served from the local asset cache.
     function loadRegionsAndProviders(): void {
         fetch(assetUrl('elsewhere/regions.txt'))
             .then(response => response.ok ? response.text() : Promise.reject(new Error(`HTTP ${response.status}`)))
@@ -1147,7 +1147,7 @@ JE.initializeElsewhereScript = function() {
             container.className = 'streaming-lookup-container';
             container.style.cssText = 'margin: 16px 0;';
 
-            // PERF: single insert with content. The old flow inserted the empty
+            // PERF(R7): single insert with content. The old flow inserted the empty
             // container immediately (its 16px margins alone shifted the page)
             // and filled it after the fetch — a second, larger shift. Now the
             // panel is built and filled off-DOM and inserted ONCE, with its

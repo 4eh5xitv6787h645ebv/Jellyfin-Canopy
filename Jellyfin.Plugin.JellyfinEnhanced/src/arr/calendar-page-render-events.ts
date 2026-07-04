@@ -9,7 +9,7 @@ import type { CalendarEvent } from './calendar-page-data';
 
 const escapeHtml = JE.escapeHtml;
 
-// PERF: no remote assets — arr icons served from the local asset cache.
+// PERF(R6): no remote assets — arr icons served from the local asset cache.
 const SONARR_ICON_URL = assetUrl('icons/sonarr.svg');
 const RADARR_ICON_URL = assetUrl('icons/radarr-light-hybrid-light.svg');
 

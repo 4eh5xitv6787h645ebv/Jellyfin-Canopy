@@ -311,7 +311,7 @@ export function setupNavigationWatcher(): void {
   if (JE?.pluginConfig?.BookmarksUseCustomTabs) return;
   if (JE?.pluginConfig?.BookmarksUseNativeTab) return;
 
-  // PERF: shared sidebar-rebuild subscriber on the multiplexed body observer
+  // PERF(R3): shared sidebar-rebuild subscriber on the multiplexed body observer
   // instead of a dedicated (body-fallback) MutationObserver per nav feature.
   onSidebarRebuild('bookmarks-nav', () => {
     if (isPluginPagesActive()) return;

@@ -340,7 +340,7 @@ export function setupNavigationWatcher(): void {
     if (config.HiddenContentUseCustomTabs) return;
     if (config.HiddenContentUseNativeTab) return;
 
-    // PERF: shared sidebar-rebuild subscriber on the multiplexed body observer
+    // PERF(R3): shared sidebar-rebuild subscriber on the multiplexed body observer
     // instead of a dedicated (body-fallback) MutationObserver per nav feature.
     onSidebarRebuild('hidden-content-nav', () => {
         const currentConfig = JE.pluginConfig || {};

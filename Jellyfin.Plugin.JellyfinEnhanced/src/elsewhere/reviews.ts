@@ -1148,7 +1148,7 @@ JE.initializeReviewsScript = function () {
             return;
         }
 
-        // PERF: no unconditional 150ms sleep — process immediately when the
+        // PERF(R7): no unconditional 150ms sleep — process immediately when the
         // detail page is already visible (the common case); keep one 150ms
         // retry for clients that fire viewshow before the page unhides. The
         // section itself is built fully off-DOM in addReviewsToPage and

@@ -155,7 +155,7 @@ export interface EnsureInjectedOptions {
      */
     isPresent?: () => boolean;
     /**
-     * PERF: also run this injector SYNCHRONOUSLY inside the shared body-observer
+     * PERF(R1): also run this injector SYNCHRONOUSLY inside the shared body-observer
      * structural callback (before the rAF-coalesced pass), so the node attaches
      * in the same mutation batch that remounted its anchor — before the anchor's
      * first paint (the events.ts action-sheet doctrine, generalized). Keep the
@@ -265,7 +265,7 @@ export interface UiApi {
     /** A `.verticalSection` matching the home-sections markup; append content into it. */
     sectionContainer(options?: SectionContainerOptions): HTMLDivElement;
     /**
-     * PERF: shift-free entrance for a node just inserted in-flow into an
+     * PERF(R1): shift-free entrance for a node just inserted in-flow into an
      * already-painted container (width 0 → natural width over ~150ms, then all
      * inline styles removed). Call synchronously right after attaching; pass
      * `instant: true` for pre-paint injections (no animation needed).

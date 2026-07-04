@@ -767,7 +767,7 @@ issueReporter.getTmdbIdFallback = async function (itemName, mediaType, item) {
 /**
  * Fetches open issues for the item and applies an orange indicator + count badge
  * to the report button. No-op if JellyseerrShowIssueIndicator is off.
- * PERF: the badge is a position:absolute overlay on the (position:relative)
+ * PERF(R2): the badge is a position:absolute overlay on the (position:relative)
  * button, so applying it never reflows the detail-button row — zero shift even
  * when it lands after the button. `prefetched` lets tryAddButton start the
  * issues fetch in parallel with its container lookup so the badge usually
@@ -972,7 +972,7 @@ issueReporter.tryAddButton = async function () {
                     } else {
                         buttonContainerUnavail.appendChild(unavailButton);
                     }
-                    // PERF: post-paint in-flow insert — same one-time width
+                    // PERF(R1): post-paint in-flow insert — same one-time width
                     // expansion as the active report button (no snap-shift).
                     JE.core.ui?.expandIn(unavailButton, {});
                     console.log(`${logPrefix} Added unavailable report button (${availability})`);
@@ -1028,7 +1028,7 @@ issueReporter.tryAddButton = async function () {
             }
         }
 
-        // PERF: start the open-issues fetch NOW, in parallel with the container
+        // PERF(R7): start the open-issues fetch NOW, in parallel with the container
         // lookup below, so the count badge is usually ready when the button
         // inserts — one visual change instead of button-then-badge. (The badge
         // is an absolute overlay either way, so a late badge never reflows.)
@@ -1113,7 +1113,7 @@ issueReporter.tryAddButton = async function () {
             } else {
                 buttonContainer.appendChild(button);
             }
-            // PERF (doctrine: reserved-space entrance): the insert is always
+            // PERF(R1, doctrine: reserved-space entrance): the insert is always
             // post-paint (viewshow + several awaits), so expand the slot with
             // the one-time 150ms width ease instead of snap-shifting the row.
             JE.core.ui?.expandIn(button, {});

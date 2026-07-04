@@ -67,7 +67,7 @@ export function injectCss(id: string, css: string): void {
  * duplicates of the same @font-face — call this next to each feature's own
  * style injection instead of re-declaring it.
  *
- * PERF: no remote assets — the woff2 is served from the local asset cache
+ * PERF(R6): no remote assets — the woff2 is served from the local asset cache
  * (same font-display: block as before, but same-origin = fast + private).
  */
 export function ensureMaterialSymbolsFont(): void {
@@ -286,7 +286,7 @@ export function sectionContainer(options: SectionContainerOptions = {}): HTMLDiv
 }
 
 /**
- * PERF: shift-free entrance for a node just inserted in-flow into an
+ * PERF(R1): shift-free entrance for a node just inserted in-flow into an
  * ALREADY-PAINTED container (e.g. a header tray at plugin boot, which by
  * architecture paints seconds before JE loads). Instead of snap-shifting its
  * siblings, the node expands from width 0 to its natural width over a short

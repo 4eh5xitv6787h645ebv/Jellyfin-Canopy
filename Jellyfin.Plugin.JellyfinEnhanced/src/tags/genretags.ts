@@ -315,7 +315,7 @@ const spec: TagSpec = {
 
 JE.initializeGenreTags = function() {
     // Ensure Material Symbols font is loaded.
-    // PERF: no remote assets — the Google Fonts stylesheet is served from the
+    // PERF(R6): no remote assets — the Google Fonts stylesheet is served from the
     // local asset cache, its @font-face urls rewritten to local woff2 copies.
     if (!document.getElementById('mat-sym')) {
         const link = document.createElement('link');

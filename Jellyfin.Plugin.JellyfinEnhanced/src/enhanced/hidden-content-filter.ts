@@ -315,7 +315,7 @@ export function refreshNativeCardVisibility(): void {
  * Filters only newly-added (not yet scanned) native cards.
  * Called synchronously from the body-observer callback (pre-paint) and by the
  * debounced safety-net pass.
- * @param syncApply - PERF: apply the je-hidden class changes synchronously
+ * @param syncApply - PERF(R8): apply the je-hidden class changes synchronously
  *   instead of deferring to requestAnimationFrame. Used by the pre-paint path
  *   so forbidden cards are display:none BEFORE their first paint — no flash,
  *   no visible row collapse.
@@ -497,7 +497,7 @@ export function setupNativeObserver(): void {
         }
         if (hasNewItems) {
             if (shouldFilter) {
-                // PERF: filter SYNCHRONOUSLY inside this mutation batch — the
+                // PERF(R8): filter SYNCHRONOUSLY inside this mutation batch — the
                 // hidden-ids set is in memory (a Set lookup per new card), so
                 // forbidden cards are display:none BEFORE their first paint:
                 // no flash, no visible row collapse. Runs at priority 10, ahead

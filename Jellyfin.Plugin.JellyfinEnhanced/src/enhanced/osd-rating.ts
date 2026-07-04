@@ -210,7 +210,7 @@ let attachInFlight = false;
 
 /**
  * Attaches the OSD observer, scoped to the player container.
- * PERF: previously created at boot and — because .videoPlayerContainer does
+ * PERF(R3): previously created at boot and — because .videoPlayerContainer does
  * not exist yet at that point — permanently fell back to observing
  * document.body, adding a 200ms-timeout schedule on every body mutation on
  * every page. It is now created lazily when a video page mounts and is torn

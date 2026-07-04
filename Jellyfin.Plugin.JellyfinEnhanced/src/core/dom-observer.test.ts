@@ -1,7 +1,7 @@
 // Unit tests for src/core/dom-observer.ts ensureInjected — the idempotent,
 // keyed injection that survives React re-renders and the /video header-tray
 // round trip (v12-platform.md §3 survival matrix, §6.5, §6.8) — and the
-// shared sidebar-rebuild watcher (PERF: one body subscriber for all nav
+// shared sidebar-rebuild watcher (PERF(R3): one body subscriber for all nav
 // re-injection checks instead of one MutationObserver per feature).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JE } from '../globals';

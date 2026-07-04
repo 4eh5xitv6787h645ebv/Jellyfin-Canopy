@@ -44,7 +44,7 @@ interface NativeTabEntry {
 /** Ordered list of {id, title, onMount, index}. Order determines data-index assignment. */
 let entries: NativeTabEntry[] = [];
 let injectPending = false;
-// PERF: link ids that already had their one-time boot entrance animation.
+// PERF(R1): link ids that already had their one-time boot entrance animation.
 // Re-injections (header re-mounts) attach instantly — they run rAF-coalesced
 // off the remount mutation, i.e. before the rebuilt header's first paint.
 const animatedLinkIds = new Set<string>();
@@ -216,7 +216,7 @@ function ensureDiscoverable(entry: NativeTabEntry): void {
     });
 
     group.insertBefore(link, separator);
-    // PERF (doctrine: reserved-space entrance): the group keeps its designed
+    // PERF(R1, doctrine: reserved-space entrance): the group keeps its designed
     // slot (flex order:-1, always first in the tray). At boot the tray painted
     // long before JE loaded, so the FIRST appearance of each link expands from
     // width 0 over 150ms instead of snap-shifting the native buttons; header

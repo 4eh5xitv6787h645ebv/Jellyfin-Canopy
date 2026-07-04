@@ -45,7 +45,7 @@ function injectCSS(): void {
         linkElement.id = CONFIG.cssId;
         linkElement.rel = 'stylesheet';
         linkElement.type = 'text/css';
-        // PERF: no remote assets — ratings.css served from the local asset cache.
+        // PERF(R6): no remote assets — ratings.css served from the local asset cache.
         linkElement.href = assetUrl('ratings/ratings.css');
         document.head.appendChild(linkElement);
     } catch (error) {
@@ -146,7 +146,7 @@ function setupMutationObserver(): boolean {
     if (!window.MutationObserver) return false;
 
     try {
-        // PERF: rides the shared structural body observer instead of a
+        // PERF(R3): rides the shared structural body observer instead of a
         // dedicated characterData:true body observer — that one fired on the
         // OSD clock's text updates every second during playback. Rating text
         // only ever (re)renders via childList mutations, and the
@@ -165,7 +165,7 @@ function setupMutationObserver(): boolean {
 
 function setupNavigationWatcher(): void {
     if (navUnsubscribe) return;
-    // PERF: replaces both the permanent 1Hz full-document polling interval and
+    // PERF(R5): replaces both the permanent 1Hz full-document polling interval and
     // the per-mutation location.href watcher — one debounced pass per
     // navigation plus a settle pass for late-arriving page content.
     navUnsubscribe = onNavigate(() => {

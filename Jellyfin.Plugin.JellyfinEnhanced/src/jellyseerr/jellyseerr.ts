@@ -361,7 +361,7 @@ JE.initializeJellyseerrScript = function() {
         let lastIconState: string | null = null;
 
         function tryAttachSearchListener() {
-            // PERF: this runs on every structural body-mutation batch — gate on
+            // PERF(R8): this runs on every structural body-mutation batch — gate on
             // a cheap search-page probe first, and only touch the icon when its
             // state changed or the icon got detached (page rebuild). The old
             // path re-queried anchors and rewrote classList/title per batch.

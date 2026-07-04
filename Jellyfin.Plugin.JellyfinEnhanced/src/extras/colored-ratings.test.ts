@@ -1,6 +1,6 @@
 // Unit tests for src/extras/colored-ratings.ts — the mutation gate that
 // replaced the permanent 1Hz polling interval and the characterData body
-// observer (PERF fix). Only batches that can actually contain rating elements
+// observer (PERF(R3/R5) fix). Only batches that can actually contain rating elements
 // may schedule the full-document processing pass.
 import { describe, expect, it } from 'vitest';
 import { mutationsTouchRatings } from './colored-ratings';

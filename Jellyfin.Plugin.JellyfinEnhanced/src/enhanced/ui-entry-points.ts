@@ -159,7 +159,7 @@ function addPrefsLinkIfOnPage(): boolean {
  * Adds it as the last item in the first vertical section (after Controls).
  */
 JE.addUserPreferencesLink = () => {
-    // PERF: retries are driven by the shared navigation/viewshow events (plus
+    // PERF(R3): retries are driven by the shared navigation/viewshow events (plus
     // the shared body observer tick in events.ts) instead of creating a new
     // body-wide attribute MutationObserver per call — the old pattern leaked
     // one observer per call whenever this ran off the preferences page.

@@ -213,7 +213,7 @@ JE.initializeArrLinksScript = async function () {
     }
 
     try {
-        // PERF: no remote assets — arr icons served from the local asset cache.
+        // PERF(R6): no remote assets — arr icons served from the local asset cache.
         const SONARR_ICON_URL = assetUrl('icons/sonarr.svg');
         const RADARR_ICON_URL = assetUrl('icons/radarr-light-hybrid-light.svg');
         const BAZARR_ICON_URL = assetUrl('icons/bazarr.svg');
@@ -569,7 +569,7 @@ JE.initializeArrLinksScript = async function () {
 
             isAddingLinks = true;
             try {
-                // PERF: all link buttons collect into this fragment and attach
+                // PERF(R7): all link buttons collect into this fragment and attach
                 // with ONE appendChild at the end — the row is built off-DOM
                 // after every instance lookup resolves, so the external-links
                 // row reflows exactly once instead of per-service.
@@ -685,7 +685,7 @@ JE.initializeArrLinksScript = async function () {
                     linksFragment.appendChild(createLinkButton('Bazarr', url, 'arr-link-bazarr'));
                 }
 
-                // PERF: single insert — the whole row lands in one reflow, only
+                // PERF(R7): single insert — the whole row lands in one reflow, only
                 // after every lookup resolved and the page is still the same.
                 if (linksFragment.childNodes.length > 0 && isStillValidTarget()) {
                     anchorElement.appendChild(linksFragment);

@@ -324,7 +324,7 @@ JE.initializePeopleTags = function() {
             // Extract country code from birthplace
             const countryCode = getCountryCodeFromBirthPlace(personData.birthPlace);
 
-            // Country flag PNG — PERF: no remote assets, served from the local asset cache.
+            // Country flag PNG — PERF(R6): no remote assets, served from the local asset cache.
             if (countryCode) {
                 const flagImg = document.createElement('img');
                 flagImg.className = 'je-people-flag';

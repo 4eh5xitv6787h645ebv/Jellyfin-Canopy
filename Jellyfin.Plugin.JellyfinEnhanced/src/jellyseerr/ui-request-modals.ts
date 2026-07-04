@@ -1,7 +1,7 @@
 // src/jellyseerr/ui-request-modals.ts
 // Advanced request modals for movies and collections.
 import { JE } from '../globals';
-// PERF: no remote assets — poster placeholder embedded in the plugin DLL.
+// PERF(R6): no remote assets — poster placeholder embedded in the plugin DLL.
 import { assetUrl } from '../core/asset-urls';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */

@@ -289,7 +289,7 @@ const handleItemDetails = debounce(() => {
 }
 }, 100);
 
-// PERF: this used to be a dedicated body-wide MutationObserver with
+// PERF(R3): this used to be a dedicated body-wide MutationObserver with
 // attributes:['class','style'], firing on every hover/focus/style write on
 // EVERY page. Structural changes now arrive via the shared multiplexed body
 // observer behind a cheap O(1) details-page gate, and the cached-page re-show

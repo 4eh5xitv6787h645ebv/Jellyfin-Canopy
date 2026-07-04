@@ -92,7 +92,7 @@ const themer: ThemerApi = {
                 blur: '--rounding',
                 blurFallback: '12px',
                 logo: null, // Zesty doesn't use a separate CSS variable for logo
-                // PERF: no remote assets — logo served from the local asset cache.
+                // PERF(R6): no remote assets — logo served from the local asset cache.
                 logoFallback: assetUrl('themer/jellyfin-logo-light.png')
             }
         },

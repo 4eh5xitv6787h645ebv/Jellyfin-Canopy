@@ -369,7 +369,7 @@ async function renderSimilarAndRecommended(itemId: string) {
         // Remove any existing Jellyseerr sections to avoid duplicates
         detailPageContent.querySelectorAll('.jellyseerr-details-section').forEach((el: Element) => el.remove());
 
-        // PERF: sections are built fully off-DOM (cards included) and inserted
+        // PERF(R7): sections are built fully off-DOM (cards included) and inserted
         // once, below the fold — no empty-shell insert, no incremental fill.
 
         // Create and insert sections
@@ -607,7 +607,7 @@ async function renderSeriesRequestMoreButton(itemId: string) {
         if (signal.aborted) return;
         if (!tvDetails) return;
 
-        // PERF: resolve the Seasons heading in parallel with the checker and
+        // PERF(R7): resolve the Seasons heading in parallel with the checker and
         // PRE-APPLY the flex layout class as soon as the heading renders — not
         // when the button lands. Flipping the h2 from block to flex at button
         // time nudged the heading's baseline right as the user read it; doing
@@ -657,7 +657,7 @@ async function renderSeriesRequestMoreButton(itemId: string) {
         }
 
         // The flex layout class was pre-applied when the heading rendered (see
-        // headingPromise above). PERF: appending at the heading's flow end
+        // headingPromise above). PERF(R7): appending at the heading's flow end
         // displaces nothing but trailing free space — single insert, content
         // fully built (no empty-shell insert).
         const button = buildSeriesRequestMoreButton(tvDetails);
