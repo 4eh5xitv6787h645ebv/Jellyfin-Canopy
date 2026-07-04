@@ -30,6 +30,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers
         /// <summary>TMDB client (api.themoviedb.org; the API key travels in the query string).</summary>
         public const string TmdbClient = "JellyfinEnhancedTmdb";
 
+        /// <summary>
+        /// Asset-cache client (the allowlisted CDN upstreams in <c>AssetCacheManifest</c>).
+        /// No credentials ever travel on these requests.
+        /// </summary>
+        public const string AssetsClient = "JellyfinEnhancedAssets";
+
         public static HttpClient CreateArrClient(IHttpClientFactory factory)
         {
             // Same fallback pattern as SeerrHttpHelper.CreateClient: if the named
@@ -42,6 +48,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers
         {
             try { return factory.CreateClient(TmdbClient); }
             catch { return factory.CreateClient(); }
+        }
+
+        /// <summary>
+        /// Asset-cache client with a 30-second deadline (instance-scoped, per the hygiene rules
+        /// above): CDN objects are small and a hung upstream must never pin a request thread for
+        /// the .NET default 100 seconds.
+        /// </summary>
+        public static HttpClient CreateAssetsClient(IHttpClientFactory factory)
+        {
+            HttpClient client;
+            try { client = factory.CreateClient(AssetsClient); }
+            catch { client = factory.CreateClient(); }
+            client.Timeout = System.TimeSpan.FromSeconds(30);
+            return client;
         }
 
         /// <summary>

@@ -49,6 +49,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             // attached per-request (HttpRequestMessage), never via DefaultRequestHeaders.
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.ArrClient);
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.TmdbClient);
+            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.AssetsClient);
             // Dedicated JellyfinEnhanced_*.log sink (a documented product feature)
             // plus a closed-generic ILogger<T> registration for every plugin type.
             // Each FileForwardingLogger<T> writes the file AND forwards to the host
@@ -106,6 +107,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             serviceCollection.AddTransient<JellyfinToSeerrWatchlistSyncTask>();
             serviceCollection.AddTransient<JellyseerrUserImportTask>();
             serviceCollection.AddTransient<ClearTranslationCacheTask>();
+            // Local mirror of the third-party CDN assets the client scripts use, served at
+            // /JellyfinEnhanced/assets/* and refreshed daily by RefreshCachedAssetsTask —
+            // browsers make zero requests to third-party CDNs.
+            serviceCollection.AddSingleton<AssetCacheService>();
+            serviceCollection.AddTransient<RefreshCachedAssetsTask>();
 
             // Hidden Content: server-side filter for every native Jellyfin endpoint that surfaces user-facing item lists
             // (Resume, Items, Latest, NextUp, Upcoming, Suggestions, SearchHints). Same filter handles "Remove from

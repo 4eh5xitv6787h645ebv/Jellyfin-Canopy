@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 600" role="img" aria-label="Poster not available">
+  <!-- Ship-safe local placeholder for Seerr search cards whose TMDB poster is
+       missing. Neutral film-strip glyph on the same dark neutral Jellyfin card
+       posters sit on, so a missing poster reads as "no artwork" rather than a
+       broken image. Embedded plugin resource: no network dependency at all. -->
+  <rect width="400" height="600" fill="#1f1f21"/>
+  <rect width="400" height="600" fill="url(#g)"/>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2a2d"/>
+      <stop offset="1" stop-color="#19191b"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke="#4a4a50" stroke-width="10" stroke-linejoin="round">
+    <rect x="120" y="230" width="160" height="140" rx="14"/>
+  </g>
+  <g fill="#4a4a50">
+    <rect x="140" y="250" width="24" height="16" rx="4"/>
+    <rect x="188" y="250" width="24" height="16" rx="4"/>
+    <rect x="236" y="250" width="24" height="16" rx="4"/>
+    <rect x="140" y="334" width="24" height="16" rx="4"/>
+    <rect x="188" y="334" width="24" height="16" rx="4"/>
+    <rect x="236" y="334" width="24" height="16" rx="4"/>
+    <path d="M178 282 L178 318 L212 300 Z"/>
+  </g>
+</svg>

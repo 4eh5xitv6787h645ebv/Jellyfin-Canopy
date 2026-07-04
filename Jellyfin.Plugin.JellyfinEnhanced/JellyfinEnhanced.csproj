@@ -56,6 +56,10 @@
     <EmbeddedResource Include="Configuration\config-page.js"/>
     <None Remove="plugin.js"/>
     <EmbeddedResource Include="js\**" />
+    <!-- Ship-safe assets served by AssetsController (guaranteed-available tier of the
+         third-party asset cache; see Services/AssetCacheManifest.cs). -->
+    <None Remove="Assets\poster-fallback.svg"/>
+    <EmbeddedResource Include="Assets\poster-fallback.svg"/>
   </ItemGroup>
 
   <!-- Production client bundle: js/** compiled by esbuild into dist/je.bundle.js

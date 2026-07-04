@@ -127,24 +127,29 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
 
         private string IndexHtmlPath => Path.Combine(_applicationPaths.WebPath, "index.html");
 
-        public static string BrandingDirectory
+        public static string BrandingDirectory => GetPluginDataSubdirectory("custom_branding");
+
+        /// <summary>
+        /// On-disk root of the third-party asset mirror (see Services.AssetCacheService),
+        /// a sibling of the custom-branding directory next to the plugin config.
+        /// </summary>
+        public static string AssetCacheDirectory => GetPluginDataSubdirectory("asset_cache");
+
+        private static string GetPluginDataSubdirectory(string name)
         {
-            get
-            {
-                if (Instance == null)
-                    return string.Empty;
+            if (Instance == null)
+                return string.Empty;
 
-                var configPath = Instance.ConfigurationFilePath;
-                if (string.IsNullOrWhiteSpace(configPath))
-                    return string.Empty;
+            var configPath = Instance.ConfigurationFilePath;
+            if (string.IsNullOrWhiteSpace(configPath))
+                return string.Empty;
 
-                var configDir = Path.GetDirectoryName(configPath);
-                if (string.IsNullOrWhiteSpace(configDir))
-                    return string.Empty;
+            var configDir = Path.GetDirectoryName(configPath);
+            if (string.IsNullOrWhiteSpace(configDir))
+                return string.Empty;
 
-                var pluginFolderName = Path.GetFileNameWithoutExtension(configPath) ?? "Jellyfin.Plugin.JellyfinEnhanced";
-                return Path.Combine(configDir, pluginFolderName, "custom_branding");
-            }
+            var pluginFolderName = Path.GetFileNameWithoutExtension(configPath) ?? "Jellyfin.Plugin.JellyfinEnhanced";
+            return Path.Combine(configDir, pluginFolderName, name);
         }
 
         // Cache-busting key: plugin version plus the DLL's last-write timestamp, so
