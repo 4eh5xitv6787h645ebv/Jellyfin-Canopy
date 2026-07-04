@@ -107,6 +107,21 @@ For detailed installation instructions and troubleshooting, see the [Installatio
 
 <br>
 
+## 🏗️ Project Structure
+
+One C# project (server) plus one TypeScript module tree (client), shipped as a single client bundle:
+
+- **`Jellyfin.Plugin.JellyfinEnhanced/src/`** — the client: strict TypeScript ES modules organized by area (`core/`, `enhanced/`, `jellyseerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/`), bundled by esbuild into `dist/je.bundle.js` on every build. `src/facade.ts` types the frozen public `window.JellyfinEnhanced` surface.
+- **`Jellyfin.Plugin.JellyfinEnhanced/js/`** — only the loader (`plugin.js`) and the translation files (`locales/`); all feature code lives in `src/`.
+- **`Jellyfin.Plugin.JellyfinEnhanced/`** (C#) — `Controllers/` (one per feature area, policy-based auth), `Configuration/` (settings registry + admin page), `Services/` (integrations, live-update pushes). Targets Jellyfin 12 / net10.0 only.
+- **`Jellyfin.Plugin.JellyfinEnhanced.Tests/`** — xUnit tests incl. golden snapshots pinning the config payload and on-disk user-data formats.
+- **`e2e/`** — committed Playwright suite + dockerized seeded Jellyfin 12.
+- **`docs/`** — this documentation site (MkDocs).
+
+Full breakdown: [Project Structure](https://n00bcodr.github.io/Jellyfin-Enhanced/advanced/project-structure/) ⦁ How to add a feature: [CONTRIBUTING.md](CONTRIBUTING.md)
+
+<br>
+
 ## 🧪 Compatibility
 
 | Platform | Support | Notes |

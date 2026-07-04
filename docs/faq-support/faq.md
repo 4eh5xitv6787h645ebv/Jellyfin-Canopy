@@ -210,7 +210,7 @@ Option B (manual in Seerr):
 
     **Stored on Jellyfin server:**
 
-    - [Bookmark **data** `bookmarks.json`](../advanced/api.md#bookmark-api--info)
+    - [Bookmark **data** `bookmarks.json`](../advanced/api.md#bookmark-api-info)
 
    ** Stored in browsers' `localStorage`:**
 

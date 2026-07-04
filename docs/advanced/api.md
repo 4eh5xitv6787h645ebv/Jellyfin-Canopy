@@ -1,8 +1,21 @@
 ## Jellyfin Enhanced API
 
+### Authentication
+
+The plugin targets **Jellyfin 12 only**, and Jellyfin 12 ignores the legacy authentication tokens (`?api_key=` query parameters, `X-Emby-Token`, `X-MediaBrowser-Token` headers). Authenticate every request with the standard header:
+
+```
+Authorization: MediaBrowser Token="{your-api-key}"
+```
+
+**Error contract:**
+
+- Endpoints are gated with ASP.NET authorization policies (bare `[Authorize]` for any authenticated user, `RequiresElevation` for admin-only). Authorization failures return a **bare status code with an empty body** — `401` for a missing/invalid token, `403` for a valid token without the required role. There is no JSON error envelope for authorization failures; branch on the status code.
+- JSON error bodies (e.g. Seerr permission codes) are used for **business errors only**, on requests that already passed authorization.
+
 ### Get Plugin Version
 
-Checks the installed version of the Jellyfin Enhanced plugin:
+Checks the installed version of the Jellyfin Enhanced plugin (no authentication required):
 
 ```bash
 curl -X GET \
@@ -113,7 +126,7 @@ curl -X POST \
 
 ## Admin Hidden Content API
 
-Admin-only endpoints that let an administrator view and manage what **other** users have hidden. Every endpoint requires a Jellyfin **administrator** token and the **Let admins view and manage other users' hidden content** toggle (**Pages → Hidden Content → Admin Controls**) to be enabled; otherwise it returns `403`. `<USER_ID>` is the 32-character hex (`"N"` format) Jellyfin user id.
+Admin-only endpoints that let an administrator view and manage what **other** users have hidden. Every endpoint requires a Jellyfin **administrator** token (enforced server-side via the `RequiresElevation` policy) and the **Let admins view and manage other users' hidden content** toggle (**Pages → Hidden Content → Admin Controls**) to be enabled; otherwise it returns a bare `403` (empty body). `<USER_ID>` is the 32-character hex (`"N"` format) Jellyfin user id.
 
 ### List Users With Hidden Content
 
