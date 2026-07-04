@@ -498,25 +498,25 @@ JE.initializeAutoSkipObserver = () => {
     if (skipButtonObserver) {
         return; // Observer is already running
     }
-    skipButtonObserver = new MutationObserver((mutationsList) => {
-        for (const mutation of mutationsList) {
-            if (mutation.type === 'childList' || mutation.type === 'attributes') {
-                const skipButton = document.querySelector('button.skip-button.emby-button:not(.skip-button-hidden):not(.hide)');
-                if (skipButton && !JE.state!.skipToastShown) {
-                    const buttonText = skipButton.textContent || '';
-                    if (JE.currentSettings!.autoSkipIntro && buttonText.includes('Skip Intro')) {
-                        (skipButton as HTMLElement).click();
-                        toast(JE.t!('toast_auto_skipped_intro'));
-                        JE.state!.skipToastShown = true;
-                    } else if (JE.currentSettings!.autoSkipOutro && buttonText.includes('Skip Outro')) {
-                        (skipButton as HTMLElement).click();
-                        toast(JE.t!('toast_auto_skipped_outro'));
-                        JE.state!.skipToastShown = true;
-                    }
-                } else if (!skipButton) {
-                    JE.state!.skipToastShown = false; // Reset when the button is gone
-                }
+    // PERF: one presence probe per mutation BATCH — the old callback ran
+    // document.querySelector once per mutation record inside the loop. The
+    // observer itself is playback-scoped: events.ts attaches it on video-page
+    // entry and JE.stopAutoSkip disconnects it on leave.
+    skipButtonObserver = new MutationObserver(() => {
+        const skipButton = document.querySelector('button.skip-button.emby-button:not(.skip-button-hidden):not(.hide)');
+        if (skipButton && !JE.state!.skipToastShown) {
+            const buttonText = skipButton.textContent || '';
+            if (JE.currentSettings!.autoSkipIntro && buttonText.includes('Skip Intro')) {
+                (skipButton as HTMLElement).click();
+                toast(JE.t!('toast_auto_skipped_intro'));
+                JE.state!.skipToastShown = true;
+            } else if (JE.currentSettings!.autoSkipOutro && buttonText.includes('Skip Outro')) {
+                (skipButton as HTMLElement).click();
+                toast(JE.t!('toast_auto_skipped_outro'));
+                JE.state!.skipToastShown = true;
             }
+        } else if (!skipButton) {
+            JE.state!.skipToastShown = false; // Reset when the button is gone
         }
     });
 
