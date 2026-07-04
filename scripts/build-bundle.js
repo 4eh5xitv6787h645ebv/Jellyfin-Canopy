@@ -65,10 +65,12 @@ function collectSrcModules(dir = SRC_ROOT) {
         }
         if (!entry.isFile() || !entry.name.endsWith('.ts')) return [];
         if (entry.name.endsWith('.test.ts') || entry.name.endsWith('.d.ts')) return [];
-        // types/ modules are interface-only; import type edges are erased so
-        // they legitimately never appear in the bundle.
-        if (path.relative(SRC_ROOT, full).startsWith(`types${path.sep}`)) return [];
-        return [path.relative(SRC_ROOT, full).replace(/\\/g, '/')];
+        // Interface-only modules are erased by esbuild (imported via `import
+        // type`), so they legitimately never appear in the bundle: the whole
+        // types/ tree plus facade.ts (the frozen public-contract interface).
+        const rel = path.relative(SRC_ROOT, full).replace(/\\/g, '/');
+        if (rel.startsWith('types/') || rel === 'facade.ts') return [];
+        return [rel];
     });
 }
 

@@ -17,6 +17,18 @@
 // and nothing is appended to this entry at build time. The whole feature tree
 // is reached through the area barrels imported below.
 
+// Frozen public-contract anchor: JEGlobal extends JellyfinEnhancedPublicApi
+// (src/facade.ts) — the single typed home for the stable window.JellyfinEnhanced
+// surface that user scripts and Configuration/config-page.js depend on.
+// Referenced here from the bundle entry so the contract is proven at compile
+// time: if a public member is ever removed or renamed, _FrozenPublicApi
+// collapses to `never` and this line fails to compile.
+import type { JEGlobal } from './types/je';
+import type { JellyfinEnhancedPublicApi } from './facade';
+type _FrozenPublicApi = JEGlobal extends JellyfinEnhancedPublicApi ? true : never;
+const _jePublicApiIsFrozen: _FrozenPublicApi = true;
+void _jePublicApiIsFrozen;
+
 import './core/navigation';
 import './core/lifecycle';
 import './core/dom-observer';

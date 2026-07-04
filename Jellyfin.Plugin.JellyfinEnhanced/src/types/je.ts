@@ -14,6 +14,8 @@
 // converted modules actually read are typed; everything else stays `unknown`
 // until the typed-config phase derives the full shape from SettingDescriptors.
 
+import type { JellyfinEnhancedPublicApi } from '../facade';
+
 /**
  * Admin plugin configuration as delivered by /JellyfinEnhanced/public-config
  * (+ private-config for admins). PascalCase keys, exactly as serialized.
@@ -357,8 +359,14 @@ export interface JELegacyHelpers {
  * window.JellyfinEnhanced — created by js/plugin.js before the bundle loads.
  * Only the members the converted src/ modules touch are typed; legacy modules
  * keep attaching their feature surfaces (typed as they get converted).
+ *
+ * Extends {@link JellyfinEnhancedPublicApi} (src/facade.ts) — the frozen public
+ * surface consumed by user scripts and Configuration/config-page.js. That
+ * facade is the canonical home for the stable members (core, t, toast,
+ * pluginConfig, customPlugins, the bootstrap loaders, ...); JEGlobal adds the
+ * internal, still-typed-incrementally members on top.
  */
-export interface JEGlobal {
+export interface JEGlobal extends JellyfinEnhancedPublicApi {
     core: JECore;
     pluginConfig: PluginConfig;
     currentSettings?: UserSettings;
@@ -377,11 +385,9 @@ export interface JEGlobal {
     };
     helpers?: JELegacyHelpers;
     tagPipeline?: TagPipelineLike;
-    // Out-of-band bootstrap surfaces attached by the separately-served loaders
-    // (src/bootstrap/*) before the main bundle runs. Optional: each is only
-    // present once its loader script has executed.
-    initializeSplashScreen?: () => void;
-    hideSplashScreen?: () => void;
-    initializeLoginImage?: () => void;
-    loadTranslations?: () => Promise<Record<string, string>>;
+    // The stable public members (core, pluginConfig, translations, pluginVersion,
+    // escapeHtml, currentSettings, initialized, t, toast, customPlugins) and the
+    // out-of-band bootstrap surfaces (initializeSplashScreen, hideSplashScreen,
+    // initializeLoginImage, loadTranslations) are inherited from
+    // JellyfinEnhancedPublicApi (src/facade.ts).
 }
