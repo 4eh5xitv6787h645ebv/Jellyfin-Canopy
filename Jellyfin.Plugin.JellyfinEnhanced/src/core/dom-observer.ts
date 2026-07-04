@@ -12,7 +12,14 @@
 // JE.helpers keeps thin aliases for unmigrated callers.
 
 import { JE } from '../globals';
-import type { BodySubscriberHandle, DomApi, ObserverProxy } from '../types/je';
+import { onNavigate } from './navigation';
+import type {
+    BodySubscriberHandle,
+    DomApi,
+    EnsureInjectedHandle,
+    EnsureInjectedOptions,
+    ObserverProxy
+} from '../types/je';
 
 JE.core = JE.core || {};
 
@@ -257,6 +264,156 @@ export function waitForElement(selector: string, timeout = 10000): Promise<Eleme
     });
 }
 
+// --- Idempotent keyed injection (React re-render / player round-trip safe) ---
+//
+// The v12 React/MUI client destroys and rebuilds anchor subtrees on navigation
+// and, for the header action tray, on the `/video` entry+exit round trip
+// (v12-platform.md §3 survival matrix, §6.5). A one-shot "inject if absent"
+// call is not enough: the node has to be re-attached every time its host
+// remounts. `ensureInjected` registers a durable, idempotent injector that:
+//   (a) no-ops when its keyed node is already present in a LIVE container
+//       (scoped to `.page:not(.hide)` by default so a marker left alive-hidden
+//       in a cached legacy view — §6.8 — does not count as present), and
+//   (b) re-runs on every navigation (HISTORY_UPDATE/je:navigate via onNavigate),
+//       every `viewshow`, and every body mutation (the multiplexed catch-all),
+//       so header-tray injections re-attach once the toolbar remounts after the
+//       player exits, and page injections re-attach into the freshly mounted
+//       live `.page`.
+// Each pass is a cheap keyed-presence query, so re-running all injectors on
+// mutation is coalesced to once per animation frame.
+
+interface InjectorEntry {
+    key: string;
+    anchorFn: () => HTMLElement | null;
+    buildFn: (anchor: HTMLElement) => HTMLElement | null | void;
+    options: EnsureInjectedOptions;
+}
+
+const injectors = new Map<string, InjectorEntry>();
+let injectorsWired = false;
+let runAllScheduled = false;
+
+const raf: (cb: () => void) => void =
+    typeof requestAnimationFrame === 'function'
+        ? (cb): void => { requestAnimationFrame(cb); }
+        : (cb): void => { setTimeout(cb, 0); };
+
+/** Escape a key for use inside an attribute selector. Keys are plugin-owned. */
+function escapeKey(key: string): string {
+    if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+        return CSS.escape(key);
+    }
+    return key.replace(/["\\]/g, '\\$&');
+}
+
+/**
+ * Default "already present?" test for a keyed injection.
+ * @param key - The injection key.
+ * @param headerTray - When true the node lives outside `.page` (AppBar tray),
+ *   so presence is judged by connectedness + not-hidden only. When false the
+ *   node must live in a visible `.page:not(.hide)` (never a cached `.page.hide`).
+ */
+function isKeyedPresent(key: string, headerTray: boolean): boolean {
+    const nodes = document.querySelectorAll<HTMLElement>(`[data-je-key="${escapeKey(key)}"]`);
+    for (let i = 0; i < nodes.length; i++) {
+        const el = nodes[i];
+        if (!el.isConnected) continue;
+        if (headerTray) {
+            // Outside .page: present unless stranded in a hidden subtree.
+            if (!el.closest('.hide')) return true;
+            continue;
+        }
+        const page = el.closest('.page');
+        if (page) {
+            // Only counts if it is the LIVE page, never a cached hidden one (§6.8).
+            if (!page.classList.contains('hide')) return true;
+            continue;
+        }
+        // Not inside any .page (unusual for a page injection): fall back to
+        // the not-hidden rule so it still de-dups.
+        if (!el.closest('.hide')) return true;
+    }
+    return false;
+}
+
+/** Run one injector pass: no-op if present, else anchor → build → tag. */
+function runInjector(entry: InjectorEntry): void {
+    try {
+        const present = entry.options.isPresent
+            ? entry.options.isPresent()
+            : isKeyedPresent(entry.key, entry.options.headerTray === true);
+        if (present) return;
+
+        const anchor = entry.anchorFn();
+        if (!anchor) return; // host not mounted yet — a later re-run will retry
+
+        const node = entry.buildFn(anchor);
+        if (node instanceof HTMLElement && !node.dataset.jeKey) {
+            node.dataset.jeKey = entry.key;
+        }
+    } catch (err) {
+        console.error(`🪼 Jellyfin Enhanced: Error in ensureInjected("${entry.key}"):`, err);
+    }
+}
+
+function runAllInjectors(): void {
+    injectors.forEach(runInjector);
+}
+
+/** Coalesce re-runs of every injector to once per frame. */
+function scheduleRunAll(): void {
+    if (runAllScheduled) return;
+    runAllScheduled = true;
+    raf(() => {
+        runAllScheduled = false;
+        runAllInjectors();
+    });
+}
+
+/** Wire the shared re-run triggers exactly once (on first ensureInjected call). */
+function ensureInjectorsWired(): void {
+    if (injectorsWired) return;
+    injectorsWired = true;
+    // Every URL change (HISTORY_UPDATE, je:navigate, hashchange, popstate).
+    onNavigate(() => scheduleRunAll());
+    // Legacy viewManager view shows (capture phase, matching navigation.ts).
+    document.addEventListener('viewshow', () => scheduleRunAll(), true);
+    // Catch-all: re-attach once a remounted host (toolbar after /video, a fresh
+    // React page) appears, even without an accompanying nav/viewshow.
+    onBodyMutation('je-ensure-injected', () => scheduleRunAll());
+}
+
+/**
+ * Register a durable, idempotent keyed injection that survives React
+ * re-renders and the `/video` header-tray round trip. Calling again with the
+ * same key replaces the prior injector. See the block comment above.
+ * @param key - Stable identity for the injected node (also its `data-je-key`).
+ * @param anchorFn - Locates the (possibly not-yet-mounted) host; return null to defer.
+ * @param buildFn - Builds AND attaches the node under the anchor; return it so
+ *   it can be tagged with the key (or tag it yourself via `data-je-key`).
+ * @param options - See {@link EnsureInjectedOptions} (e.g. `{ headerTray: true }`).
+ * @returns Handle with `run()` (force a pass now) and `remove()` (stop + delete nodes).
+ */
+export function ensureInjected(
+    key: string,
+    anchorFn: () => HTMLElement | null,
+    buildFn: (anchor: HTMLElement) => HTMLElement | null | void,
+    options: EnsureInjectedOptions = {}
+): EnsureInjectedHandle {
+    const entry: InjectorEntry = { key, anchorFn, buildFn, options };
+    injectors.set(key, entry);
+    ensureInjectorsWired();
+    runInjector(entry); // inject synchronously so first paint doesn't wait a frame
+    return {
+        // Inert once removed or replaced by a later ensureInjected(sameKey).
+        run: () => { if (injectors.get(key) === entry) runInjector(entry); },
+        remove: () => {
+            injectors.delete(key);
+            document.querySelectorAll(`[data-je-key="${escapeKey(key)}"]`).forEach((n) => n.remove());
+        }
+    };
+}
+
 // Cleanup on page unload
 window.addEventListener('beforeunload', () => {
     disconnectAllObservers();
@@ -265,6 +422,7 @@ window.addEventListener('beforeunload', () => {
 const dom: DomApi = {
     onBodyMutation,
     removeBodySubscriber,
+    ensureInjected,
     createObserver,
     disconnectObserver,
     disconnectAllObservers,

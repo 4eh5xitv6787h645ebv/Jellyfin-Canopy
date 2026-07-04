@@ -136,6 +136,32 @@ export interface ObserverProxy extends BodySubscriberHandle {
     takeRecords(): MutationRecord[];
 }
 
+/** Options for {@link DomApi.ensureInjected}. */
+export interface EnsureInjectedOptions {
+    /**
+     * The keyed node lives OUTSIDE `.page` (e.g. the MUI AppBar action tray),
+     * which the modern layout unmounts on entering `/video` and rebuilds fresh
+     * on exit (v12-platform.md §3, §6.5). With this set, presence is judged by
+     * DOM connectedness + visibility only (no `.page:not(.hide)` requirement),
+     * so the injector re-attaches after the player round trip.
+     */
+    headerTray?: boolean;
+    /**
+     * Override the "already present?" test. Return true to no-op this pass.
+     * Defaults to: a keyed node exists that is connected and not stranded in a
+     * hidden/cached container.
+     */
+    isPresent?: () => boolean;
+}
+
+/** Handle returned by {@link DomApi.ensureInjected}. */
+export interface EnsureInjectedHandle {
+    /** Run the injector now (idempotent). Re-runs happen automatically too. */
+    run(): void;
+    /** Stop auto re-running and remove any injected keyed nodes. */
+    remove(): void;
+}
+
 export interface DomApi {
     onBodyMutation(
         id: string,
@@ -143,6 +169,12 @@ export interface DomApi {
         options?: { priority?: number }
     ): BodySubscriberHandle;
     removeBodySubscriber(id: string): boolean;
+    ensureInjected(
+        key: string,
+        anchorFn: () => HTMLElement | null,
+        buildFn: (anchor: HTMLElement) => HTMLElement | null | void,
+        options?: EnsureInjectedOptions
+    ): EnsureInjectedHandle;
     createObserver(
         id: string,
         callback: MutationCallback,
@@ -335,6 +367,44 @@ export interface TagPipelineLike {
     scheduleScan?(): void;
 }
 
+// ── live-update contracts ────────────────────────────────────────────────────
+
+/**
+ * A raw server → client message as delivered by the v12 SDK socket via
+ * `ApiClient.subscribe`. Wire envelope is `{ MessageType, Data }`.
+ */
+export interface LiveMessage {
+    MessageType: string;
+    Data?: unknown;
+}
+
+/**
+ * Handler for a JE live event. `data` is the message-specific payload (already
+ * unwrapped from the envelope); `raw` is the original SDK message when one drove
+ * the event.
+ */
+export type LiveHandler = (data: unknown, raw?: LiveMessage) => void;
+
+/**
+ * The client live-update hub (JE.core.live). Subscribes ONCE to the v12 SDK
+ * socket for the message types the client already receives (UserDataChanged,
+ * LibraryChanged) plus JE's own out-of-band channel (a marked GeneralCommand),
+ * then fans them out to feature handlers registered via on(). Fails soft when
+ * the SDK subscribe API is absent (older hosts) — features keep polling.
+ */
+export interface LiveApi {
+    /** Subscribe to a JE live event type. @returns unsubscribe function. */
+    on(type: string, handler: LiveHandler): () => void;
+    /** Remove a previously registered handler. @returns true if it was registered. */
+    off(type: string, handler: LiveHandler): boolean;
+    /** Fan an event out to all handlers for `type` (used by dispatch + tests). */
+    emit(type: string, data: unknown, raw?: LiveMessage): void;
+    /** True once the SDK socket subscription is live. */
+    isConnected(): boolean;
+    /** Handler count for a type, or across all types when omitted (diagnostics). */
+    getHandlerCount(type?: string): number;
+}
+
 // ── The JE global ───────────────────────────────────────────────────────────
 
 export interface JECore {
@@ -344,6 +414,7 @@ export interface JECore {
     ui?: UiApi;
     api?: ApiApi;
     tagRenderer?: TagRendererApi;
+    live?: LiveApi;
 }
 
 /**

@@ -86,17 +86,8 @@ function navigateToItem(item: any): void {
     }
 }
 
-/**
- * Creates and injects the "Random" button into the page header if enabled.
- */
-JE.addRandomButton = (): void => {
-    if (!JE.currentSettings!.randomButtonEnabled) {
-        document.getElementById('randomItemButtonContainer')?.remove();
-        return;
-    }
-
-    if (document.getElementById('randomItemButton')) return;
-
+/** Builds the random-item button element (markup unchanged; extracted for reuse). */
+function buildRandomButton(): HTMLDivElement {
     const buttonContainer = document.createElement('div');
     buttonContainer.id = 'randomItemButtonContainer';
 
@@ -131,6 +122,40 @@ JE.addRandomButton = (): void => {
     });
 
     buttonContainer.appendChild(randomButton);
-    const headerRight = getHeaderRightContainer();
-    headerRight?.prepend(buttonContainer);
+    return buttonContainer;
+}
+
+// Durable header-tray injector. `headerTray: true` (v12-platform.md §6.5) means
+// the button re-attaches after the modern layout destroys the AppBar action
+// tray on the `/video` round trip, and re-runs on every navigation.
+let randomButtonHandle: { run(): void; remove(): void } | null = null;
+
+/**
+ * Creates and injects the "Random" button into the page header if enabled.
+ * Re-injection across React re-renders and the player round trip is handled by
+ * JE.core.dom.ensureInjected; disabling removes it.
+ */
+JE.addRandomButton = (): void => {
+    if (!JE.currentSettings!.randomButtonEnabled) {
+        randomButtonHandle?.remove();
+        randomButtonHandle = null;
+        document.getElementById('randomItemButtonContainer')?.remove();
+        return;
+    }
+
+    if (randomButtonHandle) {
+        randomButtonHandle.run();
+        return;
+    }
+
+    randomButtonHandle = JE.core.dom!.ensureInjected(
+        'je-random-button',
+        () => getHeaderRightContainer(),
+        (headerRight) => {
+            const container = buildRandomButton();
+            headerRight.prepend(container);
+            return container;
+        },
+        { headerTray: true }
+    );
 };
