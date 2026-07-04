@@ -248,47 +248,54 @@ function setupInfiniteScroll(state: any, sectionSelector: string, loadMoreFn: ()
         }
     };
 
-    // Create observer with prefetch threshold
-    state.activeScrollObserver = new IntersectionObserver(
-        (entries) => {
-            if (entries[0].isIntersecting && hasMoreCheck() && !isLoadingCheck()) {
+    // PERF: IntersectionObserver ONLY — it exists precisely to avoid layout
+    // reads. The old code ALSO attached a throttled scroll listener calling
+    // sentinel.getBoundingClientRect() every 150ms during scrolling; that path
+    // is now strictly a fallback for hosts without IntersectionObserver.
+    if (typeof IntersectionObserver !== 'undefined') {
+        // Create observer with prefetch threshold
+        state.activeScrollObserver = new IntersectionObserver(
+            (entries) => {
+                if (entries[0].isIntersecting && hasMoreCheck() && !isLoadingCheck()) {
+                    void wrappedLoad();
+                }
+            },
+            { rootMargin: `${CONFIG.prefetchThresholdPx}px` }
+        );
+
+        state.activeScrollObserver.observe(sentinel);
+        state._scrollHandler = null;
+    } else {
+        // Scroll event fallback (use JE.helpers.throttle if available, otherwise inline)
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- throttle is a stateless free function on the helpers bag
+        const throttleFn = JE.helpers?.throttle || ((fn: any, wait: number) => {
+            let lastCall = 0;
+            return (...args: any[]) => {
+                const now = Date.now();
+                if (now - lastCall >= wait) {
+                    lastCall = now;
+                    fn(...args);
+                }
+            };
+        });
+        const scrollHandler = throttleFn(() => {
+            if (!hasMoreCheck() || isLoadingCheck()) return;
+
+            const rect = sentinel.getBoundingClientRect();
+            const distanceFromBottom = rect.top - window.innerHeight;
+
+            if (distanceFromBottom < CONFIG.prefetchThresholdPx) {
                 void wrappedLoad();
             }
-        },
-        { rootMargin: `${CONFIG.prefetchThresholdPx}px` }
-    );
+        }, 150);
 
-    state.activeScrollObserver.observe(sentinel);
-
-    // Scroll event fallback (use JE.helpers.throttle if available, otherwise inline)
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- throttle is a stateless free function on the helpers bag
-    const throttleFn = JE.helpers?.throttle || ((fn: any, wait: number) => {
-        let lastCall = 0;
-        return (...args: any[]) => {
-            const now = Date.now();
-            if (now - lastCall >= wait) {
-                lastCall = now;
-                fn(...args);
-            }
-        };
-    });
-    const scrollHandler = throttleFn(() => {
-        if (!hasMoreCheck() || isLoadingCheck()) return;
-
-        const rect = sentinel.getBoundingClientRect();
-        const distanceFromBottom = rect.top - window.innerHeight;
-
-        if (distanceFromBottom < CONFIG.prefetchThresholdPx) {
-            void wrappedLoad();
-        }
-    }, 150);
+        state._scrollHandler = scrollHandler;
+        window.addEventListener('scroll', scrollHandler, { passive: true });
+    }
 
     // Store for cleanup
-    state._scrollHandler = scrollHandler;
     state._sentinel = sentinel;
     state._removeRetryRow = removeRetryRow;
-
-    window.addEventListener('scroll', scrollHandler, { passive: true });
 }
 
 /**
