@@ -193,25 +193,39 @@ JE.keyListener = (e: KeyboardEvent) => {
  * Sets up listeners for DOM changes to inject UI elements dynamically.
  */
 function setupDOMObserver(): void {
+    // PERF: track the video-page state across ticks so the leave-page teardown
+    // (stopAutoSkip) runs once on the transition instead of on every mutation
+    // batch of every non-video page.
+    let wasVideoPage = false;
+
     const runPageSpecificFunctions = () => {
         if ((JE as any).isVideoPage()) {
+            wasVideoPage = true;
             (JE as any).addOsdSettingsButton();
             JE.initializeAutoSkipObserver!();
             (JE as any).applySavedStylesWhenReady();
             // Attach seek tracker to the video element as soon as it exists
             const video = document.querySelector('video');
             if (video) JE.attachSeekTracker!(video);
-        } else {
+        } else if (wasVideoPage) {
+            wasVideoPage = false;
             JE.stopAutoSkip!();
         }
     };
+
+    // PERF: the random button registers a keyed ensureInjected injector that
+    // re-attaches itself on navigation/viewshow/body mutation — calling it once
+    // here is enough. The old per-tick call re-resolved the header container
+    // (a layout read via offsetParent) on every mutation batch (~10x/s while
+    // cards stream in). Settings toggles re-call JE.addRandomButton directly.
+    (JE as any).addRandomButton();
 
     // Create managed observer for general DOM changes
     createObserver(
         'dom-observer',
         throttle(() => {
             runPageSpecificFunctions();
-            (JE as any).addRandomButton();
+            // Cheap idempotent probe (getElementById-gated); creates no observers.
             (JE as any).addUserPreferencesLink();
         }, 100),
         document.body,

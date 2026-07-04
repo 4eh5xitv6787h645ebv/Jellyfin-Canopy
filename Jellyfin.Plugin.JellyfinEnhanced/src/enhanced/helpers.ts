@@ -9,11 +9,20 @@
 // code should use JE.core.* directly (or import from src/core / this module).
 
 import { JE } from '../globals';
+import { onNavigate } from '../core/navigation';
 import type { NavigateCallback, ViewPageCallback, ViewPageOptions } from '../types/je';
 
 // Tracks whether the MUI-toolbar button-sizing CSS fix has been injected (see
 // getHeaderRightContainer below) so it's only added once.
 let muiHeaderButtonCSSInjected = false;
+
+// PERF: per-navigation cache for getHeaderRightContainer. Resolving the
+// container reads legacy.offsetParent — a forced layout read — and callers
+// (keyed injectors, observer ticks) may probe many times per second while
+// content streams in. Cache the successful resolution and invalidate on
+// navigation so layout is read at most once per nav, not per tick.
+let cachedHeaderRightContainer: HTMLElement | null = null;
+onNavigate(() => { cachedHeaderRightContainer = null; });
 
 interface ItemCacheEntry {
     item: unknown;
@@ -163,6 +172,17 @@ export function isElementVisible(element: Element | null | undefined): boolean {
  * @returns The container, or null if no header is ready yet.
  */
 export function getHeaderRightContainer(): HTMLElement | null {
+    // Serve the per-navigation cache while the node is still attached; failed
+    // resolutions are NOT cached so early-boot retries still work.
+    if (cachedHeaderRightContainer && cachedHeaderRightContainer.isConnected) {
+        return cachedHeaderRightContainer;
+    }
+    cachedHeaderRightContainer = resolveHeaderRightContainer();
+    return cachedHeaderRightContainer;
+}
+
+/** Uncached resolution behind {@link getHeaderRightContainer}. */
+function resolveHeaderRightContainer(): HTMLElement | null {
     const legacy = document.querySelector<HTMLElement>('.headerRight');
     if (legacy && legacy.offsetParent !== null) return legacy;
 
