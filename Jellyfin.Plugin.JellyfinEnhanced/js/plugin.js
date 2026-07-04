@@ -176,6 +176,63 @@
     }
 
     /**
+     * PERF(R1): warm the Material Symbols icon fonts during boot, before the
+     * bundle initializes any feature that renders icon glyphs. Without this
+     * the woff2s only start downloading when the first injected icon paints,
+     * so already-rendered icon text reflows when the font swaps in — the
+     * residual micro-shift the jank benchmark attributes to
+     * span.material-symbols-* nodes. The shared Rounded face (media-info
+     * chips, people tags, reviews, calendar) gets a <link rel=preload> that
+     * warms the HTTP cache for the @font-face the bundle registers later; the
+     * Outlined face (genre tags) is a stylesheet — injected here under the
+     * same element id genretags.ts checks, so its later injection no-ops —
+     * whose font is force-loaded via document.fonts once the CSS lands.
+     * PERF(R6): skipped when the admin disabled the local asset cache;
+     * features then resolve their registered CDN twins themselves and we do
+     * not add early third-party fetches.
+     * Called after user settings land (Stage 2) so the genre-tag gate can
+     * respect the user's own toggle, not just the admin default.
+     */
+    function preloadIconFonts() {
+        if (JE.pluginConfig?.AssetCacheEnabled === false) return;
+        try {
+            if (!document.getElementById('je-mat-sym-rounded-preload')) {
+                const preload = document.createElement('link');
+                preload.id = 'je-mat-sym-rounded-preload';
+                preload.rel = 'preload';
+                preload.as = 'font';
+                preload.type = 'font/woff2';
+                // Font preloads must be anonymous-CORS to match the request
+                // mode of CSS @font-face fetches, or the browser re-fetches.
+                preload.crossOrigin = 'anonymous';
+                preload.href = ApiClient.getUrl('/JellyfinEnhanced/assets/fonts/material-symbols-rounded.woff2');
+                document.head.appendChild(preload);
+            }
+
+            const userSettings = JE.userConfig?.settings || {};
+            const genreTagsOn = userSettings.genreTagsEnabled !== undefined && userSettings.genreTagsEnabled !== null
+                ? !!userSettings.genreTagsEnabled
+                : !!JE.pluginConfig?.GenreTagsEnabled;
+            if (genreTagsOn && !document.getElementById('mat-sym')) {
+                const link = document.createElement('link');
+                link.id = 'mat-sym'; // same id genretags.ts checks before injecting
+                link.rel = 'stylesheet';
+                link.href = ApiClient.getUrl('/JellyfinEnhanced/assets/fonts/material-symbols-outlined.css');
+                link.onload = () => {
+                    try {
+                        if (document.fonts && typeof document.fonts.load === 'function') {
+                            void document.fonts.load("24px 'Material Symbols Outlined'");
+                        }
+                    } catch (e) { /* non-fatal: glyphs load on first paint as before */ }
+                };
+                document.head.appendChild(link);
+            }
+        } catch (e) {
+            console.warn('🪼 Jellyfin Enhanced: Failed to preload icon fonts', e);
+        }
+    }
+
+    /**
      * Returns the plugin version for use as a cache-busting query parameter.
      * Reads synchronously from the injected script tag's version attribute so it
      * is available before the async version fetch resolves. Falls back to
@@ -616,6 +673,11 @@
                 }
             });
 
+
+            // Warm the icon fonts while the bundle is still downloading, so
+            // glyphs are ready before the first injected icon paints (see
+            // preloadIconFonts for the PERF(R1)/PERF(R6) reasoning).
+            preloadIconFonts();
 
             // Initialize splash screen
             if (typeof JE.initializeSplashScreen === 'function') {

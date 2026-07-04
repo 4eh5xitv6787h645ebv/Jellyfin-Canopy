@@ -406,9 +406,15 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
     placeholder.style.verticalAlign = 'middle';
     placeholder.style.alignItems = 'center';
     placeholder.style.margin = '0 1em 0 0 !important';
-    // PERF(R1): reserve the typical final width (translate icon + one flag +
-    // language name) so the value swap doesn't resize the chip.
-    placeholder.style.minWidth = '6ch';
+    // PERF(R1): reserve the typical final width so the loading→value swap
+    // doesn't resize the chip and shift the chips after it. Sized to the
+    // actual single-language content: translate icon (~1em) + 0.5em gap +
+    // 18px flag + 0.3em margin + a median language name ("English",
+    // "Français" ≈ 3.5–4em) ≈ 6.5em ≈ 12ch. The previous 6ch reserve was
+    // close-but-not-exact and the benchmark still attributed a micrometric
+    // shift to this chip on data arrival. Cache hits render synchronously in
+    // the same task as the insert, so only the network path uses the reserve.
+    placeholder.style.minWidth = '12ch';
     // Show loading indicator
     placeholder.innerHTML = `<span class="material-icons" style="font-size: inherit; margin-right: 0.3em;">hourglass_empty</span> ...`;
     container.appendChild(placeholder);
