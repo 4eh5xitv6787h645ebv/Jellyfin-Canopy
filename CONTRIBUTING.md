@@ -22,69 +22,67 @@ Help make Jellyfin Enhanced accessible to more users by contributing translation
 
 See the [Contributing Translations](/Jellyfin-Enhanced/faq-support/contributing-translations/) section for details.
 
-
 ## 🚀 Getting Started
-
 
 ### Project Structure
 
-Before contributing, familiarize yourself with the project structure. See the [Project Structure](README.md#-project-structure) section in the README for a detailed breakdown of the codebase and what each file does.
+The plugin is one C# project (server) plus one TypeScript module tree (client), bundled into a single client artifact:
 
-Key directories:
-- `Jellyfin.Plugin.JellyfinEnhanced/js/enhanced/` - Core functionality
-- `Jellyfin.Plugin.JellyfinEnhanced/js/elsewhere/` - Elsewhere and reviews functionality
-- `Jellyfin.Plugin.JellyfinEnhanced/js/extras/` - Other Scripts
-- `Jellyfin.Plugin.JellyfinEnhanced/js/jellyseerr/` - Seerr integration
-- `Jellyfin.Plugin.JellyfinEnhanced/js/arr/` - *arr integration including calendar and requests
-- `Jellyfin.Plugin.JellyfinEnhanced/js/tags/` - Tag scripts (genre, language, people, quality, rating)
-- `Jellyfin.Plugin.JellyfinEnhanced/js/others/` - Miscellaneous scripts (letterboxd, splashscreen)
-- `Jellyfin.Plugin.JellyfinEnhanced/js/locales/` - Translation files
+- `Jellyfin.Plugin.JellyfinEnhanced/src/` — **the client.** TypeScript ES modules (strict mode, real imports), organized by area: `core/` (platform layer: navigation, lifecycle, dom-observer, ui-kit, api-client, live), `enhanced/`, `jellyseerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/`. Each area has an `index.ts` barrel; `src/main.ts` imports the barrels; `scripts/build-bundle.js` (esbuild) produces `dist/je.bundle.js`.
+- `Jellyfin.Plugin.JellyfinEnhanced/Controllers/` — one small feature controller per HTTP surface, all deriving from `JellyfinEnhancedControllerBase`.
+- `Jellyfin.Plugin.JellyfinEnhanced/Configuration/` — `PluginConfiguration.cs` (admin settings), `SettingDescriptors.cs` (the settings registry — the single source of truth for what reaches clients), the admin config page.
+- `Jellyfin.Plugin.JellyfinEnhanced.Tests/` — xUnit tests, including golden snapshots that pin the config payload contract.
+- `e2e/` — the committed Playwright suite + `e2e/docker/` (dockerized, seeded Jellyfin 12 for CI and local runs).
+- `docs/` — the MkDocs site, including **[`docs/v12-platform.md`](docs/v12-platform.md) — read this before touching injection, navigation or websocket code.** It is the evidence-based reference for how the Jellyfin 12 web client actually behaves (stable anchors, re-render survival, router traps, auth policy contract).
+
+See the [Project Structure](README.md#-project-structure) section in the README for the full breakdown.
+
+## 🛣️ The Paved Road — adding a feature
+
+Every feature is four small, declarative pieces. Start from the scaffolder:
+
+```bash
+node scripts/new-feature.js my-feature            # --area arr|jellyseerr|... , --dry-run
+```
+
+It generates a typed client module, a controller, an e2e spec stub and a docs stub — every gap marked `TODO(my-feature)` — wires the module into its area barrel, and prints the remaining wiring checklist. What each piece looks like:
+
+1. **A setting = a descriptor + a `data-config-key` attribute.**
+   Add the property to `PluginConfiguration.cs`, register it in `SettingDescriptors.BuildRegistry()` (`Public(...)` / `Private(...)` / `PublicUser(...)` for per-user overrides — exposure lists are whitelists; secrets never get a descriptor), and add a control with `data-config-key="MyFeatureEnabled"` to `Configuration/configPage.html` — the config-page binder loads/saves every `data-config-key` automatically. The golden snapshot tests pin the payload contract, so a renamed or leaked setting fails CI.
+
+2. **An endpoint = a small controller + a policy attribute.**
+   A class deriving from `JellyfinEnhancedControllerBase` with `[Route("JellyfinEnhanced")]`. Auth is declarative: bare `[Authorize]` for any authenticated user, `[Authorize(Policy = Policies.RequiresElevation)]` for admin-only (returns a bare 403 with an empty body — clients branch on status code alone; JSON envelopes are for business errors only).
+
+3. **UI = a typed module over `JE.core`.**
+   Import `JE` from `src/globals`, register a lifecycle handle (`JE.core.lifecycle` — tracked resources get torn down cleanly), inject via `JE.core.dom.ensureInjected(key, anchorFn, buildFn)` — durable, idempotent, re-attaches across React re-renders, param-only navigations and the `/video` round trip — and build markup with the ui-kit (`JE.core.ui.muiIconButton` / `muiMenuItem` / `sectionContainer`) so it wears native MUI classes and theme tokens. Type the public surface as an interface and augment `JEGlobal` — the `window.JellyfinEnhanced` contract stays compile-checked.
+
+4. **Live updates = `JE.core.live.on(LIVE.*)`.**
+   Subscribe to `LIVE.CONFIG_CHANGED` (admin saved config — re-init instead of requiring a reload), `LIVE.LIBRARY_CHANGED`, or `LIVE.USER_DATA_CHANGED` instead of polling. The server side pushes through `ISessionManager` (see `Services/LiveNotifierService.cs`).
+
+5. **Proof = an `e2e/` spec.**
+   Extend the stub: log in with the `loginAs` fixture, drive the feature, assert what the user sees, and assert `consoleErrors.real()` is empty. Specs must be idempotent and restore any server state they touch.
 
 ## 📝 Code Contribution Guidelines
 
 ### Code Style
 
-1. **Comments are Essential**
+1. **New client code is TypeScript.**
 
-   - Use JSDoc comments for functions and classes
-   - Add inline comments to explain complex logic
+   New client modules are ES modules under `Jellyfin.Plugin.JellyfinEnhanced/src/` (strict mode, real imports, unit tests where the logic is pure). The legacy `js/` tree is frozen except for conversions and bug fixes. New C# logic that can be tested without a running Jellyfin server should come with unit tests.
+
+2. **Comments are Essential**
+
+   - Use JSDoc/XML-doc comments for functions and classes
+   - Add inline comments to explain complex logic — especially anything that exists because of a Jellyfin 12 platform quirk (link the `docs/v12-platform.md` section)
    - Document parameters, return values, and side effects
 
-   Example:
-   ```javascript
-   /**
-    * Creates a bookmark at the specified timestamp
-    * @param {string} itemId - The Jellyfin item ID
-    * @param {number} timestamp - The video timestamp in seconds
-    * @param {string} label - User-provided label for the bookmark
-    * @returns {Promise<Object>} The created bookmark object
-    */
-   async function createBookmark(itemId, timestamp, label) {
-       // Validate timestamp is within video duration
-       if (timestamp > videoDuration) {
-           throw new Error('Timestamp exceeds video duration');
-       }
-
-       // Create bookmark object with metadata
-       const bookmark = {
-           id: generateId(),
-           itemId,
-           timestamp,
-           label,
-           createdAt: new Date().toISOString()
-       };
-
-       return await saveBookmark(bookmark);
-   }
-   ```
-
-2. **Code Understanding**
+3. **Code Understanding**
 
    - Ensure you understand what your changes do
    - Be prepared to answer questions about your implementation
    - Test your changes thoroughly
 
-3. **AI-Assisted Code (VibeCoded PRs)**
+4. **AI-Assisted Code (VibeCoded PRs)**
 
    - AI-assisted contributions are welcome! However:
      - You must understand what the code does
@@ -117,6 +115,7 @@ Key directories:
 
 2. **Make Your Changes**
 
+   - Start from the scaffolder / paved road above
    - Write clean, commented code
    - Follow existing code patterns
    - Test thoroughly
@@ -146,29 +145,56 @@ Key directories:
 
    - Be responsive to feedback
    - Be prepared to make requested changes
-   - If you want me to make any further changes, let me know
 
 ## 🧪 Testing
 
-### Automated checks (run these locally — CI enforces them)
+### The gates (run these locally — CI enforces all of them)
 
 ```bash
 # One-time setup
 npm install
 
-# Client scripts: parse check, lint, and type check
-npm run syntax               # node --check on every legacy js/ file
-npm run lint                 # ESLint over js/ + src/ (errors gate CI; warnings are advisory)
-npm run typecheck            # tsc over legacy js/ files opting in with // @ts-check
-npm run typecheck:src        # tsc --strict over the TypeScript module tree (src/)
-npm run test:client          # vitest unit tests for src/ modules
+# Client
+npm run typecheck:src          # tsc --strict over the TypeScript module tree (src/)
+npm run lint                   # ESLint (errors gate CI; warnings are advisory)
+npm run test:client            # vitest unit tests for src/ modules
+npm run test:client:coverage   # + the src/core line-coverage ratchet
+npm run build:bundle           # esbuild bundle — fails on unreachable src/ modules
+npm run syntax                 # node --check on the frozen legacy js/ tree
+npm run typecheck              # opt-in @ts-check over legacy js/ files
 
-# Plugin: must compile (Jellyfin 12 / net10.0), and unit tests must pass
+# Server (Jellyfin 12 / net10.0; TreatWarningsAsErrors — zero warnings)
 dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release
-dotnet test                  # xUnit tests in Jellyfin.Plugin.JellyfinEnhanced.Tests
+dotnet test                    # xUnit; add --collect:"XPlat Code Coverage" +
+                               # node scripts/check-dotnet-coverage.js for the ratchet
+
+# End-to-end (real browser against a real Jellyfin 12)
+npm run e2e                    # JF_BASE_URL=... (default http://localhost:8099)
+npm run e2e:headed             # watch it run
 ```
 
-New client modules should be written as TypeScript ES modules under `Jellyfin.Plugin.JellyfinEnhanced/src/` (strict mode, real imports, unit tests where the logic is pure); the legacy `js/` tree is frozen except for conversions and bug fixes, and its remaining files opt in to `// @ts-check` as they get touched. New C# logic that can be tested without a running Jellyfin server should come with unit tests.
+Coverage thresholds are **ratchets**: they were set just below measured coverage when introduced (`vitest.config.ts` for `src/core`, `scripts/check-dotnet-coverage.js` for the plugin assembly). Raise them as you add tests; never lower them.
+
+### E2E against a disposable server
+
+No dev server handy? The compose stack seeds a throwaway Jellyfin 12 with the freshly built plugin, generated media and the test users:
+
+```bash
+dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release
+bash e2e/docker/seed.sh                        # boots + seeds on port 8100
+JF_BASE_URL=http://localhost:8100 npm run e2e
+docker compose -f e2e/docker/compose.yml down -v
+```
+
+CI runs the same stack on every PR (advisory while the infrastructure earns trust).
+
+### Docs
+
+If you touch `docs/` (any user- or admin-visible change should), the site must build strictly:
+
+```bash
+mkdocs build --strict
+```
 
 ### Manual checklist
 
@@ -176,10 +202,11 @@ Before submitting a PR, ensure you've tested:
 
 - [ ] Feature works as expected
 - [ ] No console errors
-- [ ] Compatible with Jellyfin 12.x
+- [ ] Compatible with Jellyfin 12.x — **both** the modern (MUI) layout and the legacy layout (`localStorage.layout`)
 - [ ] Works on different browsers (Chrome, Firefox, Edge)
 - [ ] Doesn't break existing functionality
 - [ ] Mobile compatibility (if applicable)
+- [ ] Injected UI survives navigation and the `/video` round trip (see `docs/v12-platform.md` §3)
 
 ## 📋 Feature Request Guidelines
 
@@ -210,7 +237,8 @@ If you have questions or need help:
 
 For UI changes:
 
-- Test with different Jellyfin themes
+- Use the ui-kit (`JE.core.ui`) so injected UI matches native markup and follows the active theme
+- Test with different Jellyfin themes and both layouts
 - Provide before/after screenshots
 
 ---
