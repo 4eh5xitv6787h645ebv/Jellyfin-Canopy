@@ -6,7 +6,7 @@
 // history/event calls. URLs are unique per test because the dedup guard
 // (last dispatched href) is module state.
 import { describe, expect, it, vi } from 'vitest';
-import { offNavigate, onNavigate } from './navigation';
+import { handleHistoryUpdate, navDedupKey, offNavigate, onNavigate } from './navigation';
 
 describe('onNavigate dedup', () => {
     it('notifies exactly once for a pushState URL change', () => {
@@ -88,5 +88,72 @@ describe('onNavigate dedup', () => {
         const again = vi.fn();
         onNavigate(again);
         expect(offNavigate(again)).toBe(true);
+    });
+});
+
+describe('navDedupKey', () => {
+    it('is pathname + search + hash (href minus origin)', () => {
+        expect(navDedupKey({ pathname: '/web/', search: '', hash: '#/home' }))
+            .toBe('/web/#/home');
+    });
+
+    it('distinguishes param-only navigations by search (the viewshow blind spot)', () => {
+        const a = navDedupKey({ pathname: '/movies', search: '?topParentId=A', hash: '' });
+        const b = navDedupKey({ pathname: '/movies', search: '?topParentId=B', hash: '' });
+        expect(a).not.toBe(b);
+    });
+
+    it('distinguishes legacy hash-only navigations by hash', () => {
+        const a = navDedupKey({ pathname: '/web/', search: '', hash: '#/home' });
+        const b = navDedupKey({ pathname: '/web/', search: '', hash: '#/movies' });
+        expect(a).not.toBe(b);
+    });
+
+    it('treats two HISTORY_UPDATEs with the same pathname+search as one key', () => {
+        // The modern router has an empty hash, so its double-fire (REPLACE
+        // normalization) collapses: identical pathname+search → identical key.
+        const first = navDedupKey({ pathname: '/home', search: '?tab=2', hash: '' });
+        const second = navDedupKey({ pathname: '/home', search: '?tab=2', hash: '' });
+        expect(first).toBe(second);
+    });
+});
+
+describe('HISTORY_UPDATE navigation source', () => {
+    it('dispatches onNavigate for a URL change our pushState patch missed, and dedups the double-fire', () => {
+        const callback = vi.fn();
+        const unsubscribe = onNavigate(callback);
+
+        // Reproduce v12: the React router changed the URL via the ORIGINAL
+        // pushState (captured before our patch installed), so our instance-level
+        // patch never fired and no je:navigate was emitted.
+        History.prototype.pushState.call(history, {}, '', '/hist-update-a?topParentId=Z');
+        expect(callback).not.toHaveBeenCalled();
+
+        // The router's HISTORY_UPDATE signal reaches us and saves the nav.
+        handleHistoryUpdate();
+        expect(callback).toHaveBeenCalledTimes(1);
+
+        // A second HISTORY_UPDATE for the same URL (REPLACE normalization) is
+        // deduped by pathname+search.
+        handleHistoryUpdate();
+        expect(callback).toHaveBeenCalledTimes(1);
+
+        unsubscribe();
+    });
+
+    it('does not double-notify when both je:navigate and HISTORY_UPDATE fire for one nav', () => {
+        const callback = vi.fn();
+        const unsubscribe = onNavigate(callback);
+
+        // Our patch catches this one (fires je:navigate → 1 dispatch)...
+        history.pushState({}, '', '/hist-update-b?x=1');
+        expect(callback).toHaveBeenCalledTimes(1);
+
+        // ...and the router also emits HISTORY_UPDATE for the same URL: no
+        // second notification, because both map to the same navKey.
+        handleHistoryUpdate();
+        expect(callback).toHaveBeenCalledTimes(1);
+
+        unsubscribe();
     });
 });

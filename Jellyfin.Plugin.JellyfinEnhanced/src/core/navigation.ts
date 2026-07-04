@@ -29,8 +29,31 @@ const logPrefix = '🪼 Jellyfin Enhanced: Navigation:';
 const navCallbacks = new Set<NavigateCallback>();
 
 // Dedup guard: a hash navigation fires BOTH popstate and hashchange for
-// the same URL change. Only dispatch when the URL actually moved.
-let lastDispatchedHref: string | null = null;
+// the same URL change; on the modern layout HISTORY_UPDATE can fire twice for
+// one logical nav (REPLACE normalization). Only dispatch when the canonical
+// nav key actually moved. Holds the last dispatched navKey (see navDedupKey).
+let lastDispatchedKey: string | null = null;
+
+/**
+ * Canonical dedup key for a navigation target.
+ *
+ * `pathname + search + hash` — origin is constant for the session, so this is
+ * `location.href` minus the origin. Two properties matter:
+ *  - It includes `search`, so param-only navigations (home tab switches,
+ *    `/movies?topParentId=A→B`) produce a DIFFERENT key. That is what lets the
+ *    HISTORY_UPDATE source (v12-platform.md §2) notify onNavigate for the
+ *    transitions `viewshow` silently skips.
+ *  - It includes `hash`, so legacy-layout hash routing (`#/home` → `#/movies`,
+ *    where pathname+search stay constant) still de-duplicates correctly. On the
+ *    modern layout the hash is empty, so for HISTORY_UPDATE this reduces to
+ *    `pathname + search` exactly as §6.7 prescribes.
+ * @param loc - A location-like with pathname/search/hash (defaults to window.location).
+ */
+export function navDedupKey(
+    loc: { pathname: string; search: string; hash: string } = window.location
+): string {
+    return `${loc.pathname}${loc.search}${loc.hash}`;
+}
 
 /**
  * Patch history.pushState / history.replaceState to emit a 'je:navigate'
@@ -68,12 +91,56 @@ function patchNavigationEvents(): void {
 }
 
 /**
+ * Handle the router's `HISTORY_UPDATE` signal (window.Events bus).
+ *
+ * This is a FIRST-CLASS navigation source, not a supplement: the v12 React
+ * router captures `history.pushState` at its own module init — before our
+ * bundle patches it — so param-only navigations (home tab switches, library
+ * `topParentId` swaps) never fire our `je:navigate` and never fire `viewshow`
+ * either (§2/§6.2). The router DOES fire `HISTORY_UPDATE` on every such
+ * transition, so wiring it here is what makes those features re-run.
+ *
+ * It routes through the SAME deduplicated dispatch as every other source, so:
+ *  - a nav our pushState patch DID catch fires exactly once (both sources map
+ *    to the same navKey; the second is swallowed), and
+ *  - HISTORY_UPDATE's own double-fire (REPLACE normalization, §6.7) collapses
+ *    to one dispatch because both carry the same pathname+search key.
+ */
+export function handleHistoryUpdate(): void {
+    dispatchNavigate();
+}
+
+let historyUpdateSubscribed = false;
+
+/**
+ * Subscribe to `HISTORY_UPDATE` on the window.Events bus. Retries until the
+ * bus exists (it is published at boot, but our bundle may run first).
+ * @param attempt - Internal retry counter.
+ */
+function subscribeHistoryUpdate(attempt = 0): void {
+    if (historyUpdateSubscribed) return;
+    const events = window.Events;
+    if (!events || typeof events.on !== 'function') {
+        // Bounded retry (~5s). If the bus never appears (very old host) the
+        // je:navigate/hashchange/popstate sources still cover legacy routing.
+        if (attempt < 50) {
+            setTimeout(() => subscribeHistoryUpdate(attempt + 1), 100);
+        }
+        return;
+    }
+    events.on(document, 'HISTORY_UPDATE', handleHistoryUpdate);
+    historyUpdateSubscribed = true;
+    console.log(`${logPrefix} Subscribed to HISTORY_UPDATE (router nav signal)`);
+}
+
+/**
  * Fan a navigation event out to all subscribers, at most once per URL
  * change (popstate + hashchange pairs collapse to one dispatch).
  */
 function dispatchNavigate(event?: Event): void {
-    if (window.location.href === lastDispatchedHref) return;
-    lastDispatchedHref = window.location.href;
+    const key = navDedupKey();
+    if (key === lastDispatchedKey) return;
+    lastDispatchedKey = key;
     for (const callback of navCallbacks) {
         try {
             callback(event);
@@ -289,12 +356,16 @@ function initialize(): void {
         notifyViewHandlers(getCurrentView() || undefined, rawEvent.detail?.view || null, window.location.hash, rawEvent);
     });
 
-    // Navigation sources → single deduplicated dispatch
+    // Navigation sources → single deduplicated dispatch.
+    // je:navigate (our pushState patch) + hashchange/popstate cover legacy
+    // routing and any nav our patch catches; HISTORY_UPDATE (subscribed below)
+    // is the universal signal for the modern router's param-only navs.
     window.addEventListener('je:navigate', dispatchNavigate);
     window.addEventListener('hashchange', dispatchNavigate);
     window.addEventListener('popstate', dispatchNavigate);
 
     patchNavigationEvents();
+    subscribeHistoryUpdate();
     installEmbyHook();
 }
 

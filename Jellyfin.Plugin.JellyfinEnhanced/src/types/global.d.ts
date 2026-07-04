@@ -25,10 +25,27 @@ declare global {
     var ApiClient: JellyfinApiClient;
     var Emby: { Page?: Record<string, unknown> } | undefined;
 
+    /**
+     * jellyfin-web's tiny pub/sub bus (window.Events, exposed at boot —
+     * WEB src/index.jsx). NOT DOM events: on/off/trigger take an arbitrary
+     * object as the event target (the router uses `document`). The React
+     * router fires `Events.trigger(document, 'HISTORY_UPDATE', [state])` on
+     * every navigation including param-only ones (v12-platform.md §2), so it
+     * is the universal nav signal `viewshow` cannot provide.
+     */
+    interface JellyfinEvents {
+        on(target: unknown, name: string, handler: (...args: unknown[]) => void): void;
+        off(target: unknown, name: string, handler: (...args: unknown[]) => void): void;
+        trigger(target: unknown, name: string, args?: unknown[]): void;
+    }
+
+    var Events: JellyfinEvents | undefined;
+
     interface Window {
         JellyfinEnhanced: JEGlobal;
         ApiClient: JellyfinApiClient;
         Emby?: { Page?: Record<string, unknown> };
+        Events?: JellyfinEvents;
     }
 
     interface History {
