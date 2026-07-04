@@ -8,18 +8,14 @@
 // bundle is defined by the imports below — real dependency edges, not a
 // hand-maintained array.
 //
-// Import order mirrors the former js/core section of allComponentScripts:
-// navigation owns SPA nav detection, lifecycle/api-client build on it,
-// tag-renderer-base builds on ui-kit. Where a module genuinely depends on
-// another it also imports it directly, so this list is belt-and-braces
+// Import order: navigation owns SPA nav detection, lifecycle/api-client build
+// on it, tag-renderer-base builds on ui-kit. Where a module genuinely depends
+// on another it also imports it directly, so this list is belt-and-braces
 // ordering, not the only thing keeping the graph correct.
 //
-// The NOT-yet-converted legacy modules (js/**, classic IIFEs over the global)
-// are appended after this entry by scripts/build-bundle.js, which parses the
-// remaining allComponentScripts array out of js/plugin.js — so the bundle
-// still ships every component in exactly the load order the loader used to
-// enforce with per-file <script> tags. As files convert to src/, they move
-// from that array into imports here.
+// Every component now lives under src/ — there is no legacy component array
+// and nothing is appended to this entry at build time. The whole feature tree
+// is reached through the area barrels imported below.
 
 import './core/navigation';
 import './core/lifecycle';
@@ -29,11 +25,8 @@ import './core/api-client';
 import './core/tag-renderer-base';
 
 // Area barrels — each imports that area's converted modules in execution
-// order. Areas convert independently (one wave per area) without touching
-// this file; unconverted files still ride in via the legacy array appended
-// by scripts/build-bundle.js. NOTE: all src imports execute BEFORE all
-// legacy-array files — conversions must move whole prefix-families at once
-// so intra-family eager ordering survives.
+// order. Areas own their own ordering without touching this file: main.ts
+// imports each barrel once.
 import './enhanced/index';
 import './jellyseerr/index';
 import './arr/index';

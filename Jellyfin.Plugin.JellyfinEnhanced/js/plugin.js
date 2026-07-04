@@ -568,25 +568,15 @@
                 JE.initializeSplashScreen();
             }
 
-            // Stage 3: Load ALL component scripts (one bundle).
+            // Stage 3: Load the client bundle (every component, one script).
             //
-            // The core layer (navigation detection, lifecycle registry, shared
-            // body observer, fetch layer, base UI primitives) lives in the
-            // TypeScript tree (src/core/*, entry src/main.ts) and executes
-            // FIRST in the bundle — before every script listed here.
+            // The entire feature tree — core layer (navigation detection,
+            // lifecycle registry, shared body observer, fetch layer, base UI
+            // primitives) plus every feature module — lives in the TypeScript
+            // tree (entry src/main.ts) and ships as a single bundle built by
+            // scripts/build-bundle.js. Import edges in src/ define execution
+            // order; there is no longer a runtime or build-time component list.
             //
-            // This array is the load-order source of truth for the files NOT
-            // yet converted to src/. It is consumed at BUILD time by
-            // scripts/build-bundle.js (which appends these files after
-            // src/main.ts in the bundle); nothing reads it at runtime —
-            // converting a file to TypeScript means removing its entry here
-            // and importing it from src/ instead.
-            // eslint-disable-next-line no-unused-vars -- build-time manifest parsed by scripts/build-bundle.js
-            const allComponentScripts = [
-
-                // jellyseerr
-
-            ];
             // One bundle for every mode. Production serves it immutable behind a
             // versioned URL; DevMode serves the same route with no-store + a fresh
             // cache-buster per load (getScriptVersion() returns Date.now() in dev)
