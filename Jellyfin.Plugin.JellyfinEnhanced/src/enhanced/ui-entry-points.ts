@@ -7,6 +7,7 @@
 
 import { JE } from '../globals';
 import { onBodyMutation } from '../core/dom-observer';
+import { onNavigate, onViewPage } from '../core/navigation';
 import { getSidebarContainer } from './helpers';
 
 /**
@@ -103,57 +104,73 @@ JE.addOsdSettingsButton = () => {
     nativeSettingsButton.parentElement!.insertBefore(enhancedSettingsBtn, nativeSettingsButton);
 };
 
+// One-time guard for the navigation-driven retry hooks below (see
+// JE.addUserPreferencesLink).
+let prefsLinkNavHooksWired = false;
+
+/**
+ * Adds the preferences-menu link when the preferences page is visible.
+ * Cheap non-layout probes (getElementById + classList) make this safe to call
+ * on every structural mutation batch and navigation event.
+ * @returns True when the link exists (or was just added).
+ */
+function addPrefsLinkIfOnPage(): boolean {
+    const page = document.getElementById('myPreferencesMenuPage');
+    if (!page || page.classList.contains('hide')) return false;
+
+    const menuContainer = page.querySelector('.verticalSection');
+    if (!menuContainer) return false;
+
+    // Check if link already exists
+    if (document.getElementById('jellyfinEnhancedUserPrefsLink')) return true;
+
+    // Create the link element matching Jellyfin's structure
+    const enhancedLink = document.createElement('a');
+    enhancedLink.id = 'jellyfinEnhancedUserPrefsLink';
+    enhancedLink.setAttribute('is', 'emby-linkbutton');
+    enhancedLink.setAttribute('data-ripple', 'false');
+    enhancedLink.href = '#';
+    enhancedLink.className = 'listItem-border emby-button';
+    enhancedLink.style.display = 'block';
+    enhancedLink.style.padding = '0';
+    enhancedLink.style.margin = '0';
+
+    enhancedLink.innerHTML = `
+            <div class="listItem">
+                <span class="material-icons listItemIcon listItemIcon-transparent tune" aria-hidden="true"></span>
+                <div class="listItemBody">
+                    <div class="listItemBodyText">Advanced Settings (Jellyfin Enhanced)</div>
+                </div>
+            </div>
+        `;
+
+    enhancedLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        void JE.showEnhancedPanel!();
+    });
+
+    // Insert at the end of the first vertical section
+    menuContainer.appendChild(enhancedLink);
+    return true;
+}
+
 /**
  * Injects the "Jellyfin Enhanced" link into the user preferences menu (mypreferencesmenu.html).
  * Adds it as the last item in the first vertical section (after Controls).
  */
 JE.addUserPreferencesLink = () => {
-    const addLinkToMenu = () => {
-        const menuContainer = document.querySelector('#myPreferencesMenuPage:not(.hide) .verticalSection');
-        if (!menuContainer) return false;
+    // PERF: retries are driven by the shared navigation/viewshow events (plus
+    // the shared body observer tick in events.ts) instead of creating a new
+    // body-wide attribute MutationObserver per call — the old pattern leaked
+    // one observer per call whenever this ran off the preferences page.
+    if (!prefsLinkNavHooksWired) {
+        prefsLinkNavHooksWired = true;
+        // viewshow covers cached legacy pages re-shown via a class flip only
+        // (no structural mutation for the body observer to see); onNavigate
+        // covers the modern router where viewshow never fires.
+        onNavigate(() => { addPrefsLinkIfOnPage(); });
+        onViewPage(() => { addPrefsLinkIfOnPage(); });
+    }
 
-        // Check if link already exists
-        if (document.querySelector('#jellyfinEnhancedUserPrefsLink')) return true;
-
-        // Create the link element matching Jellyfin's structure
-        const enhancedLink = document.createElement('a');
-        enhancedLink.id = 'jellyfinEnhancedUserPrefsLink';
-        enhancedLink.setAttribute('is', 'emby-linkbutton');
-        enhancedLink.setAttribute('data-ripple', 'false');
-        enhancedLink.href = '#';
-        enhancedLink.className = 'listItem-border emby-button';
-        enhancedLink.style.display = 'block';
-        enhancedLink.style.padding = '0';
-        enhancedLink.style.margin = '0';
-
-        enhancedLink.innerHTML = `
-                <div class="listItem">
-                    <span class="material-icons listItemIcon listItemIcon-transparent tune" aria-hidden="true"></span>
-                    <div class="listItemBody">
-                        <div class="listItemBodyText">Advanced Settings (Jellyfin Enhanced)</div>
-                    </div>
-                </div>
-            `;
-
-        enhancedLink.addEventListener('click', (e) => {
-            e.preventDefault();
-            void JE.showEnhancedPanel!();
-        });
-
-        // Insert at the end of the first vertical section
-        menuContainer.appendChild(enhancedLink);
-        return true;
-    };
-
-    // Try to add immediately
-    if (addLinkToMenu()) return;
-
-    // If not found, observe for when the menu is loaded and visible
-    const observer = new MutationObserver(() => {
-        if (addLinkToMenu()) {
-            observer.disconnect();
-        }
-    });
-
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    addPrefsLinkIfOnPage();
 };
