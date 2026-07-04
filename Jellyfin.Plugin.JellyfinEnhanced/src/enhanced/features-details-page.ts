@@ -6,7 +6,8 @@
 // identical; the eager JE.internals.features destructure is now real imports.)
 
 import { JE } from '../globals';
-import { createObserver } from '../core/dom-observer';
+import { onBodyMutation } from '../core/dom-observer';
+import { onNavigate, onViewPage } from '../core/navigation';
 import { debounce, getItemCached } from './helpers';
 import { displayWatchProgress, displayItemSize, displayAudioLanguages } from './features-details-media-info';
 import { displayReleaseDate } from './features-release-dates';
@@ -288,21 +289,17 @@ const handleItemDetails = debounce(() => {
 }
 }, 100);
 
-// Create managed observer for item details
-createObserver(
-    'item-details-info',
-    (mutations) => {
-        for (const mutation of mutations) {
-            if (mutation.type === 'childList' || mutation.type === 'attributes') {
-                handleItemDetails();
-            }
-        }
-    },
-    document.body,
-    {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['class', 'style']
-    }
-);
+// PERF: this used to be a dedicated body-wide MutationObserver with
+// attributes:['class','style'], firing on every hover/focus/style write on
+// EVERY page. Structural changes now arrive via the shared multiplexed body
+// observer behind a cheap O(1) details-page gate, and the cached-page re-show
+// (a class flip with no structural mutation — the only thing the attribute
+// filter actually caught) is covered by the navigation/viewshow probes below.
+// handleItemDetails is debounced and re-validates page visibility itself.
+onBodyMutation('item-details-info', () => {
+    const page = document.getElementById('itemDetailPage');
+    if (!page || page.classList.contains('hide')) return;
+    handleItemDetails();
+});
+onNavigate(() => { handleItemDetails(); });
+onViewPage(() => { handleItemDetails(); });
