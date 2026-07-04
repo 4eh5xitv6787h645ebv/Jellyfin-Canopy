@@ -37,6 +37,7 @@ using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using Microsoft.Extensions.Logging;
+using MediaBrowser.Common.Api;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -157,7 +158,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         // ─── Admin cross-user hidden-content visibility ───
         // Lets an admin see what other users have hidden, surfaced as a read-only user filter on
-        // the Hidden Content page/tab. Both endpoints are admin-gated server-side via IsAdminUser()
+        // the Hidden Content page/tab. Both endpoints are admin-gated server-side via
+        // [Authorize(Policy = Policies.RequiresElevation)] (bare 403 for non-admins)
         // and never mutate another user's data — the client `isAdmin` flag is a UX convenience only,
         // never the security boundary. See the js/enhanced/hidden-content-page-* modules for the consuming UI.
 
@@ -172,13 +174,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         /// Fine for typical user counts; revisit (cache counts / pre-filter on file size) if it grows.
         /// </remarks>
         [HttpGet("admin/hidden-content-users")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         [Produces("application/json")]
         public IActionResult GetHiddenContentUsers()
         {
-            if (!IsAdminUser())
-                return Forbid();
-
             // Honour the admin config toggle: the whole cross-user feature can be disabled.
             if (_configProvider.ConfigurationOrNull?.HiddenContentAdmin != true)
                 return Forbid();
@@ -236,13 +235,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         /// what that user has hidden. Validates the id format and never writes.
         /// </summary>
         [HttpGet("admin/hidden-content/{userId}")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         [Produces("application/json")]
         public IActionResult GetUserHiddenContentForAdmin(string userId)
         {
-            if (!IsAdminUser())
-                return Forbid();
-
             // Honour the admin config toggle.
             if (_configProvider.ConfigurationOrNull?.HiddenContentAdmin != true)
                 return Forbid();
@@ -281,13 +277,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         /// the user themselves. Returns how many items were actually removed.
         /// </summary>
         [HttpPost("admin/hidden-content/{userId}/unhide")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         [Produces("application/json")]
         public IActionResult AdminUnhideForUser(string userId, [FromBody] List<string> keys)
         {
-            if (!IsAdminUser())
-                return Forbid();
-
             // Honour the admin config toggle: cross-user management can be disabled.
             if (_configProvider.ConfigurationOrNull?.HiddenContentAdmin != true)
                 return Forbid();
@@ -352,13 +345,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         /// overwriting an item the user already hid. Returns how many were newly added.
         /// </summary>
         [HttpPost("admin/hidden-content/{userId}/hide")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         [Produces("application/json")]
         public IActionResult AdminHideForUser(string userId, [FromBody] List<HiddenContentItem> items)
         {
-            if (!IsAdminUser())
-                return Forbid();
-
             // Adding is a management operation: gated by the admin config toggle.
             if (_configProvider.ConfigurationOrNull?.HiddenContentAdmin != true)
                 return Forbid();

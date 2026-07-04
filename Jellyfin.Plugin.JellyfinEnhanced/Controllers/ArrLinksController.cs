@@ -38,6 +38,7 @@ using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using Microsoft.Extensions.Logging;
+using MediaBrowser.Common.Api;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -63,14 +64,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         // ==================== Arr Links ====================
 
         [HttpGet("arr/validate/sonarr")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> ValidateSonarr([FromQuery] string url, [FromHeader(Name = "X-Arr-ApiKey")] string apiKey)
         {
             return await ValidateArrService("Sonarr", url, apiKey);
         }
 
         [HttpGet("arr/validate/radarr")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> ValidateRadarr([FromQuery] string url, [FromHeader(Name = "X-Arr-ApiKey")] string apiKey)
         {
             return await ValidateArrService("Radarr", url, apiKey);
@@ -78,9 +79,6 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         private async Task<IActionResult> ValidateArrService(string serviceName, string url, string apiKey)
         {
-            if (!IsAdminUser())
-                return Forbid();
-
             if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(apiKey))
                 return BadRequest(new { ok = false, message = $"Missing {serviceName} URL or API key" });
 
@@ -121,12 +119,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpGet("arr/identify-url")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> IdentifyUrl([FromQuery] string url)
         {
-            if (!IsAdminUser())
-                return Forbid();
-
             if (string.IsNullOrWhiteSpace(url))
                 return BadRequest(new { reachable = false, service = "unknown" });
 
@@ -242,12 +237,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpGet("arr/series-slug")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> GetSeriesSlug([FromQuery] int tvdbId)
         {
-            if (!IsAdminUser())
-                return Forbid();
-
             if (tvdbId <= 0)
                 return BadRequest(new { error = "tvdbId must be a positive integer" });
 
@@ -279,12 +271,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpGet("arr/series-slugs")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> GetSeriesSlugs([FromQuery] int tvdbId)
         {
-            if (!IsAdminUser())
-                return Forbid();
-
             if (tvdbId <= 0)
                 return BadRequest(new { error = "tvdbId must be a positive integer" });
 
@@ -370,12 +359,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpGet("arr/movie-instances")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> GetMovieInstances([FromQuery] int tmdbId)
         {
-            if (!IsAdminUser())
-                return Forbid();
-
             if (tmdbId <= 0)
                 return BadRequest(new { error = "tmdbId must be a positive integer" });
 

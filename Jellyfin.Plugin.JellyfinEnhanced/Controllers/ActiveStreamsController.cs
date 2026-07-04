@@ -37,6 +37,7 @@ using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using Microsoft.Extensions.Logging;
+using MediaBrowser.Common.Api;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -144,12 +145,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpPost("active-streams/broadcast")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> BroadcastMessage([FromBody] BroadcastMessageRequest request)
         {
-            if (!IsAdminUser())
-                return Forbid();
-
             if (request == null || string.IsNullOrWhiteSpace(request.Text))
                 return BadRequest("Message text is required.");
 

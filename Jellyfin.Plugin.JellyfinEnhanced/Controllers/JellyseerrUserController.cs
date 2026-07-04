@@ -37,6 +37,7 @@ using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using Microsoft.Extensions.Logging;
+using MediaBrowser.Common.Api;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -119,11 +120,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpGet("jellyseerr/permission-audit")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> GetPermissionAudit()
         {
-            if (!IsAdminUser()) return Forbid();
-
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.JellyseerrEnabled ||
                 string.IsNullOrEmpty(config.JellyseerrApiKey) ||
@@ -242,17 +241,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpGet("jellyseerr/user")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public Task<IActionResult> GetJellyseerrUsers([FromQuery] int take = 1000)
         {
             // Admin-only: this proxies Seerr's full user list, which includes
             // every Seerr user's email, username, plexUsername, permissions,
             // and userType. Without this gate any authenticated Jellyfin user
             // could harvest the entire Seerr roster.
-            if (!IsAdminUser())
-            {
-                return Task.FromResult<IActionResult>(Forbid());
-            }
             return ProxyJellyseerrRequest($"/api/v1/user?take={take}", HttpMethod.Get);
         }
 
@@ -308,14 +303,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpPost("jellyseerr/sync-watchlist")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> SyncJellyseerrWatchlist()
         {
-            if (!IsAdminUser())
-            {
-                return Forbid();
-            }
-
             try
             {
                 var config = _configProvider.ConfigurationOrNull;
@@ -423,14 +413,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpPost("jellyseerr/import-users")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> ImportJellyseerrUsers()
         {
-            if (!IsAdminUser())
-            {
-                return Forbid();
-            }
-
             try
             {
                 var config = _configProvider.ConfigurationOrNull;

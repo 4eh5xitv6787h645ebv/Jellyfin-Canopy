@@ -22,6 +22,7 @@ using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
+using MediaBrowser.Common.Api;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using MediaBrowser.Controller;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
@@ -98,14 +99,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpPost("UploadBrandingImage")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> UploadBrandingImage()
         {
-            if (!IsAdminUser())
-            {
-                return Forbid();
-            }
-
             try
             {
                 if (Request.Form.Files.Count == 0)
@@ -188,14 +184,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpPost("DeleteBrandingImage")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public IActionResult DeleteBrandingImage()
         {
-            if (!IsAdminUser())
-            {
-                return Forbid();
-            }
-
             try
             {
                 string? fileName = Request.Form["fileName"].FirstOrDefault();

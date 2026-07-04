@@ -22,6 +22,7 @@ using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
+using MediaBrowser.Common.Api;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using MediaBrowser.Controller;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
@@ -68,11 +69,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         // ── Maintenance Mode ────────────────────────────────────────────────────
 
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         [HttpGet("MaintenanceMode/Status")]
         public IActionResult GetMaintenanceStatus()
         {
-            if (!IsAdminUser()) return Forbid();
             var state = _maintenanceModeService.GetStatus();
             return Ok(new
             {
@@ -86,11 +86,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             });
         }
 
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         [HttpPost("MaintenanceMode/Enable")]
         public async Task<IActionResult> EnableMaintenanceMode([FromBody] MaintenanceModeRequest request)
         {
-            if (!IsAdminUser()) return Forbid();
             await _maintenanceModeService.EnableAsync(
                 request.Message ?? string.Empty,
                 request.DurationMinutes,
@@ -99,20 +98,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             return Ok(new { success = true });
         }
 
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         [HttpPost("MaintenanceMode/Disable")]
         public async Task<IActionResult> DisableMaintenanceMode()
         {
-            if (!IsAdminUser()) return Forbid();
             await _maintenanceModeService.DisableAsync().ConfigureAwait(false);
             return Ok(new { success = true });
         }
 
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         [HttpGet("MaintenanceMode/Users")]
         public IActionResult GetMaintenanceModeUsers()
         {
-            if (!IsAdminUser()) return Forbid();
             var users = _userManager.GetUsers()
                 .Where(u => !u.HasPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator))
                 .Select(u => new { Id = u.Id.ToString(), u.Username })
@@ -121,11 +118,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             return Ok(users);
         }
 
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         [HttpPost("MaintenanceMode/Broadcast")]
         public async Task<IActionResult> BroadcastMaintenanceMessage([FromBody] MaintenanceBroadcastRequest request)
         {
-            if (!IsAdminUser()) return Forbid();
             if (request == null || string.IsNullOrWhiteSpace(request.Text))
                 return BadRequest("Message text is required.");
 

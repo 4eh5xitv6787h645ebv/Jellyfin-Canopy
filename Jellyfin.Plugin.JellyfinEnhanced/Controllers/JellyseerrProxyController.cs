@@ -38,6 +38,7 @@ using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using Microsoft.Extensions.Logging;
+using MediaBrowser.Common.Api;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -97,14 +98,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         public new Task<IActionResult> GetJellyseerrStatus() => base.GetJellyseerrStatus();
 
         [HttpGet("jellyseerr/validate")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> ValidateJellyseerr([FromQuery] string url, [FromHeader(Name = "X-Arr-ApiKey")] string apiKey)
         {
-            if (!IsAdminUser())
-            {
-                return Forbid();
-            }
-
             if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(apiKey))
                 return BadRequest(new { ok = false, message = "Missing url or apiKey" });
 
@@ -161,14 +157,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         // values currently in the form (which may not be saved yet), exactly like
         // the validate endpoint above.
         [HttpPost("jellyseerr/trigger-recently-added-scan")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> TriggerJellyseerrRecentlyAddedScan([FromQuery] string url, [FromHeader(Name = "X-Arr-ApiKey")] string apiKey)
         {
-            if (!IsAdminUser())
-            {
-                return Forbid();
-            }
-
             if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(apiKey))
                 return BadRequest(new { ok = false, message = "Missing url or apiKey" });
 
@@ -706,7 +697,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpGet("tmdb/validate")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> ValidateTmdb([FromQuery] string apiKey)
         {
             // Admin-only: validates an arbitrary API key against TMDB. Any
@@ -714,11 +705,6 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // for testing leaked TMDB keys, matching the pattern in every
             // sibling validate endpoint (arr/validate/sonarr|radarr,
             // jellyseerr/validate).
-            if (!IsAdminUser())
-            {
-                return Forbid();
-            }
-
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 return BadRequest(new { ok = false, message = "API key is missing" });

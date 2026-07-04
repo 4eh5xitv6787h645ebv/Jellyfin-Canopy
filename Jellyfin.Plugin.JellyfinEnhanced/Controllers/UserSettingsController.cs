@@ -37,6 +37,7 @@ using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using Microsoft.Extensions.Logging;
+using MediaBrowser.Common.Api;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -407,14 +408,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpPost("reset-all-users-settings")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         public IActionResult ResetAllUsersSettings()
         {
-            if (!IsAdminUser())
-            {
-                return Forbid();
-            }
-
             var defaultConfig = _configProvider.ConfigurationOrNull;
 
             if (defaultConfig == null)

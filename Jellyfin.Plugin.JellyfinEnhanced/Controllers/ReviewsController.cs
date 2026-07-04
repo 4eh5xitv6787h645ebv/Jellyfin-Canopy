@@ -37,6 +37,7 @@ using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using Microsoft.Extensions.Logging;
+using MediaBrowser.Common.Api;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 {
@@ -249,13 +250,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpPost("reviews/admin/{userIdN}/{mediaType}/{tmdbId}")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         [Produces("application/json")]
         public IActionResult AdminUpsertReview(string userIdN, string mediaType, string tmdbId, [FromBody] ReviewPayload payload)
         {
-            if (!IsAdminUser())
-                return Forbid();
-
             if (string.IsNullOrWhiteSpace(userIdN) || !Guid.TryParseExact(userIdN, "N", out _))
                 return BadRequest(new { success = false, message = "Invalid userId (expected 32-char hex)." });
 
@@ -323,13 +321,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         [HttpDelete("reviews/admin/{userIdN}/{mediaType}/{tmdbId}")]
-        [Authorize]
+        [Authorize(Policy = Policies.RequiresElevation)]
         [Produces("application/json")]
         public IActionResult AdminDeleteReview(string userIdN, string mediaType, string tmdbId)
         {
-            if (!IsAdminUser())
-                return Forbid();
-
             if (mediaType != "movie" && mediaType != "tv")
                 return BadRequest(new { success = false, message = "MediaType must be 'movie' or 'tv'." });
 
