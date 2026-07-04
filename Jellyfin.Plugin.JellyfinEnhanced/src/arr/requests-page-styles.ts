@@ -1,18 +1,13 @@
-// /js/arr/requests-page-styles.js
+// src/arr/requests-page-styles.ts (formerly js/arr/requests-page-styles.js)
 // Requests Page — CSS and theme-color injection (split from requests-page.js).
 // Owns the single injection site for the feature's styles; all former call
-// sites route through P.injectStyles, deduped by style id via JE.core.ui.injectCss.
-(function () {
-  "use strict";
+// sites import injectStyles, deduped by style id via core injectCss.
 
-  const JE = window.JellyfinEnhanced;
-  // Private cross-module wiring for the split requests page (js/arr/requests-page-*.js).
-  // Not part of the public JE.* surface.
-  JE.internals = JE.internals || {};
-  const P = (JE.internals.requestsPage = JE.internals.requestsPage || {});
+import { injectCss } from '../core/ui-kit';
+import { JE } from './arr-globals';
 
-  // CSS Styles - minimal styling to fit Jellyfin's theme
-  const CSS_STYLES = `
+// CSS Styles - minimal styling to fit Jellyfin's theme
+const CSS_STYLES = `
         .je-downloads-page {
             padding: 2em;
             max-width: 85vw;
@@ -532,25 +527,25 @@
         }
     `;
 
-  /**
-   * Inject CSS styles
-   */
-  function injectStyles() {
-    if (document.getElementById("je-downloads-styles")) return;
-    JE.core.ui.injectCss("je-downloads-styles", CSS_STYLES);
+/**
+ * Inject CSS styles
+ */
+export function injectStyles(): void {
+    if (document.getElementById('je-downloads-styles')) return;
+    injectCss('je-downloads-styles', CSS_STYLES);
 
     // Inject dynamic theme colors
     injectThemeColors();
-  }
+}
 
-  /**
-   * Inject dynamic theme colors
-   */
-  function injectThemeColors() {
-    const themeVars = JE.themer?.getThemeVariables() || {};
+/**
+ * Inject dynamic theme colors
+ */
+function injectThemeColors(): void {
+    const themeVars = JE.themer?.getThemeVariables?.() || {};
     const primaryAccent = themeVars.primaryAccent || '#00a4dc';
 
-    JE.core.ui.injectCss("je-downloads-theme-colors", `
+    injectCss('je-downloads-theme-colors', `
       .je-requests-tab.emby-button.active,
       .je-issues-tab.emby-button.active,
       .je-downloads-tab.emby-button.active {
@@ -561,7 +556,4 @@
         background: ${primaryAccent} !important;
       }
     `);
-  }
-
-  P.injectStyles = injectStyles;
-})();
+}

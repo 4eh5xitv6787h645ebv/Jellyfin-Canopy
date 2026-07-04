@@ -1,18 +1,13 @@
-// /js/arr/calendar-page-styles.js
+// src/arr/calendar-page-styles.ts (formerly js/arr/calendar-page-styles.js)
 // Calendar Page — CSS and theme-color injection (split from calendar-page.js).
 // Owns the single injection site for the feature's styles; all former call
-// sites route through P.injectStyles, deduped by style id via JE.core.ui.injectCss.
-(function () {
-  "use strict";
+// sites import injectStyles, deduped by style id via core injectCss.
 
-  const JE = window.JellyfinEnhanced;
-  // Private cross-module wiring for the split calendar page (js/arr/calendar-page-*.js).
-  // Not part of the public JE.* surface.
-  JE.internals = JE.internals || {};
-  const P = (JE.internals.calendarPage = JE.internals.calendarPage || {});
+import { injectCss } from '../core/ui-kit';
+import { JE } from './arr-globals';
 
-  // CSS Styles
-  const CSS_STYLES = `
+// CSS Styles
+const CSS_STYLES = `
     @font-face {
       font-family: 'Material Symbols Rounded';
       font-style: normal;
@@ -1088,21 +1083,21 @@
     }
   `;
 
-  // Inject CSS styles into page
-  function injectStyles() {
+// Inject CSS styles into page
+export function injectStyles(): void {
     if (document.getElementById("je-calendar-styles")) return;
-    JE.core.ui.injectCss("je-calendar-styles", CSS_STYLES);
+    injectCss("je-calendar-styles", CSS_STYLES);
 
     // Inject dynamic theme colors
     injectThemeColors();
-  }
+}
 
-  // Inject dynamic theme colors
-  function injectThemeColors() {
-    const themeVars = JE.themer?.getThemeVariables() || {};
+// Inject dynamic theme colors
+function injectThemeColors(): void {
+    const themeVars = JE.themer?.getThemeVariables?.() || {};
     const primaryAccent = themeVars.primaryAccent || '#00a4dc';
 
-    JE.core.ui.injectCss("je-calendar-theme-colors", `
+    injectCss("je-calendar-theme-colors", `
       .je-calendar-view-btn.active {
         background: ${primaryAccent} !important;
         border-color: ${primaryAccent} !important;
@@ -1119,7 +1114,4 @@
         color: ${primaryAccent} !important;
       }
     `);
-  }
-
-  P.injectStyles = injectStyles;
-})();
+}

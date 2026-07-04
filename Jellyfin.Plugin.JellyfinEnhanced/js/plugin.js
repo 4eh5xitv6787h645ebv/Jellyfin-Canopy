@@ -692,24 +692,6 @@
                 'jellyseerr/tag-discovery.js',
                 'jellyseerr/collection-discovery.js',
 
-                // arr
-                'arr/arr-links.js',
-                'arr/arr-tag-links.js',
-                'arr/requests-page-styles.js',
-                'arr/requests-page-data.js',
-                'arr/requests-page-render-helpers.js',
-                'arr/requests-page-render-cards.js',
-                'arr/requests-page-render.js',
-                'arr/requests-page-actions.js',
-                'arr/requests-page-init.js',
-                'arr/calendar-page-styles.js',
-                'arr/calendar-page-data.js',
-                'arr/calendar-page-render-events.js',
-                'arr/calendar-page-render-views.js',
-                'arr/calendar-page-actions.js',
-                'arr/calendar-page-init.js',
-                'arr/requests-custom-tab.js',
-                'arr/calendar-custom-tab.js',
             ];
             // One bundle for every mode. Production serves it immutable behind a
             // versioned URL; DevMode serves the same route with no-store + a fresh
