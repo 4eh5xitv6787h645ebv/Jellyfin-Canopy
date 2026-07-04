@@ -71,6 +71,10 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
     placeholder.style.alignItems = 'center';
     placeholder.style.margin = '0 1em 0 0 !important';
     placeholder.style.cursor = 'pointer';
+    // PERF: reserve the typical final width (progress ring + "100%") so the
+    // value swap doesn't resize the chip and reflow the row the user is
+    // reading. The row reflows exactly once — at insertion.
+    placeholder.style.minWidth = '6ch';
     const getWatchProgressDisplay = (watchProgress: WatchProgressEntry, mode: string): string => {
         const safeTotal = Math.max(0, watchProgress.totalRuntimeTicks || 0);
         const safePlayed = Math.max(0, Math.min(safeTotal, watchProgress.totalPlaybackTicks || 0));
@@ -246,12 +250,11 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
         }
     };
 
-    // Defer to allow page to render first
-    if (typeof requestIdleCallback !== 'undefined') {
-        requestIdleCallback(() => { void performFetch(); }, { timeout: 2000 });
-    } else {
-        setTimeout(() => { void performFetch(); }, 0);
-    }
+    // PERF: fetch immediately (was requestIdleCallback with a 2s timeout). The
+    // fetch is async network work that never blocks rendering, and a cache hit
+    // now fills the chip in the SAME task as the insertion — one reflow total
+    // instead of hourglass-then-swap several frames later.
+    void performFetch();
 }
 
 /**
@@ -279,6 +282,9 @@ export function displayItemSize(itemId: string, container: HTMLElement): void {
     placeholder.style.display = 'flex';
     placeholder.style.alignItems = 'center';
     placeholder.style.margin = '0 1em 0 0 !important';
+    // PERF: reserve the typical final width (save icon + "12.34 GB") so the
+    // value swap doesn't resize the chip and reflow the row.
+    placeholder.style.minWidth = '8ch';
     // Show loading indicator
     placeholder.innerHTML = `<span class="material-icons" style="font-size: inherit; margin-right: 0.3em;">hourglass_empty</span> ...`;
     // Insert first so subsequent observer runs are triggered
@@ -325,12 +331,9 @@ export function displayItemSize(itemId: string, container: HTMLElement): void {
         }
     };
 
-    // Defer to allow page to render first
-    if (typeof requestIdleCallback !== 'undefined') {
-        requestIdleCallback(() => { void performFetch(); }, { timeout: 2000 });
-    } else {
-        setTimeout(() => { void performFetch(); }, 0);
-    }
+    // PERF: fetch immediately (was requestIdleCallback, up to 2s late) — cache
+    // hits fill the chip in the same task as the insertion, one reflow total.
+    void performFetch();
 }
 
 /**
@@ -402,6 +405,9 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
     placeholder.style.verticalAlign = 'middle';
     placeholder.style.alignItems = 'center';
     placeholder.style.margin = '0 1em 0 0 !important';
+    // PERF: reserve the typical final width (translate icon + one flag +
+    // language name) so the value swap doesn't resize the chip.
+    placeholder.style.minWidth = '6ch';
     // Show loading indicator
     placeholder.innerHTML = `<span class="material-icons" style="font-size: inherit; margin-right: 0.3em;">hourglass_empty</span> ...`;
     container.appendChild(placeholder);
@@ -495,7 +501,13 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
                 const flag = document.createElement('img');
                 flag.src = `https://cdnjs.cloudflare.com/ajax/libs/flag-icons/7.2.1/flags/4x3/${countryCode.toLowerCase()}.svg`;
                 flag.alt = `${lang.name} flag`;
+                // PERF: explicit width AND height (attributes + styles) so the
+                // slot is fully reserved before the SVG loads — no row reflow
+                // when the flag image arrives. 4x3 flags at 18px wide = 13.5px.
+                flag.width = 18;
+                flag.height = 14;
                 flag.style.width = '18px';
+                flag.style.height = '13.5px';
                 flag.style.marginRight = '0.3em';
                 flag.style.borderRadius = '2px';
                 langSpan.appendChild(flag);
@@ -583,10 +595,7 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
         }
     };
 
-    // Defer to allow page to render first
-    if (typeof requestIdleCallback !== 'undefined') {
-        requestIdleCallback(() => { void performFetch(); }, { timeout: 2000 });
-    } else {
-        setTimeout(() => { void performFetch(); }, 0);
-    }
+    // PERF: fetch immediately (was requestIdleCallback, up to 2s late) — cache
+    // hits fill the chip in the same task as the insertion, one reflow total.
+    void performFetch();
 }
