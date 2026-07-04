@@ -76,7 +76,10 @@ inspecting network traffic — a client-side hide would only conceal the cards.
   Nothing is duplicated in the plugin — Jellyfin remains the single source of
   truth for what each user may watch.
 - Applies to search results, discovery rows (genre/network/keyword/studio),
-  similar/recommended sections, collections, watchlists, and person filmographies.
+  similar/recommended sections, collections, watchlists, person filmographies
+  (including the films listed under a person), and the requests list.
+- A restricted user also cannot **open** a blocked title's detail/season or
+  **request** it by id — both are rejected server-side, not just hidden.
 - A title's certification is read the same way the More Info modal shows it
   (region → US → first available), using your **Default Region** (Elsewhere
   setting) to choose the certification system.
@@ -99,9 +102,6 @@ inspecting network traffic — a client-side hide would only conceal the cards.
       block-unrated settings are enforced.
     - **Unrated titles** (no certification on TMDB) follow the user's
       **Block unrated items** setting, exactly as in the library.
-    - **Detail pages aren't gated.** A user reaching a specific title's page by
-      direct link isn't blocked from viewing it — the filter targets the result
-      *lists*. Seerr's own request permissions still apply.
     - Certifications are fetched per title and cached (see
       [Advanced Configuration](#advanced-configuration)); the first search that
       surfaces a new title for a restricted user is slightly slower.
