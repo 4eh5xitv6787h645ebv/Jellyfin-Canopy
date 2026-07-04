@@ -166,6 +166,13 @@ function analyzeSeasonStatuses(seasons: any) {
     return { overallStatus, statusSummary, total, availableCount };
 }
 
+// PERF: pending detached-placement watcher for the Seerr section. A newer
+// render supersedes (cancels) it so a stale keystroke never inserts late.
+let pendingSectionPlacement: { cancel: () => void } | null = null;
+// How long to hold the built section detached waiting for the native
+// Movies/Shows sections before falling back to the results container.
+const SECTION_PLACEMENT_TIMEOUT_MS = 1000;
+
 /**
  * Renders Seerr search results into the search page with improved placement logic.
  * @param {Array} results - Array of search result items.
@@ -182,10 +189,31 @@ ui.renderJellyseerrResults = function (results: any, query: any, isJellyseerrOnl
         return;
     }
 
-    const oldSection = searchPage.querySelector('.jellyseerr-section');
-    if(oldSection) oldSection.remove();
+    // A newer render supersedes any still-detached section from the previous
+    // keystroke — cancel its placement watcher so it never inserts late.
+    if (pendingSectionPlacement) {
+        pendingSectionPlacement.cancel();
+        pendingSectionPlacement = null;
+    }
 
     const sectionToInject = createJellyseerrSection(results, isJellyseerrOnlyMode, isJellyseerrActive, jellyseerrUserFound);
+
+    // PERF: per-keystroke re-render PATCHES the existing section in place —
+    // one replaceChildren() swap inside the same container node — instead of
+    // tearing the section down and re-inserting/repositioning it, which
+    // visibly jumped the page on every keystroke. Card build is identical;
+    // only the mount strategy changed.
+    const oldSection = searchPage.querySelector('.jellyseerr-section');
+    if (oldSection) {
+        oldSection.replaceChildren(...Array.from(sectionToInject.childNodes));
+        // Keep the localized no-results message in sync (the full-render path
+        // does this at placement time).
+        const noResultsMessage = searchPage.querySelector('.noItemsMessage');
+        if (noResultsMessage) {
+            noResultsMessage.textContent = JE.t!('jellyseerr_no_results_jellyfin', { query });
+        }
+        return;
+    }
 
     const primarySectionKeywords = ['movies', 'shows', 'film', 'serier', 'filme', 'serien', 'películas', 'series', 'films', 'séries', 'serie tv'];
 
@@ -205,12 +233,11 @@ ui.renderJellyseerrResults = function (results: any, query: any, isJellyseerrOnl
     }
 
     /**
-     * Places the section after Movies/Shows if found, otherwise appends
-     * to the results container or search page.
-     * @returns {boolean} True if positioned after a primary section or
-     *   no-results message; false if using fallback placement.
+     * Inserts the section at its proper anchor when one exists NOW: after the
+     * no-results message, or after the last native Movies/Shows section.
+     * @returns {boolean} True if the section was inserted.
      */
-    function positionSection() {
+    function tryPlaceAtAnchor() {
         const noResultsMessage = searchPage.querySelector('.noItemsMessage');
         if (noResultsMessage) {
             noResultsMessage.textContent = JE.t!('jellyseerr_no_results_jellyfin', { query });
@@ -223,33 +250,45 @@ ui.renderJellyseerrResults = function (results: any, query: any, isJellyseerrOnl
             lastPrimary.after(sectionToInject);
             return true;
         }
+        return false;
+    }
 
+    // PERF: determine the insertion point BEFORE injecting. If the anchor
+    // exists, this is a single insert at the final position. Otherwise the
+    // built section stays DETACHED (off-DOM) until the native sections render,
+    // then inserts once — inside the same mutation batch that added them, so
+    // it is part of their first painted frame. The section is never moved
+    // after insertion (the old inject-at-fallback-then-reposition flow was the
+    // visible jump this replaces).
+    if (tryPlaceAtAnchor()) return;
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const observer = new MutationObserver(() => {
+        if (searchPage.querySelector('.noItemsMessage') || findLastPrimarySection()) {
+            cancel();
+            pendingSectionPlacement = null;
+            tryPlaceAtAnchor();
+        }
+    });
+    const cancel = () => {
+        observer.disconnect();
+        if (timeoutId) clearTimeout(timeoutId);
+    };
+    pendingSectionPlacement = { cancel };
+    observer.observe(searchPage, { childList: true, subtree: true });
+
+    // Timeout: anchor never appeared — insert at the fallback position once,
+    // WITHOUT any later repositioning.
+    timeoutId = setTimeout(() => {
+        cancel();
+        pendingSectionPlacement = null;
         const resultsContainer = searchPage.querySelector('.searchResults, [class*="searchResults"], .padded-top.padded-bottom-page');
         if (resultsContainer) {
             resultsContainer.appendChild(sectionToInject);
         } else {
             searchPage.appendChild(sectionToInject);
         }
-        return false;
-    }
-
-    // Inject immediately — don't wait for Movies/Shows sections to load
-    const isAfterPrimary = positionSection();
-
-    // If not yet positioned after Movies/Shows, watch for them to appear
-    // and reposition once they do
-    if (!isAfterPrimary) {
-        const observer = new MutationObserver(() => {
-            if (findLastPrimarySection()) {
-                observer.disconnect();
-                clearTimeout(fallbackTimeout);
-                positionSection();
-            }
-        });
-        observer.observe(searchPage, { childList: true, subtree: true });
-        // Safety timeout — disconnect if primary sections never appear
-        const fallbackTimeout = setTimeout(() => observer.disconnect(), 5000);
-    }
+    }, SECTION_PLACEMENT_TIMEOUT_MS);
 };
 
 /**
