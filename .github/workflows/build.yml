@@ -56,6 +56,15 @@ jobs:
       - name: Test
         run: dotnet test Jellyfin.Plugin.JellyfinEnhanced.Tests/JellyfinEnhanced.Tests.csproj -c Release --logger "console;verbosity=normal"
 
+      # Line-coverage ratchet over the plugin assembly (coverlet.collector).
+      # The threshold lives in scripts/check-dotnet-coverage.js — set just
+      # below the measured coverage when introduced; raise it as coverage
+      # grows, never lower it.
+      - name: Coverage (plugin assembly line-coverage ratchet)
+        run: |
+          dotnet test Jellyfin.Plugin.JellyfinEnhanced.Tests/JellyfinEnhanced.Tests.csproj -c Release --collect:"XPlat Code Coverage"
+          node scripts/check-dotnet-coverage.js
+
   client-scripts:
     name: Client scripts (lint + syntax + types)
     runs-on: ubuntu-latest
@@ -97,6 +106,12 @@ jobs:
 
       - name: Client unit tests (vitest)
         run: npm run test:client
+
+      # Line-coverage ratchet over src/core/ (the typed platform layer).
+      # The threshold lives in vitest.config.ts — set just below the measured
+      # coverage when introduced; raise it as coverage grows, never lower it.
+      - name: Client coverage gate (src/core)
+        run: npm run test:client:coverage
 
   # Real-browser verification against a dockerized, freshly seeded Jellyfin 12
   # (e2e/docker/): boot, tags, panel, navigation survival, live updates and the

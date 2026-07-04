@@ -9,6 +9,7 @@
     "typecheck": "tsc -p jsconfig.json",
     "typecheck:src": "tsc -p tsconfig.src.json",
     "test:client": "vitest run",
+    "test:client:coverage": "vitest run --coverage",
     "syntax": "node scripts/check-syntax.js",
     "build:bundle": "node scripts/build-bundle.js",
     "watch": "node scripts/build-bundle.js --watch",
@@ -25,6 +26,7 @@
     }
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "4.1.9",
     "esbuild": "0.28.1",
     "eslint": "^9.39.0",
     "jsdom": "29.1.1",
