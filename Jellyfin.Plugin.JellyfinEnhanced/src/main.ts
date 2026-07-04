@@ -40,6 +40,7 @@ import './core/tag-renderer-base';
 // registers the config-changed reaction on the hub.
 import './core/live';
 import './core/live-config';
+import './core/live-rows';
 
 // Area barrels — each imports that area's converted modules in execution
 // order. Areas own their own ordering without touching this file: main.ts

@@ -7,6 +7,7 @@
 // called by js/plugin.js Stage 6 and PluginPages/DownloadsPage.html.
 
 import { register as registerLifecycle } from '../core/lifecycle';
+import { LIVE } from '../core/live';
 import { JE } from './arr-globals';
 import { clearAvatarObjectUrlCache, loadAllData, state } from './requests-page-data';
 import { createPageContainer, renderPage } from './requests-page-render';
@@ -170,6 +171,41 @@ function hidePage(): void {
     clearAvatarObjectUrlCache(true);
     stopPolling();
     stopLocationWatcher();
+}
+
+// Debounce timer for the live-push refresh (LibraryChanged can arrive batched).
+let liveNudgeTimer: ReturnType<typeof setTimeout> | null = null;
+let liveNudgeWired = false;
+
+/**
+ * Subscribe to the live hub so a library push refreshes the requests/downloads
+ * view immediately. Idempotent (initialize can run more than once); the poll
+ * interval remains the fallback for Seerr-only state changes.
+ */
+function setupLiveNudge(): void {
+    if (liveNudgeWired) return;
+    const live = JE.core?.live;
+    if (!live) return; // hub unavailable (older host) — polling still covers it
+    liveNudgeWired = true;
+
+    const unsub = live.on(LIVE.LIBRARY_CHANGED, () => {
+        const visible = state.pageVisible || state._pluginPageVisible || state._customTabMode;
+        if (!visible || state.isLoading) return;
+        if (document.visibilityState === 'hidden') return;
+        if (liveNudgeTimer) clearTimeout(liveNudgeTimer);
+        liveNudgeTimer = setTimeout(() => {
+            liveNudgeTimer = null;
+            if (!state.isLoading) void loadAllData();
+        }, 500);
+    });
+
+    lifecycle.track(unsub);
+    lifecycle.onTeardown(() => {
+        if (liveNudgeTimer) {
+            clearTimeout(liveNudgeTimer);
+            liveNudgeTimer = null;
+        }
+    });
 }
 
 /**
@@ -339,6 +375,14 @@ function initialize(): void {
     }
 
     injectStyles();
+
+    // Live nudge: a completed download landing in the Jellyfin library fires a
+    // LibraryChanged push — refresh the requests/downloads view at once instead
+    // of waiting for the next poll tick. Additive: the interval poll stays as the
+    // fallback (Seerr request-state transitions are NOT pushed over the Jellyfin
+    // socket, so polling still owns those). Set up in every mode (dedicated page,
+    // custom tab, plugin page) before the plugin-pages early-return below.
+    setupLiveNudge();
 
     const usingPluginPages = pluginPagesExists && config.DownloadsUsePluginPages;
     if (usingPluginPages) {
