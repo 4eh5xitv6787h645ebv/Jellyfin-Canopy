@@ -1189,6 +1189,10 @@
                                     <div class="je-setting-description" data-desc-for="jellyseerrExcludeBlocklistedItems">
                                         <div class="fieldDescription je-field-desc-xl">When enabled, items marked as blocklisted in Seerr will not appear in similar/recommended suggestions.</div>
                                     </div>
+                                    <div class="checkboxContainer"><label><input id="jellyseerrRespectParentalRatings" data-config-key="JellyseerrRespectParentalRatings" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Respect parental ratings</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="jellyseerrRespectParentalRatings">
+                                        <div class="fieldDescription je-field-desc-xl">Hide Seerr search &amp; discovery results a user could not watch once requested, using that user's own Jellyfin content-rating limit (Maximum Parental Rating) and blocked-unrated settings. Only affects accounts that already have a rating restriction set in Jellyfin; administrators and users with no limit see everything. Tag-based restrictions can't apply to Seerr results (those titles aren't in your library yet). Default: on.</div>
+                                    </div>
                                 </div>
                             </details>
 
@@ -1492,6 +1496,13 @@
                             </div>
                                 <div class="je-setting-description" data-desc-for="jellyseerrResponseCacheTtlMinutes">
                                     <div class="fieldDescription">How long Seerr API responses (search, discovery, recommendations) are cached. Default: 10 minutes.</div>
+                                </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="jellyseerrParentalRatingCacheTtlMinutes">Parental Rating Cache TTL (min)</label>
+                                <input id="jellyseerrParentalRatingCacheTtlMinutes" data-config-key="JellyseerrParentalRatingCacheTtlMinutes" data-config-int="" data-config-fallback="1440" is="emby-input" type="number" min="1" value="1440"/>
+                            </div>
+                                <div class="je-setting-description" data-desc-for="jellyseerrParentalRatingCacheTtlMinutes">
+                                    <div class="fieldDescription">How long a title's resolved content rating is cached for the "Respect parental ratings" filter. Certifications rarely change, so this is long by default (1440 minutes = 24 hours).</div>
                                 </div>
                             <div class="inputContainer">
                                 <label class="inputLabel" for="jellyseerrUserIdCacheTtlMinutes">User ID Cache TTL (min)</label>
