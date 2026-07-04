@@ -1,5 +1,15 @@
-// /js/others/splashscreen.js
-(function() {
+// src/bootstrap/splashscreen.ts
+//
+// Out-of-band loader: compiled to its own dist/splashscreen.js IIFE and served
+// separately (js/plugin.js loads it early, before initialize()). It is NOT part
+// of je.bundle.js — it must run before the main bundle so the splash covers the
+// whole boot.
+//
+// Attaches JE.initializeSplashScreen / JE.hideSplashScreen to the shared
+// namespace. Behaviour is identical to the former js/others/splashscreen.js;
+// this is a typed port.
+
+(function () {
     'use strict';
 
     const CONFIG = {
@@ -22,19 +32,19 @@
         '.editorsChoiceItemBanner'
     ];
 
-    let splashElement = null;
-    let styleElement = null;
-    let permanentBlockStyle = null;
-    let readyObserver = null;
-    let mediaBarBlocker = null;
-    let progressTimer = null;
-    let hardTimeout = null;
+    let splashElement: HTMLDivElement | null = null;
+    let styleElement: HTMLStyleElement | null = null;
+    let permanentBlockStyle: HTMLStyleElement | null = null;
+    let readyObserver: MutationObserver | null = null;
+    let mediaBarBlocker: MutationObserver | null = null;
+    let progressTimer: number | null = null;
+    let hardTimeout: number | null = null;
     let isHidden = false;
 
     /**
      * Installs preemptive CSS to hide competing splash screens before rendering
      */
-    function installPreemptiveStyles() {
+    function installPreemptiveStyles(): void {
         try {
             const style = document.createElement('style');
             style.id = 'je-preempt-styles';
@@ -57,7 +67,7 @@
     /**
      * Installs permanent CSS block for media-bar and other competing splash screens
      */
-    function installPermanentBlock() {
+    function installPermanentBlock(): void {
         if (permanentBlockStyle) {
             return;
         }
@@ -87,7 +97,7 @@
     /**
      * Removes any media-bar splash elements from the DOM
      */
-    function removeMediaBarSplash() {
+    function removeMediaBarSplash(): void {
         const mediaBarElements = document.querySelectorAll('#page-loader, .bar-loading:not(.je-loading)');
         mediaBarElements.forEach(element => {
             if (element && element.parentNode) {
@@ -100,7 +110,7 @@
     /**
      * Starts a MutationObserver to block media-bar injection attempts
      */
-    function startMediaBarBlocker() {
+    function startMediaBarBlocker(): void {
         if (mediaBarBlocker) {
             return;
         }
@@ -126,18 +136,15 @@
 
     /**
      * Checks if an element is visible
-     * @param {Element|null} element
-     * @returns {boolean}
      */
-    function isElementShown(element) {
+    function isElementShown(element: Element | null): boolean {
         return !!(element && element instanceof HTMLElement && element.offsetParent !== null);
     }
 
     /**
      * Checks if the Jellyfin UI is ready for interaction
-     * @returns {boolean}
      */
-    function isUIReady() {
+    function isUIReady(): boolean {
         for (const selector of READY_SELECTORS) {
             const element = document.querySelector(selector);
             if (isElementShown(element) || (element && selector === '#mainAnimatedPage')) {
@@ -149,9 +156,9 @@
 
     /**
      * Hides the splash screen with animation
-     * @param {string} reason - Reason for hiding
+     * @param reason - Reason for hiding
      */
-    function hideSplashScreen(reason) {
+    function hideSplashScreen(reason?: string): void {
         if (isHidden) {
             return;
         }
@@ -217,7 +224,7 @@
     /**
      * Creates and displays the splash screen
      */
-    function createSplashScreen() {
+    function createSplashScreen(): void {
         if (splashElement) {
             return;
         }
@@ -295,7 +302,7 @@
         document.head.appendChild(styleElement);
 
         const pluginConfig = window.JellyfinEnhanced?.pluginConfig || {};
-        const imageUrl = pluginConfig.SplashScreenImageUrl || '/web/assets/img/banner-light.png';
+        const imageUrl = (pluginConfig.SplashScreenImageUrl as string) || '/web/assets/img/banner-light.png';
 
         splashElement = document.createElement('div');
         splashElement.className = 'je-loading';
@@ -322,7 +329,7 @@
     /**
      * Starts the progress bar animation
      */
-    function startProgressAnimation() {
+    function startProgressAnimation(): void {
         const progressBar = document.getElementById('je-progress-bar');
         const unfilledBar = document.getElementById('je-unfilled-bar');
 
@@ -350,7 +357,7 @@
     /**
      * Starts observing the DOM for UI ready state
      */
-    function startReadyObserver() {
+    function startReadyObserver(): void {
         if (readyObserver) {
             return;
         }
@@ -391,7 +398,7 @@
     /**
      * Cleanup function to remove all blocking styles
      */
-    function cleanup() {
+    function cleanup(): void {
         document.documentElement.classList.remove('je-splash-booting');
 
         const preemptStyle = document.getElementById('je-preempt-styles');
@@ -413,7 +420,7 @@
     /**
      * Initializes the splash screen
      */
-    function initializeSplashScreen() {
+    function initializeSplashScreen(): void {
         const pluginConfig = window.JellyfinEnhanced?.pluginConfig || {};
 
         if (!pluginConfig.EnableCustomSplashScreen) {
@@ -442,7 +449,7 @@
     /**
      * Hide splash screen
      */
-    function publicHideSplashScreen() {
+    function publicHideSplashScreen(): void {
         hideSplashScreen('requested by plugin.js');
     }
 
@@ -450,10 +457,8 @@
     installPreemptiveStyles();
 
     // Export functions to global namespace
-    window.JellyfinEnhanced = window.JellyfinEnhanced || {};
     window.JellyfinEnhanced.initializeSplashScreen = initializeSplashScreen;
     window.JellyfinEnhanced.hideSplashScreen = publicHideSplashScreen;
 
     console.log('🪼 Jellyfin Enhanced: Splash screen module loaded.');
-
 })();

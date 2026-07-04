@@ -195,7 +195,7 @@
         if (typeof JE.loadTranslations === 'function') return;
         await new Promise((resolve) => {
             const script = document.createElement('script');
-            script.src = ApiClient.getUrl(`/JellyfinEnhanced/js/enhanced/translations.js?v=${getScriptVersion()}`);
+            script.src = ApiClient.getUrl(`/JellyfinEnhanced/dist/translations.js?v=${getScriptVersion()}`);
             script.onload = () => resolve();
             script.onerror = (e) => {
                 console.error('🪼 Jellyfin Enhanced: Failed to load translations module', e);
@@ -303,7 +303,7 @@
             return;
         }
         const splashScript = document.createElement('script');
-        splashScript.src = ApiClient.getUrl('/JellyfinEnhanced/js/others/splashscreen.js?v=' + getScriptVersion());
+        splashScript.src = ApiClient.getUrl('/JellyfinEnhanced/dist/splashscreen.js?v=' + getScriptVersion());
         splashScript.onload = () => {
             if (typeof JE.initializeSplashScreen === 'function') {
                 JE.initializeSplashScreen(); // Initialize if available
@@ -373,7 +373,7 @@
             // Only load login image if enabled (default to false)
             if (config?.EnableLoginImage === true) {
                 const loginImageScript = document.createElement('script');
-                loginImageScript.src = ApiClient.getUrl('/JellyfinEnhanced/js/extras/login-image.js?v=' + getScriptVersion());
+                loginImageScript.src = ApiClient.getUrl('/JellyfinEnhanced/dist/login-image.js?v=' + getScriptVersion());
                 loginImageScript.onerror = () => console.error('🪼 Jellyfin Enhanced: Failed to load login image script.');
                 document.head.appendChild(loginImageScript);
             }

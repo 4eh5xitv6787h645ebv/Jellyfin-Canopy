@@ -36,8 +36,15 @@ const path = require('path');
 const REPO_ROOT = path.join(__dirname, '..');
 const PROJECT_DIR = path.join(REPO_ROOT, 'Jellyfin.Plugin.JellyfinEnhanced');
 const SRC_ROOT = path.join(PROJECT_DIR, 'src');
+const BOOTSTRAP_ROOT = path.join(SRC_ROOT, 'bootstrap');
 const OUT_DIR = path.join(PROJECT_DIR, 'dist');
 const OUT_FILE = path.join(OUT_DIR, 'je.bundle.js');
+
+// Out-of-band loaders: each compiles to its OWN dist/<name>.js IIFE (not part
+// of je.bundle.js) because js/plugin.js fetches them separately — before the
+// main bundle / before login. entryNames default to '[name]', so
+// src/bootstrap/splashscreen.ts -> dist/splashscreen.js, etc.
+const BOOTSTRAP_ENTRIES = ['splashscreen.ts', 'login-image.ts', 'translations.ts'];
 
 const args = process.argv.slice(2);
 const watchMode = args.includes('--watch');
@@ -106,6 +113,26 @@ function buildOptions() {
     };
 }
 
+/** @returns {import('esbuild').BuildOptions} */
+function bootstrapOptions() {
+    return {
+        entryPoints: BOOTSTRAP_ENTRIES.map((e) => path.join(BOOTSTRAP_ROOT, e)),
+        bundle: true,
+        format: 'iife',
+        minify: !devMode,
+        sourcemap: 'linked',
+        sourceRoot: '/JellyfinEnhanced/js/',
+        outdir: OUT_DIR,
+        metafile: true,
+        logLevel: 'warning',
+        banner: {
+            js: devMode
+                ? '/* Jellyfin Enhanced — generated DEV bootstrap loader (scripts/build-bundle.js --dev). Do not edit; source lives in src/bootstrap/. */'
+                : '/* Jellyfin Enhanced — generated production bootstrap loader (scripts/build-bundle.js). Do not edit; source lives in src/bootstrap/. */',
+        },
+    };
+}
+
 function report() {
     const srcModules = collectSrcModules();
     const rawBytes = srcModules.reduce((sum, s) => sum + fs.statSync(path.join(SRC_ROOT, s)).size, 0);
@@ -117,6 +144,8 @@ function report() {
         `${devMode ? ' (dev, unminified)' : ''}\n` +
         `  raw sources: ${kb(rawBytes)}  bundle: ${kb(bundleBytes)}  sourcemap: ${kb(mapBytes)}`
     );
+    const bootstrapOut = BOOTSTRAP_ENTRIES.map((e) => e.replace(/\.ts$/, '.js')).join(', ');
+    console.log(`Bootstrap loaders -> dist/{${bootstrapOut}}`);
 }
 
 async function build() {
@@ -140,12 +169,15 @@ async function build() {
         }];
         const ctx = await esbuild.context(options);
         await ctx.watch();
+        const bootstrapCtx = await esbuild.context(bootstrapOptions());
+        await bootstrapCtx.watch();
         console.log('Watching src/ for changes (Ctrl+C to stop)...');
         return;
     }
 
     const result = await esbuild.build(buildOptions());
     assertBundleComplete(result.metafile);
+    await esbuild.build(bootstrapOptions());
     report();
 }
 

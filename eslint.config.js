@@ -158,6 +158,7 @@ module.exports = [
         // legacy shapes get typed incrementally. src/core and src/types stay
         // fully strict via the block above.
         files: [
+            'Jellyfin.Plugin.JellyfinEnhanced/src/bootstrap/**/*.ts',
             'Jellyfin.Plugin.JellyfinEnhanced/src/enhanced/**/*.ts',
             'Jellyfin.Plugin.JellyfinEnhanced/src/jellyseerr/**/*.ts',
             'Jellyfin.Plugin.JellyfinEnhanced/src/arr/**/*.ts',

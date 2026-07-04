@@ -1,24 +1,32 @@
-// /js/extras/login-image.js
+// src/bootstrap/login-image.ts
+//
+// Out-of-band loader: compiled to its own dist/login-image.js IIFE and served
+// separately (js/plugin.js loads it pre-login, config-gated on EnableLoginImage).
+// It is NOT part of je.bundle.js — it runs on the login page before the user is
+// authenticated and before the main bundle loads.
+//
+// Attaches JE.initializeLoginImage to the shared namespace. Behaviour is
+// identical to the former js/extras/login-image.js; this is a typed port.
 
-(function() {
+(function () {
     'use strict';
 
     // Cleanup handlers
-    let nameInputListener = null;
-    let formObserver = null;
-    let updateTimeout = null;
+    let nameInputListener: (() => void) | null = null;
+    let formObserver: MutationObserver | null = null;
+    let updateTimeout: number | null = null;
 
     // Image cache to store preloaded images
-    const imageCache = new Map();
+    const imageCache = new Map<string, HTMLImageElement>();
 
     /**
      * Checks if a user is currently logged in by verifying the existence of the ApiClient
      * and the current user's session information.
-     * @returns {boolean} True if a user is logged in, false otherwise.
      */
-    const isUserLoggedIn = () => {
+    const isUserLoggedIn = (): boolean => {
         try {
-            const loggedIn = window.ApiClient && window.ApiClient._currentUser && window.ApiClient._currentUser.Id;
+            const api = window.ApiClient as ({ _currentUser?: { Id?: string } } | undefined);
+            const loggedIn = api && api._currentUser && api._currentUser.Id;
             return !!loggedIn;
         } catch (error) {
             console.error('🪼 Jellyfin Enhanced: Login Image - Error checking login status.', error);
@@ -26,20 +34,18 @@
         }
     };
 
-    const getServerAddress = () => window.location.origin;
-    const getUserImageUrl = (userId, quality = 40) => userId ? `${getServerAddress()}/Users/${userId}/Images/Primary?quality=${quality}` : '';
+    const getServerAddress = (): string => window.location.origin;
+    const getUserImageUrl = (userId: string | null | undefined, quality = 40): string =>
+        userId ? `${getServerAddress()}/Users/${userId}/Images/Primary?quality=${quality}` : '';
 
     /**
      * Preloads and caches an image URL.
-     * @param {string} url - The image URL to preload.
-     * @param {string} username - The username associated with this image.
-     * @returns {Promise<HTMLImageElement>} Promise that resolves with the loaded image.
      */
-    const preloadImage = (url, username) => {
+    const preloadImage = (url: string, username: string): Promise<HTMLImageElement> => {
         return new Promise((resolve, reject) => {
             // Check if already cached
             if (imageCache.has(url)) {
-                resolve(imageCache.get(url));
+                resolve(imageCache.get(url)!);
                 return;
             }
 
@@ -58,18 +64,18 @@
     /**
      * Preloads all user images from the login page cards.
      */
-    const preloadAllUserImages = () => {
+    const preloadAllUserImages = (): void => {
         const userCardsContainer = document.getElementById('divUsers');
         if (!userCardsContainer) {
             return;
         }
 
-        const userCards = userCardsContainer.querySelectorAll('.cardContent[data-username]');
-        const preloadPromises = [];
+        const userCards = userCardsContainer.querySelectorAll<HTMLElement>('.cardContent[data-username]');
+        const preloadPromises: Promise<HTMLImageElement>[] = [];
 
         userCards.forEach((card) => {
-            const username = card.dataset.username;
-            const cardImageContainer = card.querySelector('.cardImageContainer');
+            const username = card.dataset.username ?? '';
+            const cardImageContainer = card.querySelector<HTMLElement>('.cardImageContainer');
 
             if (cardImageContainer && cardImageContainer.style.backgroundImage) {
                 const style = cardImageContainer.style.backgroundImage;
@@ -83,6 +89,7 @@
                     preloadPromises.push(
                         preloadImage(highQualityUrl, username).catch(() => {
                             // Silently fail for individual images
+                            return new Image();
                         })
                     );
                 }
@@ -90,23 +97,22 @@
         });
 
         if (preloadPromises.length > 0) {
-            Promise.all(preloadPromises);
+            void Promise.all(preloadPromises);
         }
     };
 
     /**
      * Gets the label element for the username input.
-     * @returns {HTMLElement|null} The label element or null if not found.
      */
-    const getUserLabel = () => {
+    const getUserLabel = (): HTMLElement | null => {
         const form = document.querySelector('.manualLoginForm');
-        return form ? form.querySelector('label[for="txtManualName"]') : null;
+        return form ? form.querySelector<HTMLElement>('label[for="txtManualName"]') : null;
     };
 
     /**
      * Resets the form state to show username input and hide profile image.
      */
-    const resetFormState = () => {
+    const resetFormState = (): void => {
         const userNameInput = document.getElementById('txtManualName');
         const userLabel = getUserLabel();
         const imgContainer = document.getElementById('userProfileImageContainer');
@@ -118,11 +124,8 @@
 
     /**
      * Cleans up an image URL by removing unnecessary parameters and setting quality.
-     * @param {string} rawUrl - The raw URL from the card style.
-     * @param {number} quality - The quality parameter to set (10 for low-res, 90 for high-res).
-     * @returns {string} The cleaned URL.
      */
-    const cleanImageUrl = (rawUrl, quality) => {
+    const cleanImageUrl = (rawUrl: string, quality: number): string => {
         try {
             const url = new URL(rawUrl, window.location.origin);
             url.searchParams.delete('width');
@@ -138,10 +141,8 @@
 
     /**
      * Extracts the base URL without quality parameter from a full image URL.
-     * @param {string} fullUrl - The full image URL.
-     * @returns {string} The base URL without quality parameter.
      */
-    const getBaseImageUrl = (fullUrl) => {
+    const getBaseImageUrl = (fullUrl: string): string => {
         try {
             const url = new URL(fullUrl, window.location.origin);
             url.searchParams.delete('quality');
@@ -153,15 +154,15 @@
 
     /**
      * Creates and displays an image element with progressive loading.
-    /**
      * Uses cached images if available for instant display.
-     * @param {string} baseImageUrl - The base URL for the image (without quality param).
-     * @param {string} currentUsername - The username for alt text.
-     * @param {HTMLElement} imageContainer - The container to append the image to.
-     * @param {HTMLElement} userNameInput - The username input element to hide.
-     * @param {HTMLElement} userLabel - The label element to hide.
      */
-    const displayProgressiveImage = (baseImageUrl, currentUsername, imageContainer, userNameInput, userLabel) => {
+    const displayProgressiveImage = (
+        baseImageUrl: string,
+        currentUsername: string,
+        imageContainer: HTMLElement,
+        userNameInput: HTMLElement | null,
+        userLabel: HTMLElement | null
+    ): void => {
 
         const highQualityUrl = cleanImageUrl(baseImageUrl, 90);
 
@@ -224,8 +225,8 @@
      * Finds the user's profile image and displays it above the password field.
      * It also hides the username input field, as the user is selected from a card.
      */
-    const updateProfilePicture = () => {
-        const userNameInput = document.getElementById('txtManualName');
+    const updateProfilePicture = (): void => {
+        const userNameInput = document.getElementById('txtManualName') as HTMLInputElement | null;
         const manualLoginForm = document.querySelector('.manualLoginForm');
         const userLabel = getUserLabel();
 
@@ -243,17 +244,17 @@
             return;
         }
 
-        let userId = null;
-        let baseImageUrl = null;
+        let userId: string | null = null;
+        let baseImageUrl: string | null = null;
 
         // Try to get user ID and image URL from the user cards on the login page
         const userCardsContainer = document.getElementById('divUsers');
         if (userCardsContainer) {
-            const userCardContent = userCardsContainer.querySelector(`.cardContent[data-username="${currentUsername}"]`);
+            const userCardContent = userCardsContainer.querySelector<HTMLElement>(`.cardContent[data-username="${currentUsername}"]`);
             if (userCardContent) {
-                userId = userCardContent.dataset.userid;
+                userId = userCardContent.dataset.userid ?? null;
 
-                const cardImageContainer = userCardContent.querySelector('.cardImageContainer');
+                const cardImageContainer = userCardContent.querySelector<HTMLElement>('.cardImageContainer');
                 if (cardImageContainer && cardImageContainer.style.backgroundImage) {
                     const style = cardImageContainer.style.backgroundImage;
                     const urlMatch = style.match(/url\(['"]?(.*?)['"]?\)/);
@@ -302,15 +303,15 @@
     /**
      * Debounced version of updateProfilePicture to avoid excessive updates.
      */
-    const debouncedUpdate = () => {
-        clearTimeout(updateTimeout);
+    const debouncedUpdate = (): void => {
+        if (updateTimeout) clearTimeout(updateTimeout);
         updateTimeout = setTimeout(updateProfilePicture, 50);
     };
 
     /**
      * Cleans up event listeners and observers.
      */
-    const cleanup = () => {
+    const cleanup = (): void => {
         const userNameInput = document.getElementById('txtManualName');
 
         if (nameInputListener && userNameInput) {
@@ -332,13 +333,13 @@
     /**
      * Applies progressive loading to all user cards on the main login page.
      */
-    const applyProgressiveLoadingToCards = () => {
+    const applyProgressiveLoadingToCards = (): void => {
         const userCardsContainer = document.getElementById('divUsers');
         if (!userCardsContainer) {
             return;
         }
 
-        const cardImageContainers = userCardsContainer.querySelectorAll('.cardImageContainer');
+        const cardImageContainers = userCardsContainer.querySelectorAll<HTMLElement>('.cardImageContainer');
 
         cardImageContainers.forEach((container, index) => {
             // Skip if already processed
@@ -410,7 +411,7 @@
     /**
      * Sets up event listeners and observers to watch for changes to the login form.
      */
-    const setupObservers = () => {
+    const setupObservers = (): void => {
         const userNameInput = document.getElementById('txtManualName');
         const manualLoginForm = document.querySelector('.manualLoginForm');
 
@@ -472,7 +473,7 @@
      * The main initialization function. It checks for the correct page context
      * before running the script's core logic.
      */
-    const initializeLoginImage = () => {
+    const initializeLoginImage = (): void => {
         // Condition 1: If a user is already logged in, we are not on the login page. Stop the script.
         if (isUserLoggedIn()) {
             return;
@@ -499,10 +500,8 @@
     };
 
     // Export functions to global namespace
-    window.JellyfinEnhanced = window.JellyfinEnhanced || {};
     window.JellyfinEnhanced.initializeLoginImage = initializeLoginImage;
 
     // Start the initialization process when the script loads.
     initializeLoginImage();
-
 })();

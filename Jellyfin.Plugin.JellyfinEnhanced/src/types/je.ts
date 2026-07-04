@@ -377,4 +377,11 @@ export interface JEGlobal {
     };
     helpers?: JELegacyHelpers;
     tagPipeline?: TagPipelineLike;
+    // Out-of-band bootstrap surfaces attached by the separately-served loaders
+    // (src/bootstrap/*) before the main bundle runs. Optional: each is only
+    // present once its loader script has executed.
+    initializeSplashScreen?: () => void;
+    hideSplashScreen?: () => void;
+    initializeLoginImage?: () => void;
+    loadTranslations?: () => Promise<Record<string, string>>;
 }
