@@ -163,11 +163,11 @@ https://raw.githubusercontent.com/n00bcodr/jellyfin-plugins/main/10.11/manifest.
 
 ### Plugin Compatibility
 
-| Plugin | Jellyfin 10.11 | Jellyfin 10.10 | Notes |
-|--------|----------------|----------------|-------|
-| Jellyfin Enhanced | ✅ (final 11.x release only) | ❌ | New releases (v12+) require Jellyfin 12 |
-| Jellyfin Tweaks | ✅ | ✅ | |
-| JS Injector | ✅ | ✅ |  |
+| Plugin | Jellyfin 12 | Jellyfin 10.11 | Jellyfin 10.10 | Notes |
+|--------|-------------|----------------|----------------|-------|
+| Jellyfin Enhanced | ✅ (v12+ releases) | ✅ (final 11.x release only) | ❌ | See [Migrating to v12](../installation/migrating-to-v12.md) |
+| Jellyfin Tweaks | ❓ | ✅ | ✅ | Check the project page for Jellyfin 12 support |
+| JS Injector | ❓ | ✅ | ✅ | Check the project page for Jellyfin 12 support |
 
 ### Theme Compatibility
 
