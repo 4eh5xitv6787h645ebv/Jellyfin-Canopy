@@ -7,12 +7,13 @@ using Xunit;
 namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services;
 
 /// <summary>
-/// Covers the pure helpers on <see cref="JellyseerrUserResolver"/> (hoisted from the
-/// two auto-request services). NormalizeUserId decides cache-key identity for the
-/// process-wide Jellyseerr user-id cache, and GetConfiguredUrls decides which base
-/// URLs the plugin fans requests out to — both must be stable across refactors.
+/// Covers the pure helpers on <see cref="JellyseerrClient"/> (formerly
+/// JellyseerrUserResolver, now folded into the one Seerr client).
+/// NormalizeUserId decides cache-key identity for the process-wide Jellyseerr
+/// user caches, and GetConfiguredUrls decides which base URLs the plugin fans
+/// requests out to — both must be stable across refactors.
 /// </summary>
-public class JellyseerrUserResolverTests
+public class JellyseerrClientTests
 {
     // ─── NormalizeUserId ─────────────────────────────────────────────────────
 
@@ -24,7 +25,7 @@ public class JellyseerrUserResolverTests
     [InlineData("", "")]
     public void NormalizeUserId_StripsDashesAndLowercases(string input, string expected)
     {
-        Assert.Equal(expected, JellyseerrUserResolver.NormalizeUserId(input));
+        Assert.Equal(expected, JellyseerrClient.NormalizeUserId(input));
     }
 
     [Fact]
@@ -33,9 +34,9 @@ public class JellyseerrUserResolverTests
         // The three call patterns that historically produced distinct keys must collapse to one.
         var guid = Guid.Parse("abcdef12-3456-7890-abcd-ef1234567890");
 
-        var canonical = JellyseerrUserResolver.NormalizeUserId(guid.ToString("N"));
-        var hyphenated = JellyseerrUserResolver.NormalizeUserId(guid.ToString());
-        var uppercased = JellyseerrUserResolver.NormalizeUserId(guid.ToString().ToUpperInvariant());
+        var canonical = JellyseerrClient.NormalizeUserId(guid.ToString("N"));
+        var hyphenated = JellyseerrClient.NormalizeUserId(guid.ToString());
+        var uppercased = JellyseerrClient.NormalizeUserId(guid.ToString().ToUpperInvariant());
 
         Assert.Equal(canonical, hyphenated);
         Assert.Equal(canonical, uppercased);
@@ -46,19 +47,19 @@ public class JellyseerrUserResolverTests
     [Fact]
     public void GetConfiguredUrls_Null_ReturnsEmpty()
     {
-        Assert.Empty(JellyseerrUserResolver.GetConfiguredUrls(null));
+        Assert.Empty(JellyseerrClient.GetConfiguredUrls(null));
     }
 
     [Fact]
     public void GetConfiguredUrls_BlankAndWhitespaceEntries_AreDropped()
     {
-        Assert.Empty(JellyseerrUserResolver.GetConfiguredUrls("  \n , ,\r\n  "));
+        Assert.Empty(JellyseerrClient.GetConfiguredUrls("  \n , ,\r\n  "));
     }
 
     [Fact]
     public void GetConfiguredUrls_SplitsOnNewlinesAndCommas_TrimsAndStripsTrailingSlash()
     {
-        var urls = JellyseerrUserResolver.GetConfiguredUrls(
+        var urls = JellyseerrClient.GetConfiguredUrls(
             " http://seerr-a:5055/ \r\nhttp://seerr-b:5055,  https://seerr-c/base/ \n");
 
         Assert.Equal(
@@ -70,15 +71,15 @@ public class JellyseerrUserResolverTests
     public void GetConfiguredUrls_EntryOfOnlySlashes_IsDropped()
     {
         // "/" trims to empty after TrimEnd('/') and must not survive as an empty base URL.
-        var urls = JellyseerrUserResolver.GetConfiguredUrls("/,http://seerr:5055");
+        var urls = JellyseerrClient.GetConfiguredUrls("/,http://seerr:5055");
 
         Assert.Equal(new[] { "http://seerr:5055" }, urls);
     }
 
     // ─── IPluginConfigProvider seam ──────────────────────────────────────────
 
-    private static JellyseerrUserResolver NewResolver(FakePluginConfigProvider provider)
-        => new(new ThrowingHttpClientFactory(), NullLogger.Instance, provider, "[Test]");
+    private static JellyseerrClient NewClient(FakePluginConfigProvider provider)
+        => new(new ThrowingHttpClientFactory(), NullLogger<JellyseerrClient>.Instance, null!, new SeerrCache(provider), provider);
 
     [Fact]
     public async Task GetJellyseerrUserId_ReadsConfigThroughInjectedProvider_AndSkipsWorkWhenUnconfigured()
@@ -86,13 +87,13 @@ public class JellyseerrUserResolverTests
         // Plugin not loaded (provider returns null): resolver must bail out
         // before any HTTP call — the throwing factory proves no request is made.
         var provider = new FakePluginConfigProvider(config: null);
-        var resolver = NewResolver(provider);
-        Assert.Null(await resolver.GetJellyseerrUserId("abcdef1234567890abcdef1234567890"));
+        var client = NewClient(provider);
+        Assert.Null(await client.GetJellyseerrUserId("abcdef1234567890abcdef1234567890"));
 
-        // Live provider re-read: same resolver, config appears but without
+        // Live provider re-read: same client, config appears but without
         // URL/API key — the config-gate still short-circuits before HTTP.
         provider.Current = new PluginConfiguration { JellyseerrUrls = "", JellyseerrApiKey = "" };
-        Assert.Null(await resolver.GetJellyseerrUserId("abcdef1234567890abcdef1234567890"));
+        Assert.Null(await client.GetJellyseerrUserId("abcdef1234567890abcdef1234567890"));
     }
 
     private sealed class ThrowingHttpClientFactory : IHttpClientFactory

@@ -1,8 +1,8 @@
 using System.Text.Json.Nodes;
-using Jellyfin.Plugin.JellyfinEnhanced.Controllers;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
 using Jellyfin.Plugin.JellyfinEnhanced.Model.Arr;
 using Jellyfin.Plugin.JellyfinEnhanced.Tests.TestDoubles;
+using Jellyfin.Plugin.JellyfinEnhanced.Services.Arr;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -10,29 +10,25 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers;
 
 /// <summary>
 /// Covers the shared Sonarr/Radarr fetch plumbing in
-/// <see cref="JellyfinEnhancedControllerBase"/>.FetchAndMapAsync: it must use the
-/// named arr client, attach the API key per-request (never on the client's
-/// DefaultRequestHeaders), and honor the caller's per-endpoint timeout.
+/// <see cref="ArrFetchService"/>.FetchAndMapAsync (extracted from the former
+/// controller-base helper): it must use the named arr client, attach the API
+/// key per-request (never on the client's DefaultRequestHeaders), and honor
+/// the caller's per-endpoint timeout.
 /// </summary>
 public class ArrHttpPlumbingTests
 {
-    private sealed class ProbeController : JellyfinEnhancedControllerBase
-    {
-        public ProbeController(IHttpClientFactory httpClientFactory)
-            : base(httpClientFactory, NullLogger.Instance, null!, null!, null!)
-        {
-        }
+    private static ArrFetchService NewService(IHttpClientFactory httpClientFactory)
+        => new(httpClientFactory, NullLogger<ArrFetchService>.Instance);
 
-        public Task<(string Result, string? Error)> Probe(ArrInstance instance, TimeSpan timeout)
-            => FetchAndMapAsync(
-                instance,
-                "/api/v3/queue",
-                node => node?.ToJsonString() ?? "null",
-                emptyResult: "empty",
-                timeout,
-                contextLabel: "test queue",
-                CancellationToken.None);
-    }
+    private static Task<(string Result, string? Error)> Probe(ArrFetchService service, ArrInstance instance, TimeSpan timeout)
+        => service.FetchAndMapAsync(
+            instance,
+            "/api/v3/queue",
+            node => node?.ToJsonString() ?? "null",
+            emptyResult: "empty",
+            timeout,
+            contextLabel: "test queue",
+            CancellationToken.None);
 
     private static ArrInstance Instance(string url) => new ArrInstance
     {
@@ -47,9 +43,9 @@ public class ArrHttpPlumbingTests
         var handler = new RecordingHttpMessageHandler();
         handler.AddResponse("/api/v3/queue", """{"records":[]}""");
         var factory = new RecordingHttpClientFactory(handler);
-        var controller = new ProbeController(factory);
+        var service = NewService(factory);
 
-        var (result, error) = await controller.Probe(Instance("http://localhost:8989"), TimeSpan.FromSeconds(10));
+        var (result, error) = await Probe(service, Instance("http://localhost:8989"), TimeSpan.FromSeconds(10));
 
         Assert.Null(error);
         Assert.Equal("""{"records":[]}""", result);
@@ -71,9 +67,9 @@ public class ArrHttpPlumbingTests
         var handler = new RecordingHttpMessageHandler();
         handler.AddResponse("/api/v3/queue", "[]");
         var factory = new RecordingHttpClientFactory(handler);
-        var controller = new ProbeController(factory);
+        var service = NewService(factory);
 
-        await controller.Probe(Instance("http://localhost:8989"), TimeSpan.FromSeconds(15));
+        await Probe(service, Instance("http://localhost:8989"), TimeSpan.FromSeconds(15));
 
         // The historical per-endpoint deadline (10s links/requests, 15s calendar)
         // is preserved on the instance the factory handed out for this call.
@@ -86,9 +82,9 @@ public class ArrHttpPlumbingTests
     {
         var handler = new RecordingHttpMessageHandler();
         var factory = new RecordingHttpClientFactory(handler);
-        var controller = new ProbeController(factory);
+        var service = NewService(factory);
 
-        var (result, error) = await controller.Probe(Instance("http://169.254.169.254:8989"), TimeSpan.FromSeconds(10));
+        var (result, error) = await Probe(service, Instance("http://169.254.169.254:8989"), TimeSpan.FromSeconds(10));
 
         Assert.Equal("empty", result);
         Assert.Equal("URL rejected by SSRF guard", error);

@@ -51,15 +51,24 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     [ApiController]
     public class JellyseerrProxyController : JellyfinEnhancedControllerBase
     {
+        private readonly IJellyseerrClient _jellyseerr;
+
         public JellyseerrProxyController(
             IHttpClientFactory httpClientFactory,
             ILogger<JellyseerrProxyController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
-            IPluginConfigProvider configProvider)
+            IPluginConfigProvider configProvider,
+            IJellyseerrClient jellyseerr)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
+            _jellyseerr = jellyseerr;
         }
+
+        // Thin delegation kept so the ~35 proxy endpoints below read unchanged;
+        // the implementation lives on the injected IJellyseerrClient.
+        private Task<IActionResult> ProxyJellyseerrRequest(string apiPath, HttpMethod method, string? content = null)
+            => _jellyseerr.ProxyRequestAsync(apiPath, method, content, SeerrCaller());
 
         // Seerr's discover API accepts these params (verified live against
         // Seerr 3.2.0). The correct names are `keywords`, `watchProviders`,
@@ -89,13 +98,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             return sb.ToString();
         }
 
-        // Endpoint wrapper: the implementation moved verbatim to
-        // JellyfinEnhancedControllerBase (protected GetJellyseerrStatus) because
-        // IsSeerrReachableCached and JellyseerrUserController.GetJellyseerrUserStatus
-        // also call it. Route and behaviour are unchanged.
         [HttpGet("jellyseerr/status")]
         [Authorize]
-        public new Task<IActionResult> GetJellyseerrStatus() => base.GetJellyseerrStatus();
+        public async Task<IActionResult> GetJellyseerrStatus()
+            => Ok(new { active = await _jellyseerr.GetStatusActiveAsync() });
 
         [HttpGet("jellyseerr/validate")]
         [Authorize(Policy = Policies.RequiresElevation)]
@@ -295,7 +301,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         public async Task<IActionResult> GetJellyseerrQuota()
         {
             var jellyfinUserId = UserHelper.GetCurrentUserId(User)?.ToString() ?? "";
-            var seerrUserId = await GetJellyseerrUserId(jellyfinUserId);
+            var seerrUserId = await _jellyseerr.GetJellyseerrUserId(jellyfinUserId);
             var quotaResult = await ProxyJellyseerrRequest($"/api/v1/user/{seerrUserId}/quota", HttpMethod.Get);
 
             // Reset-time enrichment is best-effort — fall back to the un-enriched

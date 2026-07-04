@@ -80,6 +80,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             // holder). Must stay a singleton: controllers, the user-import task
             // and the plugin's config-change hook all share one instance.
             serviceCollection.AddSingleton<Services.Jellyseerr.ISeerrCache, Services.Jellyseerr.SeerrCache>();
+            // All Seerr plumbing (user resolution + auto-import, proxy core,
+            // watchlist/request helpers) extracted from the controller base.
+            // Singleton: stateless besides the injected ISeerrCache.
+            serviceCollection.AddSingleton<Services.Jellyseerr.IJellyseerrClient, Services.Jellyseerr.JellyseerrClient>();
+            // Shared SSRF-guarded Sonarr/Radarr fetch plumbing for the Arr controllers.
+            serviceCollection.AddSingleton<Services.Arr.ArrFetchService>();
             // Live config hot-reload: subscribes to the plugin's ConfigurationChanged
             // (via IPluginManager), flushes the Seerr caches and pushes a JE-marked
             // GeneralCommand to open sessions so admin saves hot-reload with no

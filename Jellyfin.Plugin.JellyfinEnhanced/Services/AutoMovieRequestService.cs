@@ -26,26 +26,27 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // Track which movies have already been requested to avoid duplicates (with timestamps for expiry)
         private readonly Dictionary<string, Dictionary<string, DateTime>> _requestedMovies = new();
         private readonly object _movieCacheLock = new();
-        private readonly Jellyseerr.JellyseerrUserResolver _jellyseerrUserResolver;
+        private readonly Jellyseerr.IJellyseerrClient _jellyseerrClient;
 
         public AutoMovieRequestService(
             IHttpClientFactory httpClientFactory,
             ILogger<AutoMovieRequestService> logger,
             IUserManager userManager,
             ILibraryManager libraryManager,
-            IPluginConfigProvider configProvider)
+            IPluginConfigProvider configProvider,
+            Jellyseerr.IJellyseerrClient jellyseerrClient)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _userManager = userManager;
             _libraryManager = libraryManager;
             _configProvider = configProvider;
-            _jellyseerrUserResolver = new Jellyseerr.JellyseerrUserResolver(httpClientFactory, logger, configProvider, "[Auto-Movie-Request]");
+            _jellyseerrClient = jellyseerrClient;
         }
 
         private static string[] GetConfiguredUrls(string? urls)
         {
-            return Jellyseerr.JellyseerrUserResolver.GetConfiguredUrls(urls);
+            return Jellyseerr.JellyseerrClient.GetConfiguredUrls(urls);
         }
 
         // Checks a movie to determine if the next movie in collection should be requested.
@@ -588,7 +589,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // Gets the Jellyseerr user ID for a Jellyfin user
         private Task<string?> GetJellyseerrUserId(string jellyfinUserId)
         {
-            return _jellyseerrUserResolver.GetJellyseerrUserId(jellyfinUserId);
+            // allowAutoImport: false — background monitors must never create
+            // Seerr users as a side effect of playback (matches the former
+            // JellyseerrUserResolver semantics: lookup only, no import).
+            return _jellyseerrClient.GetJellyseerrUserId(jellyfinUserId, allowAutoImport: false);
         }
 
         // Clears the request cache (useful for testing or resetting)

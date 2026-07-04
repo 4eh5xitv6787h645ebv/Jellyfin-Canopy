@@ -51,6 +51,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         private readonly ILibraryManager _libraryManager;
         private readonly IUserDataManager _userDataManager;
         private readonly IItemLookupService _itemLookup;
+        private readonly Services.Arr.ArrFetchService _arrFetch;
 
         public ArrCalendarController(
             IHttpClientFactory httpClientFactory,
@@ -60,12 +61,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             IPluginConfigProvider configProvider,
             ILibraryManager libraryManager,
             IUserDataManager userDataManager,
-            IItemLookupService itemLookup)
+            IItemLookupService itemLookup,
+            Services.Arr.ArrFetchService arrFetch)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _libraryManager = libraryManager;
             _userDataManager = userDataManager;
             _itemLookup = itemLookup;
+            _arrFetch = arrFetch;
         }
 
         [HttpGet("arr/calendar")]
@@ -386,7 +389,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             ArrInstance instance, string startIso, string endIso,
             Func<object?, DateTime?> parseDate, CancellationToken ct)
         {
-            return FetchAndMapAsync<List<ArrItem>>(
+            return _arrFetch.FetchAndMapAsync<List<ArrItem>>(
                 instance,
                 $"/api/v3/calendar?includeSeries=true&unmonitored=true&start={startIso}&end={endIso}",
                 data =>
@@ -443,7 +446,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             BackdropUrl = seriesBackdropUrl,
                             EpisodeTvdbId = (int?)episode?["tvdbId"],
                             EpisodeImdbId = (string?)episode?["imdbId"],
-                            RootFolderPath = GetRootFolderFromPath((string?)series?["path"])
+                            RootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)series?["path"])
                         });
                     }
                     return items;
@@ -463,7 +466,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             Action<Dictionary<string, DateTime>, string, object?> addRelease,
             CancellationToken ct)
         {
-            return FetchAndMapAsync<List<ArrItem>>(
+            return _arrFetch.FetchAndMapAsync<List<ArrItem>>(
                 instance,
                 $"/api/v3/calendar?unmonitored=true&start={startIso}&end={endIso}",
                 data =>
@@ -533,7 +536,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                                 BackdropUrl = backdropUrl,
                                 TmdbId = (int?)movie?["tmdbId"],
                                 ImdbId = (string?)movie?["imdbId"],
-                                RootFolderPath = GetRootFolderFromPath((string?)movie?["path"])
+                                RootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)movie?["path"])
                             });
                         }
                     }

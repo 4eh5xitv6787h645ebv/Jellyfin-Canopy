@@ -50,14 +50,21 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     [ApiController]
     public class ArrRequestsController : JellyfinEnhancedControllerBase
     {
+        private readonly IJellyseerrClient _jellyseerr;
+        private readonly Services.Arr.ArrFetchService _arrFetch;
+
         public ArrRequestsController(
             IHttpClientFactory httpClientFactory,
             ILogger<ArrRequestsController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
-            IPluginConfigProvider configProvider)
+            IPluginConfigProvider configProvider,
+            IJellyseerrClient jellyseerr,
+            Services.Arr.ArrFetchService arrFetch)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
+            _jellyseerr = jellyseerr;
+            _arrFetch = arrFetch;
         }
 
         [HttpGet("arr/queue")]
@@ -84,13 +91,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     return Ok(new { items = new List<object>(), errors = new List<object>() });
                 }
 
-                var jellyseerrUserId = await GetJellyseerrUserId(jellyfinUserId);
+                var jellyseerrUserId = await _jellyseerr.GetJellyseerrUserId(jellyfinUserId);
                 if (string.IsNullOrEmpty(jellyseerrUserId))
                 {
                     return Ok(new { items = new List<object>(), errors = new List<object>() });
                 }
 
-                var userRequests = await GetJellyseerrRequestsForUser(jellyseerrUserId);
+                var userRequests = await _jellyseerr.GetRequestsForUser(jellyseerrUserId);
                 if (userRequests == null || userRequests.Count == 0)
                 {
                     return Ok(new { items = new List<object>(), errors = new List<object>() });
@@ -149,7 +156,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         private Task<(List<object> Items, string? Error)> FetchSonarrQueue(ArrInstance instance, HashSet<(int TmdbId, string MediaType)>? allowedRequests, CancellationToken ct)
         {
-            return FetchAndMapAsync<List<object>>(
+            return _arrFetch.FetchAndMapAsync<List<object>>(
                 instance,
                 "/api/v3/queue?includeEpisode=true&includeSeries=true&sortKey=timeleft&sortDirection=ascending&pageSize=1000",
                 data =>
@@ -194,7 +201,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         private Task<(List<object> Items, string? Error)> FetchRadarrQueue(ArrInstance instance, HashSet<(int TmdbId, string MediaType)>? allowedRequests, CancellationToken ct)
         {
-            return FetchAndMapAsync<List<object>>(
+            return _arrFetch.FetchAndMapAsync<List<object>>(
                 instance,
                 "/api/v3/queue?includeMovie=true&pageSize=1000",
                 data =>
@@ -282,7 +289,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     return BadRequest(new { message = "Jellyfin User ID was not provided in claims." });
                 }
 
-                var jellyseerrUser = await GetJellyseerrUser(jellyfinUserId);
+                var jellyseerrUser = await _jellyseerr.GetJellyseerrUser(jellyfinUserId);
 
                 if (jellyseerrUser == null)
                 {
@@ -631,7 +638,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             if (string.IsNullOrEmpty(jellyfinUserId))
                 return BadRequest(new { message = "Jellyfin User ID not found." });
 
-            var jellyseerrUser = await GetJellyseerrUser(jellyfinUserId);
+            var jellyseerrUser = await _jellyseerr.GetJellyseerrUser(jellyfinUserId);
             if (jellyseerrUser == null)
                 return NotFound(new { message = "Current user is not linked to a Seerr account." });
 

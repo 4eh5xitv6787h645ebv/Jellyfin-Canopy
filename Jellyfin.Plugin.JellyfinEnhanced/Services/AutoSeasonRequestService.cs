@@ -27,7 +27,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // In-memory cache of recently requested seasons to avoid duplicates (keyed by tmdbId_seasonNumber, global across all users)
         private readonly Dictionary<string, DateTime> _requestedSeasons = new();
         private readonly object _requestCacheLock = new();
-        private readonly Jellyseerr.JellyseerrUserResolver _jellyseerrUserResolver;
+        private readonly Jellyseerr.IJellyseerrClient _jellyseerrClient;
         private readonly Dictionary<string, (string Content, DateTime CachedAt)> _seriesDetailsCache = new();
         private readonly object _seriesDetailsCacheLock = new();
         private readonly ConcurrentDictionary<string, Task<string?>> _seriesDetailsInFlight = new();
@@ -38,7 +38,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             IUserManager userManager,
             IUserDataManager userDataManager,
             ILibraryManager libraryManager,
-            IPluginConfigProvider configProvider)
+            IPluginConfigProvider configProvider,
+            Jellyseerr.IJellyseerrClient jellyseerrClient)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
@@ -46,12 +47,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             _userDataManager = userDataManager;
             _libraryManager = libraryManager;
             _configProvider = configProvider;
-            _jellyseerrUserResolver = new Jellyseerr.JellyseerrUserResolver(httpClientFactory, logger, configProvider, "[Auto-Season-Request]");
+            _jellyseerrClient = jellyseerrClient;
         }
 
         private static string[] GetConfiguredUrls(string? urls)
         {
-            return Jellyseerr.JellyseerrUserResolver.GetConfiguredUrls(urls);
+            return Jellyseerr.JellyseerrClient.GetConfiguredUrls(urls);
         }
 
         // instance method (was static) because config is now read through the injected provider
@@ -627,7 +628,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // Gets the Jellyseerr user ID for a Jellyfin user
         private Task<string?> GetJellyseerrUserId(string jellyfinUserId)
         {
-            return _jellyseerrUserResolver.GetJellyseerrUserId(jellyfinUserId);
+            // allowAutoImport: false — background monitors must never create
+            // Seerr users as a side effect of playback (matches the former
+            // JellyseerrUserResolver semantics: lookup only, no import).
+            return _jellyseerrClient.GetJellyseerrUserId(jellyfinUserId, allowAutoImport: false);
         }
     }
 }

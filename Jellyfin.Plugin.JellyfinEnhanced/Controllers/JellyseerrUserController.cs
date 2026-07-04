@@ -53,6 +53,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         private readonly IUserDataManager _userDataManager;
         private readonly ILibraryManager _libraryManager;
 
+        private readonly IJellyseerrClient _jellyseerr;
+
         public JellyseerrUserController(
             IHttpClientFactory httpClientFactory,
             ILogger<JellyseerrUserController> logger,
@@ -60,12 +62,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
             IUserDataManager userDataManager,
-            ILibraryManager libraryManager)
+            ILibraryManager libraryManager,
+            IJellyseerrClient jellyseerr)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _userDataManager = userDataManager;
             _libraryManager = libraryManager;
+            _jellyseerr = jellyseerr;
         }
+
+        // Thin delegation kept so the proxy endpoints below read unchanged.
+        private Task<IActionResult> ProxyJellyseerrRequest(string apiPath, HttpMethod method, string? content = null)
+            => _jellyseerr.ProxyRequestAsync(apiPath, method, content, SeerrCaller());
 
         [HttpGet("jellyseerr/user-status")]
         [Authorize]
@@ -86,14 +94,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             if (string.IsNullOrEmpty(jellyfinUserId))
                 return Ok(new { active = false, userFound = false, reason = "no_user" });
 
-            if (IsJellyseerrImportBlocked(jellyfinUserId, config))
+            if (_jellyseerr.IsImportBlocked(jellyfinUserId, config))
             {
                 return Ok(new { active = true, userFound = false, reason = "blocked" });
             }
 
             // GetSeerrUserId uses the user ID cache (30-min TTL).
             // A successful user lookup implicitly proves Seerr is reachable.
-            var jellyseerrUserId = await GetJellyseerrUserId(jellyfinUserId);
+            var jellyseerrUserId = await _jellyseerr.GetJellyseerrUserId(jellyfinUserId);
             if (!string.IsNullOrEmpty(jellyseerrUserId))
             {
                 return Ok(new { active = true, userFound = true, jellyseerrUserId = jellyseerrUserId, reason = "linked" });
@@ -102,15 +110,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // User not found — could be server unreachable, HTML challenge from
             // proxy, or user genuinely not linked. Probe /status to distinguish
             // "unreachable" from "unlinked".
-            var statusResult = await GetJellyseerrStatus() as OkObjectResult;
-            bool active = false;
-            if (statusResult?.Value is not null)
-            {
-                var json = System.Text.Json.JsonSerializer.Serialize(statusResult.Value);
-                using var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.TryGetProperty("active", out var a))
-                    active = a.GetBoolean();
-            }
+            bool active = await _jellyseerr.GetStatusActiveAsync();
             return Ok(new
             {
                 active,
@@ -140,7 +140,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 var userId = jfUser.Id.ToString("N");
                 // allowAutoImport: false — audit must be read-only and must not
                 // create Seerr users as a side effect.
-                var seerrUser = await GetJellyseerrUser(userId, bypassCache: true, allowAutoImport: false);
+                var seerrUser = await _jellyseerr.GetJellyseerrUser(userId, bypassCache: true, allowAutoImport: false);
 
                 if (seerrUser == null)
                 {
@@ -327,7 +327,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         _logger.LogInformation($"[Manual Watchlist Sync] Processing user: {user.Username} ({user.Id})");
 
                         // Get Seerr user ID for this Jellyfin user
-                        var jellyseerrUserId = await GetJellyseerrUserId(user.Id.ToString());
+                        var jellyseerrUserId = await _jellyseerr.GetJellyseerrUserId(user.Id.ToString());
                         if (string.IsNullOrEmpty(jellyseerrUserId))
                         {
                             _logger.LogWarning($"[Manual Watchlist Sync] Could not find Seerr user for {user.Username}");
@@ -335,7 +335,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         }
 
                         // Get watchlist from Seerr
-                        var watchlistItems = await GetJellyseerrWatchlistForUser(jellyseerrUserId);
+                        var watchlistItems = await _jellyseerr.GetWatchlistForUser(jellyseerrUserId);
                         if (watchlistItems == null || watchlistItems.Count == 0)
                         {
                             _logger.LogInformation($"[Manual Watchlist Sync] No watchlist items found for {user.Username}");
@@ -344,7 +344,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                         _logger.LogInformation($"[Manual Watchlist Sync] Found {watchlistItems.Count} watchlist items for {user.Username}");
 
-                        var requestItems = await GetJellyseerrRequestsForUser(jellyseerrUserId);
+                        var requestItems = await _jellyseerr.GetRequestsForUser(jellyseerrUserId);
                         if (requestItems != null && requestItems.Count > 0)
                         {
                             _logger.LogInformation($"[Manual Watchlist Sync] Found {requestItems.Count} request items for {user.Username}");

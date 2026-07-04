@@ -51,14 +51,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     [ApiController]
     public class ArrLinksController : JellyfinEnhancedControllerBase
     {
+        private readonly Services.Arr.ArrFetchService _arrFetch;
+
         public ArrLinksController(
             IHttpClientFactory httpClientFactory,
             ILogger<ArrLinksController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
-            IPluginConfigProvider configProvider)
+            IPluginConfigProvider configProvider,
+            Services.Arr.ArrFetchService arrFetch)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
+            _arrFetch = arrFetch;
         }
 
         // ==================== Arr Links ====================
@@ -325,7 +329,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         private async Task<ArrFetchOutcome> FetchSeriesInfoFromInstance(ArrInstance instance, int tvdbId, CancellationToken ct)
         {
-            var (match, error) = await FetchAndMapAsync<object?>(
+            var (match, error) = await _arrFetch.FetchAndMapAsync<object?>(
                 instance,
                 $"/api/v3/series?tvdbId={tvdbId}",
                 data =>
@@ -348,7 +352,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         episodeCount = (int?)statistics?["episodeCount"] ?? 0,
                         percentOfEpisodes = (double?)statistics?["percentOfEpisodes"] ?? 0,
                         sizeOnDisk = (long?)statistics?["sizeOnDisk"] ?? 0,
-                        rootFolderPath = GetRootFolderFromPath((string?)item["path"])
+                        rootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)item["path"])
                     };
                 },
                 emptyResult: null,
@@ -398,7 +402,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         private async Task<ArrFetchOutcome> FetchMovieInfoFromInstance(ArrInstance instance, int tmdbId, CancellationToken ct)
         {
-            var (match, error) = await FetchAndMapAsync<object?>(
+            var (match, error) = await _arrFetch.FetchAndMapAsync<object?>(
                 instance,
                 $"/api/v3/movie?tmdbId={tmdbId}",
                 data =>
@@ -412,7 +416,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         urlMappings = instance.UrlMappings,
                         hasFile = (bool?)item["hasFile"] ?? false,
                         sizeOnDisk = (long?)item["sizeOnDisk"] ?? 0,
-                        rootFolderPath = GetRootFolderFromPath((string?)item["path"])
+                        rootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)item["path"])
                     };
                 },
                 emptyResult: null,
