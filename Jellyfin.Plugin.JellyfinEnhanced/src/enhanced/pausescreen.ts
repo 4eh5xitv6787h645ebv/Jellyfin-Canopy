@@ -725,7 +725,7 @@ JE.initializePauseScreen = function() {
               let record = this.itemCache.get(itemId);
               if (!record) {
               const itemResp = await this.fetchWithRetry(ApiClient.getUrl(`/Items/${itemId}`), {
-                  headers: { "Authorization": 'MediaBrowser Token="' + this.token + '"', "X-Emby-Token": this.token!, "Accept": "application/json" },
+                  headers: { "Authorization": 'MediaBrowser Token="' + this.token + '"', "Accept": "application/json" },
                   signal: this.fetchAbort.signal
               });
               record = { item: itemResp, domain: (ApiClient as any).serverAddress() };
@@ -854,7 +854,7 @@ JE.initializePauseScreen = function() {
           const t = setTimeout(() => ctl.abort(), timeoutMs);
           const res = await fetch(url, {
             method: "HEAD",
-            headers: { "Authorization": 'MediaBrowser Token="' + this.token + '"', "X-Emby-Token": this.token! },
+            headers: { "Authorization": 'MediaBrowser Token="' + this.token + '"' },
             signal: ctl.signal
           });
           clearTimeout(t);
@@ -872,7 +872,7 @@ JE.initializePauseScreen = function() {
           const ctl = new AbortController();
           const t = setTimeout(() => ctl.abort(), timeoutMs);
           const res = await fetch(url, {
-            headers: { "Authorization": 'MediaBrowser Token="' + this.token + '"', "X-Emby-Token": this.token! },
+            headers: { "Authorization": 'MediaBrowser Token="' + this.token + '"' },
             signal: ctl.signal
           });
           clearTimeout(t);
