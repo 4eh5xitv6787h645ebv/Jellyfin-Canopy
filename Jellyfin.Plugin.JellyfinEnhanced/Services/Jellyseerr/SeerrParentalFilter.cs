@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -20,7 +21,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
     /// Server-side implementation of <see cref="ISeerrParentalFilter"/>. Registered
     /// as a singleton and injected into <see cref="JellyseerrClient"/>, which calls
     /// it on the way out of the proxy (post-cache, so the shared response cache
-    /// stays user-neutral).
+    /// stays user-neutral) and before proxying request POSTs.
     ///
     /// It deliberately does NOT depend on <see cref="IJellyseerrClient"/> (which
     /// depends on it) — that would form a DI cycle. Per-item certification lookups
@@ -40,7 +41,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
         // Process-wide coalescing of concurrent certification fetches for the same
         // title, mirroring ISeerrCache.TmdbEnrichmentInFlight. A null Task result
         // means the fetch could not be resolved (fail-closed for restricted callers).
-        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<CertScore?>> _inFlight = new();
+        private readonly ConcurrentDictionary<string, Task<CertScore?>> _inFlight = new();
 
         // Bound per-request fan-out and total time so a cold combined_credits view
         // (whole cast+crew, easily 100-300 items) can't stall the proxy response or
@@ -67,183 +68,137 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
 
         private readonly record struct CertScore(int? Score, int? SubScore);
 
-        private enum Container
+        private enum Category
         {
             None,
+            List,
+            DetailMovieTv,
+            Season,
+        }
+
+        private enum Container
+        {
             Results,
             Parts,
             CombinedCredits,
         }
 
-        private readonly record struct FilterPlan(Container Container, string IdField, string? MediaTypeHint);
+        private sealed record EndpointPlan
+        {
+            public Category Category { get; init; }
 
-        /// <summary>Snapshot of the caller's parental policy for one filter pass.</summary>
+            public Container Container { get; init; }
+
+            public string IdField { get; init; } = "id";
+
+            public string? MediaTypeHint { get; init; }
+
+            /// <summary>Request-list rows carry the tmdbId/mediaType under a nested <c>media</c> object.</summary>
+            public bool NestedMedia { get; init; }
+
+            /// <summary>For <see cref="Category.DetailMovieTv"/>: the title's media type.</summary>
+            public string? DetailMediaType { get; init; }
+
+            /// <summary>For <see cref="Category.Season"/>: the parent show's tmdbId (gated by the show's rating).</summary>
+            public int ParentTvId { get; init; }
+        }
+
+        /// <summary>Snapshot of the caller's parental policy for one pass.</summary>
         private readonly record struct PolicySnapshot(int? MaxScore, int? MaxSubScore, IReadOnlyCollection<UnratedItem> BlockUnrated);
 
-        public async Task<string> FilterListBodyAsync(string json, string apiPath, JellyseerrCaller caller)
+        /// <summary>Active gate for a restricted caller (feature on, non-admin, has a limit).</summary>
+        private readonly record struct GateContext(PluginConfiguration Config, PolicySnapshot Policy, string Region);
+
+        public async Task<SeerrParentalResult> ApplyAsync(string json, string apiPath, JellyseerrCaller caller)
         {
             try
             {
-                var config = _configProvider.ConfigurationOrNull;
-                if (config == null || !config.JellyseerrRespectParentalRatings)
+                var gate = await ResolveGateAsync(caller).ConfigureAwait(false);
+                if (gate is null)
                 {
-                    return json;
+                    return new SeerrParentalResult(false, json);
                 }
 
-                // Administrators bypass parental controls, matching Jellyfin core.
-                if (caller.IsAdmin)
-                {
-                    return json;
-                }
-
+                var g = gate.Value;
                 var plan = ClassifyPath(apiPath);
-                if (plan.Container == Container.None)
+                switch (plan.Category)
                 {
-                    return json;
+                    case Category.DetailMovieTv:
+                        return IsDetailBodyBlocked(json, plan.DetailMediaType!, g)
+                            ? new SeerrParentalResult(true, string.Empty)
+                            : new SeerrParentalResult(false, json);
+
+                    case Category.Season:
+                        return await IsTitleBlockedAsync("tv", plan.ParentTvId, g).ConfigureAwait(false)
+                            ? new SeerrParentalResult(true, string.Empty)
+                            : new SeerrParentalResult(false, json);
+
+                    case Category.List:
+                        return new SeerrParentalResult(false, await FilterListAsync(json, plan, g).ConfigureAwait(false));
+
+                    default:
+                        return new SeerrParentalResult(false, json);
                 }
-
-                if (!TryGetPolicy(caller.JellyfinUserId, out var policy))
-                {
-                    return json;
-                }
-
-                // Nothing to enforce: no rating limit and no blocked-unrated types.
-                if (policy.MaxScore is null && policy.BlockUnrated.Count == 0)
-                {
-                    return json;
-                }
-
-                if (JsonNode.Parse(json) is not JsonObject root)
-                {
-                    return json;
-                }
-
-                var arrays = CollectArrays(root, plan).ToList();
-                if (arrays.Count == 0)
-                {
-                    return json;
-                }
-
-                var region = ResolveRegion(config);
-
-                // Pass 1: resolve every movie/tv item's certification score concurrently.
-                var scores = await ResolveScoresAsync(arrays, plan, region, config).ConfigureAwait(false);
-
-                // Pass 2: drop disallowed items in place.
-                foreach (var array in arrays)
-                {
-                    RemoveDisallowed(array, plan, region, scores, policy);
-                }
-
-                return root.ToJsonString();
             }
             catch (Exception ex)
             {
-                // A filter fault must not break Seerr search. Log and pass through.
+                // A filter fault must not break Seerr. Log and pass through.
                 _logger.LogWarning(ex, "Seerr parental filter failed for {ApiPath}; returning unfiltered results.", apiPath);
-                return json;
+                return new SeerrParentalResult(false, json);
             }
         }
 
-        // ── Endpoint classification ──────────────────────────────────────────
-        // Keyed on the upstream Seerr apiPath. Only genuine media result lists are
-        // filtered; detail bodies, ratings, genre/keyword metadata, etc. pass through.
-        private static FilterPlan ClassifyPath(string apiPath)
+        public async Task<bool> IsBlockedAsync(string mediaType, int tmdbId, JellyseerrCaller caller)
         {
-            if (string.IsNullOrEmpty(apiPath))
+            try
             {
-                return new FilterPlan(Container.None, "id", null);
-            }
+                var gate = await ResolveGateAsync(caller).ConfigureAwait(false);
+                if (gate is null)
+                {
+                    return false;
+                }
 
-            // Watchlist entries: results[] with a `tmdbId` field (not `id`).
-            if (apiPath.StartsWith("/api/v1/discover/watchlist", StringComparison.OrdinalIgnoreCase))
+                var normalized = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movie";
+                return await IsTitleBlockedAsync(normalized, tmdbId, gate.Value).ConfigureAwait(false);
+            }
+            catch (Exception ex)
             {
-                return new FilterPlan(Container.Results, "tmdbId", null);
+                _logger.LogWarning(ex, "Seerr parental request gate failed for {MediaType}/{TmdbId}; allowing.", mediaType, tmdbId);
+                return false;
             }
-
-            // Discover movies/tv (genre/keyword/network/studio variants all share the prefix).
-            if (apiPath.StartsWith("/api/v1/discover/movies", StringComparison.OrdinalIgnoreCase))
-            {
-                return new FilterPlan(Container.Results, "id", "movie");
-            }
-
-            if (apiPath.StartsWith("/api/v1/discover/tv", StringComparison.OrdinalIgnoreCase))
-            {
-                return new FilterPlan(Container.Results, "id", "tv");
-            }
-
-            // Similar / recommendations hang off a movie or tv id.
-            bool related = apiPath.Contains("/similar", StringComparison.OrdinalIgnoreCase)
-                || apiPath.Contains("/recommendations", StringComparison.OrdinalIgnoreCase);
-            if (related && apiPath.StartsWith("/api/v1/movie/", StringComparison.OrdinalIgnoreCase))
-            {
-                return new FilterPlan(Container.Results, "id", "movie");
-            }
-
-            if (related && apiPath.StartsWith("/api/v1/tv/", StringComparison.OrdinalIgnoreCase))
-            {
-                return new FilterPlan(Container.Results, "id", "tv");
-            }
-
-            // Person filmography: cast[] + crew[], per-item mediaType.
-            if (apiPath.StartsWith("/api/v1/person/", StringComparison.OrdinalIgnoreCase)
-                && apiPath.Contains("/combined_credits", StringComparison.OrdinalIgnoreCase))
-            {
-                return new FilterPlan(Container.CombinedCredits, "id", null);
-            }
-
-            // Collection parts: parts[] with no per-item mediaType (all movies).
-            if (apiPath.StartsWith("/api/v1/collection/", StringComparison.OrdinalIgnoreCase))
-            {
-                return new FilterPlan(Container.Parts, "id", "movie");
-            }
-
-            // Multi-search: results[] with a per-item mediaType. Guard against the
-            // /search/keyword typeahead which is not a media list.
-            if ((apiPath.StartsWith("/api/v1/search?", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(apiPath, "/api/v1/search", StringComparison.OrdinalIgnoreCase))
-                && !apiPath.StartsWith("/api/v1/search/keyword", StringComparison.OrdinalIgnoreCase))
-            {
-                return new FilterPlan(Container.Results, "id", null);
-            }
-
-            return new FilterPlan(Container.None, "id", null);
         }
 
-        private static IEnumerable<JsonArray> CollectArrays(JsonObject root, FilterPlan plan)
+        // ── Gate resolution (shared fast paths) ───────────────────────────────
+        private async Task<GateContext?> ResolveGateAsync(JellyseerrCaller caller)
         {
-            switch (plan.Container)
+            var config = _configProvider.ConfigurationOrNull;
+            if (config == null || !config.JellyseerrRespectParentalRatings)
             {
-                case Container.Results:
-                    if (root["results"] is JsonArray results)
-                    {
-                        yield return results;
-                    }
-
-                    break;
-                case Container.Parts:
-                    if (root["parts"] is JsonArray parts)
-                    {
-                        yield return parts;
-                    }
-
-                    break;
-                case Container.CombinedCredits:
-                    if (root["cast"] is JsonArray cast)
-                    {
-                        yield return cast;
-                    }
-
-                    if (root["crew"] is JsonArray crew)
-                    {
-                        yield return crew;
-                    }
-
-                    break;
+                return null;
             }
+
+            // Administrators bypass parental controls, matching Jellyfin core.
+            if (caller.IsAdmin)
+            {
+                return null;
+            }
+
+            if (!TryGetPolicy(caller.JellyfinUserId, out var policy))
+            {
+                return null;
+            }
+
+            // Nothing to enforce: no rating limit and no blocked-unrated types.
+            if (policy.MaxScore is null && policy.BlockUnrated.Count == 0)
+            {
+                return null;
+            }
+
+            // Kept async-shaped for a stable seam; nothing to await today.
+            await Task.CompletedTask.ConfigureAwait(false);
+            return new GateContext(config, policy, ResolveRegion(config));
         }
 
-        // ── Policy resolution ────────────────────────────────────────────────
         private bool TryGetPolicy(string? jellyfinUserId, out PolicySnapshot policy)
         {
             policy = default;
@@ -282,36 +237,110 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
             return string.IsNullOrWhiteSpace(region) ? "US" : region.Trim().ToUpperInvariant();
         }
 
-        // ── Per-item score resolution (cache -> in-flight -> fetch) ────────────
+        // ── Detail / single-title decisions ───────────────────────────────────
+        private bool IsDetailBodyBlocked(string json, string mediaType, GateContext gate)
+        {
+            JsonElement detail;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                detail = doc.RootElement.Clone();
+            }
+            catch (JsonException)
+            {
+                // Can't verify a restricted caller's detail body -> fail closed (block).
+                return true;
+            }
+
+            var score = ScoreFromDetail(detail, mediaType, gate.Region);
+            return !IsAllowed(score, mediaType, gate.Policy);
+        }
+
+        private async Task<bool> IsTitleBlockedAsync(string mediaType, int tmdbId, GateContext gate)
+        {
+            if (tmdbId <= 0)
+            {
+                return true; // cannot identify -> fail closed
+            }
+
+            using var cts = new CancellationTokenSource(PerFetchTimeout);
+            var score = await GetScoreAsync(CacheKey(mediaType, tmdbId, gate.Region), mediaType, tmdbId, gate.Region, gate.Config, cts.Token).ConfigureAwait(false);
+            if (score is null)
+            {
+                return true; // fetch failed / unverifiable -> fail closed
+            }
+
+            return !IsAllowed(score, mediaType, gate.Policy);
+        }
+
+        private static bool IsAllowed(CertScore? score, string mediaType, PolicySnapshot policy)
+        {
+            var unratedType = mediaType == "tv" ? UnratedItem.Series : UnratedItem.Movie;
+
+            // score == null here means "resolved as unrated"; only IsTitleBlockedAsync
+            // treats a *failed* resolution as blocked before calling this.
+            return ParentalRatingDecision.IsAllowed(
+                score?.Score,
+                score?.SubScore,
+                unratedType,
+                policy.MaxScore,
+                policy.MaxSubScore,
+                policy.BlockUnrated);
+        }
+
+        // ── List filtering ────────────────────────────────────────────────────
+        private async Task<string> FilterListAsync(string json, EndpointPlan plan, GateContext gate)
+        {
+            if (JsonNode.Parse(json) is not JsonObject root)
+            {
+                return json;
+            }
+
+            var arrays = CollectArrays(root, plan).ToList();
+            if (arrays.Count == 0)
+            {
+                return json;
+            }
+
+            var scores = await ResolveScoresAsync(arrays, plan, gate).ConfigureAwait(false);
+            foreach (var array in arrays)
+            {
+                RemoveDisallowed(array, plan, gate, scores);
+            }
+
+            return root.ToJsonString();
+        }
+
         private async Task<Dictionary<string, CertScore?>> ResolveScoresAsync(
             IReadOnlyList<JsonArray> arrays,
-            FilterPlan plan,
-            string region,
-            PluginConfiguration config)
+            EndpointPlan plan,
+            GateContext gate)
         {
-            // Unique (mediaType, tmdbId) for movie/tv items worth resolving.
             var keys = new Dictionary<string, (string MediaType, int TmdbId)>(StringComparer.Ordinal);
             foreach (var array in arrays)
             {
                 foreach (var node in array)
                 {
-                    if (node is not JsonObject item || IsAdult(item))
+                    if (node is not JsonObject row)
                     {
                         continue;
                     }
 
-                    var mediaType = ResolveMediaType(item, plan);
-                    if (mediaType is null)
+                    // The row's own rating-gated title (nested under `media` for requests).
+                    var item = ResolveItemObject(node, plan);
+                    if (item is not null && !IsAdult(item))
                     {
-                        continue;
+                        var mediaType = ResolveMediaType(item, plan);
+                        if (mediaType is not null && TryGetTmdbId(item, plan.IdField, out var tmdbId))
+                        {
+                            keys[CacheKey(mediaType, tmdbId, gate.Region)] = (mediaType, tmdbId);
+                        }
                     }
 
-                    if (!TryGetTmdbId(item, plan.IdField, out var tmdbId))
-                    {
-                        continue;
-                    }
-
-                    keys[CacheKey(mediaType, tmdbId, region)] = (mediaType, tmdbId);
+                    // Person results embed a `knownFor` array of movie/tv titles that
+                    // must be filtered too (else a restricted user recovers them from
+                    // the response body).
+                    CollectKnownForKeys(row, gate.Region, keys);
                 }
             }
 
@@ -322,12 +351,31 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
             }
 
             using var cts = new CancellationTokenSource(OverallBudget);
-            using var gate = new SemaphoreSlim(MaxConcurrentFetches);
+            using var throttle = new SemaphoreSlim(MaxConcurrentFetches);
 
+            // The throttle bounds THIS request's fan-out; the budget token bounds THIS
+            // request's total wait. Neither is passed into the shared fetch task, so one
+            // request's budget can't cancel a fetch another request is awaiting.
             var tasks = keys.Select(async kvp =>
             {
-                var score = await GetScoreAsync(kvp.Key, kvp.Value.MediaType, kvp.Value.TmdbId, region, config, gate, cts.Token).ConfigureAwait(false);
-                return (kvp.Key, score);
+                try
+                {
+                    await throttle.WaitAsync(cts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return (kvp.Key, (CertScore?)null); // over budget while queued -> fail closed
+                }
+
+                try
+                {
+                    var score = await GetScoreAsync(kvp.Key, kvp.Value.MediaType, kvp.Value.TmdbId, gate.Region, gate.Config, cts.Token).ConfigureAwait(false);
+                    return (kvp.Key, score);
+                }
+                finally
+                {
+                    throttle.Release();
+                }
             });
 
             foreach (var (key, score) in await Task.WhenAll(tasks).ConfigureAwait(false))
@@ -338,13 +386,152 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
             return scores;
         }
 
+        private void RemoveDisallowed(
+            JsonArray array,
+            EndpointPlan plan,
+            GateContext gate,
+            IReadOnlyDictionary<string, CertScore?> scores)
+        {
+            for (var i = array.Count - 1; i >= 0; i--)
+            {
+                if (array[i] is not JsonObject row)
+                {
+                    continue;
+                }
+
+                // The decision reads the identifying fields (nested under `media` for
+                // request rows); removal always drops the whole row at index i.
+                var item = ResolveItemObject(array[i], plan);
+
+                // No usable object to evaluate (e.g. a request row with no media
+                // record) is nothing to leak — keep the row.
+                if (item is null)
+                {
+                    continue;
+                }
+
+                if (!ShouldKeep(item, plan, gate, scores))
+                {
+                    array.RemoveAt(i);
+                    continue;
+                }
+
+                // Kept rows may still embed a `knownFor` array of titles to filter.
+                FilterKnownFor(row, gate, scores);
+            }
+        }
+
+        // Removes blocked movie/tv entries from a person result's `knownFor` array.
+        private static void FilterKnownFor(
+            JsonObject row,
+            GateContext gate,
+            IReadOnlyDictionary<string, CertScore?> scores)
+        {
+            if (row["knownFor"] is not JsonArray knownFor)
+            {
+                return;
+            }
+
+            for (var j = knownFor.Count - 1; j >= 0; j--)
+            {
+                if (knownFor[j] is not JsonObject entry)
+                {
+                    continue;
+                }
+
+                var mediaType = NormalizeMediaType(ReadString(entry, "mediaType"));
+                if (mediaType is null)
+                {
+                    continue; // not a movie/tv known-for entry — nothing to rating-gate
+                }
+
+                if (IsAdult(entry)
+                    || !TryGetTmdbId(entry, "id", out var tmdbId)
+                    || !scores.TryGetValue(CacheKey(mediaType, tmdbId, gate.Region), out var score)
+                    || score is null
+                    || !IsAllowed(score, mediaType, gate.Policy))
+                {
+                    knownFor.RemoveAt(j);
+                }
+            }
+        }
+
+        private static void CollectKnownForKeys(
+            JsonObject row,
+            string region,
+            IDictionary<string, (string MediaType, int TmdbId)> keys)
+        {
+            if (row["knownFor"] is not JsonArray knownFor)
+            {
+                return;
+            }
+
+            foreach (var node in knownFor)
+            {
+                if (node is not JsonObject entry || IsAdult(entry))
+                {
+                    continue;
+                }
+
+                var mediaType = NormalizeMediaType(ReadString(entry, "mediaType"));
+                if (mediaType is not null && TryGetTmdbId(entry, "id", out var tmdbId))
+                {
+                    keys[CacheKey(mediaType, tmdbId, region)] = (mediaType, tmdbId);
+                }
+            }
+        }
+
+        private bool ShouldKeep(
+            JsonObject item,
+            EndpointPlan plan,
+            GateContext gate,
+            IReadOnlyDictionary<string, CertScore?> scores)
+        {
+            var mediaType = ResolveMediaType(item, plan);
+            if (mediaType is null)
+            {
+                // Persons, collections, or anything not movie/tv — never rating-gated.
+                return true;
+            }
+
+            if (IsAdult(item))
+            {
+                return false;
+            }
+
+            if (!TryGetTmdbId(item, plan.IdField, out var tmdbId))
+            {
+                return false; // a movie/tv item we cannot identify cannot be verified — fail closed
+            }
+
+            // Missing/failed resolution => could not verify => fail closed.
+            if (!scores.TryGetValue(CacheKey(mediaType, tmdbId, gate.Region), out var score) || score is null)
+            {
+                return false;
+            }
+
+            return IsAllowed(score, mediaType, gate.Policy);
+        }
+
+        // ── Score resolution (cache -> in-flight -> fetch) ─────────────────────
+        private CertScore? ScoreFromDetail(JsonElement detail, string mediaType, string region)
+        {
+            var cert = SeerrCertificationExtractor.Extract(detail, mediaType, region);
+            if (string.IsNullOrWhiteSpace(cert.Certification))
+            {
+                return new CertScore(null, null); // known-unrated
+            }
+
+            var score = _localization.GetRatingScore(cert.Certification!, cert.Iso ?? region);
+            return score is null ? new CertScore(null, null) : new CertScore(score.Score, score.SubScore);
+        }
+
         private async Task<CertScore?> GetScoreAsync(
             string cacheKey,
             string mediaType,
             int tmdbId,
             string region,
             PluginConfiguration config,
-            SemaphoreSlim gate,
             CancellationToken ct)
         {
             if (_seerrCache.CertScoreCache.TryGetValue(cacheKey, out var cached)
@@ -353,64 +540,53 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
                 return new CertScore(cached.Score, cached.SubScore);
             }
 
-            var task = _inFlight.GetOrAdd(cacheKey, _ => ResolveAndCacheAsync(cacheKey, mediaType, tmdbId, region, config, gate, ct));
+            // Coalesce concurrent fetches for the same title. The shared task carries
+            // its OWN timeout (never the caller's budget); each caller bounds only its
+            // own wait via WaitAsync(ct), so one request's budget can't cancel a fetch
+            // another request depends on.
+            var task = _inFlight.GetOrAdd(cacheKey, key =>
+            {
+                var fetch = FetchScoreAsync(key, mediaType, tmdbId, region, config);
+                // Self-evict on completion so the map doesn't accumulate finished tasks.
+                _ = fetch.ContinueWith(
+                    completed => _inFlight.TryRemove(new KeyValuePair<string, Task<CertScore?>>(key, completed)),
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+                return fetch;
+            });
+
             try
             {
-                return await task.ConfigureAwait(false);
+                return await task.WaitAsync(ct).ConfigureAwait(false);
             }
             catch (Exception)
             {
-                // Cancelled (over budget) or unexpected — cannot verify, fail closed.
+                // Our wait was cancelled (over budget) or the fetch faulted — cannot
+                // verify -> fail closed. The shared task keeps running for others.
                 return null;
-            }
-            finally
-            {
-                _inFlight.TryRemove(cacheKey, out _);
             }
         }
 
-        private async Task<CertScore?> ResolveAndCacheAsync(
+        private async Task<CertScore?> FetchScoreAsync(
             string cacheKey,
             string mediaType,
             int tmdbId,
             string region,
-            PluginConfiguration config,
-            SemaphoreSlim gate,
-            CancellationToken ct)
+            PluginConfiguration config)
         {
-            await gate.WaitAsync(ct).ConfigureAwait(false);
-            try
+            using var cts = new CancellationTokenSource(PerFetchTimeout);
+            var detail = await FetchDetailAsync(mediaType, tmdbId, config, cts.Token).ConfigureAwait(false);
+            if (detail is null)
             {
-                var detail = await FetchDetailAsync(mediaType, tmdbId, config, ct).ConfigureAwait(false);
-                if (detail is null)
-                {
-                    // Fetch failed — do NOT cache, so it retries next time. Restricted
-                    // callers fail closed on the missing verification.
-                    return null;
-                }
-
-                var cert = SeerrCertificationExtractor.Extract(detail.Value, mediaType, region);
-                CertScore resolved;
-                if (string.IsNullOrWhiteSpace(cert.Certification))
-                {
-                    // Genuinely unrated (known): null score routes through block-unrated.
-                    resolved = new CertScore(null, null);
-                }
-                else
-                {
-                    var score = _localization.GetRatingScore(cert.Certification!, cert.Iso ?? region);
-                    resolved = score is null
-                        ? new CertScore(null, null)
-                        : new CertScore(score.Score, score.SubScore);
-                }
-
-                _seerrCache.CertScoreCache[cacheKey] = (resolved.Score, resolved.SubScore, DateTime.UtcNow);
-                return resolved;
+                // Fetch failed — do NOT cache, so it retries next time. Restricted
+                // callers fail closed on the missing verification.
+                return null;
             }
-            finally
-            {
-                gate.Release();
-            }
+
+            var resolved = ScoreFromDetail(detail.Value, mediaType, region) ?? new CertScore(null, null);
+            _seerrCache.CertScoreCache[cacheKey] = (resolved.Score, resolved.SubScore, DateTime.UtcNow);
+            return resolved;
         }
 
         private async Task<JsonElement?> FetchDetailAsync(string mediaType, int tmdbId, PluginConfiguration config, CancellationToken ct)
@@ -456,74 +632,182 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
             return null;
         }
 
-        // ── Pass 2: remove disallowed items in place ──────────────────────────
-        private static void RemoveDisallowed(
-            JsonArray array,
-            FilterPlan plan,
-            string region,
-            IReadOnlyDictionary<string, CertScore?> scores,
-            PolicySnapshot policy)
+        // ── Endpoint classification ───────────────────────────────────────────
+        private static EndpointPlan ClassifyPath(string apiPath)
         {
-            for (var i = array.Count - 1; i >= 0; i--)
+            if (string.IsNullOrEmpty(apiPath))
             {
-                if (array[i] is not JsonObject item)
+                return new EndpointPlan { Category = Category.None };
+            }
+
+            // Requests list: results[] with tmdbId/mediaType nested under `media`.
+            if (apiPath.StartsWith("/api/v1/request", StringComparison.OrdinalIgnoreCase))
+            {
+                return new EndpointPlan { Category = Category.List, Container = Container.Results, IdField = "tmdbId", MediaTypeHint = null, NestedMedia = true };
+            }
+
+            // Watchlist entries: results[] with a flat `tmdbId` field.
+            if (apiPath.StartsWith("/api/v1/discover/watchlist", StringComparison.OrdinalIgnoreCase))
+            {
+                return new EndpointPlan { Category = Category.List, Container = Container.Results, IdField = "tmdbId" };
+            }
+
+            // Discover movies/tv (genre/keyword/network/studio variants share the prefix).
+            if (apiPath.StartsWith("/api/v1/discover/movies", StringComparison.OrdinalIgnoreCase))
+            {
+                return new EndpointPlan { Category = Category.List, Container = Container.Results, MediaTypeHint = "movie" };
+            }
+
+            if (apiPath.StartsWith("/api/v1/discover/tv", StringComparison.OrdinalIgnoreCase))
+            {
+                return new EndpointPlan { Category = Category.List, Container = Container.Results, MediaTypeHint = "tv" };
+            }
+
+            bool related = apiPath.Contains("/similar", StringComparison.OrdinalIgnoreCase)
+                || apiPath.Contains("/recommendations", StringComparison.OrdinalIgnoreCase);
+
+            // Movie/TV detail, season, similar, recommendations — inspect the shape.
+            if (apiPath.StartsWith("/api/v1/movie/", StringComparison.OrdinalIgnoreCase))
+            {
+                if (related)
                 {
-                    continue;
+                    return new EndpointPlan { Category = Category.List, Container = Container.Results, MediaTypeHint = "movie" };
                 }
 
-                if (!ShouldKeep(item, plan, region, scores, policy))
+                // Bare /api/v1/movie/{id} (no further path segment, ignoring query).
+                if (IsBareDetail(apiPath, "/api/v1/movie/"))
                 {
-                    array.RemoveAt(i);
+                    return new EndpointPlan { Category = Category.DetailMovieTv, DetailMediaType = "movie" };
                 }
+
+                return new EndpointPlan { Category = Category.None }; // ratingscombined etc.
+            }
+
+            if (apiPath.StartsWith("/api/v1/tv/", StringComparison.OrdinalIgnoreCase))
+            {
+                if (related)
+                {
+                    return new EndpointPlan { Category = Category.List, Container = Container.Results, MediaTypeHint = "tv" };
+                }
+
+                if (apiPath.Contains("/season/", StringComparison.OrdinalIgnoreCase))
+                {
+                    return TryParseId(apiPath, "/api/v1/tv/", out var parentTvId)
+                        ? new EndpointPlan { Category = Category.Season, ParentTvId = parentTvId }
+                        : new EndpointPlan { Category = Category.None };
+                }
+
+                if (IsBareDetail(apiPath, "/api/v1/tv/"))
+                {
+                    return new EndpointPlan { Category = Category.DetailMovieTv, DetailMediaType = "tv" };
+                }
+
+                return new EndpointPlan { Category = Category.None }; // ratings etc.
+            }
+
+            // Person filmography: cast[] + crew[], per-item mediaType.
+            if (apiPath.StartsWith("/api/v1/person/", StringComparison.OrdinalIgnoreCase)
+                && apiPath.Contains("/combined_credits", StringComparison.OrdinalIgnoreCase))
+            {
+                return new EndpointPlan { Category = Category.List, Container = Container.CombinedCredits };
+            }
+
+            // Collection parts: parts[] with no per-item mediaType (all movies).
+            if (apiPath.StartsWith("/api/v1/collection/", StringComparison.OrdinalIgnoreCase))
+            {
+                return new EndpointPlan { Category = Category.List, Container = Container.Parts, MediaTypeHint = "movie" };
+            }
+
+            // Multi-search: results[] with a per-item mediaType. Exclude /search/keyword.
+            if ((apiPath.StartsWith("/api/v1/search?", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(apiPath, "/api/v1/search", StringComparison.OrdinalIgnoreCase))
+                && !apiPath.StartsWith("/api/v1/search/keyword", StringComparison.OrdinalIgnoreCase))
+            {
+                return new EndpointPlan { Category = Category.List, Container = Container.Results };
+            }
+
+            return new EndpointPlan { Category = Category.None };
+        }
+
+        // True for /api/v1/{type}/{id} with no further path segment (query allowed).
+        private static bool IsBareDetail(string apiPath, string prefix)
+        {
+            var tail = apiPath.Substring(prefix.Length);
+            var q = tail.IndexOf('?');
+            if (q >= 0)
+            {
+                tail = tail.Substring(0, q);
+            }
+
+            return tail.Length > 0 && !tail.Contains('/');
+        }
+
+        private static bool TryParseId(string apiPath, string prefix, out int id)
+        {
+            id = 0;
+            var tail = apiPath.Substring(prefix.Length);
+            var slash = tail.IndexOf('/');
+            var idPart = slash >= 0 ? tail.Substring(0, slash) : tail;
+            return int.TryParse(idPart, NumberStyles.Integer, CultureInfo.InvariantCulture, out id);
+        }
+
+        private static IEnumerable<JsonArray> CollectArrays(JsonObject root, EndpointPlan plan)
+        {
+            switch (plan.Container)
+            {
+                case Container.Results:
+                    if (root["results"] is JsonArray results)
+                    {
+                        yield return results;
+                    }
+
+                    break;
+                case Container.Parts:
+                    if (root["parts"] is JsonArray parts)
+                    {
+                        yield return parts;
+                    }
+
+                    break;
+                case Container.CombinedCredits:
+                    if (root["cast"] is JsonArray cast)
+                    {
+                        yield return cast;
+                    }
+
+                    if (root["crew"] is JsonArray crew)
+                    {
+                        yield return crew;
+                    }
+
+                    break;
             }
         }
 
-        private static bool ShouldKeep(
-            JsonObject item,
-            FilterPlan plan,
-            string region,
-            IReadOnlyDictionary<string, CertScore?> scores,
-            PolicySnapshot policy)
+        // ── Item readers ──────────────────────────────────────────────────────
+        // For request rows, the identifying fields live under a nested `media` object.
+        private static JsonObject? ResolveItemObject(JsonNode? node, EndpointPlan plan)
         {
-            var mediaType = ResolveMediaType(item, plan);
-            if (mediaType is null)
+            if (node is not JsonObject row)
             {
-                // Persons, collections, or anything not movie/tv — never rating-gated.
-                return true;
+                return null;
             }
 
-            if (IsAdult(item))
+            if (!plan.NestedMedia)
             {
-                return false;
+                return row;
             }
 
-            if (!TryGetTmdbId(item, plan.IdField, out var tmdbId))
-            {
-                // A movie/tv item we cannot identify cannot be verified — fail closed.
-                return false;
-            }
-
-            var unratedType = mediaType == "tv" ? UnratedItem.Series : UnratedItem.Movie;
-
-            // Missing/failed resolution => could not verify => fail closed.
-            if (!scores.TryGetValue(CacheKey(mediaType, tmdbId, region), out var score) || score is null)
-            {
-                return false;
-            }
-
-            return ParentalRatingDecision.IsAllowed(
-                score.Value.Score,
-                score.Value.SubScore,
-                unratedType,
-                policy.MaxScore,
-                policy.MaxSubScore,
-                policy.BlockUnrated);
+            return row["media"] as JsonObject;
         }
 
-        // ── Small item readers ────────────────────────────────────────────────
-        private static string? ResolveMediaType(JsonObject item, FilterPlan plan)
+        // Read defensively: a non-string mediaType (a malformed or future upstream
+        // shape) must never throw — that would fail the whole list OPEN.
+        private static string? ResolveMediaType(JsonObject item, EndpointPlan plan)
+            => NormalizeMediaType(ReadString(item, "mediaType") ?? plan.MediaTypeHint);
+
+        private static string? NormalizeMediaType(string? raw)
         {
-            var raw = item["mediaType"]?.GetValue<string>() ?? plan.MediaTypeHint;
             if (string.Equals(raw, "movie", StringComparison.OrdinalIgnoreCase))
             {
                 return "movie";
@@ -535,6 +819,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
             }
 
             return null;
+        }
+
+        private static string? ReadString(JsonObject item, string property)
+        {
+            var node = item[property];
+            return node?.GetValueKind() == JsonValueKind.String ? node.GetValue<string>() : null;
         }
 
         private static bool IsAdult(JsonObject item)

@@ -2,25 +2,42 @@ using System.Threading.Tasks;
 
 namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
 {
+    /// <summary>Outcome of applying the parental filter to a proxied Seerr response.</summary>
+    /// <param name="Block">
+    /// True when the whole response must be denied (a restricted caller reaching a
+    /// blocked title's detail/season body). The controller returns a bare 403.
+    /// </param>
+    /// <param name="Body">The body to return when <see cref="Block"/> is false (filtered list, or the original body).</param>
+    public readonly record struct SeerrParentalResult(bool Block, string Body);
+
     /// <summary>
-    /// Filters a raw Seerr search/discovery JSON body so a Jellyfin user never
-    /// sees titles their own parental-rating limit would block once requested.
-    /// Applied server-side at the proxy boundary (never client-side, which would
-    /// only hide DOM cards while still delivering the restricted titles to the
-    /// browser). See <see cref="Helpers.Jellyseerr.ParentalRatingDecision"/>.
+    /// Enforces each Jellyfin user's own parental-rating restriction across the
+    /// Seerr integration, server-side. It covers three surfaces so a restricted
+    /// account cannot see, open, or request a title above its limit:
+    ///  - result LISTS (search/discovery/similar/recommendations/watchlist/
+    ///    collection/person-credits/requests) have blocked items removed;
+    ///  - DETAIL bodies (movie/tv/season) are denied outright (403);
+    ///  - a request POST for a blocked title is rejected before it reaches Seerr.
+    /// Filtering is server-side (never client-only, which would still deliver the
+    /// titles). See <see cref="Helpers.Jellyseerr.ParentalRatingDecision"/>.
     /// </summary>
     public interface ISeerrParentalFilter
     {
         /// <summary>
-        /// Returns <paramref name="json"/> with any result items the caller may not
-        /// see removed, or the body unchanged when filtering does not apply (feature
-        /// off, admin caller, caller has no rating limit, or the endpoint is not a
-        /// media result list). Never throws — on any internal error the original
-        /// body is returned.
+        /// Applies the filter to a proxied response body. Returns the body unchanged
+        /// when filtering does not apply (feature off, admin caller, caller has no
+        /// limit, or the endpoint is not gated), a filtered body for list endpoints,
+        /// or <c>Block=true</c> when a restricted caller requested a blocked
+        /// detail/season body. Never throws.
         /// </summary>
-        /// <param name="json">The raw JSON body Seerr returned for <paramref name="apiPath"/>.</param>
-        /// <param name="apiPath">The upstream Seerr path (e.g. <c>/api/v1/search?query=...</c>).</param>
-        /// <param name="caller">The resolved Jellyfin caller identity.</param>
-        Task<string> FilterListBodyAsync(string json, string apiPath, JellyseerrCaller caller);
+        Task<SeerrParentalResult> ApplyAsync(string json, string apiPath, JellyseerrCaller caller);
+
+        /// <summary>
+        /// True when <paramref name="caller"/> must be blocked from the given title
+        /// (used to gate request POSTs before they reach Seerr). Returns false when
+        /// filtering does not apply; fails closed (true) when a restricted caller's
+        /// title cannot be verified. Never throws.
+        /// </summary>
+        Task<bool> IsBlockedAsync(string mediaType, int tmdbId, JellyseerrCaller caller);
     }
 }
