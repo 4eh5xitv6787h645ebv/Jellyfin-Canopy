@@ -20,11 +20,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
     {
         private readonly ILogger<RefreshCachedAssetsTask> _logger;
         private readonly AssetCacheService _assetCache;
+        private readonly IPluginConfigProvider _configProvider;
 
-        public RefreshCachedAssetsTask(ILogger<RefreshCachedAssetsTask> logger, AssetCacheService assetCache)
+        public RefreshCachedAssetsTask(ILogger<RefreshCachedAssetsTask> logger, AssetCacheService assetCache, IPluginConfigProvider configProvider)
         {
             _logger = logger;
             _assetCache = assetCache;
+            _configProvider = configProvider;
         }
 
         public string Name => "Refresh Cached Assets";
@@ -53,6 +55,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
 
         public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
         {
+            if (_configProvider.ConfigurationOrNull?.AssetCacheEnabled == false)
+            {
+                _logger.LogInformation("[Asset Cache] Local asset serving is disabled in the plugin configuration; skipping refresh.");
+                progress?.Report(100);
+                return;
+            }
+
             var summary = await _assetCache.RefreshAllAsync(progress, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation(
                 $"[Asset Cache] Refresh complete: {summary.Attempted} attempted, " +

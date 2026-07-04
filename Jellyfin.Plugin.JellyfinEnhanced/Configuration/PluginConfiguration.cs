@@ -33,6 +33,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             MaintenanceModeAffectedUsers = "all";
             SplashScreenImageUrl = "/web/assets/img/banner-light.png";
             DevMode = false;
+            AssetCacheEnabled = true;
 
             // Jellyfin Elsewhere Settings
             ElsewhereEnabled = true;
@@ -311,6 +312,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
         public bool EnableCustomSplashScreen { get; set; }
         public string SplashScreenImageUrl { get; set; }
         public bool DevMode { get; set; }
+
+        // Serve third-party assets (fonts, icons, flags, theme CSS, data files) from
+        // the local plugin asset cache (AssetCacheService) instead of their CDNs.
+        // Default true: browsers make zero requests to third-party CDNs. When false,
+        // clients fall back to the original CDN URLs (src/core/asset-urls.ts).
+        public bool AssetCacheEnabled { get; set; }
 
         // Kill-switch for the request-time <script> injection middleware
         // (ScriptInjectionStartupFilter). When true, the middleware no-ops and the

@@ -108,3 +108,14 @@ Override the language used by the plugin for all users.
 | **Clear Translation Cache** | Forces all clients to re-fetch the latest translations. Useful after a translation update. |
 
 The **Clear All Client Caches** button in the **Enhanced Settings** tab clears tag caches (quality, genre, language, rating, people) across all clients.
+
+---
+
+## Third-Party Assets
+
+*Admin tab → Third-Party Assets*
+
+**Serve third-party assets locally (recommended)** — mirrors every remote asset the plugin's client scripts use (Material Symbols fonts, arr/Seerr/Letterboxd icons, country flags, metadata-icon and ratings CSS, Jellyfish theme styles, Elsewhere region/provider lists) onto your server and serves them from `/JellyfinEnhanced/assets/…`, so browsers never contact third-party CDNs (jsDelivr, Google Fonts, cdnjs, flagcdn).
+
+- **Default: ON.** Assets are downloaded server-side on first use and refreshed daily by the **Refresh Cached Assets** scheduled task (cadence adjustable in Jellyfin's *Scheduled Tasks* dashboard). Cached copies live next to the plugin configuration under `asset_cache/`; the last good copy is kept if an upstream is temporarily unreachable.
+- When **disabled**, clients load these assets directly from the original CDN URLs, as older plugin versions did.

@@ -128,6 +128,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 Public("HelpPanelAutocloseDelay", c => c.HelpPanelAutocloseDelay),
                 Public("EnableCustomSplashScreen", c => c.EnableCustomSplashScreen),
                 Public("SplashScreenImageUrl", c => c.SplashScreenImageUrl),
+                // Public (incl. pre-login): the client-side asset-url map
+                // (src/core/asset-urls.ts) decides local-cache vs original-CDN
+                // URLs with this flag, and some assets load before login.
+                Public("AssetCacheEnabled", c => c.AssetCacheEnabled),
 
                 // Jellyfin Elsewhere Settings
                 Public("ElsewhereEnabled", c => c.ElsewhereEnabled),

@@ -28,16 +28,26 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         private readonly AssetCacheService _assetCache;
         private readonly ILogger<AssetsController> _logger;
+        private readonly IPluginConfigProvider _configProvider;
 
-        public AssetsController(AssetCacheService assetCache, ILogger<AssetsController> logger)
+        public AssetsController(AssetCacheService assetCache, ILogger<AssetsController> logger, IPluginConfigProvider configProvider)
         {
             _assetCache = assetCache;
             _logger = logger;
+            _configProvider = configProvider;
         }
 
         [HttpGet("assets/{**key}")]
         public async Task<ActionResult> GetAsset(string key)
         {
+            // Admin kill-switch: with the asset cache disabled, clients use the original
+            // CDN URLs (src/core/asset-urls.ts), local serving stops and the cache is not
+            // populated further. 404 keeps any straggler request degrading gracefully.
+            if (_configProvider.ConfigurationOrNull?.AssetCacheEnabled == false)
+            {
+                return NotFound();
+            }
+
             var asset = _assetCache.Resolve(key);
             if (asset.Kind == AssetKind.Unknown)
             {

@@ -9,6 +9,7 @@
   "ArrTagsPrefix": "JE Arr Tag: ",
   "ArrTagsShowAsLinks": true,
   "ArrTagsSyncEnabled": false,
+  "AssetCacheEnabled": true,
   "AudioInfoTagOrder": 6,
   "AutoPauseEnabled": true,
   "AutoPipEnabled": false,

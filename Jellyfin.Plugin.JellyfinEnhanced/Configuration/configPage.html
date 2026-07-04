@@ -2103,6 +2103,16 @@
                     </fieldset>
 
                     <fieldset>
+                        <legend class="sectionTitle">Third-Party Assets</legend>
+                        <div class="configSection">
+                            <div class="checkboxContainer"><label><input id="assetCacheEnabled" data-config-key="AssetCacheEnabled" is="emby-checkbox" type="checkbox"/><span>Serve third-party assets locally (recommended)</span></label></div>
+                            <div class="je-setting-description" data-desc-for="assetCacheEnabled">
+                                <div class="fieldDescription">Mirrors the fonts, icons, flags and theme files the plugin uses onto this server and serves them from here, so browsers never contact third-party CDNs (privacy + reliability). Copies refresh daily via the "Refresh Cached Assets" scheduled task. <br>Default: ON. When disabled, clients load these assets directly from the original CDNs.</div>
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
                         <legend class="sectionTitle">Developer Settings</legend>
                         <div class="configSection">
                             <div class="checkboxContainer"><label><input id="devMode" data-config-key="DevMode" is="emby-checkbox" type="checkbox"/><span>Dev Mode</span></label></div>
