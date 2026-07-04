@@ -464,7 +464,7 @@ JE.initializeElsewhereScript = function() {
                 Regions: userRegions,
                 Services: userServices
             };
-            JE.saveUserSettings('elsewhere.json', elsewhereSettings);
+            void JE.saveUserSettings('elsewhere.json', elsewhereSettings);
         };
 
         // Close on backdrop click
