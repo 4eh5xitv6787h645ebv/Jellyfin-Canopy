@@ -96,6 +96,11 @@ function applySubtitlePosition(): void {
  * Called when the user disables custom subtitle styles.
  */
 function removeInjectedStyles(): void {
+    // Clear the native-cue override too (Chrome/native rendering path).
+    const cueOverride = document.getElementById('je-html-videoplayer-cuestyle') as HTMLStyleElement | null;
+    if (cueOverride?.sheet) {
+        while (cueOverride.sheet.cssRules.length > 0) cueOverride.sheet.deleteRule(0);
+    }
     document.querySelectorAll<HTMLElement>('.videoSubtitlesInner').forEach(el => {
         el.style.removeProperty('background-color');
         el.style.removeProperty('color');
@@ -200,7 +205,55 @@ JE.applySubtitleStyles = (textColor: string, bgColor: string, fontSize: number, 
 
     // Start the observer to catch any new subtitle elements
     startSubtitleObserver();
+
+    // NATIVE cue rendering path: on Jellyfin 12, .videoSubtitlesInner only
+    // exists when jellyfin-web's useCustomSubtitles() is true (Firefox/
+    // Safari/Edge/TVs). Chrome/Chromium with the default "Auto" styling
+    // renders native VTT cues instead, styled by the client's
+    // #htmlvideoplayer-cuestyle sheet — mirror our style into a ::cue
+    // override there, or every JE subtitle setting silently no-ops on the
+    // most common browser. Position settings cannot apply to native cues
+    // (::cue supports style properties only).
+    applyNativeCueStyles();
 };
+
+/**
+ * Upserts (or clears) the JE ::cue override sheet for the native-cue path.
+ * Keyed on the client's own #htmlvideoplayer-cuestyle element, which
+ * jellyfin-web creates via setCueAppearance() once a text track is selected —
+ * the video-page observer re-invokes the style pipeline after that, so this
+ * lands even when the track is picked mid-playback.
+ */
+function applyNativeCueStyles(): void {
+    const clientCueSheet = document.getElementById('htmlvideoplayer-cuestyle') as HTMLStyleElement | null;
+    if (!clientCueSheet?.sheet) return;
+
+    let styleElement = document.getElementById('je-html-videoplayer-cuestyle') as HTMLStyleElement | null;
+    if (!styleElement?.sheet) {
+        styleElement = document.createElement('style');
+        styleElement.id = 'je-html-videoplayer-cuestyle';
+        document.head.appendChild(styleElement);
+    }
+
+    try {
+        const sheet = styleElement.sheet;
+        if (!sheet) return;
+        while (sheet.cssRules.length > 0) sheet.deleteRule(0);
+        if (JE.currentSettings?.disableCustomSubtitleStyles) return;
+        const { textColor, bgColor, fontSize, fontFamily, textShadow } = currentSubtitleStyle;
+        const cueRule = `
+        video.htmlvideoplayer::cue {
+            background-color: ${bgColor!} !important;
+            color: ${textColor!} !important;
+            font-size: ${fontSize!}vw !important;
+            font-family: ${fontFamily!} !important;
+            text-shadow: ${textShadow || 'none'} !important;
+        }`;
+        sheet.insertRule(cueRule, 0);
+    } catch (e) {
+        console.error('🪼 Jellyfin Enhanced: Failed to apply native ::cue styles:', e);
+    }
+}
 
 /**
  * Loads saved settings and triggers the style application.

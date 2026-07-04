@@ -25,7 +25,12 @@ const fs = require('fs');
 const path = require('path');
 
 const LOCALES_DIR = path.join(__dirname, '../Jellyfin.Plugin.JellyfinEnhanced/js/locales');
-const JS_DIR = path.join(__dirname, '../Jellyfin.Plugin.JellyfinEnhanced/js');
+// Translation call sites live in the TypeScript module tree (src/) plus the
+// remaining legacy loader files under js/ — scan both.
+const CODE_DIRS = [
+    path.join(__dirname, '../Jellyfin.Plugin.JellyfinEnhanced/src'),
+    path.join(__dirname, '../Jellyfin.Plugin.JellyfinEnhanced/js'),
+];
 const BASE_LANG = 'en';
 const WEBLATE_URL = 'https://hosted.weblate.org/projects/jellyfinenhanced/';
 
@@ -223,10 +228,12 @@ function findUnusedKeys() {
 
             if (entry.isDirectory() && entry.name !== 'locales' && entry.name !== 'node_modules') {
                 searchDirectory(filePath);
-            } else if (entry.isFile() && entry.name.endsWith('.js')) {
+            } else if (entry.isFile() && /\.(js|ts)$/.test(entry.name) && !entry.name.endsWith('.d.ts')) {
                 const content = fs.readFileSync(filePath, 'utf8');
 
-                const tMatches = content.matchAll(/(?:JE|window\.JellyfinEnhanced)\.t\s*(?:\?\.)?\s*\(\s*['"]([^'"]+)['"]/g);
+                // Call shapes across the TS tree: JE.t('k'), JE.t!('k') (non-null
+                // assertion), JE.t?.('k'), plus local aliases t('k') / tWithFallback('k', ...).
+                const tMatches = content.matchAll(/(?:(?:JE|window\.JellyfinEnhanced)\.t\s*!?\s*(?:\?\.)?|\bt(?:WithFallback)?)\s*\(\s*['"]([^'"]+)['"]/g);
                 for (const match of tMatches) {
                     usedKeys.add(match[1]);
                 }
@@ -285,7 +292,7 @@ function findUnusedKeys() {
         });
     }
 
-    searchDirectory(JS_DIR);
+    CODE_DIRS.forEach(dir => { if (fs.existsSync(dir)) searchDirectory(dir); });
 
     const unusedKeys = allKeys.filter(key => !usedKeys.has(key));
 

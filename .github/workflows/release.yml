@@ -99,6 +99,15 @@ jobs:
       - name: Type check (opt-in @ts-check files)
         run: npm run typecheck
 
+      - name: Type check (src TypeScript modules, strict)
+        run: npm run typecheck:src
+
+      - name: Client unit tests (vitest)
+        run: npm run test:client
+
+      - name: Client bundle (esbuild)
+        run: npm run build:bundle
+
       - name: Unit tests
         run: dotnet test Jellyfin.Plugin.JellyfinEnhanced.Tests/JellyfinEnhanced.Tests.csproj -c Release --logger "console;verbosity=normal"
 
