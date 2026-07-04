@@ -763,7 +763,7 @@ JE.initializeReviewsScript = function () {
                     JE.currentSettings = JE.currentSettings || JE.loadSettings?.() || {};
                     JE.currentSettings.reviewsExpandedByDefault = reviewsSection.open;
                     if (typeof JE.saveUserSettings === 'function') {
-                        JE.saveUserSettings('settings.json', JE.currentSettings);
+                        void JE.saveUserSettings('settings.json', JE.currentSettings);
                     }
                 } catch (err) {
                     console.error(`${logPrefix} Failed to persist reviews expanded state`, err);
