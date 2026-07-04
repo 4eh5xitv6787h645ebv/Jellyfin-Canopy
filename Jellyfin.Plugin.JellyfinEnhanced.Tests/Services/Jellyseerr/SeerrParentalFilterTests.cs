@@ -47,7 +47,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
             int? maxSub,
             UnratedItem[] block,
             bool featureEnabled,
-            Action<RecordingHttpMessageHandler>? seed)
+            Action<RecordingHttpMessageHandler>? seed,
+            bool seerrConfigured = true)
         {
             var handler = new RecordingHttpMessageHandler();
             // Fixture titles used across the cases.
@@ -62,8 +63,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
             {
                 JellyseerrEnabled = true,
                 JellyseerrRespectParentalRatings = featureEnabled,
-                JellyseerrUrls = "http://seerr:5055",
-                JellyseerrApiKey = "key",
+                JellyseerrUrls = seerrConfigured ? "http://seerr:5055" : string.Empty,
+                JellyseerrApiKey = seerrConfigured ? "key" : string.Empty,
                 DEFAULT_REGION = "US",
             });
 
@@ -288,6 +289,24 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
             Assert.True(await filter.IsBlockedAsync("movie", 200, restricted));   // R -> blocked
             Assert.False(await filter.IsBlockedAsync("movie", 100, restricted));  // PG-13 -> allowed
             Assert.True(await filter.IsBlockedAsync("movie", 999, restricted));   // unverifiable -> fail closed
+            Assert.True(await filter.IsBlockedAsync("movie", 0, restricted));     // unparseable id -> fail closed
+        }
+
+        [Fact]
+        public async Task Gate_InactiveWhenSeerrNotConfigured()
+        {
+            // Without a Seerr URL/key the gate can't verify certs, so it stays inactive
+            // rather than fail-closed-blocking everything (would break the TMDB passthrough).
+            var filter = BuildFilter(maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>(), featureEnabled: true, seed: null, seerrConfigured: false);
+            var restricted = new JellyseerrCaller(CallerGuid, false);
+
+            Assert.False(await filter.IsBlockedAsync("movie", 200, restricted));
+            Assert.False(await filter.IsBlockedAsync("movie", 0, restricted));
+
+            const string body = @"{ ""results"": [ { ""id"": 200, ""mediaType"": ""movie"" } ] }";
+            var result = await filter.ApplyAsync(body, "/api/v1/search?query=x", restricted);
+            Assert.False(result.Block);
+            Assert.Equal(body, result.Body);
         }
 
         [Fact]

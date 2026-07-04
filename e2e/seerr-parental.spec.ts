@@ -105,9 +105,12 @@ test.describe('seerr parental-rating filter', () => {
             expect(admin.movies, 'admin baseline should include the R-rated Deadpool').toContain(DEADPOOL_R);
             expect(admin.movies).toContain(DEADPOOL2_R);
 
-            // Admin can also open any title's detail (no gate).
+            // Admin can also open any title's detail (no gate) — via both the Seerr
+            // detail endpoint and the raw TMDB passthrough.
             expect(await getStatus(page, `/JellyfinEnhanced/jellyseerr/movie/${DEADPOOL_R}`),
                 'admin detail fetch is not gated').toBe(200);
+            expect(await getStatus(page, `/JellyfinEnhanced/tmdb/movie/${DEADPOOL_R}`),
+                'admin raw TMDB fetch is not gated').toBe(200);
 
             // ── Restricted user: R titles removed, subset of admin, person kept ──
             await loginAs(page, 'user', consoleErrors);
@@ -130,6 +133,8 @@ test.describe('seerr parental-rating filter', () => {
             // restricted user can neither open nor request a blocked title by tmdbId.
             expect(await getStatus(page, `/JellyfinEnhanced/jellyseerr/movie/${DEADPOOL_R}`),
                 'restricted user is blocked from a blocked title detail').toBe(403);
+            expect(await getStatus(page, `/JellyfinEnhanced/tmdb/movie/${DEADPOOL_R}`),
+                'restricted user is blocked from the raw TMDB detail too').toBe(403);
             expect(await postRequestStatus(page, 'movie', DEADPOOL_R),
                 'restricted user cannot request a blocked title').toBe(403);
 
