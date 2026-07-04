@@ -79,7 +79,7 @@ public class JellyseerrClientTests
     // ─── IPluginConfigProvider seam ──────────────────────────────────────────
 
     private static JellyseerrClient NewClient(FakePluginConfigProvider provider)
-        => new(new ThrowingHttpClientFactory(), NullLogger<JellyseerrClient>.Instance, null!, new SeerrCache(provider), provider);
+        => new(new ThrowingHttpClientFactory(), NullLogger<JellyseerrClient>.Instance, null!, new SeerrCache(provider), provider, null!);
 
     [Fact]
     public async Task GetJellyseerrUserId_ReadsConfigThroughInjectedProvider_AndSkipsWorkWhenUnconfigured()
