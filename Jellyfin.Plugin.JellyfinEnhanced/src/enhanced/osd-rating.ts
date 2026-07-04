@@ -4,6 +4,8 @@
 // (Converted from js/enhanced/osd-rating.js — bodies semantically identical.)
 
 import { JE } from '../globals';
+import { waitForElement } from '../core/dom-observer';
+import { onNavigate } from '../core/navigation';
 
 /** Ratings resolved for one item (display-ready values). */
 interface OsdRating {
@@ -203,14 +205,48 @@ function scheduleUpdate(): void {
   }, 200);
 }
 
-function observeOsd(): void {
-  if (osdObserver) return; // Already observing
-  osdObserver = new MutationObserver(() => {
+// Guards attachOsdObserver against overlapping waitForElement waits.
+let attachInFlight = false;
+
+/**
+ * Attaches the OSD observer, scoped to the player container.
+ * PERF: previously created at boot and — because .videoPlayerContainer does
+ * not exist yet at that point — permanently fell back to observing
+ * document.body, adding a 200ms-timeout schedule on every body mutation on
+ * every page. It is now created lazily when a video page mounts and is torn
+ * down on leave (see the onNavigate wiring in JE.initializeOsdRating).
+ */
+async function attachOsdObserver(): Promise<void> {
+  if (osdObserver || attachInFlight) return;
+  attachInFlight = true;
+  try {
+    // The player container mounts shortly after navigation; wait for it via
+    // the shared body observer instead of observing body ourselves.
+    const target = document.querySelector('.videoPlayerContainer')
+      || await waitForElement('.videoPlayerContainer', 20000);
+    if (!target) return;
+    if (!(JE as any).isVideoPage()) return; // navigated away while waiting
+    if (osdObserver) return;
+    osdObserver = new MutationObserver(() => {
+      scheduleUpdate();
+    });
+    osdObserver.observe(target, { childList: true, subtree: true });
     scheduleUpdate();
-  });
-  // Only observe the video player container, not the entire document
-  const observeTarget = document.querySelector('.videoPlayerContainer') || document.body;
-  osdObserver.observe(observeTarget, { childList: true, subtree: true });
+  } finally {
+    attachInFlight = false;
+  }
+}
+
+/** Disconnects the OSD observer and cancels any pending update. */
+function detachOsdObserver(): void {
+  if (osdObserver) {
+    osdObserver.disconnect();
+    osdObserver = null;
+  }
+  if (scheduledUpdate) {
+    clearTimeout(scheduledUpdate);
+    scheduledUpdate = null;
+  }
 }
 
 JE.initializeOsdRating = function() {
@@ -219,7 +255,15 @@ JE.initializeOsdRating = function() {
     return;
   }
   try {
-    observeOsd();
+    const syncWithPage = (): void => {
+      if ((JE as any).isVideoPage()) {
+        void attachOsdObserver();
+      } else {
+        detachOsdObserver();
+      }
+    };
+    onNavigate(syncWithPage);
+    syncWithPage(); // boot may happen while already on a video page
     console.log(`${logPrefix} Initialized successfully.`);
   } catch (e) { console.warn(`${logPrefix} Init failed`, e); }
 };
