@@ -49,3 +49,5 @@ Display user reviews from TMDB on item detail pages.
 
 !!! note
     TMDB Reviews require a valid TMDB API key. If the Elsewhere feature is already configured, no additional API key is needed.
+
+    TMDB Reviews are **independent of the "Enable Elsewhere" toggle** — you can show reviews without enabling the Elsewhere streaming-providers panel. All they need is a TMDB API key (entered under Elsewhere Settings and shared across features).
