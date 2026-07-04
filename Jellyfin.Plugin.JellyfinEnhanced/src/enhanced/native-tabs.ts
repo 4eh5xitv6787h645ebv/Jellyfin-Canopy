@@ -194,17 +194,20 @@ function ensureDiscoverable(entry: NativeTabEntry): void {
     const group = getOrCreateGroup(headerRight);
     const separator = document.getElementById('je-native-tabs-separator');
 
-    const link = document.createElement('button');
-    link.id = linkId;
-    link.type = 'button';
-    link.setAttribute('is', 'paper-icon-button-light');
-    link.className = 'headerButton headerButtonRight paper-icon-button-light';
-    link.title = entry.title;
-    link.innerHTML = '<i class="material-icons">' + (entry.icon || 'tab') + '</i>';
-    link.addEventListener('click', function () {
-        const hash = window.location.hash;
-        const base = hash.indexOf('#/home') === 0 ? hash.split('?')[0] : '#/home';
-        window.location.hash = base + '?tab=' + entry.index;
+    // This fallback only appears on the modern/experimental layout (the real
+    // tab button is hidden there), so build it with the native MUI AppBar
+    // action-button markup via the UI kit. Legacy classes are kept so it sits
+    // in the header group consistently with the other tray buttons.
+    const link = JE.core.ui!.muiIconButton({
+        id: linkId,
+        icon: entry.icon || 'tab',
+        title: entry.title,
+        className: 'headerButton headerButtonRight paper-icon-button-light',
+        onClick: function () {
+            const hash = window.location.hash;
+            const base = hash.indexOf('#/home') === 0 ? hash.split('?')[0] : '#/home';
+            window.location.hash = base + '?tab=' + entry.index;
+        }
     });
 
     group.insertBefore(link, separator);

@@ -86,41 +86,72 @@ function navigateToItem(item: any): void {
     }
 }
 
-/** Builds the random-item button element (markup unchanged; extracted for reuse). */
-function buildRandomButton(): HTMLDivElement {
+/** Set the button's Material Icons glyph (works for both `<i>` and MUI `<span>`). */
+function setGlyph(btn: HTMLElement, ligature: string): void {
+    const glyph = btn.querySelector('.material-icons');
+    if (glyph) glyph.textContent = ligature;
+}
+
+/** Shared click handler: fetch a random item and navigate, with a spinner glyph. */
+function onRandomClick(randomButton: HTMLButtonElement): void {
+    void (async () => {
+        randomButton.disabled = true;
+        randomButton.classList.add('loading');
+        setGlyph(randomButton, 'hourglass_empty');
+
+        try {
+            const item = await getRandomItem();
+            if (item) {
+                navigateToItem(item);
+            }
+        } finally {
+            setTimeout(() => {
+                if (document.getElementById(randomButton.id)) {
+                    randomButton.disabled = false;
+                    randomButton.classList.remove('loading');
+                    setGlyph(randomButton, 'casino');
+                }
+            }, 500);
+        }
+    })();
+}
+
+/**
+ * Builds the random-item button. On the modern layout (MUI toolbar tray) it is
+ * built with JE.core.ui.muiIconButton so it wears the native AppBar action
+ * button markup/theme tokens; on the legacy header it keeps the classic
+ * paper-icon-button-light markup so it matches that layout's own buttons.
+ * @param anchor - The resolved header container (see getHeaderRightContainer).
+ */
+function buildRandomButton(anchor: HTMLElement): HTMLDivElement {
     const buttonContainer = document.createElement('div');
     buttonContainer.id = 'randomItemButtonContainer';
 
-    const randomButton = document.createElement('button');
-    randomButton.id = 'randomItemButton';
-    randomButton.setAttribute('is', 'paper-icon-button-light');
-    randomButton.className = 'headerButton headerButtonRight paper-icon-button-light';
-    randomButton.title = JE.t!('random_button_tooltip');
-    randomButton.innerHTML = `<i class="material-icons">casino</i>`;
+    const onModern = anchor.closest('.MuiToolbar-root') !== null;
+    let randomButton: HTMLButtonElement;
 
-    randomButton.addEventListener('click', () => {
-        void (async () => {
-            randomButton.disabled = true;
-            randomButton.classList.add('loading');
-            randomButton.innerHTML = '<i class="material-icons">hourglass_empty</i>';
+    if (onModern) {
+        // Native MUI AppBar action button; legacy classes kept so the shared
+        // header-button sizing fix and group styling still apply.
+        randomButton = JE.core.ui!.muiIconButton({
+            id: 'randomItemButton',
+            icon: 'casino',
+            title: JE.t!('random_button_tooltip'),
+            className: 'headerButton headerButtonRight paper-icon-button-light'
+        });
+    } else {
+        randomButton = document.createElement('button');
+        randomButton.id = 'randomItemButton';
+        randomButton.setAttribute('is', 'paper-icon-button-light');
+        randomButton.className = 'headerButton headerButtonRight paper-icon-button-light';
+        randomButton.title = JE.t!('random_button_tooltip');
+        const glyph = document.createElement('i');
+        glyph.className = 'material-icons';
+        glyph.textContent = 'casino';
+        randomButton.appendChild(glyph);
+    }
 
-            try {
-                const item = await getRandomItem();
-                if (item) {
-                    navigateToItem(item);
-                }
-            } finally {
-                setTimeout(() => {
-                    if (document.getElementById(randomButton.id)) {
-                        randomButton.disabled = false;
-                        randomButton.classList.remove('loading');
-                        randomButton.innerHTML = `<i class="material-icons">casino</i>`;
-                    }
-                }, 500);
-            }
-        })();
-    });
-
+    randomButton.addEventListener('click', () => onRandomClick(randomButton));
     buttonContainer.appendChild(randomButton);
     return buttonContainer;
 }
@@ -152,7 +183,7 @@ JE.addRandomButton = (): void => {
         'je-random-button',
         () => getHeaderRightContainer(),
         (headerRight) => {
-            const container = buildRandomButton();
+            const container = buildRandomButton(headerRight);
             headerRight.prepend(container);
             return container;
         },

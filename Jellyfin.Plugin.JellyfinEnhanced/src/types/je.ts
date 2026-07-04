@@ -188,11 +188,59 @@ export interface DomApi {
     getBodySubscriberCount(): number;
 }
 
+/** Options for {@link UiApi.muiIconButton}. */
+export interface MuiIconButtonOptions {
+    /** Material Icons ligature (e.g. "casino"). */
+    icon: string;
+    /** Tooltip + default aria-label. */
+    title?: string;
+    /** aria-label override (defaults to `title`). */
+    ariaLabel?: string;
+    /** Click handler. */
+    onClick?: (ev: MouseEvent) => void;
+    /** Element id. */
+    id?: string;
+    /** Extra classes (e.g. legacy `headerButton` classes for dual-layout). */
+    className?: string;
+    /** MUI IconButton size. Defaults to `large` (matches the AppBar tray). */
+    size?: 'small' | 'medium' | 'large';
+}
+
+/** Options for {@link UiApi.muiMenuItem}. */
+export interface MuiMenuItemOptions {
+    /** Menu item label text. */
+    label: string;
+    /** Optional leading Material Icons ligature. */
+    icon?: string;
+    /** Click handler. */
+    onClick?: (ev: MouseEvent) => void;
+    /** Element id. */
+    id?: string;
+    /** Extra classes. */
+    className?: string;
+}
+
+/** Options for {@link UiApi.sectionContainer}. */
+export interface SectionContainerOptions {
+    /** Section heading text. Omit for an untitled section. */
+    title?: string;
+    /** Element id. */
+    id?: string;
+    /** Extra classes on the outer `.verticalSection`. */
+    className?: string;
+}
+
 export interface UiApi {
     escapeHtml(value: unknown): string;
     toast(html: string, duration?: number): void;
     injectCss(id: string, css: string): void;
     removeCss(id: string): boolean;
+    /** Theme-token-aware MUI IconButton (clones the AppBar action-button markup). */
+    muiIconButton(options: MuiIconButtonOptions): HTMLButtonElement;
+    /** Theme-token-aware MUI MenuItem (`<li class="MuiMenuItem-root">`). */
+    muiMenuItem(options: MuiMenuItemOptions): HTMLLIElement;
+    /** A `.verticalSection` matching the home-sections markup; append content into it. */
+    sectionContainer(options?: SectionContainerOptions): HTMLDivElement;
 }
 
 // ── api-client contracts ────────────────────────────────────────────────────
