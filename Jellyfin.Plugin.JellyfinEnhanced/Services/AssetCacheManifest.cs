@@ -202,6 +202,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
                 // -- Themer: Zesty logo fallback ----------------------------------------------
                 new AssetDescriptor("themer/jellyfin-logo-light.png", "https://cdn.jsdelivr.net/gh/stpnwf/ZestyTheme@latest/images/logo/jellyfin-logo-light.png", "image/png", ImageCap),
+
+                // -- Config-page documentation screenshots -------------------------------------
+                // Referenced by static <img> tags in Configuration/configPage.html (relative
+                // ../JellyfinEnhanced/assets/... URLs with an onerror CDN fallback), so they are
+                // not part of the client-side asset-urls.ts map.
+                new AssetDescriptor("screenshots/ratings.png", "https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Enhanced@main/docs/images/ratings.png", "image/png", ImageCap),
+                new AssetDescriptor("screenshots/theme-selector.png", "https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Enhanced@main/docs/images/theme-selector.png", "image/png", ImageCap),
+                new AssetDescriptor("screenshots/colored-activity-icons.png", "https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Enhanced@main/docs/images/colored-activity-icons.png", "image/png", ImageCap),
+                new AssetDescriptor("screenshots/login-image.png", "https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Enhanced@main/docs/images/login-image.png", "image/png", ImageCap),
+                new AssetDescriptor("screenshots/plugin-icons.png", "https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Enhanced@main/docs/images/plugin-icons.png", "image/png", ImageCap),
             };
 
             // Jellyfish theme color variants (theme-selector). The theme CSS references logo +
