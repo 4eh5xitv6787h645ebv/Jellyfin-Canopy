@@ -816,7 +816,7 @@
                                     <div>
                                         <strong>Requests Page</strong> shows a Requests Button in sidebar with a dedicated view of active downloads from Sonarr/Radarr and requests from Seerr.
                                         <div id="requestsPageRequirementsLine" style="display: none; margin-top: 10px;">
-                                            <strong>Requirements:</strong> <span id="requestsPageRequirementsList">Configure Sonarr/Radarr and Seerr URLs and API keys.</span>
+                                            <strong>Requirements:</strong> <span id="requestsPageRequirementsList">Configure Seerr (for requests) and/or Sonarr or Radarr (for downloads) &mdash; URL and API key each.</span>
                                         </div>
                                     </div>
                                 </div>
@@ -1702,21 +1702,21 @@
                                     <input id="DEFAULT_REGION" data-config-key="DEFAULT_REGION" is="emby-input" type="text" placeholder="e.g., US"/>
                                 </div>
                                     <div class="je-setting-description" data-desc-for="DEFAULT_REGION">
-                                        <div class="fieldDescription">The default two-letter country code for streaming provider lookup. Empty defaults to US. <a class="sectionTitle" href="https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/regions.txt" target="_blank">Full List</a></div>
+                                        <div class="fieldDescription">The default two-letter country code for streaming provider lookup. Empty defaults to US. <a class="sectionTitle" href="https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/regions.txt" target="_blank">Full List</a><br/>Also used by <strong>TMDB Release Dates</strong> and the <strong>Seerr streaming icons</strong>, so it stays editable even when the Elsewhere panel is off.</div>
                                     </div>
                                 <div class="inputContainer">
                                     <label class="inputLabel" for="DEFAULT_PROVIDERS">Default Providers</label>
                                     <input id="DEFAULT_PROVIDERS" data-config-key="DEFAULT_PROVIDERS" class="emby-input" type="text" placeholder="e.g., Netflix,Hulu"/>
                                 </div>
                                     <div class="je-setting-description" data-desc-for="DEFAULT_PROVIDERS">
-                                        <div class="fieldDescription">A list of default streaming providers to show. Leave blank to show all. <a class="sectionTitle" href="https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/providers.txt" target="_blank">Full List</a></div>
+                                        <div class="fieldDescription">A list of default streaming providers to show. Leave blank to show all. <a class="sectionTitle" href="https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/providers.txt" target="_blank">Full List</a><br/>Also used by the <strong>Seerr streaming icons</strong>, so it stays editable even when the Elsewhere panel is off.</div>
                                     </div>
                             <div class="inputContainer">
                                 <label class="inputLabel" for="IGNORE_PROVIDERS">Ignore Providers</label>
                                 <input id="IGNORE_PROVIDERS" data-config-key="IGNORE_PROVIDERS" class="emby-input" type="text" placeholder="e.g., .*with Ads, Hulu"/>
                             </div>
                                 <div class="je-setting-description" data-desc-for="IGNORE_PROVIDERS">
-                                    <div class="fieldDescription">A list of providers to ignore from the default region (supports regex).<a class="sectionTitle" href="https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/providers.txt" target="_blank">Full List</a></div>
+                                    <div class="fieldDescription">A list of providers to ignore from the default region (supports regex).<a class="sectionTitle" href="https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/providers.txt" target="_blank">Full List</a><br/>Also used by the <strong>Seerr streaming icons</strong>, so it stays editable even when the Elsewhere panel is off.</div>
                                 </div>
 
                             <details class="je-details-section">

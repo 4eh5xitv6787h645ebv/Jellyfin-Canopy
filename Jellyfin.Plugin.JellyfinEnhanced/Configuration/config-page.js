@@ -1658,60 +1658,45 @@
             });
         }
 
-        // Requests Page requirements line — hides once Sonarr, Radarr AND
-        // Seerr all have URL + API key configured, shows with a dynamic list
-        // of what's still missing otherwise. The surrounding info banner
-        // itself stays visible; only the "Requirements:" sentence toggles.
-        // Runs off the live DOM so typing a URL/API key updates immediately
-        // without needing a save-and-reload.
+        // Requests Page requirements line — the page draws from two INDEPENDENT
+        // data sources and is useful with EITHER one, so the requirement is met
+        // as soon as one source is configured:
+        //   • Downloads list  ← at least one ENABLED *arr service (Sonarr and/or
+        //     Radarr). A movie-only setup with just Radarr, or a TV-only setup
+        //     with just Sonarr, is enough — neither is individually mandatory.
+        //   • Requests/Issues list ← Seerr (URL + API key).
+        // The download section renders with no Seerr, and the requests section
+        // renders with no *arr, so forcing all three (the old behaviour) blocked
+        // legitimate single-service setups from the page. The surrounding info
+        // banner stays visible; only the "Requirements:" sentence toggles. Runs
+        // off the live DOM so typing a URL/API key updates immediately without a
+        // save-and-reload.
         function updateRequestsRequirementsBanner() {
             var line = document.getElementById('requestsPageRequirementsLine');
             if (!line) return;
             var list = document.getElementById('requestsPageRequirementsList');
 
-            function hasCompleteInstance(listId) {
-                var root = document.getElementById(listId);
-                if (!root) return false;
-                // Walk each instance card (the <details class="arr-instance-card"> element
-                // built by createInstanceCard). Matching on the real card wrapper avoids
-                // closest() landing on the inner .inputContainer div, which only contains
-                // the URL input and misses the API-key sibling.
-                var cards = root.querySelectorAll('.arr-instance-card');
-                for (var i = 0; i < cards.length; i++) {
-                    var urlEl = cards[i].querySelector('.arr-instance-url');
-                    var apiEl = cards[i].querySelector('.arr-instance-apikey');
-                    var url = urlEl ? (urlEl.value || '').trim() : '';
-                    var api = apiEl ? (apiEl.value || '').trim() : '';
-                    if (url && api) return true;
-                }
-                return false;
-            }
+            // At least one enabled Sonarr/Radarr instance with URL + API key.
+            // Reuses the shared arr check so disabled-only instances don't count
+            // as "configured" (they're skipped by every fan-out caller).
+            var arrOK = hasAnyArrService();
+            // Seerr side uses the same "enabled AND a valid URL + API key" test as
+            // the rest of the config page (the #seerr section gate). The requests
+            // and issues sections only render when JellyseerrEnabled is on, so
+            // creds typed in while the integration is left disabled must NOT count
+            // as a working source — otherwise the banner would report "ready" over
+            // an empty page.
+            var seerrOK = hasJellyseerrConfigured();
 
-            var sonarrOK = hasCompleteInstance('sonarrInstancesList');
-            var radarrOK = hasCompleteInstance('radarrInstancesList');
-            var seerrUrlsEl = document.getElementById('jellyseerrUrls');
-            var seerrKeyEl = document.getElementById('JellyseerrApiKey');
-            var seerrOK = seerrUrlsEl && (seerrUrlsEl.value || '').trim().length > 0 &&
-                          seerrKeyEl && (seerrKeyEl.value || '').trim().length > 0;
-
-            if (sonarrOK && radarrOK && seerrOK) {
+            if (arrOK || seerrOK) {
                 line.style.display = 'none';
                 return;
             }
 
-            var missing = [];
-            if (!sonarrOK) missing.push('Sonarr');
-            if (!radarrOK) missing.push('Radarr');
-            if (!seerrOK) missing.push('Seerr');
-            var missingText;
-            if (missing.length === 1) {
-                missingText = missing[0] + ' (URL and API key)';
-            } else if (missing.length === 2) {
-                missingText = missing.join(' and ') + ' (URL and API key each)';
-            } else {
-                missingText = missing.slice(0, -1).join(', ') + ', and ' + missing[missing.length - 1] + ' (URL and API key each)';
+            // Nothing configured yet — point the admin at either data source.
+            if (list) {
+                list.textContent = 'Configure Seerr (for requests) and/or Sonarr or Radarr (for downloads) — URL and API key each.';
             }
-            if (list) list.textContent = 'Still to configure: ' + missingText + '.';
             line.style.display = '';
         }
 
@@ -3237,12 +3222,21 @@
         }
 
         var PARENT_DEPS = [
-            // TMDB Reviews are independent of Elsewhere: they live in their own
-            // fieldset, render off (ShowReviews && TmdbEnabled) with no Elsewhere
-            // dependency, and are already gated on a TMDB key via INDIVIDUAL_DEPS.
-            // Keeping them as children here left "Show TMDB Reviews" greyed out and
-            // un-toggleable whenever Elsewhere was off, while reviews kept rendering.
-            { parent: 'elsewhereEnabled', label: 'Enable Elsewhere', children: ['DEFAULT_REGION', 'DEFAULT_PROVIDERS', 'IGNORE_PROVIDERS', 'ElsewhereCustomBrandingText', 'ElsewhereCustomBrandingImageUrl'] },
+            // Only the custom-branding fields belong to "Enable Elsewhere" alone —
+            // they're consumed solely inside the Elsewhere panel, so they stay
+            // children here. Everything else that once hung off this parent is
+            // shared with features that render independently of the Elsewhere
+            // toggle, so gating it here greyed out live controls (the same trap the
+            // "Show TMDB Reviews" fix addressed):
+            //   • TMDB Reviews / reviewsExpandedByDefault render off
+            //     (ShowReviews && TmdbEnabled) — gated on a TMDB key via the
+            //     showReviews INDIVIDUAL/PARENT deps, not on Elsewhere.
+            //   • Default Region is read by the TMDB Release Dates chip
+            //     (ShowReleaseDates && TmdbEnabled), and Default Region / Default
+            //     Providers / Ignore Providers are all read by the Seerr poster
+            //     streaming icons (ShowElsewhereOnJellyseerr && TmdbEnabled).
+            // Those provider inputs therefore stay editable with Elsewhere off.
+            { parent: 'elsewhereEnabled', label: 'Enable Elsewhere', children: ['ElsewhereCustomBrandingText', 'ElsewhereCustomBrandingImageUrl'] },
             { parent: 'showReviews', label: 'Show Reviews', children: ['reviewsExpandedByDefault'] },
             { parent: 'showUserReviews', label: 'Enable User Reviews', children: ['hideReviewsFromHiddenUsers', 'hideReviewsFromDisabledUsers', 'showUserRatingDash', 'showUserRatingOnPosters'] },
             { parent: 'randomButtonEnabled', label: 'Enable Random Button', children: ['randomUnwatchedOnly', 'randomIncludeMovies', 'randomIncludeShows'] },
@@ -3921,6 +3915,13 @@
             SECTION_DEPS.forEach(updateSectionDep);
             INDIVIDUAL_DEPS.forEach(updateIndividualDep);
             PARENT_DEPS.forEach(updateParentDep);
+            // Keep the Requests Page requirements banner in sync with dep-relevant
+            // changes it now reads — notably the Seerr enable toggle (which fires
+            // updateAllDependencies) feeding hasJellyseerrConfigured(). Isolated so
+            // a throw here can't break the rest of the dependency pass.
+            try { updateRequestsRequirementsBanner(); } catch (e) {
+                console.warn('[JE] requirements banner refresh threw:', e);
+            }
             updateClientTagCacheControlsVisibility();
             // `updateStatusDashboard` and the legacy `renderChecklist` both
             // now delegate to `renderServiceStatusDashboard`. Calling both

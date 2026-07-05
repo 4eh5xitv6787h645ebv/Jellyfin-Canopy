@@ -121,18 +121,18 @@ Display synced *arr tags as clickable links on item detail pages.
 
 **Prerequisites:**
 
-- Sonarr and/or Radarr configured
-- API keys for Sonarr and Radarr
+- At least one Sonarr **and/or** Radarr instance configured (URL + API key)
+
+Neither service is mandatory — tags sync from whichever you set up. A movie-only server with just Radarr, or a TV-only server with just Sonarr, works fine; the sync task processes each service independently and simply skips the one you haven't configured.
 
 **Configuration:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
 2. Navigate to ***arr Settings** tab
 3. Check **"Enable *arr Tags Sync"**
-4. Enter **Sonarr API Key**
-5. Enter **Radarr API Key**
-6. Configure tag settings (see below)
-7. Click **Save**
+4. Enter the **API key** for whichever service(s) you use — Sonarr, Radarr, or both
+5. Configure tag settings (see below)
+6. Click **Save**
 
 ### Tag Settings
 

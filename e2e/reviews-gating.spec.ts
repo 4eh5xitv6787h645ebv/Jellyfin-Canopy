@@ -66,4 +66,65 @@ test.describe('reviews gating', () => {
         });
         expect(labelDimmed, 'Show TMDB Reviews container must not be dimmed by a parent dep').toBe(false);
     });
+
+    // Same bug class: Default Region / Default Providers / Ignore Providers are
+    // read by TMDB Release Dates (Default Region) and the Seerr poster streaming
+    // icons (all three) — neither depends on the Elsewhere panel — so they must
+    // NOT be greyed out just because "Enable Elsewhere" is off. Only the custom
+    // branding fields belong to Elsewhere alone.
+    test('Provider inputs stay editable with Elsewhere OFF', async ({ page, consoleErrors }) => {
+        await loginAs(page, 'admin', consoleErrors);
+
+        await page.evaluate((hash) => { window.location.hash = hash; }, CONFIG_HASH);
+        // A populated TMDB key signals config-page.js has finished loadConfig and
+        // run its dependency passes — waiting on the static inputs alone would let
+        // us assert before the parent-dep gate has (or hasn't) disabled anything.
+        await page.waitForFunction(() => {
+            const tmdb = document.getElementById('TMDB_API_KEY') as HTMLInputElement | null;
+            return !!(tmdb && tmdb.value.trim().length > 0
+                && document.getElementById('elsewhereEnabled')
+                && document.getElementById('DEFAULT_REGION')
+                && document.getElementById('DEFAULT_PROVIDERS')
+                && document.getElementById('IGNORE_PROVIDERS')
+                && document.getElementById('ElsewhereCustomBrandingText'));
+        }, undefined, { timeout: 60_000 });
+
+        const state = await page.evaluate(() => {
+            // Force Elsewhere OFF and re-run the dependency passes via a change event.
+            const elsewhere = document.getElementById('elsewhereEnabled') as HTMLInputElement;
+            if (elsewhere.checked) { elsewhere.checked = false; }
+            elsewhere.dispatchEvent(new Event('change', { bubbles: true }));
+            elsewhere.dispatchEvent(new Event('input', { bubbles: true }));
+
+            function probe(id: string) {
+                const el = document.getElementById(id) as HTMLInputElement;
+                const container = el.closest('.inputContainer') as HTMLElement | null;
+                return {
+                    disabled: el.disabled,
+                    depAttr: el.getAttribute('data-dep-disabled') || '',
+                    dimmed: container ? container.style.opacity === '0.5' : false,
+                };
+            }
+            return {
+                elsewhereChecked: elsewhere.checked,
+                region: probe('DEFAULT_REGION'),
+                providers: probe('DEFAULT_PROVIDERS'),
+                ignore: probe('IGNORE_PROVIDERS'),
+                // Control: the branding field SHOULD still be gated by Elsewhere.
+                brandingDisabled: (document.getElementById('ElsewhereCustomBrandingText') as HTMLInputElement | null)?.disabled ?? null,
+            };
+        });
+
+        expect(state.elsewhereChecked, 'precondition: Elsewhere is OFF').toBe(false);
+
+        for (const [name, p] of [['Default Region', state.region], ['Default Providers', state.providers], ['Ignore Providers', state.ignore]] as const) {
+            expect(p.disabled, `${name} must not be disabled with Elsewhere off`).toBe(false);
+            expect(p.depAttr, `${name} must carry no parent-dep tag`).not.toContain('parent-elsewhereEnabled');
+            expect(p.dimmed, `${name} must not be dimmed by a parent dep`).toBe(false);
+        }
+
+        // The branding field is Elsewhere-only, so it SHOULD be disabled here —
+        // proving the fix narrowed the gate rather than removing it wholesale.
+        expect(state.brandingDisabled, 'Custom Branding stays gated by Elsewhere').toBe(true);
+    });
 });
