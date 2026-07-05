@@ -221,7 +221,7 @@ export async function renderBookmarksLibrary(container: HTMLElement): Promise<vo
 
     try {
       const result = await JE.bookmarks!.cleanupOrphaned();
-      toast(JE.t!('bookmark_cleanup_complete').replace('{count}', String(result.cleaned)), 4000);
+      toast(JE.t!('bookmark_cleanup_complete').replace('{count}', String(Number(result.cleaned) || 0)), 4000);
       void renderBookmarksLibrary(container);
     } catch (error) {
       console.error('Cleanup failed:', error);

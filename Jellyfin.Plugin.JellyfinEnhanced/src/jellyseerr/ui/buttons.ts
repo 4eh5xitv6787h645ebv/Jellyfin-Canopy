@@ -85,9 +85,9 @@ function configureTvShowButton(button: any, overallStatus: any, seasonAnalysis: 
                 internal.addDownloadProgressHover(button, item);
             }
             break;
-        case MediaStatus.AVAILABLE: setButton(JE.t!('jellyseerr_btn_available'), icons.available, 'jellyseerr-button-available', true, seasonAnalysis?.total > 1 ? JE.t!('jellyseerr_all_seasons', {count: seasonAnalysis.total}) : null); break;
+        case MediaStatus.AVAILABLE: setButton(JE.t!('jellyseerr_btn_available'), icons.available, 'jellyseerr-button-available', true, seasonAnalysis?.total > 1 ? JE.t!('jellyseerr_all_seasons', {count: Number(seasonAnalysis.total) || 0}) : null); break;
         case MediaStatus.BLOCKED: setButton(JE.t!('jellyseerr_btn_blocklisted'), icons.cancel, 'jellyseerr-button-blocklisted', true); break;
-        default: setButton(JE.t!('jellyseerr_btn_request'), icons.request, 'jellyseerr-button-request', false, seasonAnalysis?.total > 1 ? JE.t!('jellyseerr_seasons_available', {count: seasonAnalysis.total}) : null); break;
+        default: setButton(JE.t!('jellyseerr_btn_request'), icons.request, 'jellyseerr-button-request', false, seasonAnalysis?.total > 1 ? JE.t!('jellyseerr_seasons_available', {count: Number(seasonAnalysis.total) || 0}) : null); break;
     }
 
     const show4KOption = !!JE.pluginConfig.JellyseerrEnable4KTvRequests;

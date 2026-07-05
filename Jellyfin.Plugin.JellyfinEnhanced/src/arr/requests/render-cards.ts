@@ -306,7 +306,7 @@ export function renderSeasonPackCard(group: Extract<DownloadGroup, { type: 'seas
           ${posterHtml}
           <div class="je-download-info">
             <div class="je-download-title" title="${escapeHtml(item.title || '')}">${escapeHtml(item.title || JE.t?.('requests_unknown') || 'Unknown')}</div>
-            <div class="je-download-subtitle">${JE.t?.('requests_season') || 'Season'} ${Number(item.seasonNumber) || 0} (${group.episodeCount} ${JE.t?.('requests_episodes') || 'episodes'})</div>
+            <div class="je-download-subtitle">${JE.t?.('requests_season') || 'Season'} ${Number(item.seasonNumber) || 0} (${Number(group.episodeCount) || 0} ${JE.t?.('requests_episodes') || 'episodes'})</div>
             <div class="je-download-meta">
               <span class="je-download-badge je-arr-badge" title="Sonarr"><img src="${SONARR_ICON_URL}" alt="Sonarr" loading="lazy"></span>
               <span class="je-download-badge" style="background: ${statusColor}">${escapeHtml(item.status)}</span>
