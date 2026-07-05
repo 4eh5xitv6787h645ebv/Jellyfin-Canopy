@@ -1,13 +1,13 @@
 // src/jellyseerr/more-info-modal-actions.ts
 // Action-area rendering: movie request buttons, requested chips, quota chip
 // and the renderActions orchestrator for the action/chip/download mounts.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 /* eslint-disable @typescript-eslint/no-misused-promises -- legacy async event listeners with fire-and-forget bodies; semantics preserved verbatim */
 
 
-import { internal } from './more-info-modal-internal';
+import { internal } from './internal';
 const state = internal.state;
 const logPrefix = '🪼 Jellyfin Enhanced: Jellyseerr More Info:';
 const escapeHtml = JE.escapeHtml;

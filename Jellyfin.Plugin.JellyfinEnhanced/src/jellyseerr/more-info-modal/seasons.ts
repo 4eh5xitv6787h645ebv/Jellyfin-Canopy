@@ -1,12 +1,12 @@
 // src/jellyseerr/more-info-modal-seasons.ts
 // Season-level logic: metadata backfill from TMDB, Jellyfin season links,
 // availability chips, unrequested-season detection and the seasons section.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
 
-import { internal } from './more-info-modal-internal';
+import { internal } from './internal';
 const state = internal.state;
 const logPrefix = '🪼 Jellyfin Enhanced: Jellyseerr More Info:';
 const escapeHtml = JE.escapeHtml;

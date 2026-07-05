@@ -1,14 +1,14 @@
 // src/jellyseerr/more-info-modal-render.ts
 // Static HTML builders for the more-info modal body (header, panels,
 // crew/cast, trailers, keywords, collection card).
-import { JE } from '../globals';
+import { JE } from '../../globals';
 // PERF(R6): no remote assets — flag/icon images served from the local asset cache.
-import { assetUrl, flagPngUrl } from '../core/asset-urls';
+import { assetUrl, flagPngUrl } from '../../core/asset-urls';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
 
-import { internal } from './more-info-modal-internal';
+import { internal } from './internal';
 const escapeHtml = JE.escapeHtml;
 
 /**

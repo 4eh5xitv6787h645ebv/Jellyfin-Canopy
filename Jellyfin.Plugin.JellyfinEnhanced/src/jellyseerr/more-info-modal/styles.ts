@@ -1,6 +1,6 @@
 // src/jellyseerr/more-info-modal-styles.ts
 // CSS for the Jellyseerr more-info modal, injected once at load.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
  
 

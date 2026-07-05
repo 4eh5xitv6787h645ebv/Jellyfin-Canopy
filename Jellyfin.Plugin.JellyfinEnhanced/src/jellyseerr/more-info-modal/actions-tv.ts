@@ -1,13 +1,13 @@
 // src/jellyseerr/more-info-modal-actions-tv.ts
 // TV request buttons: season request split-button, 4K variants and
 // the "Request More" button.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 /* eslint-disable @typescript-eslint/no-misused-promises, @typescript-eslint/require-await -- legacy async event listeners with fire-and-forget bodies; semantics preserved verbatim */
 
 
-import { internal } from './more-info-modal-internal';
+import { internal } from './internal';
 const DisplayStatus = JE.seerrStatus!.DISPLAY;
 
 /**

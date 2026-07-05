@@ -1,14 +1,14 @@
 // src/jellyseerr/more-info-modal-init.ts
 // Public surface + orchestration for the Jellyseerr more-info modal:
 // open/close, modal lifecycle, refresh and navigation cleanup.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 /* eslint-disable @typescript-eslint/no-misused-promises -- legacy async event listeners with fire-and-forget bodies; semantics preserved verbatim */
 
 
 const moreInfoModal: any = JE.jellyseerrMoreInfo = JE.jellyseerrMoreInfo || {};
-import { internal } from './more-info-modal-internal';
+import { internal } from './internal';
 const state = internal.state;
 const logPrefix = '🪼 Jellyfin Enhanced: Jellyseerr More Info:';
 

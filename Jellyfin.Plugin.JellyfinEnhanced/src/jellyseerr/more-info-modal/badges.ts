@@ -1,11 +1,11 @@
 // src/jellyseerr/more-info-modal-badges.ts
 // Rating logos, external media-fact links, status chips and download bars.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
 
-import { internal } from './more-info-modal-internal';
+import { internal } from './internal';
 const escapeHtml = JE.escapeHtml;
 
 /**

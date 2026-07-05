@@ -1,12 +1,12 @@
 // src/jellyseerr/more-info-modal-data.ts
 // Fetch + pure data helpers for the more-info modal (ratings, details,
 // content rating resolution, currency formatting, error reporting).
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
 
-import { internal } from './more-info-modal-internal';
+import { internal } from './internal';
 const logPrefix = '🪼 Jellyfin Enhanced: Jellyseerr More Info:';
 
 /**
