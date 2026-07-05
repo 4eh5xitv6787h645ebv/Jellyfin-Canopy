@@ -4,12 +4,12 @@
 // library cards, including the scoped (Next Up / Continue Watching) flow.
 // (Converted from js/enhanced/hidden-content-buttons.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { getItemCached } from './helpers';
-import { hiddenIdSet, getSettings, hideItem, unhideItem } from './hidden-content-data';
-import type { HideItemParams } from './hidden-content-data';
-import { getCardSurface, getCardItemId } from './hidden-content-filter';
-import { confirmAndHide } from './hidden-content-dialogs';
+import { JE } from '../../globals';
+import { getItemCached } from '../helpers';
+import { hiddenIdSet, getSettings, hideItem, unhideItem } from './data';
+import type { HideItemParams } from './data';
+import { getCardSurface, getCardItemId } from './filter';
+import { confirmAndHide } from './dialogs';
 
 // ============================================================
 // Library hide buttons

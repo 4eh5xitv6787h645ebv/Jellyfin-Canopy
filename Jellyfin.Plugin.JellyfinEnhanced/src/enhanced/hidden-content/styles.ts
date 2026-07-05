@@ -4,7 +4,7 @@
 // and the confirmation dialog.
 // (Converted from js/enhanced/hidden-content-styles.js — CSS verbatim.)
 
-import { addCSS } from './helpers';
+import { addCSS } from '../helpers';
 
 // ============================================================
 // CSS injection

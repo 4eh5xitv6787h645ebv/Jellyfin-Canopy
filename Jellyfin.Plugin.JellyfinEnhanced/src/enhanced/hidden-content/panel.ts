@@ -4,9 +4,9 @@
 // items with unhide actions) and the shared hidden-item card factory.
 // (Converted from js/enhanced/hidden-content-panel.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { getHiddenData, unhideItem, unhideAll } from './hidden-content-data';
-import type { HiddenItem } from './hidden-content-data';
+import { JE } from '../../globals';
+import { getHiddenData, unhideItem, unhideAll } from './data';
+import type { HiddenItem } from './data';
 
 /** Max poster width when loading images from TMDB / Jellyfin. */
 const POSTER_MAX_WIDTH = 300;

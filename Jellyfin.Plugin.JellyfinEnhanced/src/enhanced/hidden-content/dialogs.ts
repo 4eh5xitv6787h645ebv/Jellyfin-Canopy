@@ -4,9 +4,9 @@
 // (standard, surface-scoped, and episode-choice variants).
 // (Converted from js/enhanced/hidden-content-dialogs.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { getSettings, hideItem, unhideItem } from './hidden-content-data';
-import type { HideItemParams } from './hidden-content-data';
+import { JE } from '../../globals';
+import { getSettings, hideItem, unhideItem } from './data';
+import type { HideItemParams } from './data';
 
 /** Options customising the hide-confirmation dialog variants. */
 export interface HideDialogOptions {

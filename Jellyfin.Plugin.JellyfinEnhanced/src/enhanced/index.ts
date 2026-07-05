@@ -24,14 +24,14 @@ import './playback';
 // hidden-content modules — order matters: -data owns the store + lookup sets the
 // later files import; -init exposes the frozen JE.initializeHiddenContent /
 // JE.hiddenContent surface last.
-import './hidden-content-data';
-import './hidden-content-save';
-import './hidden-content-styles';
-import './hidden-content-dialogs';
-import './hidden-content-panel';
-import './hidden-content-filter';
-import './hidden-content-buttons';
-import './hidden-content-init';
+import './hidden-content/data';
+import './hidden-content/save';
+import './hidden-content/styles';
+import './hidden-content/dialogs';
+import './hidden-content/panel';
+import './hidden-content/filter';
+import './hidden-content/buttons';
+import './hidden-content/init';
 // hidden-content-page modules — order matters: -state owns the shared page
 // state the later files import; -init exposes the frozen JE.hiddenContentPage /
 // JE.initializeHiddenContentPage last.

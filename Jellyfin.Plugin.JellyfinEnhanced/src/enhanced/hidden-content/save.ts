@@ -4,10 +4,10 @@
 // and the admin cross-user endpoints.
 // (Converted from js/enhanced/hidden-content-save.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { toast } from '../core/ui-kit';
-import { getHiddenData } from './hidden-content-data';
-import type { HiddenItem } from './hidden-content-data';
+import { JE } from '../../globals';
+import { toast } from '../../core/ui-kit';
+import { getHiddenData } from './data';
+import type { HiddenItem } from './data';
 
 let saveTimeout: number | null = null;
 

@@ -5,13 +5,13 @@
 // hidden-content-* module reads state through the functions exported here.
 // (Converted from js/enhanced/hidden-content-data.js — bodies semantically identical.)
 
-import { JE } from '../globals';
+import { JE } from '../../globals';
 // Cross-module references (defined in the later-loaded
 // hidden-content-save/dialogs/filter modules) — call-time only, so the
 // import cycles are safe.
-import { debouncedSave } from './hidden-content-save';
-import { showUndoToast } from './hidden-content-dialogs';
-import { refreshNativeCardVisibility, restoreNativeCardsForIds } from './hidden-content-filter';
+import { debouncedSave } from './save';
+import { showUndoToast } from './dialogs';
+import { refreshNativeCardVisibility, restoreNativeCardsForIds } from './filter';
 
 // ============================================================
 // Shared shapes

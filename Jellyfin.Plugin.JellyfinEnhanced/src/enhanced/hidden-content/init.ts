@@ -7,7 +7,7 @@
 // hidden-content-data.ts where the hiddenData closure variable lives.)
 // Loads last among the hidden-content-* modules.
 
-import { JE } from '../globals';
+import { JE } from '../../globals';
 import {
     resetFromUserConfig,
     isHidden,
@@ -24,24 +24,24 @@ import {
     unhideAll,
     refresh,
     markScopedHidden,
-} from './hidden-content-data';
+} from './data';
 import {
     flushPendingSave,
     fetchHiddenContentUsers,
     fetchUserHiddenItemsForAdmin,
     adminUnhideForUser,
     adminHideForUser,
-} from './hidden-content-save';
-import { injectCSS } from './hidden-content-styles';
-import { showUndoToast, confirmAndHide } from './hidden-content-dialogs';
-import { showManagementPanel, createItemCard } from './hidden-content-panel';
+} from './save';
+import { injectCSS } from './styles';
+import { showUndoToast, confirmAndHide } from './dialogs';
+import { showManagementPanel, createItemCard } from './panel';
 import {
     setupNativeObserver,
     filterAllNativeCards,
     isHiddenOnSurface,
     filterNativeCards,
-} from './hidden-content-filter';
-import { addLibraryHideButtons, removeLibraryHideButtons } from './hidden-content-buttons';
+} from './filter';
+import { addLibraryHideButtons, removeLibraryHideButtons } from './buttons';
 
 /** Initial filter delay after module initialization. */
 const INIT_FILTER_DELAY_MS = 150;

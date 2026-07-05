@@ -3,12 +3,12 @@
 // Legacy js/ areas (hidden-content-page-*, ui-panel-hidden-content, etc.) and
 // user scripts keep reading JE.hiddenContent / calling JE.initializeHiddenContent
 // by these exact names.
-import type {} from '../types/je';
-import type { HiddenItem, HideItemParams, HiddenContentSettings } from './hidden-content-data';
-import type { HideDialogOptions } from './hidden-content-dialogs';
-import type { HiddenContentUser } from './hidden-content-save';
+import type {} from '../../types/je';
+import type { HiddenItem, HideItemParams, HiddenContentSettings } from './data';
+import type { HideDialogOptions } from './dialogs';
+import type { HiddenContentUser } from './save';
 
-declare module '../types/je' {
+declare module '../../types/je' {
     /** The frozen public JE.hiddenContent surface. */
     interface HiddenContentApi {
         isHidden(jellyfinItemId: string): boolean;

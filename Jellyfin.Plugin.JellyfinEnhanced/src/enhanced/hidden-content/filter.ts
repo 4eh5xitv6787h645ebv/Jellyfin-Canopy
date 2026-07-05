@@ -9,12 +9,12 @@
 // (see the PERF notes below); debouncedFilterNative remains as the safety-net
 // pass, and setupNativeObserver keeps the same onViewPage hook.
 
-import { JE } from '../globals';
-import { debounce } from './helpers';
-import { onViewPage } from '../core/navigation';
-import { onBodyMutation } from '../core/dom-observer';
-import { hiddenIdSet, getSettings, shouldFilterSurface, getHiddenData, getHiddenCount } from './hidden-content-data';
-import { addLibraryHideButtons } from './hidden-content-buttons';
+import { JE } from '../../globals';
+import { debounce } from '../helpers';
+import { onViewPage } from '../../core/navigation';
+import { onBodyMutation } from '../../core/dom-observer';
+import { hiddenIdSet, getSettings, shouldFilterSurface, getHiddenData, getHiddenCount } from './data';
+import { addLibraryHideButtons } from './buttons';
 
 const parentSeriesCache = new Map<string, string | null>();
 const parentSeriesRequestMap = new Map<string, Promise<string | null>>();
