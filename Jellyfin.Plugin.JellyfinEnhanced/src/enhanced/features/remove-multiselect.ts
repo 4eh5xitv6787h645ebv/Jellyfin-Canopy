@@ -5,12 +5,12 @@
 // (Converted from js/enhanced/features-remove-multiselect.js — bodies semantically
 // identical; the eager JE.internals.features destructure is now real imports.)
 
-import { JE } from '../globals';
+import { JE } from '../../globals';
 import {
     showNotification, REMOVE_SURFACES, buildNativeActionSheetItem, setActionSheetItemIcon,
     fitRemoveItemToMenu, removeFromHomeSurface, closeOpenActionSheet, hideEmptyHomeSections,
     getActiveActionSheetScroller
-} from './features-remove-home';
+} from './remove-home';
 
 // ── Multi-select / long-press menu ───────────────────────────────────────────
 // Touch devices have no per-item "…" button; a long-press opens Jellyfin's multi-select

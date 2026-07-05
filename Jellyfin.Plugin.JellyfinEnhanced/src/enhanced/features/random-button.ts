@@ -3,9 +3,9 @@
 // Random-item header button: fetches a random movie/series and navigates to it.
 // (Converted from js/enhanced/features-random-button.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { toast } from '../core/ui-kit';
-import { getHeaderRightContainer } from './helpers';
+import { JE } from '../../globals';
+import { toast } from '../../core/ui-kit';
+import { getHeaderRightContainer } from '../helpers';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

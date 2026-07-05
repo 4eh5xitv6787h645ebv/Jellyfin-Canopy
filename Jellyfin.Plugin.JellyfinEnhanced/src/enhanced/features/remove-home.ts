@@ -5,7 +5,7 @@
 // (Converted from js/enhanced/features-remove-home.js — bodies semantically
 // identical; the JE.internals.features pieces are now real module exports.)
 
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

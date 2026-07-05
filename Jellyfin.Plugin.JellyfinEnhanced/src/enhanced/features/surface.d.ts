@@ -3,9 +3,9 @@
 // JEGlobal surface owned by the features-* modules (frozen public contract):
 // consumed by js/plugin.js, other legacy areas (e.g. events.js) and user scripts.
 
-import type {} from '../types/je';
+import type {} from '../../types/je';
 
-declare module '../types/je' {
+declare module '../../types/je' {
     interface JEGlobal {
         /** features-random-button: injects the header Random button. */
         addRandomButton?: () => void;

@@ -5,12 +5,12 @@
 // (Converted from js/enhanced/features-details-page.js — bodies semantically
 // identical; the eager JE.internals.features destructure is now real imports.)
 
-import { JE } from '../globals';
-import { onBodyMutation } from '../core/dom-observer';
-import { onNavigate, onViewPage } from '../core/navigation';
-import { debounce, getItemCached } from './helpers';
-import { displayWatchProgress, displayItemSize, displayAudioLanguages } from './features-details-media-info';
-import { displayReleaseDate } from './features-release-dates';
+import { JE } from '../../globals';
+import { onBodyMutation } from '../../core/dom-observer';
+import { onNavigate, onViewPage } from '../../core/navigation';
+import { debounce, getItemCached } from '../helpers';
+import { displayWatchProgress, displayItemSize, displayAudioLanguages } from './details-media-info';
+import { displayReleaseDate } from './release-dates';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

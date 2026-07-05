@@ -4,9 +4,9 @@
 // (Converted from js/enhanced/features-release-dates.js — bodies semantically
 // identical; the JE.internals.features pieces are now real module exports.)
 
-import { JE } from '../globals';
-import { ensureMaterialSymbolsFont } from '../core/ui-kit';
-import { addCSS, getItemCached } from './helpers';
+import { JE } from '../../globals';
+import { ensureMaterialSymbolsFont } from '../../core/ui-kit';
+import { addCSS, getItemCached } from '../helpers';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
