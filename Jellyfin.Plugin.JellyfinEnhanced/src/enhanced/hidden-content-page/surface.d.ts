@@ -5,9 +5,9 @@
 // PluginPages HTML + the custom-tab module; JE.initializeHiddenContentPage is
 // invoked by js/plugin.js.
 
-import type {} from '../types/je';
+import type {} from '../../types/je';
 
-declare module '../types/je' {
+declare module '../../types/je' {
     interface HiddenContentPageApi {
         initialize(): void;
         showPage(): void;

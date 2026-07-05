@@ -6,14 +6,14 @@
 // identical; the JE.internals.hiddenContentPage bag is now real module imports.)
 // Loads last among the hidden-content-page-* modules.
 
-import { JE } from '../globals';
-import { state, pluginPagesExists } from './hidden-content-page-state';
-import { injectStyles } from './hidden-content-page-styles';
-import { renderPage } from './hidden-content-page-render';
+import { JE } from '../../globals';
+import { state, pluginPagesExists } from './state';
+import { injectStyles } from './styles';
+import { renderPage } from './render';
 import {
     showPage, hidePage, interceptNavigation, handleNavigation, handleViewShow,
     handleNavClick, injectNavigation, setupNavigationWatcher, renderForCustomTab
-} from './hidden-content-page-nav';
+} from './nav';
 
 const logPrefix = '🪼 Jellyfin Enhanced: Hidden Content Page:';
 

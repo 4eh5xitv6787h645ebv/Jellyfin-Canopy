@@ -7,7 +7,7 @@
 // Loads first: owns the state object and parse-time sidebar/Plugin-Pages
 // detection that every other hidden-content-page-* module reads.
 
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

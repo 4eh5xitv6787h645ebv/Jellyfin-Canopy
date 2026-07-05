@@ -5,11 +5,11 @@
 // (Converted from js/enhanced/hidden-content-page-admin.js — bodies semantically
 // identical; the JE.internals.hiddenContentPage bag is now real module exports.)
 
-import { JE } from '../globals';
-import { state, POSTER_MAX_WIDTH } from './hidden-content-page-state';
+import { JE } from '../../globals';
+import { state, POSTER_MAX_WIDTH } from './state';
 // Cross-module reference (defined in hidden-content-page-render.ts). ES-module
 // cyclic edge — only ever invoked at call time, never during module evaluation.
-import { renderPage } from './hidden-content-page-render';
+import { renderPage } from './render';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

@@ -15,7 +15,7 @@
 // identical. The original file's top-level early-returns are preserved by
 // keeping the body inside an IIFE.)
 
-import { createObserver } from '../core/dom-observer';
+import { createObserver } from '../../core/dom-observer';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

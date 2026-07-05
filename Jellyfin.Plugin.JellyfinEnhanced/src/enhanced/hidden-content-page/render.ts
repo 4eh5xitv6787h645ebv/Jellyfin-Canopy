@@ -6,17 +6,17 @@
 // (Converted from js/enhanced/hidden-content-page-render.js — bodies semantically
 // identical; the JE.internals.hiddenContentPage bag is now real module imports.)
 
-import { JE } from '../globals';
-import { state, scopeBadgeText, showUnhideConfirmation } from './hidden-content-page-state';
+import { JE } from '../../globals';
+import { state, scopeBadgeText, showUnhideConfirmation } from './state';
 import {
     handleUnhide, handleUnhideMany, maybeInitAdminFilter, onAdminUserChange,
     toOpaqueColor, applyAdminThemeVars, isCssColor, createAdminViewingBadge,
     openAdminAddModal
-} from './hidden-content-page-admin';
-import { createGroupCard, createSection } from './hidden-content-page-cards';
+} from './admin';
+import { createGroupCard, createSection } from './cards';
 // Cross-module reference (defined in hidden-content-page-nav.ts). ES-module
 // cyclic edge — only ever invoked at call time, never during module evaluation.
-import { createPageContainer } from './hidden-content-page-nav';
+import { createPageContainer } from './nav';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

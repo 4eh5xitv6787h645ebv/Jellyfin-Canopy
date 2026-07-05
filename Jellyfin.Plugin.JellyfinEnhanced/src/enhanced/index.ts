@@ -35,14 +35,14 @@ import './hidden-content/init';
 // hidden-content-page modules — order matters: -state owns the shared page
 // state the later files import; -init exposes the frozen JE.hiddenContentPage /
 // JE.initializeHiddenContentPage last.
-import './hidden-content-page-state';
-import './hidden-content-page-styles';
-import './hidden-content-page-admin';
-import './hidden-content-page-cards';
-import './hidden-content-page-render';
-import './hidden-content-page-nav';
-import './hidden-content-page-init';
-import './hidden-content-custom-tab';
+import './hidden-content-page/state';
+import './hidden-content-page/styles';
+import './hidden-content-page/admin';
+import './hidden-content-page/cards';
+import './hidden-content-page/render';
+import './hidden-content-page/nav';
+import './hidden-content-page/init';
+import './hidden-content-page/custom-tab';
 import './subtitles';
 import './themer';
 // ui modules — order matters: -release-notes exports GITHUB_REPO + the release-

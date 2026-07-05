@@ -5,13 +5,13 @@
 // (Converted from js/enhanced/hidden-content-page-nav.js — bodies semantically
 // identical; the JE.internals.hiddenContentPage bag is now real module imports.)
 
-import { JE } from '../globals';
-import { onSidebarRebuild } from '../core/dom-observer';
-import { state, sidebar, pluginPagesExists } from './hidden-content-page-state';
-import { injectStyles } from './hidden-content-page-styles';
+import { JE } from '../../globals';
+import { onSidebarRebuild } from '../../core/dom-observer';
+import { state, sidebar, pluginPagesExists } from './state';
+import { injectStyles } from './styles';
 // Cross-module reference (defined in hidden-content-page-render.ts). ES-module
 // cyclic edge — only ever invoked at call time, never during module evaluation.
-import { renderPage } from './hidden-content-page-render';
+import { renderPage } from './render';
 
 const logPrefix = '🪼 Jellyfin Enhanced: Hidden Content Page:';
 

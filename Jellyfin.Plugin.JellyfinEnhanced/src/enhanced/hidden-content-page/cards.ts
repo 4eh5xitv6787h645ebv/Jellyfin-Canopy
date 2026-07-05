@@ -5,9 +5,9 @@
 // (Converted from js/enhanced/hidden-content-page-cards.js — bodies semantically
 // identical; the JE.internals.hiddenContentPage bag is now real module imports.)
 
-import { JE } from '../globals';
-import { scopeBadgeText, scopeUnhideText, showUnhideConfirmation, POSTER_MAX_WIDTH } from './hidden-content-page-state';
-import { handleUnhide, handleUnhideMany } from './hidden-content-page-admin';
+import { JE } from '../../globals';
+import { scopeBadgeText, scopeUnhideText, showUnhideConfirmation, POSTER_MAX_WIDTH } from './state';
+import { handleUnhide, handleUnhideMany } from './admin';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
