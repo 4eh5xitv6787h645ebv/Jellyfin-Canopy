@@ -75,6 +75,10 @@ Injected UI must never jank the host client. The full doctrine — each rule wit
 - [ ] **R7** Feature DOM is built off-DOM and inserted once, content ready; late async data gets a compositor-only fade, never a layout-affecting swap.
 - [ ] **R8** Synchronous per-mutation-batch work stays under ~2 ms (`performance.now()` guard) and overflows to the async path.
 
+And one server-side rule (guarded by `LibraryScanEventGuardTests`):
+
+- [ ] **S1** Any handler for `ILibraryManager.ItemAdded/ItemUpdated/ItemRemoved` (raised synchronously on the library-scan thread) does only O(1) record-and-defer work — no DB query, no `GetMediaSources`, no I/O; heavy work runs on a debounced off-thread worker that coalesces by id. See [S1](docs/advanced/performance-rules.md) and `TagCacheMonitor`/`TagCacheService`.
+
 ## 📝 Code Contribution Guidelines
 
 ### Code Style
