@@ -2,26 +2,26 @@
 // Requests Page — full page rendering (downloads/requests/issues sections)
 // and the page container shell (split from requests-page.js).
 
-import { JE } from './arr-globals';
+import { JE } from '../arr-globals';
 import {
     clearAvatarObjectUrlCache,
     handleRequestAction,
     hydrateAvatarImages,
     loadAllData,
     state
-} from './requests-page-data';
+} from './data';
 import {
     getDownloadStatuses,
     getFilteredDownloads,
     groupDownloads,
     translateStatus
-} from './requests-page-render-helpers';
+} from './render-helpers';
 import {
     renderDownloadCard,
     renderIssueCard,
     renderRequestCard,
     renderSeasonPackCard
-} from './requests-page-render-cards';
+} from './render-cards';
 
 /** Container element carrying the once-per-element delegated-listener flag. */
 type BindableContainer = HTMLElement & { _jeRequestsActionsBound?: boolean };

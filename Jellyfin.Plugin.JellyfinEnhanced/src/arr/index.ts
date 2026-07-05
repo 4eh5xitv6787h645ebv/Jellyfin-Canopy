@@ -4,18 +4,18 @@
 // imports this barrel once, so conversions never edit main.ts itself.
 import './arr-links';
 import './arr-tag-links';
-import './requests-page-styles';
-import './requests-page-data';
-import './requests-page-render-helpers';
-import './requests-page-render-cards';
-import './requests-page-render';
-import './requests-page-actions';
-import './requests-page-init';
+import './requests/styles';
+import './requests/data';
+import './requests/render-helpers';
+import './requests/render-cards';
+import './requests/render';
+import './requests/actions';
+import './requests/init';
 import './calendar/styles';
 import './calendar/data';
 import './calendar/render-events';
 import './calendar/render-views';
 import './calendar/actions';
 import './calendar/init';
-import './requests-custom-tab';
+import './requests/custom-tab';
 import './calendar/custom-tab';

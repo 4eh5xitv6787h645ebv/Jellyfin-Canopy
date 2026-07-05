@@ -165,7 +165,7 @@ export type ArrJE = Omit<
     initializeArrLinksScript?: () => Promise<void>;
     _arrLinksObserver?: MutationObserver | ObserverProxy | null;
     initializeArrTagLinksScript?: () => Promise<void>;
-    downloadsPage?: import('./requests-page-init').DownloadsPageApi;
+    downloadsPage?: import('./requests/init').DownloadsPageApi;
     initializeDownloadsPage?: () => void;
     calendarPage?: import('./calendar/init').CalendarPageApi;
     initializeCalendarPage?: () => void;

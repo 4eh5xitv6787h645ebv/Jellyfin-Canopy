@@ -2,9 +2,9 @@
 // Requests Page — download, request, issue and season-pack card rendering
 // (split from requests-page.js).
 
-import { assetUrl } from '../core/asset-urls';
-import { JE } from './arr-globals';
-import { richApiClient, state, getIssueMediaType, getIssueTmdbId } from './requests-page-data';
+import { assetUrl } from '../../core/asset-urls';
+import { JE } from '../arr-globals';
+import { richApiClient, state, getIssueMediaType, getIssueTmdbId } from './data';
 import {
     formatDownloadStats,
     formatRelativeDate,
@@ -12,9 +12,9 @@ import {
     getReleaseDateLabel,
     getStatusColors,
     resolveRequestStatus
-} from './requests-page-render-helpers';
-import type { DownloadItem, IssueItem, RequestItem } from './requests-page-data';
-import type { DownloadGroup } from './requests-page-render-helpers';
+} from './render-helpers';
+import type { DownloadItem, IssueItem, RequestItem } from './data';
+import type { DownloadGroup } from './render-helpers';
 
 const escapeHtml = JE.escapeHtml;
 

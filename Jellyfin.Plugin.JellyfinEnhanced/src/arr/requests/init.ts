@@ -6,13 +6,13 @@
 // Public surface (frozen): JE.downloadsPage + JE.initializeDownloadsPage —
 // called by js/plugin.js Stage 6 and PluginPages/DownloadsPage.html.
 
-import { register as registerLifecycle } from '../core/lifecycle';
-import { LIVE } from '../core/live';
-import { onSidebarRebuild } from '../core/dom-observer';
-import { JE } from './arr-globals';
-import { clearAvatarObjectUrlCache, loadAllData, state } from './requests-page-data';
-import { createPageContainer, renderPage } from './requests-page-render';
-import { injectStyles } from './requests-page-styles';
+import { register as registerLifecycle } from '../../core/lifecycle';
+import { LIVE } from '../../core/live';
+import { onSidebarRebuild } from '../../core/dom-observer';
+import { JE } from '../arr-globals';
+import { clearAvatarObjectUrlCache, loadAllData, state } from './data';
+import { createPageContainer, renderPage } from './render';
+import { injectStyles } from './styles';
 import {
     filterDownloads,
     filterIssues,
@@ -22,8 +22,8 @@ import {
     prevIssuesPage,
     prevPage,
     searchDownloads
-} from './requests-page-actions';
-import type { RequestsPageState } from './requests-page-data';
+} from './actions';
+import type { RequestsPageState } from './data';
 
 /** The frozen JE.downloadsPage contract (js/plugin.js + PluginPages HTML). */
 export interface DownloadsPageApi {

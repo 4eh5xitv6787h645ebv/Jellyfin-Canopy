@@ -3,8 +3,8 @@
 // Owns the single injection site for the feature's styles; all former call
 // sites import injectStyles, deduped by style id via core injectCss.
 
-import { injectCss } from '../core/ui-kit';
-import { JE } from './arr-globals';
+import { injectCss } from '../../core/ui-kit';
+import { JE } from '../arr-globals';
 
 // CSS Styles - minimal styling to fit Jellyfin's theme
 const CSS_STYLES = `

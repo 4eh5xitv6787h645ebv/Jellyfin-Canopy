@@ -2,8 +2,8 @@
 // Requests Page — user actions: downloads tab filtering/search, request and
 // issue filter tabs and pagination (split from requests-page.js).
 
-import { fetchIssues, fetchRequests, state } from './requests-page-data';
-import { renderPage } from './requests-page-render';
+import { fetchIssues, fetchRequests, state } from './data';
+import { renderPage } from './render';
 
 /**
  * Filter downloads by status
