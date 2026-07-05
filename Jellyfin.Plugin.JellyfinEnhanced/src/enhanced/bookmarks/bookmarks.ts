@@ -3,11 +3,11 @@
 // Enhanced bookmarks system with multi-bookmark support, TMDB/TVDB tracking, and visual markers
 // (Converted from js/enhanced/bookmarks.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { escapeHtml, toast } from '../core/ui-kit';
-import { getItemCached, debounce } from './helpers';
-import { createObserver, disconnectObserver } from '../core/dom-observer';
-import type { BookmarksApi } from './bookmarks-surface';
+import { JE } from '../../globals';
+import { escapeHtml, toast } from '../../core/ui-kit';
+import { getItemCached, debounce } from '../helpers';
+import { createObserver, disconnectObserver } from '../../core/dom-observer';
+import type { BookmarksApi } from './surface';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

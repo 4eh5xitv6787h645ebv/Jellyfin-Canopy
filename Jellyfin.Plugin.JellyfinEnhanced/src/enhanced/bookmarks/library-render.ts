@@ -5,11 +5,11 @@
 // Split from bookmarks-library.js (code motion; bodies verbatim).
 // (Converted from js/enhanced/bookmarks-library-render.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { toast } from '../core/ui-kit';
-import { onViewPage } from '../core/navigation';
-import { renderBookmarkItems } from './bookmarks-library-items';
-import { showDuplicatesSyncModal } from './bookmarks-library-modals';
+import { JE } from '../../globals';
+import { toast } from '../../core/ui-kit';
+import { onViewPage } from '../../core/navigation';
+import { renderBookmarkItems } from './library-items';
+import { showDuplicatesSyncModal } from './library-modals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

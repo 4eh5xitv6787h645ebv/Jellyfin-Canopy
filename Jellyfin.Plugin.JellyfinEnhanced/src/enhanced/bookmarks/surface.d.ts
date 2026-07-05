@@ -4,8 +4,8 @@
 // public contract): consumed by js/plugin.js, other legacy areas (e.g.
 // events.js) and user scripts.
 
-import type {} from '../types/je';
-import type { JEGlobal } from '../types/je';
+import type {} from '../../types/je';
+import type { JEGlobal } from '../../types/je';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -38,7 +38,7 @@ declare global {
     }
 }
 
-declare module '../types/je' {
+declare module '../../types/je' {
     interface JEGlobal {
         /** enhanced/bookmarks: the public bookmarks API. */
         bookmarks?: BookmarksApi;

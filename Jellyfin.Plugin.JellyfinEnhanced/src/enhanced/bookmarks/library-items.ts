@@ -4,12 +4,12 @@
 // Split from bookmarks-library.js (code motion; bodies verbatim).
 // (Converted from js/enhanced/bookmarks-library-items.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { escapeHtml, toast } from '../core/ui-kit';
-import { getItemCached } from './helpers';
-import { formatTimestamp, parseTimestampInput, renderBookmarksLibrary } from './bookmarks-library-render';
-import { findAndOfferReplacement } from './bookmarks-library-replacements';
-import { showOffsetAdjustmentModal } from './bookmarks-library-modals';
+import { JE } from '../../globals';
+import { escapeHtml, toast } from '../../core/ui-kit';
+import { getItemCached } from '../helpers';
+import { formatTimestamp, parseTimestampInput, renderBookmarksLibrary } from './library-render';
+import { findAndOfferReplacement } from './library-replacements';
+import { showOffsetAdjustmentModal } from './library-modals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

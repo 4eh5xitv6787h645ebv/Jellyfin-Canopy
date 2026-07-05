@@ -4,9 +4,9 @@
 // Split from bookmarks-library.js (code motion; bodies verbatim).
 // (Converted from js/enhanced/bookmarks-library-page.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { onSidebarRebuild } from '../core/dom-observer';
-import { renderIfSectionExists } from './bookmarks-library-render';
+import { JE } from '../../globals';
+import { onSidebarRebuild } from '../../core/dom-observer';
+import { renderIfSectionExists } from './library-render';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

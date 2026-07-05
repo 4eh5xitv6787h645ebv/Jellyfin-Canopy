@@ -6,7 +6,7 @@
 // (see bookmarks-library-init.ts for the boot sequence).
 // (Converted from js/enhanced/bookmarks-library-styles.js — bodies semantically identical.)
 
-import { JE } from "../globals";
+import { JE } from "../../globals";
 
 if (!JE.pluginConfig?.BookmarksEnabled) {
   console.log("🪼 Jellyfin Enhanced: Bookmarks library feature is disabled");

@@ -57,15 +57,15 @@ import './ui-panel-settings';
 import './ui-panel-hidden-content';
 import './ui-panel-language';
 import './ui-panel';
-import './bookmarks';
+import './bookmarks/bookmarks';
 // bookmarks-library modules — order matters: styles/page/render export the
 // bookmarksLibrary pieces the later files import; -init boots last.
-import './bookmarks-library-styles';
-import './bookmarks-library-page';
-import './bookmarks-library-render';
-import './bookmarks-library-items';
-import './bookmarks-library-modals';
-import './bookmarks-library-replacements';
-import './bookmarks-library-init';
+import './bookmarks/library-styles';
+import './bookmarks/library-page';
+import './bookmarks/library-render';
+import './bookmarks/library-items';
+import './bookmarks/library-modals';
+import './bookmarks/library-replacements';
+import './bookmarks/library-init';
 import './osd-rating';
 import './pausescreen';

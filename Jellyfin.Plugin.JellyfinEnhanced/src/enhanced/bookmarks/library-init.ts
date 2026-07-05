@@ -6,10 +6,10 @@
 // observer, and the optional native tab, then triggers the first render.
 // (Converted from js/enhanced/bookmarks-library-init.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { createObserver } from '../core/dom-observer';
-import { register as registerLifecycle } from '../core/lifecycle';
-import { onViewPage, onNavigate } from '../core/navigation';
+import { JE } from '../../globals';
+import { createObserver } from '../../core/dom-observer';
+import { register as registerLifecycle } from '../../core/lifecycle';
+import { onViewPage, onNavigate } from '../../core/navigation';
 import {
   isPluginPagesActive,
   injectNavigation,
@@ -18,8 +18,8 @@ import {
   interceptNavigation,
   handleViewShow,
   handleNavClick,
-} from './bookmarks-library-page';
-import { renderIfSectionExists, hookViewEvents } from './bookmarks-library-render';
+} from './library-page';
+import { renderIfSectionExists, hookViewEvents } from './library-render';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
