@@ -6,7 +6,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Helpers.Jellyseerr
 {
     /// <summary>
     /// Verifies the C# certification extractor matches the client's
-    /// <c>getContentRating</c> (more-info-modal-data.ts): region -> US -> first
+    /// <c>getContentRating</c> (more-info-modal/data.ts): region -> US -> first
     /// fallback, theatrical (type 3) preference for movies, and the ISO actually
     /// used is reported so scores resolve against the right country.
     /// </summary>

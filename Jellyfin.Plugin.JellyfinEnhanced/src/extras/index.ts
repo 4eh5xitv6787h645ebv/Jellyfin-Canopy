@@ -1,4 +1,4 @@
-// src/extras/index.ts — area barrel: imports this area's converted modules in
+// src/extras/index.ts
 // their required execution order (the former allComponentScripts order).
 // Owned by the extras conversion wave; main.ts imports this barrel once, so
 // conversions never edit main.ts itself. login-image.js stays out-of-band

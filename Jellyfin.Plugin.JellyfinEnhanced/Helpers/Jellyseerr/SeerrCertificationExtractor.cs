@@ -7,7 +7,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr
     /// Extracts the content-rating certification from a Seerr movie/TV detail
     /// payload (<c>/api/v1/movie/{id}</c> or <c>/api/v1/tv/{id}</c>). This is a
     /// faithful C# port of the client's <c>getContentRating</c>
-    /// (<c>src/jellyseerr/more-info-modal-data.ts</c>) so the server-side parental
+    /// (<c>src/jellyseerr/more-info-modal/data.ts</c>) so the server-side parental
     /// filter reads exactly the same certification the more-info modal displays.
     ///
     /// Region resolution: prefer the requested region, then <c>US</c>, then the

@@ -1,4 +1,4 @@
-// src/arr/arr-tag-links.ts (formerly js/arr/arr-tag-links.js)
+// src/arr/arr-tag-links.ts
 // Renders "JE Arr Tag: ..." library tags as link buttons on the item detail
 // page. Public surface (frozen): JE.initializeArrTagLinksScript (called by
 // js/plugin.js Stage 6).

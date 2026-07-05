@@ -1,4 +1,4 @@
-// src/arr/arr-links.ts (formerly js/arr/arr-links.js)
+// src/arr/arr-links.ts
 // Sonarr/Radarr/Bazarr external-link buttons on the item detail page.
 // Public surface (frozen): JE.initializeArrLinksScript (called by js/plugin.js
 // Stage 6), JE._arrLinksObserver.

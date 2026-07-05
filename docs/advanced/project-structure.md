@@ -30,21 +30,26 @@ Jellyfin.Plugin.JellyfinEnhanced/
     ├── bootstrap/           # Out-of-band loaders compiled to their OWN dist/<name>.js files
     │   │                    # (fetched by plugin.js separately — before login / before the bundle)
     │   ├── splashscreen.ts / login-image.ts / translations.ts
-    ├── enhanced/            # Core features: config, events, playback, subtitles, pausescreen,
-    │   │                    # themer, icons, native-tabs, osd-rating, tag-pipeline
-    │   ├── features-*.ts    # Split feature modules (random button, details page, release dates,
+    ├── enhanced/            # Core features. Flat singles: config, events, playback, subtitles,
+    │   │                    # pausescreen, themer, icons, native-tabs, osd-rating, tag-pipeline
+    │   ├── features/        # Split feature modules (random button, details page, release dates,
     │   │                    # remove-from-home, multi-select)
-    │   ├── ui-*.ts          # Split settings-panel modules (entry points, styles, panel, sections)
-    │   ├── bookmarks.ts + bookmarks-library-*.ts       # Bookmarks + the bookmarks library page
-    │   └── hidden-content-*.ts + hidden-content-page-*.ts  # Hidden-content engine, panel, admin page
-    ├── jellyseerr/          # Seerr integration: api, request-manager, seerr-status, modal,
-    │   │                    # item-details, issue-reporter, seamless-scroll
-    │   ├── discovery-base.ts + {genre,tag,network,person,collection}-discovery.ts
-    │   ├── more-info-modal-*.ts         # Split media-details modal
-    │   └── ui-*.ts                      # Split card/request UI
-    ├── arr/                 # Sonarr/Radarr integration: arr-links, arr-tag-links,
-    │   ├── calendar-page-*.ts + calendar-custom-tab.ts
-    │   └── requests-page-*.ts + requests-custom-tab.ts
+    │   ├── settings-panel/  # Split settings-panel modules (entry points, styles, panel, sections)
+    │   ├── bookmarks/       # Bookmarks + the bookmarks library page (library-*.ts)
+    │   ├── hidden-content/  # Hidden-content engine (data, save, filter, dialogs, panel, buttons)
+    │   └── hidden-content-page/  # Hidden-content admin page (state, render, cards, nav, custom tab)
+    ├── jellyseerr/          # Seerr integration. Flat singles: api, request-manager, jellyseerr,
+    │   │                    # seerr-status, modal, item-details, issue-reporter, seamless-scroll,
+    │   │                    # hss-discovery-handler
+    │   ├── discovery/       # Discovery rows: base + filter-utils + {genre,tag,network,person,collection}.ts
+    │   ├── more-info-modal/ # Split media-details modal (styles, data, seasons, badges, render,
+    │   │                    # actions, actions-tv, init + internal.ts shared state)
+    │   └── ui/              # Split card/request UI (icons, styles, popover, badges, cards, buttons,
+    │                        # quota, results, request/season modals + internal.ts shared state)
+    ├── arr/                 # Sonarr/Radarr integration. Flat singles: arr-links, arr-tag-links,
+    │   │                    # arr-globals
+    │   ├── calendar/        # Calendar page (styles, data, render-*, actions, init) + custom-tab.ts
+    │   └── requests/        # Requests page (styles, data, render-*, actions, init) + custom-tab.ts
     ├── tags/                # Tag renderer specs over core/tag-renderer-base + enhanced/tag-pipeline
     ├── elsewhere/           # Streaming-availability + reviews
     ├── extras/              # Active streams, colored ratings/icons, theme selector, plugin icons
@@ -53,7 +58,7 @@ Jellyfin.Plugin.JellyfinEnhanced/
     └── test/setup.ts        # Vitest bootstrap stub (what plugin.js provides in the real client)
 ```
 
-Feature-internal state is shared through real module imports (typed `*-surface.d.ts` /
+Feature-internal state is shared through real module imports (typed `surface.d.ts` files /
 interface augmentations where a surface crosses files). The legacy `JE.internals` bag is gone;
 the only global surface is the typed `window.JellyfinEnhanced` facade (`src/facade.ts`).
 

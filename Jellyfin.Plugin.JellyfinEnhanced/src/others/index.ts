@@ -1,4 +1,4 @@
-// src/others/index.ts — area barrel: imports this area's converted modules in
+// src/others/index.ts
 // their required execution order (the former allComponentScripts order).
 // Owned by the others conversion wave; main.ts imports this barrel once, so
 // conversions never edit main.ts itself. splashscreen.js stays out-of-band
