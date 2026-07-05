@@ -271,7 +271,7 @@ function fillReleaseDateChip(chip: HTMLElement, infos: ReleaseInfo[]): void {
     chip.style.alignItems = 'center';
     chip.style.gap = '0.6em';
     chip.style.margin = '0 1em 0 0 !important';
-    chip.innerHTML = infos.map(info => `<span style="display: inline-flex; align-items: center;"><span class="je-release-date-icon" style="font-size: inherit; margin-right: 0.3em;" title="${JE.t!(info.titleKey)}">${info.icon}</span>${formatReleaseDate(info.date)}</span>`).join('');
+    chip.innerHTML = infos.map(info => `<span style="display: inline-flex; align-items: center;"><span class="je-release-date-icon" style="font-size: inherit; margin-right: 0.3em;" title="${JE.t!(info.titleKey)}">${info.icon}</span>${JE.escapeHtml(formatReleaseDate(info.date))}</span>`).join('');
 }
 
 /** Creates and appends a fresh release-date chip (cache-hit path, where there's no placeholder to fill). */

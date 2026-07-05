@@ -50,7 +50,7 @@ return `
                 </svg>
             </button>
 
-            <div class="modal-backdrop" style="background-image: url('${backdropUrl}');">
+            <div class="modal-backdrop" style="background-image: url('${escapeHtml(backdropUrl)}');">
                 <div class="je-modal-backdrop-overlay"></div>
             </div>
 
@@ -59,7 +59,7 @@ return `
                     <div class="modal-left">
                         <div class="header-section">
                             <div class="header-poster">
-                                ${posterUrl ? `<img src="${posterUrl}" alt="${title}" />` : ''}
+                                ${posterUrl ? `<img src="${escapeHtml(posterUrl)}" alt="${escapeHtml(title)}" />` : ''}
                             </div>
                             <div class="header-info">
                                 <div class="title-row">
@@ -67,8 +67,8 @@ return `
                                 <div class="title-chip" data-mount="je-status-chip"></div>
                                 </div>
                                 <div class="meta-info">
-                                    <span class="rating-badge">${internal.getContentRating(data, mediaType)}</span>
-                                    <span class="runtime">${runtime}</span>
+                                    <span class="rating-badge">${escapeHtml(internal.getContentRating(data, mediaType))}</span>
+                                    <span class="runtime">${escapeHtml(runtime)}</span>
                                     <span class="genres">${data.genres?.map((g: any) => escapeHtml(g.name)).join(', ') || 'N/A'}</span>
                                 </div>
                                 ${data.tagline ? `<p class="tagline">${escapeHtml(data.tagline)}</p>` : ''}
@@ -165,7 +165,7 @@ return `
             ${data.originalLanguage ? `
                 <div class="je-more-info-stat-row">
                     <div class="je-more-info-stat-label">${JE.t!('jellyseerr_modal_original_language')}</div>
-                    <div class="je-more-info-stat-value">${data.originalLanguage.toUpperCase()}</div>
+                    <div class="je-more-info-stat-value">${escapeHtml(data.originalLanguage.toUpperCase())}</div>
                 </div>
             ` : ''}
 
@@ -175,7 +175,7 @@ return `
                     <div class="je-more-info-stat-value">${data.productionCountries.map((c: any) => {
                         const disp = c?.name === 'United States of America' ? 'United States' : (c?.name || '');
                         const code = (c?.iso_3166_1 || '').toLowerCase();
-                        return `<div><img src="${flagPngUrl(code)}" alt="${escapeHtml(disp)}" title="${escapeHtml(disp)}" style="margin-right: 6px; vertical-align: middle;" /> ${escapeHtml(disp)}</div>`;
+                        return `<div><img src="${escapeHtml(flagPngUrl(code))}" alt="${escapeHtml(disp)}" title="${escapeHtml(disp)}" style="margin-right: 6px; vertical-align: middle;" /> ${escapeHtml(disp)}</div>`;
                     }).join('')}</div>
                 </div>
             ` : ''}
@@ -236,7 +236,7 @@ return `
     <div class="je-more-info-stat-row">
         <div class="je-more-info-stat-label">${JE.t!('jellyseerr_modal_streaming')}</div>
         <div class="je-more-info-providers-list">
-            ${uniqueProviders.map((p: any) => `<img src="https://image.tmdb.org/t/p/w92${p.logoPath}" alt="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" />`).join('')}
+            ${uniqueProviders.map((p: any) => `<img src="https://image.tmdb.org/t/p/w92${escapeHtml(p.logoPath)}" alt="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" />`).join('')}
         </div>
     </div>
 `;
@@ -260,7 +260,7 @@ return `
         </div>
         <div class="je-collection-card-content">
             <div class="je-collection-card-title">${escapeHtml(collection.name)}</div>
-            <button class="je-collection-card-button" data-collection-id="${collection.id}" data-collection-name="${escapeHtml(collection.name)}">
+            <button class="je-collection-card-button" data-collection-id="${escapeHtml(collection.id)}" data-collection-name="${escapeHtml(collection.name)}">
                 ${JE.t!('jellyseerr_btn_view_collection') || 'View'}
             </button>
         </div>
@@ -351,7 +351,7 @@ return `
                 return `
                     <a is="emby-linkbutton" href="${escapeHtml(trailer.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(trailer.name)}" class="trailer-item">
                         <div class="trailer-thumbnail">
-                            ${thumbnailUrl ? `<img src="${thumbnailUrl}" alt="${escapeHtml(trailer.name)}" />` : ''}
+                            ${thumbnailUrl ? `<img src="${escapeHtml(thumbnailUrl)}" alt="${escapeHtml(trailer.name)}" />` : ''}
                             <div class="je-modal-play-button">
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M8 5v14l11-7z"/>
@@ -391,7 +391,7 @@ return `
                 return `
                     <div class="cast-member">
                         <div class="person-avatar">
-                            ${imageUrl ? `<img src="${imageUrl}" alt="${escapeHtml(person.name)}" />` : buildPersonPlaceholder()}
+                            ${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(person.name)}" />` : buildPersonPlaceholder()}
                         </div>
                         <div class="person-name">${escapeHtml(person.name)}</div>
                         <div class="person-character">${escapeHtml(person.character || '')}</div>

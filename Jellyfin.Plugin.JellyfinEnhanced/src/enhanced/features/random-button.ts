@@ -56,7 +56,7 @@ async function getRandomItem(): Promise<any> {
         throw new Error('No items found in selected libraries.');
     } catch (error) {
         console.error('🪼 Jellyfin Enhanced: Error fetching random item:', error);
-        toast(`${JE.icon!(JE.IconName!.ERROR)} ${(error as any)?.message || 'Unknown error'}`, 2000);
+        toast(`${JE.icon!(JE.IconName!.ERROR)} ${JE.escapeHtml((error as any)?.message || 'Unknown error')}`, 2000);
         return null;
     }
 }

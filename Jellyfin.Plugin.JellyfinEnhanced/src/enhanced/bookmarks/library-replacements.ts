@@ -123,7 +123,7 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
         <div class="je-modal-warning-box">
           <div class="je-modal-warning-label">Old Item (Missing)</div>
           <div class="je-modal-item-name">${escapeHtml(oldGroup.details.name)}</div>
-          <div class="je-modal-item-meta">TMDB: ${oldGroup.details.tmdbId || 'N/A'} • Item ID: ${oldGroup.details.itemId.substring(0,16)}...</div>
+          <div class="je-modal-item-meta">TMDB: ${escapeHtml(oldGroup.details.tmdbId || 'N/A')} • Item ID: ${escapeHtml(oldGroup.details.itemId.substring(0,16))}...</div>
         </div>
 
         <div class="je-replacement-section-title">Select Replacement:</div>
@@ -136,11 +136,11 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
             });
             return `
               <div class="replacement-option" data-item-index="${idx}" style="display: flex; gap: 12px; background: rgba(76,175,80,0.05); border: 2px solid rgba(76,175,80,0.2); border-radius: 8px; padding: 12px; cursor: pointer; transition: all 0.2s; align-items: center;">
-                ${posterUrl ? `<img src="${posterUrl}" style="width: 60px; height: 90px; object-fit: cover; border-radius: 6px; flex-shrink: 0;">` : '<div style="width: 60px; height: 90px; background: rgba(255,255,255,0.05); border-radius: 6px; flex-shrink: 0;"></div>'}
+                ${posterUrl ? `<img src="${escapeHtml(posterUrl)}" style="width: 60px; height: 90px; object-fit: cover; border-radius: 6px; flex-shrink: 0;">` : '<div style="width: 60px; height: 90px; background: rgba(255,255,255,0.05); border-radius: 6px; flex-shrink: 0;"></div>'}
                 <div style="flex: 1;">
                   <div style="font-weight: 600; margin-bottom: 4px; color: #fff; font-size: 15px;">${escapeHtml(item.Name)}</div>
-                  <div style="font-size: 12px; color: #aaa; margin-bottom: 4px;">${item.ProductionYear || ''}</div>
-                  <div style="font-size: 11px; color: #888;">Item ID: ${item.Id.substring(0,16)}...</div>
+                  <div style="font-size: 12px; color: #aaa; margin-bottom: 4px;">${escapeHtml(item.ProductionYear || '')}</div>
+                  <div style="font-size: 11px; color: #888;">Item ID: ${escapeHtml(item.Id.substring(0,16))}...</div>
                 </div>
                 <span class="material-icons" aria-hidden="true" style="color: #4caf50; font-size: 28px; display: none; flex-shrink: 0;">check_circle</span>
               </div>
@@ -344,7 +344,7 @@ function showOrphanedSummaryModal(replacementResults: any[]): void {
                 </button>
               </div>
               <div class="je-orphaned-result-meta">
-                TMDB: ${result.group.details.tmdbId || 'N/A'} • Item ID: ${result.group.details.itemId.substring(0,12)}...
+                TMDB: ${escapeHtml(result.group.details.tmdbId || 'N/A')} • Item ID: ${escapeHtml(result.group.details.itemId.substring(0,12))}...
               </div>
             </div>
           `).join('')}

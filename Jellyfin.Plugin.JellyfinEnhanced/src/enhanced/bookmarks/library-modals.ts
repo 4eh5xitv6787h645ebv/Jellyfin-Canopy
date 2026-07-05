@@ -49,8 +49,8 @@ export function showOffsetAdjustmentModal(group: any): void {
           <div class="je-modal-list-title">${JE.t!('bookmark_offset_affected')}</div>
           ${syncedBookmarks.map((bm: any) => `
             <div class="je-modal-list-item">
-              <div class="je-modal-list-item-title">${bm.label || JE.t!('bookmark_unlabeled')}</div>
-              <div class="je-modal-list-item-meta">${formatTimestamp(bm.timestamp)} • ${JE.t!('bookmark_from').replace('{source}', bm.syncedFrom)}</div>
+              <div class="je-modal-list-item-title">${escapeHtml(bm.label || JE.t!('bookmark_unlabeled'))}</div>
+              <div class="je-modal-list-item-meta">${formatTimestamp(bm.timestamp)} • ${JE.t!('bookmark_from').replace('{source}', escapeHtml(bm.syncedFrom))}</div>
             </div>
           `).join('')}
         </div>
@@ -214,7 +214,7 @@ export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
                         ${versionIdx === 0 ? JE.t!('bookmark_primary_version') : JE.t!('bookmark_old_version')}
                       </div>
                       <div style="font-size: 12px; color: #ccc; margin-bottom: 6px;">
-                        ${JE.t!('bookmark_item_id')}: <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; font-size: 11px;">${itemId.substring(0, 16)}...</code>
+                        ${JE.t!('bookmark_item_id')}: <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; font-size: 11px;">${escapeHtml(itemId.substring(0, 16))}...</code>
                       </div>
                       <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">
                         ${JE.t!('bookmark_bookmark_count').replace('{count}', bms.length)} ${bms.map((b: any) => formatTimestamp(b.timestamp)).join(', ')}

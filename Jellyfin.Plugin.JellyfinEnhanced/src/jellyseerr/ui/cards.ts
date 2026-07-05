@@ -53,7 +53,7 @@ function createJellyseerrCard(item: any, isJellyseerrActive: any, jellyseerrUser
     }
     const isAvailable = Boolean(jellyfinMediaId)
         && (cardEffectiveStatus === MediaStatus.AVAILABLE || cardEffectiveStatus === MediaStatus.PARTIALLY_AVAILABLE);
-    const jellyfinHref = isAvailable ? `#!/details?id=${jellyfinMediaId}` : null;
+    const jellyfinHref = isAvailable ? `#!/details?id=${escapeHtml(jellyfinMediaId)}` : null;
     // True when the card should navigate directly to an external Seerr URL instead of
     // showing the hover overview — used to decide poster touch behaviour below.
     const navigatesExternally = !useMoreInfoModal && !jellyfinMediaId && !!jellyseerrUrl && item.mediaType !== 'collection';
@@ -64,7 +64,7 @@ function createJellyseerrCard(item: any, isJellyseerrActive: any, jellyseerrUser
         : (useMoreInfoModal
             ? 'href="#"'
             : (jellyseerrUrl
-                ? `href="${jellyseerrUrl}" target="_blank" rel="noopener noreferrer"`
+                ? `href="${escapeHtml(jellyseerrUrl)}" target="_blank" rel="noopener noreferrer"`
                 : 'href="#"'));
 
     const card = document.createElement('div');
@@ -84,13 +84,13 @@ function createJellyseerrCard(item: any, isJellyseerrActive: any, jellyseerrUser
                 <a ${titleLinkIsAttribute}
                    ${titleHrefAttribute}
                    class="jellyseerr-more-info-link"
-                   data-tmdb-id="${item.id}"
-                   data-media-type="${item.mediaType}"
+                   data-tmdb-id="${escapeHtml(item.id)}"
+                   data-media-type="${escapeHtml(item.mediaType)}"
                    title="${jellyfinHref ? titleText : (useMoreInfoModal ? titleText : (jellyseerrUrl ? (JE.t!('jellyseerr_card_view_on_jellyseerr') || 'View on Jellyseerr') : titleText))}"><bdi>${titleText}</bdi></a>
             </div>
             <div class="cardText cardTextCentered cardText-secondary jellyseerr-meta">
                 <img src="${assetUrl('icons/seerr.svg')}" class="jellyseerr-icon-on-card" alt="Seerr"/>
-                <bdi>${year}</bdi>
+                <bdi>${escapeHtml(year)}</bdi>
                 <div class="jellyseerr-rating">${icons.star}<span>${rating}</span></div>
             </div>
         </div>`;
@@ -122,11 +122,11 @@ function createJellyseerrCard(item: any, isJellyseerrActive: any, jellyseerrUser
             // When modal is disabled and item isn't in the library, wrap the description
             // text in a real <a is="emby-linkbutton"> so the user's tap opens outside the app.
             const contentHtml = navigatesExternally
-                ? `<a is="emby-linkbutton" href="${jellyseerrUrl}" target="_blank" rel="noopener noreferrer" class="content jellyseerr-overview-link" style="text-decoration:none;color:inherit;">${escapeHtml((item.overview || JE.t!('jellyseerr_card_no_info')).slice(0, 500))}</a>`
+                ? `<a is="emby-linkbutton" href="${escapeHtml(jellyseerrUrl)}" target="_blank" rel="noopener noreferrer" class="content jellyseerr-overview-link" style="text-decoration:none;color:inherit;">${escapeHtml((item.overview || JE.t!('jellyseerr_card_no_info')).slice(0, 500))}</a>`
                 : `<div class="content">${escapeHtml((item.overview || JE.t!('jellyseerr_card_no_info')).slice(0, 500))}</div>`;
             overview.innerHTML = `
                 ${contentHtml}
-                <button type="button" class="jellyseerr-request-button" data-tmdb-id="${item.id}" data-media-type="${item.mediaType}"></button>
+                <button type="button" class="jellyseerr-request-button" data-tmdb-id="${escapeHtml(item.id)}" data-media-type="${escapeHtml(item.mediaType)}"></button>
             `;
 
             cardScalable.appendChild(overview);

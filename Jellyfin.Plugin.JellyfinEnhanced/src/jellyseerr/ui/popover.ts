@@ -176,7 +176,7 @@ function createInlineProgress(downloadStatus: any) {
     progressContainer.className = 'jellyseerr-inline-progress';
     progressContainer.innerHTML = `
         <div class="jellyseerr-inline-progress-bar"><div class="jellyseerr-inline-progress-fill" style="width: ${percentage}%"></div></div>
-        <div class="jellyseerr-inline-progress-text">${percentage}% • ${(downloadStatus.status || 'downloading').replace(/^./, (c: any) => c.toUpperCase())}</div>`;
+        <div class="jellyseerr-inline-progress-text">${percentage}% • ${escapeHtml((downloadStatus.status || 'downloading').replace(/^./, (c: any) => c.toUpperCase()))}</div>`;
     return progressContainer;
 }
 

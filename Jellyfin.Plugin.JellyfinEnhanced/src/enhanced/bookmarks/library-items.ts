@@ -85,33 +85,33 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
     let titleDisplay = escapeHtml(group.details.name || 'Unknown Item');
     // For TV episodes, show series name and episode number/name
     if (group.type === 'tv' && item && item.Type === 'Episode' && item.SeriesName) {
-      titleDisplay = `${escapeHtml(item.SeriesName)}<br><small class="je-episode-title">S${item.ParentIndexNumber || '?'}:E${item.IndexNumber || '?'} ${item.Name ? escapeHtml(item.Name) : ''}</small>`;
+      titleDisplay = `${escapeHtml(item.SeriesName)}<br><small class="je-episode-title">S${escapeHtml(item.ParentIndexNumber || '?')}:E${escapeHtml(item.IndexNumber || '?')} ${item.Name ? escapeHtml(item.Name) : ''}</small>`;
     }
 
     // Create the card header HTML
     const headerHtml = `
       <div class="je-bookmark-item-header">
         ${posterUrl ? `
-          <img src="${posterUrl}"
+          <img src="${escapeHtml(posterUrl)}"
                class="je-bookmark-item-poster"
-               data-item-id="${group.details.itemId}">
+               data-item-id="${escapeHtml(group.details.itemId)}">
         ` : `
           <div class="je-bookmark-item-placeholder"><span class="material-icons" style="font-size: 48px; opacity: 0.3;">image_not_supported</span></div>
         `}
         <div class="je-bookmark-item-info">
-          <a href="/web/#/details?id=${group.details.itemId || ''}" class="je-bookmark-item-title">${titleDisplay}</a>
+          <a href="/web/#/details?id=${escapeHtml(group.details.itemId || '')}" class="je-bookmark-item-title">${titleDisplay}</a>
           <div class="je-bookmark-item-meta">
             ${JE.t!('bookmark_count').replace('{count}', group.bookmarks.length)}
             ${orphaned ? ` • <span style="color: #ff9800;">${JE.t!('bookmark_orphaned')}</span>` : ''}
           </div>
         </div>
         ${orphaned && group.details.tmdbId ? `
-          <button class="btnFindReplacement je-btn-find-replacement" data-group-key="${key}" title="${JE.t!('bookmark_find_replacement')}">
+          <button class="btnFindReplacement je-btn-find-replacement" data-group-key="${escapeHtml(key)}" title="${JE.t!('bookmark_find_replacement')}">
             <span class="material-icons" aria-hidden="true">find_replace</span>
           </button>
         ` : ''}
         ${!orphaned && group.bookmarks.some((bm: any) => bm.syncedFrom) ? `
-          <button class="btnAdjustOffset je-offset-icon" data-group-key="${key}" title="${JE.t!('bookmark_adjust_offset')}">
+          <button class="btnAdjustOffset je-offset-icon" data-group-key="${escapeHtml(key)}" title="${JE.t!('bookmark_adjust_offset')}">
             <span class="material-icons" aria-hidden="true">schedule</span>
           </button>
         ` : ''}
@@ -166,8 +166,8 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
         info.className = 'je-bookmark-info';
         info.innerHTML = `
           ${bm.label ? `<div class="je-bookmark-label">${escapeHtml(bm.label)}</div>` : ''}
-          <div class="je-bm-time" data-item-id="${bm.itemId}" data-time="${bm.timestamp}">
-            <span>${bm.progress ? `${bm.progress}% • ` : ''}${formatTimestamp(bm.timestamp)}</span>
+          <div class="je-bm-time" data-item-id="${escapeHtml(bm.itemId)}" data-time="${Number(bm.timestamp) || 0}">
+            <span>${bm.progress ? `${Number(bm.progress) || 0}% • ` : ''}${formatTimestamp(bm.timestamp)}</span>
           </div>
         `;
 
