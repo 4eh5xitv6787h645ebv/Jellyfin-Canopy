@@ -851,7 +851,7 @@ JE.initializeElsewhereScript = function() {
                 searchButton.style.opacity = '1';
 
                 if (error) {
-                    resultContainer.innerHTML = `<div style="color: #ff6b6b; font-size: 13px; margin-top: 8px;">${JE.t('elsewhere_panel_error', { error })}</div>`;
+                    resultContainer.innerHTML = `<div style="color: #ff6b6b; font-size: 13px; margin-top: 8px;">${JE.t('elsewhere_panel_error', { error: JE.escapeHtml(String(error)) })}</div>`;
                     return;
                 }
 

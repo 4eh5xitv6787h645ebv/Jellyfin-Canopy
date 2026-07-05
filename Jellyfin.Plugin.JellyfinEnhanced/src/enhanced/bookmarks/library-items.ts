@@ -382,6 +382,6 @@ async function playItemAtTime(itemId: string, startTime: number): Promise<void> 
 
   } catch (e) {
     console.error(`${logPrefix} Failed to play item:`, e);
-    toast(JE.t!('toast_playback_failed').replace('{error}', (e as any).message || 'Unknown error'), 3000);
+    toast(JE.t!('toast_playback_failed').replace('{error}', JE.escapeHtml((e as any).message || 'Unknown error')), 3000);
   }
 }

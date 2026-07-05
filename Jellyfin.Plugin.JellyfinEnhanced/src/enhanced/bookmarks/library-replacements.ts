@@ -227,7 +227,7 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
       // Sync bookmarks to new item (no offset)
       const synced = await JE.bookmarks!.syncBookmarks(oldGroup.bookmarks, newDetails, 0);
 
-      toast(JE.t!('bookmark_migrated').replace('{count}', String(synced.length)).replace('{name}', fullItem.Name), 4000);
+      toast(JE.t!('bookmark_migrated').replace('{count}', String(synced.length)).replace('{name}', JE.escapeHtml(fullItem.Name)), 4000);
 
       closeDialog();
 
