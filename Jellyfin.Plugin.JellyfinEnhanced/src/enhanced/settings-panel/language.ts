@@ -5,9 +5,9 @@
 // Split from ui.js (code motion; bodies verbatim).
 // (Converted from js/enhanced/ui-panel-language.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { toast } from '../core/ui-kit';
-import type { PanelContext } from './ui-panel';
+import { JE } from '../../globals';
+import { toast } from '../../core/ui-kit';
+import type { PanelContext } from './panel';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

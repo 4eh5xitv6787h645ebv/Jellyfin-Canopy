@@ -3,8 +3,8 @@
 // implementation created a NEW body-wide attribute MutationObserver on every
 // call made off the preferences page, and never disconnected them).
 import { beforeEach, describe, expect, it } from 'vitest';
-import { JE } from '../globals';
-import './ui-entry-points';
+import { JE } from '../../globals';
+import './entry-points';
 
 const addLink = (): void => (JE as unknown as { addUserPreferencesLink: () => void }).addUserPreferencesLink();
 

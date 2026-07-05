@@ -5,10 +5,10 @@
 // Split from ui.js (code motion; bodies verbatim).
 // (Converted from js/enhanced/ui-panel-settings.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { toast } from '../core/ui-kit';
-import { showReleaseNotesNotification } from './ui-release-notes';
-import type { PanelContext } from './ui-panel';
+import { JE } from '../../globals';
+import { toast } from '../../core/ui-kit';
+import { showReleaseNotesNotification } from './release-notes';
+import type { PanelContext } from './panel';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

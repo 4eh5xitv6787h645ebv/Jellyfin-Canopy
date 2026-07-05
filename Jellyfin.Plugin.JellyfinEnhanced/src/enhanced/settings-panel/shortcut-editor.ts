@@ -5,8 +5,8 @@
 // Split from ui.js (code motion; bodies verbatim).
 // (Converted from js/enhanced/ui-panel-shortcut-editor.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import type { PanelContext } from './ui-panel';
+import { JE } from '../../globals';
+import type { PanelContext } from './panel';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

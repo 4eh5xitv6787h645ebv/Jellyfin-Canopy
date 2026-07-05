@@ -5,10 +5,10 @@
 // Split from ui.js (code motion; bodies verbatim).
 // (Converted from js/enhanced/ui-entry-points.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { onBodyMutation } from '../core/dom-observer';
-import { onNavigate, onViewPage } from '../core/navigation';
-import { getSidebarContainer } from './helpers';
+import { JE } from '../../globals';
+import { onBodyMutation } from '../../core/dom-observer';
+import { onNavigate, onViewPage } from '../../core/navigation';
+import { getSidebarContainer } from '../helpers';
 
 /**
  * Helper function to determine if the current page is the video player.

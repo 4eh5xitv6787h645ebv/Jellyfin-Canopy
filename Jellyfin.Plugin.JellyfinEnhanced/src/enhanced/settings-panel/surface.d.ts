@@ -3,9 +3,9 @@
 // JEGlobal surface owned by the ui-* modules (frozen public contract):
 // consumed by js/plugin.js, other legacy areas and user scripts.
 
-import type {} from '../types/je';
+import type {} from '../../types/je';
 
-declare module '../types/je' {
+declare module '../../types/je' {
     interface JEGlobal {
         /** ui-styles: injects the plugin's global CSS once. */
         injectGlobalStyles?: () => void;

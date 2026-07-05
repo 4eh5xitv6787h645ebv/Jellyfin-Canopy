@@ -48,15 +48,15 @@ import './themer';
 // ui modules — order matters: -release-notes exports GITHUB_REPO + the release-
 // notes panel the template/settings wiring import; ui-panel hosts
 // JE.showEnhancedPanel and orchestrates the buildPanelHtml/wire* pieces last.
-import './ui-styles';
-import './ui-entry-points';
-import './ui-release-notes';
-import './ui-panel-template';
-import './ui-panel-shortcut-editor';
-import './ui-panel-settings';
-import './ui-panel-hidden-content';
-import './ui-panel-language';
-import './ui-panel';
+import './settings-panel/styles';
+import './settings-panel/entry-points';
+import './settings-panel/release-notes';
+import './settings-panel/template';
+import './settings-panel/shortcut-editor';
+import './settings-panel/settings';
+import './settings-panel/hidden-content-tab';
+import './settings-panel/language';
+import './settings-panel/panel';
 import './bookmarks/bookmarks';
 // bookmarks-library modules — order matters: styles/page/render export the
 // bookmarksLibrary pieces the later files import; -init boots last.

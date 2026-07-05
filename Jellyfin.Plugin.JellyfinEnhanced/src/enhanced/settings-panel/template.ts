@@ -5,10 +5,10 @@
 // Split from ui.js (code motion; bodies semantically identical.)
 // (Converted from js/enhanced/ui-panel-template.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { escapeHtml } from '../core/ui-kit';
-import { GITHUB_REPO } from './ui-release-notes';
-import type { PanelContext } from './ui-panel';
+import { JE } from '../../globals';
+import { escapeHtml } from '../../core/ui-kit';
+import { GITHUB_REPO } from './release-notes';
+import type { PanelContext } from './panel';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

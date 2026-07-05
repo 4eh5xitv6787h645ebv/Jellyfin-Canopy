@@ -4,8 +4,8 @@
 // Split from ui.js (code motion; bodies verbatim).
 // (Converted from js/enhanced/ui-styles.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { ensureMaterialSymbolsFont } from '../core/ui-kit';
+import { JE } from '../../globals';
+import { ensureMaterialSymbolsFont } from '../../core/ui-kit';
 
 /**
  * Injects custom CSS for plugin features.

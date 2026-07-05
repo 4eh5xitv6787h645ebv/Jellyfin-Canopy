@@ -6,12 +6,12 @@
 // Split from ui.js (code motion; bodies verbatim).
 // (Converted from js/enhanced/ui-panel.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { buildPanelHtml } from './ui-panel-template';
-import { wireShortcutEditor } from './ui-panel-shortcut-editor';
-import { wireSettingsListeners, wireMiscSettingsControls } from './ui-panel-settings';
-import { wireHiddenContentListeners } from './ui-panel-hidden-content';
-import { wireLanguageControls } from './ui-panel-language';
+import { JE } from '../../globals';
+import { buildPanelHtml } from './template';
+import { wireShortcutEditor } from './shortcut-editor';
+import { wireSettingsListeners, wireMiscSettingsControls } from './settings';
+import { wireHiddenContentListeners } from './hidden-content-tab';
+import { wireLanguageControls } from './language';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

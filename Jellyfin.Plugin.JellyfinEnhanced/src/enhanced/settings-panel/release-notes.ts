@@ -4,8 +4,8 @@
 // Split from ui.js (code motion; bodies verbatim).
 // (Converted from js/enhanced/ui-release-notes.js — bodies semantically identical.)
 
-import { JE } from '../globals';
-import { escapeHtml, toast } from '../core/ui-kit';
+import { JE } from '../../globals';
+import { escapeHtml, toast } from '../../core/ui-kit';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
