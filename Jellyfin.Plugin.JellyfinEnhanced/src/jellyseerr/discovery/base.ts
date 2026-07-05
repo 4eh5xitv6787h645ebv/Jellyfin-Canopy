@@ -19,7 +19,7 @@
 // nothing outside js/jellyseerr consumes it.
 //
 // Public surface: JE.discoveryBase { createDiscovery, idFromDetailUrl, idFromListParam }.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + spec shapes; typed incrementally */
 
@@ -39,7 +39,7 @@ export interface DiscoveryBaseApi {
     idFromListParam: (param: string) => () => string | null;
 }
 
-declare module '../types/je' {
+declare module '../../types/je' {
     interface JEGlobal {
         /** Shared discovery chassis (src/jellyseerr/discovery-base.ts). */
         discoveryBase?: DiscoveryBaseApi;

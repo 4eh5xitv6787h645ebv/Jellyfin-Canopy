@@ -1,6 +1,6 @@
 // src/jellyseerr/discovery-filter-utils.ts
 // Shared utilities for discovery section content type filtering
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -30,7 +30,7 @@ export interface DiscoveryFilterApi {
     applyFilterVisibility: (container: HTMLElement | null, mode: string) => void;
 }
 
-declare module '../types/je' {
+declare module '../../types/je' {
     interface JEGlobal {
         /** Shared discovery filter/sort utilities (src/jellyseerr/discovery-filter-utils.ts). */
         discoveryFilter?: DiscoveryFilterApi;

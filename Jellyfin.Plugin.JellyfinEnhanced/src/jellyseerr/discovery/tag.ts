@@ -4,7 +4,7 @@
 // pagination, filter/sort controls, infinite scroll, dedup and lifecycle
 // wiring; this module keeps the tag → TMDB-keyword resolution. Both feeds
 // share the same keyword id.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 

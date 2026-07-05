@@ -3,7 +3,7 @@
 // One-shot spec over JE.discoveryBase — the base owns page dedup, abort,
 // metrics and lifecycle wiring; this module keeps only the BoxSet lookup
 // and the missing-movies render.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 

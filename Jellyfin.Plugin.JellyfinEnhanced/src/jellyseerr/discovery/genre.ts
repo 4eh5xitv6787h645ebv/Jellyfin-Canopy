@@ -3,7 +3,7 @@
 // Dual-feed spec over JE.discoveryBase — the base owns the TV/movie
 // pagination, filter/sort controls, infinite scroll, dedup and lifecycle
 // wiring; this module keeps the Jellyfin-genre → TMDB-genre resolution.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
