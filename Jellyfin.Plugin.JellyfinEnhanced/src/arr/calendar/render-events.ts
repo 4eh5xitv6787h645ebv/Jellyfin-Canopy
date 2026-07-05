@@ -2,10 +2,10 @@
 // Calendar Page — date-range helpers, event formatting and single-event /
 // agenda-event / card rendering (split from calendar-page.js).
 
-import { assetUrl } from '../core/asset-urls';
-import { JE } from './arr-globals';
-import { state, STATUS_COLORS } from './calendar-page-data';
-import type { CalendarEvent } from './calendar-page-data';
+import { assetUrl } from '../../core/asset-urls';
+import { JE } from '../arr-globals';
+import { state, STATUS_COLORS } from './data';
+import type { CalendarEvent } from './data';
 
 const escapeHtml = JE.escapeHtml;
 

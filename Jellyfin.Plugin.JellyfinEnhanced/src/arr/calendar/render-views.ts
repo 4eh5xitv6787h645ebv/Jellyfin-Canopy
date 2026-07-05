@@ -2,13 +2,13 @@
 // Calendar Page — month/week/day/agenda view rendering, legend, sidebar
 // collapse and the full page shell (split from calendar-page.js).
 
-import { JE } from './arr-globals';
+import { JE } from '../arr-globals';
 import {
     filterEvents,
     groupEventsByDate,
     state,
     STATUS_COLORS
-} from './calendar-page-data';
+} from './data';
 import {
     formatHourLabel,
     formatRangeLabel,
@@ -19,8 +19,8 @@ import {
     renderAgendaEvent,
     renderCardItems,
     renderEvent
-} from './calendar-page-render-events';
-import type { CalendarEvent } from './calendar-page-data';
+} from './render-events';
+import type { CalendarEvent } from './data';
 
 function getDefaultSidebarCollapsed(): boolean {
     if (window.matchMedia) {

@@ -5,12 +5,12 @@
 // Public surface (frozen): JE.calendarPage + JE.initializeCalendarPage —
 // called by js/plugin.js Stage 6 and PluginPages/CalendarPage.html.
 
-import { register as registerLifecycle } from '../core/lifecycle';
-import { onSidebarRebuild } from '../core/dom-observer';
-import { JE } from './arr-globals';
-import { loadSettings, state } from './calendar-page-data';
-import { createPageContainer, renderPage } from './calendar-page-render-views';
-import { injectStyles } from './calendar-page-styles';
+import { register as registerLifecycle } from '../../core/lifecycle';
+import { onSidebarRebuild } from '../../core/dom-observer';
+import { JE } from '../arr-globals';
+import { loadSettings, state } from './data';
+import { createPageContainer, renderPage } from './render-views';
+import { injectStyles } from './styles';
 import {
     goToday,
     handleEventClick,
@@ -20,7 +20,7 @@ import {
     shiftPeriod,
     toggleFilter,
     toggleShowUnmonitored
-} from './calendar-page-actions';
+} from './actions';
 
 /** The frozen JE.calendarPage contract (js/plugin.js + PluginPages HTML). */
 export interface CalendarPageApi {

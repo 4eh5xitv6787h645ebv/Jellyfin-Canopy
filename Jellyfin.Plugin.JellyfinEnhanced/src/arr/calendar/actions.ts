@@ -2,7 +2,7 @@
 // Calendar Page — user actions: data refresh, view/display mode switching,
 // filter toggles and event-click navigation (split from calendar-page.js).
 
-import { JE } from './arr-globals';
+import { JE } from '../arr-globals';
 import {
     ensureRequestData,
     fetchCalendarEvents,
@@ -10,17 +10,17 @@ import {
     searchFromProviders,
     setStoredShowUnmonitored,
     state
-} from './calendar-page-data';
+} from './data';
 import {
     getRangeForView
-} from './calendar-page-render-events';
+} from './render-events';
 import {
     renderPage,
     syncPageModeClasses,
     toggleSidebarCollapsed,
     updateDisplayModeButtons
-} from './calendar-page-render-views';
-import type { CalendarEvent } from './calendar-page-data';
+} from './render-views';
+import type { CalendarEvent } from './data';
 
 const logPrefix = '🪼 Jellyfin Enhanced: Calendar Page:';
 

@@ -7,9 +7,9 @@
 // cross-module reference happens inside function bodies at call time, so the
 // cycle is safe under ES module evaluation.
 
-import { JE } from './arr-globals';
-import { renderPage } from './calendar-page-render-views';
-import type { ApiApi } from '../types/je';
+import { JE } from '../arr-globals';
+import { renderPage } from './render-views';
+import type { ApiApi } from '../../types/je';
 
 const logPrefix = '🪼 Jellyfin Enhanced: Calendar Page:';
 

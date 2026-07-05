@@ -12,8 +12,8 @@
 // (e.g. after SPA navigation). Only runs when on the home page; suspends
 // when navigated away.
 
-import { JE } from './arr-globals';
-import type { ArrJE } from './arr-globals';
+import { JE } from '../arr-globals';
+import type { ArrJE } from '../arr-globals';
 
 (function () {
     if (!JE?.pluginConfig?.CalendarPageEnabled) {

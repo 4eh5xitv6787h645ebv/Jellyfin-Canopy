@@ -3,8 +3,8 @@
 // Owns the single injection site for the feature's styles; all former call
 // sites import injectStyles, deduped by style id via core injectCss.
 
-import { ensureMaterialSymbolsFont, injectCss } from '../core/ui-kit';
-import { JE } from './arr-globals';
+import { ensureMaterialSymbolsFont, injectCss } from '../../core/ui-kit';
+import { JE } from '../arr-globals';
 
 // CSS Styles. The shared Material Symbols @font-face lives in core/ui-kit
 // (local asset cache) and is injected by injectStyles() below, not re-declared here.

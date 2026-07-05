@@ -167,7 +167,7 @@ export type ArrJE = Omit<
     initializeArrTagLinksScript?: () => Promise<void>;
     downloadsPage?: import('./requests-page-init').DownloadsPageApi;
     initializeDownloadsPage?: () => void;
-    calendarPage?: import('./calendar-page-init').CalendarPageApi;
+    calendarPage?: import('./calendar/init').CalendarPageApi;
     initializeCalendarPage?: () => void;
 };
 
