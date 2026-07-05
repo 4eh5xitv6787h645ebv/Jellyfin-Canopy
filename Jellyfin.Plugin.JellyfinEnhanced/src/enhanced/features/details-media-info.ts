@@ -89,7 +89,7 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
             return `-${getTimeString(remaining)} / ${getTimeString(safeTotal)}`;
         }
 
-        return `${watchProgress.progress}%`;
+        return `${Number(watchProgress.progress) || 0}%`;
     };
 
     const persistWatchProgressMode = (mode: string): void => {

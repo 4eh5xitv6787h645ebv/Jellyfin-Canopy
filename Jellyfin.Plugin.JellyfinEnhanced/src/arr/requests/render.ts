@@ -93,13 +93,13 @@ export function renderPage(targetContainer?: HTMLElement): void {
                     html += `<div class="je-downloads-tabs">`;
                     html += `<button is="emby-button" type="button" class="je-downloads-tab emby-button ${state.downloadsActiveTab === 'all' ? 'active' : ''}" data-tab="all">
             <span>${translateStatus('All')}</span>
-            <span class="je-downloads-tab-count">${totalGroupedCount}</span>
+            <span class="je-downloads-tab-count">${Number(totalGroupedCount) || 0}</span>
           </button>`;
 
                     for (const [status, count] of statuses) {
                         html += `<button is="emby-button" type="button" class="je-downloads-tab emby-button ${state.downloadsActiveTab === status ? 'active' : ''}" data-tab="${escapeHtml(status)}">
               <span>${escapeHtml(translateStatus(status))}</span>
-              <span class="je-downloads-tab-count">${count}</span>
+              <span class="je-downloads-tab-count">${Number(count) || 0}</span>
             </button>`;
                     }
 
@@ -213,7 +213,7 @@ export function renderPage(targetContainer?: HTMLElement): void {
                     html += `
                         <div class="je-pagination">
                             <button is="emby-button" type="button" class="emby-button" onclick="window.JellyfinEnhanced.downloadsPage.prevPage()" ${state.requestsPage <= 1 ? 'disabled' : ''}><span class="material-icons">chevron_left</span></button>
-                            <span>${state.requestsPage} / ${state.requestsTotalPages}</span>
+                            <span>${Number(state.requestsPage) || 0} / ${Number(state.requestsTotalPages) || 0}</span>
                             <button is="emby-button" type="button" class="emby-button" onclick="window.JellyfinEnhanced.downloadsPage.nextPage()" ${state.requestsPage >= state.requestsTotalPages ? 'disabled' : ''}><span class="material-icons">chevron_right</span></button>
                         </div>
                     `;
@@ -262,7 +262,7 @@ export function renderPage(targetContainer?: HTMLElement): void {
                 html += `
             <div class="je-pagination">
               <button is="emby-button" type="button" class="emby-button" onclick="window.JellyfinEnhanced.downloadsPage.prevIssuesPage()" ${state.issuesPage <= 1 ? 'disabled' : ''}><span class="material-icons">chevron_left</span></button>
-              <span>${state.issuesPage} / ${state.issuesTotalPages}</span>
+              <span>${Number(state.issuesPage) || 0} / ${Number(state.issuesTotalPages) || 0}</span>
               <button is="emby-button" type="button" class="emby-button" onclick="window.JellyfinEnhanced.downloadsPage.nextIssuesPage()" ${state.issuesPage >= state.issuesTotalPages ? 'disabled' : ''}><span class="material-icons">chevron_right</span></button>
             </div>
           `;

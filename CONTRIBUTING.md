@@ -79,6 +79,12 @@ And one server-side rule (guarded by `LibraryScanEventGuardTests`):
 
 - [ ] **S1** Any handler for `ILibraryManager.ItemAdded/ItemUpdated/ItemRemoved` (raised synchronously on the library-scan thread) does only O(1) record-and-defer work — no DB query, no `GetMediaSources`, no I/O; heavy work runs on a debounced off-thread worker that coalesces by id. See [S1](docs/advanced/performance-rules.md) and `TagCacheMonitor`/`TagCacheService`.
 
+### Security rule
+
+One client-side security rule, guarded by `src/test/escape-guard.test.ts` (it fails the build on any unrecognized interpolation):
+
+- [ ] **X1** Every `${...}` interpolated into HTML (templates, `innerHTML`, `toast()`, `insertAdjacentHTML`) is a compile-time constant / trusted producer, a coerced number (`Number(x) || 0`), or wrapped in `escapeHtml(...)` — in attribute **and** text positions; `toast()` renders innerHTML and `JE.t()` does **not** escape params. See [Client Security](docs/advanced/client-security.md).
+
 ## 📝 Code Contribution Guidelines
 
 ### Code Style

@@ -54,12 +54,14 @@ export const REMOVE_SURFACES: Record<string, RemoveSurfaceConfig> = {
 export function buildNativeActionSheetItem(scroller: HTMLElement, opts: { dataId: string; icon: string; text: string }): HTMLButtonElement {
     const ref = scroller.querySelector('.actionSheetMenuItem');
     // Mirror a real item's classes (minus any transient selection state) so sizing is identical.
-    const itemClass = (ref ? ref.getAttribute('class') : 'listItem listItem-button actionSheetMenuItem')!
-        .replace(/\bselected\b/g, '').replace(/\s+/g, ' ').trim();
+    // SEC(X1): escaped even though it mirrors the host's own class list —
+    // the attribute position must never depend on what the DOM contained.
+    const itemClass = JE.escapeHtml((ref ? ref.getAttribute('class') : 'listItem listItem-button actionSheetMenuItem')!
+        .replace(/\bselected\b/g, '').replace(/\s+/g, ' ').trim());
     const tmp = document.createElement('div');
     tmp.innerHTML =
-        `<button is="emby-button" type="button" class="${itemClass}" data-id="${opts.dataId}">`
-        + `<span class="actionsheetMenuItemIcon listItemIcon listItemIcon-transparent material-icons ${opts.icon}" aria-hidden="true"></span>`
+        `<button is="emby-button" type="button" class="${itemClass}" data-id="${JE.escapeHtml(opts.dataId)}">`
+        + `<span class="actionsheetMenuItemIcon listItemIcon listItemIcon-transparent material-icons ${JE.escapeHtml(opts.icon)}" aria-hidden="true"></span>`
         + `<div class="listItemBody actionsheetListItemBody"><div class="listItemBodyText actionSheetItemText"></div></div>`
         + `</button>`;
     const button = tmp.firstElementChild as HTMLButtonElement;
@@ -197,7 +199,7 @@ export async function removeFromHomeSurface(itemId: string, surface: string, car
     try {
         await (JE as any).hiddenContent?.flushPendingSave?.();
     } catch (e: any) {
-        showNotification(JE.t!('remove_continue_watching_error_api', { error: e?.statusText || JE.t!('unknown_error') }), "error");
+        showNotification(JE.t!('remove_continue_watching_error_api', { error: JE.escapeHtml(e?.statusText || '') || JE.t!('unknown_error') }), "error");
         return false;
     }
 
@@ -221,10 +223,11 @@ export async function removeFromHomeSurface(itemId: string, surface: string, car
         }
         return true;
     } catch (error: any) {
-        const errorMessage = error.responseJSON?.message
+        // SEC(X1): server/API error text reaches an innerHTML-rendered toast.
+        const errorMessage = JE.escapeHtml(error.responseJSON?.message
             || error.responseJSON?.Message
             || error.statusText
-            || JE.t!('unknown_error');
+            || '') || JE.t!('unknown_error');
         showNotification(JE.t!('remove_continue_watching_error_api', { error: errorMessage }), "error");
         return false;
     }

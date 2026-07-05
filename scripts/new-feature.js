@@ -116,6 +116,13 @@ function clientModule(name, area) {
 //   R7  Build DOM off-DOM, insert once with content ready; late async data
 //       fades in (opacity only).
 //   R8  Sync work in a mutation batch stays under ~2ms; overflow to async.
+//
+// Security rule (docs/advanced/client-security.md — enforced by
+// src/test/escape-guard.test.ts):
+//   X1  Every \${...} that lands in HTML is a constant/trusted producer, a
+//       coerced number (Number(x) || 0), or escapeHtml(...)-wrapped — in
+//       attribute AND text positions; toast() renders innerHTML and JE.t()
+//       does NOT escape params.
 
 import { JE } from '../globals';
 import { register } from '../core/lifecycle';
