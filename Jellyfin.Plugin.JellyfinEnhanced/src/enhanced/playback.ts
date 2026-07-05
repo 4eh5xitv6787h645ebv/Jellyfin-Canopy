@@ -406,7 +406,7 @@ JE.cycleSubtitleTrack = () => {
         if (nextOption) {
             (nextOption as HTMLElement).click();
             const subtitleName = nextOption.querySelector('.listItemBodyText')!.textContent.trim();
-            toast(JE.t!('toast_subtitle', { subtitle: subtitleName }));
+            toast(JE.t!('toast_subtitle', { subtitle: JE.escapeHtml(subtitleName) }));
         }
     };
 
@@ -446,7 +446,7 @@ JE.cycleAudioTrack = () => {
         if (nextOption) {
             (nextOption as HTMLElement).click();
             const audioName = nextOption.querySelector('.listItemBodyText.actionSheetItemText')!.textContent.trim();
-            toast(JE.t!('toast_audio', { audio: audioName }));
+            toast(JE.t!('toast_audio', { audio: JE.escapeHtml(audioName) }));
         }
     };
 

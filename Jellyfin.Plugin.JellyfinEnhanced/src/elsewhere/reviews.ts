@@ -332,7 +332,7 @@ JE.initializeReviewsScript = function () {
         }) : '';
 
         const rating = review.author_details?.rating;
-        const ratingDisplay = rating ? `<span class="tmdb-review-rating">${JE.icon(JE.IconName.STAR)} ${rating}</span>` : '';
+        const ratingDisplay = rating ? `<span class="tmdb-review-rating">${JE.icon(JE.IconName.STAR)} ${Number(rating) || 0}</span>` : '';
 
         reviewCard.innerHTML = `
             <div class="tmdb-review-header">

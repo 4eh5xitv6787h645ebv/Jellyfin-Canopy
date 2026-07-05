@@ -390,7 +390,7 @@ JE.initializeElsewhereScript = function() {
                 <label style="display: block; margin-bottom: 6px; font-weight: 600; color: #ccc;">${JE.t('elsewhere_settings_country')}</label>
                 <select id="region-select" style="width: 100%; padding: 12px; border: 1px solid #444; border-radius: 6px; background: #2a2a2a; color: #fff; font-size: 14px;">
                     ${Object.entries(availableRegions).map(([code, name]) =>
-                        `<option value="${code}" ${code === userRegion ? 'selected' : ''}>${name}</option>`
+                        `<option value="${JE.escapeHtml(code)}" ${code === userRegion ? 'selected' : ''}>${JE.escapeHtml(name)}</option>`
                     ).join('')}
                 </select>
             </div>
@@ -851,7 +851,7 @@ JE.initializeElsewhereScript = function() {
                 searchButton.style.opacity = '1';
 
                 if (error) {
-                    resultContainer.innerHTML = `<div style="color: #ff6b6b; font-size: 13px; margin-top: 8px;">${JE.t('elsewhere_panel_error', { error })}</div>`;
+                    resultContainer.innerHTML = `<div style="color: #ff6b6b; font-size: 13px; margin-top: 8px;">${JE.t('elsewhere_panel_error', { error: JE.escapeHtml(String(error)) })}</div>`;
                     return;
                 }
 

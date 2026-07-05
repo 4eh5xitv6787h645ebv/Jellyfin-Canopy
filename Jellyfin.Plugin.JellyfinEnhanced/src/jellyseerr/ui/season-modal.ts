@@ -135,7 +135,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
                         return;
                     }
                     await requestTvSeasons(tmdbId, selectedSeasons, settings, searchResultItem, is4k);
-                    JE.toast!(JE.t!('jellyseerr_modal_toast_request_success', { count: selectedSeasons.length, title: resolvedShowTitle }), 4000);
+                    JE.toast!(JE.t!('jellyseerr_modal_toast_request_success', { count: selectedSeasons.length, title: JE.escapeHtml(resolvedShowTitle) }), 4000);
                 } else {
                     // Partial requests disabled: request all non-special seasons to avoid locking specials
                     const allSeasons = (tvDetails?.seasons || [])
@@ -148,7 +148,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
                         await requestMedia(tmdbId, 'tv', settings, is4k, searchResultItem);
                     }
 
-                    JE.toast!(JE.t!('jellyseerr_modal_toast_request_success', { count: 'all', title: resolvedShowTitle }), 4000);
+                    JE.toast!(JE.t!('jellyseerr_modal_toast_request_success', { count: 'all', title: JE.escapeHtml(resolvedShowTitle) }), 4000);
                 }
                 // Notify any listening modals that TV was requested
                 document.dispatchEvent(new CustomEvent('jellyseerr-tv-requested', { detail: { tmdbId, mediaType: 'tv', is4k } }));

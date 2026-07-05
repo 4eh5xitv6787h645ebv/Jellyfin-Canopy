@@ -23,6 +23,8 @@ import {
     renderSeasonPackCard
 } from './render-cards';
 
+const escapeHtml = JE.escapeHtml;
+
 /** Container element carrying the once-per-element delegated-listener flag. */
 type BindableContainer = HTMLElement & { _jeRequestsActionsBound?: boolean };
 
@@ -95,8 +97,8 @@ export function renderPage(targetContainer?: HTMLElement): void {
           </button>`;
 
                     for (const [status, count] of statuses) {
-                        html += `<button is="emby-button" type="button" class="je-downloads-tab emby-button ${state.downloadsActiveTab === status ? 'active' : ''}" data-tab="${status}">
-              <span>${translateStatus(status)}</span>
+                        html += `<button is="emby-button" type="button" class="je-downloads-tab emby-button ${state.downloadsActiveTab === status ? 'active' : ''}" data-tab="${escapeHtml(status)}">
+              <span>${escapeHtml(translateStatus(status))}</span>
               <span class="je-downloads-tab-count">${count}</span>
             </button>`;
                     }
@@ -115,7 +117,7 @@ export function renderPage(targetContainer?: HTMLElement): void {
                 if (showSearchBar && state.downloadsSearchVisible) {
                     html += `<div class="je-downloads-search-container">
             <span class="material-icons je-downloads-search-icon">search</span>
-            <input type="text" class="je-downloads-search-input" value="${state.downloadsSearchQuery}" autofocus>
+            <input type="text" class="je-downloads-search-input" value="${escapeHtml(state.downloadsSearchQuery)}" autofocus>
           </div>`;
                 }
 

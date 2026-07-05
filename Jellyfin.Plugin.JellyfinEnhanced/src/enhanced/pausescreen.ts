@@ -759,8 +759,8 @@ JE.initializePauseScreen = function() {
         const rating = item.OfficialRating || "";
         const runtime = this.formatRuntime(item.RunTimeTicks);
         this.overlayDetails.innerHTML = [
-          year && `<span>${year}</span>`,
-          rating && `<span class="mediaInfoOfficialRating" rating="${rating}">${rating}</span>`,
+          year && `<span>${JE.escapeHtml(year)}</span>`,
+          rating && `<span class="mediaInfoOfficialRating" rating="${JE.escapeHtml(rating)}">${JE.escapeHtml(rating)}</span>`,
           runtime && `<span>${runtime}</span>`
         ].filter(Boolean).join('');
 

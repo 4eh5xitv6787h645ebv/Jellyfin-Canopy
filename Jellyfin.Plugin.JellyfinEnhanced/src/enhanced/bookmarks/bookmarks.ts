@@ -855,7 +855,7 @@ if (!JE.pluginConfig?.BookmarksEnabled) {
           <div class="je-bookmark-hero-title">
             <span>${title}</span>
           </div>
-          <div class="je-bookmark-hero-subtitle">${details.name}</div>
+          <div class="je-bookmark-hero-subtitle">${escapeHtml(details.name)}</div>
         </div>
         <div class="je-bookmark-form-grid">
           <div class="je-bookmark-input-group">
@@ -874,7 +874,7 @@ if (!JE.pluginConfig?.BookmarksEnabled) {
               id="bookmark-label"
               class="je-bookmark-input"
               placeholder="${JE.t!('bookmark_label_placeholder')}"
-              value="${label}"
+              value="${escapeHtml(label)}"
               maxlength="100">
           </div>
         </div>
@@ -893,10 +893,10 @@ if (!JE.pluginConfig?.BookmarksEnabled) {
                   ${!bm.exactMatch ? `<div class="je-bookmark-item-warning">${JE.t!('bookmark_file_changed')}</div>` : ''}
                 </div>
                 <div class="je-bookmark-item-actions">
-                  <button class="je-bookmark-btn je-bookmark-btn-jump" data-bookmark-id="${bm.id}" title="${JE.t!('bookmark_jump')}">
+                  <button class="je-bookmark-btn je-bookmark-btn-jump" data-bookmark-id="${escapeHtml(bm.id)}" title="${JE.t!('bookmark_jump')}">
                     <span class="material-icons">forward</span>
                   </button>
-                  <button class="je-bookmark-btn je-bookmark-btn-delete" data-bookmark-id="${bm.id}" title="${JE.t!('bookmark_delete_confirm')}">
+                  <button class="je-bookmark-btn je-bookmark-btn-delete" data-bookmark-id="${escapeHtml(bm.id)}" title="${JE.t!('bookmark_delete_confirm')}">
                     <span class="material-icons">delete</span>
                   </button>
                 </div>

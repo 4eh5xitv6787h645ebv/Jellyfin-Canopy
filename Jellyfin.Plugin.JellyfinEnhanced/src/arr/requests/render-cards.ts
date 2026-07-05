@@ -32,32 +32,33 @@ export function renderDownloadCard(item: DownloadItem): string {
     const sourceLabel = escapeHtml(item.instanceName || item.source);
 
     const posterHtml = item.posterUrl
-        ? `<img class="je-download-poster" src="${item.posterUrl}" alt="" loading="lazy" onerror="this.style.display='none'">`
+        ? `<img class="je-download-poster" src="${escapeHtml(item.posterUrl)}" alt="" loading="lazy" onerror="this.style.display='none'">`
         : `<div class="je-download-poster placeholder"></div>`;
 
+    const progress = Number(item.progress) || 0;
     const progressHtml = `
       <div class="je-download-progress-container">
         <div class="je-download-progress">
-          <div class="je-download-progress-bar" style="width: ${item.progress || 0}%; background: ${statusColor}"></div>
+          <div class="je-download-progress-bar" style="width: ${progress}%; background: ${statusColor}"></div>
         </div>
         <div class="je-download-stats">
-          <span>${item.progress || 0}%</span>
-          ${item.timeRemaining ? `<span>ETA: ${formatTimeRemaining(item.timeRemaining)}</span>` : ''}
+          <span>${progress}%</span>
+          ${item.timeRemaining ? `<span>ETA: ${escapeHtml(formatTimeRemaining(item.timeRemaining))}</span>` : ''}
           ${item.totalSize ? `<span>${formatDownloadStats(item.totalSize, item.sizeRemaining)}</span>` : ''}
         </div>
       </div>
     `;
 
     return `
-      <div class="je-download-card" ${item.jellyfinMediaId ? `data-media-id="${item.jellyfinMediaId}"` : ''}>
+      <div class="je-download-card" ${item.jellyfinMediaId ? `data-media-id="${escapeHtml(item.jellyfinMediaId)}"` : ''}>
         <div class="je-download-card-content">
           ${posterHtml}
           <div class="je-download-info">
-            <div class="je-download-title" title="${item.title || ''}">${item.title || JE.t?.('requests_unknown') || 'Unknown'}</div>
-            ${item.subtitle ? `<div class="je-download-subtitle" title="${item.subtitle}">${item.subtitle}</div>` : ''}
+            <div class="je-download-title" title="${escapeHtml(item.title || '')}">${escapeHtml(item.title || JE.t?.('requests_unknown') || 'Unknown')}</div>
+            ${item.subtitle ? `<div class="je-download-subtitle" title="${escapeHtml(item.subtitle)}">${escapeHtml(item.subtitle)}</div>` : ''}
             <div class="je-download-meta">
                 <span class="je-download-badge je-arr-badge" title="${sourceLabel}"><img src="${sourceIcon}" alt="${sourceLabel}" loading="lazy"></span>
-              <span class="je-download-badge" style="background: ${statusColor}">${item.status}</span>
+              <span class="je-download-badge" style="background: ${statusColor}">${escapeHtml(item.status)}</span>
             </div>
           </div>
         </div>
@@ -265,7 +266,7 @@ export function renderSeasonPackCard(group: Extract<DownloadGroup, { type: 'seas
     const statusColor = STATUS_COLORS[item.status as string] || STATUS_COLORS.Unknown;
 
     const posterHtml = item.posterUrl
-        ? `<img class="je-download-poster" src="${item.posterUrl}" alt="" loading="lazy" onerror="this.style.display='none'">`
+        ? `<img class="je-download-poster" src="${escapeHtml(item.posterUrl)}" alt="" loading="lazy" onerror="this.style.display='none'">`
         : `<div class="je-download-poster placeholder"></div>`;
 
     // Calculate total size for the pack
@@ -285,30 +286,31 @@ export function renderSeasonPackCard(group: Extract<DownloadGroup, { type: 'seas
         ? firstRemaining
         : group.episodes.reduce((sum, ep) => sum + (ep.sizeRemaining || 0), 0);
 
+    const progress = Number(item.progress) || 0;
     const progressHtml = `
       <div class="je-download-progress-container">
         <div class="je-download-progress">
-          <div class="je-download-progress-bar" style="width: ${item.progress || 0}%; background: ${statusColor}"></div>
+          <div class="je-download-progress-bar" style="width: ${progress}%; background: ${statusColor}"></div>
         </div>
         <div class="je-download-stats">
-          <span>${item.progress || 0}%</span>
-          ${item.timeRemaining ? `<span>ETA: ${formatTimeRemaining(item.timeRemaining)}</span>` : ''}
+          <span>${progress}%</span>
+          ${item.timeRemaining ? `<span>ETA: ${escapeHtml(formatTimeRemaining(item.timeRemaining))}</span>` : ''}
           ${totalSize ? `<span>${formatDownloadStats(totalSize, sizeRemaining)}</span>` : ''}
         </div>
       </div>
     `;
 
     return `
-      <div class="je-download-card je-season-pack" ${item.jellyfinMediaId ? `data-media-id="${item.jellyfinMediaId}"` : ''}>
+      <div class="je-download-card je-season-pack" ${item.jellyfinMediaId ? `data-media-id="${escapeHtml(item.jellyfinMediaId)}"` : ''}>
         <div class="je-download-card-content">
           ${posterHtml}
           <div class="je-download-info">
-            <div class="je-download-title" title="${item.title || ''}">${item.title || JE.t?.('requests_unknown') || 'Unknown'}</div>
-            <div class="je-download-subtitle">${JE.t?.('requests_season') || 'Season'} ${item.seasonNumber} (${group.episodeCount} ${JE.t?.('requests_episodes') || 'episodes'})</div>
+            <div class="je-download-title" title="${escapeHtml(item.title || '')}">${escapeHtml(item.title || JE.t?.('requests_unknown') || 'Unknown')}</div>
+            <div class="je-download-subtitle">${JE.t?.('requests_season') || 'Season'} ${Number(item.seasonNumber) || 0} (${group.episodeCount} ${JE.t?.('requests_episodes') || 'episodes'})</div>
             <div class="je-download-meta">
               <span class="je-download-badge je-arr-badge" title="Sonarr"><img src="${SONARR_ICON_URL}" alt="Sonarr" loading="lazy"></span>
-              <span class="je-download-badge" style="background: ${statusColor}">${item.status}</span>
-              <span class="je-download-badge" style="background: rgba(128,128,128,0.4)">${group.episodeRange}</span>
+              <span class="je-download-badge" style="background: ${statusColor}">${escapeHtml(item.status)}</span>
+              <span class="je-download-badge" style="background: rgba(128,128,128,0.4)">${escapeHtml(group.episodeRange)}</span>
             </div>
           </div>
         </div>

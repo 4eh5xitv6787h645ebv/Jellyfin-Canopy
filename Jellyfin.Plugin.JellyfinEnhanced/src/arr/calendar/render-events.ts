@@ -363,7 +363,7 @@ export function renderCardItems(events: CalendarEvent[]): string {
             return `
           <div class="je-calendar-card" data-event-id="${escapeHtml(event.id)}" style="border-bottom-color: ${color};">
             <div class="je-calendar-card-image-wrap">
-              <img src="${normalizeImageUrl(poster)}" alt="" class="je-calendar-card-image">
+              <img src="${escapeHtml(normalizeImageUrl(poster))}" alt="" class="je-calendar-card-image">
               ${statusTop}
               <div class="je-calendar-card-overlay">
                 ${timeRow}

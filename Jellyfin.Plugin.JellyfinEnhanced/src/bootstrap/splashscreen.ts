@@ -303,12 +303,20 @@
 
         const pluginConfig = window.JellyfinEnhanced?.pluginConfig || {};
         const imageUrl = (pluginConfig.SplashScreenImageUrl as string) || '/web/assets/img/banner-light.png';
+        // Local copy of core/ui-kit escapeHtml: this file is an out-of-band
+        // IIFE that must not import the main-bundle module tree.
+        const escapedImageUrl = imageUrl
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
 
         splashElement = document.createElement('div');
         splashElement.className = 'je-loading';
         splashElement.innerHTML = `
             <div class="je-loader-content">
-                <h1><img src="${imageUrl}" alt="Server Logo" decoding="async" fetchpriority="high" referrerpolicy="no-referrer"></h1>
+                <h1><img src="${escapedImageUrl}" alt="Server Logo" decoding="async" fetchpriority="high" referrerpolicy="no-referrer"></h1>
                 <div class="je-progress">
                     <div id="je-progress-bar"></div>
                     <div class="je-gap"></div>
