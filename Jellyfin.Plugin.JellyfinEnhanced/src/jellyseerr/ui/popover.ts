@@ -1,11 +1,11 @@
 // src/jellyseerr/ui-popover.ts
 // Download-progress hover popover and the 4K request popup.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
 
-import { ui, internal } from './ui-internal';
+import { ui, internal } from './internal';
 const logPrefix = '🪼 Jellyfin Enhanced: Seerr UI:';
 const DisplayStatus = JE.seerrStatus!.DISPLAY;
 const state = internal.state;

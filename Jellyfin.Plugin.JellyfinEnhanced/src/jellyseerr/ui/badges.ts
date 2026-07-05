@@ -1,12 +1,12 @@
 // src/jellyseerr/ui-badges.ts
 // Card badge helpers: status badge, media-type/collection badges and
 // streaming-provider icons.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
 
-import { ui, internal } from './ui-internal';
+import { ui, internal } from './internal';
 const escapeHtml = JE.escapeHtml;
 const DisplayStatus = JE.seerrStatus!.DISPLAY;
 const logPrefix = '🪼 Jellyfin Enhanced: Seerr UI:';

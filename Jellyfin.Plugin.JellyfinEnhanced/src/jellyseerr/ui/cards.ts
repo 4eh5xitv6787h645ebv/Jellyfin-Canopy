@@ -1,14 +1,14 @@
 // src/jellyseerr/ui-cards.ts
 // Seerr search-result card construction.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 // PERF(R6): no remote assets — Seerr icon + poster placeholder served from the
 // local asset cache (the placeholder is embedded in the plugin DLL).
-import { assetUrl } from '../core/asset-urls';
+import { assetUrl } from '../../core/asset-urls';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
 
-import { ui, internal } from './ui-internal';
+import { ui, internal } from './internal';
 const MediaStatus = JE.seerrStatus!.MEDIA;
 const icons = internal.icons; // requires ui-icons.js to be loaded first
 const escapeHtml = JE.escapeHtml;

@@ -10,7 +10,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- cross-file helper bag; typed incrementally */
 
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /**
  * The public Seerr UI surface (JE.jellyseerrUI). Members accrue across the
@@ -31,7 +31,7 @@ export interface JellyseerrUiInternal {
     [key: string]: any;
 }
 
-declare module '../types/je' {
+declare module '../../types/je' {
     interface JEGlobal {
         /** Public Seerr UI surface (src/jellyseerr/ui-*.ts). */
         jellyseerrUI?: JellyseerrUI;

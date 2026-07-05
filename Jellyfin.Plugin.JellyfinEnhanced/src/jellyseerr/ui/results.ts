@@ -1,14 +1,14 @@
 // src/jellyseerr/ui-results.ts
 // Search-page result rendering: Seerr section, header icon, season
 // status analysis and in-place result updates.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 // PERF(R6): no remote assets — Seerr icon served from the local asset cache.
-import { assetUrl } from '../core/asset-urls';
+import { assetUrl } from '../../core/asset-urls';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
 
-import { ui, internal } from './ui-internal';
+import { ui, internal } from './internal';
 const state = internal.state;
 const logPrefix = '🪼 Jellyfin Enhanced: Seerr UI:';
 const MediaStatus = JE.seerrStatus!.MEDIA;

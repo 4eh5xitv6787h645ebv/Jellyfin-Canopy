@@ -1,13 +1,13 @@
 // src/jellyseerr/ui-request-modals.ts
 // Advanced request modals for movies and collections.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 // PERF(R6): no remote assets — poster placeholder embedded in the plugin DLL.
-import { assetUrl } from '../core/asset-urls';
+import { assetUrl } from '../../core/asset-urls';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
 
-import { ui, internal } from './ui-internal';
+import { ui, internal } from './internal';
 const MediaStatus = JE.seerrStatus!.MEDIA;
 const logPrefix = '🪼 Jellyfin Enhanced: Seerr UI:';
 const escapeHtml = JE.escapeHtml;

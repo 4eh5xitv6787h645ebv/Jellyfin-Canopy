@@ -1,11 +1,11 @@
 // src/jellyseerr/ui-styles.ts
 // CSS for Seerr search cards, buttons, popovers and the season modal.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
  
 
 
-import { ui, internal } from './ui-internal';
+import { ui, internal } from './internal';
 
 // ================================
 // STYLING SYSTEM

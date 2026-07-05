@@ -1,11 +1,11 @@
 // src/jellyseerr/ui-icons.ts
 // Shared SVG icon library for the Seerr UI modules.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
  
 
 
-import { ui, internal } from './ui-internal';
+import { ui, internal } from './internal';
 // ================================
 // SVG ICONS LIBRARY
 // ================================

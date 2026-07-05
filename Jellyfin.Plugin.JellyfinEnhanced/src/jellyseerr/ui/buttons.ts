@@ -1,11 +1,11 @@
 // src/jellyseerr/ui-buttons.ts
 // Request-button configuration for movie/TV/collection cards.
-import { JE } from '../globals';
+import { JE } from '../../globals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
 
-import { ui, internal } from './ui-internal';
+import { ui, internal } from './internal';
 const state = internal.state;
 const escapeHtml = JE.escapeHtml;
 const MediaStatus = JE.seerrStatus!.MEDIA;
