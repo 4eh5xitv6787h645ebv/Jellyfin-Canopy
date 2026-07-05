@@ -1,4 +1,4 @@
-// src/enhanced/ui-panel-shortcut-editor.ts
+// src/enhanced/settings-panel/shortcut-editor.ts
 //
 // Click-to-rebind editor for the shortcut keys shown in the panel's
 // Shortcuts tab (rebind, conflict shake, Backspace-to-reset).
@@ -12,7 +12,7 @@ import type { PanelContext } from './panel';
 
 /**
  * Wires the shortcut-key rebinding behaviour inside the open panel.
- * @param {object} ctx Shared panel context assembled in ui-panel.ts.
+ * @param {object} ctx Shared panel context assembled in settings-panel/panel.ts.
  */
 export function wireShortcutEditor(ctx: PanelContext): void {
     const { help, pluginShortcuts, primaryAccentColor, kbdBackground } = ctx;

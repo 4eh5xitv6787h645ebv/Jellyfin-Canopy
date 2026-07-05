@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-save.ts
+// src/enhanced/hidden-content/save.ts
 //
 // Hidden Content — debounced persistence, the bounded retry ladder,
 // and the admin cross-user endpoints.

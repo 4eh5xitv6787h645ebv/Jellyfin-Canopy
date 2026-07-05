@@ -1,4 +1,4 @@
-// src/enhanced/ui-panel-language.ts
+// src/enhanced/settings-panel/language.ts
 //
 // Display-language selector (locale enumeration + persistence) and the
 // clear-translation-cache button in the settings panel.
@@ -13,7 +13,7 @@ import type { PanelContext } from './panel';
 
 /**
  * Wires the language dropdown and translation-cache controls.
- * @param {object} ctx Shared panel context assembled in ui-panel.ts.
+ * @param {object} ctx Shared panel context assembled in settings-panel/panel.ts.
  */
 export function wireLanguageControls(ctx: PanelContext): void {
     const { resetAutoCloseTimer } = ctx;

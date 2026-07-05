@@ -1,4 +1,4 @@
-// src/arr/calendar-custom-tab.ts (formerly js/arr/calendar-custom-tab.js)
+// src/arr/calendar/custom-tab.ts
 //
 // Calendar Custom Tab
 // Creates <div class="jellyfinenhanced calendar"></div>, either inside a tab

@@ -1,4 +1,4 @@
-// src/enhanced/bookmarks-library-replacements.ts
+// src/enhanced/bookmarks/library-replacements.ts
 //
 // Bookmarks Library View — orphaned-bookmark replacement search + migration modals.
 // Split from bookmarks-library.js (code motion; bodies verbatim).

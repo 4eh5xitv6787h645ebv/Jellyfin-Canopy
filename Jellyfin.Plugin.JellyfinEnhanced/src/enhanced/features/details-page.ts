@@ -1,4 +1,4 @@
-// src/enhanced/features-details-page.ts
+// src/enhanced/features/details-page.ts
 //
 // Details-page dispatcher: the debounced item-details observer, the Hide
 // button on detail pages, and the per-item-type feature gating.

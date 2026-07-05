@@ -1,4 +1,4 @@
-// src/jellyseerr/ui-icons.ts
+// src/jellyseerr/ui/icons.ts
 // Shared SVG icon library for the Seerr UI modules.
 import { JE } from '../../globals';
 

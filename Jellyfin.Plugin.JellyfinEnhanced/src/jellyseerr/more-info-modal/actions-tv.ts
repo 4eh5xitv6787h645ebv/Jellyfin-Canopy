@@ -1,4 +1,4 @@
-// src/jellyseerr/more-info-modal-actions-tv.ts
+// src/jellyseerr/more-info-modal/actions-tv.ts
 // TV request buttons: season request split-button, 4K variants and
 // the "Request More" button.
 import { JE } from '../../globals';

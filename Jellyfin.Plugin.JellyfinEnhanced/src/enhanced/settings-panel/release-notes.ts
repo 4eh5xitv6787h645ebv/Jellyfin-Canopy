@@ -1,4 +1,4 @@
-// src/enhanced/ui-release-notes.ts
+// src/enhanced/settings-panel/release-notes.ts
 //
 // Latest-release notes notification panel fetched from GitHub.
 // Split from ui.js (code motion; bodies verbatim).

@@ -1,4 +1,4 @@
-// src/arr/requests-page-init.ts (formerly js/arr/requests-page-init.js)
+// src/arr/requests/init.ts
 // Requests Page — initialization, navigation interception, page show/hide,
 // polling and the public JE.downloadsPage surface (split from requests-page.js).
 // The poll interval and the navigation-watcher fallback interval are tracked

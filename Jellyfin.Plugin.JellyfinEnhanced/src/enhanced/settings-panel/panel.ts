@@ -1,8 +1,8 @@
-// src/enhanced/ui-panel.ts
+// src/enhanced/settings-panel/panel.ts
 //
 // Settings/help panel host (JE.showEnhancedPanel): open/close lifecycle,
 // settings refresh, dragging, auto-close, tab switching; delegates the
-// HTML template and section wiring to the ui-panel-*.ts modules.
+// HTML template and section wiring to the settings-panel/*.ts modules.
 // Split from ui.js (code motion; bodies verbatim).
 // (Converted from js/enhanced/ui-panel.js — bodies semantically identical.)
 
@@ -16,8 +16,8 @@ import { wireLanguageControls } from './language';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
- * Shared context handed to the split panel modules (ui-panel-template.ts and
- * the ui-panel-*.ts wiring files). Assembled in JE.showEnhancedPanel.
+ * Shared context handed to the split panel modules (settings-panel/template.ts and
+ * the settings-panel/*.ts wiring files). Assembled in JE.showEnhancedPanel.
  */
 export interface PanelContext {
     help: HTMLElement;
@@ -188,7 +188,7 @@ JE.showEnhancedPanel = async () => {
     help.addEventListener('wheel', (e) => { e.stopPropagation(); resetAutoCloseTimer(); });
 
     // Shared context handed to the split panel modules
-    // (ui-panel-template.ts and the ui-panel-*.ts wiring files).
+    // (settings-panel/template.ts and the settings-panel/*.ts wiring files).
     const ctx: PanelContext = {
         help,
         pluginShortcuts,

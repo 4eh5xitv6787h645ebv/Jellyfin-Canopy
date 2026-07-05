@@ -1,4 +1,4 @@
-// src/enhanced/ui-panel-template.ts
+// src/enhanced/settings-panel/template.ts
 //
 // Settings/help panel HTML template (shortcuts tab, settings sections,
 // footer) built from the shared panel context.
@@ -34,7 +34,7 @@ function tWithFallback(key: string, fallback?: string): string {
 
 /**
  * Builds the panel's inner HTML.
- * @param {object} ctx Shared panel context (theme constants) assembled in ui-panel.ts.
+ * @param {object} ctx Shared panel context (theme constants) assembled in settings-panel/panel.ts.
  * @returns {string} HTML string assigned to the panel element's innerHTML.
  */
 export function buildPanelHtml(ctx: PanelContext): string {

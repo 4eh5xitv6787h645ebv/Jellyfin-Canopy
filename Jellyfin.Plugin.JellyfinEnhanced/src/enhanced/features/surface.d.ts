@@ -1,4 +1,4 @@
-// src/enhanced/features-surface.d.ts
+// src/enhanced/features/surface.d.ts
 //
 // JEGlobal surface owned by the features-* modules (frozen public contract):
 // consumed by js/plugin.js, other legacy areas (e.g. events.js) and user scripts.

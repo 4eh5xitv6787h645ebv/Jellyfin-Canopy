@@ -1,4 +1,4 @@
-// src/arr/requests-page-render.ts (formerly js/arr/requests-page-render.js)
+// src/arr/requests/render.ts
 // Requests Page — full page rendering (downloads/requests/issues sections)
 // and the page container shell (split from requests-page.js).
 

@@ -1,4 +1,4 @@
-// src/jellyseerr/ui-request-modals.ts
+// src/jellyseerr/ui/request-modals.ts
 // Advanced request modals for movies and collections.
 import { JE } from '../../globals';
 // PERF(R6): no remote assets — poster placeholder embedded in the plugin DLL.

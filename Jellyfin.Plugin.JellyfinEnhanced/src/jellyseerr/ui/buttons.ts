@@ -1,4 +1,4 @@
-// src/jellyseerr/ui-buttons.ts
+// src/jellyseerr/ui/buttons.ts
 // Request-button configuration for movie/TV/collection cards.
 import { JE } from '../../globals';
 
@@ -10,7 +10,7 @@ const state = internal.state;
 const escapeHtml = JE.escapeHtml;
 const MediaStatus = JE.seerrStatus!.MEDIA;
 const DisplayStatus = JE.seerrStatus!.DISPLAY;
-const icons = internal.icons; // requires ui-icons.js to be loaded first
+const icons = internal.icons; // requires ui/icons.ts to be loaded first
 
 /**
  * Configures the request button based on item status and type.

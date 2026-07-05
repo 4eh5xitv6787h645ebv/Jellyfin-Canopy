@@ -1,4 +1,4 @@
-// src/jellyseerr/tag-discovery.ts
+// src/jellyseerr/discovery/tag.ts
 // Adds "More [Tag]" section to tag list pages using Seerr API.
 // Dual-feed spec over JE.discoveryBase — the base owns the TV/movie
 // pagination, filter/sort controls, infinite scroll, dedup and lifecycle

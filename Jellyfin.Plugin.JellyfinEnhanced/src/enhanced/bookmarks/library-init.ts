@@ -1,4 +1,4 @@
-// src/enhanced/bookmarks-library-init.ts
+// src/enhanced/bookmarks/library-init.ts
 //
 // Bookmarks Library View — initialization / boot.
 // Split from bookmarks-library.js (code motion; bodies verbatim).

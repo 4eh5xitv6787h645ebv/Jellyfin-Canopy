@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-page-admin.ts
+// src/enhanced/hidden-content-page/admin.ts
 //
 // Hidden Content Page — admin cross-user view: user resolution, the user filter,
 // theming helpers, unhide routing, and the add-items modal.
@@ -7,7 +7,7 @@
 
 import { JE } from '../../globals';
 import { state, POSTER_MAX_WIDTH } from './state';
-// Cross-module reference (defined in hidden-content-page-render.ts). ES-module
+// Cross-module reference (defined in hidden-content-page/render.ts). ES-module
 // cyclic edge — only ever invoked at call time, never during module evaluation.
 import { renderPage } from './render';
 

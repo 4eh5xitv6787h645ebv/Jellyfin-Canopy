@@ -1,4 +1,4 @@
-// src/jellyseerr/more-info-modal-render.ts
+// src/jellyseerr/more-info-modal/render.ts
 // Static HTML builders for the more-info modal body (header, panels,
 // crew/cast, trailers, keywords, collection card).
 import { JE } from '../../globals';

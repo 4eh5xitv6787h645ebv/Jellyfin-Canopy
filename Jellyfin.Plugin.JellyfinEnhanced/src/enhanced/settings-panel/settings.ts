@@ -1,4 +1,4 @@
-// src/enhanced/ui-panel-settings.ts
+// src/enhanced/settings-panel/settings.ts
 //
 // Settings-tab wiring: feature toggles, quality-tag categories, subtitle
 // styling/position controls, tag position selectors and subtitle presets.
@@ -15,7 +15,7 @@ import type { PanelContext } from './panel';
 /**
  * Wires the feature toggles, quality-tag category controls and subtitle
  * styling/position controls of the Settings tab.
- * @param {object} ctx Shared panel context assembled in ui-panel.ts.
+ * @param {object} ctx Shared panel context assembled in settings-panel/panel.ts.
  */
 export function wireSettingsListeners(ctx: PanelContext): void {
     const { createToast, resetAutoCloseTimer } = ctx;
@@ -370,7 +370,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
 /**
  * Wires the remaining panel controls: random-button item types, the
  * release-notes button, tag position selectors and subtitle preset grids.
- * @param {object} ctx Shared panel context assembled in ui-panel.ts.
+ * @param {object} ctx Shared panel context assembled in settings-panel/panel.ts.
  */
 export function wireMiscSettingsControls(ctx: PanelContext): void {
     const { help, primaryAccentColor, resetAutoCloseTimer } = ctx;

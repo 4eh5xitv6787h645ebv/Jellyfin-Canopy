@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-page-cards.ts
+// src/enhanced/hidden-content-page/cards.ts
 //
 // Hidden Content Page — grouped show cards: posters, episode lists,
 // expand/collapse, per-item unhide, and section containers.

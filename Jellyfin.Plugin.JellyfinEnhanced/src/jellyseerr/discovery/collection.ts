@@ -1,4 +1,4 @@
-// src/jellyseerr/collection-discovery.ts
+// src/jellyseerr/discovery/collection.ts
 // Shows missing collection movies on BoxSet detail pages with request buttons.
 // One-shot spec over JE.discoveryBase — the base owns page dedup, abort,
 // metrics and lifecycle wiring; this module keeps only the BoxSet lookup

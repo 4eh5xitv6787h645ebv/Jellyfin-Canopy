@@ -1,4 +1,4 @@
-// src/jellyseerr/ui-season-modal.ts
+// src/jellyseerr/ui/season-modal.ts
 // Season-selection request modal for TV shows.
 import { JE } from '../../globals';
 

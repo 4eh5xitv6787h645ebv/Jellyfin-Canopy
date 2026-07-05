@@ -1,4 +1,4 @@
-// src/enhanced/ui-panel-hidden-content.ts
+// src/enhanced/settings-panel/hidden-content/tab.ts
 //
 // Hidden Content section wiring inside the settings panel (toggles,
 // surface filters, experimental options, manage button).
@@ -12,7 +12,7 @@ import type { PanelContext } from './panel';
 
 /**
  * Wires the Hidden Content settings-panel listeners.
- * @param {object} ctx Shared panel context assembled in ui-panel.ts.
+ * @param {object} ctx Shared panel context assembled in settings-panel/panel.ts.
  */
 export function wireHiddenContentListeners(ctx: PanelContext): void {
     const { resetAutoCloseTimer } = ctx;

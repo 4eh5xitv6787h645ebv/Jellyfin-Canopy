@@ -1,4 +1,4 @@
-// src/arr/requests-custom-tab.ts (formerly js/arr/requests-custom-tab.js)
+// src/arr/requests/custom-tab.ts
 //
 // Requests Custom Tab
 // Creates <div class="jellyfinenhanced requests"></div>, either inside a tab

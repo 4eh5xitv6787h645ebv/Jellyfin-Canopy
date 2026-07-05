@@ -1,4 +1,4 @@
-// src/jellyseerr/index.ts — area barrel: imports this area's converted modules in
+// src/jellyseerr/index.ts
 // their required execution order. Owned by the jellyseerr conversion wave; main.ts
 // imports this barrel once, so conversions never edit main.ts itself.
 // Relative order mirrors the former js/plugin.js allComponentScripts jellyseerr

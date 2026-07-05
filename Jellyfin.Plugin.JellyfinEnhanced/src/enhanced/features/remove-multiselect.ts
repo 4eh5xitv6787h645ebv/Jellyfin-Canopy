@@ -1,4 +1,4 @@
-// src/enhanced/features-remove-multiselect.ts
+// src/enhanced/features/remove-multiselect.ts
 //
 // Remove option for Jellyfin's multi-select / long-press menu, including the
 // bulk-remove confirmation dialog.

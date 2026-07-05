@@ -1,4 +1,4 @@
-// src/jellyseerr/more-info-modal-init.ts
+// src/jellyseerr/more-info-modal/init.ts
 // Public surface + orchestration for the Jellyseerr more-info modal:
 // open/close, modal lifecycle, refresh and navigation cleanup.
 import { JE } from '../../globals';

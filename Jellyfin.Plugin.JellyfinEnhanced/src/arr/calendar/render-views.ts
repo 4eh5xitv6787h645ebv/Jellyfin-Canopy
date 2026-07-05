@@ -1,4 +1,4 @@
-// src/arr/calendar-page-render-views.ts (formerly js/arr/calendar-page-render-views.js)
+// src/arr/calendar/render-views.ts
 // Calendar Page — month/week/day/agenda view rendering, legend, sidebar
 // collapse and the full page shell (split from calendar-page.js).
 

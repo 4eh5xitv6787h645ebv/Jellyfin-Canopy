@@ -1,4 +1,4 @@
-// src/jellyseerr/more-info-modal-actions.ts
+// src/jellyseerr/more-info-modal/actions.ts
 // Action-area rendering: movie request buttons, requested chips, quota chip
 // and the renderActions orchestrator for the action/chip/download mounts.
 import { JE } from '../../globals';

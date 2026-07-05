@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-page-state.ts
+// src/enhanced/hidden-content-page/state.ts
 //
 // Hidden Content Page — shared page state, scope-label helpers, and the styled
 // unhide-confirmation dialog.

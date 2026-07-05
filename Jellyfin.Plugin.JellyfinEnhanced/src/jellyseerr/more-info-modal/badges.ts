@@ -1,4 +1,4 @@
-// src/jellyseerr/more-info-modal-badges.ts
+// src/jellyseerr/more-info-modal/badges.ts
 // Rating logos, external media-fact links, status chips and download bars.
 import { JE } from '../../globals';
 

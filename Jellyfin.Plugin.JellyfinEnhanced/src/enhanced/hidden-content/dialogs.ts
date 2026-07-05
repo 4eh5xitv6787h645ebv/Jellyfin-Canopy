@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-dialogs.ts
+// src/enhanced/hidden-content/dialogs.ts
 //
 // Hidden Content — undo toast and the hide-confirmation dialogs
 // (standard, surface-scoped, and episode-choice variants).

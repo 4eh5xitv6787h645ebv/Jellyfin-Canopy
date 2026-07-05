@@ -1,4 +1,4 @@
-// src/enhanced/features-release-dates.ts
+// src/enhanced/features/release-dates.ts
 //
 // Details-page release/air-date chip resolved from TMDB via the plugin proxy.
 // (Converted from js/enhanced/features-release-dates.js — bodies semantically

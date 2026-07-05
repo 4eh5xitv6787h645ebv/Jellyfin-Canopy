@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-buttons.ts
+// src/enhanced/hidden-content/buttons.ts
 //
 // Hidden Content — hide/unhide toggle buttons injected on native
 // library cards, including the scoped (Next Up / Continue Watching) flow.

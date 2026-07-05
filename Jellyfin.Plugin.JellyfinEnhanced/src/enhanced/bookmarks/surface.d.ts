@@ -1,4 +1,4 @@
-// src/enhanced/bookmarks-surface.d.ts
+// src/enhanced/bookmarks/surface.d.ts
 //
 // JEGlobal surface owned by the bookmarks + bookmarks-library modules (frozen
 // public contract): consumed by js/plugin.js, other legacy areas (e.g.

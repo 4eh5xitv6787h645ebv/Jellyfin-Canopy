@@ -1,4 +1,4 @@
-// src/arr/calendar-page-actions.ts (formerly js/arr/calendar-page-actions.js)
+// src/arr/calendar/actions.ts
 // Calendar Page — user actions: data refresh, view/display mode switching,
 // filter toggles and event-click navigation (split from calendar-page.js).
 

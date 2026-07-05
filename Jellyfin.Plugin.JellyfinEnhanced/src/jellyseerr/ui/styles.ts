@@ -1,4 +1,4 @@
-// src/jellyseerr/ui-styles.ts
+// src/jellyseerr/ui/styles.ts
 // CSS for Seerr search cards, buttons, popovers and the season modal.
 import { JE } from '../../globals';
 

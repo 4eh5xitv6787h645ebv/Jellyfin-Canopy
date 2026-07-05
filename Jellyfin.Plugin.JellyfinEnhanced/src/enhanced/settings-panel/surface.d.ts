@@ -1,4 +1,4 @@
-// src/enhanced/ui-surface.d.ts
+// src/enhanced/settings-panel/surface.d.ts
 //
 // JEGlobal surface owned by the ui-* modules (frozen public contract):
 // consumed by js/plugin.js, other legacy areas and user scripts.

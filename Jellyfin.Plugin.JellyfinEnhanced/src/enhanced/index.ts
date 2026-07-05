@@ -1,4 +1,4 @@
-// src/enhanced/index.ts — area barrel: imports this area's converted modules in
+// src/enhanced/index.ts
 // their required execution order. Owned by the enhanced conversion wave; main.ts
 // imports this barrel once, so conversions never edit main.ts itself.
 //

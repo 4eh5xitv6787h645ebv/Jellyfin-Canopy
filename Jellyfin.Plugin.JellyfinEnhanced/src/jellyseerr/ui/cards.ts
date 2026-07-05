@@ -1,4 +1,4 @@
-// src/jellyseerr/ui-cards.ts
+// src/jellyseerr/ui/cards.ts
 // Seerr search-result card construction.
 import { JE } from '../../globals';
 // PERF(R6): no remote assets — Seerr icon + poster placeholder served from the
@@ -10,7 +10,7 @@ import { assetUrl } from '../../core/asset-urls';
 
 import { ui, internal } from './internal';
 const MediaStatus = JE.seerrStatus!.MEDIA;
-const icons = internal.icons; // requires ui-icons.js to be loaded first
+const icons = internal.icons; // requires ui/icons.ts to be loaded first
 const escapeHtml = JE.escapeHtml;
 
 /**

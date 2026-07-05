@@ -1,4 +1,4 @@
-// src/arr/calendar-page-render-events.ts (formerly js/arr/calendar-page-render-events.js)
+// src/arr/calendar/render-events.ts
 // Calendar Page — date-range helpers, event formatting and single-event /
 // agenda-event / card rendering (split from calendar-page.js).
 

@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-page-surface.d.ts
+// src/enhanced/hidden-content-page/surface.d.ts
 //
 // JEGlobal surface owned by the hidden-content-page-* modules (frozen public
 // contract): JE.hiddenContentPage.renderForCustomTab is called by the

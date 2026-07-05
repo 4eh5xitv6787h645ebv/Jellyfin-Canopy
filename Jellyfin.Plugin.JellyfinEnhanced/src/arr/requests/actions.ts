@@ -1,4 +1,4 @@
-// src/arr/requests-page-actions.ts (formerly js/arr/requests-page-actions.js)
+// src/arr/requests/actions.ts
 // Requests Page — user actions: downloads tab filtering/search, request and
 // issue filter tabs and pagination (split from requests-page.js).
 

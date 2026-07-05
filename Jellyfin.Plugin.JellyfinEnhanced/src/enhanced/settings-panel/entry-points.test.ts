@@ -1,4 +1,4 @@
-// Unit tests for src/enhanced/ui-entry-points.ts — specifically the
+// Unit tests for src/enhanced/settings-panel/entry-points.ts — specifically the
 // observer-free JE.addUserPreferencesLink gating (PERF(R3) fix: the old
 // implementation created a NEW body-wide attribute MutationObserver on every
 // call made off the preferences page, and never disconnected them).

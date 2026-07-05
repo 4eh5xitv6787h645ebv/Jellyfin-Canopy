@@ -1,4 +1,4 @@
-// src/enhanced/bookmarks-library-items.ts
+// src/enhanced/bookmarks/library-items.ts
 //
 // Bookmarks Library View — per-item card rendering + bookmark playback.
 // Split from bookmarks-library.js (code motion; bodies verbatim).

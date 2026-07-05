@@ -1,4 +1,4 @@
-// src/jellyseerr/discovery-base.ts
+// src/jellyseerr/discovery/base.ts
 //
 // Shared state machine for the Seerr discovery sections (genre, tag,
 // network, person, collection). Owns the chassis every module used to
@@ -41,7 +41,7 @@ export interface DiscoveryBaseApi {
 
 declare module '../../types/je' {
     interface JEGlobal {
-        /** Shared discovery chassis (src/jellyseerr/discovery-base.ts). */
+        /** Shared discovery chassis (src/jellyseerr/discovery/base.ts). */
         discoveryBase?: DiscoveryBaseApi;
     }
 }

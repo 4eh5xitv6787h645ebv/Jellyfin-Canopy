@@ -1,4 +1,4 @@
-// src/jellyseerr/ui-badges.ts
+// src/jellyseerr/ui/badges.ts
 // Card badge helpers: status badge, media-type/collection badges and
 // streaming-provider icons.
 import { JE } from '../../globals';

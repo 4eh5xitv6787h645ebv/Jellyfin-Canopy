@@ -1,4 +1,4 @@
-// src/jellyseerr/more-info-modal-data.ts
+// src/jellyseerr/more-info-modal/data.ts
 // Fetch + pure data helpers for the more-info modal (ratings, details,
 // content rating resolution, currency formatting, error reporting).
 import { JE } from '../../globals';

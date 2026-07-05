@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-filter.ts
+// src/enhanced/hidden-content/filter.ts
 //
 // Hidden Content — the client-side filter engine: scope-aware surface
 // detection, native card filtering, parent-series cascading, and the

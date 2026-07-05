@@ -1,4 +1,4 @@
-// src/jellyseerr/ui-results.ts
+// src/jellyseerr/ui/results.ts
 // Search-page result rendering: Seerr section, header icon, season
 // status analysis and in-place result updates.
 import { JE } from '../../globals';

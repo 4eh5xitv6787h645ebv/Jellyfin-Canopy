@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-styles.ts
+// src/enhanced/hidden-content/styles.ts
 //
 // Hidden Content — CSS for hide buttons, undo toast, management panel,
 // and the confirmation dialog.

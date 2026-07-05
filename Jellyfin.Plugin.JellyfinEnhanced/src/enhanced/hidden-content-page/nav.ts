@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-page-nav.ts
+// src/enhanced/hidden-content-page/nav.ts
 //
 // Hidden Content Page — standalone page container, show/hide, navigation
 // interception, sidebar nav item, and custom-tab rendering.
@@ -9,7 +9,7 @@ import { JE } from '../../globals';
 import { onSidebarRebuild } from '../../core/dom-observer';
 import { state, sidebar, pluginPagesExists } from './state';
 import { injectStyles } from './styles';
-// Cross-module reference (defined in hidden-content-page-render.ts). ES-module
+// Cross-module reference (defined in hidden-content-page/render.ts). ES-module
 // cyclic edge — only ever invoked at call time, never during module evaluation.
 import { renderPage } from './render';
 

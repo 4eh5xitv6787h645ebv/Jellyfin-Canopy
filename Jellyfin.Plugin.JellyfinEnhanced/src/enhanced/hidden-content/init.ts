@@ -1,11 +1,11 @@
-// src/enhanced/hidden-content-init.ts
+// src/enhanced/hidden-content/init.ts
 //
 // Hidden Content — initialization: wires the modules together and
 // exposes the frozen JE.initializeHiddenContent / JE.hiddenContent surface.
 // (Converted from js/enhanced/hidden-content-init.js — body verbatim except the
 // two-line data reset, which moved into resetFromUserConfig() in
-// hidden-content-data.ts where the hiddenData closure variable lives.)
-// Loads last among the hidden-content-* modules.
+// hidden-content/data.ts where the hiddenData closure variable lives.)
+// Loads last among the hidden-content/* modules.
 
 import { JE } from '../../globals';
 import {

@@ -1,4 +1,4 @@
-// src/jellyseerr/genre-discovery.ts
+// src/jellyseerr/discovery/genre.ts
 // Adds "More [Genre]" section to genre list pages using Seerr API.
 // Dual-feed spec over JE.discoveryBase — the base owns the TV/movie
 // pagination, filter/sort controls, infinite scroll, dedup and lifecycle

@@ -1,9 +1,9 @@
-// src/arr/calendar-page-data.ts (formerly js/arr/calendar-page-data.js)
+// src/arr/calendar/data.ts
 // Calendar Page — state, settings and data access (split from calendar-page.js).
 // The former raw fetch() calls with hand-built auth headers are routed through
 // JE.core.api.plugin (same /JellyfinEnhanced/arr endpoints, core auth headers).
 //
-// calendar-page-render-views.ts is imported circularly (renderPage) — every
+// calendar/render-views.ts is imported circularly (renderPage) — every
 // cross-module reference happens inside function bodies at call time, so the
 // cycle is safe under ES module evaluation.
 

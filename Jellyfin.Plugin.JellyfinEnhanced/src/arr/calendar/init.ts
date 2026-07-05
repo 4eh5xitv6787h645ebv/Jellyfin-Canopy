@@ -1,4 +1,4 @@
-// src/arr/calendar-page-init.ts (formerly js/arr/calendar-page-init.js)
+// src/arr/calendar/init.ts
 // Calendar Page — initialization, navigation interception, page show/hide
 // and the public JE.calendarPage surface (split from calendar-page.js).
 // The navigation-watcher fallback interval is tracked with core lifecycle.

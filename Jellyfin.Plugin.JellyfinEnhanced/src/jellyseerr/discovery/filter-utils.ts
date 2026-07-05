@@ -1,4 +1,4 @@
-// src/jellyseerr/discovery-filter-utils.ts
+// src/jellyseerr/discovery/filter-utils.ts
 // Shared utilities for discovery section content type filtering
 import { JE } from '../../globals';
 
@@ -32,7 +32,7 @@ export interface DiscoveryFilterApi {
 
 declare module '../../types/je' {
     interface JEGlobal {
-        /** Shared discovery filter/sort utilities (src/jellyseerr/discovery-filter-utils.ts). */
+        /** Shared discovery filter/sort utilities (src/jellyseerr/discovery/filter-utils.ts). */
         discoveryFilter?: DiscoveryFilterApi;
     }
 }

@@ -1,9 +1,9 @@
-// src/enhanced/bookmarks-library-styles.ts
+// src/enhanced/bookmarks/library-styles.ts
 //
 // Bookmarks Library View — styles.
 // Split from bookmarks-library.js (code motion; CSS block verbatim).
 // Creates <div class="sections bookmarks"></div> for CustomTabs plugin
-// (see bookmarks-library-init.ts for the boot sequence).
+// (see bookmarks/library-init.ts for the boot sequence).
 // (Converted from js/enhanced/bookmarks-library-styles.js — bodies semantically identical.)
 
 import { JE } from "../../globals";

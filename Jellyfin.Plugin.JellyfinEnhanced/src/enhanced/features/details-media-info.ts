@@ -1,4 +1,4 @@
-// src/enhanced/features-details-media-info.ts
+// src/enhanced/features/details-media-info.ts
 //
 // Details-page media-info chips: watch progress, file size and audio languages.
 // (Converted from js/enhanced/features-details-media-info.js — bodies semantically

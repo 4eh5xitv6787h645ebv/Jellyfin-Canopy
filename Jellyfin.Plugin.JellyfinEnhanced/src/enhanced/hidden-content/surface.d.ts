@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-surface.d.ts
+// src/enhanced/hidden-content/surface.d.ts
 // JEGlobal surface owned by the hidden-content modules (frozen public contract).
 // Legacy js/ areas (hidden-content-page-*, ui-panel-hidden-content, etc.) and
 // user scripts keep reading JE.hiddenContent / calling JE.initializeHiddenContent

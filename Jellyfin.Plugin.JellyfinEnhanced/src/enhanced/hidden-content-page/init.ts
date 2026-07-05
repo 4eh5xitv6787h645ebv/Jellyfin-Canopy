@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-page-init.ts
+// src/enhanced/hidden-content-page/init.ts
 //
 // Hidden Content Page — initialization and the frozen public surface
 // (JE.hiddenContentPage / JE.initializeHiddenContentPage).

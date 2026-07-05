@@ -1,4 +1,4 @@
-// src/enhanced/ui-entry-points.ts
+// src/enhanced/settings-panel/entry-points.ts
 //
 // Page-location helpers and the panel entry points: sidebar menu button,
 // video-OSD settings button and the user-preferences menu link.

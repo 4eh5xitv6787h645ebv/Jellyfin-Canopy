@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-page-render.ts
+// src/enhanced/hidden-content-page/render.ts
 //
 // Hidden Content Page — full page render: header, toolbar (search, scoped
 // filter, admin controls), section rendering, and the read-only strip of
@@ -14,7 +14,7 @@ import {
     openAdminAddModal
 } from './admin';
 import { createGroupCard, createSection } from './cards';
-// Cross-module reference (defined in hidden-content-page-nav.ts). ES-module
+// Cross-module reference (defined in hidden-content-page/nav.ts). ES-module
 // cyclic edge — only ever invoked at call time, never during module evaluation.
 import { createPageContainer } from './nav';
 

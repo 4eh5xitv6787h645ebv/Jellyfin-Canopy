@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-page-styles.ts
+// src/enhanced/hidden-content-page/styles.ts
 //
 // Hidden Content Page — page CSS and its injector.
 // (Converted from js/enhanced/hidden-content-page-styles.js — CSS verbatim.)

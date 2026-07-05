@@ -1,4 +1,4 @@
-// src/arr/requests-page-render-helpers.ts (formerly js/arr/requests-page-render-helpers.js)
+// src/arr/requests/render-helpers.ts
 // Requests Page — status colors, formatting, filtering and download grouping
 // helpers shared by the card and page renderers (split from requests-page.js).
 

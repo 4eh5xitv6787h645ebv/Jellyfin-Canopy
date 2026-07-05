@@ -1,4 +1,4 @@
-// src/arr/requests-page-styles.ts (formerly js/arr/requests-page-styles.js)
+// src/arr/requests/styles.ts
 // Requests Page — CSS and theme-color injection (split from requests-page.js).
 // Owns the single injection site for the feature's styles; all former call
 // sites import injectStyles, deduped by style id via core injectCss.

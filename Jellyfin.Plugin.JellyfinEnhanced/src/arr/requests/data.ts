@@ -1,9 +1,9 @@
-// src/arr/requests-page-data.ts (formerly js/arr/requests-page-data.js)
+// src/arr/requests/data.ts
 // Requests Page — state, avatar handling and data access (split from
 // requests-page.js). JSON calls go through JE.core.api.plugin; the avatar
 // fetch stays raw because it returns a binary blob (JE.core.api is JSON-only).
 //
-// requests-page-render.ts is imported circularly (renderPage) — every
+// requests/render.ts is imported circularly (renderPage) — every
 // cross-module reference here happens inside function bodies at call time,
 // so the cycle is safe under ES module evaluation.
 

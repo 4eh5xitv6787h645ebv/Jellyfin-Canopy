@@ -1,4 +1,4 @@
-// src/enhanced/features-remove-home.ts
+// src/enhanced/features/remove-home.ts
 //
 // Remove from Continue Watching / Next Up: surface detection, the server
 // POST + optimistic hide, and the per-item action-sheet Remove button.

@@ -1,4 +1,4 @@
-// src/jellyseerr/more-info-modal-internal.ts
+// src/jellyseerr/more-info-modal/internal.ts
 //
 // Shared mutable bag for the Jellyseerr more-info modal family. Replaces the
 // former JE.internals.moreInfoModal global: the eight more-info-modal-*

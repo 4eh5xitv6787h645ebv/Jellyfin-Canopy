@@ -1,4 +1,4 @@
-// src/jellyseerr/person-discovery.ts
+// src/jellyseerr/discovery/person.ts
 // Adds "More from [Actor]" section to person detail pages using Seerr API.
 // Client-paged spec over JE.discoveryBase — the base owns the chunked
 // pagination, filter/sort controls, infinite scroll and lifecycle wiring;

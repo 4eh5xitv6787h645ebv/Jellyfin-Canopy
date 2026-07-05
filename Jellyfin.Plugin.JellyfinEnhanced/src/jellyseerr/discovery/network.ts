@@ -1,4 +1,4 @@
-// src/jellyseerr/network-discovery.ts
+// src/jellyseerr/discovery/network.ts
 // Adds "More from [Network]" section to studio/network list pages using
 // Seerr API. Dual-feed spec over JE.discoveryBase — the base owns the
 // TV/movie pagination, filter/sort controls, infinite scroll, dedup and

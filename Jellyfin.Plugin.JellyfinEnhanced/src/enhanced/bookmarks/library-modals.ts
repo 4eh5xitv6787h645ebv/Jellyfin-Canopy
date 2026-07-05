@@ -1,4 +1,4 @@
-// src/enhanced/bookmarks-library-modals.ts
+// src/enhanced/bookmarks/library-modals.ts
 //
 // Bookmarks Library View — offset-adjustment and duplicate-merge modals.
 // Split from bookmarks-library.js (code motion; bodies verbatim).

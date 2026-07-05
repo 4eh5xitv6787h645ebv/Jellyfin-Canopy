@@ -35,7 +35,7 @@ declare module '../types/je' {
         initializeJellyseerrScript?: any;
         /** jellyseerr/more-info-modal-* surface (legacy). */
         jellyseerrMoreInfo?: any;
-        /** jellyseerr/ui-icons.js icon map (legacy). */
+        /** jellyseerr/ui/icons.ts icon map (legacy). */
         jellyseerrUIIcons?: any;
         /** Elsewhere user-config surface (legacy). */
         userConfig?: any;

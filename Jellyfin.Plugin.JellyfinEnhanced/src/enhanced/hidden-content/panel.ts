@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-panel.ts
+// src/enhanced/hidden-content/panel.ts
 //
 // Hidden Content — management panel overlay (searchable grid of hidden
 // items with unhide actions) and the shared hidden-item card factory.

@@ -1,4 +1,4 @@
-// src/enhanced/bookmarks.ts
+// src/enhanced/bookmarks/bookmarks.ts
 //
 // Enhanced bookmarks system with multi-bookmark support, TMDB/TVDB tracking, and visual markers
 // (Converted from js/enhanced/bookmarks.js — bodies semantically identical.)

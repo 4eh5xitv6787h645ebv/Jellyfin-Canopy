@@ -1,4 +1,4 @@
-// src/jellyseerr/ui-popover.ts
+// src/jellyseerr/ui/popover.ts
 // Download-progress hover popover and the 4K request popup.
 import { JE } from '../../globals';
 

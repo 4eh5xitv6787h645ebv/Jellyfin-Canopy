@@ -1,4 +1,4 @@
-// src/arr/calendar-page-styles.ts (formerly js/arr/calendar-page-styles.js)
+// src/arr/calendar/styles.ts
 // Calendar Page — CSS and theme-color injection (split from calendar-page.js).
 // Owns the single injection site for the feature's styles; all former call
 // sites import injectStyles, deduped by style id via core injectCss.

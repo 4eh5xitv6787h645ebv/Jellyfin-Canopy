@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-custom-tab.ts
+// src/enhanced/hidden-content-page/custom-tab.ts
 //
 // Hidden Content Custom Tab
 // Creates <div class="jellyfinenhanced hidden-content"></div>, either inside a

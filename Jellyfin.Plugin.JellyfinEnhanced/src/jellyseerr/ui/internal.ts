@@ -1,4 +1,4 @@
-// src/jellyseerr/ui-internal.ts
+// src/jellyseerr/ui/internal.ts
 //
 // Shared singletons for the Jellyseerr UI family (ui-* modules). Replaces the
 // former JE.internals.jellyseerrUi bag and the per-file

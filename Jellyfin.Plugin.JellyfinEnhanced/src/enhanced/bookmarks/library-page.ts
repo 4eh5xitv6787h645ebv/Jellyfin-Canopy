@@ -1,4 +1,4 @@
-// src/enhanced/bookmarks-library-page.ts
+// src/enhanced/bookmarks/library-page.ts
 //
 // Bookmarks Library View — standalone page + sidebar navigation.
 // Split from bookmarks-library.js (code motion; bodies verbatim).

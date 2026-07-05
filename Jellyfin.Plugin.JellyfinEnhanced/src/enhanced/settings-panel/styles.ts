@@ -1,4 +1,4 @@
-// src/enhanced/ui-styles.ts
+// src/enhanced/settings-panel/styles.ts
 //
 // Global CSS injected once for plugin features (JE.injectGlobalStyles).
 // Split from ui.js (code motion; bodies verbatim).

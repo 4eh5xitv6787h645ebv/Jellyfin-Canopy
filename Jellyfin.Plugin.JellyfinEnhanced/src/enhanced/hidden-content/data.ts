@@ -1,4 +1,4 @@
-// src/enhanced/hidden-content-data.ts
+// src/enhanced/hidden-content/data.ts
 //
 // Hidden Content — data store, lookup sets, and the public data API.
 // Owns the hiddenData closure variable and the ID lookup Sets; every other

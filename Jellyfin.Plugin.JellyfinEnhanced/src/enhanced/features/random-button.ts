@@ -1,4 +1,4 @@
-// src/enhanced/features-random-button.ts
+// src/enhanced/features/random-button.ts
 //
 // Random-item header button: fetches a random movie/series and navigates to it.
 // (Converted from js/enhanced/features-random-button.js — bodies semantically identical.)

@@ -1,4 +1,4 @@
-// src/jellyseerr/ui-quota.ts
+// src/jellyseerr/ui/quota.ts
 // Request-quota helpers: error detection, quota chip and error dialog.
 import { JE } from '../../globals';
 

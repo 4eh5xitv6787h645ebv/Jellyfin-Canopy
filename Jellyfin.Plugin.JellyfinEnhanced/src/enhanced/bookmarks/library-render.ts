@@ -1,4 +1,4 @@
-// src/enhanced/bookmarks-library-render.ts
+// src/enhanced/bookmarks/library-render.ts
 //
 // Bookmarks Library View — mount detection + main library rendering,
 // plus the small shared time/type helpers.

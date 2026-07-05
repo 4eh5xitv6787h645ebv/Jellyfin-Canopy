@@ -1,4 +1,4 @@
-// src/arr/requests-page-render-cards.ts (formerly js/arr/requests-page-render-cards.js)
+// src/arr/requests/render-cards.ts
 // Requests Page — download, request, issue and season-pack card rendering
 // (split from requests-page.js).
 
