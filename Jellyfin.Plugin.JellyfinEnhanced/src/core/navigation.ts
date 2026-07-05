@@ -118,7 +118,9 @@ let historyUpdateSubscribed = false;
  * @param attempt - Internal retry counter.
  */
 function subscribeHistoryUpdate(attempt = 0): void {
-    if (historyUpdateSubscribed) return;
+    // The retry timer can outlive a jsdom test teardown, where `window` no
+    // longer exists at all — bail instead of throwing an unhandled error.
+    if (typeof window === 'undefined' || historyUpdateSubscribed) return;
     const events = window.Events;
     if (!events || typeof events.on !== 'function') {
         // Bounded retry (~5s). If the bus never appears (very old host) the
