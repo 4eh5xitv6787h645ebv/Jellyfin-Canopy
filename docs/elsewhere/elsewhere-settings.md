@@ -37,6 +37,9 @@
 
 Select the primary region for streaming availability checks. Empty defaults to US.
 
+!!! note "Shared across features"
+    Default Region, Default Providers and Ignore Providers are also used by **TMDB Release Dates** (region) and the **Seerr streaming icons** (all three), which don't depend on the Elsewhere panel. These fields therefore stay editable even when **Enable Elsewhere** is off — only the Elsewhere detail-page panel and its custom-branding fields are gated behind that toggle.
+
 **View full list:** [Available Regions](https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/regions.txt)
 
 **Examples:**

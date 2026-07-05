@@ -138,6 +138,9 @@ When enabled, new Jellyfin users are automatically imported into Seerr the first
 
 Display a dedicated page showing active downloads from *arr and requests from Seerr.
 
+!!! note "Only one data source is required"
+    The page works with either source on its own — a single Sonarr **or** Radarr instance powers the downloads list (a movie-only Radarr or TV-only Sonarr setup is enough), and Seerr powers the requests/issues list. You do not need to configure Sonarr, Radarr and Seerr all together.
+
 **Configuration:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**

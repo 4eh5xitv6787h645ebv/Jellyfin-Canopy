@@ -191,6 +191,14 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 8. Click **Save**
 9. Restart Jellyfin if using Plugin Pages
 
+!!! note "You only need one data source"
+    The Requests Page draws from two **independent** sources and is useful with either one:
+
+    - **Downloads** come from your ***arr** services — a single **Sonarr *or* Radarr** instance is enough. A movie-only setup with just Radarr (or a TV-only setup with just Sonarr) works fine; the other service is not required.
+    - **Requests and issues** come from **Seerr**.
+
+    Configure whichever you use. You do **not** need to set up Sonarr, Radarr and Seerr all at once — any one of them enables the page.
+
 ### Polling Settings
 
 #### Enable Polling
