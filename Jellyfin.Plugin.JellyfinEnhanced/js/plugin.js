@@ -476,6 +476,12 @@
     const MAX_MISMATCH_RETRIES = 100; // ~30s at 300ms intervals
 
     let readyRetryCount = 0;
+    // Cap the ApiClient-readiness poll so a login page left open unauthenticated
+    // does not busy-loop (and re-parse jellyfin_credentials) forever. ~10*50ms +
+    // 590*250ms ≈ 2.5 min — generous enough for a real user typing credentials;
+    // on login Jellyfin full-reloads, discarding the loop, so this only bites the
+    // never-authenticated idle case.
+    const MAX_READY_RETRIES = 600;
 
     /**
      * Delay before the next ApiClient-readiness poll.
@@ -507,6 +513,11 @@
 
         // Normal retry logic (no mismatch)
         if (typeof ApiClient === 'undefined' || !ApiClient.getCurrentUserId?.()) {
+            if (readyRetryCount >= MAX_READY_RETRIES) {
+                console.warn('🪼 Jellyfin Enhanced: ApiClient not ready after max retries - stopping poll');
+                window.JE?.hideSplashScreen?.();
+                return;
+            }
             setTimeout(initialize, nextReadyPollDelay());
             return;
         }

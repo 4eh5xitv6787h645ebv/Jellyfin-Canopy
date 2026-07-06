@@ -321,11 +321,21 @@ export function getCurrentView(): string | null {
 }
 
 /**
- * Hook into Emby.Page.onViewShow. Retries until the host router exists.
+ * Hook into Emby.Page.onViewShow. Retries (bounded) until the host router exists.
+ * Exported for the retry-cap unit test.
+ * @param attempt - Internal retry counter.
  */
-function installEmbyHook(): void {
+export function installEmbyHook(attempt = 0): void {
+    // The retry timer can outlive a jsdom test teardown, where `window` no
+    // longer exists at all — bail instead of throwing an unhandled error
+    // (mirrors subscribeHistoryUpdate).
+    if (typeof window === 'undefined') return;
     if (!window.Emby?.Page) {
-        setTimeout(installEmbyHook, 100);
+        // Bounded retry (~5s). If Emby.Page never appears, the
+        // je:navigate/hashchange/popstate/HISTORY_UPDATE sources still cover routing.
+        if (attempt < 50) {
+            setTimeout(() => installEmbyHook(attempt + 1), 100);
+        }
         return;
     }
 

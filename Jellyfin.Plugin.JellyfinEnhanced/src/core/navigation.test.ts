@@ -6,7 +6,7 @@
 // history/event calls. URLs are unique per test because the dedup guard
 // (last dispatched href) is module state.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { handleHistoryUpdate, navDedupKey, offNavigate, onNavigate, onViewPage } from './navigation';
+import { handleHistoryUpdate, installEmbyHook, navDedupKey, offNavigate, onNavigate, onViewPage } from './navigation';
 
 describe('onNavigate dedup', () => {
     it('notifies exactly once for a pushState URL change', () => {
@@ -185,6 +185,33 @@ describe('viewshow rawEvent expiry', () => {
         expect(rawEvents[0]).toBeNull();
 
         unregister();
+    });
+});
+
+describe('installEmbyHook retry cap (CORE-5)', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        // Restore the router stub the rest of the suite (and setup.ts) relies on.
+        (window as unknown as { Emby?: unknown }).Emby = { Page: {} };
+    });
+
+    it('stops rescheduling after 50 attempts when Emby.Page never appears', () => {
+        vi.useFakeTimers();
+        const savedEmby = (window as unknown as { Emby?: unknown }).Emby;
+        // Emby.Page absent → installEmbyHook takes the bounded-retry branch.
+        (window as unknown as { Emby?: unknown }).Emby = undefined;
+        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+        installEmbyHook();                // attempt 0 → schedules the first retry
+        vi.advanceTimersByTime(100 * 60); // drain well past the 50-attempt window
+
+        // Bounded: attempts 0..49 each schedule one 100ms retry (50 total);
+        // attempt 50 schedules none. Pre-fix it rescheduled forever.
+        const retryCalls = setTimeoutSpy.mock.calls.filter((c) => c[1] === 100).length;
+        expect(retryCalls).toBe(50);
+
+        setTimeoutSpy.mockRestore();
+        (window as unknown as { Emby?: unknown }).Emby = savedEmby;
     });
 });
 
