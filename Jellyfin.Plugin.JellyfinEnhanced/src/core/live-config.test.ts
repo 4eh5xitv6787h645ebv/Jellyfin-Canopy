@@ -85,6 +85,44 @@ describe('config hot-reload delivery-flag re-sanitize (INIT-1)', () => {
             expect(JE.pluginConfig.HiddenContentUsePluginPages).toBe(false);
         });
     });
+
+    it('never exposes a stale flag as true during the private-config round-trip (LC-1)', async () => {
+        JE._deliveryPluginsInstalled = { customTabs: false, pluginPages: false };
+        (JE.pluginConfig as Record<string, unknown>).HiddenContentUsePluginPages = false;
+
+        let releasePrivate: (v: unknown) => void = () => undefined;
+        const privatePending = new Promise<unknown>((resolve) => { releasePrivate = resolve; });
+
+        // Sampled inside the private-config fetch: this runs AFTER the public
+        // merge but BEFORE private resolves — exactly the window a drawer rebuild
+        // would observe. The public payload re-writes the stale `true`.
+        let flagDuringWindow: unknown = 'unsampled';
+
+        JE.core.api = {
+            plugin: vi.fn((path: string) => {
+                if (path.startsWith('/public-config')) {
+                    return Promise.resolve({ HiddenContentUsePluginPages: true, RefreshMarker: 'pub' });
+                }
+                if (path.startsWith('/private-config')) {
+                    flagDuringWindow = JE.pluginConfig.HiddenContentUsePluginPages;
+                    return privatePending;
+                }
+                return Promise.resolve({});
+            })
+        } as unknown as NonNullable<typeof JE.core.api>;
+
+        emit(LIVE.CONFIG_CHANGED, {});
+
+        // Wait until the refresh has entered the private-config fetch.
+        await vi.waitFor(() => expect(flagDuringWindow).not.toBe('unsampled'));
+
+        // The stale flag must ALREADY be false across the await — never observably true.
+        expect(flagDuringWindow).toBe(false);
+
+        // Draining private-config keeps it false (the end-of-refresh sanitize).
+        releasePrivate({});
+        await vi.waitFor(() => expect(JE.pluginConfig.HiddenContentUsePluginPages).toBe(false));
+    });
 });
 
 describe('config hot-reload in-flight guard (CORE-9)', () => {

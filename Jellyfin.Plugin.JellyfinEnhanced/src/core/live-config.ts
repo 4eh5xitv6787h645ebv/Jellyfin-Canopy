@@ -70,6 +70,12 @@ async function refreshPluginConfig(): Promise<void> {
             prunePayloadKeys(lastPublicKeys, pub); // (CORE-9) drop vanished public keys
             Object.assign(JE.pluginConfig, pub as PluginConfig);
             lastPublicKeys = Object.keys(pub);
+            // (INIT-1/LC-1) Re-zero the stale UseCustomTabs/UsePluginPages flags
+            // IMMEDIATELY — the public payload we just merged re-wrote them to
+            // their pre-uninstall `true`. Deferring the sanitize to the end of the
+            // refresh leaves a /private-config round-trip window where a drawer
+            // rebuild would observe them true and skip re-injecting the nav item.
+            applyDeliveryFlagSanitization();
         }
     } catch (err) {
         console.error(`${logPrefix} failed to refetch public-config:`, err);
