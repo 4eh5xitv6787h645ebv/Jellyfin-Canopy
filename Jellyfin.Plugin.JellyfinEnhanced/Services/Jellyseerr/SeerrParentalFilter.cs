@@ -76,6 +76,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
             List,
             DetailMovieTv,
             Season,
+            SubDetail,
         }
 
         private enum Container
@@ -101,7 +102,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
             /// <summary>For <see cref="Category.DetailMovieTv"/>: the title's media type.</summary>
             public string? DetailMediaType { get; init; }
 
-            /// <summary>For <see cref="Category.Season"/>: the parent show's tmdbId (gated by the show's rating).</summary>
+            /// <summary>
+            /// For <see cref="Category.Season"/> and <see cref="Category.SubDetail"/>:
+            /// the parent title's tmdbId (the movie/tv the sub-resource belongs to), gated
+            /// on that title's rating. Its media type is carried by <see cref="DetailMediaType"/>.
+            /// </summary>
             public int ParentTvId { get; init; }
         }
 
@@ -132,6 +137,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
 
                     case Category.Season:
                         return await IsTitleBlockedAsync("tv", plan.ParentTvId, g).ConfigureAwait(false)
+                            ? new SeerrParentalResult(true, string.Empty)
+                            : new SeerrParentalResult(false, json);
+
+                    case Category.SubDetail:
+                        // A movie/tv sub-resource (ratingscombined, ratings, watch/providers,
+                        // …) carries no rating of its own; gate it on the parent title so a
+                        // blocked title exposes none of its sub-resources while the bare
+                        // detail already 403s.
+                        return await IsTitleBlockedAsync(plan.DetailMediaType!, plan.ParentTvId, g).ConfigureAwait(false)
                             ? new SeerrParentalResult(true, string.Empty)
                             : new SeerrParentalResult(false, json);
 
@@ -848,7 +862,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
                     return new EndpointPlan { Category = Category.DetailMovieTv, DetailMediaType = "movie" };
                 }
 
-                return new EndpointPlan { Category = Category.None }; // ratingscombined etc.
+                // Any other sub-resource (ratingscombined, watch/providers, …): gate on the
+                // parent movie so a blocked title exposes none of its sub-resources.
+                return TryParseId(apiPath, "/api/v1/movie/", out var movieSubId)
+                    ? new EndpointPlan { Category = Category.SubDetail, DetailMediaType = "movie", ParentTvId = movieSubId }
+                    : new EndpointPlan { Category = Category.None };
             }
 
             if (apiPath.StartsWith("/api/v1/tv/", StringComparison.OrdinalIgnoreCase))
@@ -870,7 +888,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
                     return new EndpointPlan { Category = Category.DetailMovieTv, DetailMediaType = "tv" };
                 }
 
-                return new EndpointPlan { Category = Category.None }; // ratings etc.
+                // Any other sub-resource (ratings, watch/providers, …): gate on the parent
+                // show so a blocked title exposes none of its sub-resources.
+                return TryParseId(apiPath, "/api/v1/tv/", out var tvSubId)
+                    ? new EndpointPlan { Category = Category.SubDetail, DetailMediaType = "tv", ParentTvId = tvSubId }
+                    : new EndpointPlan { Category = Category.None };
             }
 
             // Person filmography: cast[] + crew[], per-item mediaType.

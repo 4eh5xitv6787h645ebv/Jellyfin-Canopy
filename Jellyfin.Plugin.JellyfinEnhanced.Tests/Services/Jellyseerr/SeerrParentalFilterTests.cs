@@ -254,13 +254,50 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
         }
 
         [Fact]
-        public async Task RatingsEndpoint_IsNotGated()
+        public async Task SubDetail_BlocksRatingsOfBlockedTitle()
         {
-            // /ratingscombined is not a detail body and must pass through untouched.
+            // A sub-resource of a blocked title (movie 200 = R, tv 200 = TV-MA) must be
+            // denied — it carries no rating of its own, so it is gated on the parent.
             const string body = @"{ ""rt"": 90 }";
-            var result = await ApplyAsync(body, "/api/v1/movie/200/ratingscombined", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+
+            var blockedMovie = await ApplyAsync(body, "/api/v1/movie/200/ratingscombined", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+            Assert.True(blockedMovie.Block);
+
+            var blockedTv = await ApplyAsync(body, "/api/v1/tv/200/ratings", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+            Assert.True(blockedTv.Block);
+        }
+
+        [Fact]
+        public async Task SubDetail_AllowsRatingsOfAllowedTitle()
+        {
+            // The same sub-resource on an in-limit title (movie 100 = PG-13) passes through.
+            const string body = @"{ ""rt"": 90 }";
+            var result = await ApplyAsync(body, "/api/v1/movie/100/ratingscombined", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
             Assert.False(result.Block);
             Assert.Equal(body, result.Body);
+        }
+
+        [Fact]
+        public async Task SubDetail_AdminNotBlocked()
+        {
+            const string body = @"{ ""rt"": 90 }";
+            var result = await ApplyAsync(body, "/api/v1/movie/200/ratingscombined", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>(), isAdmin: true);
+            Assert.False(result.Block);
+        }
+
+        // Class guard: any sub-resource of a blocked title must be denied, so a future
+        // sub-resource routed to Category.None instead of SubDetail fails this.
+        [Theory]
+        [InlineData("ratingscombined")]
+        [InlineData("watch/providers")]
+        [InlineData("keywords")]
+        [InlineData("videos")]
+        [InlineData("somethingnew")]
+        public async Task SubDetail_BlocksAnySubResourceOfBlockedTitle(string sub)
+        {
+            const string body = @"{ ""anything"": true }";
+            var result = await ApplyAsync(body, $"/api/v1/movie/200/{sub}", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+            Assert.True(result.Block);
         }
 
         [Fact]
