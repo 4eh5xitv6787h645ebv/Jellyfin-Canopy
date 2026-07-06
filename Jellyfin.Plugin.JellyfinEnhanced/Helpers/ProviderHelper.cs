@@ -59,14 +59,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers
 
             if (includeNormal)
             {
-                Add("Tvdb", e.TvdbId?.ToString());
-                Add("Tmdb", e.TmdbId?.ToString());
+                // Route the numeric ids through ToProviderValue so a present-but-0 id never
+                // becomes a ("Tvdb","0")/("Tmdb","0") pair that would mis-resolve every
+                // un-mapped item to a single unrelated ProviderIds["Tvdb"]=="0" library item.
+                Add("Tvdb", ArrIdHelper.ToProviderValue(e.TvdbId));
+                Add("Tmdb", ArrIdHelper.ToProviderValue(e.TmdbId));
                 Add("Imdb", e.ImdbId);
             }
 
             if (includeEpisode)
             {
-                Add("Tvdb", e.EpisodeTvdbId?.ToString());
+                Add("Tvdb", ArrIdHelper.ToProviderValue(e.EpisodeTvdbId));
                 Add("Imdb", e.EpisodeImdbId);
             }
 

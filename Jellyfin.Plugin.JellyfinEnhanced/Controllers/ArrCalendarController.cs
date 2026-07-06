@@ -306,6 +306,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             {
                 string dedupeKey;
                 var normalizedDate = NormalizeDateForDedup(evt.ReleaseDate);
+                // TvdbId/TmdbId are pre-normalized by ArrIdHelper.ToNullableId at the producer, so a
+                // present-but-0 id is null here and takes the title fallback — two distinct un-mapped
+                // items no longer collide on a shared "0" key.
                 if (evt.Source == nameof(ArrType.Sonarr))
                 {
                     var seriesKey = evt.TvdbId?.ToString() ?? $"title:{evt.Title}";
@@ -439,12 +442,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             EpisodeNumber = episodeNumber,
                             EpisodeTitle = episodeTitle,
                             Overview = (string?)episode?["overview"],
-                            TvdbId = (int?)series?["tvdbId"],
+                            TvdbId = ArrIdHelper.ToNullableId((int?)series?["tvdbId"]),
                             ImdbId = (string?)series?["imdbId"],
-                            TmdbId = (int?)series?["tmdbId"],
+                            TmdbId = ArrIdHelper.ToNullableId((int?)series?["tmdbId"]),
                             PosterUrl = seriesPosterUrl,
                             BackdropUrl = seriesBackdropUrl,
-                            EpisodeTvdbId = (int?)episode?["tvdbId"],
+                            EpisodeTvdbId = ArrIdHelper.ToNullableId((int?)episode?["tvdbId"]),
                             EpisodeImdbId = (string?)episode?["imdbId"],
                             RootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)series?["path"])
                         });
@@ -534,7 +537,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                                 Monitored = (bool?)movie?["monitored"] ?? false,
                                 PosterUrl = posterUrl,
                                 BackdropUrl = backdropUrl,
-                                TmdbId = (int?)movie?["tmdbId"],
+                                TmdbId = ArrIdHelper.ToNullableId((int?)movie?["tmdbId"]),
                                 ImdbId = (string?)movie?["imdbId"],
                                 RootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)movie?["path"])
                             });

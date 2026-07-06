@@ -147,8 +147,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     return;
                 }
 
-                if (!int.TryParse(tmdbIdString, out var tmdbId))
+                if (!int.TryParse(tmdbIdString, out var tmdbId) || tmdbId <= 0)
                 {
+                    // A Tmdb=="0" library item must not auto-add to every 0-tmdb requester's watchlist.
                     _logger.LogWarning($"[Watchlist] Invalid TMDB ID format: {tmdbIdString}");
                     return;
                 }
@@ -398,7 +399,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     }
                 }
 
-                if (tmdbId.HasValue && mediaType != null && !string.IsNullOrEmpty(requestedByJellyfinUserId))
+                if (tmdbId is > 0 && mediaType != null && !string.IsNullOrEmpty(requestedByJellyfinUserId))
                 {
                     return new RequestItemWithUser
                     {
