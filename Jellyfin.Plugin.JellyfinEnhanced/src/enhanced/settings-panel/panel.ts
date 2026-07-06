@@ -281,7 +281,11 @@ JE.showEnhancedPanel = async () => {
     // --- Event Handlers for Settings Panel ---
     const closeHelp = (ev: any) => {
         if ((ev.type === 'keydown' && (ev.key === 'Escape' || ev.key === '?')) || (ev.type === 'click' && ev.target.id === 'closeSettingsPanel')) {
-            ev.stopPropagation();
+            // modal-a11y's Escape path invokes this with a synthetic
+            // `{ type, key }` object (not a DOM event), so stopPropagation may be
+            // absent — guard it. Calling it unconditionally threw a TypeError
+            // here, aborting the close so Escape never dismissed the panel.
+            ev.stopPropagation?.();
             if (autoCloseTimer) clearTimeout(autoCloseTimer);
             help.remove();
             document.removeEventListener('keydown', closeHelp);

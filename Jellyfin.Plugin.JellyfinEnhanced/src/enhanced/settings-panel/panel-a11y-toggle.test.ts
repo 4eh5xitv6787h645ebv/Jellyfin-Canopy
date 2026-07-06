@@ -75,4 +75,20 @@ describe('settings panel toggle-close releases the modal-a11y handle', () => {
         // was torn down (release() calls removeEventListener(..., true)).
         expect(removeSpy).toHaveBeenCalledWith('keydown', expect.any(Function), true);
     });
+
+    it('Escape dismisses the panel and releases the je-modal-open gate', async () => {
+        // Regression: modal-a11y's Escape path calls the panel's closeHelp with a
+        // synthetic `{ type, key }` object. closeHelp used to call
+        // `ev.stopPropagation()` unconditionally, which threw on that plain
+        // object and aborted the close — so Escape never dismissed the panel.
+        await je().showEnhancedPanel();
+        expect(document.getElementById('jellyfin-enhanced-panel')).not.toBeNull();
+        expect(isAnyModalOpen()).toBe(true);
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+        expect(document.getElementById('jellyfin-enhanced-panel')).toBeNull();
+        expect(isAnyModalOpen()).toBe(false);
+        expect(document.body.classList.contains('je-modal-open')).toBe(false);
+    });
 });
