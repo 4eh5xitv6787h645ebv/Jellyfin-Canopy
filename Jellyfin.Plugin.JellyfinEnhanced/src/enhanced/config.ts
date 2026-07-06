@@ -49,8 +49,17 @@ JE.saveUserSettings = async (fileName: string, settings: unknown): Promise<void>
             return;
         }
 
+        // Fail LOUDLY on a no-arg / bad-fileName save instead of silently no-oping.
+        // A call like saveUserSettings() serializes `undefined` and — for non-
+        // settings.json files — hits the dedup guard below and returns without ever
+        // POSTing, which is exactly how the pause-screen delay silently lost writes.
+        if (!fileName || typeof settings === 'undefined') {
+            console.error('🪼 Jellyfin Enhanced: saveUserSettings called without fileName/settings', { fileName });
+            return;
+        }
+
         // Convert data back to PascalCase for server C# deserialization
-        let dataToSave = settings;
+        let dataToSave: unknown = settings;
         if ((fileName === 'bookmark.json' || fileName === 'settings.json') && typeof window.JellyfinEnhanced?.toPascalCase === 'function') {
             dataToSave = window.JellyfinEnhanced.toPascalCase(settings);
         }
