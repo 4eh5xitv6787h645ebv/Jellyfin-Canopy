@@ -58,8 +58,12 @@ declare module '../types/je' {
         saveUserSettings?: (fileName: string, settings: unknown) => Promise<void>;
         loadSettings?: () => UserSettings;
         initializeShortcuts?: () => void;
-        /** Provided by js/plugin.js (camelCase→PascalCase for C# serialization). */
-        toPascalCase?: (value: unknown) => unknown;
+        /**
+         * Provided by js/plugin.js (camelCase→PascalCase for C# serialization).
+         * opts.preserveKey copies matching keys verbatim (e.g. bookmark ids
+         * `Bm_…`) so ID-keyed dictionaries are not case-mangled.
+         */
+        toPascalCase?: (value: unknown, opts?: { preserveKey?: (key: string) => boolean }) => unknown;
 
         // enhanced/native-tabs
         nativeTabs?: NativeTabsApi;

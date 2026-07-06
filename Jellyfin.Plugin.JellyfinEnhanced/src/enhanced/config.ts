@@ -61,8 +61,14 @@ JE.saveUserSettings = async (fileName: string, settings: unknown): Promise<void>
 
         // Convert data back to PascalCase for server C# deserialization
         let dataToSave: unknown = settings;
-        if ((fileName === 'bookmark.json' || fileName === 'settings.json') && typeof window.JellyfinEnhanced?.toPascalCase === 'function') {
-            dataToSave = window.JellyfinEnhanced.toPascalCase(settings);
+        if (typeof window.JellyfinEnhanced?.toPascalCase === 'function') {
+            if (fileName === 'bookmark.json') {
+                // Mirror the load-side key preservation so bookmark ids (`Bm_…`)
+                // keep their case on disk (save-side symmetry of LOADER-8).
+                dataToSave = window.JellyfinEnhanced.toPascalCase(settings, { preserveKey: (k: string) => /^bm_/i.test(k) });
+            } else if (fileName === 'settings.json') {
+                dataToSave = window.JellyfinEnhanced.toPascalCase(settings);
+            }
         }
 
         const serialized = JSON.stringify(dataToSave);

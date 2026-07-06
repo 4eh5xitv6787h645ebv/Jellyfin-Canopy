@@ -8,7 +8,7 @@
         // dom, api, ui). Created here so core modules can attach to it.
         core: {},
         pluginConfig: {},
-        userConfig: { settings: {}, shortcuts: { Shortcuts: [] }, bookmarks: { Bookmarks: {} }, elsewhere: {}, hiddenContent: { items: {}, settings: {} } },
+        userConfig: { settings: {}, shortcuts: { Shortcuts: [] }, bookmark: { bookmarks: {} }, elsewhere: {}, hiddenContent: { items: {}, settings: {} } },
         translations: {},
         pluginVersion: 'unknown',
         // Stub functions that will be overwritten by modules
@@ -79,7 +79,12 @@
             let text = translations[key] || key;
             if (params) {
                 for (const [param, value] of Object.entries(params)) {
-                    text = text.replace(new RegExp(`{${param}}`, 'g'), value);
+                    // Escape regex metacharacters in the param name and match the
+                    // braces literally; use a function replacer so `$&`, `$1`, `$$`
+                    // etc. inside a value are inserted verbatim, not as replacement
+                    // patterns.
+                    const safeParam = String(param).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    text = text.replace(new RegExp(`\\{${safeParam}\\}`, 'g'), () => String(value));
                 }
             }
             // Replace {{icon:name}} tokens with JE.icon() calls
@@ -116,17 +121,24 @@
     /**
      * Converts PascalCase object keys to camelCase recursively.
      * @param {object} obj - The object to convert.
+     * @param {{preserveKey?: (key: string) => boolean}} [opts] - When
+     *   opts.preserveKey(key) is true the key is copied verbatim (not
+     *   camelCased) — used to keep ID-keyed dictionaries (e.g. bookmark ids
+     *   `Bm_…`) case-stable across the round trip.
      * @returns {object} - A new object with camelCase keys.
      */
-    function toCamelCase(obj) {
+    function toCamelCase(obj, opts) {
         if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
             return obj; // Return primitives and arrays as-is
         }
+        const preserveKey = opts && opts.preserveKey;
         const camelCased = {};
         for (const key in obj) {
             if (obj.hasOwnProperty(key)) {
-                const camelKey = key.charAt(0).toLowerCase() + key.slice(1);
-                camelCased[camelKey] = toCamelCase(obj[key]); // Recursive for nested objects
+                const camelKey = (preserveKey && preserveKey(key))
+                    ? key
+                    : key.charAt(0).toLowerCase() + key.slice(1);
+                camelCased[camelKey] = toCamelCase(obj[key], opts); // Recursive for nested objects
             }
         }
         return camelCased;
@@ -136,17 +148,24 @@
     /**
      * Converts object keys from camelCase to PascalCase (recursively).
      * @param {object} obj - The object to convert.
+     * @param {{preserveKey?: (key: string) => boolean}} [opts] - When
+     *   opts.preserveKey(key) is true the key is copied verbatim (not
+     *   PascalCased) — the save-side mirror of toCamelCase so ID-keyed
+     *   dictionaries (bookmark ids `Bm_…`) stay case-stable on disk.
      * @returns {object} - A new object with PascalCase keys.
      */
-    function toPascalCase(obj) {
+    function toPascalCase(obj, opts) {
         if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
             return obj; // Return primitives and arrays as-is
         }
+        const preserveKey = opts && opts.preserveKey;
         const pascalCased = {};
         for (const key in obj) {
             if (obj.hasOwnProperty(key)) {
-                const pascalKey = key.charAt(0).toUpperCase() + key.slice(1);
-                pascalCased[pascalKey] = toPascalCase(obj[key]); // Recursive for nested objects
+                const pascalKey = (preserveKey && preserveKey(key))
+                    ? key
+                    : key.charAt(0).toUpperCase() + key.slice(1);
+                pascalCased[pascalKey] = toPascalCase(obj[key], opts); // Recursive for nested objects
             }
         }
         return pascalCased;
@@ -173,6 +192,20 @@
         } else if (!enabled && existing) {
             existing.remove();
         }
+    }
+
+    /**
+     * Single source of truth for the admin-aware genre-tag resolution:
+     * the user's own toggle wins when set, otherwise the admin default. Both
+     * the boot font preload and the merged-settings init gate must agree, so
+     * the resolution lives here instead of being re-derived inline.
+     * @param {object} userSettings - Raw JE.userConfig.settings.
+     * @returns {boolean}
+     */
+    function resolveGenreTagsEnabled(userSettings) {
+        return (userSettings.genreTagsEnabled !== undefined && userSettings.genreTagsEnabled !== null)
+            ? !!userSettings.genreTagsEnabled
+            : !!JE.pluginConfig?.GenreTagsEnabled;
     }
 
     /**
@@ -210,9 +243,7 @@
             }
 
             const userSettings = JE.userConfig?.settings || {};
-            const genreTagsOn = userSettings.genreTagsEnabled !== undefined && userSettings.genreTagsEnabled !== null
-                ? !!userSettings.genreTagsEnabled
-                : !!JE.pluginConfig?.GenreTagsEnabled;
+            const genreTagsOn = resolveGenreTagsEnabled(userSettings);
             if (genreTagsOn && !document.getElementById('mat-sym')) {
                 const link = document.createElement('link');
                 link.id = 'mat-sym'; // same id genretags.ts checks before injecting
@@ -504,7 +535,7 @@
             mismatchRetryCount++;
             if (mismatchRetryCount >= MAX_MISMATCH_RETRIES) {
                 console.warn('🪼 Jellyfin Enhanced: Server ID mismatch detected - stopping to allow re-authentication');
-                window.JE?.hideSplashScreen?.();
+                JE?.hideSplashScreen?.();
                 return;
             }
             setTimeout(initialize, 300);
@@ -515,7 +546,7 @@
         if (typeof ApiClient === 'undefined' || !ApiClient.getCurrentUserId?.()) {
             if (readyRetryCount >= MAX_READY_RETRIES) {
                 console.warn('🪼 Jellyfin Enhanced: ApiClient not ready after max retries - stopping poll');
-                window.JE?.hideSplashScreen?.();
+                JE?.hideSplashScreen?.();
                 return;
             }
             setTimeout(initialize, nextReadyPollDelay());
@@ -660,7 +691,11 @@
                     const data = result.value;
                     if (data.status === 'fulfilled' && data.value && typeof data.value === 'object') {
                         // *** CONVERT PASCALCASE TO CAMELCASE ***
-                        if (data.name === 'settings' || data.name === 'bookmark' || data.name === 'hiddenContent') {
+                        if (data.name === 'bookmark') {
+                            // Preserve the bookmark ID dictionary keys (`Bm_…`) so
+                            // the server-generated id case is not mangled to `bm_…`.
+                            JE.userConfig[data.name] = toCamelCase(data.value, { preserveKey: (k) => /^bm_/i.test(k) });
+                        } else if (data.name === 'settings' || data.name === 'hiddenContent') {
                             JE.userConfig[data.name] = toCamelCase(data.value);
                         } else {
                             JE.userConfig[data.name] = data.value;
