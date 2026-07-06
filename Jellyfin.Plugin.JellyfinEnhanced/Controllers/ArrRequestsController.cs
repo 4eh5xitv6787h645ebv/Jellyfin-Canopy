@@ -783,6 +783,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         // never fetched) are reachable. Bounded so a huge Seerr can't drive unbounded calls.
         internal const int ComingSoonPageSize = 100;
         internal const int ComingSoonMaxItems = 500;
+        // Hard ceiling on upstream pages walked per filter. The maxItems / raw-length guards only
+        // terminate the walk when surviving rows accumulate or a short page arrives; a pathological
+        // upstream that returns full pages whose rows are ALL filtered out (or all duplicates) never
+        // advances either, so this cap guarantees termination. Set well above the pages a normal
+        // Seerr needs (maxItems/pageSize ≈ 5) so it never truncates real data, while still bounding
+        // worst-case calls.
+        internal const int ComingSoonMaxPagesPerFilter = 50;
         internal static readonly string[] ComingSoonUpstreamFilters = { "processing", "approved" };
 
         /// <summary>
@@ -798,15 +805,29 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             Func<string, int, int, Task<(int RawCount, JsonArray? Filtered)>> fetchPage,
             IReadOnlyList<string> upstreamFilters,
             int pageSize,
-            int maxItems)
+            int maxItems,
+            int maxPagesPerFilter = ComingSoonMaxPagesPerFilter)
         {
             var combined = new List<JsonObject>();
             var seenIds = new HashSet<int>();
 
             foreach (var filter in upstreamFilters)
             {
+                var pagesWalked = 0;
                 for (int skip = 0; combined.Count < maxItems; skip += pageSize)
                 {
+                    // Hard page bound: when every raw row is filtered out (or a duplicate),
+                    // combined.Count never advances, so neither the maxItems loop condition nor the
+                    // short-page break below can fire — a never-short upstream would loop forever.
+                    // Cap the pages walked so the walk always terminates; the normal finite-stream
+                    // terminations below still run first for well-behaved upstreams.
+                    if (pagesWalked >= maxPagesPerFilter)
+                    {
+                        break;
+                    }
+
+                    pagesWalked++;
+
                     var (rawCount, filtered) = await fetchPage(filter, skip, pageSize).ConfigureAwait(false);
                     if (rawCount <= 0)
                     {

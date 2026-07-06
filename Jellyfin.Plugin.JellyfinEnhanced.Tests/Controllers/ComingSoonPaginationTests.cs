@@ -93,6 +93,32 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
         }
 
         [Fact]
+        public async Task AggregateComingSoonPages_AllFilteredFullPages_TerminatesAtPageCap()
+        {
+            // A pathological upstream: every page is FULL (raw == pageSize) but every row is
+            // filtered out, so combined.Count never advances and the raw-length/maxItems guards can
+            // never fire. Without the page cap this loops forever; the guard below fails the test
+            // fast (instead of hanging) if it ever runs past the cap.
+            var calls = 0;
+            Task<(int, JsonArray?)> Fetch(string filter, int skip, int take)
+            {
+                calls++;
+                if (calls > 1000)
+                {
+                    throw new InvalidOperationException("coming-soon aggregation looped past the page cap");
+                }
+
+                return Task.FromResult<(int, JsonArray?)>((take, new JsonArray())); // full raw page, zero survivors
+            }
+
+            var combined = await ArrRequestsController.AggregateComingSoonPagesAsync(
+                Fetch, new[] { "processing" }, pageSize: 2, maxItems: 500, maxPagesPerFilter: 5);
+
+            Assert.Empty(combined);   // nothing survived the filter
+            Assert.Equal(5, calls);   // stopped exactly at the page cap, not looping forever
+        }
+
+        [Fact]
         public void PaginateFiltered_WindowsFullSet_WithHonestTotals()
         {
             var items = Enumerable.Range(1, 25).ToList();
