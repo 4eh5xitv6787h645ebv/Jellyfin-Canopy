@@ -208,6 +208,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 // restoring, so a crash mid-restore left an inactive state with an empty list and
                 // stranded the still-disabled accounts. Now the state stays active-with-list until
                 // every restore has been applied.
+                //
+                // Track the users whose restore actually THREW: their UpdatePolicyAsync failed, so
+                // they are still disabled/remote-blocked. We must NOT clear their restore record
+                // below — that would strand them with nothing to restore from — so they stay in the
+                // persisted (still-active) list for a later retry / restart.
+                var failedIds = new HashSet<string>();
                 foreach (var idStr in allIds)
                 {
                     if (!Guid.TryParse(idStr, out var userId)) continue;
@@ -227,24 +233,49 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     }
                     catch (Exception ex)
                     {
+                        failedIds.Add(idStr);
                         _logger.LogError($"[Maintenance] Failed to restore user {idStr}: {ex.Message}");
                     }
                 }
 
-                // Every restore applied — now durably clear the maintenance state. If this write
-                // fails the state stays active-with-list and the next disable simply restores again
-                // (IsDisabled=false / EnableRemoteAccess=true is idempotent), so a failure here is
-                // self-healing rather than stranding disabled accounts.
+                // Clear the restore records ONLY for the users we actually restored. If every restore
+                // succeeded the state is fully cleared (IsActive=false). If some threw, keep those
+                // users — and only those — in a still-active state so the next disable / a restart
+                // retries them (IsDisabled=false / EnableRemoteAccess=true is idempotent). A failed
+                // restore therefore never drops the record that would let us recover the user.
+                MaintenanceState clearedState;
+                if (failedIds.Count == 0)
+                {
+                    clearedState = new MaintenanceState { IsActive = false };
+                    _logger.LogInformation("[Maintenance] Mode disabled.");
+                }
+                else
+                {
+                    clearedState = new MaintenanceState
+                    {
+                        IsActive = true,
+                        Message = state.Message,
+                        Action = state.Action,
+                        StartedAt = state.StartedAt,
+                        EndsAt = state.EndsAt,
+                        AccountDisabledUserIds = state.AccountDisabledUserIds.Where(failedIds.Contains).ToList(),
+                        RemoteDisabledUserIds = state.RemoteDisabledUserIds.Where(failedIds.Contains).ToList()
+                    };
+                    _logger.LogWarning($"[Maintenance] Mode disable incomplete: {failedIds.Count} user(s) could not be restored and stay in the restore list for a later retry.");
+                }
+
+                // Persist the outcome durably. If this write fails the state stays as it was on disk
+                // (full restore list, still active) and the next disable simply restores again
+                // (idempotent), so a failure here is self-healing rather than stranding disabled
+                // accounts.
                 try
                 {
-                    SaveState(new MaintenanceState { IsActive = false });
+                    SaveState(clearedState);
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError($"[Maintenance] Failed to persist cleared state (restores already applied; will retry on next disable): {ex.Message}");
                 }
-
-                _logger.LogInformation("[Maintenance] Mode disabled.");
             }
             finally
             {
