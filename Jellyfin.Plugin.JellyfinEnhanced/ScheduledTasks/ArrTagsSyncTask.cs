@@ -301,13 +301,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
         }
 
         /// <summary>
-        /// Resolves the tag prefix, treating a blank/whitespace admin value as the shared
-        /// default so the write side matches the client read side (which uses the same
-        /// <c>|| 'JE Arr Tag: '</c> default). Blanking the field can no longer write bare
-        /// tags the client then fails to recognize (ARR-9).
+        /// Resolves the tag prefix, defaulting only an empty/absent admin value so the write side
+        /// matches the client read side EXACTLY. The client uses <c>config.ArrTagsPrefix || 'JE Arr
+        /// Tag: '</c>, and JS treats only <c>''</c>/<c>undefined</c> as falsy — a whitespace-only
+        /// prefix stays verbatim on the client. Using <see cref="string.IsNullOrEmpty"/> (not
+        /// <c>IsNullOrWhiteSpace</c>) keeps the two in lockstep: a whitespace prefix is preserved on
+        /// both, so the client's <c>tag.startsWith(prefix)</c> read matches the tags the sync writes
+        /// (ARR-CS-3). <c>IsNullOrWhiteSpace</c> would default the write side while the client kept
+        /// the whitespace, diverging write vs read.
         /// </summary>
         internal static string ResolveTagPrefix(PluginConfiguration config)
-            => string.IsNullOrWhiteSpace(config.ArrTagsPrefix)
+            => string.IsNullOrEmpty(config.ArrTagsPrefix)
                 ? PluginConfiguration.DefaultArrTagsPrefix
                 : config.ArrTagsPrefix;
 

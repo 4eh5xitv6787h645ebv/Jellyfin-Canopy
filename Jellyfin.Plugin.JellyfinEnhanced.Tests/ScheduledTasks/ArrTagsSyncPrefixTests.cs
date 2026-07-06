@@ -5,9 +5,11 @@ using Xunit;
 namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.ScheduledTasks
 {
     /// <summary>
-    /// ARR-9: the sync task's write-side prefix default must match the config-property
-    /// default and the client read-side default so blanking the field can't write bare
-    /// tags the client then fails to recognize.
+    /// ARR-9 / ARR-CS-3: the sync task's write-side prefix default must match the config-property
+    /// default AND the client read-side default so blanking the field can't write bare tags the
+    /// client then fails to recognize. The client uses <c>config.ArrTagsPrefix || 'JE Arr Tag: '</c>,
+    /// so only an empty/absent value defaults — a whitespace-only prefix is kept verbatim. The write
+    /// side must mirror that (IsNullOrEmpty, not IsNullOrWhiteSpace) or write and read diverge.
     /// </summary>
     public class ArrTagsSyncPrefixTests
     {
@@ -23,11 +25,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.ScheduledTasks
         }
 
         [Fact]
-        public void ResolveTagPrefix_WhitespaceValue_FallsBackToSharedDefault()
+        public void ResolveTagPrefix_WhitespaceValue_IsPreservedToMatchClient()
         {
+            // JS treats a whitespace-only string as truthy, so the client keeps "   " as the prefix.
+            // The write side must keep it too (IsNullOrEmpty, not IsNullOrWhiteSpace) or the tags the
+            // sync writes ("   Anime") won't match the client's startsWith("   ") read.
             var config = new PluginConfiguration { ArrTagsPrefix = "   " };
 
-            Assert.Equal(PluginConfiguration.DefaultArrTagsPrefix, ArrTagsSyncTask.ResolveTagPrefix(config));
+            Assert.Equal("   ", ArrTagsSyncTask.ResolveTagPrefix(config));
         }
 
         [Fact]
