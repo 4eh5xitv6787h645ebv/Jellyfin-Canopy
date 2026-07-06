@@ -3,6 +3,7 @@
 
 import { JE as JEBase } from '../globals';
 import { describeFetchError } from '../core/fetch-error';
+import { insertHeaderTrayButton, HeaderTrayOrder } from '../enhanced/helpers';
 import type { ApiApi, LifecycleApi, LifecycleHandle, NavigationApi, PluginConfig, UiApi } from '../types/je';
 
 /**
@@ -1209,7 +1210,7 @@ const tryInjectHeader = (attempts = 0): void => {
     btn.appendChild(sup);
     btn.addEventListener('click', (e) => { e.stopPropagation(); togglePanel(); });
 
-    headerRight.insertBefore(btn, headerRight.firstChild);
+    insertHeaderTrayButton(headerRight, btn, HeaderTrayOrder.activeStreams);
     // PERF(R1, doctrine: reserved-space entrance + pre-paint re-mounts): the
     // button keeps its designed leading slot. Boot/toggle-on injection is
     // post-paint (JE loads after the native header paints) so the first
