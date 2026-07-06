@@ -109,20 +109,24 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
         }
 
         /// <summary>
-        /// Every writable string property becomes "cfg-{PropertyName}" and every int/long a
-        /// unique number, assigned in ordinal property-name order so the values are stable
-        /// across runs and machines. Side effects worth knowing when reading the snapshots:
+        /// Every writable string property becomes "cfg-{PropertyName}", every int/long a
+        /// unique number, and every bool the NEGATION of its default, assigned in ordinal
+        /// property-name order so the values are stable across runs and machines. Side effects
+        /// worth knowing when reading the snapshots:
         ///  - TMDB_API_KEY becomes non-empty, so TmdbEnabled flips to true (computed field).
         ///  - JellyseerrUrls becomes a single non-URL line, which is what JellyseerrBaseUrl
         ///    echoes back for authenticated callers (first-line extraction).
         ///  - SonarrInstances/RadarrInstances become unparseable JSON, which pins the
         ///    corruption behavior: empty instance lists + *InstancesCorrupt = true.
-        /// Bools are left at their defaults (a flipped bool cannot be distinguished from a
-        /// neighboring flipped bool anyway; the string/int values catch wrong-property reads).
+        /// Flipping every bool to !default makes a wrong-bool projection whose two properties
+        /// have DIFFERENT defaults visibly diverge in the snapshot; the same-default case
+        /// (both false→both true) is caught by BoolProjectionGuardTests, which isolates each
+        /// descriptor→property binding.
         /// </summary>
         private static PluginConfiguration CreateDistinctiveConfig()
         {
             var config = new PluginConfiguration();
+            var defaults = new PluginConfiguration();
             var properties = typeof(PluginConfiguration)
                 .GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(p => p.CanWrite)
@@ -143,6 +147,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
                 else if (property.PropertyType == typeof(long))
                 {
                     property.SetValue(config, 5_000_000L + i);
+                }
+                else if (property.PropertyType == typeof(bool))
+                {
+                    property.SetValue(config, !(bool)property.GetValue(defaults)!);
                 }
             }
 

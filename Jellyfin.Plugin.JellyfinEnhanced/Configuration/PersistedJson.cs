@@ -55,8 +55,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
 
         /// <summary>
         /// Read options — Newtonsoft equivalent: <c>JsonConvert.DeserializeObject&lt;T&gt;(json)</c>
-        /// with default settings (the strict/RMW path). The lenient path additionally
-        /// applies <see cref="StripNullMembers"/> (= NullValueHandling.Ignore on read).
+        /// with default settings. Both read paths (lenient GET and strict RMW) apply
+        /// <see cref="StripNullMembers"/> first (= NullValueHandling.Ignore on read), so a
+        /// legacy JSON null on a now-non-nullable property is skipped rather than treated
+        /// as corruption on either path.
         /// </summary>
         internal static readonly JsonSerializerOptions ReadOptions = new JsonSerializerOptions
         {

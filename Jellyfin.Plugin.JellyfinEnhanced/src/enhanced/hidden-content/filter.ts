@@ -13,7 +13,7 @@ import { JE } from '../../globals';
 import { debounce } from '../helpers';
 import { onViewPage } from '../../core/navigation';
 import { onBodyMutation } from '../../core/dom-observer';
-import { hiddenIdSet, getSettings, shouldFilterSurface, getHiddenData, getHiddenCount } from './data';
+import { hiddenIdSet, getSettings, shouldFilterSurface, shouldProcessNativeSurface, getHiddenData, getHiddenCount } from './data';
 import { addLibraryHideButtons } from './buttons';
 
 const parentSeriesCache = new Map<string, string | null>();
@@ -299,7 +299,10 @@ export function restoreNativeCardsForIds(idsToRestore: Set<string>): void {
  * restores any previously-hidden cards instead.
  */
 export function refreshNativeCardVisibility(): void {
-    if (!getSettings().enabled || !shouldFilterSurface(getCurrentNativeSurface())) {
+    // shouldProcessNativeSurface keeps home scanning alive when Filter Library is
+    // off but a scoped CW/Next-Up toggle is on (the page-scope hides are gated
+    // per-card inside filterAllNativeCards).
+    if (!shouldProcessNativeSurface(getCurrentNativeSurface())) {
         restoreNativeCardsForIds(hiddenIdSet);
         return;
     }
@@ -322,11 +325,15 @@ export function refreshNativeCardVisibility(): void {
  */
 export function filterNativeCards(syncApply = false): void {
     const nativeSurface = getCurrentNativeSurface();
-    if (!shouldFilterSurface(nativeSurface)) return;
+    if (!shouldProcessNativeSurface(nativeSurface)) return;
     const settings = getSettings();
     if (!settings.enabled) return;
     if (getHiddenCount() === 0) return;
     const isDetailPage = nativeSurface === 'details';
+    // Page-scope (global) hides only apply when the page surface itself is
+    // filterable; the card-scope (CW/Next-Up) branch below runs regardless so
+    // home scoped-hiding works even with Filter Library off.
+    const pageFilterable = shouldFilterSurface(nativeSurface);
 
     const toHide: HTMLElement[] = [];
     const toShow: HTMLElement[] = [];
@@ -351,7 +358,7 @@ export function filterNativeCards(syncApply = false): void {
             }
         }
 
-        if (hiddenIdSet.has(itemId)) {
+        if (pageFilterable && hiddenIdSet.has(itemId)) {
             toHide.push(card);
             card.setAttribute(HIDDEN_DIRECT_ATTR, '1');
         } else {
@@ -359,7 +366,7 @@ export function filterNativeCards(syncApply = false): void {
                 toShow.push(card);
                 card.removeAttribute(HIDDEN_DIRECT_ATTR);
             }
-            if (!isDetailPage) {
+            if (pageFilterable && !isDetailPage) {
                 const cardType = card.dataset.type || '';
                 if (cardType === 'Episode' || cardType === 'Season') {
                     pendingParentChecks.push({ card, itemId });
@@ -389,10 +396,14 @@ export function filterNativeCards(syncApply = false): void {
  */
 export function filterAllNativeCards(): void {
     const nativeSurface = getCurrentNativeSurface();
-    if (!shouldFilterSurface(nativeSurface)) return;
+    if (!shouldProcessNativeSurface(nativeSurface)) return;
     const settings = getSettings();
     if (!settings.enabled) return;
     const isDetailPage = nativeSurface === 'details';
+    // Page-scope (global) hides only apply when the page surface itself is
+    // filterable; the card-scope (CW/Next-Up) branch below runs regardless so
+    // home scoped-hiding works even with Filter Library off.
+    const pageFilterable = shouldFilterSurface(nativeSurface);
 
     const toHide: HTMLElement[] = [];
     const toShow: HTMLElement[] = [];
@@ -414,7 +425,7 @@ export function filterAllNativeCards(): void {
         }
 
         if (!hiddenByScope) {
-            if (hiddenIdSet.has(itemId)) {
+            if (pageFilterable && hiddenIdSet.has(itemId)) {
                 toHide.push(card);
                 card.setAttribute(HIDDEN_DIRECT_ATTR, '1');
             } else {
@@ -422,7 +433,7 @@ export function filterAllNativeCards(): void {
                     toShow.push(card);
                     card.removeAttribute(HIDDEN_DIRECT_ATTR);
                 }
-                if (!isDetailPage) {
+                if (pageFilterable && !isDetailPage) {
                     const cardType = card.dataset.type || '';
                     if (cardType === 'Episode' || cardType === 'Season') {
                         pendingParentChecks.push({ card, itemId });

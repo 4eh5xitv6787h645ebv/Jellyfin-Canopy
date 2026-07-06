@@ -2,6 +2,8 @@
 // Shows a live Active Streams counter in the Jellyfin header.
 
 import { JE as JEBase } from '../globals';
+import { describeFetchError } from '../core/fetch-error';
+import { insertHeaderTrayButton, HeaderTrayOrder } from '../enhanced/header-tray';
 import type { ApiApi, LifecycleApi, LifecycleHandle, NavigationApi, PluginConfig, UiApi } from '../types/je';
 
 /**
@@ -34,6 +36,11 @@ let _lastUpdated: Date | null = null;
 // the first injection (boot / toggle-on, post-paint by architecture) gets the
 // one-time width-expand entrance; re-mount re-injections attach instantly.
 let _headerInjectedOnce = false;
+// The 500ms header-injection retry (fired when the header tray isn't mounted
+// yet). Stored so both teardown paths (stopObserver + destroy) can cancel a
+// pending retry — otherwise a disable racing the retry window re-injects the
+// full button + panel + poll after teardown (zombie UI).
+let _headerRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 const ticksToTime = (ticks: number): string => {
@@ -419,7 +426,7 @@ const injectStyles = (): void => {
   text-transform: uppercase;
   margin-bottom: 2px;
 }
-
+.je-as-broadcast-timeout-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -773,6 +780,24 @@ const renderPanel = (sessions: any[] | null): void => {
     const panel = document.getElementById('je-active-streams-panel');
     if (!panel) return;
 
+    // A null sessions arg means the fetch failed (not "zero streams"). Show an
+    // error row so the open panel agrees with the header button's red error
+    // state instead of collapsing null → "No active streams" (W4-ERR-7).
+    if (sessions === null) {
+        const errText = JE.t?.('active_streams_load_error') || 'Failed to fetch sessions';
+        const titleErr = panel.querySelector('.je-as-panel-title');
+        if (titleErr) titleErr.textContent = errText;
+        const errBody = panel.querySelector('.je-as-panel-body');
+        if (errBody) {
+            while (errBody.firstChild) errBody.removeChild(errBody.firstChild);
+            const errRow = document.createElement('div');
+            errRow.className = 'je-as-panel-empty je-as-panel-error';
+            errRow.textContent = errText;
+            errBody.appendChild(errRow);
+        }
+        return;
+    }
+
     const active = (sessions || []).filter(s => s.NowPlayingItem);
 
     const titleEl = panel.querySelector('.je-as-panel-title');
@@ -829,7 +854,7 @@ const updateCounter = async (): Promise<void> => {
         iconEl.textContent = 'cast';
         supEl.textContent = '';
         btn.classList.add('je-as-err');
-        btn.title = 'Failed to fetch sessions';
+        btn.title = JE.t?.('active_streams_load_error') || 'Failed to fetch sessions';
     } else {
         const playing = sessions.filter(s => s.NowPlayingItem && !s.PlayState?.IsPaused);
         const paused  = sessions.filter(s => s.NowPlayingItem &&  s.PlayState?.IsPaused);
@@ -1053,9 +1078,9 @@ const sendBroadcast = async (header: string | undefined, text: string, timeoutMs
     } catch (err: any) {
         resultEl.className = 'je-as-broadcast-result je-as-broadcast-err';
         if (err && err.status) {
-            // HTTP error: surface the response body like the old
-            // `await resp.text()` path did.
-            resultEl.textContent = `Error: ${err.responseText || err.message}`;
+            // HTTP error: surface a sanitized upstream message (never a raw
+            // URL-bearing / HTML blob) like the old `await resp.text()` path did.
+            resultEl.textContent = `Error: ${describeFetchError(err, err.message || 'Request failed')}`;
         } else {
             resultEl.textContent = `Failed: ${err.message}`;
         }
@@ -1161,7 +1186,7 @@ const tryInjectHeader = (attempts = 0): void => {
 
     const headerRight = JE.helpers.getHeaderRightContainer();
     if (!headerRight) {
-        setTimeout(() => tryInjectHeader(attempts + 1), 500);
+        _headerRetryTimer = setTimeout(() => tryInjectHeader(attempts + 1), 500);
         return;
     }
 
@@ -1185,7 +1210,7 @@ const tryInjectHeader = (attempts = 0): void => {
     btn.appendChild(sup);
     btn.addEventListener('click', (e) => { e.stopPropagation(); togglePanel(); });
 
-    headerRight.insertBefore(btn, headerRight.firstChild);
+    insertHeaderTrayButton(headerRight, btn, HeaderTrayOrder.activeStreams);
     // PERF(R1, doctrine: reserved-space entrance + pre-paint re-mounts): the
     // button keeps its designed leading slot. Boot/toggle-on injection is
     // post-paint (JE loads after the native header paints) so the first
@@ -1217,6 +1242,9 @@ const startObserver = (): void => {
 
 const stopObserver = (): void => {
     if (_observer) { _observer.unsubscribe(); _observer = null; }
+    // The observer callback re-invokes tryInjectHeader; cancel any pending
+    // header-injection retry so it can't re-inject after teardown.
+    if (_headerRetryTimer) { clearTimeout(_headerRetryTimer); _headerRetryTimer = null; }
 };
 
 // ── Public API ───────────────────────────────────────────────────────────
@@ -1247,6 +1275,7 @@ JE.activeStreams = {
         if (_lifecycle) { _lifecycle.teardown(); _lifecycle = null; }
         if (_outsideClickListener) { document.removeEventListener('click', _outsideClickListener); _outsideClickListener = null; }
         if (_broadcastCollapseTimer) { clearTimeout(_broadcastCollapseTimer); _broadcastCollapseTimer = null; }
+        if (_headerRetryTimer) { clearTimeout(_headerRetryTimer); _headerRetryTimer = null; }
         document.getElementById('je-active-streams')?.remove();
         document.getElementById('je-active-streams-panel')?.remove();
         document.getElementById('je-active-streams-styles')?.remove();

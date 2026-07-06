@@ -5,6 +5,7 @@
 
 import { JE } from '../globals';
 import { createObserver } from '../core/dom-observer';
+import { isAnyModalOpen } from '../core/modal-a11y';
 import { toast } from '../core/ui-kit';
 import { throttle } from './helpers';
 
@@ -13,6 +14,9 @@ import { throttle } from './helpers';
  * @param e The keyboard event.
  */
 function panelKeyListener(e: KeyboardEvent): void {
+    // INT-1: never open the panel through an open JE modal (`?` would otherwise
+    // pop the panel up behind another dialog).
+    if (isAnyModalOpen() || document.body.classList.contains('je-modal-open')) return;
     // Don't open if the panel is already open or if typing in an input field.
     if (document.getElementById('jellyfin-enhanced-panel') || ['INPUT', 'TEXTAREA'].includes(document.activeElement!.tagName)) {
         return;
@@ -30,6 +34,9 @@ function panelKeyListener(e: KeyboardEvent): void {
  * @param e The keyboard event.
  */
 JE.keyListener = (e: KeyboardEvent) => {
+    // INT-1: suppress every global shortcut while any JE modal is open so a
+    // configured key can't fire through the dialog and navigate the SPA away.
+    if (isAnyModalOpen() || document.body.classList.contains('je-modal-open')) return;
     if (['INPUT', 'TEXTAREA'].includes(document.activeElement!.tagName)) return;
 
     const key = e.key;

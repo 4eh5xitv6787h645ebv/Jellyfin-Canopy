@@ -150,8 +150,12 @@ const TRUSTED_TABLE_NAMES = new Set(['icons']);
 // ─────────────────────────────────────────────────────────────────────────────
 // Allowlist — genuinely safe but not provable syntactically. Keep SMALL; every
 // entry carries a one-line justification. A stale entry (no longer matching a
-// finding) fails the staleness test below so the list cannot rot. An entry
-// covers every occurrence of that exact expression text in that file.
+// finding) fails the staleness test below so the list cannot rot. Each entry is
+// LINE-PINNED to the exact finding it covers: it matches by (file, expr, line),
+// so it can never blanket a future `${expr}` added elsewhere in the same file
+// (a reused loop variable, a second template) — that new site has no entry and
+// fails the guard. When the same safe expression legitimately appears at
+// several sites, add one entry PER site (see selectedPreset.name below).
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface AllowlistEntry {
@@ -159,6 +163,12 @@ interface AllowlistEntry {
     file: string;
     /** Exact expression text as it appears in the source. */
     expr: string;
+    /**
+     * 1-based line of the specific finding this entry covers. Pins the exact
+     * site so the entry cannot blanket future occurrences of the same text;
+     * if the source moves, the entry goes stale and must be re-pinned.
+     */
+    line: number;
     /** One-line justification — why this is safe despite being unprovable. */
     why: string;
 }
@@ -167,56 +177,67 @@ const ALLOWLIST: AllowlistEntry[] = [
     {
         file: 'arr/requests/render-cards.ts',
         expr: 'dateText.text',
+        line: 116,
         why: 'pre-built HTML from formatFutureReleaseDate\'s { isHtml, text } payload — the template that constructs it is itself scanned in render-helpers.ts',
     },
     {
         file: 'enhanced/bookmarks/library-items.ts',
         expr: 'key',
+        line: 119,
         why: 'Object.entries key over bookmark groups (server item ids); used symmetrically as a class fragment (L119) and querySelector (L153) — escaping one side would desync them',
     },
     {
         file: 'enhanced/features/release-dates.ts',
         expr: 'info.titleKey',
+        line: 278,
         why: 'ReleaseInfo entries are built by this module: titleKey is a fixed translation key literal',
     },
     {
         file: 'enhanced/features/release-dates.ts',
         expr: 'info.icon',
+        line: 278,
         why: 'ReleaseInfo entries are built by this module: icon is a Material Symbols glyph name literal',
     },
     {
         file: 'enhanced/playback.ts',
         expr: 'next.textContent',
+        line: 490,
         why: 'label of the host client\'s own aspect-ratio OSD menu item (jellyfin-web UI string, not media metadata)',
     },
     {
         file: 'enhanced/settings-panel/settings.ts',
         expr: 'selectedPreset.name',
-        why: 'name of a plugin-defined preset (subtitlePresets/fontSizePresets/fontFamilyPresets tables in the legacy js/ tree)',
+        line: 481,
+        why: 'name of a plugin-defined subtitle preset (subtitlePresets table in the legacy js/ tree) shown in the style toast',
     },
     {
-        file: 'enhanced/settings-panel/template.ts',
-        expr: 'preset.bgColor',
-        why: 'plugin-defined subtitle preset tables (legacy js/ tree) — fixed CSS color values; isCssColor validation is the planned tightening',
+        file: 'enhanced/settings-panel/settings.ts',
+        expr: 'selectedPreset.name',
+        line: 495,
+        why: 'name of a plugin-defined font-size preset (fontSizePresets table in the legacy js/ tree) shown in the size toast',
     },
     {
-        file: 'enhanced/settings-panel/template.ts',
-        expr: 'preset.textColor',
-        why: 'plugin-defined subtitle preset tables (legacy js/ tree) — fixed CSS color values; isCssColor validation is the planned tightening',
+        file: 'enhanced/settings-panel/settings.ts',
+        expr: 'selectedPreset.name',
+        line: 509,
+        why: 'name of a plugin-defined font-family preset (fontFamilyPresets table in the legacy js/ tree) shown in the font toast',
     },
     {
         file: 'enhanced/settings-panel/template.ts',
         expr: 'preset.size',
+        line: 52,
         why: 'plugin-defined font-size preset tables (legacy js/ tree) — fixed numeric em values',
     },
     {
         file: 'enhanced/settings-panel/template.ts',
         expr: 'preset.family',
+        line: 54,
         why: 'plugin-defined font-family preset tables (legacy js/ tree) — fixed font-family literals',
     },
     {
         file: 'extras/theme-selector.ts',
         expr: 'sessionStorage.getItem(\'jellyfin-theme-applied\')',
+        line: 200,
         why: 'round-trip of this module\'s own sessionStorage value — a theme name from the plugin theme table, persisted across the reload it triggers',
     },
 ];
@@ -229,6 +250,22 @@ interface Violation {
     file: string;
     line: number;
     text: string;
+}
+
+/**
+ * A finding from the pre-escaping-producer body scan (W2-TEST-4): a producer
+ * (parseMarkdown/markdownToHtml) that does not escape its whole input up front,
+ * or that reuses the raw parameter after escaping.
+ */
+interface ProducerViolation {
+    file: string;
+    line: number;
+    /** Producer function name. */
+    producer: string;
+    /** Offending expression text (the raw-param reuse, or the producer itself). */
+    text: string;
+    /** 'no-scannable-first-parameter' | 'parameter-not-escaped' | 'raw-parameter-reused' */
+    reason: string;
 }
 
 interface ScanStats {
@@ -311,6 +348,8 @@ interface Project {
      * obligations that cascade across the project.
      */
     probeDepth: number;
+    /** Pre-escaping producer declarations, collected during the context build. */
+    producers: Array<{ fn: FunctionLike; name: string }>;
     stats: ScanStats;
 }
 
@@ -1234,12 +1273,22 @@ function buildContext(project: Project, sf: ts.SourceFile): FileContext {
             collectPattern(node.name, scope, node.initializer);
             if (ts.isIdentifier(node.name) && node.initializer) {
                 const init = unwrap(node.initializer);
-                if (isFunctionLikeExpr(init)) registerFunction(node.name.text, init);
+                if (isFunctionLikeExpr(init)) {
+                    registerFunction(node.name.text, init);
+                    // Pre-escaping producer assigned to a const/let (arrow/fn expr).
+                    if (PRE_ESCAPING_PRODUCERS.has(node.name.text)) {
+                        project.producers.push({ fn: init, name: node.name.text });
+                    }
+                }
             }
         } else if (ts.isCatchClause(node) && node.variableDeclaration) {
             markOpaque(node.variableDeclaration.name, scopeOf(node));
         } else if (ts.isFunctionDeclaration(node) && node.name) {
             registerFunction(node.name.text, node);
+            // Pre-escaping producer declared as a named function.
+            if (PRE_ESCAPING_PRODUCERS.has(node.name.text) && node.body) {
+                project.producers.push({ fn: node, name: node.name.text });
+            }
         } else if (ts.isMethodDeclaration(node)
             && (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name))) {
             registerFunction(node.name.text, node);
@@ -1289,6 +1338,154 @@ function isPreEscapingProducerDecl(node: ts.Node): boolean {
         return true;
     }
     return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pre-escaping-producer body scan (W2-TEST-4)
+//
+// The producers (parseMarkdown/markdownToHtml) are TRUSTED at their call sites
+// so their result is not double-escaped — but that trust must be earned: the
+// producer must escape its whole input FIRST and never touch the raw parameter
+// again in the markup it builds. We do NOT run the general classifier over the
+// body (its auto-linker `.replace()` callback builds `href="'+url+'"` from an
+// already-escaped capture group, which would false-positive). Instead we track
+// ONLY the raw first parameter: it must be escaped, and every other use of it
+// must be a value-neutral guard (`!p`, `p.length`, `p === x`, `typeof p`) — any
+// use that can reach markup is a violation. Block-level shadowing is honoured
+// (a `const text = ...` local is a different variable, out of scope here).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const COMPARISON_OPS = new Set<ts.SyntaxKind>([
+    ts.SyntaxKind.EqualsEqualsToken, ts.SyntaxKind.EqualsEqualsEqualsToken,
+    ts.SyntaxKind.ExclamationEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken,
+    ts.SyntaxKind.LessThanToken, ts.SyntaxKind.LessThanEqualsToken,
+    ts.SyntaxKind.GreaterThanToken, ts.SyntaxKind.GreaterThanEqualsToken,
+]);
+
+/** Does a binding pattern bind `name` anywhere within it? */
+function bindingBindsName(binding: ts.BindingName, name: string): boolean {
+    if (ts.isIdentifier(binding)) return binding.text === name;
+    return binding.elements.some(
+        (element) => ts.isBindingElement(element) && bindingBindsName(element.name, name)
+    );
+}
+
+/**
+ * Does this block/for/switch-clause DIRECTLY declare a `const/let/var name`
+ * (shadowing an outer binding within this scope)? Nested blocks and nested
+ * functions have their own scope and are not scanned.
+ */
+function scopeDeclaresLocal(scope: ts.Node, name: string): boolean {
+    let found = false;
+    const scan = (node: ts.Node): void => {
+        if (found) return;
+        if (ts.isVariableDeclaration(node) && bindingBindsName(node.name, name)) { found = true; return; }
+        if (isFunctionLikeNode(node)) return;          // its own scope
+        if (node !== scope && ts.isBlock(node)) return; // nested block scope
+        ts.forEachChild(node, scan);
+    };
+    ts.forEachChild(scope, scan);
+    return found;
+}
+
+/** An identifier that READS the value of `name` (not a member/key/binding). */
+function isValueReference(node: ts.Identifier, name: string): boolean {
+    if (node.text !== name) return false;
+    const parent = node.parent;
+    if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false; // x.name
+    if (ts.isPropertyAssignment(parent) && parent.name === node) return false;        // { name: ... }
+    if (ts.isBindingElement(parent) && parent.name === node) return false;
+    if (ts.isParameter(parent) && parent.name === node) return false;
+    if (ts.isVariableDeclaration(parent) && parent.name === node) return false;
+    if (ts.isPropertySignature(parent) && parent.name === node) return false;
+    return true;
+}
+
+/** Is `ref` the root receiver of an inline `.replace()` escape chain (`p.replace…`)? */
+function isRootOfInlineEscapeChain(ref: ts.Identifier): boolean {
+    const access = ref.parent;
+    if (!(ts.isPropertyAccessExpression(access) && access.expression === ref && access.name.text === 'replace')) {
+        return false;
+    }
+    if (!(access.parent && ts.isCallExpression(access.parent))) return false;
+    let outer: ts.CallExpression = access.parent;
+    for (;;) {
+        const chained = outer.parent;
+        if (ts.isPropertyAccessExpression(chained) && chained.expression === outer
+            && chained.name.text === 'replace'
+            && chained.parent && ts.isCallExpression(chained.parent)) {
+            outer = chained.parent;
+        } else {
+            break;
+        }
+    }
+    return isInlineEscapeChain(outer);
+}
+
+/** A value-neutral use of the parameter that cannot reach markup. */
+function isNeutralGuardUse(ref: ts.Identifier): boolean {
+    const parent = ref.parent;
+    if (ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken) return true;
+    if (ts.isTypeOfExpression(parent)) return true;
+    if (ts.isPropertyAccessExpression(parent) && parent.expression === ref && parent.name.text === 'length') return true;
+    if (ts.isBinaryExpression(parent) && COMPARISON_OPS.has(parent.operatorToken.kind)) return true;
+    if (ts.isIfStatement(parent) && parent.expression === ref) return true;
+    if (ts.isWhileStatement(parent) && parent.expression === ref) return true;
+    if (ts.isConditionalExpression(parent) && parent.condition === ref) return true;
+    return false;
+}
+
+/** Collect value references to the parameter, honouring block-level shadowing. */
+function collectParamReferences(fn: FunctionLike, paramName: string): ts.Identifier[] {
+    const refs: ts.Identifier[] = [];
+    const body = fn.body;
+    if (!body) return refs;
+    const walk = (node: ts.Node, shadowed: boolean): void => {
+        if (isFunctionLikeNode(node)) {
+            const shadowsHere = node.parameters.some((p) => bindingBindsName(p.name, paramName));
+            ts.forEachChild(node, (child) => walk(child, shadowed || shadowsHere));
+            return;
+        }
+        if (ts.isBlock(node) || ts.isForStatement(node) || ts.isForOfStatement(node)
+            || ts.isForInStatement(node) || ts.isCaseClause(node) || ts.isDefaultClause(node)) {
+            const shadowsHere = scopeDeclaresLocal(node, paramName);
+            ts.forEachChild(node, (child) => walk(child, shadowed || shadowsHere));
+            return;
+        }
+        if (ts.isIdentifier(node)) {
+            if (!shadowed && isValueReference(node, paramName)) refs.push(node);
+            return;
+        }
+        ts.forEachChild(node, (child) => walk(child, shadowed));
+    };
+    // Concise arrow bodies are expressions, not blocks — walk directly.
+    if (ts.isBlock(body)) ts.forEachChild(body, (child) => walk(child, false));
+    else walk(body, false);
+    return refs;
+}
+
+/** Verify one pre-escaping producer escapes-first and never reuses the raw param. */
+function checkProducer(fn: FunctionLike, name: string): ProducerViolation[] {
+    const sf = fn.getSourceFile();
+    const mk = (node: ts.Node, reason: string): ProducerViolation => {
+        const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+        return { file: sf.fileName, line: line + 1, producer: name, text: node.getText(sf), reason };
+    };
+    const first = fn.parameters[0];
+    if (!first || !ts.isIdentifier(first.name)) return [mk(fn, 'no-scannable-first-parameter')];
+
+    const paramName = first.name.text;
+    const refs = collectParamReferences(fn, paramName);
+    const escapingRefs = refs.filter((r) => isWithinEscaperCall(r) || isRootOfInlineEscapeChain(r));
+    if (escapingRefs.length === 0) return [mk(fn, 'parameter-not-escaped')];
+
+    const offenders: ProducerViolation[] = [];
+    for (const ref of refs) {
+        if (escapingRefs.includes(ref)) continue;   // inside the escaper — fine
+        if (isNeutralGuardUse(ref)) continue;        // guard, cannot reach markup
+        offenders.push(mk(ref, 'raw-parameter-reused'));
+    }
+    return offenders;
 }
 
 /** Walk one file for HTML-context roots and classify them. */
@@ -1367,6 +1564,7 @@ function newProject(): Project {
         elementSafeParams: [],
         validatedTexts: [],
         probeDepth: 0,
+        producers: [],
         stats: { files: 0, htmlTemplates: 0, interpolations: 0, sinkArgsChecked: 0, functionsAnalyzed: 0 },
     };
 }
@@ -1377,7 +1575,12 @@ function toViolation(node: ts.Node): Violation {
     return { file: sf.fileName, line: line + 1, text: node.getText(sf) };
 }
 
-function scanProject(files: Array<{ relPath: string; text: string }>): { violations: Violation[]; stats: ScanStats } {
+function scanProject(files: Array<{ relPath: string; text: string }>): {
+    violations: Violation[];
+    stats: ScanStats;
+    producerViolations: ProducerViolation[];
+    producerNames: string[];
+} {
     const project = newProject();
 
     // Phase 1: parse everything, build per-file contexts + the function
@@ -1426,7 +1629,21 @@ function scanProject(files: Array<{ relPath: string; text: string }>): { violati
     }
     violations.sort((a, b) => (a.file === b.file ? a.line - b.line : a.file < b.file ? -1 : 1));
 
-    return { violations, stats: project.stats };
+    // Phase 4: verify the pre-escaping producers escape-first (their bodies are
+    // excluded from the general scan above — see the producer-scan section).
+    // Producer declarations were collected during the phase-1 context build.
+    const producerViolations: ProducerViolation[] = [];
+    for (const producer of project.producers) {
+        producerViolations.push(...checkProducer(producer.fn, producer.name));
+    }
+    producerViolations.sort((a, b) => (a.file === b.file ? a.line - b.line : a.file < b.file ? -1 : 1));
+
+    return {
+        violations,
+        stats: project.stats,
+        producerViolations,
+        producerNames: project.producers.map((p) => p.name),
+    };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1438,7 +1655,13 @@ function scanProject(files: Array<{ relPath: string; text: string }>): { violati
 const TEST_FILE_PATH = decodeURIComponent(new URL(import.meta.url).pathname);
 const SRC_ROOT = TEST_FILE_PATH.replace(/\/test\/[^/]+$/, '/');
 
-function scanTree(): { violations: Violation[]; stats: ScanStats; elapsedMs: number } {
+function scanTree(): {
+    violations: Violation[];
+    stats: ScanStats;
+    elapsedMs: number;
+    producerViolations: ProducerViolation[];
+    producerNames: string[];
+} {
     const started = Date.now();
     const files = ts.sys
         .readDirectory(SRC_ROOT, ['.ts'], undefined, undefined)
@@ -1454,8 +1677,8 @@ function scanTree(): { violations: Violation[]; stats: ScanStats; elapsedMs: num
             relPath: filePath.substring(SRC_ROOT.length).replace(/\\/g, '/'),
             text: ts.sys.readFile(filePath) ?? '',
         }));
-    const { violations, stats } = scanProject(files);
-    return { violations, stats, elapsedMs: Date.now() - started };
+    const { violations, stats, producerViolations, producerNames } = scanProject(files);
+    return { violations, stats, elapsedMs: Date.now() - started, producerViolations, producerNames };
 }
 
 function formatViolations(violations: Violation[]): string {
@@ -1477,8 +1700,10 @@ describe('escape-guard (SEC X1): HTML-template interpolations are recognizably s
         expect(result.stats.files).toBeGreaterThan(100);
         expect(result.stats.htmlTemplates).toBeGreaterThan(100);
         expect(result.stats.interpolations).toBeGreaterThan(400);
-        // Keep the guard cheap enough to never be skipped.
-        expect(result.elapsedMs).toBeLessThan(10_000);
+        // Pathological-regression backstop (an accidental O(n^2) scan), NOT a CI-timing gate: a real
+        // blowup takes minutes, so keep the bound generous — the normal scan can balloon past 10s
+        // under CPU contention and must not flake there.
+        expect(result.elapsedMs).toBeLessThan(60_000);
         // Visible in the vitest output for the scan-stats record.
         console.info(
             `escape-guard: ${result.stats.files} files, ${result.stats.htmlTemplates} HTML templates, `
@@ -1490,7 +1715,9 @@ describe('escape-guard (SEC X1): HTML-template interpolations are recognizably s
 
     it('every interpolation is escaped, numeric, a trusted producer, or allowlisted', () => {
         const unmatched = result.violations.filter(
-            (v) => !ALLOWLIST.some((entry) => entry.file === v.file && entry.expr === v.text)
+            (v) => !ALLOWLIST.some(
+                (entry) => entry.file === v.file && entry.expr === v.text && entry.line === v.line
+            )
         );
         expect(
             unmatched,
@@ -1503,14 +1730,79 @@ describe('escape-guard (SEC X1): HTML-template interpolations are recognizably s
         ).toEqual([]);
     });
 
-    it('allowlist entries are exact, current, and still needed', () => {
-        const stale = ALLOWLIST.filter(
-            (entry) => !result.violations.some((v) => v.file === entry.file && v.text === entry.expr)
-        );
+    it('allowlist entries are exact, current, line-pinned, and unambiguous', () => {
+        const problems: string[] = [];
+
+        // (1) Every entry must match EXACTLY ONE raw finding at its pinned line.
+        //     Zero => the code was fixed/moved (stale — re-pin or remove); more
+        //     than one => two findings collapse onto one line (indistinguishable).
+        for (const entry of ALLOWLIST) {
+            const exact = result.violations.filter(
+                (v) => v.file === entry.file && v.text === entry.expr && v.line === entry.line
+            );
+            if (exact.length === 0) {
+                problems.push(
+                    `${entry.file}:${entry.line} \${ ${entry.expr} } — no finding at this line `
+                    + '(the code was fixed or moved; re-pin the line or remove the entry)'
+                );
+            } else if (exact.length > 1) {
+                problems.push(
+                    `${entry.file}:${entry.line} \${ ${entry.expr} } — ${exact.length} findings on one line `
+                    + '(cannot be disambiguated by line; split the site)'
+                );
+            }
+        }
+
+        // (2) No entry may blanket a finding on an UNPINNED line: any raw finding
+        //     that shares (file, expr) with some entry but is NOT pinned by an
+        //     entry at its own line would slip through — add a per-line entry for
+        //     it (or escape it). This makes blanket coverage structurally
+        //     impossible: a new `${expr}` on a fresh line is never auto-covered.
+        for (const v of result.violations) {
+            const sharesExpr = ALLOWLIST.some((e) => e.file === v.file && e.expr === v.text);
+            const pinnedHere = ALLOWLIST.some(
+                (e) => e.file === v.file && e.expr === v.text && e.line === v.line
+            );
+            if (sharesExpr && !pinnedHere) {
+                problems.push(
+                    `${v.file}:${v.line} \${ ${v.text} } — matches an allowlisted expression but on an `
+                    + 'unpinned line; add a per-line allowlist entry with justification, or escape it'
+                );
+            }
+        }
+
         expect(
-            stale.map((entry) => `${entry.file}: \${ ${entry.expr} }`),
-            'Allowlist entries that no longer match a finding — the code was fixed or moved; '
-            + 'remove the entries so the allowlist cannot rot.'
+            problems,
+            'Allowlist is stale, ambiguous, or blanketing an unpinned site (entries are line-pinned '
+            + 'by design so they cannot rot or silently cover new occurrences):\n' + problems.join('\n')
+        ).toEqual([]);
+    });
+
+    it('the producer scan actually finds every declared pre-escaping producer', () => {
+        // If the scan stops seeing a producer (renamed, moved), its body is no
+        // longer verified escape-first — fail loudly instead of silently.
+        const found = new Set(result.producerNames);
+        for (const name of PRE_ESCAPING_PRODUCERS) {
+            expect(
+                found.has(name),
+                `pre-escaping producer '${name}' was not found under src/ — the escape-first scan `
+                + 'lost sight of it; update PRE_ESCAPING_PRODUCERS or restore the producer.'
+            ).toBe(true);
+        }
+    });
+
+    it('every pre-escaping producer escapes its whole input before building markup', () => {
+        // The producers are trusted at their call sites (their result is not
+        // double-escaped) — so their bodies MUST escape the raw parameter first
+        // and never touch it again in the markup they build.
+        expect(
+            result.producerViolations.map(
+                (v) => `  ${v.file}:${v.line}  ${v.producer}: ${v.reason} — \`${v.text}\``
+            ),
+            'Pre-escaping producer(s) violate the escape-first contract '
+            + '(docs/advanced/client-security.md). Each producer must escape its whole first '
+            + 'parameter up front (escapeHtml(p) or an inline &<>" replace chain) and use the raw '
+            + 'parameter only in value-neutral guards afterward — never in the markup it builds.'
         ).toEqual([]);
     });
 });
@@ -1521,6 +1813,10 @@ describe('escape-guard (SEC X1): HTML-template interpolations are recognizably s
 
 function scanFixture(source: string): Violation[] {
     return scanProject([{ relPath: 'fixture.ts', text: source }]).violations;
+}
+
+function scanFixtureProducers(source: string): ProducerViolation[] {
+    return scanProject([{ relPath: 'fixture.ts', text: source }]).producerViolations;
 }
 
 describe('escape-guard classifier self-tests', () => {
@@ -1656,5 +1952,73 @@ describe('escape-guard classifier self-tests', () => {
             'const renamed = item.Name.replace(/foo/g, \'bar\');\nel.innerHTML = `<b>${renamed}</b>`;'
         );
         expect(notEscaper.map((v) => v.text)).toEqual(['item.Name']);
+    });
+});
+
+describe('escape-guard pre-escaping-producer body scan (W2-TEST-4)', () => {
+    it('accepts a producer that escapes-first and never reuses the raw parameter', () => {
+        expect(scanFixtureProducers(
+            'function parseMarkdown(text: string): string {\n'
+            + '    if (!text) return \'\';\n'
+            + '    const html = escapeHtml(text);\n'
+            + '    return \'<p>\' + html + \'</p>\';\n'
+            + '}'
+        )).toEqual([]);
+    });
+
+    it('accepts the inline replace-chain escaper as escaping the parameter', () => {
+        expect(scanFixtureProducers(
+            'function parseMarkdown(text: string): string {\n'
+            + '    const html = text.replace(/&/g, \'&amp;\').replace(/</g, \'&lt;\')'
+            + '.replace(/>/g, \'&gt;\').replace(/"/g, \'&quot;\');\n'
+            + '    return \'<p>\' + html + \'</p>\';\n'
+            + '}'
+        )).toEqual([]);
+    });
+
+    it('flags a raw parameter reused in markup AFTER the escape', () => {
+        const reused = scanFixtureProducers(
+            'function parseMarkdown(text: string): string {\n'
+            + '    const html = escapeHtml(text);\n'
+            + '    return \'<img src="\' + text + \'">\' + html;\n'
+            + '}'
+        );
+        expect(reused.map((v) => v.text)).toEqual(['text']);
+        expect(reused.map((v) => v.reason)).toEqual(['raw-parameter-reused']);
+    });
+
+    it('flags markup built from the raw parameter BEFORE the escape (reordered)', () => {
+        const reordered = scanFixtureProducers(
+            'function markdownToHtml(text: string): string {\n'
+            + '    const pre = \'<a href="\' + text + \'">x</a>\';\n'
+            + '    const esc = escapeHtml(text);\n'
+            + '    return pre + esc;\n'
+            + '}'
+        );
+        expect(reordered.map((v) => v.text)).toEqual(['text']);
+        expect(reordered.map((v) => v.reason)).toEqual(['raw-parameter-reused']);
+    });
+
+    it('flags a producer that never escapes its parameter at all', () => {
+        const unescaped = scanFixtureProducers(
+            'function parseMarkdown(text: string): string { return \'<p>\' + text + \'</p>\'; }'
+        );
+        expect(unescaped.map((v) => v.reason)).toEqual(['parameter-not-escaped']);
+    });
+
+    it('honours block-level shadowing: a local of the same name is not the parameter', () => {
+        // The `const text` inside the loop shadows the escaped param — using it
+        // raw is out of scope for this check (it is a different variable).
+        expect(scanFixtureProducers(
+            'function parseMarkdown(text: string): string {\n'
+            + '    const html = escapeHtml(text);\n'
+            + '    const parts: string[] = [];\n'
+            + '    for (const line of html.split(\'\\n\')) {\n'
+            + '        const text = line.trim();\n'
+            + '        parts.push(`<p>${text}</p>`);\n'
+            + '    }\n'
+            + '    return parts.join(\'\');\n'
+            + '}'
+        )).toEqual([]);
     });
 });

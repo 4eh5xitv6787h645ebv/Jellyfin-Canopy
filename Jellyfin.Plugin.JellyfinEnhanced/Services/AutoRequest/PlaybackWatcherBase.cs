@@ -14,13 +14,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
     ///
     /// Subclasses keep only their trigger predicate and handling logic. The playback
     /// event handlers themselves stay in the subclasses as async void with their own
-    /// try/catch, exactly as before this refactor.
+    /// try/catch.
     ///
-    /// Known follow-up (deliberately NOT changed in this mechanical phase): the
-    /// subclasses' event handlers are async void, so exceptions escaping their
-    /// try/catch (e.g. from the catch block itself) would crash the process rather
-    /// than be observable by a caller. Consolidating them behind a single guarded
-    /// dispatcher is future work.
+    /// Because those handlers are async void, an exception escaping their catch (e.g. from
+    /// the catch block itself) would become an unobserved exception that crashes the host.
+    /// Each subclass handler therefore double-guards its catch — the logging call inside the
+    /// outer catch is itself wrapped in a swallowing try/catch.
     /// </summary>
     public abstract class PlaybackWatcherBase : IDisposable
     {
@@ -33,6 +32,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
         // Track which user+item combinations have already been checked to avoid duplicate checks
         private readonly Dictionary<string, DateTime> _checkedSessions = new();
         private readonly object _sessionLock = new();
+        private readonly object _subLock = new();
+        private bool _subscribed;
 
         protected PlaybackWatcherBase(
             ISessionManager sessionManager,
@@ -83,7 +84,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
                 return;
             }
 
-            SubscribeEvents();
+            // Guard against a second startup-task run double-subscribing (a dashboard "Run" button
+            // always exists). The disabled-feature early-return stays ahead of the lock so re-running
+            // the task after enabling the feature still subscribes.
+            lock (_subLock)
+            {
+                if (_subscribed) return;
+                SubscribeEvents();
+                _subscribed = true;
+            }
 
             _logger.LogInformation($"{LogPrefix} Successfully subscribed to playback events");
         }
@@ -138,7 +147,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
         {
             _logger.LogInformation($"{LogPrefix} Unsubscribing from playback events");
 
-            UnsubscribeEvents();
+            lock (_subLock)
+            {
+                UnsubscribeEvents();
+                _subscribed = false;
+            }
 
             GC.SuppressFinalize(this);
         }

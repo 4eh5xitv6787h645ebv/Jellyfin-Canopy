@@ -9,6 +9,7 @@
 
 import { JE } from '../arr-globals';
 import { renderPage } from './render';
+import { describeFetchError } from '../../core/fetch-error';
 import type { ApiApi } from '../../types/je';
 
 const logPrefix = '🪼 Jellyfin Enhanced: Requests Page:';
@@ -144,6 +145,7 @@ export interface RequestsPageState {
     requestsPage: number;
     requestsTotalPages: number;
     requestsFilter: string;
+    requestsError: boolean;
     canApproveRequests: boolean;
     issues: IssueItem[];
     issuesPage: number;
@@ -173,6 +175,7 @@ export const state: RequestsPageState = {
     requestsPage: 1,
     requestsTotalPages: 1,
     requestsFilter: 'all',
+    requestsError: false,
     canApproveRequests: false,
     issues: [],
     issuesPage: 1,
@@ -205,7 +208,6 @@ function getAuthHeaders(): Record<string, string> {
     const token = ApiClient.accessToken ? ApiClient.accessToken() : '';
     return {
         'Authorization': 'MediaBrowser Token="' + token + '"',
-        'X-MediaBrowser-Token': token,
         'Content-Type': 'application/json',
     };
 }
@@ -341,6 +343,12 @@ async function fetchDownloads(): Promise<unknown> {
     } catch (error) {
         console.error(`${logPrefix} Failed to fetch downloads:`, error);
         state.downloads = [];
+        // A total failure (the whole /arr/queue request rejected) has no
+        // per-instance errors[] to surface, so toast once here — otherwise the
+        // page would just show "No active downloads" as if the queue were empty.
+        if (typeof JE.toast === 'function') {
+            JE.toast('⚠ ' + esc(describeFetchError(error, JE.t?.('downloads_load_error') || 'Unable to load downloads')));
+        }
         return null;
     }
 }
@@ -405,11 +413,16 @@ export async function fetchRequests(): Promise<unknown> {
         state.requests = data.requests || [];
         state.requestsTotalPages = data.totalPages || 1;
         state.canApproveRequests = data.canApproveRequests === true;
+        state.requestsError = false;
 
         return data;
     } catch (error) {
         console.error(`${logPrefix} Failed to fetch requests:`, error);
         state.requests = [];
+        // Distinguish a backend failure (e.g. the requests proxy's 502 when
+        // Seerr is unreachable) from a genuinely empty list so the renderer can
+        // show an ERROR state instead of "No requests found" (CRIT-2).
+        state.requestsError = true;
         return null;
     }
 }

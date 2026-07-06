@@ -2,6 +2,7 @@
 // Calendar Page — month/week/day/agenda view rendering, legend, sidebar
 // collapse and the full page shell (split from calendar-page.js).
 
+import { formatDate } from '../../core/locale';
 import { JE } from '../arr-globals';
 import {
     filterEvents,
@@ -175,8 +176,8 @@ function renderAgendaView(): string {
     dates.forEach((dateKey) => {
         const [year, month, day] = dateKey.split('-');
         const dateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-        const weekday = dateObj.toLocaleDateString(undefined, { weekday: 'short' });
-        const monthDay = dateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const weekday = formatDate(dateObj, { weekday: 'short' });
+        const monthDay = formatDate(dateObj, { month: 'short', day: 'numeric' });
 
         const dayEvents = groupedEvents[dateKey] || [];
         dayEvents.sort((a, b) => new Date(a.releaseDate as string).getTime() - new Date(b.releaseDate as string).getTime());
@@ -273,6 +274,11 @@ function renderDayView(): string {
 
 // Render calendar based on current view mode
 function renderCalendar(): string {
+    // A backend failure must show an explicit ERROR state, not the per-view
+    // "No upcoming releases" empty message that a genuinely empty range shows.
+    if (state.eventsError) {
+        return `<div class="je-calendar-empty je-error-state">${JE.t?.('calendar_load_error') || 'Unable to load calendar'}</div>`;
+    }
     if (state.viewMode === 'week') return renderWeekView();
     if (state.viewMode === 'agenda') return renderAgendaView();
     if (state.viewMode === 'day') return renderDayView();
@@ -417,9 +423,9 @@ export function renderPage(targetContainer?: HTMLElement): void {
         <div class="je-calendar-actions je-calendar-actions-center">
           <div class="je-calendar-nav">
             <div class="je-calendar-nav-group">
-              <button class="je-calendar-nav-btn" onclick="window.JellyfinEnhanced.calendarPage.shiftPeriod('prev'); event.stopPropagation();" aria-label="${JE.t?.('prev') || 'Previous'}">‹</button>
+              <button class="je-calendar-nav-btn" onclick="window.JellyfinEnhanced.calendarPage.shiftPeriod('prev'); event.stopPropagation();" aria-label="${JE.t?.('calendar_prev')}">‹</button>
               <button class="je-calendar-nav-btn je-calendar-nav-today" onclick="window.JellyfinEnhanced.calendarPage.goToday(); event.stopPropagation();">${JE.t?.('calendar_today')}</button>
-              <button class="je-calendar-nav-btn" onclick="window.JellyfinEnhanced.calendarPage.shiftPeriod('next'); event.stopPropagation();" aria-label="${JE.t?.('next') || 'Next'}">›</button>
+              <button class="je-calendar-nav-btn" onclick="window.JellyfinEnhanced.calendarPage.shiftPeriod('next'); event.stopPropagation();" aria-label="${JE.t?.('calendar_next')}">›</button>
             </div>
           </div>
         </div>

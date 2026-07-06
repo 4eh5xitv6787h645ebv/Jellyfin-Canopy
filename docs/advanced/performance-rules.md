@@ -21,6 +21,8 @@ grep -rn "PERF(R3" Jellyfin.Plugin.JellyfinEnhanced/src/
 
 Those eight are client-side (jank). There is also one **server-side** rule — [S1](#s1-never-block-jellyfins-synchronous-threads) — for plugin code that runs on Jellyfin's own threads (library-scan event handlers).
 
+Several of these rules are now backed by **source-scan guard tests** that fail `npm run test:client` on a new violation, not only on review: `src/test/perf-rules-guard.test.ts` (the R-rules), `src/test/leak-guard.test.ts` (object URLs, un-torn-down observers, unbounded TTL maps and self-rescheduling retry loops for R3/R5), plus the non-perf `css-injection-guard` and `error-as-empty-guard` companions described in [Client Security](client-security.md).
+
 ---
 
 ## R1 — Pre-paint or reserved space
@@ -218,13 +220,13 @@ private void OnItemChanged(object? sender, ItemChangeEventArgs e)
 
 Use a short debounce with a hard max-wait cap so a continuous scan still flushes periodically, and drain any queued work on `Dispose` so a shutdown mid-window doesn't lose it.
 
-**Enforced.** `LibraryScanEventGuardTests` fails the build when a new file subscribes to these events without being reviewed onto its allowlist, and when `TagCacheMonitor`'s handler regains an inline `GetItemById` / `GetMediaSources` / `GetItemList` / `GetFirstEpisode` call. Grep the record-and-defer sites:
+**Enforced.** `LibraryScanEventGuardTests` fails the build when a new file subscribes to these events without being reviewed onto its allowlist. It also checks the **synchronous body of *every* reviewed subscriber** — not just `TagCacheMonitor` — against a broadened denylist of DB queries and I/O sinks (`GetItem(s)` / `GetPeople` / `QueryItems` / `GetMediaSources` / `GetImageInfo` / `GetChildren`, plus `File.*`, `SaveChanges`, `ToListAsync` and LINQ materialization like `.First(...)`). Legitimately deferred work — the code inside a `Task.Run(...)` lambda or a named off-thread worker — is stripped before matching, so only work that would actually run on the scan thread trips the guard. A subscriber that regains inline heavy work in its synchronous prefix fails with the file and offending call named. Grep the record-and-defer sites:
 
 ```bash
 grep -rn "PERF(S1)" Jellyfin.Plugin.JellyfinEnhanced/
 ```
 
-**In the tree:** `Services/TagCacheMonitor.cs` (record-and-defer handler), `Services/TagCachePendingChanges.cs` (coalescing set), `Services/TagCacheService.cs` (debounced off-thread flush + `Dispose` drain), `Services/SeerrScanTriggerService.cs` (counter + debounce timer).
+**In the tree:** `Services/TagCacheMonitor.cs` (record-and-defer handler), `Services/TagCachePendingChanges.cs` (coalescing set), `Services/TagCacheService.cs` (debounced off-thread flush + `Dispose` drain), `Services/SeerrScanTriggerService.cs` (counter + debounce timer), `EventHandlers/ContinueWatchingPlaybackEvents.cs` (a bulk library removal coalesces to one hidden-content prune per user for the whole batch, not one per removed item).
 
 ---
 
@@ -242,7 +244,7 @@ Numbers from `e2e/perf/jank-benchmark.js` — a manual measurement harness (not 
 | JE-attributed shift entries (whole flow) | 16 | **3** |
 | Live `MutationObserver`s created by JE (idle on home) | 27 | **3** |
 | … of which body-wide | 26 | 3 |
-| … of which body-wide **and attribute-observing** | 24 | **2** |
+| … of which body-wide **and attribute-observing** | 24 | **0** |
 | Active `setInterval` timers owned by JE (idle on home) | 2 — a permanent 1 Hz colored-ratings poll + a 30 s requests poll running even on home | **1** — a 15-min, visibility-gated plugin-update recheck |
 | JE requests at boot | 78 | **33** |
 | JE bytes at boot | 3 372 662 B (3.2 MiB) | **1 624 785 B (1.5 MiB)** |
@@ -265,7 +267,7 @@ Numbers from `e2e/perf/jank-benchmark.js` — a manual measurement harness (not 
 
 Reported here so the doctrine stays honest — each is visible in the census output of a fresh run:
 
-- **R3 stragglers:** `src/arr/arr-tag-links.ts`, `src/elsewhere/elsewhere.ts` and `src/others/letterboxd-links.ts` still register body-wide observers with `attributeFilter: ['class']` (the `attributeFilter` opts them out of the multiplexer). They account for the 2 attribute-observing body-wide observers in the *after* column.
+- **R3 stragglers (resolved):** `src/arr/arr-tag-links.ts`, `src/elsewhere/elsewhere.ts` and `src/others/letterboxd-links.ts` — once body-wide observers with `attributeFilter: ['class']` — now ride the shared `JE.core.dom.onBodyMutation` multiplexer (childList-only; the old `attributeFilter` survives only in `// PERF(R3):` comments describing the retired design). No feature owns a body-wide attribute-observing observer any more, so the *after* count above is **0**. The only `attributeFilter` observers left are player-scoped (`src/enhanced/playback.ts`) and element-scoped (`src/bootstrap/login-image.ts`), neither of them body-wide.
 - **R5 note:** the one standing JE interval is `src/core/live-update.ts`'s 15-minute version recheck — visibility-gated and push-nudged (config pushes carry the version), but app-scoped rather than page-scoped.
 - **Home-page first-tag latency after a cold boot** is higher on the fixed build (median ≈ 2.7 s after card mount vs ≈ 0.7 s before): home cards paint long before the bundle finishes booting, and first tags wait for the server tag-cache fetch. They fade into absolute overlays, so this costs zero shift — but it is the number to beat next.
 - **Residual JE-attributed shifts** (the 0.0002 above) are micrometric, ≤ 0.0001 each: the Material Symbols icon-font swap reflowing already-injected icons at boot, the `#je-active-streams` header button's one-time entrance, and the audio-language chip whose reserved width is close-but-not-exact to its final content. One run in five showed a ~0.03 JE-attributed spike on the library page that did not reproduce; `jeShifts` in the harness output names the source nodes when it does.

@@ -43,10 +43,10 @@
  * summaries.
  */
 
-const crypto = require('crypto');
 const fs = require('fs');
 
 const { validateManifest, compareVersions, expectedZipName } = require('./validate-manifest.js');
+const { computeZipChecksum } = require('../lib/md5.js');
 
 const TAG_RE = /^v?\d+\.\d+\.\d+(\.\d+)?$/;
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
@@ -140,10 +140,7 @@ function main() {
             fail(`asset zip for targetAbi ${targetAbi} must be named ${expected}, got ${zipName}`);
         }
 
-        const checksum = crypto.createHash('md5')
-            .update(fs.readFileSync(zipPath))
-            .digest('hex')
-            .toUpperCase();
+        const checksum = computeZipChecksum(zipPath);
 
         return {
             changelog,

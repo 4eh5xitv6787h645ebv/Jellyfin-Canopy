@@ -276,7 +276,7 @@ async function processPluginIcons(): Promise<void> {
                 icon: 'newspaper'
             },
             {
-                selector: 'a[href*="Segment%Editor"]',
+                selector: 'a[href*="Segment%20Editor"]',
                 type: 'material',
                 icon: 'content_cut'
             },

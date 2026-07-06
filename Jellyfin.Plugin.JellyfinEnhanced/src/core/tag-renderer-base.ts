@@ -20,27 +20,31 @@
 
 import { JE } from '../globals';
 import { injectCss as uiInjectCss } from './ui-kit';
+import { createBoundedCache, type BoundedCache } from './bounded-cache';
 import type { TagPosition, TagRendererApi, TagRendererContext, TagSpec } from '../types/je';
 
 JE.core = JE.core || {};
 
 // Contexts (cards) that should never receive tag overlays. Shared verbatim
 // by the language/rating/quality modules; genre supplies its own list.
+//
+// These are CONTAINER-scoped (not `.cardImageContainer`-scoped) on purpose:
+// the tag pipeline renders into a `.je-tag-host` div that is a *sibling* of
+// `.cardImageContainer` inside `.cardScalable`, so an ignore selector ending
+// in `.cardImageContainer` never matches the render target via
+// `el.matches()`/`el.closest()`. Scoping to the page/section container (the
+// proven shape genre already ships) makes `el.closest(sel)` match the host.
 const STANDARD_IGNORE_SELECTORS: string[] = [
-    '#itemDetailPage .infoWrapper .cardImageContainer',
-    '#itemDetailPage #castCollapsible .cardImageContainer',
-    '#indexPage .verticalSection.MyMedia .cardImageContainer',
-    '.formDialog .cardImageContainer',
+    '#itemDetailPage .infoWrapper',
+    '#itemDetailPage #castCollapsible',
+    '#indexPage .verticalSection.MyMedia',
+    '.formDialog',
     '#itemDetailPage .chapterCardImageContainer',
     // Admin/dashboard pages
-    '#pluginsPage .cardImageContainer',
-    '#pluginsPage .card',
-    '#pluginCatalogPage .cardImageContainer',
-    '#pluginCatalogPage .card',
-    '#devicesPage .cardImageContainer',
-    '#devicesPage .card',
-    '#mediaLibraryPage .cardImageContainer',
-    '#mediaLibraryPage .card',
+    '#pluginsPage',
+    '#pluginCatalogPage',
+    '#devicesPage',
+    '#mediaLibraryPage',
 ];
 
 interface TagInstance {
@@ -105,7 +109,7 @@ function createTag(name: string, spec: TagSpec): TagInstance {
         /** persistent (localStorage-backed) cache */
         cache: {} as Record<string, unknown>,
         /** shared hot cache bucket */
-        hot: null as Map<string, unknown> | null,
+        hot: null as BoundedCache<string, unknown> | null,
         localStorageEnabled: false,
         cacheTtl: (30) * 24 * 60 * 60 * 1000,
         ignoreSelectors: null as string[] | null,
@@ -118,7 +122,7 @@ function createTag(name: string, spec: TagSpec): TagInstance {
     function buildIgnoreSelectors(): string[] {
         const list = (spec.ignoreSelectors || STANDARD_IGNORE_SELECTORS).slice();
         if (JE.pluginConfig?.DisableTagsOnSearchPage === true) {
-            list.push(spec.searchPageIgnoreSelector || '#searchPage .cardImageContainer');
+            list.push(spec.searchPageIgnoreSelector || '#searchPage');
         }
         return list;
     }
@@ -173,8 +177,9 @@ function createTag(name: string, spec: TagSpec): TagInstance {
             : {};
         if (spec.cache.hotBucket) {
             const Hot = (JE._hotCache = JE._hotCache || { ttl: state.cacheTtl });
-            Hot[spec.cache.hotBucket] = Hot[spec.cache.hotBucket] || new Map<string, unknown>();
-            state.hot = Hot[spec.cache.hotBucket] as Map<string, unknown>;
+            Hot[spec.cache.hotBucket] = Hot[spec.cache.hotBucket] ||
+                createBoundedCache<string, unknown>({ maxEntries: 1000, ttlMs: state.cacheTtl });
+            state.hot = Hot[spec.cache.hotBucket] as BoundedCache<string, unknown>;
         }
     }
 

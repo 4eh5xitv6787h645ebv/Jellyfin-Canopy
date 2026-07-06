@@ -1,5 +1,6 @@
 // src/jellyseerr/modal.ts
 import { JE } from '../globals';
+import { installModalA11y, type ModalA11yHandle } from '../core/modal-a11y';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -120,43 +121,10 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
 
     modalElement.appendChild(contentEl);
 
-    // Handle keyboard navigation
-    const handleKeydown = (e: KeyboardEvent) => {
-        // Close on Escape
-        if (e.key === 'Escape') {
-            e.preventDefault();
-            e.stopPropagation();
-            history.back();
-            return;
-        }
-
-        // Tab key focus trap
-        if (e.key === 'Tab') {
-            const focusableElements = modalElement.querySelectorAll(
-                'button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
-            );
-            const focusableArray = Array.from(focusableElements);
-
-            if (focusableArray.length === 0) return;
-
-            const firstElement = focusableArray[0];
-            const lastElement = focusableArray[focusableArray.length - 1];
-
-            if (e.shiftKey) {
-                // Shift+Tab: if on first element, wrap to last
-                if (document.activeElement === firstElement || document.activeElement === modalElement) {
-                    e.preventDefault();
-                    (lastElement as HTMLElement).focus();
-                }
-            } else {
-                // Tab: if on last element, wrap to first
-                if (document.activeElement === lastElement) {
-                    e.preventDefault();
-                    (firstElement as HTMLElement).focus();
-                }
-            }
-        }
-    };
+    // A11Y-5: focus trap + Escape + focus RESTORE come from the shared modal
+    // util (the former hand-rolled handleKeydown trapped focus but never
+    // restored it, and never counted toward the je-modal-open shortcut gate).
+    let a11y: ModalA11yHandle | null = null;
 
     const show = () => {
         document.body.appendChild(modalElement);
@@ -164,17 +132,12 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
         // Add a state to history to handle back button for closing
         history.pushState(null, '', location.href);
         window.addEventListener('popstate', close);
-        document.addEventListener('keydown', handleKeydown);
-        setTimeout(() => {
-            modalElement.classList.add('show');
-            // Focus the first interactive element in the modal
-            const firstFocusable = modalElement.querySelector('button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex="0"]');
-            if (firstFocusable) {
-                (firstFocusable as HTMLElement).focus();
-            } else {
-                modalElement.focus();
-            }
-        }, 10);
+        a11y = installModalA11y(modalElement, {
+            labelledBy: 'jellyseerr-modal-title',
+            initialFocus: () => modalElement.querySelector<HTMLElement>('button:not([disabled]), select, input'),
+            onEscape: () => history.back(), // keep the history-based close mechanism
+        });
+        setTimeout(() => { modalElement.classList.add('show'); }, 10);
     };
 
     let isClosing = false;
@@ -192,7 +155,8 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
         }
 
         window.removeEventListener('popstate', close);
-        document.removeEventListener('keydown', handleKeydown);
+        a11y?.release(); // restores focus to the trigger + lifts the shortcut gate
+        a11y = null;
         modalElement.classList.remove('show');
         document.body.classList.remove('jellyseerr-modal-is-open');
         setTimeout(() => {
@@ -249,6 +213,17 @@ modal.createAdvancedOptionsHTML = function(idPrefix) {
  * @param {string} idPrefix - The prefix ('movie' or 'tv') used for the element IDs.
  */
 modal.populateAdvancedOptions = function(modalElement, data, idPrefix) {
+    // Backend failed to load server options: show an error note instead of
+    // polling for selects that will only ever be populated with empty
+    // placeholders — three empty dropdowns look like a valid config (W4-ERR-5).
+    if (data && data.error) {
+        const container = modalElement.querySelector('.jellyseerr-advanced-options');
+        if (container) {
+            container.innerHTML = `<h3>${JE.t!('jellyseerr_advanced_options')}</h3><div class="jellyseerr-advanced-error">${JE.escapeHtml(data.error)}</div>`;
+        }
+        return;
+    }
+
     // Use a timer to ensure emby-select elements are ready
     let attempts = 0;
     const maxAttempts = 50; // 5 seconds

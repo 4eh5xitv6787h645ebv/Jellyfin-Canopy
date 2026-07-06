@@ -23,6 +23,13 @@ const logPrefix = '🪼 Jellyfin Enhanced: Rating Tags:';
 const containerClass = 'rating-overlay-container';
 const tagClass = 'rating-tag';
 
+// PERF(R6): the RT tomato glyphs were `url(assets/img/{fresh,rotten}.svg)`, which
+// resolve relative to /web/ and do not exist anywhere in the tree (404, no icon).
+// Inline them as plugin-owned, zero-network data-URI SVGs (compile-time constants
+// → trusted producers, no CDN/manifest) — same glyphs as enhanced/osd-rating.ts.
+const FRESH_TOMATO_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMyIgcj0iOCIgZmlsbD0iI2Y5MzIwOCIvPjxwYXRoIGQ9Ik0xMiA1YzEtMiAzLTMgNS0zLTEgMi0yIDMtNCA0eiIgZmlsbD0iIzVhYTAyYyIvPjwvc3ZnPg==';
+const ROTTEN_TOMATO_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDNjMiAzIDYgMyA2IDcgMCAzIDIgNCAxIDctMiA0LTggNC0xMSAxLTMtMy0yLTYtMS04IDEtMiAzLTMgNS03eiIgZmlsbD0iIzZiOGUyMyIvPjwvc3ZnPg==';
+
 /**
  * Normalize a raw critic rating to a 0-100 integer percentage.
  * @param raw - Raw critic rating value (may be on a 0-10 or 0-100 scale).
@@ -181,8 +188,8 @@ const spec: TagSpec = {
 
             .rating-star-icon { color: #ffc107 !important; font-size: 14px; line-height: 1; }
             .rating-tomato-icon { width: 14px; height: 14px; flex-shrink: 0; background-size: contain; background-repeat: no-repeat; background-position: center; display: inline-block; }
-            .rating-tomato-icon.fresh { background-image: url(assets/img/fresh.svg); }
-            .rating-tomato-icon.rotten { background-image: url(assets/img/rotten.svg); }
+            .rating-tomato-icon.fresh { background-image: url(${FRESH_TOMATO_DATA_URI}); }
+            .rating-tomato-icon.rotten { background-image: url(${ROTTEN_TOMATO_DATA_URI}); }
             .rating-text { line-height: 1; }
 
             .layout-mobile .${tagClass} {

@@ -11,6 +11,7 @@ using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Tasks;
+using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Arr;
 using Microsoft.Extensions.Logging;
@@ -68,7 +69,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             var arrTagService = new ArrTagService(_httpClientFactory, _logger);
 
             var radarrTags = new Dictionary<int, List<string>>();
-            var sonarrTags = new Dictionary<string, List<string>>();
+            // Sonarr tags keyed BOTH by TVDB id (canonical) and IMDb id (fallback) so a
+            // TVDB-scraped library (series without an IMDb id) still syncs.
+            var sonarrTagsByTvdb = new Dictionary<int, List<string>>();
+            var sonarrTagsByImdb = new Dictionary<string, List<string>>();
 
             // Fetch tags from all configured Radarr instances
             if (config.IsRadarrInstancesCorrupt())
@@ -87,21 +91,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                         _logger.LogInformation($"Fetching tags from Radarr instance: {instance.Name}");
                         var instanceTags = await arrTagService.GetMovieTagsByTmdbId(instance.Url, instance.ApiKey, cancellationToken);
                         _logger.LogInformation($"Fetched {instanceTags.Count} movie tag mappings from {instance.Name}");
-                        foreach (var kvp in instanceTags)
-                        {
-                            if (radarrTags.TryGetValue(kvp.Key, out var existing))
-                            {
-                                foreach (var tag in kvp.Value)
-                                {
-                                    if (!existing.Contains(tag, StringComparer.OrdinalIgnoreCase))
-                                        existing.Add(tag);
-                                }
-                            }
-                            else
-                            {
-                                radarrTags[kvp.Key] = new List<string>(kvp.Value);
-                            }
-                        }
+                        MergeTagMap(radarrTags, instanceTags);
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
@@ -137,23 +127,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                     try
                     {
                         _logger.LogInformation($"Fetching tags from Sonarr instance: {instance.Name}");
-                        var instanceTags = await arrTagService.GetSeriesTagsByTvdbId(instance.Url, instance.ApiKey, cancellationToken);
-                        _logger.LogInformation($"Fetched {instanceTags.Count} series tag mappings from {instance.Name}");
-                        foreach (var kvp in instanceTags)
-                        {
-                            if (sonarrTags.TryGetValue(kvp.Key, out var existing))
-                            {
-                                foreach (var tag in kvp.Value)
-                                {
-                                    if (!existing.Contains(tag, StringComparer.OrdinalIgnoreCase))
-                                        existing.Add(tag);
-                                }
-                            }
-                            else
-                            {
-                                sonarrTags[kvp.Key] = new List<string>(kvp.Value);
-                            }
-                        }
+                        var instanceMaps = await arrTagService.GetSeriesTagsAsync(instance.Url, instance.ApiKey, cancellationToken);
+                        _logger.LogInformation($"Fetched {instanceMaps.ByTvdbId.Count} series tag mappings by TVDB, {instanceMaps.ByImdbId.Count} by IMDb from {instance.Name}");
+                        MergeTagMap(sonarrTagsByTvdb, instanceMaps.ByTvdbId);
+                        MergeTagMap(sonarrTagsByImdb, instanceMaps.ByImdbId);
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
@@ -189,7 +166,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             var processedItems = 0;
             var updatedItemNames = new List<string>(); // Track updated items for batch logging
 
-            string tagPrefix = config.ArrTagsPrefix ?? "Requested by: ";
+            string tagPrefix = ResolveTagPrefix(config);
             bool clearOldTags = config.ArrTagsClearOldTags;
 
             // Parse sync filter - if empty, sync all tags
@@ -222,15 +199,23 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                         }
                     }
                 }
-                // Check if it's a series
+                // Check if it's a series — prefer TVDB (Sonarr's canonical id), fall back to IMDb.
                 else if (item is Series series)
                 {
-                    var imdbId = series.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Imdb);
-                    if (!string.IsNullOrWhiteSpace(imdbId))
+                    var tvdbId = series.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Tvdb);
+                    if (!string.IsNullOrWhiteSpace(tvdbId)
+                        && int.TryParse(tvdbId, out var tvdbIdInt)
+                        && sonarrTagsByTvdb.TryGetValue(tvdbIdInt, out var tvdbTags))
                     {
-                        if (sonarrTags.TryGetValue(imdbId, out var tags))
+                        tagsToAdd = tvdbTags;
+                    }
+                    else
+                    {
+                        var imdbId = series.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Imdb);
+                        if (!string.IsNullOrWhiteSpace(imdbId)
+                            && sonarrTagsByImdb.TryGetValue(imdbId, out var imdbTags))
                         {
-                            tagsToAdd = tags;
+                            tagsToAdd = imdbTags;
                         }
                     }
                 }
@@ -313,6 +298,46 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
 
             _logger.LogInformation($"Arr Tags Sync completed. Updated {updatedCount} items out of {totalItems}");
             progress?.Report(100);
+        }
+
+        /// <summary>
+        /// Resolves the tag prefix, defaulting only an empty/absent admin value so the write side
+        /// matches the client read side EXACTLY. The client uses <c>config.ArrTagsPrefix || 'JE Arr
+        /// Tag: '</c>, and JS treats only <c>''</c>/<c>undefined</c> as falsy — a whitespace-only
+        /// prefix stays verbatim on the client. Using <see cref="string.IsNullOrEmpty"/> (not
+        /// <c>IsNullOrWhiteSpace</c>) keeps the two in lockstep: a whitespace prefix is preserved on
+        /// both, so the client's <c>tag.startsWith(prefix)</c> read matches the tags the sync writes
+        /// (ARR-CS-3). <c>IsNullOrWhiteSpace</c> would default the write side while the client kept
+        /// the whitespace, diverging write vs read.
+        /// </summary>
+        internal static string ResolveTagPrefix(PluginConfiguration config)
+            => string.IsNullOrEmpty(config.ArrTagsPrefix)
+                ? PluginConfiguration.DefaultArrTagsPrefix
+                : config.ArrTagsPrefix;
+
+        /// <summary>
+        /// Merges one instance's tag map into the accumulator: unions tag labels for an
+        /// existing key (case-insensitive) and copies the value list for a new key so the
+        /// accumulator never shares a reference with the source map.
+        /// </summary>
+        private static void MergeTagMap<TKey>(Dictionary<TKey, List<string>> accumulator, Dictionary<TKey, List<string>> instanceTags)
+            where TKey : notnull
+        {
+            foreach (var kvp in instanceTags)
+            {
+                if (accumulator.TryGetValue(kvp.Key, out var existing))
+                {
+                    foreach (var tag in kvp.Value)
+                    {
+                        if (!existing.Contains(tag, StringComparer.OrdinalIgnoreCase))
+                            existing.Add(tag);
+                    }
+                }
+                else
+                {
+                    accumulator[kvp.Key] = new List<string>(kvp.Value);
+                }
+            }
         }
     }
 }

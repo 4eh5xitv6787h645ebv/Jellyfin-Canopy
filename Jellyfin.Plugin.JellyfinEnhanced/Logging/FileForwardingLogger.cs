@@ -6,12 +6,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Logging
     /// <summary>
     /// The ILogger&lt;T&gt; implementation injected into every plugin class
     /// (registered as closed generics in <see cref="PluginServiceRegistrator"/>).
-    /// Reproduces exactly what the former custom Logger did per call:
+    /// Reproduces what the former custom Logger did per call:
     ///   1. write the sanitized message to the dedicated JellyfinEnhanced_*.log
-    ///      (all levels, no filtering — the file has always logged Debug), and
-    ///   2. forward the same sanitized message to the host (Serilog) logger as
-    ///      a "{Message}" argument, so arbitrary braces/JSON in messages are
-    ///      never parsed as message-template holes.
+    ///      (Information and above — the file sink is level-floored so hot-path
+    ///      Debug/Trace don't do a synchronous locked append), and
+    ///   2. forward the same sanitized message to the host (Serilog) logger at
+    ///      every level as a "{Message}" argument, so arbitrary braces/JSON in
+    ///      messages are never parsed as message-template holes (Debug/Trace
+    ///      still reach the host log when the host enables them).
     /// The host category is the consumer's full type name (always under the
     /// "Jellyfin.Plugin.JellyfinEnhanced" prefix the old single category used).
     /// </summary>
@@ -32,8 +34,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Logging
             where TState : notnull
             => _hostLogger.BeginScope(state);
 
-        // The dedicated file intentionally records every level regardless of the
-        // host's minimum level, matching the old custom Logger.
+        // Enabled for any real level: the host sink accepts all levels; the file sink additionally
+        // level-floors itself in FileLogger.IsEnabled, so below-floor lines are dropped there.
         public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None;
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)

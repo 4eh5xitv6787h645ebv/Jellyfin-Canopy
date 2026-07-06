@@ -71,3 +71,42 @@ poster on a detail page**, and **episodes in list view**.
 !!! tip
 
     [Custom CSS available](../advanced/css-customization.md#tags)
+
+### Disable Tags on Search Page
+
+Enable **Disable Tags on Search Page** to stop poster tag overlays rendering on
+the search results page. This hides **all** four families — Quality, Genre,
+Language and Rating — not only Genre tags.
+
+### Tags Cache Duration
+
+**Tags Cache Duration** (`TagsCacheTtlDays`, default 30 days) controls how long
+the client keeps cached tag data before re-fetching. It applies to every tag
+family, **including People tags** — changing it now adjusts the people-tag cache
+lifetime too (previously that was fixed at 30 days regardless of this setting).
+
+## Pause Screen Delay
+
+Sets how many seconds a video is paused before the [Custom Pause
+Screen](enhanced-features.md#custom-pause-screen) overlay appears.
+
+- **Admin default** — set **Pause Screen Delay (seconds)** on the plugin config
+  page (Enhanced Settings). Default 5, range 1–60. This is the value users start
+  with.
+- **Per-user override** — each user can set their own delay in the Enhanced
+  panel; their choice persists across reloads and overrides the admin default.
+
+## Home Row Filtering
+
+**Filter Continue Watching** and **Filter Next Up** (in the Hidden Content
+settings) take effect on the Home screen on their own — independently of **Filter
+library views**. Enabling either one hides the matching cards from those Home rows
+without requiring library filtering to be on. See [Hidden Content
+System](enhanced-features.md#hidden-content-system).
+
+## Language Discovery
+
+The plugin's language selector lists the available translations by querying the
+plugin's **own server endpoint** (`/JellyfinEnhanced/locales`) — the browser no
+longer calls GitHub to discover locales, so language discovery works on isolated
+networks and doesn't depend on GitHub's rate limits.

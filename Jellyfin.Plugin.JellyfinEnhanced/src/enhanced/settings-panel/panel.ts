@@ -7,6 +7,7 @@
 // (Converted from js/enhanced/ui-panel.js — bodies semantically identical.)
 
 import { JE } from '../../globals';
+import { installModalA11y, type ModalA11yHandle } from '../../core/modal-a11y';
 import { buildPanelHtml } from './template';
 import { wireShortcutEditor } from './shortcut-editor';
 import { wireSettingsListeners, wireMiscSettingsControls } from './settings';
@@ -76,6 +77,12 @@ JE.showEnhancedPanel = async () => {
     const panelId = 'jellyfin-enhanced-panel';
     const existing = document.getElementById(panelId);
     if (existing) {
+        // Toggle-close: release the modal-a11y handle BEFORE removal so the
+        // je-modal-open gate drops, focus is restored and the capture-phase
+        // keydown listener is torn down — otherwise all JE shortcuts stay
+        // suppressed for the rest of the session (the normal close paths below
+        // already release; this early-return branch used to skip it).
+        (existing as unknown as { _a11y?: ModalA11yHandle })._a11y?.release();
         existing.remove();
         return;
     }
@@ -138,6 +145,7 @@ JE.showEnhancedPanel = async () => {
     let offset = { x: 0, y: 0 };
     let autoCloseTimer: number | null = null;
     let isMouseInside = false;
+    let a11y: ModalA11yHandle | null = null;
 
     const resetAutoCloseTimer = () => {
         if (autoCloseTimer) clearTimeout(autoCloseTimer);
@@ -147,9 +155,10 @@ JE.showEnhancedPanel = async () => {
                 document.removeEventListener('keydown', closeHelp);
                 document.removeEventListener('mousemove', handleMouseMove);
                 document.removeEventListener('mouseup', handleMouseUp);
-                if (!JE.pluginConfig.DisableAllShortcuts) {
-                    document.addEventListener('keydown', (JE as any).keyListener);
-                }
+                // release() restores focus and drops the je-modal-open gate that
+                // suppresses JE.keyListener — no manual re-add of the listener.
+                a11y?.release();
+                a11y = null;
             }
         }, JE.CONFIG!.HELP_PANEL_AUTOCLOSE_DELAY as number);
     };
@@ -272,15 +281,18 @@ JE.showEnhancedPanel = async () => {
     // --- Event Handlers for Settings Panel ---
     const closeHelp = (ev: any) => {
         if ((ev.type === 'keydown' && (ev.key === 'Escape' || ev.key === '?')) || (ev.type === 'click' && ev.target.id === 'closeSettingsPanel')) {
-            ev.stopPropagation();
+            // modal-a11y's Escape path invokes this with a synthetic
+            // `{ type, key }` object (not a DOM event), so stopPropagation may be
+            // absent — guard it. Calling it unconditionally threw a TypeError
+            // here, aborting the close so Escape never dismissed the panel.
+            ev.stopPropagation?.();
             if (autoCloseTimer) clearTimeout(autoCloseTimer);
             help.remove();
             document.removeEventListener('keydown', closeHelp);
             document.removeEventListener('mousemove', handleMouseMove);
             document.removeEventListener('mouseup', handleMouseUp);
-            if (!JE.pluginConfig.DisableAllShortcuts) {
-                document.addEventListener('keydown', (JE as any).keyListener);
-            }
+            a11y?.release();
+            a11y = null;
         }
     };
 
@@ -292,9 +304,17 @@ JE.showEnhancedPanel = async () => {
     document.addEventListener('keydown', closeHelp);
     document.getElementById('closeSettingsPanel')!.addEventListener('click', closeHelp);
 
-    if (!JE.pluginConfig.DisableAllShortcuts) {
-        document.removeEventListener('keydown', (JE as any).keyListener);
-    }
+    // Make the panel an accessible modal dialog: dialog role, focus trap +
+    // restore, and the je-modal-open gate that suppresses JE.keyListener while
+    // it is open (INT-1) — replacing the former manual remove/re-add dance.
+    a11y = installModalA11y(help, {
+        label: JE.t!('panel_settings_tab'),
+        onEscape: () => closeHelp({ type: 'keydown', key: 'Escape' }),
+    });
+    // Stash the handle on the panel element so the toggle-close early-return
+    // branch (top of this function) can release it without re-entering this
+    // closure. The close paths that DO reach this closure use `a11y` directly.
+    (help as unknown as { _a11y?: ModalA11yHandle })._a11y = a11y;
     ctx.createToast = createToast;
 
     wireSettingsListeners(ctx);

@@ -5,6 +5,7 @@
 
 import { JE } from '../globals';
 import type { UserSettings } from '../types/je';
+import { adminDefaultsView } from '../core/config-resolve';
 
 /**
  * Constants derived from the plugin configuration.
@@ -49,10 +50,25 @@ JE.saveUserSettings = async (fileName: string, settings: unknown): Promise<void>
             return;
         }
 
+        // Fail LOUDLY on a no-arg / bad-fileName save instead of silently no-oping.
+        // A call like saveUserSettings() serializes `undefined` and — for non-
+        // settings.json files — hits the dedup guard below and returns without ever
+        // POSTing, which is exactly how the pause-screen delay silently lost writes.
+        if (!fileName || typeof settings === 'undefined') {
+            console.error('🪼 Jellyfin Enhanced: saveUserSettings called without fileName/settings', { fileName });
+            return;
+        }
+
         // Convert data back to PascalCase for server C# deserialization
-        let dataToSave = settings;
-        if ((fileName === 'bookmark.json' || fileName === 'settings.json') && typeof window.JellyfinEnhanced?.toPascalCase === 'function') {
-            dataToSave = window.JellyfinEnhanced.toPascalCase(settings);
+        let dataToSave: unknown = settings;
+        if (typeof window.JellyfinEnhanced?.toPascalCase === 'function') {
+            if (fileName === 'bookmark.json') {
+                // Mirror the load-side key preservation so bookmark ids (`Bm_…`)
+                // keep their case on disk (save-side symmetry of LOADER-8).
+                dataToSave = window.JellyfinEnhanced.toPascalCase(settings, { preserveKey: (k: string) => /^bm_/i.test(k) });
+            } else if (fileName === 'settings.json') {
+                dataToSave = window.JellyfinEnhanced.toPascalCase(settings);
+            }
         }
 
         const serialized = JSON.stringify(dataToSave);
@@ -86,6 +102,11 @@ JE.saveUserSettings = async (fileName: string, settings: unknown): Promise<void>
 JE.loadSettings = (): UserSettings => {
     const userSettings: Record<string, unknown> = JE.userConfig?.settings || {};
     const pluginDefaults: Record<string, unknown> = JE.pluginConfig || {};
+    // JE.pluginConfig is PascalCase; the merge below iterates camelCase keys, so
+    // the admin tier resolves through a camelCase VIEW (ENH-4). Without this the
+    // admin tier read `pluginDefaults[camelKey]` off the PascalCase object and
+    // always missed, silently falling every paired setting through to hardcoded.
+    const adminDefaults = adminDefaultsView(pluginDefaults);
 
     const hardcodedDefaults: Record<string, unknown> = {
         autoPauseEnabled: true, autoResumeEnabled: false, autoPipEnabled: false,
@@ -133,23 +154,23 @@ JE.loadSettings = (): UserSettings => {
             } else {
                 mergedSettings[key] = userSettings[key];
             }
-        } else if (Object.prototype.hasOwnProperty.call(pluginDefaults, key) && pluginDefaults[key] !== null && pluginDefaults[key] !== undefined) {
-            mergedSettings[key] = pluginDefaults[key];
+        } else if (Object.prototype.hasOwnProperty.call(adminDefaults, key) && adminDefaults[key] !== null && adminDefaults[key] !== undefined) {
+            mergedSettings[key] = adminDefaults[key];
         } else {
             mergedSettings[key] = hardcodedDefaults[key];
         }
     }
 
+    // displayLanguage stays an explicit override: its admin default is the
+    // RENAMED property DefaultLanguage, which the generic camelCase view maps to
+    // `defaultLanguage` (not `displayLanguage`), so the merge loop can't resolve
+    // it. removeContinueWatchingEnabled is NOT special-cased anymore — the admin
+    // tier now resolves RemoveContinueWatchingEnabled generically through
+    // adminDefaults.
     mergedSettings.displayLanguage = Object.prototype.hasOwnProperty.call(userSettings, 'displayLanguage')
         ? userSettings.displayLanguage
         : (pluginDefaults.DefaultLanguage || '');
     mergedSettings.lastOpenedTab = userSettings.lastOpenedTab || 'shortcuts';
-
-    // Admin default → per-user default (camelCase merge above misses PascalCase from GetPublicConfig). Sticky once explicitly set.
-    if (!Object.prototype.hasOwnProperty.call(userSettings, 'removeContinueWatchingEnabled')
-        && pluginDefaults.RemoveContinueWatchingEnabled === true) {
-        mergedSettings.removeContinueWatchingEnabled = true;
-    }
 
     // Ensure isAdmin is always present (even if undefined) so it can be set later
     if (!Object.prototype.hasOwnProperty.call(mergedSettings, 'isAdmin')) {

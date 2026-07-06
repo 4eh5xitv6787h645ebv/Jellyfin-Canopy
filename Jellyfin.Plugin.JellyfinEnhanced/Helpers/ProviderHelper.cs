@@ -28,7 +28,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers
             if (scoreMap.Count == 0)
                 return null;
 
-            return scoreMap.MaxBy(kv => kv.Value).Key;
+            // Deterministic tie-break: highest score first, then smallest Guid. MaxBy resolved equal
+            // scores by Dictionary enumeration order, so the chosen item could differ across runs;
+            // ThenBy(Guid) gives a total order so the same input always yields the same item id.
+            return scoreMap.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key).First().Key;
         }
 
         public static List<(string Provider, string Value)> GetProviders(ArrItem e) 
@@ -59,14 +62,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers
 
             if (includeNormal)
             {
-                Add("Tvdb", e.TvdbId?.ToString());
-                Add("Tmdb", e.TmdbId?.ToString());
+                // Route the numeric ids through ToProviderValue so a present-but-0 id never
+                // becomes a ("Tvdb","0")/("Tmdb","0") pair that would mis-resolve every
+                // un-mapped item to a single unrelated ProviderIds["Tvdb"]=="0" library item.
+                Add("Tvdb", ArrIdHelper.ToProviderValue(e.TvdbId));
+                Add("Tmdb", ArrIdHelper.ToProviderValue(e.TmdbId));
                 Add("Imdb", e.ImdbId);
             }
 
             if (includeEpisode)
             {
-                Add("Tvdb", e.EpisodeTvdbId?.ToString());
+                Add("Tvdb", ArrIdHelper.ToProviderValue(e.EpisodeTvdbId));
                 Add("Imdb", e.EpisodeImdbId);
             }
 

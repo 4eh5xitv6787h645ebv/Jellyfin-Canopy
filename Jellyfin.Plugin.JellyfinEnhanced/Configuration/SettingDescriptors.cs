@@ -336,7 +336,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 Public("MaintenanceModeEnabled", c => c.MaintenanceModeEnabled),
                 Public("MaintenanceModeMessage", c => c.MaintenanceModeMessage),
                 Public("MaintenanceModeAction", c => c.MaintenanceModeAction),
-                Public("MaintenanceModeAffectedUsers", c => c.MaintenanceModeAffectedUsers),
+                // The targeted-user GUID list enumerates specific accounts and is sensitive
+                // topology; redact it for anonymous/pre-login callers (mirrors the Seerr URL
+                // redaction above). MaintenanceModeMessage/Action stay Public because the
+                // login-page maintenance banner legitimately needs them pre-auth.
+                PublicContextual("MaintenanceModeAffectedUsers",
+                    ctx => ctx.IsAuthenticated ? (ctx.Config.MaintenanceModeAffectedUsers ?? "all") : string.Empty),
 
                 // =========================== private-config ===========================
 

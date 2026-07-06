@@ -14,10 +14,25 @@
     // Cleanup handlers
     let nameInputListener: (() => void) | null = null;
     let formObserver: MutationObserver | null = null;
+    let cardsObserver: MutationObserver | null = null;
     let updateTimeout: number | null = null;
 
-    // Image cache to store preloaded images
+    // Image cache to store preloaded images (FIFO-capped via cacheImage; this
+    // IIFE cannot import core/bounded-cache).
+    const IMAGE_CACHE_MAX = 100; // covers a login user grid
     const imageCache = new Map<string, HTMLImageElement>();
+
+    /**
+     * Inserts into imageCache with a FIFO size cap so the pre-login cache
+     * cannot grow unbounded across form churn.
+     */
+    const cacheImage = (url: string, img: HTMLImageElement): void => {
+        if (imageCache.size >= IMAGE_CACHE_MAX && !imageCache.has(url)) {
+            const first = imageCache.keys().next().value;
+            if (first !== undefined) imageCache.delete(first);
+        }
+        imageCache.set(url, img);
+    };
 
     /**
      * Checks if a user is currently logged in by verifying the existence of the ApiClient
@@ -51,7 +66,7 @@
 
             const img = new Image();
             img.onload = () => {
-                imageCache.set(url, img);
+                cacheImage(url, img);
                 resolve(img);
             };
             img.onerror = () => {
@@ -208,7 +223,7 @@
                 imgElement.style.opacity = '1';
 
                 // Cache the image
-                imageCache.set(highQualityUrl, imgElement);
+                cacheImage(highQualityUrl, imgElement);
             }
         };
 
@@ -324,10 +339,17 @@
             formObserver = null;
         }
 
+        if (cardsObserver) {
+            cardsObserver.disconnect();
+            cardsObserver = null;
+        }
+
         if (updateTimeout) {
             clearTimeout(updateTimeout);
             updateTimeout = null;
         }
+
+        imageCache.clear();
     };
 
     /**
@@ -456,7 +478,10 @@
         // Watch for new cards being added (in case the page dynamically loads users)
         const userCardsContainer = document.getElementById('divUsers');
         if (userCardsContainer) {
-            const cardsObserver = new MutationObserver(() => {
+            // Store on the module ref so cleanup() disconnects it (it was a local
+            // const before, never torn down); guard against stacking on re-entry.
+            if (cardsObserver) cardsObserver.disconnect();
+            cardsObserver = new MutationObserver(() => {
                 applyProgressiveLoadingToCards();
                 preloadAllUserImages();
             });
@@ -505,3 +530,7 @@
     // Start the initialization process when the script loads.
     initializeLoginImage();
 })();
+
+// Module marker so this out-of-band IIFE can be re-imported by its vitest
+// suite; type-only, erased by esbuild (iife) — no runtime effect.
+export {};

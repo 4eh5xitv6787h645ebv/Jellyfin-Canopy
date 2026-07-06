@@ -92,7 +92,7 @@ Universal strategy: idempotent keyed injectors re-driven by (1) `HISTORY_UPDATE`
 | Raw-EF 10.11 batch lookup (`#if !NET10_0_OR_GREATER`) | **DELETE** |
 | `SeerrCache.Instance` static + `UpdateConfiguration` flush bridge | **DELETE** → IHostedService + `IPluginManager` + `ConfigurationChanged` |
 | Hand-rolled `IsAdminUser()` + JSON 403 envelopes | **CONVERT** → `[Authorize(Policy = ...)]` (contract below) |
-| `X-Emby-Token` client header | **DELETE** (ignored by v12) |
+| `X-Emby-Token` / `X-MediaBrowser-Token` client header | **DELETED** — the avatar-fetch helper (`src/arr/requests/data.ts`) now sends only `Authorization: MediaBrowser Token=…`; v12 ignores the legacy headers |
 | Request-time index.html injection middleware | **STAYS** (no native hook) |
 | Legacy on-disk index.html rewrite | keep `CleanupOldScript` only |
 | `BrandingAssetStartupFilter` | **STAYS** (no server API) |

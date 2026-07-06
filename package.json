@@ -14,6 +14,7 @@
     "build:bundle": "node scripts/build-bundle.js",
     "watch": "node scripts/build-bundle.js --watch",
     "validate-translations": "node scripts/validate-translations.js validate",
+    "test:scripts": "node --test \"scripts/**/*.test.js\"",
     "e2e": "playwright test --config e2e/playwright.config.ts",
     "e2e:headed": "playwright test --config e2e/playwright.config.ts --headed"
   },

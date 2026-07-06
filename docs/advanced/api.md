@@ -22,6 +22,17 @@ curl -X GET \
   "<JELLYFIN_ADDRESS>/JellyfinEnhanced/version"
 ```
 
+### Public Configuration
+
+The plugin serves a **public config** payload (`/JellyfinEnhanced/public-config`) that the client bootstraps from before login. Only settings whitelisted for public exposure are included — secrets (API keys, tokens) never appear.
+
+Fields that would leak internal topology are additionally **redacted for anonymous / pre-login callers** and only returned once the request is authenticated:
+
+- Seerr URLs.
+- The **maintenance-mode target-user list** (the affected-user GUIDs) — returned empty pre-login.
+
+The maintenance-mode **message** and **action** stay public because the login page's maintenance banner legitimately needs them before a user signs in.
+
 ## Bookmark API + Info
 
 ### Storage Directory

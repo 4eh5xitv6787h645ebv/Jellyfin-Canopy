@@ -153,10 +153,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
 
             try
             {
-                // Strict path: no null-stripping — a JSON null on a non-nullable
-                // property is corruption here (Newtonsoft's default settings threw
-                // for that too) and must back up + throw rather than bind partially.
-                var parsed = JsonSerializer.Deserialize<T>(json, PersistedJson.ReadOptions);
+                // Tolerate the SAME legacy nulls the lenient GET path skips: a field
+                // that was once nullable (bool?/int?/string?) left a literal JSON null
+                // on disk and has since become non-nullable. Binding it directly throws,
+                // which used to 500 every save of an otherwise-fine file while the GET
+                // path read it correctly. Strip null members first (constructor defaults
+                // kept), exactly like GetUserConfiguration. Genuine corruption still
+                // fails: empty/whitespace/literal-null is rejected above, malformed JSON
+                // throws in JsonNode.Parse, and a non-object payload deserializes to null
+                // (or throws) — both caught below and backed up.
+                var node = JsonNode.Parse(json, documentOptions: PersistedJson.ParseOptions);
+                var parsed = PersistedJson.StripNullMembers(node) is JsonNode stripped
+                    ? stripped.Deserialize<T>(PersistedJson.ReadOptions)
+                    : default;
                 if (parsed == null)
                 {
                     _logger.LogError($"'{fileName}' for user '{userId}' deserialized to null; refusing to overwrite.");
@@ -192,16 +201,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             }
         }
 
-        // Atomic save via temp file + File.Move(overwrite). RMW callers must hold GetUserFileLock.
+        // Atomic save via AtomicFile (temp file + File.Move(overwrite)). RMW callers must hold GetUserFileLock.
         public void SaveUserConfiguration(string userId, string fileName, object config)
         {
-            string configPath = string.Empty;
-            string tempPath = string.Empty;
             try
             {
-                configPath = ResolveUserFile(userId, fileName);
-                // Per-call random suffix avoids collisions between concurrent non-RMW writers on a shared .tmp.
-                tempPath = configPath + ".tmp." + Guid.NewGuid().ToString("N");
+                var configPath = ResolveUserFile(userId, fileName);
 
                 // Serialize with the runtime type: callers pass both typed DTOs and
                 // raw JsonElement payloads (client JSON pass-through). JsonElement is
@@ -210,14 +215,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 // Both forms read identically; pinned by RawClientJson_* tests.
                 var jsonToSave = JsonSerializer.Serialize(config, config.GetType(), PersistedJson.WriteOptions);
 
-                File.WriteAllText(tempPath, jsonToSave);
-                File.Move(tempPath, configPath, overwrite: true);
+                // AtomicFile owns the per-call temp sibling + rename + temp cleanup.
+                AtomicFile.WriteAllText(configPath, jsonToSave);
             }
             catch (Exception ex)
             {
                 _logger.LogError($"Failed to save user configuration for user '{userId}' to file '{fileName}'. Exception: {ex.Message}");
-                try { if (!string.IsNullOrEmpty(tempPath) && File.Exists(tempPath)) File.Delete(tempPath); }
-                catch (Exception cleanupEx) { _logger.LogWarning($"Failed to clean up stale .tmp for '{fileName}': {cleanupEx.Message}"); }
                 throw;
             }
         }

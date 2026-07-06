@@ -4,6 +4,7 @@
 // per navigation).
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getHeaderRightContainer } from './helpers';
+import { insertHeaderTrayButton, HeaderTrayOrder } from './header-tray';
 
 /** Builds a `.headerRight` whose offsetParent getter counts layout reads. */
 function buildLegacyHeader(reads: { count: number }): HTMLElement {
@@ -64,5 +65,48 @@ describe('getHeaderRightContainer per-navigation cache', () => {
 
         // Found on the next probe without requiring a navigation in between.
         expect(getHeaderRightContainer()).toBe(header);
+    });
+});
+
+// INT-2: independent header-tray injectors (random button, active streams) used
+// to each prepend, so the winner of the injection race took the leading slot →
+// nondeterministic order. insertHeaderTrayButton keeps them in a stable order.
+describe('insertHeaderTrayButton deterministic order (INT-2)', () => {
+    function tray(): HTMLElement {
+        const t = document.createElement('div');
+        t.appendChild(Object.assign(document.createElement('button'), { className: 'native-a' }));
+        t.appendChild(Object.assign(document.createElement('button'), { className: 'native-b' }));
+        return t;
+    }
+    const btn = (id: string): HTMLElement => Object.assign(document.createElement('button'), { id });
+    const ids = (t: HTMLElement): string[] => Array.from(t.children).map(c => c.id || c.className);
+
+    it('yields the same order regardless of which injector runs first', () => {
+        const forward = tray();
+        insertHeaderTrayButton(forward, btn('active'), HeaderTrayOrder.activeStreams);
+        insertHeaderTrayButton(forward, btn('random'), HeaderTrayOrder.randomButton);
+
+        const reverse = tray();
+        insertHeaderTrayButton(reverse, btn('random'), HeaderTrayOrder.randomButton);
+        insertHeaderTrayButton(reverse, btn('active'), HeaderTrayOrder.activeStreams);
+
+        expect(ids(forward)).toEqual(['active', 'random', 'native-a', 'native-b']);
+        expect(ids(reverse)).toEqual(ids(forward));
+    });
+
+    it('keeps JE tray buttons leading, before the native buttons', () => {
+        const t = tray();
+        insertHeaderTrayButton(t, btn('random'), HeaderTrayOrder.randomButton);
+        insertHeaderTrayButton(t, btn('active'), HeaderTrayOrder.activeStreams);
+        expect(ids(t)).toEqual(['active', 'random', 'native-a', 'native-b']);
+    });
+
+    it('re-inserting an already-present button repositions it without duplicating', () => {
+        const t = tray();
+        const active = btn('active');
+        insertHeaderTrayButton(t, active, HeaderTrayOrder.activeStreams);
+        insertHeaderTrayButton(t, active, HeaderTrayOrder.activeStreams); // e.g. an observer re-run
+        expect(t.querySelectorAll('#active').length).toBe(1);
+        expect(ids(t)).toEqual(['active', 'native-a', 'native-b']);
     });
 });

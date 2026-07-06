@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using MediaBrowser.Common.Configuration;
@@ -28,6 +30,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Logging
         private readonly object _writeLock = new object();
         private const int LogRetentionDays = 3; // How many days of logs to keep
         private const string LogFilePrefix = "JellyfinEnhanced_";
+
+        // The file sink is Information-floored: hot-path Debug/Trace lines no longer do a synchronous
+        // File.AppendAllText under the global write lock. The host (Serilog) logger still receives all
+        // levels via FileForwardingLogger, so Debug is available in the main log when the host enables it.
+        internal const LogLevel MinFileLogLevel = LogLevel.Information;
 
         public JellyfinEnhancedFileLoggerProvider(IApplicationPaths appPaths)
         {
@@ -80,22 +87,42 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Logging
             try
             {
                 var logDirectory = _appPaths.LogDirectoryPath;
-                var cutoffDate = DateTime.Now.AddDays(-LogRetentionDays);
+                var cutoffDate = DateTime.Now.AddDays(-LogRetentionDays).Date;
 
                 var oldLogFiles = Directory.GetFiles(logDirectory, $"{LogFilePrefix}*.log")
-                    .Select(f => new FileInfo(f))
-                    .Where(f => f.CreationTime < cutoffDate);
+                    .Where(f => ResolveLogFileDate(Path.GetFileName(f), () => new FileInfo(f).LastWriteTime).Date < cutoffDate);
 
                 foreach (var file in oldLogFiles)
                 {
-                    file.Delete();
-                    Console.WriteLine($"Deleted old log file: {file.Name}");
+                    File.Delete(file);
+                    Console.WriteLine($"Deleted old log file: {Path.GetFileName(file)}");
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error during log rotation: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Retention key for a log file: the yyyy-MM-dd embedded in the filename, which is the
+        /// reliable signal on Linux where file birth-time (CreationTime) is often unavailable and
+        /// reports the last-write or epoch instead. Falls back to <paramref name="lastWriteTimeFallback"/>
+        /// only when the filename doesn't carry a parseable date.
+        /// </summary>
+        internal static DateTime ResolveLogFileDate(string fileName, Func<DateTime> lastWriteTimeFallback)
+        {
+            var name = Path.GetFileNameWithoutExtension(fileName);
+            if (name.StartsWith(LogFilePrefix, StringComparison.Ordinal))
+            {
+                var datePart = name.Substring(LogFilePrefix.Length);
+                if (DateTime.TryParseExact(datePart, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+                {
+                    return parsed;
+                }
+            }
+
+            return lastWriteTimeFallback();
         }
 
         internal static string SanitizeForLog(string message)
@@ -110,7 +137,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Logging
                 .Replace("\n", "\\n", StringComparison.Ordinal);
         }
 
-        /// <summary>File-only logger; writes every level (the file log has no level filter, matching the old behavior).</summary>
+        /// <summary>File-only logger; writes at or above <see cref="MinFileLogLevel"/> so hot-path
+        /// Debug/Trace don't do a synchronous locked append (the host log still gets all levels).</summary>
         private sealed class FileLogger : ILogger
         {
             private readonly JellyfinEnhancedFileLoggerProvider _provider;
@@ -121,7 +149,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Logging
                 where TState : notnull
                 => null;
 
-            public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None;
+            public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None && logLevel >= MinFileLogLevel;
 
             public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
             {

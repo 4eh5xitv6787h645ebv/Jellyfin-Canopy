@@ -15,6 +15,12 @@ interface OsdRating {
 
 const logPrefix = '🪼 Jellyfin Enhanced: OSD Rating:';
 const CONTAINER_ID = 'je-osd-rating-container';
+// PERF(R6/ENH-7): the RT critic chip's tomato glyphs were `url(assets/img/*.svg)`,
+// which resolve relative to /web/ and DO NOT exist anywhere in the tree — so the
+// chip rendered no icon and fired a 404. Inline them as plugin-owned, zero-network
+// data-URI SVGs (compile-time constants → trusted producers, no CDN/manifest).
+const FRESH_TOMATO_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMyIgcj0iOCIgZmlsbD0iI2Y5MzIwOCIvPjxwYXRoIGQ9Ik0xMiA1YzEtMiAzLTMgNS0zLTEgMi0yIDMtNCA0eiIgZmlsbD0iIzVhYTAyYyIvPjwvc3ZnPg==';
+const ROTTEN_TOMATO_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDNjMiAzIDYgMyA2IDcgMCAzIDIgNCAxIDctMiA0LTggNC0xMSAxLTMtMy0yLTYtMS04IDEtMiAzLTMgNS03eiIgZmlsbD0iIzZiOGUyMyIvPjwvc3ZnPg==';
 // Hot cache (per session) so each item is fetched once
 const ratingCache = new Map<string, OsdRating>();
 const pendingRatings = new Map<string, Promise<OsdRating>>();
@@ -80,7 +86,7 @@ async function fetchItemRatings(userId: string, itemId: string): Promise<OsdRati
   }
 }
 
-function ensureStyles(): void {
+export function ensureStyles(): void {
   if (document.getElementById('je-osd-rating-style')) return;
   const style = document.createElement('style');
   style.id = 'je-osd-rating-style';
@@ -92,8 +98,8 @@ function ensureStyles(): void {
     #${CONTAINER_ID} .je-star { font-family: 'Material Icons'; font-size: 16px; color: #ffc107; line-height: 1; }
     #${CONTAINER_ID} .je-text { font-size: 14px; color: inherit; font-weight: 600; line-height: 1; }
     #${CONTAINER_ID} .je-tomato { width: 16px; height: 16px; flex-shrink: 0; background-size: contain; background-repeat: no-repeat; background-position: center; display: inline-block; }
-    #${CONTAINER_ID} .je-tomato.fresh { background-image: url(assets/img/fresh.svg); }
-    #${CONTAINER_ID} .je-tomato.rotten { background-image: url(assets/img/rotten.svg); }
+    #${CONTAINER_ID} .je-tomato.fresh { background-image: url(${FRESH_TOMATO_DATA_URI}); }
+    #${CONTAINER_ID} .je-tomato.rotten { background-image: url(${ROTTEN_TOMATO_DATA_URI}); }
   `;
   document.head.appendChild(style);
 }

@@ -111,14 +111,39 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // worth of arr-side calendar fetches + dedup loops.
             const int maxCalendarRangeDays = 365;
             var requestedRange = (endDate - startDate).TotalDays;
+            bool capApplied = false;
             if (requestedRange > maxCalendarRangeDays)
             {
                 _logger.LogInformation($"Calendar range capped from {(int)requestedRange} days to {maxCalendarRangeDays} days.");
                 endDate = startDate.AddDays(maxCalendarRangeDays);
+                capApplied = true;
             }
 
-            var startIso = startDate.ToUniversalTime().ToString("o");
-            var endIso = endDate.ToUniversalTime().ToString("o");
+            // Local calendar-day bounds of the view (yyyy-MM-dd). The client sends these alongside
+            // the UTC instants so date-only releases (which carry no clock time) can be range-
+            // filtered by LOCAL day — a UTC-instant compare drops a midnight-UTC release whose local
+            // day is in view for any viewer off UTC (CRIT-1). Fall back to the UTC date portion when
+            // the params are absent/invalid, or when the abuse cap reshaped the requested range.
+            string startDayKey = startDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            string endDayKey = endDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            if (!capApplied
+                && Request.Query.TryGetValue("startDay", out var startDayValues) && IsDayKey(startDayValues.ToString())
+                && Request.Query.TryGetValue("endDay", out var endDayValues) && IsDayKey(endDayValues.ToString()))
+            {
+                startDayKey = startDayValues.ToString();
+                endDayKey = endDayValues.ToString();
+                if (string.CompareOrdinal(startDayKey, endDayKey) > 0)
+                {
+                    (startDayKey, endDayKey) = (endDayKey, startDayKey);
+                }
+            }
+
+            // Query the arr instances over a window widened by a day on each side so a date-only
+            // release whose LOCAL day intersects the view is RETURNED even though its midnight-UTC
+            // instant can sit up to a timezone offset outside [startDate,endDate]. The precise
+            // in-code filter (IsEventInView) trims the widened result back to the requested view.
+            var startIso = startDate.AddDays(-1).ToUniversalTime().ToString("o");
+            var endIso = endDate.AddDays(1).ToUniversalTime().ToString("o");
 
             DateTime? ParseDate(object? value)
             {
@@ -181,8 +206,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var radarrInstances = config.GetEnabledRadarrInstances();
             var ct = HttpContext.RequestAborted;
 
-            var sonarrTasks = sonarrInstances.Select(i => FetchSonarrCalendar(i, startIso, endIso, ParseDate, ct)).ToList();
-            var radarrTasks = radarrInstances.Select(i => FetchRadarrCalendar(i, startIso, endIso, startDate, endDate, ParseDate, AddRelease, ct)).ToList();
+            var sonarrTasks = sonarrInstances.Select((i, idx) => FetchSonarrCalendar(i, idx, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, ct)).ToList();
+            var radarrTasks = radarrInstances.Select((i, idx) => FetchRadarrCalendar(i, idx, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, AddRelease, ct)).ToList();
 
             var sonarrCalResults = await Task.WhenAll(sonarrTasks);
             var radarrCalResults = await Task.WhenAll(radarrTasks);
@@ -282,40 +307,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             //   2. HasFile=true (if one instance has the file downloaded, show that).
             // The losing candidate's InstanceName is preserved in AlsoInInstances so the UI
             // can show "also in: X, Y" context instead of silently erasing other instances.
-            // normalize ReleaseDate to a calendar-day
-            // bucket before using it in the dedup key. Different Sonarr/Radarr
-            // versions emit different precision (`...000Z` vs `Z`, airDate vs
-            // airDateUtc fallbacks with TZ drift); using the raw string fails
-            // dedup and surfaces duplicate events on a per-instance basis.
-            static string NormalizeDateForDedup(string? raw)
-            {
-                if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
-                if (DateTimeOffset.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
-                        out var dto))
-                {
-                    return dto.UtcDateTime.ToString("yyyy-MM-dd");
-                }
-                // Fallback: strip everything after the first 10 chars when it
-                // already looks like an ISO date prefix.
-                return raw.Length >= 10 ? raw.Substring(0, 10) : raw;
-            }
-
             var deduped = new Dictionary<string, ArrItem>();
             foreach (var evt in events)
             {
-                string dedupeKey;
-                var normalizedDate = NormalizeDateForDedup(evt.ReleaseDate);
-                if (evt.Source == nameof(ArrType.Sonarr))
-                {
-                    var seriesKey = evt.TvdbId?.ToString() ?? $"title:{evt.Title}";
-                    dedupeKey = $"sonarr|{seriesKey}|S{evt.SeasonNumber}E{evt.EpisodeNumber}|{normalizedDate}";
-                }
-                else
-                {
-                    var movieKey = evt.TmdbId?.ToString() ?? $"title:{evt.Title}";
-                    dedupeKey = $"radarr|{movieKey}|{evt.ReleaseType}|{normalizedDate}";
-                }
+                var dedupeKey = BuildDedupKey(evt);
 
                 if (!deduped.TryGetValue(dedupeKey, out var existing))
                 {
@@ -385,8 +380,59 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             return Ok(new { events, errors });
         }
 
+        /// <summary>True for a well-formed "yyyy-MM-dd" local-day key.</summary>
+        internal static bool IsDayKey(string? value)
+            => !string.IsNullOrEmpty(value)
+            && DateTime.TryParseExact(value, "yyyy-MM-dd",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out _);
+
+        /// <summary>
+        /// Whether a mapped calendar event falls within the requested view. Date-only releases
+        /// (Radarr cinema/digital/physical; Sonarr airDate fallback) carry no clock time, so they
+        /// are compared by their LOCAL calendar day against the client's local-day bounds — a
+        /// UTC-instant comparison would drop a midnight-UTC release whose local day intersects the
+        /// view for any viewer off UTC (CRIT-1). Genuine instants keep the exact UTC-window compare.
+        /// </summary>
+        internal static bool IsEventInView(
+            bool dateOnly, string? releaseLocalDay, DateTime releaseUtc,
+            DateTime startUtc, DateTime endUtc, string startDay, string endDay)
+        {
+            if (dateOnly)
+            {
+                return !string.IsNullOrEmpty(releaseLocalDay)
+                    && string.CompareOrdinal(releaseLocalDay, startDay) >= 0
+                    && string.CompareOrdinal(releaseLocalDay, endDay) <= 0;
+            }
+
+            return releaseUtc >= startUtc && releaseUtc <= endUtc;
+        }
+
+        // Cross-instance dedup key. A series tvdbId + S/E (or a movie tmdbId + release-type) already
+        // uniquely identifies the item, so the release date is intentionally NOT part of the key for
+        // the id path: a given episode/movie-release can't legitimately occur twice, and including the
+        // date could only false-split the same item across a UTC-midnight boundary — never a wrong
+        // merge. TvdbId/TmdbId are pre-normalized by ArrIdHelper.ToNullableId, so a present-but-0 id
+        // takes the title fallback. That fallback CANNOT prove two same-title rows are the same item,
+        // so it must carry discriminators (instance + year/air-date); otherwise two unmapped same-title
+        // shows or same-title movie remakes would collapse into one row and hide content (ARR-CS-2).
+        internal static string BuildDedupKey(ArrItem evt)
+        {
+            if (evt.Source == nameof(ArrType.Sonarr))
+            {
+                var seriesKey = evt.TvdbId?.ToString()
+                    ?? $"title:{evt.Title}|inst:{evt.InstanceName}|date:{evt.ReleaseDateLocal ?? evt.ReleaseDate}";
+                return $"sonarr|{seriesKey}|S{evt.SeasonNumber}E{evt.EpisodeNumber}";
+            }
+
+            var movieKey = evt.TmdbId?.ToString()
+                ?? $"title:{evt.Title}|inst:{evt.InstanceName}|year:{evt.Subtitle}";
+            return $"radarr|{movieKey}|{evt.ReleaseType}";
+        }
+
         private Task<(List<ArrItem> Items, string? Error)> FetchSonarrCalendar(
-            ArrInstance instance, string startIso, string endIso,
+            ArrInstance instance, int instanceIndex, string startIso, string endIso,
+            DateTime startDate, DateTime endDate, string startDayKey, string endDayKey,
             Func<object?, DateTime?> parseDate, CancellationToken ct)
         {
             return _arrFetch.FetchAndMapAsync<List<ArrItem>>(
@@ -399,8 +445,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     foreach (var episode in data.AsArray())
                     {
                         var series = episode?["series"];
-                        var airDate = parseDate((string?)episode?["airDateUtc"] ?? (string?)episode?["airDate"]);
+                        var airDateUtcRaw = (string?)episode?["airDateUtc"];
+                        var airDate = parseDate(airDateUtcRaw ?? (string?)episode?["airDate"]);
                         if (!airDate.HasValue) continue;
+                        // Genuine instant only when airDateUtc was present; the airDate fallback
+                        // is a calendar day with no broadcast time and must render date-only.
+                        var sonarrDateOnly = string.IsNullOrWhiteSpace(airDateUtcRaw);
 
                         string? seriesPosterUrl = null;
                         string? seriesBackdropUrl = null;
@@ -422,15 +472,28 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         var episodeNumber = (int?)episode?["episodeNumber"] ?? 0;
                         var episodeTitle = (string?)episode?["title"] ?? "Unknown Episode";
 
+                        var sonarrUtc = airDate.Value.ToUniversalTime();
+                        var (sonarrIso, sonarrLocal) = Helpers.Arr.ArrReleaseDate.Build(sonarrUtc, sonarrDateOnly);
+                        // Trim the day-widened arr query back to the requested view. A date-only
+                        // airDate is kept when its LOCAL day intersects the view; a genuine instant
+                        // (airDateUtc) keeps the exact UTC-window comparison (CRIT-1).
+                        if (!IsEventInView(sonarrDateOnly, sonarrLocal, sonarrUtc, startDate, endDate, startDayKey, endDayKey))
+                            continue;
+
                         items.Add(new ArrItem
                         {
-                            Id = episode?["id"]?.ToString(),
+                            // Namespace the per-instance row id by source + the instance's unique
+                            // position so two Sonarr instances that both number episodes from 1 —
+                            // even with an identical or blank display name — can't collide.
+                            Id = ArrIdHelper.NamespacedId(nameof(ArrType.Sonarr), instanceIndex, episode?["id"]),
                             Source = nameof(ArrType.Sonarr),
                             InstanceName = instance.Name,
                             Type = "Series",
                             Title = (string?)series?["title"] ?? "Unknown Series",
                             Subtitle = $"S{seasonNumber:D2}E{episodeNumber:D2} - {episodeTitle}",
-                            ReleaseDate = airDate.Value.ToUniversalTime().ToString("o"),
+                            ReleaseDate = sonarrIso,
+                            ReleaseDateLocal = sonarrLocal,
+                            DateOnly = sonarrDateOnly,
                             ReleaseType = "Episode",
                             HasFile = (bool?)episode?["hasFile"] ?? false,
                             Monitored = (bool?)episode?["monitored"] ?? false,
@@ -439,12 +502,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             EpisodeNumber = episodeNumber,
                             EpisodeTitle = episodeTitle,
                             Overview = (string?)episode?["overview"],
-                            TvdbId = (int?)series?["tvdbId"],
+                            TvdbId = ArrIdHelper.ToNullableId((int?)series?["tvdbId"]),
                             ImdbId = (string?)series?["imdbId"],
-                            TmdbId = (int?)series?["tmdbId"],
+                            TmdbId = ArrIdHelper.ToNullableId((int?)series?["tmdbId"]),
                             PosterUrl = seriesPosterUrl,
                             BackdropUrl = seriesBackdropUrl,
-                            EpisodeTvdbId = (int?)episode?["tvdbId"],
+                            EpisodeTvdbId = ArrIdHelper.ToNullableId((int?)episode?["tvdbId"]),
                             EpisodeImdbId = (string?)episode?["imdbId"],
                             RootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)series?["path"])
                         });
@@ -460,8 +523,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         private Task<(List<ArrItem> Items, string? Error)> FetchRadarrCalendar(
-            ArrInstance instance, string startIso, string endIso,
-            DateTime startDate, DateTime endDate,
+            ArrInstance instance, int instanceIndex, string startIso, string endIso,
+            DateTime startDate, DateTime endDate, string startDayKey, string endDayKey,
             Func<object?, DateTime?> parseDate,
             Action<Dictionary<string, DateTime>, string, object?> addRelease,
             CancellationToken ct)
@@ -519,22 +582,35 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         foreach (var kvp in releaseDates)
                         {
                             var releaseUtc = kvp.Value.ToUniversalTime();
-                            if (releaseUtc < startDate || releaseUtc > endDate) continue;
+                            // Radarr cinema/digital/physical releases are date-granularity by
+                            // definition — emit the date-only contract so the client buckets them
+                            // on the correct local day and prints no bogus clock time.
+                            var (releaseIso, releaseLocal) = Helpers.Arr.ArrReleaseDate.Build(releaseUtc, dateOnly: true);
+                            // Trim the day-widened arr query back to the view by LOCAL day: a
+                            // midnight-UTC release whose local day is in view must survive even
+                            // though its instant can sit a timezone offset outside [start,end] (CRIT-1).
+                            if (!IsEventInView(true, releaseLocal, releaseUtc, startDate, endDate, startDayKey, endDayKey))
+                                continue;
                             items.Add(new ArrItem
                             {
-                                Id = $"{movie?["id"]}-{kvp.Key}",
+                                // Namespace the per-instance row id (plus release-type) by source + the
+                                // instance's unique position so two Radarr instances numbering movies
+                                // from 1 — even with an identical or blank display name — can't collide.
+                                Id = ArrIdHelper.NamespacedId(nameof(ArrType.Radarr), instanceIndex, $"{movie?["id"]}-{kvp.Key}"),
                                 Source = nameof(ArrType.Radarr),
                                 InstanceName = instance.Name,
                                 Type = "Movie",
                                 Title = movieTitle,
                                 Subtitle = movieYear,
-                                ReleaseDate = releaseUtc.ToString("o"),
+                                ReleaseDate = releaseIso,
+                                ReleaseDateLocal = releaseLocal,
+                                DateOnly = true,
                                 ReleaseType = kvp.Key,
                                 HasFile = (bool?)movie?["hasFile"] ?? false,
                                 Monitored = (bool?)movie?["monitored"] ?? false,
                                 PosterUrl = posterUrl,
                                 BackdropUrl = backdropUrl,
-                                TmdbId = (int?)movie?["tmdbId"],
+                                TmdbId = ArrIdHelper.ToNullableId((int?)movie?["tmdbId"]),
                                 ImdbId = (string?)movie?["imdbId"],
                                 RootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)movie?["path"])
                             });

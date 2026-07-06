@@ -29,6 +29,38 @@
 - Check sync filter isn't too restrictive
 - Ensure tags exist in *arr
 
+**Sonarr series tags not appearing:**
+
+- Series are matched to your library by **TVDB id** first, then by **IMDb id**.
+  A series with neither a TVDB nor an IMDb id in Sonarr cannot be matched — check
+  the series' provider ids in Sonarr.
+
+### Calendar Icons or Links Wrong Across Instances
+
+If a show or movie exists in **multiple** Sonarr/Radarr instances and its calendar
+event shows the wrong instance icon or opens the wrong instance, this is fixed —
+events are now disambiguated per instance. Make sure each instance has a distinct
+**Name** in the plugin settings.
+
+### *arr URL Blocked (SSRF Protection)
+
+The plugin guards every request it makes to a configured *arr URL against
+server-side request forgery (SSRF):
+
+- **Cloud-metadata and link-local addresses are blocked** (e.g. `169.254.169.254`
+  and the `169.254.0.0/16` range) — a malicious or misconfigured URL can't be used
+  to reach a cloud provider's metadata service.
+- **Loopback (`127.0.0.1`, `::1`) and private LAN ranges (`10.0.0.0/8`,
+  `192.168.0.0/16`, `172.16.0.0/12`) stay allowed** by design, because Sonarr/Radarr
+  commonly run on the same host or LAN as Jellyfin.
+- A hostname that **cannot be resolved** now fails closed (the request is blocked)
+  rather than being allowed through, and the actually-resolved IP is re-checked at
+  connect time to defeat DNS-rebinding.
+
+If a legitimate *arr instance is being blocked, confirm its address is a normal
+loopback/LAN/public address and that its hostname resolves from the Jellyfin
+server.
+
 ### Calendar Not Loading
 
 **Check Prerequisites:**

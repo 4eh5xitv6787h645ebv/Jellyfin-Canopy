@@ -157,6 +157,22 @@ export function shouldFilterSurface(surface: string): boolean {
     }
 }
 
+/**
+ * Whether the native page scan should run AT ALL for a page surface. True if the
+ * page surface itself is filterable, OR a scoped home-section surface (Next Up /
+ * Continue Watching) is enabled — those sections render on the home page, which
+ * classifies as the 'library' surface, so the scan must proceed even when Filter
+ * Library is off (otherwise the per-card CW/Next-Up gates never run). The scan
+ * itself then gates page-scope hides on {@link shouldFilterSurface} while letting
+ * the card-scope gates fire regardless.
+ */
+export function shouldProcessNativeSurface(pageSurface: string): boolean {
+    const settings = getSettings();
+    if (!settings.enabled) return false;
+    if (shouldFilterSurface(pageSurface)) return true;
+    return settings.filterNextUp || settings.filterContinueWatching;
+}
+
 // ============================================================
 // Event emission
 // ============================================================

@@ -125,6 +125,13 @@ Display synced *arr tags as clickable links on item detail pages.
 
 Neither service is mandatory — tags sync from whichever you set up. A movie-only server with just Radarr, or a TV-only server with just Sonarr, works fine; the sync task processes each service independently and simply skips the one you haven't configured.
 
+!!! note "How series are matched"
+
+    Sonarr series tags are matched to your Jellyfin library by **TVDB id**
+    (Sonarr's canonical, always-present id), falling back to **IMDb id**. This
+    means TVDB-scraped libraries — series that have no IMDb id — now sync their
+    tags reliably. Radarr movies are matched by **TMDB id** as before.
+
 **Configuration:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
@@ -141,6 +148,8 @@ Neither service is mandatory — tags sync from whichever you set up. A movie-on
 - Default: `JE Arr Tag: `
 - Prefix added to synced tags
 - Helps identify plugin-managed tags
+- Leaving the field blank falls back to the same `JE Arr Tag: ` default on both
+  the write and read sides, so cleared prefixes no longer leave orphaned tags
 
 **Clear Old Tags:**
 
@@ -280,6 +289,21 @@ View upcoming releases from Sonarr and Radarr in a calendar interface.
 - Click event to view details
 - Filter by Sonarr/Radarr
 - Search functionality
+
+!!! note "Accuracy with multiple instances and date-only releases"
+
+    - **Multiple instances** — when the same show or movie exists in more than
+      one Sonarr/Radarr instance, its calendar events are disambiguated **per
+      instance**, so each event keeps the correct instance icon and click-through
+      even when two instances number their items identically.
+    - **Date-only releases** — a release with no exact air time (Radarr cinema/
+      digital/physical dates, and the Sonarr air-date fallback) is placed on its
+      intended **local calendar day** with no spurious clock time, instead of
+      drifting a day earlier for viewers west of UTC. Genuine air-time releases
+      (Sonarr `airDateUtc`) are still shown in your local time.
+    - **Duplicate collapsing** is deterministic — the same release always
+      collapses to the same single event regardless of which instance or date
+      order it was fetched in.
 
 ---
 

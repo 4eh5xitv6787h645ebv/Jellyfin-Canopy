@@ -11,9 +11,19 @@
 # Requirements: docker (compose v2), curl, jq. ffmpeg is used from the host
 # when available, otherwise from jellyfin-ffmpeg inside the pulled image.
 #
+# Optional Seerr/TMDB seeding (bare by default — no secrets in the repo/CI
+# unless supplied): export any of these before running to also wire the
+# TMDB and Jellyseerr integration the security specs exercise. When unset the
+# seed is bare and those specs SKIP (see e2e/fixtures/seerr.ts):
+#   TMDB_API_KEY               a TMDB v3 API key            -> TmdbEnabled
+#   JELLYSEERR_URL             a reachable Jellyseerr URL    \
+#   JELLYSEERR_API_KEY         its API key                   > JellyseerrEnabled
+#   JELLYSEERR_RESPECT_PARENTAL  true|false (default true) — parental gating
+#
 # Usage:
 #   dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release
-#   bash e2e/docker/seed.sh                # default port 8100
+#   bash e2e/docker/seed.sh                # default port 8100 (bare)
+#   TMDB_API_KEY=... JELLYSEERR_URL=... JELLYSEERR_API_KEY=... bash e2e/docker/seed.sh
 #   JF_BASE_URL=http://localhost:8100 npm run e2e
 #   docker compose -f e2e/docker/compose.yml down -v
 set -euo pipefail
@@ -67,10 +77,14 @@ else
 fi
 
 make_movie() { # <filename> <tone-hz>
+    # Tag the audio stream as English so the language-tags renderer has a real
+    # language to stamp (a bare testsrc clip reports "und", which the renderer
+    # skips). Genres + a community rating are added post-scan via the API below.
     run_ffmpeg \
         -f lavfi -i "testsrc2=duration=5:size=640x360:rate=24" \
         -f lavfi -i "sine=frequency=$2:duration=5" \
-        -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest -y "$1"
+        -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest \
+        -metadata:s:a:0 language=eng -y "$1"
 }
 
 log "generating test movies"
@@ -134,16 +148,50 @@ api POST "/Library/VirtualFolders?name=Movies&collectionType=movies&paths=%2Fmed
 log "creating user ${USER_NAME}"
 api POST /Users/New "{\"Name\":\"${USER_NAME}\",\"Password\":\"${USER_PASS}\"}" >/dev/null
 
-# ── 5. plugin feature flags + scan wait ──────────────────────────────────────
+# ── 5. plugin feature flags (+ optional TMDB/Seerr) + scan wait ──────────────
 log "enabling the plugin features the specs exercise"
+
+# Optional Seerr/TMDB integration — bare unless the env vars are supplied
+# (never hardcode a key; CI passes these as secrets when it wants the security
+# specs to RUN rather than SKIP). See e2e/fixtures/seerr.ts for the gate.
+TMDB_API_KEY="${TMDB_API_KEY:-}"
+JELLYSEERR_URL="${JELLYSEERR_URL:-}"
+JELLYSEERR_API_KEY="${JELLYSEERR_API_KEY:-}"
+case "${JELLYSEERR_RESPECT_PARENTAL:-true}" in
+    false|FALSE|0|no) JELLYSEERR_RESPECT_PARENTAL=false ;;
+    *) JELLYSEERR_RESPECT_PARENTAL=true ;;
+esac
+
 PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration" \
-    | jq '.QualityTagsEnabled = true
+    | jq --arg tmdb "${TMDB_API_KEY}" \
+         --arg seerrUrl "${JELLYSEERR_URL}" \
+         --arg seerrKey "${JELLYSEERR_API_KEY}" \
+         --argjson seerrParental "${JELLYSEERR_RESPECT_PARENTAL}" \
+        '.QualityTagsEnabled = true
         | .GenreTagsEnabled = true
         | .LanguageTagsEnabled = true
         | .RatingTagsEnabled = true
         | .RandomButtonEnabled = true
-        | .HiddenContentEnabled = true')"
+        | .HiddenContentEnabled = true
+        | (if $tmdb != "" then .TMDB_API_KEY = $tmdb else . end)
+        | (if ($seerrUrl != "" and $seerrKey != "")
+             then .JellyseerrUrls = $seerrUrl
+                | .JellyseerrApiKey = $seerrKey
+                | .JellyseerrEnabled = true
+                | .JellyseerrRespectParentalRatings = $seerrParental
+             else . end)')"
 api POST "/Plugins/${PLUGIN_ID}/Configuration" "${PLUGIN_CONFIG}" >/dev/null
+
+if [ -n "${TMDB_API_KEY}" ]; then
+    log "optional: TMDB configured (TmdbEnabled)"
+else
+    log "optional: TMDB not configured — TMDB/reviews specs will SKIP"
+fi
+if [ -n "${JELLYSEERR_URL}" ] && [ -n "${JELLYSEERR_API_KEY}" ]; then
+    log "optional: Jellyseerr configured (${JELLYSEERR_URL}, respectParental=${JELLYSEERR_RESPECT_PARENTAL})"
+else
+    log "optional: Jellyseerr not configured — Seerr specs will SKIP"
+fi
 
 log "waiting for the library scan to index the movies"
 ADMIN_ID="$(api GET /Users | jq -r --arg name "${ADMIN_USER}" '.[] | select(.Name == $name) | .Id')"
@@ -154,6 +202,29 @@ for _ in $(seq 1 60); do
     sleep 5
 done
 [ "${MOVIES}" -ge 3 ] || fail "library scan indexed only ${MOVIES} movies"
+
+# ── 6. per-movie metadata so every enabled tag family can render ─────────────
+# The generated testsrc clips carry no genre or rating, so the genre- and
+# rating-tags renderers had nothing to stamp (only quality + language, which
+# come from the media itself, tagged). Give each movie real Genres and a
+# CommunityRating via the item-update API so the per-family tag assertions in
+# tags.spec.ts / non-admin.spec.ts stay meaningful on this bare seed.
+log "seeding genre + rating metadata so every tag family renders"
+MOVIE_IDS="$(api GET "/Items?IncludeItemTypes=Movie&Recursive=true&userId=${ADMIN_ID}" | jq -r '.Items[].Id')"
+i=0
+for MID in ${MOVIE_IDS}; do
+    # Rotate a genre set and vary the community rating a little per movie; jq
+    # picks both from the loop index so no fragile shell array-splitting.
+    DTO="$(api GET "/Users/${ADMIN_ID}/Items/${MID}")"
+    PATCHED="$(printf '%s' "${DTO}" | jq \
+        --argjson idx "$((i % 4))" \
+        '([["Action","Adventure"],["Comedy","Drama"],["Science Fiction","Thriller"],["Documentary"]][$idx]) as $g
+         | .Genres = $g
+         | .CommunityRating = (6.5 + ($idx * 0.5))')"
+    api POST "/Items/${MID}" "${PATCHED}" >/dev/null || fail "could not update metadata for item ${MID}"
+    i=$((i + 1))
+done
+log "updated metadata on ${i} movies (genres + community rating; audio lang baked at encode)"
 
 log "ready: ${BASE} (admin=${ADMIN_USER}, user=${USER_NAME}, ${MOVIES} movies)"
 log "run the suite with: JF_BASE_URL=${BASE} npm run e2e"

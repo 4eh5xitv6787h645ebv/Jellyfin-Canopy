@@ -19,15 +19,36 @@
 
 import { JE } from '../globals';
 import { LIVE, on } from './live';
+import { applyDeliveryFlagSanitization } from './delivery-flags';
 import type { PluginConfig } from '../types/je';
 
 const logPrefix = '🪼 Jellyfin Enhanced: Live Config:';
+
+// (CORE-9) Monotonic refresh counter — only the LAST-INITIATED refresh may
+// mutate JE.pluginConfig, so two rapid saves can't settle by completion order
+// (last-to-finish, possibly the older snapshot). The key-set of the previous
+// payload from each source lets us PRUNE keys that vanished server-side (plain
+// Object.assign never deletes).
+let refreshSeq = 0;
+let lastPublicKeys: string[] = [];
+let lastPrivateKeys: string[] = [];
+
+/** Prune keys that the previous payload from this source owned but the new one dropped. */
+function prunePayloadKeys(previousKeys: string[], next: object): void {
+    const config = JE.pluginConfig as Record<string, unknown>;
+    for (const key of previousKeys) {
+        if (!(key in next)) delete config[key];
+    }
+}
 
 /**
  * Refetch the plugin config from the server and merge it into JE.pluginConfig.
  * Merges IN PLACE (Object.assign) to preserve the object's reference identity —
  * js/plugin.js and many modules hold JE.pluginConfig by reference, matching the
- * loader's own `Object.assign(JE.pluginConfig, privateConfig)` pattern.
+ * loader's own `Object.assign(JE.pluginConfig, privateConfig)` pattern. Guards
+ * against out-of-order settle (CORE-9), prunes vanished keys per source, and
+ * re-applies the delivery-flag sanitization so a hot-reload can't resurface
+ * stale *UseCustomTabs/*UsePluginPages flags (INIT-1).
  */
 async function refreshPluginConfig(): Promise<void> {
     const api = JE.core.api;
@@ -36,14 +57,25 @@ async function refreshPluginConfig(): Promise<void> {
         return;
     }
 
+    const seq = ++refreshSeq; // (CORE-9) last-initiated wins
+
     // Cache-buster: bypass any intermediary/browser caching so the very next
     // read reflects the admin's just-saved values.
     const bust = `?_je=${Date.now()}`;
 
     try {
         const pub = await api.plugin(`/public-config${bust}`, { skipCache: true });
+        if (seq !== refreshSeq) return; // superseded by a newer refresh
         if (pub && typeof pub === 'object') {
+            prunePayloadKeys(lastPublicKeys, pub); // (CORE-9) drop vanished public keys
             Object.assign(JE.pluginConfig, pub as PluginConfig);
+            lastPublicKeys = Object.keys(pub);
+            // (INIT-1/LC-1) Re-zero the stale UseCustomTabs/UsePluginPages flags
+            // IMMEDIATELY — the public payload we just merged re-wrote them to
+            // their pre-uninstall `true`. Deferring the sanitize to the end of the
+            // refresh leaves a /private-config round-trip window where a drawer
+            // rebuild would observe them true and skip re-injecting the nav item.
+            applyDeliveryFlagSanitization();
         }
     } catch (err) {
         console.error(`${logPrefix} failed to refetch public-config:`, err);
@@ -54,12 +86,20 @@ async function refreshPluginConfig(): Promise<void> {
     // endpoint returns an empty object rather than 403), so this is best-effort.
     try {
         const priv = await api.plugin(`/private-config${bust}`, { skipCache: true });
+        if (seq !== refreshSeq) return;
         if (priv && typeof priv === 'object') {
+            prunePayloadKeys(lastPrivateKeys, priv);
             Object.assign(JE.pluginConfig, priv as Record<string, unknown>);
+            lastPrivateKeys = Object.keys(priv);
         }
     } catch (err) {
         console.debug(`${logPrefix} private-config not available (non-admin?):`, err);
     }
+
+    // (INIT-1) Re-force stale UseCustomTabs/UsePluginPages flags back to false for
+    // any delivery plugin that is not installed — the raw server payload we just
+    // merged still stores the pre-uninstall `true`.
+    applyDeliveryFlagSanitization();
 }
 
 on(LIVE.CONFIG_CHANGED, () => {

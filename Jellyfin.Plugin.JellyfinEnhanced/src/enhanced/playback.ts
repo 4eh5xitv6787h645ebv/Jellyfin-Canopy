@@ -5,6 +5,8 @@
 
 import { JE } from '../globals';
 import { toast } from '../core/ui-kit';
+import { onBodyMutation } from '../core/dom-observer';
+import type { BodySubscriberHandle } from '../types/je';
 
 /**
  * Finds the currently active video element on the page.
@@ -462,15 +464,21 @@ JE.cycleAudioTrack = () => {
     }
 };
 
+// ~3s at 120ms: the aspect-ratio action sheet always opens well within this.
+const ASPECT_CYCLE_MAX_ATTEMPTS = 25;
+
 /**
  * Cycles through video aspect ratio modes (Auto, Cover, Fill).
  */
-const performAspectCycle = () => {
+const performAspectCycle = (attempts = 0) => {
     const opts = [...document.querySelectorAll<HTMLElement>('.actionSheetContent button[data-id="auto"], .actionSheetContent button[data-id="cover"], .actionSheetContent button[data-id="fill"]')];
 
     if (!opts.length) {
+        // PERF: bound the self-reschedule so a never-opening action sheet can't
+        // poll forever (was an unbounded 120ms loop, leak-guard-allowlisted).
+        if (attempts >= ASPECT_CYCLE_MAX_ATTEMPTS) return;
         document.querySelector<HTMLElement>('.actionSheetContent button[data-id="aspectratio"]')?.click();
-        setTimeout(performAspectCycle, 120);
+        setTimeout(() => performAspectCycle(attempts + 1), 120);
         return;
     }
 
@@ -489,53 +497,94 @@ JE.cycleAspect = () => {
     JE.openSettings!(performAspectCycle);
 };
 
-let skipButtonObserver: MutationObserver | null = null;
+// The v12 client mounts the intro/outro skip button at document.body level
+// (jellyfin-web src/components/playback/skipsegment.ts:
+// `document.body.insertAdjacentHTML('beforeend', …)`), OUTSIDE
+// .videoPlayerContainer. Scoping the observer to the player container therefore
+// meant it never saw the button and auto-skip stopped firing. Detection now
+// rides the shared STRUCTURAL body multiplexer (childList only — never a
+// body-wide attribute observer, R3); activation (the hide/skip-button-hidden
+// class toggle) is watched with an attribute observer SCOPED to the button node.
+let skipButtonBodyHandle: BodySubscriberHandle | null = null;
+let skipButtonClassObserver: MutationObserver | null = null;
+let watchedSkipButton: HTMLElement | null = null;
 
 /**
- * Initializes a MutationObserver to watch for the skip button's appearance.
+ * Evaluate the currently-visible skip button and auto-click it when the user's
+ * matching auto-skip toggle is on. PERF(R8): one presence probe per call.
+ */
+function evaluateAutoSkip(): void {
+    const skipButton = document.querySelector('button.skip-button.emby-button:not(.skip-button-hidden):not(.hide)');
+    if (skipButton && !JE.state!.skipToastShown) {
+        const buttonText = skipButton.textContent || '';
+        if (JE.currentSettings!.autoSkipIntro && buttonText.includes('Skip Intro')) {
+            (skipButton as HTMLElement).click();
+            toast(JE.t!('toast_auto_skipped_intro'));
+            JE.state!.skipToastShown = true;
+        } else if (JE.currentSettings!.autoSkipOutro && buttonText.includes('Skip Outro')) {
+            (skipButton as HTMLElement).click();
+            toast(JE.t!('toast_auto_skipped_outro'));
+            JE.state!.skipToastShown = true;
+        }
+    } else if (!skipButton) {
+        JE.state!.skipToastShown = false; // Reset when the button is gone
+    }
+}
+
+/**
+ * Attach (or re-point) an element-scoped attribute observer to the skip button
+ * so its show/hide class toggle activates auto-skip — WITHOUT any body-wide
+ * attribute observation (PERF(R3)). Called from the structural body multiplexer,
+ * so it also handles the button's initial insertion at document.body level.
+ */
+function wireSkipButtonWatcher(): void {
+    const button = document.querySelector<HTMLElement>('button.skip-button');
+    if (!button) {
+        // Button removed (playback ended / OSD teardown) — drop the stale watcher.
+        if (skipButtonClassObserver) { skipButtonClassObserver.disconnect(); skipButtonClassObserver = null; }
+        watchedSkipButton = null;
+        return;
+    }
+    if (button !== watchedSkipButton) {
+        if (skipButtonClassObserver) skipButtonClassObserver.disconnect();
+        watchedSkipButton = button;
+        // PERF(R3): attribute observation scoped to the button node, never body-wide.
+        skipButtonClassObserver = new MutationObserver(() => evaluateAutoSkip());
+        skipButtonClassObserver.observe(button, { attributes: true, attributeFilter: ['class'] });
+    }
+    // The insertion mutation itself may already present an active button.
+    evaluateAutoSkip();
+}
+
+/**
+ * Initializes the skip-button watcher. Rides the shared structural body observer
+ * to detect the button (which the v12 client mounts at document.body, not inside
+ * the player container), then scopes attribute observation to the button node.
+ * events.ts re-invokes this each video-page tick (idempotent) and JE.stopAutoSkip
+ * tears it down on leave.
  */
 JE.initializeAutoSkipObserver = () => {
-    if (skipButtonObserver) {
-        return; // Observer is already running
+    if (skipButtonBodyHandle) {
+        return; // Watcher is already running
     }
-    // PERF(R8): one presence probe per mutation BATCH — the old callback ran
-    // document.querySelector once per mutation record inside the loop. The
-    // observer itself is playback-scoped: events.ts attaches it on video-page
-    // entry and JE.stopAutoSkip disconnects it on leave.
-    skipButtonObserver = new MutationObserver(() => {
-        const skipButton = document.querySelector('button.skip-button.emby-button:not(.skip-button-hidden):not(.hide)');
-        if (skipButton && !JE.state!.skipToastShown) {
-            const buttonText = skipButton.textContent || '';
-            if (JE.currentSettings!.autoSkipIntro && buttonText.includes('Skip Intro')) {
-                (skipButton as HTMLElement).click();
-                toast(JE.t!('toast_auto_skipped_intro'));
-                JE.state!.skipToastShown = true;
-            } else if (JE.currentSettings!.autoSkipOutro && buttonText.includes('Skip Outro')) {
-                (skipButton as HTMLElement).click();
-                toast(JE.t!('toast_auto_skipped_outro'));
-                JE.state!.skipToastShown = true;
-            }
-        } else if (!skipButton) {
-            JE.state!.skipToastShown = false; // Reset when the button is gone
-        }
-    });
-
-    skipButtonObserver.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['class', 'style']
-    });
+    skipButtonBodyHandle = onBodyMutation('je-auto-skip', () => wireSkipButtonWatcher());
+    // The button may already be mounted when we (re-)enter the video page.
+    wireSkipButtonWatcher();
 };
 
 /**
- * Disconnects the MutationObserver for the skip button.
+ * Disconnects the skip-button watcher (shared body subscriber + scoped observer).
  */
 JE.stopAutoSkip = () => {
-    if (skipButtonObserver) {
-        skipButtonObserver.disconnect();
-        skipButtonObserver = null;
+    if (skipButtonBodyHandle) {
+        skipButtonBodyHandle.unsubscribe();
+        skipButtonBodyHandle = null;
     }
+    if (skipButtonClassObserver) {
+        skipButtonClassObserver.disconnect();
+        skipButtonClassObserver = null;
+    }
+    watchedSkipButton = null;
 };
 
 // --- Long Press Speed Control ---

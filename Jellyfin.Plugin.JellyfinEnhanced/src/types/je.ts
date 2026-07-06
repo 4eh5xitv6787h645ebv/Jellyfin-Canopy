@@ -47,10 +47,28 @@ export interface CacheManager {
     forceSave(): void;
 }
 
+/**
+ * The Map subset every in-memory item cache uses, backed by a size-capped +
+ * lazily-TTL-swept LRU (src/core/bounded-cache.ts). Drop-in for the raw
+ * `Map<K, V>` these caches used to be: `get`/`has` expire entries on read,
+ * `set` evicts the least-recently-used entry past the cap, and `values()`
+ * yields only live (non-expired) entries.
+ */
+export interface BoundedCache<K, V> {
+    get(key: K): V | undefined;
+    set(key: K, value: V): void;
+    has(key: K): boolean;
+    delete(key: K): boolean;
+    clear(): void;
+    readonly size: number;
+    keys(): IterableIterator<K>;
+    values(): IterableIterator<V>;
+}
+
 /** Shared in-memory hot cache buckets used by the tag renderers. */
 export interface HotCache {
     ttl?: number;
-    [bucket: string]: Map<string, unknown> | number | undefined;
+    [bucket: string]: BoundedCache<string, unknown> | number | undefined;
 }
 
 // ── Core surface contracts (frozen until the facade phase) ─────────────────
@@ -383,7 +401,7 @@ export interface TagRendererContext {
     logPrefix: string;
     containerClass: string;
     taggedAttr: string;
-    readonly hot: Map<string, unknown> | null;
+    readonly hot: BoundedCache<string, unknown> | null;
     readonly cacheTtl: number;
     readonly localStorageEnabled: boolean;
     getPersistent(itemId: string): unknown;
@@ -536,6 +554,13 @@ export interface JEGlobal extends JellyfinEnhancedPublicApi {
     _cacheManager?: CacheManager;
     _hotCache?: HotCache;
     /**
+     * The retained pause-screen singleton (enhanced/pausescreen.ts). Held so a
+     * re-init (config hot-reload / account switch) can tear the prior instance
+     * down via destroy() before constructing a new one — instead of stacking a
+     * duplicate overlay + capturing keydown listener each time.
+     */
+    _pauseScreenInstance?: { destroy(): void };
+    /**
      * PERF(R7): in-flight tag-cache GET started by js/plugin.js as soon as
      * public config lands (boot Stage 1), so the tag pipeline's init awaits an
      * ALREADY-STARTED fetch instead of serializing it behind bundle boot.
@@ -543,6 +568,12 @@ export interface JEGlobal extends JellyfinEnhancedPublicApi {
      * back to its own fetch when absent. Resolves null on fetch failure.
      */
     _tagCachePrefetch?: Promise<unknown> | null;
+    /**
+     * Delivery-plugin (Custom Tabs / Plugin Pages) install state cached by
+     * js/plugin.js at boot; consumed by src/core/delivery-flags.ts to re-zero the
+     * stale `*UseCustomTabs`/`*UsePluginPages` flags after every live-config merge.
+     */
+    _deliveryPluginsInstalled?: { customTabs: boolean; pluginPages: boolean };
     CONFIG?: { TOAST_DURATION?: number; [key: string]: unknown };
     themer?: {
         getThemeVariables?: () => { secondaryBg?: string; primaryAccent?: string; blur?: string };

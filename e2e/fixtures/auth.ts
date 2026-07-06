@@ -26,27 +26,78 @@ export type Role = keyof typeof USERS;
 // Expected browser noise on a stock Jellyfin 12 + JE session; anything NOT
 // matching one of these is a real error and fails the spec:
 //   - favicon / optional-asset fetch failures
-//   - the dead legacy websocket the v12 client still probes
+//   - the dead legacy websocket the v12 client still probes at /socket (403)
 //   - transient connection errors while the app boots
 //   - media autoplay policy warnings
 //   - AbortError from cancelled fetches on fast navigation
-//   - 401/403/404 resource logs from EXPECTED authz probes (e.g. a non-admin
-//     session touching an admin endpoint and degrading gracefully)
+//   - Chromium's generic "Failed to load resource … 40x" line, which carries
+//     NO url and so cannot be scoped here — kept only as text-noise
+//     suppression; the real signal for a broken plugin endpoint now comes from
+//     the URL-aware unexpected4xx() detector below.
 const CONSOLE_NOISE: RegExp[] = [
     /favicon/i,
-    /WebSocket/i,
+    // Narrowed from a blanket /WebSocket/i to the dead legacy apiclient probe:
+    // v12 keeps opening `wss://host/socket`, which 403s by design
+    // (docs/v12-platform.md §"WebSocket / server messages"). A WebSocket error
+    // to any OTHER url is a real failure and is no longer swallowed.
+    /WebSocket.*\/socket/i,
     /ERR_CONNECTION/i,
     /autoplay/i,
     /AbortError/i,
     /Failed to load resource: the server responded with a status of 40[134]/i,
 ];
 
-/** Console/pageerror sink with noise filtering. */
+// A failed response is "expected" only when its url matches one of these
+// known-legacy / authz-degrade probes. Everything else surfaced by
+// unexpected4xx() is a real 4xx from a plugin endpoint and fails the spec.
+//   - /socket                  : the dead legacy websocket handshake (403)
+//   - favicon                  : optional favicon asset
+//   - cast_sender / gstatic cast: Google Cast sender SDK, absent in the
+//                                 headless test env
+//   - /JellyfinEnhanced/admin/ : RequiresElevation endpoints a non-admin
+//                                 session legitimately hits and degrades on
+//                                 (bare 403 — docs/v12-platform.md §5)
+//   - /Plugins (bare list)     : the core Jellyfin plugin-list endpoint JE
+//                                 probes at boot (js/plugin.js) to detect the
+//                                 Custom Tabs / Plugin Pages delivery plugins.
+//                                 It is admin-gated, so a non-admin session gets
+//                                 a 403 that JE catches and degrades on (leaves
+//                                 the delivery flags as reported). Same
+//                                 authz-degrade shape as /JellyfinEnhanced/admin/.
+//                                 Scoped to the bare list — /Plugins/{id}/… is
+//                                 NOT matched, so a broken per-plugin call still
+//                                 surfaces.
+// Config-page-only chrome noise (admin dashboard branding previews, the admin's
+// absent avatar, jellyfin-web's own dashboard pageerror) is NOT listed here — it
+// is scoped locally in settings-persist.spec.ts (the only spec that enters the
+// dashboard) so this web-client net stays tight for every other spec.
+const ALLOWED_4XX_URL: RegExp[] = [
+    /\/socket(\?|$)/i,
+    /favicon/i,
+    /cast_sender|gstatic\.com\/cast/i,
+    /\/JellyfinEnhanced\/admin\//i,
+    /\/Plugins(\?|$)/i,
+];
+
+/** A response whose HTTP status was an error (>= 400). */
+export interface FailedResponse {
+    url: string;
+    status: number;
+}
+
+/** Console/pageerror sink with noise filtering + a URL-aware 4xx detector. */
 export interface ConsoleErrors {
     /** Every collected console error / pageerror text. */
     all: string[];
     /** Errors that are NOT on the noise whitelist — must be empty. */
     real(): string[];
+    /**
+     * 4xx responses whose url is NOT on the ALLOWED_4XX_URL allowlist — a real
+     * broken plugin endpoint. Complements real(): Chromium's generic 40x
+     * console text has no url, so this URL-scoped detector is what actually
+     * catches a bad endpoint. Must be empty.
+     */
+    unexpected4xx(): FailedResponse[];
     /** Drop everything collected so far (used to discard pre-login noise). */
     reset(): void;
 }
@@ -58,23 +109,52 @@ interface Fixtures {
 export const test = base.extend<Fixtures>({
     consoleErrors: async ({ page }, use) => {
         const all: string[] = [];
+        const failed: FailedResponse[] = [];
         page.on('console', (message) => {
             if (message.type() === 'error') all.push(message.text());
         });
         page.on('pageerror', (error) => {
             all.push(`pageerror: ${error.message}`);
         });
+        // URL-aware failed-response recorder: a 4xx's console text is generic and
+        // url-less, so scope the safety net by RESPONSE url here instead.
+        // requestfailed (net-level aborts) is deliberately NOT wired — a
+        // cancelled fetch on fast navigation would false-positive; a genuinely
+        // broken endpoint answers with a 4xx response, which this captures.
+        page.on('response', (response) => {
+            const status = response.status();
+            if (status >= 400) failed.push({ url: response.url(), status });
+        });
         await use({
             all,
             real: () => all.filter((text) => !CONSOLE_NOISE.some((rx) => rx.test(text))),
+            unexpected4xx: () =>
+                failed.filter(
+                    (r) => r.status < 500 && !ALLOWED_4XX_URL.some((rx) => rx.test(r.url))
+                ),
             reset: () => {
                 all.length = 0;
+                failed.length = 0;
             },
         });
     },
 });
 
 export { expect };
+
+/**
+ * Assert a spec produced no runtime errors: neither an un-whitelisted console
+ * error / pageerror (real()) NOR a 4xx from a non-allowlisted url
+ * (unexpected4xx()). One shared call so every spec gets the tightened net and
+ * it cannot drift per-spec.
+ */
+export function assertNoRuntimeErrors(consoleErrors: ConsoleErrors): void {
+    expect(consoleErrors.real(), 'unexpected console errors').toEqual([]);
+    expect(
+        consoleErrors.unexpected4xx(),
+        'unexpected 4xx responses from plugin endpoints'
+    ).toEqual([]);
+}
 
 /** True when the stored credentials carry a signed-in server session. */
 async function hasStoredSession(page: Page): Promise<boolean> {

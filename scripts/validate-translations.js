@@ -96,11 +96,106 @@ function getAvailableLanguages() {
 }
 
 /**
- * Extract placeholders from a translation string
+ * Extract placeholders from a translation string.
+ *
+ * Two token shapes must stay identical between the base and every locale:
+ *   - Icon tokens: `{{icon:name}}` — the FULL token is captured so a dropped,
+ *     renamed, or malformed (single-brace `{{icon:name}`) token becomes a
+ *     placeholder-set mismatch against the base instead of passing silently.
+ *   - Simple params: `{name}` / `{count}` / numbered `{0}`. The colon inside an
+ *     icon token stops this pattern, so a well-formed `{{icon:x}}` never yields a
+ *     spurious `{x}` hit.
+ *
+ * Non-string input returns `[]` so callers can't crash on a non-string value.
  */
 function extractPlaceholders(text) {
-    const matches = text.match(/\{[a-zA-Z_][a-zA-Z0-9_]*\}/g);
-    return matches ? [...new Set(matches)].sort() : [];
+    if (typeof text !== 'string') return [];
+    const icons = text.match(/\{\{icon:[a-zA-Z]+\}\}/g) || [];
+    const simple = text.match(/\{[a-zA-Z0-9_]+\}/g) || [];
+    return [...new Set([...icons, ...simple])].sort();
+}
+
+/**
+ * Validate a translation object against the base translation object.
+ *
+ * Pure: no disk access, no logging — it collects and returns errors/warnings so
+ * the logic is unit-testable on synthetic in-memory data. Every per-key check
+ * (key parity, placeholder parity, empty/non-string values) routes through here.
+ *
+ * Errors (fail CI): missing keys, missing icon/curly placeholders, empty values,
+ * non-string values. Warnings (non-fatal): extra keys, extra placeholders.
+ *
+ * @param {Record<string, unknown>} baseTranslation - base (en) key/value map
+ * @param {Record<string, unknown>} translation - target locale key/value map
+ * @returns {{ errors: string[], warnings: string[] }}
+ */
+function validateEntries(baseTranslation, translation) {
+    const errors = [];
+    const warnings = [];
+    const baseKeys = Object.keys(baseTranslation).sort();
+    const translationKeys = Object.keys(translation).sort();
+
+    // Check for missing keys
+    const missingKeys = baseKeys.filter(key => !translationKeys.includes(key));
+    if (missingKeys.length > 0) {
+        errors.push(`Missing ${missingKeys.length} key(s):`);
+        missingKeys.forEach(key => {
+            errors.push(`  - ${key}`);
+        });
+    }
+
+    // Check for extra keys
+    const extraKeys = translationKeys.filter(key => !baseKeys.includes(key));
+    if (extraKeys.length > 0) {
+        warnings.push(`Extra ${extraKeys.length} key(s) not in base translation:`);
+        extraKeys.forEach(key => {
+            warnings.push(`  - ${key}`);
+        });
+    }
+
+    // Check for placeholder mismatches (icon tokens + simple params). Skip
+    // blank/non-string values here — they are reported by the dedicated check
+    // below and would otherwise be double-flagged; extractPlaceholders already
+    // returns [] for non-strings so there is no crash risk either way.
+    baseKeys.forEach(key => {
+        const tv = translation[key];
+        if (typeof tv !== 'string' || tv.trim() === '') return;
+
+        const basePlaceholders = extractPlaceholders(baseTranslation[key]);
+        const translationPlaceholders = extractPlaceholders(tv);
+
+        if (basePlaceholders.length > 0) {
+            const missingPlaceholders = basePlaceholders.filter(
+                p => !translationPlaceholders.includes(p)
+            );
+            const extraPlaceholders = translationPlaceholders.filter(
+                p => !basePlaceholders.includes(p)
+            );
+
+            if (missingPlaceholders.length > 0) {
+                errors.push(`Key "${key}" missing placeholders: ${missingPlaceholders.join(', ')}`);
+            }
+            if (extraPlaceholders.length > 0) {
+                warnings.push(`Key "${key}" has extra placeholders: ${extraPlaceholders.join(', ')}`);
+            }
+        }
+    });
+
+    // A present value must be a non-empty string. A non-string value (nested
+    // object/array/number/boolean from a Weblate export or hand edit) is a hard
+    // error rather than a crash; a blank/whitespace value is a hard error rather
+    // than a silent warning.
+    translationKeys.forEach(key => {
+        const val = translation[key];
+        if (val === undefined) return;
+        if (typeof val !== 'string') {
+            errors.push(`Key "${key}" has a non-string value (${typeof val}); translations must be strings`);
+        } else if (val.trim() === '') {
+            errors.push(`Key "${key}" has an empty translation`);
+        }
+    });
+
+    return { errors, warnings };
 }
 
 /**
@@ -125,59 +220,9 @@ function validateTranslation(lang, verbose = false) {
         return { valid: false, errors: ['Translation file not found'], warnings: [] };
     }
 
-    const errors = [];
-    const warnings = [];
-    const baseKeys = Object.keys(baseTranslation).sort();
-    const translationKeys = Object.keys(translation).sort();
-
-    // Check for missing keys
-    const missingKeys = baseKeys.filter(key => !translationKeys.includes(key));
-    if (missingKeys.length > 0) {
-        errors.push(`Missing ${missingKeys.length} key(s):`);
-        missingKeys.forEach(key => {
-            errors.push(`  - ${key}`);
-        });
-    }
-
-    // Check for extra keys
-    const extraKeys = translationKeys.filter(key => !baseKeys.includes(key));
-    if (extraKeys.length > 0) {
-        warnings.push(`Extra ${extraKeys.length} key(s) not in base translation:`);
-        extraKeys.forEach(key => {
-            warnings.push(`  - ${key}`);
-        });
-    }
-
-    // Check for placeholder mismatches
-    baseKeys.forEach(key => {
-        if (!translation[key]) return;
-
-        const basePlaceholders = extractPlaceholders(baseTranslation[key]);
-        const translationPlaceholders = extractPlaceholders(translation[key]);
-
-        if (basePlaceholders.length > 0) {
-            const missingPlaceholders = basePlaceholders.filter(
-                p => !translationPlaceholders.includes(p)
-            );
-            const extraPlaceholders = translationPlaceholders.filter(
-                p => !basePlaceholders.includes(p)
-            );
-
-            if (missingPlaceholders.length > 0) {
-                errors.push(`Key "${key}" missing placeholders: ${missingPlaceholders.join(', ')}`);
-            }
-            if (extraPlaceholders.length > 0) {
-                warnings.push(`Key "${key}" has extra placeholders: ${extraPlaceholders.join(', ')}`);
-            }
-        }
-    });
-
-    // Check for empty translations
-    translationKeys.forEach(key => {
-        if (!translation[key] || translation[key].trim() === '') {
-            warnings.push(`Key "${key}" has empty translation`);
-        }
-    });
+    const { errors, warnings } = validateEntries(baseTranslation, translation);
+    const baseKeyCount = Object.keys(baseTranslation).length;
+    const translationKeyCount = Object.keys(translation).length;
 
     const valid = errors.length === 0;
 
@@ -188,7 +233,7 @@ function validateTranslation(lang, verbose = false) {
         log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`, 'gray');
 
         if (valid && warnings.length === 0) {
-            logSuccess(`All checks passed! (${translationKeys.length} keys)`);
+            logSuccess(`All checks passed! (${translationKeyCount} keys)`);
         } else {
             if (errors.length > 0) {
                 logError(`Found ${errors.length} error(s):`);
@@ -200,8 +245,8 @@ function validateTranslation(lang, verbose = false) {
             }
         }
 
-        const completion = Math.round((translationKeys.length / baseKeys.length) * 100);
-        logInfo(`Completion: ${completion}% (${translationKeys.length}/${baseKeys.length} keys)`);
+        const completion = Math.round((translationKeyCount / baseKeyCount) * 100);
+        logInfo(`Completion: ${completion}% (${translationKeyCount}/${baseKeyCount} keys)`);
     }
 
     return { valid, errors, warnings };
@@ -547,6 +592,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+    extractPlaceholders,
+    validateEntries,
     validateTranslation,
     findUnusedKeys,
     createTranslationTemplate,

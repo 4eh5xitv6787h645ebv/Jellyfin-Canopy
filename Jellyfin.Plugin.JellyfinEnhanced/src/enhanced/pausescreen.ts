@@ -15,6 +15,17 @@ JE.initializePauseScreen = function() {
       console.log('🪼 Jellyfin Enhanced: Custom Pause Screen is disabled.');
       return;
   }
+  // Singleton: a prior instance (Stage-6 re-invokes this on config hot-reload /
+  // account switch) must be torn down before constructing a new one, or its
+  // overlay/style/document listeners stack. The boot below now retains the
+  // instance on JE._pauseScreenInstance so the previously-unreachable destroy()
+  // runs on re-init.
+  const prevInstance = JE._pauseScreenInstance;
+  if (prevInstance) {
+      try { prevInstance.destroy(); }
+      catch (e) { console.warn('🪼 Jellyfin Enhanced: pause-screen destroy failed', e); }
+      JE._pauseScreenInstance = undefined;
+  }
     class JellyfinPauseScreen {
       // State
       currentVideo: HTMLVideoElement | null = null;
@@ -34,7 +45,7 @@ JE.initializePauseScreen = function() {
       pauseScreenDelayMs: number;
       pauseScreenTimer: number | null = null;
       lastUserInteractionAt = Date.now();
-      interactionListeners: Array<{ event: string; listener: (e: any) => void }> | null = null;
+      interactionListeners: Array<{ event: string; listener: (e: any) => void; opts?: AddEventListenerOptions }> | null = null;
       _dismissedThisPause = false;
 
       // DOM refs
@@ -119,6 +130,8 @@ JE.initializePauseScreen = function() {
       }
 
       injectStyles() {
+        // Idempotent: never stack a second style tag on re-init.
+        if (document.getElementById('pause-screen-style')) return;
         const style = document.createElement("style");
         style.id = "pause-screen-style";
         style.textContent = `
@@ -384,6 +397,11 @@ JE.initializePauseScreen = function() {
       }
 
       createOverlay() {
+        // Idempotent: remove any pre-existing overlay so re-init never stacks a
+        // second #pause-screen-overlay (belt-and-braces with the singleton guard).
+        const existingOverlay = document.getElementById('pause-screen-overlay');
+        if (existingOverlay) existingOverlay.remove();
+
         // Root overlay
         this.overlay = document.createElement("div");
         this.overlay.id = "pause-screen-overlay";
@@ -484,8 +502,10 @@ JE.initializePauseScreen = function() {
       }
 
       setupKeyboardAccessibility() {
-        // Space/Enter resumes when overlay visible
-        document.addEventListener('keydown', (e) => {
+        // Space/Enter resumes when overlay visible. Tracked in interactionListeners
+        // (with its {capture:true} opts) so destroy() removes it — previously an
+        // anonymous capturing listener that leaked and compounded key-swallow.
+        const onKeydown = (e: any) => {
           if (this.overlay.getAttribute('aria-hidden') === 'false') {
             if (e.code === 'Space' || e.code === 'Enter') {
               e.preventDefault();
@@ -504,7 +524,9 @@ JE.initializePauseScreen = function() {
               }
             }
           }
-        }, { capture: true });
+        };
+        document.addEventListener('keydown', onKeydown, { capture: true });
+        (this.interactionListeners ||= []).push({ event: 'keydown', listener: onKeydown, opts: { capture: true } });
       }
 
       setupVideoObserver() {
@@ -564,11 +586,14 @@ JE.initializePauseScreen = function() {
         // Events that always reset the timer
         const resetEvents = ['mousedown', 'click', 'touchstart', 'touchmove', 'keydown', 'wheel'];
 
-        this.interactionListeners = resetEvents.map(event => {
+        // Append (don't clobber) — setupKeyboardAccessibility already tracked the
+        // capturing keydown listener into this array before this runs.
+        const resetListeners = resetEvents.map(event => {
           const listener = resetTimer;
           document.addEventListener(event, listener, { passive: true });
           return { event, listener };
         });
+        (this.interactionListeners ||= []).push(...resetListeners);
 
         // Handle mousemove based on threshold
         const handleMouseMove = (e: MouseEvent) => {
@@ -615,6 +640,12 @@ JE.initializePauseScreen = function() {
         // Clear item cache on video change so a new item always fetches fresh data
         this.itemCache.clear();
         this.imgProbeCache.clear();
+
+        // Revoke the outgoing item's blob URLs — the whole cache belongs to the
+        // item we just left. Previously only the never-called destroy() revoked
+        // them, so every logo/disc/backdrop blob leaked for the session.
+        for (const url of this.imgBlobCache.values()) URL.revokeObjectURL(url);
+        this.imgBlobCache.clear();
 
         const itemId = this.checkForItemId(true);
         if (itemId) {
@@ -932,10 +963,11 @@ JE.initializePauseScreen = function() {
         this.clearState();
         if (this.observer) { this.observer.unsubscribe(); this.observer = null; }
 
-        // Clean up interaction listeners
+        // Clean up interaction listeners (passing each one's opts so the
+        // {capture:true} keydown is actually removed — capture must match).
         if (this.interactionListeners) {
-          this.interactionListeners.forEach(({ event, listener }) => {
-            document.removeEventListener(event, listener);
+          this.interactionListeners.forEach(({ event, listener, opts }) => {
+            document.removeEventListener(event, listener, opts);
           });
           this.interactionListeners = null;
         }
@@ -950,7 +982,7 @@ JE.initializePauseScreen = function() {
         if (css) css.remove();
       }
     }
-    // Boot
-    new JellyfinPauseScreen();
+    // Boot — retain the instance so a later re-init can destroy() it (above).
+    JE._pauseScreenInstance = new JellyfinPauseScreen();
       console.log('🪼 Jellyfin Enhanced: Custom Pause Screen initialized.');
   };

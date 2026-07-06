@@ -8,7 +8,7 @@
 //
 // Both flows restore every value they touch: the favorite goes back to its
 // original state, and the plugin configuration is restored verbatim.
-import { test, expect, loginAs, USERS } from './fixtures/auth';
+import { test, expect, loginAs, USERS, assertNoRuntimeErrors } from './fixtures/auth';
 import { api, authenticate, PLUGIN_ID } from './fixtures/api';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -50,7 +50,19 @@ test.describe('live updates', () => {
             undefined,
             { timeout: 15_000 }
         );
-        await page.waitForTimeout(2_000);
+        // isConnected() means the subscription is registered; the SDK socket may
+        // still be mid-open right after boot. Wait for it to actually report OPEN
+        // instead of a blind 2s sleep. If this build doesn't expose the socket
+        // the probe is a no-op and the retry loop below (which re-toggles and
+        // re-waits for the real push) covers a missed first event.
+        await page.waitForFunction(
+            () => {
+                const ws = (window as any).ApiClient?._webSocket;
+                return !ws || ws.readyState === 1;
+            },
+            undefined,
+            { timeout: 10_000 }
+        ).catch(() => { /* retry loop covers a late socket */ });
 
         const waitForLiveEvent = (timeout: number): Promise<boolean> => page
             .waitForFunction(
@@ -79,7 +91,7 @@ test.describe('live updates', () => {
         expect(received).toBe(true);
         const events = await page.evaluate(() => (window as any).__jeE2eLiveEvents);
         expect(events).toContain('user-data-changed');
-        expect(consoleErrors.real()).toEqual([]);
+        assertNoRuntimeErrors(consoleErrors);
     });
 
     test('admin config save hot-reloads JE.pluginConfig without a page reload', async ({ page, consoleErrors, baseURL }) => {
@@ -129,6 +141,6 @@ test.describe('live updates', () => {
             { timeout: 30_000 }
         );
 
-        expect(consoleErrors.real()).toEqual([]);
+        assertNoRuntimeErrors(consoleErrors);
     });
 });

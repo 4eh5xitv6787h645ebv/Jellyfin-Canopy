@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Jellyfin.Plugin.JellyfinEnhanced.Controllers;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
 using Jellyfin.Plugin.JellyfinEnhanced.Model.Arr;
 using Jellyfin.Plugin.JellyfinEnhanced.Tests.TestDoubles;
@@ -90,5 +91,26 @@ public class ArrHttpPlumbingTests
         Assert.Equal("URL rejected by SSRF guard", error);
         Assert.Empty(handler.Requests);
         Assert.Empty(factory.CreatedClients);
+    }
+
+    // ---- CSCTRL-1: the requests outer-catch message must not leak the Seerr host to non-admins ----
+
+    [Fact]
+    public void BuildRequestsFetchErrorMessage_NonAdmin_RedactsSeerrHost()
+    {
+        var exMessage = "Connection refused (http://seerr.internal:5055/api/v1/request)";
+        var message = ArrRequestsController.BuildRequestsFetchErrorMessage(isAdmin: false, exMessage);
+
+        Assert.DoesNotContain("seerr.internal", message);
+        Assert.Contains("<seerr-url>", message);
+    }
+
+    [Fact]
+    public void BuildRequestsFetchErrorMessage_Admin_PreservesRawHost()
+    {
+        var exMessage = "Connection refused (http://seerr.internal:5055/api/v1/request)";
+        var message = ArrRequestsController.BuildRequestsFetchErrorMessage(isAdmin: true, exMessage);
+
+        Assert.Contains("seerr.internal:5055", message);
     }
 }

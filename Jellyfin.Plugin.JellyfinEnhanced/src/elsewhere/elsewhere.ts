@@ -658,6 +658,13 @@ JE.initializeElsewhereScript = function() {
                 title.style.gap = '8px';
 
                 const icon = document.createElement('img');
+                // PERF(R6, accepted admin exception): ELSEWHERE_CUSTOM_BRANDING_IMAGE_URL
+                // is an admin-configured ARBITRARY URL, so it cannot be mirrored through
+                // the local asset cache (a fixed manifest of known keys — see
+                // core/asset-urls.ts). Like the login-image/splash admin-URL exception,
+                // it is served from the admin's chosen host directly. This is a DOM `.src`
+                // assignment (no HTML sink), so there is no XSS surface; onerror hides it
+                // if the host is unreachable.
                 icon.src = ELSEWHERE_CUSTOM_BRANDING_IMAGE_URL;
                 icon.alt = 'Custom Branding';
                 icon.className = 'elsewhere-custom-branding-icon';

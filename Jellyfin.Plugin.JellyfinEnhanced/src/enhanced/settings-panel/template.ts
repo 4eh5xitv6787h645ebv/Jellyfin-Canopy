@@ -7,6 +7,7 @@
 
 import { JE } from '../../globals';
 import { escapeHtml } from '../../core/ui-kit';
+import { cssColorOr } from '../../core/css-safe';
 import { GITHUB_REPO } from './release-notes';
 import type { PanelContext } from './panel';
 
@@ -46,7 +47,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
         const html = presets.map((preset: any, index: number) => {
             let previewStyle = '';
             if (type === 'style') {
-                previewStyle = `background-color: ${preset.bgColor}; color: ${preset.textColor}; border: 1px solid rgba(255,255,255,0.3); text-shadow: #000000 0px 0px 3px;`;
+                previewStyle = `background-color: ${cssColorOr(preset.bgColor, 'transparent')}; color: ${cssColorOr(preset.textColor, '#ffffff')}; border: 1px solid rgba(255,255,255,0.3); text-shadow: #000000 0px 0px 3px;`;
             } else if (type === 'font-size') {
                 previewStyle = `font-size: ${preset.size}em; color: #fff; text-shadow: 0 0 4px rgba(0,0,0,0.8);`;
             } else if (type === 'font-family') {
@@ -216,7 +217,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                             </div>
                                         </div>
                                     </div>
-                                    <div id="subtitleColorPreview" style="display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600; border-radius: 6px; background: rgba(0,0,0,0.3); color: ${escapeHtml((JE.currentSettings as any).customSubtitleTextColor || '#FFFFFFFF')}; background-color: ${escapeHtml((JE.currentSettings as any).customSubtitleBgColor || '#00000000')}; padding: 12px 20px; flex: 0.5; align-self: center;">AaBbCcDd</div>
+                                    <div id="subtitleColorPreview" style="display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600; border-radius: 6px; background: rgba(0,0,0,0.3); color: ${cssColorOr((JE.currentSettings as any).customSubtitleTextColor, '#FFFFFFFF')}; background-color: ${cssColorOr((JE.currentSettings as any).customSubtitleBgColor, '#00000000')}; padding: 12px 20px; flex: 0.5; align-self: center;">AaBbCcDd</div>
                                 </div>
                             </div>
                             <div style="margin-bottom: 16px;"><div style="font-weight: 600; margin-bottom: 8px;">${JE.t!('panel_settings_subtitles_size')}</div><div id="font-size-presets-container" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)); gap: 8px;">${generatePresetHTML((JE as any).fontSizePresets, 'font-size')}</div></div>
@@ -233,7 +234,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                         <div style="position:absolute;top:50%;left:0;right:0;height:1px;background:rgba(255,255,255,0.08);transform:translateY(-50%);"></div>
                                     </div>
                                     <!-- Subtitle preview text -->
-                                    <div id="subtitlePositionPreview" style="position:absolute; transform:translate(-50%,-50%); pointer-events:none; white-space:nowrap; font-size:clamp(8px,1.5vw,13px); font-weight:600; color:${escapeHtml((JE.currentSettings as any).customSubtitleTextColor?.substring(0,7) || '#ffffff')}; background-color:${escapeHtml((JE.currentSettings as any).customSubtitleBgColor || 'transparent')}; padding:2px 6px; border-radius:3px; text-shadow:0 0 4px #000; left:${Number((JE.currentSettings as any).subtitleHorizontalPosition ?? 50) || 0}%; top:${Number((JE.currentSettings as any).subtitleVerticalPosition ?? 85) || 0}%;">AaBbCcDd</div>
+                                    <div id="subtitlePositionPreview" style="position:absolute; transform:translate(-50%,-50%); pointer-events:none; white-space:nowrap; font-size:clamp(8px,1.5vw,13px); font-weight:600; color:${cssColorOr((JE.currentSettings as any).customSubtitleTextColor?.substring(0,7), '#ffffff')}; background-color:${cssColorOr((JE.currentSettings as any).customSubtitleBgColor, 'transparent')}; padding:2px 6px; border-radius:3px; text-shadow:0 0 4px #000; left:${Number((JE.currentSettings as any).subtitleHorizontalPosition ?? 50) || 0}%; top:${Number((JE.currentSettings as any).subtitleVerticalPosition ?? 85) || 0}%;">AaBbCcDd</div>
                                 </div>
                                 <div style="margin-top:6px; font-size:11px; color:rgba(255,255,255,0.4); text-align:center;">${JE.t!('panel_settings_subtitles_position_note') || 'Requires Jellyfin subtitle style set to <b>Custom</b> in Subtitle settings'}</div>
                             </div>

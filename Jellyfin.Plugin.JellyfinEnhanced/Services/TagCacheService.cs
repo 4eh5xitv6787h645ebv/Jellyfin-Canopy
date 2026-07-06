@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using Jellyfin.Plugin.JellyfinEnhanced.Model;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities;
@@ -31,6 +32,25 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         private long _lastModified;
         private Timer? _debounceSaveTimer;
         private volatile bool _dirty;
+        // Monotonic counter bumped every time the cache is marked dirty. SaveToDisk captures it
+        // BEFORE its snapshot and only clears _dirty if it is unchanged afterwards, so a flush that
+        // dirties the cache AFTER the snapshot (but before the clear) is never wiped — its change
+        // stays scheduled for the next save instead of being silently dropped.
+        private long _dirtyVersion;
+
+        // Test seam (Tests has InternalsVisibleTo): invoked inside SaveToDisk immediately AFTER the
+        // cache/version snapshot and BEFORE the dirty-bit clear, so a test can deterministically
+        // simulate a flush landing in that exact window.
+        internal Action? OnAfterSnapshotForTest;
+
+        // Test seam: invoked inside BuildFullCache while the flush guard is held, just BEFORE the
+        // cache swap, so a test can simulate an incremental flush firing mid-rebuild.
+        internal Action? OnBeforeSwapForTest;
+
+        // Test seam: invoked inside FlushPending after the batch is applied but BEFORE the flush
+        // guard (_flushing) is released, so a test can park a flush in the "drained + applied, still
+        // holding the guard" state and drive the rebuild against it deterministically.
+        internal Action? OnAfterFlushApplyForTest;
 
         // Incremental cache maintenance. Library-scan events are recorded here (O(1),
         // no DB/probe work) and drained by a debounced background worker so scans are
@@ -41,6 +61,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         private int _flushing;           // 0/1 non-reentrancy guard for the worker
         private static readonly TimeSpan FlushDebounce = TimeSpan.FromSeconds(3);
         private static readonly TimeSpan FlushMaxWait = TimeSpan.FromSeconds(30);
+
+        // Spin budget the full rebuild uses to acquire the flush guard (spins × 10ms ≈ 30s). Far
+        // larger than Dispose's 5s default: a rebuild that can't take the guard must NOT fall back
+        // to a lossy swap (see BuildFullCache), so it waits out an in-flight flush instead. A field
+        // (not a const) only so a test can shrink it to exercise the wait/abort path without a real
+        // multi-second wait.
+        private int _rebuildFlushGuardSpins = 3000;
+        internal void SetRebuildFlushGuardSpinsForTest(int spins) => _rebuildFlushGuardSpins = spins;
 
         // User access cache: avoids expensive GetItemIds query on every request
         private readonly ConcurrentDictionary<string, (HashSet<string> Ids, DateTime CachedAt)> _userAccessCache = new();
@@ -66,6 +94,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         public long LastModified => Interlocked.Read(ref _lastModified);
         public int Count => _cache.Count;
 
+        // Test seams for the user-access cache invalidation contract (Tests has InternalsVisibleTo).
+        internal int UserAccessCacheCount => _userAccessCache.Count;
+
+        internal void SeedUserAccessCacheForTest(string userKey)
+            => _userAccessCache[userKey] = (new HashSet<string>(), DateTime.UtcNow);
+
+        internal void FlushPendingForTest() => FlushPending();
+
+        internal bool ContainsKeyForTest(string key) => _cache.ContainsKey(key);
+
         private string CacheFilePath =>
             Path.Combine(_applicationPaths.PluginsPath, "configurations", "Jellyfin.Plugin.JellyfinEnhanced", "tag-cache.json");
 
@@ -78,46 +116,83 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             _logger.LogInformation("[TagCache] Starting full cache build...");
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
-            var allItems = _libraryManager.GetItemList(new InternalItemsQuery
+            // Serialize the rebuild against incremental flushes: hold the flush guard across the
+            // whole build + swap. While we hold it, a FlushPending that fires sees _flushing==1 and
+            // re-arms WITHOUT draining (it never mutates the OLD _cache we're about to discard), so
+            // events raised during the build stay in _pending and are applied onto the NEW cache
+            // below.
+            //
+            // Crucially we take the guard BEFORE the library snapshot below. If a flush is ALREADY
+            // running when we start it has already drained _pending and is mutating the OLD cache we
+            // will discard — its deltas are gone from _pending, so proceeding to swap would silently
+            // drop them (the post-swap drain finds nothing to re-apply). That is the lost-update
+            // window. So instead of a lossy timeout-and-proceed, we WAIT (bounded) for the in-flight
+            // flush to finish; once it does, its changes are committed to the library and the fresh
+            // scan below captures them. Only if a flush is STILL running after ~30s do we abort this
+            // rebuild rather than swap lossily — incremental flushes keep the cache fresh and the
+            // scheduled task retries next cycle. AcquireFlushGuard polls (10ms sleeps), so this
+            // neither busy-spins nor deadlocks (the single guard is always released by its holder).
+            if (!AcquireFlushGuard(maxSpins: _rebuildFlushGuardSpins, spinMs: 10))
             {
-                IncludeItemTypes = TaggableTypes.ToArray(),
-                IsVirtualItem = false,
-                Recursive = true
-            }).ToList();
-
-            _logger.LogInformation($"[TagCache] Found {allItems.Count} taggable items");
-
-            var newCache = new ConcurrentDictionary<string, TagCacheEntry>();
-            var processed = 0;
-
-            foreach (var item in allItems)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var entry = BuildEntryForItem(item);
-                if (entry != null)
-                {
-                    var key = item.Id.ToString("N").ToLowerInvariant();
-                    newCache[key] = entry;
-                }
-
-                processed++;
-                if (processed % 500 == 0)
-                {
-                    progress?.Report((double)processed / allItems.Count * 100);
-                }
+                _logger.LogWarning("[TagCache] Skipping full rebuild: an incremental flush is still running after the guard wait; retrying next cycle to avoid a lost-update swap.");
+                return;
             }
 
-            // Atomic reference swap — readers see old or new cache, never partial
-            _cache = newCache;
-            Interlocked.Increment(ref _version);
-            Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-            // Invalidate user access cache since items may have changed
-            _userAccessCache.Clear();
-            progress?.Report(100);
+            try
+            {
+                var allItems = _libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    IncludeItemTypes = TaggableTypes.ToArray(),
+                    IsVirtualItem = false,
+                    Recursive = true
+                }).ToList();
 
-            sw.Stop();
-            _logger.LogInformation($"[TagCache] Full cache build complete: {_cache.Count} entries in {sw.Elapsed.TotalSeconds:F1}s");
+                _logger.LogInformation($"[TagCache] Found {allItems.Count} taggable items");
+
+                var newCache = new ConcurrentDictionary<string, TagCacheEntry>();
+                var processed = 0;
+
+                foreach (var item in allItems)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var entry = BuildEntryForItem(item);
+                    if (entry != null)
+                    {
+                        var key = item.Id.ToString("N").ToLowerInvariant();
+                        newCache[key] = entry;
+                    }
+
+                    processed++;
+                    if (processed % 500 == 0)
+                    {
+                        progress?.Report((double)processed / allItems.Count * 100);
+                    }
+                }
+
+                OnBeforeSwapForTest?.Invoke();
+
+                // Atomic reference swap — readers see old or new cache, never partial
+                _cache = newCache;
+                Interlocked.Increment(ref _version);
+                Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                // Invalidate user access cache since items may have changed
+                _userAccessCache.Clear();
+
+                // Apply any events queued while we were building onto the freshly-published cache,
+                // so the swap can't strand a change that arrived mid-rebuild.
+                ApplyBatch(_pending.Drain(), RebuildEntry, RemoveEntry);
+
+                progress?.Report(100);
+
+                sw.Stop();
+                _logger.LogInformation($"[TagCache] Full cache build complete: {_cache.Count} entries in {sw.Elapsed.TotalSeconds:F1}s");
+            }
+            finally
+            {
+                // We only reach the try after acquiring the guard above, so always release it.
+                Interlocked.Exchange(ref _flushing, 0);
+            }
 
             SaveToDisk();
         }
@@ -226,6 +301,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     ScheduleDebouncedSave();
                 }
+
+                OnAfterFlushApplyForTest?.Invoke();
             }
             finally
             {
@@ -233,6 +310,28 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 // Ids recorded while we were draining/applying: run again (cap-aware).
                 if (!_pending.IsEmpty) ScheduleFlush();
             }
+        }
+
+        /// <summary>
+        /// Spin-acquire the single-flush guard (<c>_flushing</c>) so no incremental flush mutates
+        /// <c>_cache</c> concurrently. Returns false if it couldn't be taken within the cap (an
+        /// unusually long in-flight flush) — the caller then proceeds best-effort rather than
+        /// blocking a rebuild/shutdown indefinitely. Callers that acquired MUST release it with
+        /// <c>Interlocked.Exchange(ref _flushing, 0)</c>.
+        /// </summary>
+        private bool AcquireFlushGuard(int maxSpins = 500, int spinMs = 10)
+        {
+            for (var i = 0; i < maxSpins; i++) // ~5s cap by default, well under the shutdown grace period
+            {
+                if (Interlocked.CompareExchange(ref _flushing, 1, 0) == 0)
+                {
+                    return true;
+                }
+
+                Thread.Sleep(spinMs);
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -254,6 +353,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 {
                     _logger.LogWarning($"[TagCache] Failed to apply pending change for {id}: {ex.Message}");
                 }
+            }
+
+            if (changed)
+            {
+                // Symmetry with BuildFullCache: a changed incremental batch must also drop the 60s
+                // per-user accessible-id cache. Otherwise a freshly added/updated item's tag entry is
+                // filtered out of every user's GetCacheForUser response for up to UserAccessCacheTtl.
+                // Cleared here — the single choke point shared by the debounced flush and the
+                // dispose-time drain — so both incremental paths invalidate it. Only on an actual
+                // change, so a no-op flush doesn't force every user to recompute their accessible set.
+                _userAccessCache.Clear();
             }
 
             return changed;
@@ -369,6 +479,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     var dir = Path.GetDirectoryName(CacheFilePath);
                     if (dir != null) Directory.CreateDirectory(dir);
 
+                    // Capture the dirty version BEFORE reading _cache. A flush that lands after this
+                    // (mutating _cache and bumping _dirtyVersion) is then detected below so we don't
+                    // clear a dirty bit whose change we didn't actually persist.
+                    var versionAtSnapshot = Interlocked.Read(ref _dirtyVersion);
+
                     var data = new TagCacheDiskFormat
                     {
                         Version = Interlocked.Read(ref _version),
@@ -376,11 +491,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                         Items = new Dictionary<string, TagCacheEntry>(_cache)
                     };
 
+                    OnAfterSnapshotForTest?.Invoke();
+
                     var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = false });
-                    var tempPath = CacheFilePath + ".tmp";
-                    File.WriteAllText(tempPath, json);
-                    File.Move(tempPath, CacheFilePath, overwrite: true);
-                    _dirty = false;
+                    AtomicFile.WriteAllText(CacheFilePath, json);
+
+                    // Only clear the dirty bit if no flush recorded a change after our snapshot. If a
+                    // concurrent flush bumped _dirtyVersion in the snapshot→persist window, leave _dirty
+                    // set so the debounced timer persists the newer state — never wipe an unpersisted
+                    // change. (Also write-failure-safe: a throw above skips the clear entirely.)
+                    if (Interlocked.Read(ref _dirtyVersion) == versionAtSnapshot)
+                    {
+                        _dirty = false;
+                    }
+
                     _logger.LogInformation($"[TagCache] Saved {_cache.Count} entries to disk");
                 }
                 catch (Exception ex)
@@ -390,9 +514,22 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
         }
 
+        // Mark the cache dirty and advance the dirty version. SaveToDisk uses the version to detect
+        // a flush that dirtied the cache after its snapshot (see #3), so every dirty-mark must bump it.
+        private void MarkDirty()
+        {
+            Interlocked.Increment(ref _dirtyVersion);
+            _dirty = true;
+        }
+
+        // Test seams (Tests has InternalsVisibleTo) for the dirty-bit-preservation contract.
+        internal void MarkDirtyForTest() => MarkDirty();
+
+        internal bool IsDirtyForTest => _dirty;
+
         private void ScheduleDebouncedSave()
         {
-            _dirty = true;
+            MarkDirty();
             // Reuse existing timer if possible, otherwise create a new one.
             // Change() resets the countdown without creating a new object.
             var existing = _debounceSaveTimer;
@@ -426,17 +563,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             // _pending, skip the save, and lose the in-flight flush's applied batch (it only
             // schedules a debounced save that never fires during shutdown). Waiting for _flushing
             // to release means that flush has finished and set _dirty, so the save below catches it.
-            var acquired = false;
-            for (var i = 0; i < 500; i++) // ~5s cap, well under the shutdown grace period
-            {
-                if (Interlocked.CompareExchange(ref _flushing, 1, 0) == 0)
-                {
-                    acquired = true;
-                    break;
-                }
-
-                Thread.Sleep(10);
-            }
+            var acquired = AcquireFlushGuard();
 
             // Apply anything still queued in the debounce window so a change made moments before
             // shutdown is persisted — matching the old synchronous handler, which applied to the
@@ -448,7 +575,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 if (ApplyBatch(_pending.Drain(), RebuildEntry, RemoveEntry))
                 {
                     Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                    _dirty = true;
+                    MarkDirty();
                 }
             }
             catch (Exception ex)

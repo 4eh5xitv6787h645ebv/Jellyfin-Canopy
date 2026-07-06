@@ -226,7 +226,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
                 {
                     _logger.LogInformation("Found old Jellyfin Enhanced script tag in index.html. Removing it now.");
                     content = regex.Replace(content, string.Empty);
-                    File.WriteAllText(indexPath, content);
+                    AtomicFile.WriteAllText(indexPath, content);
                     _logger.LogInformation("Successfully removed old script tag.");
                 }
             }
@@ -258,6 +258,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
                     File.ReadAllText(pluginPagesConfig),
                     documentOptions: PersistedJson.ParseOptions)!.AsObject();
             }
+
+            // Baseline serialization of what we read, so we only rewrite the file
+            // when JE actually changes the pages array (avoids per-boot phantom churn).
+            string originalJson = config.ToJsonString(PersistedJson.WriteOptions);
 
             if (!config.ContainsKey("pages"))
             {
@@ -398,7 +402,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             // PluginPages' config.json is admin-visible on disk: keep the same
             // human-readable shape JObject.ToString(Formatting.Indented) produced
             // (2-space indent, raw non-ASCII) via the shared persistence options.
-            File.WriteAllText(pluginPagesConfig, config.ToJsonString(PersistedJson.WriteOptions));
+            // Atomic + write-only-when-changed: we cannot share a lock with the PluginPages
+            // plugin, so this closes torn-write corruption and minimizes the race window,
+            // not the cross-process race itself. The dirty-check also stops the phantom
+            // per-boot rewrite (and comment-strip) when the pages array is unchanged.
+            string newJson = config.ToJsonString(PersistedJson.WriteOptions);
+            if (!string.Equals(newJson, originalJson, StringComparison.Ordinal))
+            {
+                AtomicFile.WriteAllText(pluginPagesConfig, newJson);
+            }
             }
             catch (Exception ex)
             {
@@ -442,7 +454,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
                     _logger.LogInformation($"Successfully removed the {PluginName} script from index.html during uninstall.");
                 }
 
-                File.WriteAllText(indexPath, content);
+                AtomicFile.WriteAllText(indexPath, content);
             }
             catch (Exception ex)
             {

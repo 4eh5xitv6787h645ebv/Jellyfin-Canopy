@@ -78,12 +78,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
 
             // Normalize the request so the static handler returns a complete, plain-text
-            // 200 we can rewrite: drop Accept-Encoding (no compression) and Range/If-Range
+            // 200 we can rewrite: drop Accept-Encoding (no compression), Range/If-Range
             // (a 206 partial response would otherwise pass through un-injected with a wrong
-            // total length).
+            // total length), and the conditional validators If-None-Match/If-Modified-Since
+            // (a 304 Not Modified has no body to inject, so it would fall through the
+            // !isHtml passthrough below and let the browser render its cached, pre-injection
+            // index.html — the JE script would silently never load on a warm cache).
             context.Request.Headers.Remove("Accept-Encoding");
             context.Request.Headers.Remove("Range");
             context.Request.Headers.Remove("If-Range");
+            context.Request.Headers.Remove("If-None-Match");
+            context.Request.Headers.Remove("If-Modified-Since");
 
             var originalBody = context.Response.Body;
             using var buffer = new MemoryStream();

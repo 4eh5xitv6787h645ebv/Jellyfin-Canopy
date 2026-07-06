@@ -48,7 +48,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         }
 
         // Handle playback stopped events to check if we should request next season.
-        // NOTE: async void event handler kept as-is in this mechanical phase (see PlaybackWatcherBase).
+        // async void handler: the catch below is double-guarded so an exception escaping it
+        // (e.g. a logging failure) can't crash the host. See PlaybackWatcherBase.
         private async void OnPlaybackStopped(object? sender, PlaybackStopEventArgs e)
         {
             try
@@ -114,12 +115,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError($"[Auto-Season-Request] Error in OnPlaybackStopped: {ex.Message}");
+                // async void: an exception escaping this catch would become an unobserved exception
+                // that crashes the host, so guard the logging call itself.
+                try { _logger.LogError($"[Auto-Season-Request] Error in OnPlaybackStopped: {ex.Message}"); }
+                catch { /* never let a logging failure crash the host from an async void handler */ }
             }
         }
 
         // Handle playback progress events to detect when user starts watching a new episode.
-        // NOTE: async void event handler kept as-is in this mechanical phase (see PlaybackWatcherBase).
+        // async void handler: the catch below is double-guarded so an exception escaping it
+        // (e.g. a logging failure) can't crash the host. See PlaybackWatcherBase.
         private async void OnPlaybackProgress(object? sender, PlaybackProgressEventArgs e)
         {
             try
@@ -171,7 +176,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError($"[Auto-Season-Request] Error in OnPlaybackProgress: {ex.Message}");
+                // async void: an exception escaping this catch would become an unobserved exception
+                // that crashes the host, so guard the logging call itself.
+                try { _logger.LogError($"[Auto-Season-Request] Error in OnPlaybackProgress: {ex.Message}"); }
+                catch { /* never let a logging failure crash the host from an async void handler */ }
             }
         }
     }

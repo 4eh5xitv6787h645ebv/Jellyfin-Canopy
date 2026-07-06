@@ -11,6 +11,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
 using Microsoft.Extensions.Logging;
 
@@ -627,12 +628,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             return buffer.ToArray();
         }
 
+        // Thin forwarder to the shared crash-safe helper; kept to minimize call-site churn.
         private static void WriteAtomic(string path, byte[] content)
-        {
-            var temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
-            File.WriteAllBytes(temp, content);
-            File.Move(temp, path, overwrite: true);
-        }
+            => AtomicFile.WriteAllBytes(path, content);
 
         private sealed record AssetMeta(string? ETag, string? LastModified, DateTimeOffset FetchedUtc);
 

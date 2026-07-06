@@ -60,7 +60,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             (new Regex(@"^icon-transparent\..*\.png$", Opts, MatchTimeout), "icon-transparent.png"),
             (new Regex(@"^banner-light\..*\.png$", Opts, MatchTimeout), "banner-light.png"),
             (new Regex(@"^banner-dark\..*\.png$", Opts, MatchTimeout), "banner-dark.png"),
-            (new Regex(@"^favicon\..*\.ico$", Opts, MatchTimeout), "favicon.ico"),
+            // Match both the content-hashed form (favicon.<hash>.ico) and the bare
+            // favicon.ico jellyfin-web actually serves — the required-hash form never
+            // matched the un-hashed name, so a custom favicon was never applied.
+            (new Regex(@"^favicon(\..*)?\.ico$", Opts, MatchTimeout), "favicon.ico"),
             (new Regex(@"^touchicon\d*(\.[0-9a-f]+)?\.png$", Opts, MatchTimeout), "apple-touch-icon.png"),
         };
 
@@ -213,7 +216,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         private static string Unweaken(string etag) =>
             etag.StartsWith("W/", StringComparison.Ordinal) ? etag.Substring(2) : etag;
 
-        private static string? MatchBrandingAsset(string? path)
+        // internal for the branding-map unit test (Tests has InternalsVisibleTo).
+        internal static string? MatchBrandingAsset(string? path)
         {
             if (string.IsNullOrEmpty(path) || path.IndexOf("/web/", StringComparison.OrdinalIgnoreCase) < 0)
             {

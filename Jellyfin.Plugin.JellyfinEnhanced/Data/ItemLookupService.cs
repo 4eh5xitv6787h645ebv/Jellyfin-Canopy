@@ -30,12 +30,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Data
         }
 
         /// <inheritdoc />
-        public IReadOnlyList<Guid> GetItemIdsByProviders(IDictionary<string, string>? providers)
+        public IReadOnlyList<Guid> GetItemIdsByProviders(IDictionary<string, string>? providers, JUser? user = null)
         {
             if (providers == null || providers.Count == 0)
                 return Array.Empty<Guid>();
 
-            return _libraryManager.GetItemIds(BuildProviderQuery(providers));
+            return _libraryManager.GetItemIds(BuildProviderQuery(providers, user));
         }
 
         /// <inheritdoc />
@@ -59,14 +59,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Data
 
         /// <summary>
         /// Query for the single-value-per-provider lookup (items/by-providers endpoint).
-        /// Kept byte-identical to the former IItemRepository-based query.
+        /// When <paramref name="user"/> is non-null the query is scoped to that user's
+        /// accessible libraries (a null user preserves the former unscoped behavior).
         /// </summary>
-        internal static InternalItemsQuery BuildProviderQuery(IDictionary<string, string> providers)
+        internal static InternalItemsQuery BuildProviderQuery(IDictionary<string, string> providers, JUser? user = null)
         {
             return new InternalItemsQuery
             {
                 HasAnyProviderId = new Dictionary<string, string>(providers),
-                Recursive = true
+                Recursive = true,
+                User = user
             };
         }
 

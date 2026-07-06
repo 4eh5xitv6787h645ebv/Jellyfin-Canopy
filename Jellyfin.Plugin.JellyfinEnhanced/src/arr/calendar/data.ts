@@ -9,6 +9,8 @@
 
 import { JE } from '../arr-globals';
 import { renderPage } from './render-views';
+import { getEventDateKey } from './event-date';
+import { describeFetchError } from '../../core/fetch-error';
 import type { ApiApi } from '../../types/je';
 
 const logPrefix = '🪼 Jellyfin Enhanced: Calendar Page:';
@@ -31,6 +33,11 @@ export interface CalendarEvent {
     seasonNumber?: number;
     episodeNumber?: number;
     releaseDate?: string;
+    // True when releaseDate is a calendar day with no meaningful clock time; the
+    // event must bucket by releaseDateLocal without timezone conversion (CRIT-1).
+    dateOnly?: boolean;
+    // The intended "yyyy-MM-dd" calendar day for a date-only release.
+    releaseDateLocal?: string;
     releaseType?: string;
     source?: string;
     instanceName?: string;
@@ -61,6 +68,7 @@ export interface CalendarSettings {
 
 export interface CalendarState {
     events: CalendarEvent[];
+    eventsError: boolean;
     isLoading: boolean;
     pageVisible: boolean;
     previousPage: Element | null;
@@ -77,6 +85,7 @@ export interface CalendarState {
     requestedItems: Set<string>;
     requestedLoaded: boolean;
     requestedLoading: boolean;
+    requestedError: boolean;
     locationSignature: string | null;
     locationUnsubscribe: (() => void) | null;
     _customTabContainer: HTMLElement | null;
@@ -128,6 +137,7 @@ function getDefaultViewMode(): string {
 // State management
 export const state: CalendarState = {
     events: [],
+    eventsError: false,
     isLoading: false,
     pageVisible: false,
     previousPage: null,
@@ -152,6 +162,7 @@ export const state: CalendarState = {
     requestedItems: new Set(),
     requestedLoaded: false,
     requestedLoading: false,
+    requestedError: false,
     locationSignature: null,
     locationUnsubscribe: null,
     _customTabContainer: null,
@@ -195,6 +206,14 @@ export function loadSettings(): void {
     }
 }
 
+/** "yyyy-MM-dd" for a Date's LOCAL calendar day (matches getEventDateKey's bucketing). */
+function toLocalDayKey(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
 /**
  * Fetch calendar events from backend
  */
@@ -203,9 +222,17 @@ export async function fetchCalendarEvents(startDate: Date, endDate: Date): Promi
         const query = new URLSearchParams({
             start: startDate.toISOString(),
             end: endDate.toISOString(),
+            // The view's LOCAL calendar-day bounds. Date-only releases (Radarr cinema/digital/
+            // physical; Sonarr airDate fallback) carry no clock time, so the server must range-
+            // filter them by LOCAL day: their midnight-UTC instant can fall a timezone offset
+            // outside [start,end] even though their local day is in view, and a UTC-instant
+            // compare would wrongly drop them for any viewer off UTC (CRIT-1).
+            startDay: toLocalDayKey(startDate),
+            endDay: toLocalDayKey(endDate),
         });
         const data = await api.plugin(`/arr/calendar?${query.toString()}`) as { events?: CalendarEvent[]; errors?: CalendarErrorEntry[] };
         state.events = (data.events || []).filter((evt) => evt && evt.releaseDate);
+        state.eventsError = false;
         // Surface per-instance errors from the backend envelope so a misconfigured or
         // unreachable arr instance doesn't silently leave the calendar looking fine.
         surfaceCalendarErrors(data.errors);
@@ -213,6 +240,13 @@ export async function fetchCalendarEvents(startDate: Date, endDate: Date): Promi
     } catch (error) {
         console.error(`${logPrefix} Failed to fetch calendar events:`, error);
         state.events = [];
+        // A total failure has no per-instance errors[] envelope to surface, so
+        // flag it + toast once — otherwise the calendar would render "No
+        // upcoming releases" as though the range were genuinely empty (W4-ERR-3).
+        state.eventsError = true;
+        if (typeof JE.toast === 'function') {
+            JE.toast('⚠ ' + esc(describeFetchError(error, JE.t?.('calendar_load_error') || 'Unable to load calendar')));
+        }
         return null;
     }
 }
@@ -316,6 +350,7 @@ async function fetchUserRequests(): Promise<void> {
     }
 
     state.requestedLoading = true;
+    state.requestedError = false;
     const requested = new Set<string>();
     const pageSize = 200;
     let page = 1;
@@ -346,6 +381,13 @@ async function fetchUserRequests(): Promise<void> {
         }
     } catch (error) {
         console.warn(`${logPrefix} Failed to fetch user requests:`, error);
+        // A mid-loop throw would otherwise under-populate the Requests filter
+        // silently (requestedLoaded still flips true in finally). Flag it +
+        // toast once so the "Requests"/force-only view isn't quietly incomplete.
+        state.requestedError = true;
+        if (typeof JE.toast === 'function') {
+            JE.toast('⚠ ' + esc(describeFetchError(error, JE.t?.('calendar_load_error') || 'Unable to load calendar')));
+        }
     } finally {
         state.requestedItems = requested;
         state.requestedLoaded = true;
@@ -431,15 +473,10 @@ export function groupEventsByDate(events: CalendarEvent[]): Record<string, Calen
     const grouped: Record<string, CalendarEvent[]> = {};
 
     events.forEach((event) => {
-        if (!event.releaseDate) {
-            return;
-        }
-        // Convert UTC timestamp to user's local date
-        const date = new Date(event.releaseDate);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const dateKey = `${year}-${month}-${day}`;
+        // getEventDateKey is the single decision point: date-only releases bucket
+        // by their server-supplied local day; genuine instants convert to local.
+        const dateKey = getEventDateKey(event);
+        if (!dateKey) return;
 
         if (!grouped[dateKey]) {
             grouped[dateKey] = [];

@@ -412,10 +412,22 @@ const isOnPreferencesPage = (): boolean => {
 let observerInstance: { unsubscribe(): void } | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
-const initialize = (): void => {
+// ~25s at 250ms: enough for a slow ApiClient boot, then give up so a login page
+// left open (never authenticates) can't busy-loop the poller for the session.
+// ~25s at 250ms: enough for a slow ApiClient boot, then give up so a login page
+// left open (never authenticates) can't busy-loop the poller for the session.
+const MAX_INIT_ATTEMPTS = 100;
+
+const initialize = (attempt = 0): void => {
+    // Browser-only module — never reschedule in a non-DOM (SSR/test) context.
+    if (typeof window === 'undefined') return;
     if (typeof ApiClient === 'undefined' || typeof ApiClient.getCurrentUserId !== 'function') {
+        if (attempt >= MAX_INIT_ATTEMPTS) {
+            console.warn('🪼🎨Jellyfish Theme Selector :  ApiClient never became available; giving up.');
+            return;
+        }
         console.log('🪼🎨Jellyfish Theme Selector :  Waiting for ApiClient...');
-        setTimeout(initialize, INIT_DELAY);
+        setTimeout(() => initialize(attempt + 1), INIT_DELAY);
         return;
     }
 

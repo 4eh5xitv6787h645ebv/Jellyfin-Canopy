@@ -39,5 +39,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
         /// title cannot be verified. Never throws.
         /// </summary>
         Task<bool> IsBlockedAsync(string mediaType, int tmdbId, JellyseerrCaller caller);
+
+        /// <summary>
+        /// True when the raw-TMDB passthrough (<c>/tmdb/{**apiPath}</c>) must deny
+        /// (403) this path for the caller: a blocked movie/tv detail or sub-resource
+        /// title, or any non-allow-listed metadata shape (deny-by-default). False for
+        /// neutral paths, admins, no-limit callers, or the feature/Seerr being off.
+        /// Never throws.
+        /// </summary>
+        Task<bool> IsTmdbProxyPathBlockedAsync(string tmdbApiPath, JellyseerrCaller caller);
     }
 }

@@ -32,6 +32,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
     {
         private const string CallerGuid = "11111111-1111-1111-1111-111111111111";
 
+        // Two distinct callers for the per-caller resolution guard.
+        private static readonly Guid UserA = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        private static readonly Guid UserB = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+
         // Region-agnostic detail bodies for the fixture titles.
         private static string MovieDetail(string cert) =>
             $@"{{ ""releases"": {{ ""results"": [ {{ ""iso_3166_1"": ""US"", ""release_dates"": [ {{ ""type"": 3, ""certification"": ""{cert}"" }} ] }} ] }} }}";
@@ -78,7 +82,51 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
             return new SeerrParentalFilter(
                 new RecordingHttpClientFactory(handler),
                 NullLogger<SeerrParentalFilter>.Instance,
-                new StubUserManager(user, policy),
+                new StubUserManager(new Dictionary<Guid, (User, UserPolicy)>
+                {
+                    [Guid.Parse(CallerGuid)] = (user, policy),
+                }),
+                new FakeLocalization(),
+                new SeerrCache(provider),
+                provider);
+        }
+
+        // Builds ONE filter (sharing ONE SeerrCache) whose user manager resolves each guid to its
+        // own user + policy, so a test can prove caller A's limits apply to A and caller B's to B.
+        private static SeerrParentalFilter BuildMultiUserFilter(
+            params (Guid Guid, int? MaxScore, int? MaxSub, UnratedItem[] Block)[] users)
+        {
+            var handler = new RecordingHttpMessageHandler();
+            handler.AddResponse("/movie/100", MovieDetail("PG-13"));
+            handler.AddResponse("/movie/200", MovieDetail("R"));
+            handler.AddResponse("/tv/100", TvDetail("TV-PG"));
+            handler.AddResponse("/tv/200", TvDetail("TV-MA"));
+            handler.AddResponse("/movie/300", MovieNoCert());
+
+            var provider = new FakePluginConfigProvider(new PluginConfiguration
+            {
+                JellyseerrEnabled = true,
+                JellyseerrRespectParentalRatings = true,
+                JellyseerrUrls = "http://seerr:5055",
+                JellyseerrApiKey = "key",
+                DEFAULT_REGION = "US",
+            });
+
+            var registry = new Dictionary<Guid, (User, UserPolicy)>();
+            foreach (var u in users)
+            {
+                var user = new User($"user-{u.Guid:N}", "Prov", "PwProv")
+                {
+                    MaxParentalRatingScore = u.MaxScore,
+                    MaxParentalRatingSubScore = u.MaxSub,
+                };
+                registry[u.Guid] = (user, new UserPolicy { BlockUnratedItems = u.Block });
+            }
+
+            return new SeerrParentalFilter(
+                new RecordingHttpClientFactory(handler),
+                NullLogger<SeerrParentalFilter>.Instance,
+                new StubUserManager(registry),
                 new FakeLocalization(),
                 new SeerrCache(provider),
                 provider);
@@ -254,13 +302,50 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
         }
 
         [Fact]
-        public async Task RatingsEndpoint_IsNotGated()
+        public async Task SubDetail_BlocksRatingsOfBlockedTitle()
         {
-            // /ratingscombined is not a detail body and must pass through untouched.
+            // A sub-resource of a blocked title (movie 200 = R, tv 200 = TV-MA) must be
+            // denied — it carries no rating of its own, so it is gated on the parent.
             const string body = @"{ ""rt"": 90 }";
-            var result = await ApplyAsync(body, "/api/v1/movie/200/ratingscombined", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+
+            var blockedMovie = await ApplyAsync(body, "/api/v1/movie/200/ratingscombined", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+            Assert.True(blockedMovie.Block);
+
+            var blockedTv = await ApplyAsync(body, "/api/v1/tv/200/ratings", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+            Assert.True(blockedTv.Block);
+        }
+
+        [Fact]
+        public async Task SubDetail_AllowsRatingsOfAllowedTitle()
+        {
+            // The same sub-resource on an in-limit title (movie 100 = PG-13) passes through.
+            const string body = @"{ ""rt"": 90 }";
+            var result = await ApplyAsync(body, "/api/v1/movie/100/ratingscombined", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
             Assert.False(result.Block);
             Assert.Equal(body, result.Body);
+        }
+
+        [Fact]
+        public async Task SubDetail_AdminNotBlocked()
+        {
+            const string body = @"{ ""rt"": 90 }";
+            var result = await ApplyAsync(body, "/api/v1/movie/200/ratingscombined", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>(), isAdmin: true);
+            Assert.False(result.Block);
+        }
+
+        // Class guard: any sub-resource of a blocked title must be denied, so a future
+        // sub-resource routed to Category.None instead of SubDetail fails this.
+        [Theory]
+        [InlineData("ratingscombined")]
+        [InlineData("watch/providers")]
+        [InlineData("keywords")]
+        [InlineData("videos")]
+        [InlineData("somethingnew")]
+        public async Task SubDetail_BlocksAnySubResourceOfBlockedTitle(string sub)
+        {
+            const string body = @"{ ""anything"": true }";
+            var result = await ApplyAsync(body, $"/api/v1/movie/200/{sub}", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+            Assert.True(result.Block);
         }
 
         [Fact]
@@ -359,6 +444,73 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
         }
 
         [Fact]
+        public async Task IsTmdbProxyPathBlocked_DenyByDefault_GatesRawTmdbPaths()
+        {
+            var filter = BuildFilter(maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>(), featureEnabled: true, seed: null);
+            var restricted = new JellyseerrCaller(CallerGuid, false);
+
+            // Enumerating / discovery shapes are Restricted -> blocked without a fetch.
+            Assert.True(await filter.IsTmdbProxyPathBlockedAsync("discover/movie", restricted));
+            Assert.True(await filter.IsTmdbProxyPathBlockedAsync("search/multi", restricted));
+
+            // Detail gate: blocked for the over-limit title, allowed for the in-limit one.
+            Assert.True(await filter.IsTmdbProxyPathBlockedAsync("movie/200", restricted));   // R
+            Assert.False(await filter.IsTmdbProxyPathBlockedAsync("movie/100", restricted));  // PG-13
+
+            // Neutral rating-free shape is allowed.
+            Assert.False(await filter.IsTmdbProxyPathBlockedAsync("genres/movie", restricted));
+
+            // Admins bypass the gate entirely.
+            var admin = new JellyseerrCaller(CallerGuid, true);
+            Assert.False(await filter.IsTmdbProxyPathBlockedAsync("discover/movie", admin));
+            Assert.False(await filter.IsTmdbProxyPathBlockedAsync("movie/200", admin));
+        }
+
+        [Fact]
+        public async Task ListFilter_DecrementsPageInfoCounts_WhenRowsRemoved()
+        {
+            const string body = @"{ ""results"": [
+                { ""id"": 100, ""mediaType"": ""movie"" },
+                { ""id"": 200, ""mediaType"": ""movie"" } ],
+                ""pageInfo"": { ""page"": 1, ""pages"": 2, ""pageSize"": 1, ""results"": 2 } }";
+
+            var result = await RunAsync(body, "/api/v1/search?query=x", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+
+            Assert.Equal(new[] { 100 }, Ids(result, "results")); // R-rated 200 removed
+            var pageInfo = (System.Text.Json.Nodes.JsonObject)result["pageInfo"]!;
+            Assert.Equal(1, (int)pageInfo["results"]!);          // 2 - 1 removed
+            Assert.Equal(1, (int)pageInfo["pages"]!);            // ceil(1 / pageSize 1)
+        }
+
+        [Fact]
+        public async Task ListFilter_DecrementsTopLevelTotals_WhenRowsRemoved()
+        {
+            const string body = @"{ ""results"": [
+                { ""id"": 100, ""mediaType"": ""movie"" },
+                { ""id"": 200, ""mediaType"": ""movie"" } ],
+                ""totalResults"": 2, ""totalPages"": 2 }";
+
+            var result = await RunAsync(body, "/api/v1/search?query=x", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+
+            Assert.Equal(new[] { 100 }, Ids(result, "results"));
+            Assert.Equal(1, (int)result["totalResults"]!); // 2 - 1 removed
+            Assert.Equal(1, (int)result["totalPages"]!);   // recomputed from surviving results
+        }
+
+        [Fact]
+        public async Task ListFilter_LeavesCountsUntouched_WhenNothingRemoved()
+        {
+            const string body = @"{ ""results"": [ { ""id"": 100, ""mediaType"": ""movie"" } ],
+                ""pageInfo"": { ""pages"": 5, ""pageSize"": 20, ""results"": 100 } }";
+
+            var result = await RunAsync(body, "/api/v1/search?query=x", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+
+            var pageInfo = (System.Text.Json.Nodes.JsonObject)result["pageInfo"]!;
+            Assert.Equal(100, (int)pageInfo["results"]!);
+            Assert.Equal(5, (int)pageInfo["pages"]!);
+        }
+
+        [Fact]
         public async Task IsBlockedAsync_AdminAndFeatureOff_NeverBlock()
         {
             var admin = new JellyseerrCaller(CallerGuid, true);
@@ -367,6 +519,71 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
 
             var filterOff = BuildFilter(13, 0, Array.Empty<UnratedItem>(), featureEnabled: false, seed: null);
             Assert.False(await filterOff.IsBlockedAsync("movie", 200, new JellyseerrCaller(CallerGuid, false)));
+        }
+
+        // ── Per-caller resolution guard (W2-TEST-7) ──────────────────────────
+        // The parental filter is a security control: it must apply THE CALLER'S own limit,
+        // resolved server-side from the caller's guid. These share ONE filter/ONE cache and
+        // prove A's limit applies to A and B's to B — a fixed-user or cross-caller cache
+        // mixup fails them.
+
+        [Fact]
+        public async Task PerCallerLimitsAreApplied_NotAFixedUser()
+        {
+            // A is PG-13-limited; B has no limit at all.
+            var filter = BuildMultiUserFilter(
+                (UserA, 13, 0, Array.Empty<UnratedItem>()),
+                (UserB, null, null, Array.Empty<UnratedItem>()));
+
+            var callerA = new JellyseerrCaller(UserA.ToString(), false);
+            var callerB = new JellyseerrCaller(UserB.ToString(), false);
+
+            // R-rated movie 200: blocked for A (score 17 > limit 13), allowed for B (no limit).
+            Assert.True(await filter.IsBlockedAsync("movie", 200, callerA));
+            Assert.False(await filter.IsBlockedAsync("movie", 200, callerB));
+
+            // Reverse the order to prove no first-caller / cross-caller cache stickiness.
+            Assert.False(await filter.IsBlockedAsync("movie", 200, callerB));
+            Assert.True(await filter.IsBlockedAsync("movie", 200, callerA));
+        }
+
+        [Fact]
+        public async Task ListFilter_AppliesEachCallersOwnLimit_AndDoesNotLeakBodiesAcrossCallers()
+        {
+            var filter = BuildMultiUserFilter(
+                (UserA, 13, 0, Array.Empty<UnratedItem>()),
+                (UserB, null, null, Array.Empty<UnratedItem>()));
+
+            const string body = @"{ ""results"": [
+                { ""id"": 100, ""mediaType"": ""movie"" },
+                { ""id"": 200, ""mediaType"": ""movie"" } ] }";
+
+            // Same path + body, different callers: each response is filtered to that caller's
+            // limit (the per-user ResponseCache key must not leak A's filtered body to B).
+            var forA = await filter.ApplyAsync(body, "/api/v1/search?query=x", new JellyseerrCaller(UserA.ToString(), false));
+            var forB = await filter.ApplyAsync(body, "/api/v1/search?query=x", new JellyseerrCaller(UserB.ToString(), false));
+
+            Assert.Equal(new[] { 100 }, Ids((System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse(forA.Body)!, "results"));      // A: R-rated 200 dropped
+            Assert.Equal(new[] { 100, 200 }, Ids((System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse(forB.Body)!, "results")); // B: no limit, both kept
+        }
+
+        [Fact]
+        public async Task PerCallerBlockUnratedPolicyIsApplied_NotAFixedUser()
+        {
+            // Both have the same permissive score (17), so rating alone allows the uncertified
+            // title 300; only A blocks unrated Movies. Proves the POLICY (BlockUnratedItems),
+            // read via GetUserDto, is resolved per caller too — not just the score.
+            var filter = BuildMultiUserFilter(
+                (UserA, 17, 0, new[] { UnratedItem.Movie }),
+                (UserB, 17, 0, Array.Empty<UnratedItem>()));
+
+            const string body = @"{ ""results"": [ { ""id"": 300, ""mediaType"": ""movie"" } ] }";
+
+            var forA = await filter.ApplyAsync(body, "/api/v1/search?query=x", new JellyseerrCaller(UserA.ToString(), false));
+            var forB = await filter.ApplyAsync(body, "/api/v1/search?query=x", new JellyseerrCaller(UserB.ToString(), false));
+
+            Assert.Empty(Ids((System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse(forA.Body)!, "results"));           // A blocks uncertified movies
+            Assert.Equal(new[] { 300 }, Ids((System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse(forB.Body)!, "results")); // B allows them
         }
 
         // ── Minimal fakes ────────────────────────────────────────────────────
@@ -409,20 +626,34 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
 
         private sealed class StubUserManager : IUserManager
         {
-            private readonly User _user;
-            private readonly UserPolicy _policy;
+            private readonly IReadOnlyDictionary<Guid, (User User, UserPolicy Policy)> _users;
 
-            public StubUserManager(User user, UserPolicy policy)
+            public StubUserManager(IReadOnlyDictionary<Guid, (User User, UserPolicy Policy)> users)
             {
-                _user = user;
-                _policy = policy;
+                _users = users;
             }
 
             public event EventHandler<GenericEventArgs<User>> OnUserUpdated { add { } remove { } }
 
-            public User? GetUserById(Guid id) => _user;
+            // Resolve the ACTUAL user for this id — not a fixed one. A caller→user mixup
+            // (hardcoded id, admin's policy, dropped mapping) now surfaces as null here,
+            // which fails the gate loudly instead of silently applying the wrong limits.
+            public User? GetUserById(Guid id) => _users.TryGetValue(id, out var entry) ? entry.User : null;
 
-            public UserDto GetUserDto(User user, string? remoteEndPoint = null) => new() { Policy = _policy };
+            // Policy is keyed to the SAME user object GetUserById returned (reference match),
+            // so each caller's own BlockUnratedItems is applied — never a shared one.
+            public UserDto GetUserDto(User user, string? remoteEndPoint = null)
+            {
+                foreach (var entry in _users.Values)
+                {
+                    if (ReferenceEquals(entry.User, user))
+                    {
+                        return new UserDto { Policy = entry.Policy };
+                    }
+                }
+
+                throw new InvalidOperationException($"GetUserDto called for an unregistered user '{user.Username}'.");
+            }
 
             public IEnumerable<User> GetUsers() => throw new NotImplementedException();
 

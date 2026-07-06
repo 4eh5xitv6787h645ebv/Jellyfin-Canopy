@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using MediaBrowser.Model.Session;
 using Xunit;
@@ -39,11 +40,66 @@ public class LiveNotifierServiceTests
         Assert.Equal(LiveNotifierService.ConfigChangedValue, command.Arguments[LiveNotifierService.MarkerKey]);
     }
 
-    [Fact]
-    public void CarrierCommand_IsNotAnInputActionNativeClientsHandle()
+    /// <summary>
+    /// The <see cref="GeneralCommandType"/> values jellyfin-web's <c>GeneralCommand</c>
+    /// handler acts on (mirrors the <c>processGeneralCommand</c> switch + the inputManager
+    /// triggers as of Jellyfin 12.0-rc2). The config-changed push rides a carrier command
+    /// purely to smuggle its <c>JellyfinEnhanced = config-changed</c> marker; it must NOT
+    /// be any of these, or every config save would drive real UI (a toast, a nav, a volume
+    /// change, ...) on every connected client. Over-inclusive by design — a broader set only
+    /// makes the guard stricter. <c>SetPlaybackOrder</c> is deliberately absent: it has no
+    /// web handler, which is exactly why it is the inert carrier.
+    /// </summary>
+    private static readonly HashSet<GeneralCommandType> WebHandledCommands = new()
     {
-        // Guard against picking a carrier the web GeneralCommand switch acts on
-        // (which would trigger real UI). SetPlaybackOrder is not in that switch.
-        Assert.Equal(GeneralCommandType.SetPlaybackOrder, LiveNotifierService.CarrierCommand);
+        // Navigation / focus (inputManager)
+        GeneralCommandType.MoveUp, GeneralCommandType.MoveDown,
+        GeneralCommandType.MoveLeft, GeneralCommandType.MoveRight,
+        GeneralCommandType.PageUp, GeneralCommandType.PageDown,
+        GeneralCommandType.PreviousLetter, GeneralCommandType.NextLetter,
+        GeneralCommandType.Select, GeneralCommandType.Back,
+        GeneralCommandType.GoHome, GeneralCommandType.GoToSettings,
+        GeneralCommandType.GoToSearch, GeneralCommandType.Guide,
+        // On-screen UI toggles
+        GeneralCommandType.ToggleOsd, GeneralCommandType.ToggleOsdMenu,
+        GeneralCommandType.ToggleContextMenu, GeneralCommandType.ToggleFullscreen,
+        GeneralCommandType.ToggleStats, GeneralCommandType.TakeScreenshot,
+        // Text input
+        GeneralCommandType.SendKey, GeneralCommandType.SendString,
+        // Volume / audio / subtitles / bitrate
+        GeneralCommandType.VolumeUp, GeneralCommandType.VolumeDown,
+        GeneralCommandType.Mute, GeneralCommandType.Unmute, GeneralCommandType.ToggleMute,
+        GeneralCommandType.SetVolume, GeneralCommandType.SetAudioStreamIndex,
+        GeneralCommandType.SetSubtitleStreamIndex, GeneralCommandType.SetMaxStreamingBitrate,
+        // Content / messaging / playback
+        GeneralCommandType.DisplayContent, GeneralCommandType.DisplayMessage,
+        GeneralCommandType.SetRepeatMode, GeneralCommandType.SetShuffleQueue,
+        GeneralCommandType.ChannelUp, GeneralCommandType.ChannelDown,
+        GeneralCommandType.PlayMediaSource, GeneralCommandType.PlayTrailers,
+        GeneralCommandType.PlayState, GeneralCommandType.PlayNext, GeneralCommandType.Play,
+    };
+
+    [Fact]
+    public void CarrierCommand_IsNotAnInputActionWebClientsHandle()
+    {
+        // The real invariant (replaces the old x == x tautology): the carrier must be
+        // DISJOINT from the set of commands jellyfin-web actually acts on. If a future
+        // web version starts handling the carrier — or someone repoints CarrierCommand at
+        // a handled command like DisplayMessage — the config-changed push would fire real
+        // client UI on every save, and this fails.
+        Assert.DoesNotContain(LiveNotifierService.CarrierCommand, WebHandledCommands);
+    }
+
+    [Fact]
+    public void WebHandledCommands_IsNonTrivial()
+    {
+        // Keep the denylist honest: it must actually enumerate handled commands (so the
+        // disjointness check above can't be defeated by silently gutting the set), and it
+        // must include the obvious UI-driving ones the carrier must never collide with.
+        Assert.Contains(GeneralCommandType.DisplayMessage, WebHandledCommands);
+        Assert.Contains(GeneralCommandType.DisplayContent, WebHandledCommands);
+        Assert.Contains(GeneralCommandType.Play, WebHandledCommands);
+        Assert.Contains(GeneralCommandType.GoHome, WebHandledCommands);
+        Assert.True(WebHandledCommands.Count >= 20, "the web-handled set looks truncated");
     }
 }

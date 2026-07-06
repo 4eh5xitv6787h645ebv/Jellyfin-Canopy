@@ -26,6 +26,13 @@ Jellyfin.Plugin.JellyfinEnhanced/
     │   ├── live-rows.ts     # Library/user-data pushes → coalesced tag rescans
     │   ├── live-update.ts   # Plugin self-update detection → one-time refresh toast
     │   ├── tag-renderer-base.ts  # Factory owning the shared tag-module plumbing
+    │   ├── bounded-cache.ts # Size-capped, lazily-TTL-swept LRU — the one item-cache primitive
+    │   ├── config-resolve.ts # PascalCase admin-config → camelCase view (admin-default resolution)
+    │   ├── delivery-flags.ts # Zeroes stale Custom-Tabs/Plugin-Pages flags when those plugins are gone
+    │   ├── fetch-error.ts   # Classifies a failed fetch so callers show an error state, not empty
+    │   ├── css-safe.ts      # isCssColor / cssColorOr — the CSS-context escape sink (see client-security.md)
+    │   ├── modal-a11y.ts    # Shared modal focus-trap + global-shortcut suppression for JE overlays
+    │   ├── locale.ts        # One display locale for every date/number format in a session
     │   └── *.test.ts        # Vitest unit tests, colocated (coverage ratchet in vitest.config.ts)
     ├── bootstrap/           # Out-of-band loaders compiled to their OWN dist/<name>.js files
     │   │                    # (fetched by plugin.js separately — before login / before the bundle)
@@ -48,7 +55,7 @@ Jellyfin.Plugin.JellyfinEnhanced/
     │                        # quota, results, request/season modals + internal.ts shared state)
     ├── arr/                 # Sonarr/Radarr integration. Flat singles: arr-links, arr-tag-links,
     │   │                    # arr-globals
-    │   ├── calendar/        # Calendar page (styles, data, render-*, actions, init) + custom-tab.ts
+    │   ├── calendar/        # Calendar page (styles, data, render-*, actions, init, event-date) + custom-tab.ts
     │   └── requests/        # Requests page (styles, data, render-*, actions, init) + custom-tab.ts
     ├── tags/                # Tag renderer specs over core/tag-renderer-base + enhanced/tag-pipeline
     ├── elsewhere/           # Streaming-availability + reviews
@@ -95,17 +102,23 @@ Jellyfin.Plugin.JellyfinEnhanced/
 ├── Configuration/
 │   ├── PluginConfiguration.cs # Flat XML-serialized settings bag (shape is frozen for upgrades)
 │   ├── SettingDescriptors.cs  # Settings-as-data registry: exposure + per-user pairing per setting
+│   ├── AtomicFile.cs          # Crash-safe write helper (temp-file + atomic rename) all config writes go through
 │   ├── UserConfiguration.cs / UserConfigurationManager.cs (+ store/migration/reviews classes)
 │   ├── PersistedJson.cs       # System.Text.Json options replicating the legacy on-disk tolerances
 │   └── configPage.html + config-page.js  # Admin page; simple fields bind via data-config-key
 ├── Services/                  # Seerr cache/scan/watchlist, Seerr parental-rating result filter,
-│   │                          # auto-request watchers, arr tag sync,
+│   │                          # auto-request watchers (AutoRequest/AutoRequestRetryPolicy —
+│   │                          # transport-only retry / already-requested handling), arr tag sync,
 │   │                          # maintenance mode, startup filters (script injection, branding)
 │   └── LiveNotifierService.cs # Pushes live updates (config-changed etc.) to open sessions
 │                              # via ISessionManager (see docs/advanced/live-updates.md)
 ├── EventHandlers/             # Server-side Jellyfin event subscribers (playback events)
 ├── Data/ItemLookupService.cs  # Provider-id lookups via the supported ILibraryManager query surface
-├── ScheduledTasks/ · Helpers/ · Model/ · Logging/ · PluginPages/
+├── Helpers/                  # Pure helpers: ArrIdHelper (zero-id normalize + per-instance id namespacing),
+│                              # ArrUrlGuard (SSRF guard: metadata/rebind blocked, LAN allowed),
+│                              # Arr/ArrReleaseDate (date-only vs instant calendar release contract),
+│                              # Jellyseerr/TmdbProxyPathClassifier (deny-by-default raw-TMDB gate)
+├── ScheduledTasks/ · Model/ · Logging/ · PluginPages/
 └── dist/                      # esbuild output (generated at build time, never committed)
 ```
 
@@ -116,7 +129,8 @@ The project targets **Jellyfin 12 / net10.0 only** and builds with `TreatWarning
 - `npm run typecheck:src` / `npm run lint` / `npm run test:client` — strict type check, ESLint, and vitest unit tests for the `src/` tree (`test:client:coverage` adds the `src/core` line-coverage ratchet)
 - `npm run build:bundle` — the client bundle (also run automatically by the C# build); `npm run watch` rebuilds it (unminified) on every source change
 - `npm run syntax` / `npm run typecheck` — `node --check` + opt-in `@ts-check` for the one remaining classic script (the loader)
-- `Jellyfin.Plugin.JellyfinEnhanced.Tests/` — xUnit tests, including golden snapshots for the config payloads and on-disk user-file formats, plus a line-coverage ratchet (`scripts/check-dotnet-coverage.js`)
-- `e2e/` — the committed Playwright suite (`npm run e2e`) + `e2e/docker/` (dockerized, seeded Jellyfin 12 for CI and local runs)
+- `Jellyfin.Plugin.JellyfinEnhanced.Tests/` — xUnit tests, including golden snapshots for the config payloads and on-disk user-file formats, plus a line-coverage ratchet (`scripts/check-dotnet-coverage.js`). Its `Configuration/` tests bridge the `SettingDescriptors` registry to both ends of the admin config page over one shared source parser (`ConfigPageSource.cs`, read by both directions so they can never drift): `ConfigControlCoverageTests` fails if any admin-settable descriptor backed by a real `PluginConfiguration` property has no config-page control (an admin default stuck at its hardcoded value), and `ClientConfigKeyLivenessTests` scans the shipped client source and fails if any `JE.pluginConfig.X` read is not a projected (`Public`/`Private`) descriptor key (a client knob that is always `undefined`)
+- `src/test/` — cross-cutting **guard tests** that parse the shipped source and fail on a whole *class* of regression, not just one instance: `escape-guard` (HTML-injection, incl. an escape-first check of pre-escaping producers), `css-injection-guard` (CSS-context values), `leak-guard` (object URLs, observers, TTL maps, unbounded retry loops), `perf-rules-guard` (the R-rules), `error-as-empty-guard` (fetch errors surfaced, not swallowed), `locale-guard`, `ratings-css`, `injected-css-balance`, `legacy-auth-header`, `plugin-loader`, `build-scripts`. Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber's synchronous body (see [S1](performance-rules.md#s1-never-block-jellyfins-synchronous-threads))
+- `e2e/` — the committed Playwright suite (`npm run e2e`) + `e2e/docker/` (dockerized, seeded Jellyfin 12 for CI and local runs). Every spec closes on the shared `assertNoRuntimeErrors` net in `e2e/fixtures/auth.ts`: it fails on any un-whitelisted console error / pageerror and, because Chromium's generic 40x console line carries no url, on any 4xx response whose url is not on the known-legacy `ALLOWED_4XX_URL` allowlist (a real broken plugin endpoint) — `e2e/console-net.spec.ts` is the unit-of-behavior spec that pins that net. Alongside the boot / navigation / panel / live-update / tag specs, the security- and persistence-sensitive flows have their own: `arr-requests-parental.spec.ts` (the Requests page applies the caller's own parental limit server-side; an admin bypasses it), `search-tags.spec.ts` (`DisableTagsOnSearchPage` hides *every* tag family on the search page, not just genre), `settings-persist.spec.ts` (a per-user setting round-trips through the server across a reload) and `non-admin.spec.ts` (core surfaces from a non-admin session, where per-user gating bugs live). `e2e/docker/seed.sh` accepts optional `TMDB_API_KEY` / `JELLYSEERR_*` env so the Seerr/TMDB specs run when configured and skip cleanly when not — the readiness probes and per-user parental-limit helpers live in `e2e/fixtures/seerr.ts` (`tmdbReady` / `seerrReady` read the projected public-config)
 - `node scripts/new-feature.js <name>` — the paved-road scaffolder: generates a typed client module, a controller, an e2e spec stub and a docs stub, wired into the area barrel (see CONTRIBUTING.md)
 - `scripts/release/` — release packaging + manifest generation/validation (see RELEASING.md)

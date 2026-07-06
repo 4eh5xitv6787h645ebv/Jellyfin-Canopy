@@ -99,29 +99,50 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             return GetUserConfiguration<ProcessedWatchlistItems>(userId.ToString(), "processed-watchlist-items.json");
         }
 
-        /// Saves processed watchlist items for a user.
+        /// <summary>
+        /// Saves processed watchlist items for a user. This is a whole-replace,
+        /// last-write-wins write (used for the first-write/full-replace case) — it does
+        /// NOT serialize against a concurrent reader-mutator. For in-place marker
+        /// mutations (append/prune) that can race the event monitor and the scheduled
+        /// sync task, use <see cref="RmwProcessedWatchlistItems"/> instead.
+        /// </summary>
         public void SaveProcessedWatchlistItems(Guid userId, ProcessedWatchlistItems items)
         {
             SaveUserConfiguration(userId.ToString(), "processed-watchlist-items.json", items);
         }
+
+        /// <summary>
+        /// Locked read-modify-write of a user's processed-watchlist file. All mutators
+        /// (WatchlistMonitor + JellyseerrWatchlistSyncTask) MUST go through this so
+        /// concurrent event/scheduled writers cannot lose each other's markers. The
+        /// mutator returns the number of changes; a return of 0 skips the save.
+        /// Strict-read semantics apply (a corrupt file backs up + throws), so callers
+        /// running off the request path must catch/log/skip rather than propagate.
+        /// </summary>
+        public int RmwProcessedWatchlistItems(Guid userId, Func<ProcessedWatchlistItems, int> mutate)
+            => RmwUserConfiguration<ProcessedWatchlistItems>(
+                   userId.ToString(), "processed-watchlist-items.json", mutate);
 
         /// Cleans up old processed watchlist items (older than specified days).
         public void CleanupOldProcessedWatchlistItems(Guid userId, int daysToKeep = 365)
         {
             try
             {
-                var items = GetProcessedWatchlistItems(userId);
                 var cutoffDate = System.DateTime.UtcNow.AddDays(-daysToKeep);
 
-                var originalCount = items.Items.Count;
-                var itemsToKeep = items.Items.Where(item => item.ProcessedAt > cutoffDate).ToList();
-
-                if (itemsToKeep.Count != originalCount)
+                // Serialize the prune through the locked RMW so it can't race an append
+                // from the monitor/sync task and lose a just-added marker.
+                RmwProcessedWatchlistItems(userId, items =>
                 {
-                    items.Items = itemsToKeep;
-                    SaveProcessedWatchlistItems(userId, items);
-                    _logger.LogInformation($"Cleaned up {originalCount - itemsToKeep.Count} old processed watchlist items for user {userId}");
-                }
+                    var originalCount = items.Items.Count;
+                    items.Items = items.Items.Where(item => item.ProcessedAt > cutoffDate).ToList();
+                    var removed = originalCount - items.Items.Count;
+                    if (removed > 0)
+                    {
+                        _logger.LogInformation($"Cleaned up {removed} old processed watchlist items for user {userId}");
+                    }
+                    return removed;
+                });
             }
             catch (Exception ex)
             {

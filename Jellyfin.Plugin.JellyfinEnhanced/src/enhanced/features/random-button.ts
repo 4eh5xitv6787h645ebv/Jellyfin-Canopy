@@ -6,6 +6,7 @@
 import { JE } from '../../globals';
 import { toast } from '../../core/ui-kit';
 import { getHeaderRightContainer } from '../helpers';
+import { insertHeaderTrayButton, HeaderTrayOrder } from '../header-tray';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -195,7 +196,7 @@ JE.addRandomButton = (): void => {
         () => getHeaderRightContainer(),
         (headerRight, ctx) => {
             const container = buildRandomButton(headerRight);
-            headerRight.prepend(container);
+            insertHeaderTrayButton(headerRight, container, HeaderTrayOrder.randomButton);
             JE.core.ui!.expandIn(container, { instant: ctx?.prePaint === true || !firstBuild });
             firstBuild = false;
             return container;

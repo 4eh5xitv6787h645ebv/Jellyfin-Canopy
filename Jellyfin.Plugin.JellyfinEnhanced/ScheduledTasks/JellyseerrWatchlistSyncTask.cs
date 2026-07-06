@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
+using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -541,10 +542,35 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             Skipped
         }
 
+        /// <summary>
+        /// Whether a Jellyfin item's TMDB provider-id string matches the watchlist item's TMDB id.
+        /// A watchlist item with no real TMDB id (absent → 0, or an explicit 0 for an unknown-provider
+        /// entry) matches NOTHING — otherwise it would "like" a Jellyfin item stored with
+        /// ProviderIds["Tmdb"]=="0" (an unknown-provider placeholder). Mirrors the WatchlistMonitor
+        /// drop-zero guard, routed through ArrIdHelper.
+        /// </summary>
+        internal static bool MatchesTmdb(string? itemTmdbId, int watchlistTmdbId)
+        {
+            var wanted = ArrIdHelper.ToNullableId(watchlistTmdbId);
+            return wanted.HasValue
+                && string.Equals(
+                    itemTmdbId,
+                    wanted.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    StringComparison.Ordinal);
+        }
+
         private Task<WatchlistItemResult> ProcessWatchlistItem(JUser user, WatchlistItem watchlistItem)
         {
             try
             {
+                // Drop items with no real TMDB id (absent → 0, or an explicit 0) before matching or
+                // recording them: a 0 would otherwise key the processed-items check and match a
+                // Jellyfin item stored with ProviderIds["Tmdb"]=="0", liking the wrong item.
+                if (ArrIdHelper.ToNullableId(watchlistItem.TmdbId) == null)
+                {
+                    return Task.FromResult(WatchlistItemResult.Skipped);
+                }
+
                 var config = _configProvider.ConfigurationOrNull;
                 if (config?.PreventWatchlistReAddition == true)
                 {
@@ -568,13 +594,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                 });
 
                 var item = items.FirstOrDefault(i =>
-                {
-                    if (i.ProviderIds != null && i.ProviderIds.TryGetValue("Tmdb", out var tmdbId))
-                    {
-                        return tmdbId == watchlistItem.TmdbId.ToString();
-                    }
-                    return false;
-                });
+                    i.ProviderIds != null
+                    && i.ProviderIds.TryGetValue("Tmdb", out var tmdbId)
+                    && MatchesTmdb(tmdbId, watchlistItem.TmdbId));
 
                 if (item == null)
                 {
@@ -596,18 +618,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                     // Mark as processed if prevention is enabled and not already marked
                     if (config?.PreventWatchlistReAddition == true)
                     {
-                        var processedItems = _userConfigurationManager.GetProcessedWatchlistItems(user.Id);
-                        if (!processedItems.Items.Any(p => p.TmdbId == watchlistItem.TmdbId && p.MediaType == watchlistItem.MediaType))
-                        {
-                            processedItems.Items.Add(new ProcessedWatchlistItem
-                            {
-                                TmdbId = watchlistItem.TmdbId,
-                                MediaType = watchlistItem.MediaType,
-                                ProcessedAt = System.DateTime.UtcNow,
-                                Source = "existing"
-                            });
-                            _userConfigurationManager.SaveProcessedWatchlistItems(user.Id, processedItems);
-                        }
+                        TryMarkProcessed(user.Id, watchlistItem.TmdbId, watchlistItem.MediaType, "existing");
                     }
 
                     return Task.FromResult(WatchlistItemResult.AlreadyInWatchlist);
@@ -620,15 +631,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                 // Mark as processed if prevention is enabled
                 if (config?.PreventWatchlistReAddition == true)
                 {
-                    var processedItems = _userConfigurationManager.GetProcessedWatchlistItems(user.Id);
-                    processedItems.Items.Add(new ProcessedWatchlistItem
-                    {
-                        TmdbId = watchlistItem.TmdbId,
-                        MediaType = watchlistItem.MediaType,
-                        ProcessedAt = System.DateTime.UtcNow,
-                        Source = "sync"
-                    });
-                    _userConfigurationManager.SaveProcessedWatchlistItems(user.Id, processedItems);
+                    TryMarkProcessed(user.Id, watchlistItem.TmdbId, watchlistItem.MediaType, "sync");
                 }
 
                 _logger.LogInformation($"[Seerr→Jellyfin Watchlist Sync] ✓ Added to watchlist: {item.Name} for user {user.Username}");
@@ -638,6 +641,37 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             {
                 _logger.LogError($"[Seerr→Jellyfin Watchlist Sync] Error processing watchlist item: {ex.Message}");
                 return Task.FromResult(WatchlistItemResult.Skipped);
+            }
+        }
+
+        // Serialize the processed-watchlist marker append through the locked RMW primitive so this
+        // scheduled task can't clobber a marker the event monitor just added (or vice versa). The
+        // in-lock re-check keeps the append idempotent; strict-read corruption is logged + skipped
+        // so a single corrupt user file can't fail the whole sync task.
+        private void TryMarkProcessed(Guid userId, int tmdbId, string mediaType, string source)
+        {
+            try
+            {
+                _userConfigurationManager.RmwProcessedWatchlistItems(userId, items =>
+                {
+                    if (items.Items.Any(p => p.TmdbId == tmdbId && p.MediaType == mediaType))
+                    {
+                        return 0;
+                    }
+
+                    items.Items.Add(new ProcessedWatchlistItem
+                    {
+                        TmdbId = tmdbId,
+                        MediaType = mediaType,
+                        ProcessedAt = System.DateTime.UtcNow,
+                        Source = source
+                    });
+                    return 1;
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"[Seerr→Jellyfin Watchlist Sync] Failed to record processed marker for user {userId}: {ex.Message}");
             }
         }
 

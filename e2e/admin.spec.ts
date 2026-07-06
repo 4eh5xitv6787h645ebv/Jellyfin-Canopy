@@ -5,7 +5,7 @@
 // a valid non-admin token -> bare 403 with an EMPTY body; missing/garbage
 // token -> 401. Client code branches on status alone, so the specs pin both
 // the codes and the empty-body shape.
-import { test, expect, loginAs, USERS } from './fixtures/auth';
+import { test, expect, loginAs, USERS, assertNoRuntimeErrors } from './fixtures/auth';
 import { apiRaw, authenticate } from './fixtures/api';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -79,7 +79,7 @@ test.describe('admin authorization', () => {
             // "View own" + at least the seeded user.
             expect(optionCount).toBeGreaterThan(1);
 
-            expect(consoleErrors.real()).toEqual([]);
+            assertNoRuntimeErrors(consoleErrors);
         } finally {
             // Leave the user's hidden-content store as found.
             await apiRaw(
@@ -100,9 +100,13 @@ test.describe('admin authorization', () => {
         await page.waitForSelector('#je-hidden-content-container', { state: 'visible', timeout: 30_000 });
         await page.waitForSelector('.je-hidden-content-page-grid, .je-hidden-content-page-empty', { timeout: 30_000 });
 
-        // The bare-403 responses from admin endpoints must degrade silently:
-        // no admin surface leaks in and nothing is left spinning.
-        await page.waitForTimeout(4_000);
+        // The admin-filter decision is settled once the page has rendered its
+        // grid/empty state and the network is idle: the non-admin's build path
+        // short-circuits on resolveIsAdmin()'s getCurrentUser() and never even
+        // calls /admin/hidden-content-users, so network-idle (not a fixed sleep,
+        // and not a response that is never sent) is the concrete signal that the
+        // decision has been made. Only then assert the negative.
+        await page.waitForLoadState('networkidle');
         const state = await page.evaluate(() => ({
             adminFilter: !!document.querySelector('.je-hidden-admin-user-filter'),
             stuckSpinners: [...document.querySelectorAll('.docspinner, .mdl-spinner, .loading-spinner')]
@@ -111,6 +115,6 @@ test.describe('admin authorization', () => {
         expect(state.adminFilter).toBe(false);
         expect(state.stuckSpinners).toBe(0);
 
-        expect(consoleErrors.real()).toEqual([]);
+        assertNoRuntimeErrors(consoleErrors);
     });
 });

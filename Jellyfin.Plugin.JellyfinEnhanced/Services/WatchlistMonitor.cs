@@ -29,6 +29,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         private readonly Dictionary<string, (List<RequestItemWithUser> Items, DateTime CachedAt)> _requestsCache = new();
         private readonly object _requestsCacheLock = new();
         private readonly ConcurrentDictionary<string, Task<List<RequestItemWithUser>?>> _requestsInFlight = new();
+        private readonly object _subLock = new();
+        private bool _subscribed;
 
         public WatchlistMonitor(
             ILibraryManager libraryManager,
@@ -75,9 +77,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 return;
             }
 
-            // _logger.LogInformation("[Watchlist] Initializing library event monitoring");
-            _libraryManager.ItemAdded += OnItemAdded;
-            _libraryManager.ItemUpdated += OnItemUpdated;
+            // Guard against a second startup-task run double-subscribing (a dashboard "Run" button
+            // always exists). The disabled-feature early-return stays ahead of the lock so re-running
+            // the task after enabling the feature still subscribes.
+            lock (_subLock)
+            {
+                if (_subscribed) return;
+                _libraryManager.ItemAdded += OnItemAdded;
+                _libraryManager.ItemUpdated += OnItemUpdated;
+                _subscribed = true;
+            }
             _logger.LogInformation("[Watchlist] Successfully subscribed to library ItemAdded and ItemUpdated events");
         }
 
@@ -147,8 +156,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     return;
                 }
 
-                if (!int.TryParse(tmdbIdString, out var tmdbId))
+                if (!int.TryParse(tmdbIdString, out var tmdbId) || tmdbId <= 0)
                 {
+                    // A Tmdb=="0" library item must not auto-add to every 0-tmdb requester's watchlist.
                     _logger.LogWarning($"[Watchlist] Invalid TMDB ID format: {tmdbIdString}");
                     return;
                 }
@@ -230,32 +240,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                         // Mark as processed if prevention is enabled
                         if (config.PreventWatchlistReAddition)
                         {
-                            var processedItems = _userConfigurationManager.GetProcessedWatchlistItems(user.Id);
-                            processedItems.Items.Add(new ProcessedWatchlistItem
-                            {
-                                TmdbId = tmdbId,
-                                MediaType = mediaType,
-                                ProcessedAt = System.DateTime.UtcNow,
-                                Source = "monitor"
-                            });
-                            _userConfigurationManager.SaveProcessedWatchlistItems(user.Id, processedItems);
+                            TryMarkProcessed(user.Id, tmdbId, mediaType, "monitor");
                         }
                     }
                     else if (userData != null && userData.Likes == true && config.PreventWatchlistReAddition)
                     {
                         // Item is already in watchlist, mark as processed if not already marked
-                        var processedItems = _userConfigurationManager.GetProcessedWatchlistItems(user.Id);
-                        if (!processedItems.Items.Any(p => p.TmdbId == tmdbId && p.MediaType == mediaType))
-                        {
-                            processedItems.Items.Add(new ProcessedWatchlistItem
-                            {
-                                TmdbId = tmdbId,
-                                MediaType = mediaType,
-                                ProcessedAt = System.DateTime.UtcNow,
-                                Source = "existing"
-                            });
-                            _userConfigurationManager.SaveProcessedWatchlistItems(user.Id, processedItems);
-                        }
+                        TryMarkProcessed(user.Id, tmdbId, mediaType, "existing");
                     }
                 }
 
@@ -268,6 +259,37 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             catch (Exception ex)
             {
                 _logger.LogError($"[Watchlist] Error in ProcessItemForWatchlist: {ex.Message}\nStack trace: {ex.StackTrace}");
+            }
+        }
+
+        // Serialize the processed-watchlist marker append through the locked RMW primitive so a
+        // concurrent scheduled sync (or another event) can't clobber a just-added marker. The
+        // in-lock re-check keeps the append idempotent; strict-read corruption is logged + skipped
+        // (this runs off the request path in Task.Run — never throw into the scan thread).
+        private void TryMarkProcessed(Guid userId, int tmdbId, string mediaType, string source)
+        {
+            try
+            {
+                _userConfigurationManager.RmwProcessedWatchlistItems(userId, items =>
+                {
+                    if (items.Items.Any(p => p.TmdbId == tmdbId && p.MediaType == mediaType))
+                    {
+                        return 0;
+                    }
+
+                    items.Items.Add(new ProcessedWatchlistItem
+                    {
+                        TmdbId = tmdbId,
+                        MediaType = mediaType,
+                        ProcessedAt = System.DateTime.UtcNow,
+                        Source = source
+                    });
+                    return 1;
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"[Watchlist] Failed to record processed marker for user {userId}: {ex.Message}");
             }
         }
 
@@ -386,7 +408,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     }
                 }
 
-                if (tmdbId.HasValue && mediaType != null && !string.IsNullOrEmpty(requestedByJellyfinUserId))
+                if (tmdbId is > 0 && mediaType != null && !string.IsNullOrEmpty(requestedByJellyfinUserId))
                 {
                     return new RequestItemWithUser
                     {
@@ -409,8 +431,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         public void Dispose()
         {
             _logger.LogInformation("[Watchlist] Unsubscribing from library events");
-            _libraryManager.ItemAdded -= OnItemAdded;
-            _libraryManager.ItemUpdated -= OnItemUpdated;
+            lock (_subLock)
+            {
+                _libraryManager.ItemAdded -= OnItemAdded;
+                _libraryManager.ItemUpdated -= OnItemUpdated;
+                _subscribed = false;
+            }
             GC.SuppressFinalize(this);
         }
 

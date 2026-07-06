@@ -2,6 +2,7 @@
 // Public surface + orchestration for the Jellyseerr more-info modal:
 // open/close, modal lifecycle, refresh and navigation cleanup.
 import { JE } from '../../globals';
+import { installModalA11y } from '../../core/modal-a11y';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 /* eslint-disable @typescript-eslint/no-misused-promises -- legacy async event listeners with fire-and-forget bodies; semantics preserved verbatim */
@@ -156,14 +157,13 @@ if (collectionBtn) {
 document.body.appendChild(modal);
 state.currentModal = modal;
 
-// Add Escape key handler
-const handleEscape = (e: any) => {
-    if (e.key === 'Escape') {
-        moreInfoModal.close();
-    }
-};
-document.addEventListener('keydown', handleEscape);
-(modal as any)._cleanupEscapeListener = () => document.removeEventListener('keydown', handleEscape);
+// Accessible dialog: role/aria, focus trap + restore, Escape, and the
+// je-modal-open gate that suppresses JE global shortcuts while open (A11Y-1 /
+// INT-1). Replaces the former hand-rolled Escape-only keydown listener.
+(modal as any)._a11y = installModalA11y(modal, {
+    labelledBy: 'je-more-info-title',
+    onEscape: () => moreInfoModal.close(),
+});
 
 // Render action buttons/chips after mount
 internal.renderActions(data, mediaType);
@@ -214,9 +214,10 @@ if (state.currentModal) {
     if (state.currentModal._cleanupTvListener) {
         state.currentModal._cleanupTvListener();
     }
-    // Clean up Escape key listener if exists
-    if (state.currentModal._cleanupEscapeListener) {
-        state.currentModal._cleanupEscapeListener();
+    // Release the a11y handle now (before the 300ms removal) so focus restores
+    // immediately and the je-modal-open gate lifts.
+    if (state.currentModal._a11y) {
+        state.currentModal._a11y.release();
     }
     state.currentModal.classList.remove('active');
     setTimeout(() => {

@@ -295,8 +295,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         [Authorize]
         public Task<IActionResult> GetJellyseerrRequests([FromQuery] int take = 500, [FromQuery] int skip = 0, [FromQuery] string filter = "all")
         {
-            return ProxyJellyseerrRequest($"/api/v1/request?take={take}&skip={skip}&filter={filter}", HttpMethod.Get);
+            return ProxyJellyseerrRequest(BuildRequestsProxyPath(take, skip, filter), HttpMethod.Get);
         }
+
+        // Escapes filter (take/skip are ints, already safe) so a crafted value can't smuggle extra
+        // query params into the upstream path — matching the sibling GetJellyseerrIssues route.
+        // Extracted so the escaping is unit-testable without a live proxy round-trip.
+        internal static string BuildRequestsProxyPath(int take, int skip, string filter)
+            => $"/api/v1/request?take={take}&skip={skip}&filter={Uri.EscapeDataString(filter)}";
 
         // Returns the user's Seerr quota with a nextResetAt added per side.
         [HttpGet("jellyseerr/quota")]
@@ -754,19 +760,24 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 return StatusCode(503, "TMDB API key is not configured.");
             }
 
-            // The raw TMDB passthrough bypasses the Seerr proxy, so gate movie/tv
-            // detail lookups here too — otherwise a restricted user could recover a
-            // blocked title's metadata via /tmdb/movie/{id} despite the Seerr detail
-            // endpoint being blocked. (No-op unless Seerr is configured + the caller
-            // is rating-limited.)
-            if (TryGetTmdbDetailPath(apiPath, out var detailMediaType, out var detailTmdbId)
-                && await _parentalFilter.IsBlockedAsync(detailMediaType, detailTmdbId, SeerrCaller()))
+            // The raw TMDB passthrough bypasses the Seerr proxy, so gate it here too —
+            // otherwise a restricted user could enumerate above-limit titles or recover a
+            // blocked title's metadata/sub-resources through /tmdb/{**apiPath} despite the
+            // Seerr routes being blocked. Deny-by-default: only an explicit allow-list of
+            // rating-free shapes passes, movie/tv detail + sub-resources are parent-gated,
+            // and every other shape (including future/unknown ones) is denied. (No-op
+            // unless Seerr is configured + the caller is rating-limited.)
+            //
+            // The FULL query is forwarded to TMDB below, so it is handed to the gate too:
+            // otherwise an append_to_response=similar,recommendations rides on an allowed
+            // detail and smuggles above-limit title lists the passthrough cannot body-filter.
+            var queryString = HttpContext.Request.QueryString;
+            if (await _parentalFilter.IsTmdbProxyPathBlockedAsync($"{apiPath}{queryString}", SeerrCaller()))
             {
                 return new StatusCodeResult(403);
             }
 
             var httpClient = Helpers.PluginHttpClients.CreateTmdbClient(_httpClientFactory);
-            var queryString = HttpContext.Request.QueryString;
             var separator = queryString.HasValue ? "&" : "?";
             var requestUri = $"https://api.themoviedb.org/3/{apiPath}{queryString}{separator}api_key={config.TMDB_API_KEY}";
 
@@ -787,35 +798,6 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 _logger.LogError($"Failed to proxy TMDB request. Error: {ex.Message}");
                 return StatusCode(500, "Failed to connect to TMDB.");
             }
-        }
-
-        // Matches a bare TMDB detail path ("movie/{id}" or "tv/{id}", no further
-        // segment) so the parental gate applies only to full-title metadata, not to
-        // sub-resources (watch/providers), search, or list endpoints.
-        private static bool TryGetTmdbDetailPath(string apiPath, out string mediaType, out int tmdbId)
-        {
-            mediaType = "movie";
-            tmdbId = 0;
-            if (string.IsNullOrEmpty(apiPath))
-            {
-                return false;
-            }
-
-            var segments = apiPath.Trim('/').Split('/');
-            if (segments.Length != 2)
-            {
-                return false;
-            }
-
-            if (!string.Equals(segments[0], "movie", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(segments[0], "tv", StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            mediaType = segments[0].ToLowerInvariant();
-            return int.TryParse(segments[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out tmdbId)
-                && tmdbId > 0;
         }
 
         [HttpGet("jellyseerr/issue")]

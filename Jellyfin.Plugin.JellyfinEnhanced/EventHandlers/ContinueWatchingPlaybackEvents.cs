@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -120,6 +121,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.EventHandlers
 
                 if (changed > 0)
                 {
+                    // The response filter caches each user's HideContext for 30s; invalidate now so the
+                    // just-resumed item stops being hidden immediately instead of up to 30s later.
+                    HiddenContentResponseFilter.InvalidateUser(userId.ToString("N"));
                     _logger.LogInformation($"CW: dropped/demoted {changed} hidden-content entr{(changed == 1 ? "y" : "ies")} for user {userId} on resume of item {item.Id}");
                 }
             }
@@ -132,12 +136,35 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.EventHandlers
         }
     }
 
-    public sealed class ContinueWatchingLibraryHook : IHostedService
+    public sealed class ContinueWatchingLibraryHook : IHostedService, IDisposable
     {
+        private static readonly TimeSpan DrainDebounce = TimeSpan.FromSeconds(2);
+
         private readonly ILibraryManager _libraryManager;
         private readonly UserConfigurationManager _configManager;
         private readonly IUserManager _userManager;
         private readonly ILogger<ContinueWatchingLibraryHook> _logger;
+
+        // Coalesce a bulk delete (many ItemRemoved events in one burst) into a single debounced
+        // drain: without this, each removed item started its own Task.Run that enumerated every user
+        // and did a locked per-user disk RMW — O(items × users) file reads on a bulk delete.
+        private readonly ConcurrentDictionary<string, byte> _pendingRemovals = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Timer _drainTimer;
+        // Interlocked flush guard so a StopAsync flush and a concurrent timer tick don't double-drain
+        // (mirrors TagCacheService.FlushPending).
+        private int _draining;
+        private int _drainRearms; // count of times the finally re-armed the timer (test seam)
+
+        // Test seams (Tests has InternalsVisibleTo).
+        internal void EnqueueRemovalForTest(Guid id) => _pendingRemovals.TryAdd(id.ToString(), 0);
+
+        internal void DrainForTest() => Drain();
+
+        internal Action? OnDrainProcessingForTest;
+
+        internal int DrainRearmCountForTest => _drainRearms;
+
+        internal bool PendingIsEmptyForTest => _pendingRemovals.IsEmpty;
 
         public ContinueWatchingLibraryHook(
             ILibraryManager libraryManager,
@@ -149,6 +176,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.EventHandlers
             _configManager = configManager;
             _userManager = userManager;
             _logger = logger;
+            _drainTimer = new Timer(_ => Drain(), null, Timeout.Infinite, Timeout.Infinite);
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
@@ -160,40 +188,94 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.EventHandlers
         public Task StopAsync(CancellationToken cancellationToken)
         {
             _libraryManager.ItemRemoved -= OnItemRemoved;
+            // Flush anything queued mid-window so a shutdown doesn't drop pending prunes.
+            _drainTimer.Change(Timeout.Infinite, Timeout.Infinite);
+            Drain();
+            _drainTimer.Dispose();
             return Task.CompletedTask;
+        }
+
+        public void Dispose()
+        {
+            _drainTimer.Dispose();
+            GC.SuppressFinalize(this);
         }
 
         private void OnItemRemoved(object? sender, ItemChangeEventArgs e)
         {
-            // PERF(S1): ItemRemoved fires synchronously on Jellyfin's library-scan thread. Capture
-            // only the id here (O(1)); the user enumeration and the per-user hidden-content prune
-            // (file I/O) run off-thread. IUserManager is a thread-safe singleton, safe to read from
-            // the worker. See docs/advanced/performance-rules.md (S1).
+            // PERF(S1): ItemRemoved fires synchronously on Jellyfin's library-scan thread. Record only
+            // the id here (O(1)) and (re)arm the debounce timer; the user enumeration and the per-user
+            // hidden-content prune (file I/O) run once, off the scan thread, on the timer thread. See
+            // docs/advanced/performance-rules.md (S1).
             var id = e?.Item?.Id ?? Guid.Empty;
             if (id == Guid.Empty) return;
-            var idStr = id.ToString();
-
-            _ = Task.Run(() =>
-            {
-                try
-                {
-                    foreach (var userId in _userManager.GetUsers().Select(u => u.Id))
-                    {
-                        PruneOrphan(userId, idStr);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning($"CW: orphan-prune background task failed: {ex.Message}");
-                }
-            });
+            _pendingRemovals.TryAdd(id.ToString(), 0);
+            _drainTimer.Change(DrainDebounce, Timeout.InfiniteTimeSpan);
         }
 
-        private void PruneOrphan(Guid userId, string targetId)
+        // Snapshot + clear the pending removals, then prune each user ONCE for the whole batch.
+        private void Drain()
+        {
+            if (Interlocked.Exchange(ref _draining, 1) == 1) return;
+            try
+            {
+                if (_pendingRemovals.IsEmpty) return;
+                var ids = _pendingRemovals.Keys.ToArray();
+                foreach (var k in ids) _pendingRemovals.TryRemove(k, out _);
+
+                OnDrainProcessingForTest?.Invoke();
+
+                var userIds = _userManager.GetUsers().Select(u => u.Id);
+                DrainBatch(ids, userIds, PruneOrphans);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"CW: orphan-prune drain failed: {ex.Message}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _draining, 0);
+                // Re-arm if work arrived while we were draining (a concurrent ItemRemoved, or a timer
+                // tick that bailed on the _draining guard): those ids weren't in this drain's snapshot,
+                // so without a re-arm they'd sit in _pendingRemovals until the next unrelated event.
+                // Fixed delay, no busy-spin. Guard against ObjectDisposedException: StopAsync may have
+                // disposed the timer (it drains once more itself), so a late re-arm is a harmless no-op.
+                if (!_pendingRemovals.IsEmpty)
+                {
+                    try
+                    {
+                        _drainTimer.Change(DrainDebounce, Timeout.InfiniteTimeSpan);
+                        Interlocked.Increment(ref _drainRearms);
+                    }
+                    catch (ObjectDisposedException) { /* shutting down; StopAsync already drained/stopped */ }
+                }
+            }
+        }
+
+        // Coalescing core, factored out for testability: enumerate users once and prune each user
+        // exactly ONCE for the whole batch of removed ids (not once per id).
+        internal static int DrainBatch(
+            IReadOnlyCollection<string> removedIds,
+            IEnumerable<Guid> userIds,
+            Action<Guid, IReadOnlyCollection<string>> pruneUser)
+        {
+            if (removedIds.Count == 0) return 0;
+            var users = 0;
+            foreach (var userId in userIds)
+            {
+                pruneUser(userId, removedIds);
+                users++;
+            }
+            return users;
+        }
+
+        // One locked RMW per user that removes every batched orphan id, then invalidates the response
+        // filter's HideContext cache for that user if anything changed.
+        private void PruneOrphans(Guid userId, IReadOnlyCollection<string> targetIds)
         {
             try
             {
-                _configManager.RmwUserConfiguration<UserHiddenContent>(
+                var removed = _configManager.RmwUserConfiguration<UserHiddenContent>(
                     userId.ToString("N"), "hidden-content.json", hidden =>
                 {
                     if (hidden?.Items == null || hidden.Items.Count == 0) return 0;
@@ -202,11 +284,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.EventHandlers
                     {
                         var entry = kvp.Value;
                         if (entry == null) continue;
-                        if (CwEventHelpers.IdMatches(entry.ItemId, targetId)) keysToDrop.Add(kvp.Key);
+                        if (targetIds.Any(t => CwEventHelpers.IdMatches(entry.ItemId, t))) keysToDrop.Add(kvp.Key);
                     }
                     foreach (var k in keysToDrop) hidden.Items.Remove(k);
                     return keysToDrop.Count;
                 });
+                if (removed > 0)
+                {
+                    HiddenContentResponseFilter.InvalidateUser(userId.ToString("N"));
+                }
             }
             catch (InvalidDataException ex)
             {

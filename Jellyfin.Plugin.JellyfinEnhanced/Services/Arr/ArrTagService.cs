@@ -61,55 +61,102 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
             _logger = logger;
         }
 
-        /// <summary>Sonarr: tag labels keyed by series ImdbId.</summary>
-        public Task<Dictionary<string, List<string>>> GetSeriesTagsByTvdbId(string sonarrUrl, string apiKey, CancellationToken ct = default)
+        /// <summary>
+        /// Sonarr series tag labels keyed BOTH by TVDB id (Sonarr's canonical, always-present
+        /// id) and by IMDb id (fallback). Keying by IMDb alone silently synced nothing for
+        /// TVDB-scraped libraries (series without an IMDb id); TVDB is the reliable key.
+        /// </summary>
+        public async Task<SeriesTagMaps> GetSeriesTagsAsync(string sonarrUrl, string apiKey, CancellationToken ct = default)
         {
-            return GetTagsAsync(
-                ArrType.Sonarr,
-                sonarrUrl,
-                apiKey,
-                hasKey: item => !string.IsNullOrEmpty(item.ImdbId),
-                keySelector: item => item.ImdbId!,
-                ct);
+            var byTvdbId = new Dictionary<int, List<string>>();
+            var byImdbId = new Dictionary<string, List<string>>();
+
+            var fetched = await FetchTagsAndItemsAsync(ArrType.Sonarr, sonarrUrl, apiKey, ct).ConfigureAwait(false);
+            if (fetched == null)
+            {
+                return new SeriesTagMaps(byTvdbId, byImdbId);
+            }
+
+            var (items, tagLabels) = fetched.Value;
+            foreach (var item in items)
+            {
+                if (item.Tags.Count == 0)
+                {
+                    continue;
+                }
+
+                var itemTags = ResolveLabels(item, tagLabels);
+                if (itemTags.Count == 0)
+                {
+                    continue;
+                }
+
+                // Separate list copies per map so a later per-instance merge can't mutate
+                // the other map's value through a shared reference.
+                if (item.TvdbId > 0)
+                {
+                    byTvdbId[item.TvdbId] = new List<string>(itemTags);
+                }
+
+                if (!string.IsNullOrEmpty(item.ImdbId))
+                {
+                    byImdbId[item.ImdbId] = new List<string>(itemTags);
+                }
+            }
+
+            _logger.LogInformation($"Mapped Sonarr tags for {byTvdbId.Count} series by TVDB, {byImdbId.Count} by IMDb");
+            return new SeriesTagMaps(byTvdbId, byImdbId);
         }
 
         /// <summary>Radarr: tag labels keyed by movie TmdbId.</summary>
-        public Task<Dictionary<int, List<string>>> GetMovieTagsByTmdbId(string radarrUrl, string apiKey, CancellationToken ct = default)
+        public async Task<Dictionary<int, List<string>>> GetMovieTagsByTmdbId(string radarrUrl, string apiKey, CancellationToken ct = default)
         {
-            return GetTagsAsync(
-                ArrType.Radarr,
-                radarrUrl,
-                apiKey,
-                hasKey: item => item.TmdbId > 0,
-                keySelector: item => item.TmdbId,
-                ct);
+            var result = new Dictionary<int, List<string>>();
+
+            var fetched = await FetchTagsAndItemsAsync(ArrType.Radarr, radarrUrl, apiKey, ct).ConfigureAwait(false);
+            if (fetched == null)
+            {
+                return result;
+            }
+
+            var (items, tagLabels) = fetched.Value;
+            foreach (var item in items)
+            {
+                if (item.TmdbId > 0 && item.Tags.Count > 0)
+                {
+                    var itemTags = ResolveLabels(item, tagLabels);
+                    if (itemTags.Count > 0)
+                    {
+                        result[item.TmdbId] = itemTags;
+                    }
+                }
+            }
+
+            _logger.LogInformation($"Mapped tags for {result.Count} movies");
+            return result;
         }
 
         /// <summary>
-        /// Shared implementation. <paramref name="hasKey"/> decides whether an item has a usable
-        /// provider-id key; <paramref name="keySelector"/> extracts it.
+        /// Fetches the tag label map and the full media list from one *arr instance in a
+        /// single tag + media round-trip. Returns null when the SSRF guard blocks the URL
+        /// or any fetch/parse step fails (all logged); callers degrade to empty maps.
         /// </summary>
-        private async Task<Dictionary<TKey, List<string>>> GetTagsAsync<TKey>(
+        private async Task<(List<ArrMediaItem> Items, Dictionary<int, string> TagLabels)?> FetchTagsAndItemsAsync(
             ArrType arrType,
             string baseUrl,
             string apiKey,
-            Func<ArrMediaItem, bool> hasKey,
-            Func<ArrMediaItem, TKey> keySelector,
             CancellationToken ct)
-            where TKey : notnull
         {
             var serviceName = arrType.ToString(); // "Sonarr" / "Radarr"
             var itemNoun = arrType == ArrType.Sonarr ? "series" : "movies";
             var mediaEndpoint = arrType == ArrType.Sonarr ? "series" : "movie";
-
-            var result = new Dictionary<TKey, List<string>>();
 
             // SSRF guard: reject before any outbound request so scheduled-task callers
             // cannot be pointed at metadata/loopback targets via instance URL.
             if (!Jellyfin.Plugin.JellyfinEnhanced.Helpers.ArrUrlGuard.IsAllowedUrl(baseUrl))
             {
                 _logger.LogError($"Refusing to fetch {serviceName} tags — URL rejected by SSRF guard: {baseUrl}");
-                return result;
+                return null;
             }
 
             try
@@ -128,7 +175,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
                 if (!tagsResponse.IsSuccessStatusCode)
                 {
                     _logger.LogError($"Failed to fetch {serviceName} tags. Status: {tagsResponse.StatusCode}");
-                    return result;
+                    return null;
                 }
 
                 var tagsContent = await tagsResponse.Content.ReadAsStringAsync(ct);
@@ -146,7 +193,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
                 if (!mediaResponse.IsSuccessStatusCode)
                 {
                     _logger.LogError($"Failed to fetch {serviceName} {itemNoun}. Status: {mediaResponse.StatusCode}");
-                    return result;
+                    return null;
                 }
 
                 var mediaContent = await mediaResponse.Content.ReadAsStringAsync(ct);
@@ -154,28 +201,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
 
                 _logger.LogInformation($"Found {allItems.Count} {itemNoun} in {serviceName}");
 
-                // Map tags to items - keyed by the provider id Jellyfin uses
-                foreach (var item in allItems)
-                {
-                    if (hasKey(item) && item.Tags.Count > 0)
-                    {
-                        var itemTags = new List<string>();
-                        foreach (var tagId in item.Tags)
-                        {
-                            if (tagDictionary.TryGetValue(tagId, out var tagLabel))
-                            {
-                                itemTags.Add(tagLabel);
-                            }
-                        }
-
-                        if (itemTags.Count > 0)
-                        {
-                            result[keySelector(item)] = itemTags;
-                        }
-                    }
-                }
-
-                _logger.LogInformation($"Mapped tags for {result.Count} {itemNoun}");
+                return (allItems, tagDictionary);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -200,7 +226,31 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Arr
                 _logger.LogError($"Unexpected error fetching {serviceName} tags: {ex.Message}");
             }
 
-            return result;
+            return null;
+        }
+
+        /// <summary>Resolves an item's tag ids to their labels via the fetched label map.</summary>
+        private static List<string> ResolveLabels(ArrMediaItem item, Dictionary<int, string> tagLabels)
+        {
+            var itemTags = new List<string>();
+            foreach (var tagId in item.Tags)
+            {
+                if (tagLabels.TryGetValue(tagId, out var tagLabel))
+                {
+                    itemTags.Add(tagLabel);
+                }
+            }
+
+            return itemTags;
         }
     }
+
+    /// <summary>
+    /// Sonarr series tag labels projected by both keying strategies: TVDB id (canonical,
+    /// preferred) and IMDb id (fallback). Built in a single fetch so a TVDB-scraped library
+    /// (series with no IMDb id) still syncs.
+    /// </summary>
+    public sealed record SeriesTagMaps(
+        Dictionary<int, List<string>> ByTvdbId,
+        Dictionary<string, List<string>> ByImdbId);
 }

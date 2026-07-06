@@ -52,6 +52,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     {
         private readonly IJellyseerrClient _jellyseerr;
         private readonly Services.Arr.ArrFetchService _arrFetch;
+        private readonly ISeerrParentalFilter _parentalFilter;
 
         public ArrRequestsController(
             IHttpClientFactory httpClientFactory,
@@ -60,11 +61,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
             IJellyseerrClient jellyseerr,
-            Services.Arr.ArrFetchService arrFetch)
+            Services.Arr.ArrFetchService arrFetch,
+            ISeerrParentalFilter parentalFilter)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _jellyseerr = jellyseerr;
             _arrFetch = arrFetch;
+            _parentalFilter = parentalFilter;
         }
 
         [HttpGet("arr/queue")]
@@ -78,6 +81,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // Non-admin users can only see downloads for items they requested via Seerr
             // unless the admin has disabled per-user filtering
             HashSet<(int TmdbId, string MediaType)>? allowedRequests = null;
+            HashSet<int>? allowedTvTvdb = null;
             if (!IsAdminUser() && config.DownloadsFilterByUserRequests)
             {
                 if (!config.JellyseerrEnabled || string.IsNullOrWhiteSpace(config.JellyseerrUrls) || string.IsNullOrWhiteSpace(config.JellyseerrApiKey))
@@ -104,6 +108,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
 
                 allowedRequests = new HashSet<(int, string)>(userRequests.Select(r => (r.TmdbId, r.MediaType)));
+
+                // Sonarr is TVDB-native and routinely reports series.tmdbId 0 for its download
+                // records, so a TV request must also be matchable by TVDB id — otherwise the user's
+                // own TV download is silently dropped.
+                allowedTvTvdb = new HashSet<int>(userRequests
+                    .Where(r => r.MediaType == "tv" && r.TvdbId is > 0)
+                    .Select(r => r.TvdbId!.Value));
             }
 
             WarnIfArrInstancesCorrupt(config);
@@ -111,8 +122,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var radarrInstances = config.GetEnabledRadarrInstances();
 
             var ct = HttpContext.RequestAborted;
-            var sonarrTasks = sonarrInstances.Select(i => FetchSonarrQueue(i, allowedRequests, ct)).ToList();
-            var radarrTasks = radarrInstances.Select(i => FetchRadarrQueue(i, allowedRequests, ct)).ToList();
+            var sonarrTasks = sonarrInstances.Select((i, idx) => FetchSonarrQueue(i, idx, allowedRequests, allowedTvTvdb, ct)).ToList();
+            var radarrTasks = radarrInstances.Select((i, idx) => FetchRadarrQueue(i, idx, allowedRequests, ct)).ToList();
 
             var sonarrResults = await Task.WhenAll(sonarrTasks);
             var radarrResults = await Task.WhenAll(radarrTasks);
@@ -154,7 +165,28 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             return null;
         }
 
-        private Task<(List<object> Items, string? Error)> FetchSonarrQueue(ArrInstance instance, HashSet<(int TmdbId, string MediaType)>? allowedRequests, CancellationToken ct)
+        // Per-user download-queue match for a Sonarr record. A Seerr TV request carries both a TMDB
+        // and (usually) a TVDB id, but Sonarr download records report the series with tmdbId 0, so the
+        // record must match either the TMDB set or the TV-TVDB set. Both ids are re-normalized here so a
+        // 0 can never key a match. allowedRequests == null means unfiltered (admin) passthrough.
+        internal static bool IsSonarrQueueItemAllowed(
+            int? tmdbId,
+            int? tvdbId,
+            HashSet<(int TmdbId, string MediaType)>? allowedRequests,
+            HashSet<int>? allowedTvTvdb)
+        {
+            if (allowedRequests == null)
+                return true;
+
+            tmdbId = ArrIdHelper.ToNullableId(tmdbId);
+            tvdbId = ArrIdHelper.ToNullableId(tvdbId);
+
+            bool tmdbOk = tmdbId is int tm && allowedRequests.Contains((tm, "tv"));
+            bool tvdbOk = tvdbId is int tv && allowedTvTvdb != null && allowedTvTvdb.Contains(tv);
+            return tmdbOk || tvdbOk;
+        }
+
+        private Task<(List<object> Items, string? Error)> FetchSonarrQueue(ArrInstance instance, int instanceIndex, HashSet<(int TmdbId, string MediaType)>? allowedRequests, HashSet<int>? allowedTvTvdb, CancellationToken ct)
         {
             return _arrFetch.FetchAndMapAsync<List<object>>(
                 instance,
@@ -167,15 +199,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     {
                         var series = record?["series"];
                         var episode = record?["episode"];
-                        int? tmdbId = (int?)series?["tmdbId"];
-                        if (allowedRequests != null && (!tmdbId.HasValue || !allowedRequests.Contains((tmdbId.Value, "tv"))))
+                        int? tmdbId = ArrIdHelper.ToNullableId((int?)series?["tmdbId"]);
+                        int? tvdbId = ArrIdHelper.ToNullableId((int?)series?["tvdbId"]);
+                        if (!IsSonarrQueueItemAllowed(tmdbId, tvdbId, allowedRequests, allowedTvTvdb))
                             continue;
 
                         var seasonNumber = (int?)episode?["seasonNumber"];
                         var episodeNumber = (int?)episode?["episodeNumber"];
                         items.Add(new
                         {
-                            id = record?["id"]?.ToString(),
+                            // Namespace the per-instance queue id by source + the instance's unique
+                            // position so two Sonarr instances that both number queue records from 1 —
+                            // even with an identical or blank display name — can't collide.
+                            id = ArrIdHelper.NamespacedId(nameof(ArrType.Sonarr), instanceIndex, record?["id"]),
                             source = nameof(ArrType.Sonarr),
                             instanceName = instance.Name,
                             title = (string?)series?["title"] ?? "Unknown",
@@ -199,7 +235,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 ct: ct);
         }
 
-        private Task<(List<object> Items, string? Error)> FetchRadarrQueue(ArrInstance instance, HashSet<(int TmdbId, string MediaType)>? allowedRequests, CancellationToken ct)
+        private Task<(List<object> Items, string? Error)> FetchRadarrQueue(ArrInstance instance, int instanceIndex, HashSet<(int TmdbId, string MediaType)>? allowedRequests, CancellationToken ct)
         {
             return _arrFetch.FetchAndMapAsync<List<object>>(
                 instance,
@@ -211,13 +247,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     foreach (var record in records)
                     {
                         var movie = record?["movie"];
-                        int? tmdbId = (int?)movie?["tmdbId"];
+                        int? tmdbId = ArrIdHelper.ToNullableId((int?)movie?["tmdbId"]);
                         if (allowedRequests != null && (!tmdbId.HasValue || !allowedRequests.Contains((tmdbId.Value, "movie"))))
                             continue;
 
                         items.Add(new
                         {
-                            id = record?["id"]?.ToString(),
+                            // Namespace the per-instance queue id by source + the instance's unique
+                            // position so two Radarr instances that both number queue records from 1 —
+                            // even with an identical or blank display name — can't collide.
+                            id = ArrIdHelper.NamespacedId(nameof(ArrType.Radarr), instanceIndex, record?["id"]),
                             source = nameof(ArrType.Radarr),
                             instanceName = instance.Name,
                             title = (string?)movie?["title"] ?? "Unknown",
@@ -382,10 +421,101 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     });
                 }
 
+                // Enforce each caller's own parental-rating limit on the request list —
+                // the same gate the /jellyseerr/request route applies via ProxyRequestAsync.
+                // Reuses the "/api/v1/request" classification (Category.List, nested `media`),
+                // resolves the caller from the auth principal (never a client header), and is
+                // a no-op for admins / no-limit users / feature off. Never throws (the filter
+                // passes the body through on any fault). Runs before enrichment so the TMDB
+                // round-trips only fire for surviving rows.
+                var parental = await _parentalFilter.ApplyAsync(json!, "/api/v1/request", SeerrCaller());
+                json = parental.Body; // Block is never set for a list endpoint.
+
                 var data = JsonNode.Parse(json!)!.AsObject();
 
                 var requests = new List<object>();
                 var results = data["results"] as JsonArray;
+                bool selfScoped = !hasRequestViewPermission || userOnly;
+
+                // "Coming Soon" is aggregated across ALL upstream pages of `processing` AND
+                // `approved` — the single-page path only ever saw page 1 of processing, so
+                // future-dated requests further in (and every `approved` item) were unreachable
+                // and the paginator was wrong. Each aggregated page is parental-filtered and the
+                // rows are deduped by request id; the full future set is ordered and windowed
+                // locally below (ARR-5).
+                int comingSoonTotal = 0;
+                if (isComingSoonFilter)
+                {
+                    var scopeParam = selfScoped ? $"&requestedBy={jellyseerrUser.Id}" : string.Empty;
+
+                    async Task<(int RawCount, JsonArray? Filtered)> FetchComingSoonPage(string upstreamFilter, int pageSkip, int pageTake)
+                    {
+                        var pageUri = $"{jellyseerrUrl}/api/v1/request?take={pageTake}&skip={pageSkip}&filter={upstreamFilter}{scopeParam}";
+                        try
+                        {
+                            using var pageRequest = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
+                                HttpMethod.Get, pageUri, config.JellyseerrApiKey);
+                            using var pageResponse = await client.SendAsync(pageRequest);
+                            var (pageJson, pageError) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(pageResponse, pageUri);
+                            if (pageError != null || pageJson == null)
+                            {
+                                return (0, null);
+                            }
+
+                            // Count the RAW upstream rows BEFORE the parental filter shrinks the
+                            // page, so aggregation paginates by the true upstream page length
+                            // (SEC-SEERR-3): otherwise a rating-limited caller's filtered short
+                            // pages would stop the walk early and hide future-dated items.
+                            var rawCount = (JsonNode.Parse(pageJson) as JsonObject)?["results"] is JsonArray rawResults
+                                ? rawResults.Count
+                                : 0;
+
+                            // Every aggregated page gets the same parental gate as the primary fetch.
+                            var pageParental = await _parentalFilter.ApplyAsync(pageJson, "/api/v1/request", SeerrCaller());
+                            var pageData = JsonNode.Parse(pageParental.Body)!.AsObject();
+                            return (rawCount, pageData["results"] as JsonArray);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning($"Coming-soon page fetch failed ({upstreamFilter} skip={pageSkip}): {ex.Message}");
+                            return (0, null);
+                        }
+                    }
+
+                    var rawPages = await AggregateComingSoonPagesAsync(
+                        FetchComingSoonPage, ComingSoonUpstreamFilters, ComingSoonPageSize, ComingSoonMaxItems);
+
+                    // Deep-clone each row into a fresh array so it can be re-parented cleanly.
+                    var combinedResults = new JsonArray();
+                    foreach (var obj in rawPages)
+                    {
+                        combinedResults.Add(obj.DeepClone());
+                    }
+
+                    data["results"] = combinedResults;
+                    results = combinedResults;
+                }
+
+                // Defense-in-depth backstop: the admin-key fetch scopes to the caller by
+                // appending &requestedBy=; if that param were ever dropped or ignored
+                // upstream, a self-scoped caller must still never receive another user's
+                // rows. Drop any row not owned by the caller when they lack request-view
+                // permission (or explicitly asked for user-only), and track the count so the
+                // page total stays honest.
+                int removedByScope = 0;
+                if (selfScoped && results != null)
+                {
+                    for (var i = results.Count - 1; i >= 0; i--)
+                    {
+                        var ownerId = (int?)((results[i] as JsonObject)?["requestedBy"] as JsonObject)?["id"];
+                        if (ownerId != jellyseerrUser.Id)
+                        {
+                            results.RemoveAt(i);
+                            removedByScope++;
+                        }
+                    }
+                }
+
                 if (results != null)
                 {
                     // Enrich all requests in parallel for better performance
@@ -581,13 +711,26 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                                 return bestDate ?? DateTime.MaxValue;
                             })
                             .ToArray();
-                    }
 
-                    requests.AddRange(enrichedRequests);
+                        // enrichedRequests is now the full future-dated, ordered set across all
+                        // aggregated pages; window it locally and report the honest total (ARR-5).
+                        var (comingSoonPage, comingSoonFilteredTotal, _) = PaginateFiltered(enrichedRequests, skip, take);
+                        comingSoonTotal = comingSoonFilteredTotal;
+                        requests.AddRange(comingSoonPage);
+                    }
+                    else
+                    {
+                        requests.AddRange(enrichedRequests);
+                    }
                 }
 
                 var pageInfo = data["pageInfo"] as JsonObject;
-                var totalResults = isComingSoonFilter ? requests.Count : ((int?)pageInfo?["results"] ?? 0);
+                // pageInfo.results already reflects any parental removals (the filter
+                // decrements it); subtract the DiD-backstop removals on top so the page
+                // count never over-reports what the caller can actually see.
+                // Coming-soon totals come from the FULL aggregated+filtered set (not just the
+                // windowed page), so the client paginator walks every future-dated request.
+                var totalResults = isComingSoonFilter ? comingSoonTotal : Math.Max(0, ((int?)pageInfo?["results"] ?? 0) - removedByScope);
                 var totalPages = (int)Math.Ceiling((double)totalResults / take);
 
                 var canApproveRequests = IsAdminUser() || JellyseerrPermissionHelper.HasAnyPermission(
@@ -615,12 +758,133 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 {
                     error = true,
                     code = "requests_fetch_failed",
-                    message = $"Failed to fetch requests from Jellyseerr: {ex.Message}",
+                    // Sanitize for non-admins: an HttpRequestException/URI-bearing message can carry
+                    // the internal Seerr host:port, which a non-admin caller must not see. The full
+                    // detail stays in the server log above.
+                    message = BuildRequestsFetchErrorMessage(IsAdminUser(), ex.Message),
                     requests = new List<object>(),
                     totalPages = 0,
                     totalResults = 0,
                 });
             }
+        }
+
+        // Builds the outer-catch "requests fetch failed" message. Admins see the raw exception text;
+        // non-admins get the Seerr URL/host rewritten to <seerr-url>. Extracted so the redaction is
+        // unit-testable without a live HTTP round-trip.
+        internal static string BuildRequestsFetchErrorMessage(bool isAdmin, string exMessage)
+        {
+            var full = $"Failed to fetch requests from Jellyseerr: {exMessage}";
+            return isAdmin ? full : Helpers.Jellyseerr.SeerrError.SanitizeMessage(full);
+        }
+
+        // Coming-soon aggregates every upstream page across these filters so future-dated
+        // requests beyond the first page (and `approved` items, which the single-page path
+        // never fetched) are reachable. Bounded so a huge Seerr can't drive unbounded calls.
+        internal const int ComingSoonPageSize = 100;
+        internal const int ComingSoonMaxItems = 500;
+        // Hard ceiling on upstream pages walked per filter. The maxItems / raw-length guards only
+        // terminate the walk when surviving rows accumulate or a short page arrives; a pathological
+        // upstream that returns full pages whose rows are ALL filtered out (or all duplicates) never
+        // advances either, so this cap guarantees termination. Set well above the pages a normal
+        // Seerr needs (maxItems/pageSize ≈ 5) so it never truncates real data, while still bounding
+        // worst-case calls.
+        internal const int ComingSoonMaxPagesPerFilter = 50;
+        internal static readonly string[] ComingSoonUpstreamFilters = { "processing", "approved" };
+
+        /// <summary>
+        /// Walks every upstream page for each coming-soon filter (via the injected page
+        /// fetcher) and returns the combined request rows, deduped by request id. The fetcher
+        /// returns the RAW upstream page length alongside the parental-filtered rows;
+        /// pagination terminates on the raw length so parental filtering (which shrinks a page
+        /// below <paramref name="pageSize"/>) cannot truncate the walk early. Stops at a
+        /// short/empty raw page or the <paramref name="maxItems"/> cap. Extracted so the
+        /// aggregate-all-pages fix is unit-testable without a live Seerr.
+        /// </summary>
+        internal static async Task<List<JsonObject>> AggregateComingSoonPagesAsync(
+            Func<string, int, int, Task<(int RawCount, JsonArray? Filtered)>> fetchPage,
+            IReadOnlyList<string> upstreamFilters,
+            int pageSize,
+            int maxItems,
+            int maxPagesPerFilter = ComingSoonMaxPagesPerFilter)
+        {
+            var combined = new List<JsonObject>();
+            var seenIds = new HashSet<int>();
+
+            foreach (var filter in upstreamFilters)
+            {
+                var pagesWalked = 0;
+                for (int skip = 0; combined.Count < maxItems; skip += pageSize)
+                {
+                    // Hard page bound: when every raw row is filtered out (or a duplicate),
+                    // combined.Count never advances, so neither the maxItems loop condition nor the
+                    // short-page break below can fire — a never-short upstream would loop forever.
+                    // Cap the pages walked so the walk always terminates; the normal finite-stream
+                    // terminations below still run first for well-behaved upstreams.
+                    if (pagesWalked >= maxPagesPerFilter)
+                    {
+                        break;
+                    }
+
+                    pagesWalked++;
+
+                    var (rawCount, filtered) = await fetchPage(filter, skip, pageSize).ConfigureAwait(false);
+                    if (rawCount <= 0)
+                    {
+                        break; // no upstream rows (empty page or fetch failure) → last page
+                    }
+
+                    if (filtered != null)
+                    {
+                        foreach (var node in filtered)
+                        {
+                            if (node is not JsonObject obj)
+                            {
+                                continue;
+                            }
+
+                            var id = (int?)obj["id"];
+                            // Dedupe by request id so a row present under both processing and
+                            // approved (or across overlapping pages) is only counted once.
+                            if (id.HasValue && !seenIds.Add(id.Value))
+                            {
+                                continue;
+                            }
+
+                            combined.Add(obj);
+                            if (combined.Count >= maxItems)
+                            {
+                                break;
+                            }
+                        }
+                    }
+
+                    // Terminate on the RAW upstream page length, not the filtered count: the
+                    // parental filter shrinks pages below pageSize, so breaking on the filtered
+                    // count would stop the walk early and hide future-dated items from a
+                    // rating-limited caller (SEC-SEERR-3).
+                    if (rawCount < pageSize)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            return combined;
+        }
+
+        /// <summary>
+        /// Windows a fully-filtered, ordered set locally so paging walks the real filtered
+        /// set and the totals are honest (ARR-5). Returns the requested page plus the total
+        /// item and page counts computed from the whole set.
+        /// </summary>
+        internal static (List<T> Page, int TotalResults, int TotalPages) PaginateFiltered<T>(
+            IReadOnlyList<T> filteredOrdered, int skip, int take)
+        {
+            var totalResults = filteredOrdered.Count;
+            var totalPages = take > 0 ? (int)Math.Ceiling((double)totalResults / take) : 0;
+            var page = filteredOrdered.Skip(skip).Take(take).ToList();
+            return (page, totalResults, totalPages);
         }
 
         [HttpPost("arr/requests/{requestId}/approve")]

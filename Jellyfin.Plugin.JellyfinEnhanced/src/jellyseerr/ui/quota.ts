@@ -1,6 +1,7 @@
 // src/jellyseerr/ui/quota.ts
 // Request-quota helpers: error detection, quota chip and error dialog.
 import { JE } from '../../globals';
+import { describeFetchError } from '../../core/fetch-error';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -153,8 +154,11 @@ async function handleRequestError(error: any, mediaType: any, requestBtn: any, r
     if (isQuotaError(error)) {
         await showQuotaErrorDialog(error, mediaType);
     } else {
-        const upstream = error?.responseJSON?.message;
-        JE.toast!(upstream ? escapeHtml(upstream) : JE.t!('jellyseerr_modal_toast_request_fail'), 4000);
+        // describeFetchError drops URL-bearing / HTML / over-long blobs, so a
+        // Seerr 500 stack no longer leaks to the toast; a clean short message
+        // still passes through. escapeHtml keeps the innerHTML toast sink safe
+        // (and leaves the fallback's {{icon:error}} token intact) (W4-ERR-8).
+        JE.toast!(escapeHtml(describeFetchError(error, JE.t!('jellyseerr_modal_toast_request_fail'))), 4000);
     }
     if (requestBtn) {
         requestBtn.disabled = false;

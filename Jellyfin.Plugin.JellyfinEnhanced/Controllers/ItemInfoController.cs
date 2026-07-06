@@ -63,13 +63,25 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             _itemLookup = itemLookup;
         }
 
+        /// <summary>
+        /// Resolves the authenticated caller to a <see cref="JUser"/> so metadata lookups
+        /// can be scoped to their accessible libraries. Returns null when the principal
+        /// carries no resolvable user id — callers treat that as "no access" (fail-closed).
+        /// </summary>
+        private JUser? GetCallerUser()
+        {
+            var id = UserHelper.GetCurrentUserId(User);
+            return id.HasValue ? _userManager.GetUserById(id.Value) : null;
+        }
+
         [HttpGet("studio/{studioId}")]
         [Authorize]
         public IActionResult GetStudioInfo(Guid studioId)
         {
             try
             {
-                var studio = _libraryManager.GetItemById(studioId);
+                var user = GetCallerUser();
+                var studio = user == null ? null : _libraryManager.GetItemById<BaseItem>(studioId, user);
                 if (studio == null)
                 {
                     return NotFound(new { message = "Studio not found" });
@@ -103,7 +115,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         {
             try
             {
-                var boxset = _libraryManager.GetItemById(boxsetId);
+                var user = GetCallerUser();
+                var boxset = user == null ? null : _libraryManager.GetItemById<BaseItem>(boxsetId, user);
                 if (boxset == null || boxset.GetType().Name != "BoxSet")
                 {
                     return NotFound(new { message = "BoxSet not found" });
@@ -137,7 +150,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         {
             try
             {
-                var person = _libraryManager.GetItemById(personId);
+                var user = GetCallerUser();
+                var person = user == null ? null : _libraryManager.GetItemById<BaseItem>(personId, user);
                 if (person == null)
                 {
                     return NotFound(new { message = "Person not found" });
@@ -226,7 +240,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     // Calculate age at item release if itemId provided
                     if (itemId.HasValue)
                     {
-                        var item = _libraryManager.GetItemById(itemId.Value);
+                        var item = _libraryManager.GetItemById<BaseItem>(itemId.Value, user);
                         if (item?.PremiereDate.HasValue ?? false)
                         {
                             ageAtItemRelease = CalculateAge(birthDate.Value, item.PremiereDate.Value);
@@ -345,7 +359,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         {
             try
             {
-                var genre = _libraryManager.GetItemById(genreId);
+                var user = GetCallerUser();
+                var genre = user == null ? null : _libraryManager.GetItemById<BaseItem>(genreId, user);
                 if (genre == null)
                 {
                     return NotFound(new { message = "Genre not found" });
@@ -512,7 +527,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         [HttpGet("items/by-providers")]
         public ActionResult<Guid?> GetItemIdByProviders([FromQuery] Dictionary<string, string>? providers)
         {
-            var itemIds = _itemLookup.GetItemIdsByProviders(providers);
+            // Scope the provider lookup to the caller's libraries so a non-admin can't
+            // confirm existence / resolve the internal Guid of items they can't access.
+            var itemIds = _itemLookup.GetItemIdsByProviders(providers, GetCallerUser());
 
             if (itemIds.Count == 0)
                 return BadRequest("No provider ids supplied or no items found");

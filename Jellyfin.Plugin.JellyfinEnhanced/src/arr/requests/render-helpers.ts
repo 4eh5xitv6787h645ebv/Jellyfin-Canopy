@@ -2,6 +2,7 @@
 // Requests Page — status colors, formatting, filtering and download grouping
 // helpers shared by the card and page renderers (split from requests-page.js).
 
+import { formatDate, getDisplayLocale, ordinalSuffix } from '../../core/locale';
 import { JE } from '../arr-globals';
 import { state } from './data';
 import type { DownloadItem, RequestItem } from './data';
@@ -206,8 +207,8 @@ export function formatRelativeDate(dateStr: string): string {
     if (hours < 24) return JE.t?.('requests_hours_ago')?.replace('{hours}', String(hours)) || `${hours}h ago`;
     if (days < 30) return JE.t?.('requests_days_ago')?.replace('{days}', String(days)) || `${days}d ago`;
 
-    // For older dates, show the date in "DD MMM YYYY" format
-    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    // For older dates, show the absolute date in the user's display locale.
+    return formatDate(date, { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 /**
@@ -240,27 +241,23 @@ function formatFutureReleaseDate(dateStr: string | undefined): string | { isHtml
     } else if (diffDays <= 14) {
         return labelInDays.replace('{days}', String(diffDays));
     } else {
+        const locale = getDisplayLocale();
         const day = date.getDate();
-        const month = date.toLocaleString('default', { month: 'long' });
-        const suffix = getOrdinalSuffix(day);
+        if (locale.toLowerCase().startsWith('en')) {
+            // English keeps its "14th February" decorative ordinal.
+            const month = formatDate(date, { month: 'long' });
+            return {
+                isHtml: true,
+                text: labelOn.replace('{date}', `${day}${ordinalSuffix(day, locale)} ${month}`)
+            };
+        }
+        // Non-English: a fully localized "10 février" / "2月10日"-style date,
+        // no English ordinal glued onto a localized month.
+        const localized = formatDate(date, { day: 'numeric', month: 'long' });
         return {
             isHtml: true,
-            text: labelOn.replace('{date}', `${day}${suffix} ${month}`)
+            text: labelOn.replace('{date}', localized)
         };
-    }
-}
-
-/**
- * Get ordinal suffix for day number as superscript (1st, 2nd, etc.)
- * Returns plain text suffix without HTML tags
- */
-function getOrdinalSuffix(day: number): string {
-    if (day > 3 && day < 21) return '<sup>th</sup>';
-    switch (day % 10) {
-        case 1: return '<sup>st</sup>';
-        case 2: return '<sup>nd</sup>';
-        case 3: return '<sup>rd</sup>';
-        default: return '<sup>th</sup>';
     }
 }
 

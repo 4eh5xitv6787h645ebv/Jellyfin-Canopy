@@ -9,14 +9,22 @@
 // server already has in the exact bug state (ElsewhereEnabled=false,
 // ShowReviews=true, TMDB key set).
 import { test, expect, loginAs } from './fixtures/auth';
+import { tmdbReady } from './fixtures/seerr';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const CONFIG_HASH = '#/configurationpage?name=Jellyfin%20Enhanced';
 
+// The reproducible docker seed is bare: with no TMDB key the config page never
+// populates TMDB_API_KEY, so this scenario's precondition can't be met and the
+// old 60s waitForFunction would time out rather than guard anything. Skip
+// cleanly when TMDB is unconfigured (set TMDB_API_KEY at seed time to run).
+const NEEDS_TMDB = 'TMDB not configured — set TMDB_API_KEY at seed time to run';
+
 test.describe('reviews gating', () => {
     test('Show TMDB Reviews is toggleable with Elsewhere OFF + TMDB key set', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
+        test.skip(!(await tmdbReady(page)), NEEDS_TMDB);
 
         // Route to the plugin config page and let config-page.js load values +
         // run its dependency passes.
@@ -74,6 +82,7 @@ test.describe('reviews gating', () => {
     // branding fields belong to Elsewhere alone.
     test('Provider inputs stay editable with Elsewhere OFF', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
+        test.skip(!(await tmdbReady(page)), NEEDS_TMDB);
 
         await page.evaluate((hash) => { window.location.hash = hash; }, CONFIG_HASH);
         // A populated TMDB key signals config-page.js has finished loadConfig and

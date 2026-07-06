@@ -54,6 +54,13 @@ function findReports(dir) {
  * Deliberately regex-based (the report is machine-generated and this script
  * must run with zero dependencies): isolate the <package name="..."> block,
  * then count line elements and their hits.
+ *
+ * coverlet emits each covered line TWICE — once under <method><lines> and again
+ * under the enclosing <class><lines>. Counting every <line> globally therefore
+ * double-counts most lines (and not self-cancellingly: the class-level <lines>
+ * also carry lines outside any method, e.g. field/property initializers). We
+ * count only the class-level <lines> — the authoritative complete set — by
+ * stripping each class's <methods> section before counting.
  */
 function measurePackage(xml) {
     const packagePattern = new RegExp(`<package[^>]*name="${PACKAGE_NAME}"[^>]*>([\\s\\S]*?)</package>`);
@@ -62,11 +69,18 @@ function measurePackage(xml) {
 
     let valid = 0;
     let covered = 0;
+    const classPattern = /<class\b[\s\S]*?<\/class>/g;
     const linePattern = /<line[^>]*\bhits="(\d+)"[^>]*>/g;
-    let lineMatch;
-    while ((lineMatch = linePattern.exec(match[1])) !== null) {
-        valid += 1;
-        if (Number(lineMatch[1]) > 0) covered += 1;
+    let classMatch;
+    while ((classMatch = classPattern.exec(match[1])) !== null) {
+        // Drop the method-level lines; the class-level <lines> remain.
+        const classXml = classMatch[0].replace(/<methods>[\s\S]*?<\/methods>/g, '');
+        let lineMatch;
+        linePattern.lastIndex = 0;
+        while ((lineMatch = linePattern.exec(classXml)) !== null) {
+            valid += 1;
+            if (Number(lineMatch[1]) > 0) covered += 1;
+        }
     }
     return { valid, covered };
 }
@@ -100,4 +114,8 @@ function main() {
     console.log(`check-dotnet-coverage: OK — ${summary}`);
 }
 
-main();
+if (require.main === module) {
+    main();
+}
+
+module.exports = { measurePackage };

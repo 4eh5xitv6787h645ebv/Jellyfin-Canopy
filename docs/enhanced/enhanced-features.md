@@ -82,6 +82,14 @@ Access via:
    - Plugin Pages (requires Plugin Pages plugin)
    - Custom Tabs (requires Custom Tabs plugin)
 
+!!! note "Home rows filter independently of Filter Library"
+
+    **Filter Next Up** and **Filter Continue Watching** apply on the Home screen
+    on their own — you do **not** need **Filter library views** enabled for them
+    to work. With Filter Library off but Filter Continue Watching on, a card you
+    hid from Continue Watching stays hidden on Home, while ordinary library
+    browsing is left unfiltered.
+
 ### Remove from Continue Watching / Next Up
 
 A lightweight, **non-destructive** way to tidy the home screen. It adds a **Remove** option to an item's "⋯" action-sheet menu for items in the **Continue Watching** and **Next Up** rows, hiding the item from that row without touching your playback position or watched state.
@@ -215,6 +223,14 @@ Beautiful overlay with media info when you pause a video.
 - Current progress with time remaining
 - Spinning disc animation
 - Blurred backdrop
+
+**Delay before it appears:**
+
+You can set how many seconds of pause pass before the overlay fades in. Each user
+can set their own delay in the Enhanced panel (and it now persists across reloads),
+while an administrator sets the **default** for everyone in the plugin config page
+(**Enhanced Settings → Pause Screen Delay**). The default is 5 seconds (range
+1–60); a user's own value overrides the admin default.
 
 !!! tip
 
@@ -511,6 +527,13 @@ Display age and birthplace information for cast members.
 - Age chips (top-left of cast cards)
 - Birthplace banner (bottom of cast cards)
 - Deceased styling (grayscale filter)
+
+!!! note "Caching"
+
+    People-tag data is cached client-side using the same **Tags Cache Duration**
+    (`TagsCacheTtlDays`, default 30 days) that every other tag family uses — so
+    changing that admin setting now also controls how long people-tag data is
+    kept. It previously ignored the setting and was pinned at 30 days.
 
 ---
 

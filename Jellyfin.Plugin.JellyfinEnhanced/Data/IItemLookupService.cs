@@ -16,8 +16,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Data
         /// value for a provider matches every item that has that provider set at all.
         /// </summary>
         /// <param name="providers">Provider name → provider value (e.g. "Tvdb" → "121361").</param>
+        /// <param name="user">
+        /// When non-null, scopes the query to the caller's accessible libraries so a
+        /// non-admin cannot resolve ids for content they can't see. Null resolves across
+        /// all libraries (server-side callers with no user context).
+        /// </param>
         /// <returns>Matching item ids; empty when <paramref name="providers"/> is null or empty.</returns>
-        IReadOnlyList<Guid> GetItemIdsByProviders(IDictionary<string, string>? providers);
+        IReadOnlyList<Guid> GetItemIdsByProviders(IDictionary<string, string>? providers, JUser? user = null);
 
         /// <summary>
         /// Batch-resolves many (Provider, Value) pairs at once and returns a map of each

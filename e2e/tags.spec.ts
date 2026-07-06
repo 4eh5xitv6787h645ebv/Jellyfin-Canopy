@@ -8,42 +8,51 @@ import { test, expect, loginAs } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-const TAGGED_ATTRS = [
-    'data-je-quality-tagged',
-    'data-je-genre-tagged',
-    'data-je-language-tagged',
-    'data-je-rating-tagged',
-];
+// setting flag → the marker each family's renderer stamps on a tagged card.
+const FAMILIES = [
+    { setting: 'qualityTagsEnabled', attr: 'data-je-quality-tagged' },
+    { setting: 'genreTagsEnabled', attr: 'data-je-genre-tagged' },
+    { setting: 'languageTagsEnabled', attr: 'data-je-language-tagged' },
+    { setting: 'ratingTagsEnabled', attr: 'data-je-rating-tagged' },
+] as const;
 
 test.describe('tags', () => {
-    test('home library cards get data-je-*-tagged markers', async ({ page, consoleErrors }) => {
+    test('home library cards get data-je-*-tagged markers per enabled family', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
 
-        const anyTagsEnabled = await page.evaluate(() => {
+        // Only the families ENABLED for this user are asserted — but each of
+        // them independently. (The old test summed all four and asserted the
+        // total > 0, so one working family masked three dead ones.)
+        const enabled: string[] = await page.evaluate((families) => {
             const settings = (window as any).JellyfinEnhanced?.currentSettings || {};
-            return ['qualityTagsEnabled', 'genreTagsEnabled', 'languageTagsEnabled', 'ratingTagsEnabled']
-                .some((key) => settings[key] === true);
-        });
-        test.skip(!anyTagsEnabled, 'no tag renderer enabled for this user');
+            return families.filter((f) => settings[f.setting] === true).map((f) => f.attr);
+        }, FAMILIES.map((f) => ({ setting: f.setting, attr: f.attr })));
+        test.skip(enabled.length === 0, 'no tag renderer enabled for this user');
 
         await page.waitForSelector('#indexPage .card', { timeout: 60_000 });
 
-        // The pipeline tags cards asynchronously (item lookups + batching).
+        // Wait for EVERY enabled family to have tagged a card (the whole pipeline
+        // settled), not just one — a single stuck family must not be hidden by
+        // the others. If a family stays at zero the wait times out; the caught
+        // timeout lets the per-family assertion below report exactly which one.
         await page.waitForFunction(
-            (attrs) => attrs.some((attr) => document.querySelectorAll(`[${attr}]`).length > 0),
-            TAGGED_ATTRS,
+            (attrs) => attrs.every((attr) => document.querySelectorAll(`[${attr}]`).length > 0),
+            enabled,
             { timeout: 60_000 }
-        );
+        ).catch(() => { /* fall through to the precise per-family assertion */ });
 
         const counts = await page.evaluate((attrs) => {
             const byAttr: Record<string, number> = {};
             for (const attr of attrs) byAttr[attr] = document.querySelectorAll(`[${attr}]`).length;
             return { byAttr, cards: document.querySelectorAll('#indexPage .card').length };
-        }, TAGGED_ATTRS);
+        }, enabled);
 
         expect(counts.cards).toBeGreaterThan(0);
-        const totalTagged = Object.values(counts.byAttr).reduce((sum, n) => sum + n, 0);
-        expect(totalTagged).toBeGreaterThan(0);
+        // Per-family: each enabled family must tag at least one card on its own.
+        for (const attr of enabled) {
+            expect(counts.byAttr[attr], `enabled tag family ${attr} must tag at least one card`)
+                .toBeGreaterThan(0);
+        }
 
         expect(consoleErrors.real()).toEqual([]);
     });

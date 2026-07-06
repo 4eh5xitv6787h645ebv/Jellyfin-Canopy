@@ -3,8 +3,10 @@
 // agenda-event / card rendering (split from calendar-page.js).
 
 import { assetUrl } from '../../core/asset-urls';
+import { formatDate, formatTime } from '../../core/locale';
 import { JE } from '../arr-globals';
 import { state, STATUS_COLORS } from './data';
+import { getEventTimeLabel } from './event-date';
 import type { CalendarEvent } from './data';
 
 const escapeHtml = JE.escapeHtml;
@@ -111,30 +113,18 @@ function formatReleaseLabel(event: CalendarEvent): string {
     return 'Release';
 }
 
-// Format event time for display
-function formatEventTime(releaseDate: string | undefined): string | null {
-    if (!releaseDate) return null;
-    const date = new Date(releaseDate);
-    if (Number.isNaN(date.getTime())) return null;
-
-    if (date.getHours() === 0 && date.getMinutes() === 0) return null;
-
-    const hour12 = state.settings.timeFormat === '5pm/5:30pm';
-    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12 });
-}
-
 // Format date range label for header
 export function formatRangeLabel(): string {
     if (!state.rangeStart || !state.rangeEnd) {
-        return new Date(state.currentDate).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+        return formatDate(new Date(state.currentDate), { month: 'long', year: 'numeric' });
     }
 
     if (state.viewMode === 'month') {
-        return new Date(state.currentDate).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+        return formatDate(new Date(state.currentDate), { month: 'long', year: 'numeric' });
     }
 
-    const startLabel = state.rangeStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    const endLabel = state.rangeEnd.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const startLabel = formatDate(state.rangeStart, { month: 'short', day: 'numeric' });
+    const endLabel = formatDate(state.rangeEnd, { month: 'short', day: 'numeric' });
 
     if (state.viewMode === 'week') {
         return `${startLabel} - ${endLabel}`;
@@ -159,13 +149,13 @@ function getRelativeDayLabel(date: Date): string {
     if (diffDays === 0) return JE.t?.('calendar_today') ?? '';
     if (diffDays === -1) return JE.t?.('calendar_yesterday') ?? '';
     if (diffDays === 1) return JE.t?.('calendar_tomorrow') ?? '';
-    return targetStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return formatDate(targetStart, { month: 'short', day: 'numeric' });
 }
 
 export function formatHourLabel(hour: number): string {
     const hour12 = state.settings.timeFormat === '5pm/5:30pm';
     const base = new Date(2000, 0, 1, hour, 0, 0, 0);
-    return base.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12 });
+    return formatTime(base, { hour: 'numeric', minute: '2-digit', hour12 });
 }
 
 /**
@@ -213,7 +203,7 @@ function buildInstanceLabel(event: CalendarEvent): string {
 }
 
 function buildTimePill(event: CalendarEvent): string {
-    const timeLabel = formatEventTime(event.releaseDate);
+    const timeLabel = getEventTimeLabel(event);
     if (!timeLabel) return '';
 
     const releaseDate = event.releaseDate ? new Date(event.releaseDate) : null;
@@ -230,7 +220,7 @@ function buildTimePill(event: CalendarEvent): string {
 }
 
 function formatTimeText(event: CalendarEvent): string {
-    const timeLabel = formatEventTime(event.releaseDate);
+    const timeLabel = getEventTimeLabel(event);
     return timeLabel ? `<span style="opacity: 0.85; font-size: 1em;">${escapeHtml(timeLabel)}</span>` : '';
 }
 
@@ -295,7 +285,7 @@ export function renderAgendaEvent(event: CalendarEvent): string {
     const sourceLabel = escapeHtml(sourceLabelRaw);
     const iconClass = event.source === 'Sonarr' ? 'je-sonarr-icon' : 'je-radarr-icon';
     const subtitle = event.subtitle || '';
-    const timeLabel = formatEventTime(event.releaseDate);
+    const timeLabel = getEventTimeLabel(event);
     const hasFileClass = event.hasFile ? ' je-has-file' : '';
 
     // Build indicators array (only add if they exist)

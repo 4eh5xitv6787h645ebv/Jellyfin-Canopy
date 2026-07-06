@@ -228,7 +228,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             const val = Math.max(1, Math.min(60, parseInt(pauseScreenDelayInput.value, 10) || 5));
             pauseScreenDelayInput.value = String(val);
             (JE.currentSettings as any).pauseScreenDelaySeconds = val;
-            void (JE.saveUserSettings as any)();
+            void JE.saveUserSettings!('settings.json', JE.currentSettings);
         });
     }
     addSettingToggleListener('languageTagsToggle', 'languageTagsEnabled', 'feature_language_tags', true);
