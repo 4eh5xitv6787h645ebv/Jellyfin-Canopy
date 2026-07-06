@@ -18,16 +18,22 @@
   const preferencesPages = Array.from(document.querySelectorAll("#userPluginPreferencesPage"));
   const preferencesPage = preferencesPages.find(p => p.offsetWidth > 0 && p.offsetHeight > 0);
 
+  // Keep this page's own authored container; drop only stray copies that are not
+  // inside a visible preferences page. Recreate into our own page (never gated on
+  // a visible #userPluginPreferencesPage existing) so the page can't blank out —
+  // mirrors BookmarksPage.
+  const ownPage = document.querySelector(".je-hidden-content-page");
   document.querySelectorAll("#je-hidden-content-container").forEach(el => {
+    if (ownPage && ownPage.contains(el)) return;
     if (!preferencesPage || !preferencesPage.contains(el)) {
       el.remove();
     }
   });
 
-  if (preferencesPage && !preferencesPage.querySelector("#je-hidden-content-container")) {
+  if (!ownPage?.querySelector("#je-hidden-content-container")) {
     const newContainer = document.createElement("div");
     newContainer.id = "je-hidden-content-container";
-    const target = document.querySelector(".je-hidden-content-page") || document.body;
+    const target = ownPage || document.body;
     target.appendChild(newContainer);
   }
 

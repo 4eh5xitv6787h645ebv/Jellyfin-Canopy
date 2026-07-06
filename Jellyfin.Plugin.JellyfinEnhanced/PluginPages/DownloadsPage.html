@@ -18,16 +18,22 @@
   const preferencesPages = Array.from(document.querySelectorAll("#userPluginPreferencesPage"));
   const preferencesPage = preferencesPages.find(p => p.offsetWidth > 0 && p.offsetHeight > 0);
 
+  // Keep this page's own authored container; drop only stray copies that are not
+  // inside a visible preferences page. Recreate into our own page (never gated on
+  // a visible #userPluginPreferencesPage existing) so the page can't blank out —
+  // mirrors BookmarksPage.
+  const ownPage = document.querySelector(".je-downloads-page");
   document.querySelectorAll("#je-downloads-container").forEach(el => {
+    if (ownPage && ownPage.contains(el)) return;
     if (!preferencesPage || !preferencesPage.contains(el)) {
       el.remove();
     }
   });
 
-  if (preferencesPage && !preferencesPage.querySelector("#je-downloads-container")) {
+  if (!ownPage?.querySelector("#je-downloads-container")) {
     const newContainer = document.createElement("div");
     newContainer.id = "je-downloads-container";
-    const target = document.querySelector(".je-downloads-page") || document.body;
+    const target = ownPage || document.body;
     target.appendChild(newContainer);
   }
 
@@ -93,8 +99,20 @@ function startPollingFallback() {
   const POLL_INTERVAL = pollIntervalSeconds * 1000;
   JE.downloadsPage._pluginPagePollTimer = setInterval(() => {
     const container = document.getElementById("je-downloads-container");
-    // Check visibility: container visible and plugin page is active
-    if (container && container.offsetHeight > 0 && container.offsetWidth > 0 && JE.downloadsPage._pluginPageVisible) {
+    // Stop polling once the page is gone (SPA nav away removes the container):
+    // beforeunload does not fire on in-app navigation, so clear the interval here
+    // or it runs for the rest of the session.
+    if (!container) {
+      clearInterval(JE.downloadsPage._pluginPagePollTimer);
+      JE.downloadsPage._pluginPagePollTimer = null;
+      return;
+    }
+    // Read the same visibility flag the load block set: newer builds set it on
+    // _state, older builds on the page object itself.
+    const pluginPageVisible = JE.downloadsPage._state
+      ? JE.downloadsPage._state._pluginPageVisible
+      : JE.downloadsPage._pluginPageVisible;
+    if (container.offsetHeight > 0 && container.offsetWidth > 0 && pluginPageVisible) {
       JE.downloadsPage.refresh();
     }
   }, POLL_INTERVAL);
