@@ -614,7 +614,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     {
                         return true;
                     }
+                    // Seerr already has this request (409) — idempotent success, stop here.
+                    if (AutoRequest.AutoRequestRetryPolicy.IsAlreadyRequested(error))
+                    {
+                        _logger.LogInformation($"[Auto-Season-Request] Season already requested on Jellyseerr (409) at {url} — treating as success.");
+                        return true;
+                    }
                     _logger.LogWarning($"[Auto-Season-Request] Jellyseerr request failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                    // A server that RESPONDED (any real status) may already have committed the
+                    // request; do not re-POST it to another backend. Only fail over on a pure
+                    // transport failure (no commit possible).
+                    if (!AutoRequest.AutoRequestRetryPolicy.ShouldTryNextUrl(error))
+                    {
+                        return false;
+                    }
                 }
                 catch (Exception ex)
                 {

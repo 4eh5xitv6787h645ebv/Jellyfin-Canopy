@@ -237,6 +237,29 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             return null;
         }
 
+        /// <summary>
+        /// Orders a TMDB collection "parts" array by parsed release date (stable by original
+        /// index), so the "next in collection" walk follows chronological order. Parts with a
+        /// missing/unparseable release date sort last. Non-array input yields an empty list.
+        /// </summary>
+        internal static List<JsonElement> OrderPartsByReleaseDate(JsonElement partsArray)
+        {
+            if (partsArray.ValueKind != JsonValueKind.Array)
+            {
+                return new List<JsonElement>();
+            }
+
+            return partsArray.EnumerateArray()
+                .Select((p, idx) => (p, idx,
+                    date: p.TryGetProperty("releaseDate", out var d)
+                          && DateTime.TryParse(d.GetString(), out var dt)
+                        ? dt : DateTime.MaxValue))
+                .OrderBy(t => t.date)
+                .ThenBy(t => t.idx)
+                .Select(t => t.p)
+                .ToList();
+        }
+
         // Gets next movie in collection from Jellyseerr collection endpoint
         private async Task<MovieInfo?> GetNextMovieInCollectionAsync(int collectionId, string currentTmdbId)
         {
@@ -277,8 +300,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                                 int? currentIndex = null;
                                 int? nextIndex = null;
 
-                                // Find current movie and next movie
-                                var parts = partsArray.EnumerateArray().ToList();
+                                // Find current movie and next movie. The TMDB "parts" array is
+                                // NOT guaranteed to be in release order, so order it by release
+                                // date first — otherwise "next in collection" could request a
+                                // prequel/spin-off listed after the film just watched (ARR-7).
+                                var parts = OrderPartsByReleaseDate(partsArray);
                                 for (int i = 0; i < parts.Count; i++)
                                 {
                                     var part = parts[i];
@@ -575,7 +601,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     {
                         return true;
                     }
+                    // Seerr already has this request (409) — idempotent success, stop here.
+                    if (AutoRequest.AutoRequestRetryPolicy.IsAlreadyRequested(error))
+                    {
+                        _logger.LogInformation($"[Auto-Movie-Request] Movie already requested on Jellyseerr (409) at {url} — treating as success.");
+                        return true;
+                    }
                     _logger.LogWarning($"[Auto-Movie-Request] Jellyseerr request failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                    // A server that RESPONDED (any real status) may already have committed the
+                    // request; do not re-POST it to another backend. Only fail over on a pure
+                    // transport failure (no commit possible).
+                    if (!AutoRequest.AutoRequestRetryPolicy.ShouldTryNextUrl(error))
+                    {
+                        return false;
+                    }
                 }
                 catch (Exception ex)
                 {

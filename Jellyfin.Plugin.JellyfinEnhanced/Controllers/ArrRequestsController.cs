@@ -433,6 +433,58 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                 var requests = new List<object>();
                 var results = data["results"] as JsonArray;
+                bool selfScoped = !hasRequestViewPermission || userOnly;
+
+                // "Coming Soon" is aggregated across ALL upstream pages of `processing` AND
+                // `approved` — the single-page path only ever saw page 1 of processing, so
+                // future-dated requests further in (and every `approved` item) were unreachable
+                // and the paginator was wrong. Each aggregated page is parental-filtered and the
+                // rows are deduped by request id; the full future set is ordered and windowed
+                // locally below (ARR-5).
+                int comingSoonTotal = 0;
+                if (isComingSoonFilter)
+                {
+                    var scopeParam = selfScoped ? $"&requestedBy={jellyseerrUser.Id}" : string.Empty;
+
+                    async Task<JsonArray?> FetchComingSoonPage(string upstreamFilter, int pageSkip, int pageTake)
+                    {
+                        var pageUri = $"{jellyseerrUrl}/api/v1/request?take={pageTake}&skip={pageSkip}&filter={upstreamFilter}{scopeParam}";
+                        try
+                        {
+                            using var pageRequest = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
+                                HttpMethod.Get, pageUri, config.JellyseerrApiKey);
+                            using var pageResponse = await client.SendAsync(pageRequest);
+                            var (pageJson, pageError) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(pageResponse, pageUri);
+                            if (pageError != null || pageJson == null)
+                            {
+                                return null;
+                            }
+
+                            // Every aggregated page gets the same parental gate as the primary fetch.
+                            var pageParental = await _parentalFilter.ApplyAsync(pageJson, "/api/v1/request", SeerrCaller());
+                            var pageData = JsonNode.Parse(pageParental.Body)!.AsObject();
+                            return pageData["results"] as JsonArray;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning($"Coming-soon page fetch failed ({upstreamFilter} skip={pageSkip}): {ex.Message}");
+                            return null;
+                        }
+                    }
+
+                    var rawPages = await AggregateComingSoonPagesAsync(
+                        FetchComingSoonPage, ComingSoonUpstreamFilters, ComingSoonPageSize, ComingSoonMaxItems);
+
+                    // Deep-clone each row into a fresh array so it can be re-parented cleanly.
+                    var combinedResults = new JsonArray();
+                    foreach (var obj in rawPages)
+                    {
+                        combinedResults.Add(obj.DeepClone());
+                    }
+
+                    data["results"] = combinedResults;
+                    results = combinedResults;
+                }
 
                 // Defense-in-depth backstop: the admin-key fetch scopes to the caller by
                 // appending &requestedBy=; if that param were ever dropped or ignored
@@ -441,7 +493,6 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 // permission (or explicitly asked for user-only), and track the count so the
                 // page total stays honest.
                 int removedByScope = 0;
-                bool selfScoped = !hasRequestViewPermission || userOnly;
                 if (selfScoped && results != null)
                 {
                     for (var i = results.Count - 1; i >= 0; i--)
@@ -650,16 +701,26 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                                 return bestDate ?? DateTime.MaxValue;
                             })
                             .ToArray();
-                    }
 
-                    requests.AddRange(enrichedRequests);
+                        // enrichedRequests is now the full future-dated, ordered set across all
+                        // aggregated pages; window it locally and report the honest total (ARR-5).
+                        var (comingSoonPage, comingSoonFilteredTotal, _) = PaginateFiltered(enrichedRequests, skip, take);
+                        comingSoonTotal = comingSoonFilteredTotal;
+                        requests.AddRange(comingSoonPage);
+                    }
+                    else
+                    {
+                        requests.AddRange(enrichedRequests);
+                    }
                 }
 
                 var pageInfo = data["pageInfo"] as JsonObject;
                 // pageInfo.results already reflects any parental removals (the filter
                 // decrements it); subtract the DiD-backstop removals on top so the page
                 // count never over-reports what the caller can actually see.
-                var totalResults = isComingSoonFilter ? requests.Count : Math.Max(0, ((int?)pageInfo?["results"] ?? 0) - removedByScope);
+                // Coming-soon totals come from the FULL aggregated+filtered set (not just the
+                // windowed page), so the client paginator walks every future-dated request.
+                var totalResults = isComingSoonFilter ? comingSoonTotal : Math.Max(0, ((int?)pageInfo?["results"] ?? 0) - removedByScope);
                 var totalPages = (int)Math.Ceiling((double)totalResults / take);
 
                 var canApproveRequests = IsAdminUser() || JellyseerrPermissionHelper.HasAnyPermission(
@@ -705,6 +766,85 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         {
             var full = $"Failed to fetch requests from Jellyseerr: {exMessage}";
             return isAdmin ? full : Helpers.Jellyseerr.SeerrError.SanitizeMessage(full);
+        }
+
+        // Coming-soon aggregates every upstream page across these filters so future-dated
+        // requests beyond the first page (and `approved` items, which the single-page path
+        // never fetched) are reachable. Bounded so a huge Seerr can't drive unbounded calls.
+        internal const int ComingSoonPageSize = 100;
+        internal const int ComingSoonMaxItems = 500;
+        internal static readonly string[] ComingSoonUpstreamFilters = { "processing", "approved" };
+
+        /// <summary>
+        /// Walks every upstream page for each coming-soon filter (via the injected page
+        /// fetcher) and returns the combined request rows, deduped by request id. Stops at a
+        /// short/empty page or the <paramref name="maxItems"/> cap. Extracted so the
+        /// aggregate-all-pages fix is unit-testable without a live Seerr.
+        /// </summary>
+        internal static async Task<List<JsonObject>> AggregateComingSoonPagesAsync(
+            Func<string, int, int, Task<JsonArray?>> fetchPage,
+            IReadOnlyList<string> upstreamFilters,
+            int pageSize,
+            int maxItems)
+        {
+            var combined = new List<JsonObject>();
+            var seenIds = new HashSet<int>();
+
+            foreach (var filter in upstreamFilters)
+            {
+                for (int skip = 0; combined.Count < maxItems; skip += pageSize)
+                {
+                    var results = await fetchPage(filter, skip, pageSize).ConfigureAwait(false);
+                    if (results == null || results.Count == 0)
+                    {
+                        break;
+                    }
+
+                    foreach (var node in results)
+                    {
+                        if (node is not JsonObject obj)
+                        {
+                            continue;
+                        }
+
+                        var id = (int?)obj["id"];
+                        // Dedupe by request id so a row present under both processing and
+                        // approved (or across overlapping pages) is only counted once.
+                        if (id.HasValue && !seenIds.Add(id.Value))
+                        {
+                            continue;
+                        }
+
+                        combined.Add(obj);
+                        if (combined.Count >= maxItems)
+                        {
+                            break;
+                        }
+                    }
+
+                    // A short page is the last page for this filter.
+                    if (results.Count < pageSize)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            return combined;
+        }
+
+        /// <summary>
+        /// Windows a fully-filtered, ordered set locally so paging walks the real filtered
+        /// set and the totals are honest (ARR-5). Returns the requested page plus the total
+        /// item and page counts computed from the whole set.
+        /// </summary>
+        internal static (List<T> Page, int TotalResults, int TotalPages) PaginateFiltered<T>(
+            IReadOnlyList<T> filteredOrdered, int skip, int take)
+        {
+            var totalResults = filteredOrdered.Count;
+            var totalPages = take > 0 ? (int)Math.Ceiling((double)totalResults / take) : 0;
+            var page = filteredOrdered.Skip(skip).Take(take).ToList();
+            return (page, totalResults, totalPages);
         }
 
         [HttpPost("arr/requests/{requestId}/approve")]
