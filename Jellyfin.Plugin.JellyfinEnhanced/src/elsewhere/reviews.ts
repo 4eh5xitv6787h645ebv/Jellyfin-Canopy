@@ -35,6 +35,18 @@ interface DashboardLike {
     alert?: (options: { title: string; message: string }) => void;
 }
 
+/**
+ * Resolve which TMDB review a read-more toggle belongs to, by the stable index
+ * stored on the card in {@link HTMLElement.dataset} — never by matching the
+ * author text. The old code compared `escapeHtml(author)` to the card's DECODED
+ * `textContent`, which mismatched for any author containing ' & < > " (e.g.
+ * "O'Brien") and silently no-op'd the expand. Exported for direct testing.
+ */
+export function resolveReviewByCard<T>(reviews: readonly T[], card: HTMLElement): T | undefined {
+    const index = Number(card.dataset.reviewIndex);
+    return Number.isInteger(index) ? reviews[index] : undefined;
+}
+
 JE.initializeReviewsScript = function () {
     const tmdbReviewsEnabled = JE.pluginConfig.ShowReviews && JE.pluginConfig.TmdbEnabled;
     const userReviewsEnabled = JE.pluginConfig.ShowUserReviews;
@@ -318,10 +330,14 @@ JE.initializeReviewsScript = function () {
         return processed.join('');
     }
 
-    function createReviewElement(review: any): HTMLElement {
+    function createReviewElement(review: any, index: number): HTMLElement {
         const REVIEW_PREVIEW_LENGTH = 350;
         const reviewCard = document.createElement('div');
         reviewCard.className = 'tmdb-review-card';
+        // Stable key for the read-more toggle: resolve the review by its index into
+        // `reviews`, never by matching the (escaped vs decoded) author text — that
+        // mismatched for authors with ' & < > " (e.g. "O'Brien") and no-op'd expand.
+        reviewCard.dataset.reviewIndex = String(index);
 
         const content = review.content || 'No content available';
         const isLongReview = content.length > REVIEW_PREVIEW_LENGTH;
@@ -695,8 +711,8 @@ JE.initializeReviewsScript = function () {
 
             // Render TMDB reviews after
             if (reviews && reviews.length > 0) {
-                reviews.slice(0, 10).forEach(review => {
-                    swipeContainer.appendChild(createReviewElement(review));
+                reviews.slice(0, 10).forEach((review, index) => {
+                    swipeContainer.appendChild(createReviewElement(review, index));
                 });
             }
 
@@ -745,7 +761,7 @@ JE.initializeReviewsScript = function () {
                         }
                         return;
                     }
-                    const review = reviews!.find(r => escapeHtml(r.author) === card.querySelector('.tmdb-review-author')!.textContent);
+                    const review = resolveReviewByCard(reviews!, card);
                     if (!review) return;
                     if (textElement.classList.toggle('expanded')) {
                         textElement.innerHTML = parseMarkdown(review.content) + `<span class="tmdb-review-toggle">${JE.t('reviews_read_less')}</span>`;
