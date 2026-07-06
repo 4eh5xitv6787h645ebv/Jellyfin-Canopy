@@ -77,10 +77,14 @@ else
 fi
 
 make_movie() { # <filename> <tone-hz>
+    # Tag the audio stream as English so the language-tags renderer has a real
+    # language to stamp (a bare testsrc clip reports "und", which the renderer
+    # skips). Genres + a community rating are added post-scan via the API below.
     run_ffmpeg \
         -f lavfi -i "testsrc2=duration=5:size=640x360:rate=24" \
         -f lavfi -i "sine=frequency=$2:duration=5" \
-        -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest -y "$1"
+        -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest \
+        -metadata:s:a:0 language=eng -y "$1"
 }
 
 log "generating test movies"
@@ -198,6 +202,29 @@ for _ in $(seq 1 60); do
     sleep 5
 done
 [ "${MOVIES}" -ge 3 ] || fail "library scan indexed only ${MOVIES} movies"
+
+# ── 6. per-movie metadata so every enabled tag family can render ─────────────
+# The generated testsrc clips carry no genre or rating, so the genre- and
+# rating-tags renderers had nothing to stamp (only quality + language, which
+# come from the media itself, tagged). Give each movie real Genres and a
+# CommunityRating via the item-update API so the per-family tag assertions in
+# tags.spec.ts / non-admin.spec.ts stay meaningful on this bare seed.
+log "seeding genre + rating metadata so every tag family renders"
+MOVIE_IDS="$(api GET "/Items?IncludeItemTypes=Movie&Recursive=true&userId=${ADMIN_ID}" | jq -r '.Items[].Id')"
+i=0
+for MID in ${MOVIE_IDS}; do
+    # Rotate a genre set and vary the community rating a little per movie; jq
+    # picks both from the loop index so no fragile shell array-splitting.
+    DTO="$(api GET "/Users/${ADMIN_ID}/Items/${MID}")"
+    PATCHED="$(printf '%s' "${DTO}" | jq \
+        --argjson idx "$((i % 4))" \
+        '([["Action","Adventure"],["Comedy","Drama"],["Science Fiction","Thriller"],["Documentary"]][$idx]) as $g
+         | .Genres = $g
+         | .CommunityRating = (6.5 + ($idx * 0.5))')"
+    api POST "/Items/${MID}" "${PATCHED}" >/dev/null || fail "could not update metadata for item ${MID}"
+    i=$((i + 1))
+done
+log "updated metadata on ${i} movies (genres + community rating; audio lang baked at encode)"
 
 log "ready: ${BASE} (admin=${ADMIN_USER}, user=${USER_NAME}, ${MOVIES} movies)"
 log "run the suite with: JF_BASE_URL=${BASE} npm run e2e"
