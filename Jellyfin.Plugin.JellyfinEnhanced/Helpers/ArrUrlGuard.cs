@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -50,7 +52,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers
             return null;  // need DNS
         }
 
-        private static bool IsBlockedIp(IPAddress addr)
+        internal static bool IsBlockedIp(IPAddress addr)
         {
             if (_blockedIPs.Contains(addr)) return true;
             // 169.254.0.0/16 — AWS metadata + Windows APIPA + ECS metadata + custom probes
@@ -75,8 +77,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers
             }
             catch (SocketException)
             {
-                // DNS resolution failed — let the subsequent HTTP call surface its own error.
-                // Hostname alone passed the allow-list; let the request proceed.
+                // Fail CLOSED: if the host can't be resolved we can't prove it isn't a
+                // blocked target (a short-TTL/rebinding name could resolve to metadata
+                // later), so treat it as disallowed. Callers surface "instance unreachable".
+                return false;
             }
             catch (ArgumentException)
             {
@@ -106,7 +110,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers
             }
             catch (SocketException)
             {
-                // See sync variant — pass-through on resolver errors.
+                // See sync variant — fail CLOSED on resolver failure.
+                return false;
             }
             catch (ArgumentException)
             {
@@ -114,6 +119,37 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Builds a <see cref="SocketsHttpHandler"/> that re-validates the ACTUAL connected
+        /// IP at socket-connect time, defeating DNS rebinding: the guard's pre-flight resolve
+        /// (<see cref="IsAllowedUrl"/>) and the client's connect-time resolve can differ, so
+        /// this callback is the authoritative, TOCTOU-proof block point. Every arr/Seerr
+        /// HttpClient routes through here.
+        /// </summary>
+        public static SocketsHttpHandler CreateGuardedHandler(bool allowAutoRedirect)
+        {
+            var handler = new SocketsHttpHandler { AllowAutoRedirect = allowAutoRedirect };
+            handler.ConnectCallback = async (ctx, ct) =>
+            {
+                var entries = await Dns.GetHostAddressesAsync(ctx.DnsEndPoint.Host, ct).ConfigureAwait(false);
+                var target = entries.FirstOrDefault(a => !IsBlockedIp(a.IsIPv4MappedToIPv6 ? a.MapToIPv4() : a))
+                             ?? throw new HttpRequestException("Blocked by ArrUrlGuard (connect-time IP check).");
+
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+                try
+                {
+                    await socket.ConnectAsync(new IPEndPoint(target, ctx.DnsEndPoint.Port), ct).ConfigureAwait(false);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch
+                {
+                    socket.Dispose();
+                    throw;
+                }
+            };
+            return handler;
         }
     }
 }

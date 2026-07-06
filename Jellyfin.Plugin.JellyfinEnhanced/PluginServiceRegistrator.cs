@@ -35,19 +35,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             // 302 to a login URL are detected as `UpstreamRedirect` instead of
             // silently followed and producing a 200 + login HTML body.
             // SeerrHttpHelper.CreateClient(factory) selects this for outbound
-            // Seerr calls.
+            // Seerr calls. The guarded handler re-validates the connect-time IP
+            // (DNS-rebind / TOCTOU defense) on top of the pre-flight URL guard.
             serviceCollection.AddHttpClient(Helpers.Jellyseerr.SeerrHttpHelper.NamedClient)
-                .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-                {
-                    AllowAutoRedirect = false
-                });
+                .ConfigurePrimaryHttpMessageHandler(() => Helpers.ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: false));
 
             // Named clients for the remaining upstreams (see PluginHttpClients for
-            // the per-upstream rationale). Both use the default handler — redirects
-            // followed — and keep the .NET default 100s timeout; call sites that need
-            // a shorter deadline set it per factory-created instance. API keys are
-            // attached per-request (HttpRequestMessage), never via DefaultRequestHeaders.
-            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.ArrClient);
+            // the per-upstream rationale). The Arr client points at admin-supplied
+            // Sonarr/Radarr URLs, so it routes through the guarded handler (connect-time
+            // IP re-check) while keeping AllowAutoRedirect=true. TmdbClient/AssetsClient
+            // target hardcoded/allowlisted CDNs and keep the default handler. API keys
+            // are attached per-request (HttpRequestMessage), never via DefaultRequestHeaders.
+            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.ArrClient)
+                .ConfigurePrimaryHttpMessageHandler(() => Helpers.ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: true));
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.TmdbClient);
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.AssetsClient);
             // Dedicated JellyfinEnhanced_*.log sink (a documented product feature)
