@@ -6,12 +6,10 @@
 // This drives the ACTUAL selector literal from the source against a real
 // Segment Editor anchor, so the test is red until the source encodes the space.
 import { describe, expect, it } from 'vitest';
-import * as fs from 'fs';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
+import * as ts from 'typescript';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const src = fs.readFileSync(path.join(HERE, 'plugin-icons.ts'), 'utf8');
+const TEST_PATH = decodeURIComponent(new URL(import.meta.url).pathname);
+const src = ts.sys.readFile(TEST_PATH.replace(/plugin-icons-selector\.test\.ts$/, 'plugin-icons.ts')) ?? '';
 
 describe('plugin-icons Segment Editor selector (MISC-3)', () => {
     it('uses the URL-encoded space so it matches the real Segment Editor href', () => {

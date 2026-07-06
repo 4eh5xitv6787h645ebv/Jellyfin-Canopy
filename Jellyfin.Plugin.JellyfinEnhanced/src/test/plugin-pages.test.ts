@@ -11,14 +11,16 @@
 //        on SPA nav-away). It must read the flag it set and stop when the page is
 //        gone.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import * as fs from 'fs';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
+import * as ts from 'typescript';
 
-const PAGES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../PluginPages');
+// Resolve PluginPages/ from this test's path (src/test/) without node's fs/path
+// (which aren't in the src tsconfig); read via the TS compiler host like the
+// other source-scanning guards do.
+const TEST_PATH = decodeURIComponent(new URL(import.meta.url).pathname);
+const PAGES_DIR = TEST_PATH.replace(/src\/test\/plugin-pages\.test\.ts$/, 'PluginPages/');
 
 function readPage(name: string): string {
-    return fs.readFileSync(path.join(PAGES_DIR, name), 'utf8');
+    return ts.sys.readFile(PAGES_DIR + name) ?? '';
 }
 
 /** Markup before the first <script> (the authored page divs). */
@@ -35,7 +37,7 @@ describe('nav-page container never self-destructs (SRV-3)', () => {
     afterEach(() => {
         document.body.innerHTML = '';
         vi.unstubAllGlobals();
-        delete (window as Record<string, unknown>).JellyfinEnhanced;
+        delete (window as unknown as Record<string, unknown>).JellyfinEnhanced;
     });
 
     const cases = [
@@ -50,7 +52,7 @@ describe('nav-page container never self-destructs (SRV-3)', () => {
             // Neuter the bootstrap poll — we only assert the synchronous container wiring.
             vi.stubGlobal('setInterval', () => 0 as unknown);
             vi.stubGlobal('clearInterval', () => { /* no-op */ });
-            (window as Record<string, unknown>).JellyfinEnhanced = {}; // not "ready" → poll would spin, but it's stubbed
+            (window as unknown as Record<string, unknown>).JellyfinEnhanced = {}; // not "ready" → poll would spin, but it's stubbed
 
             document.body.innerHTML = markupOf(readPage(c.file)); // NO #userPluginPreferencesPage in the DOM
             const ownPage = document.querySelector(`.${c.pageClass}`)!;
@@ -68,7 +70,7 @@ describe('nav-page container never self-destructs (SRV-3)', () => {
             it(`${c.file}: recreates the container into its own page when missing`, () => {
                 vi.stubGlobal('setInterval', () => 0 as unknown);
                 vi.stubGlobal('clearInterval', () => { /* no-op */ });
-                (window as Record<string, unknown>).JellyfinEnhanced = {};
+                (window as unknown as Record<string, unknown>).JellyfinEnhanced = {};
 
                 document.body.innerHTML = markupOf(readPage(c.file));
                 const ownPage = document.querySelector(`.${c.pageClass}`)!;
@@ -88,7 +90,7 @@ describe('DownloadsPage fallback poll (SRV-5)', () => {
         document.body.innerHTML = '';
         vi.useRealTimers();
         vi.unstubAllGlobals();
-        delete (window as Record<string, unknown>).JellyfinEnhanced;
+        delete (window as unknown as Record<string, unknown>).JellyfinEnhanced;
     });
 
     function runDownloadsBootstrap(refresh: () => void): void {
@@ -100,7 +102,7 @@ describe('DownloadsPage fallback poll (SRV-5)', () => {
         Object.defineProperty(container, 'offsetHeight', { get: () => 10, configurable: true });
         Object.defineProperty(container, 'offsetWidth', { get: () => 10, configurable: true });
 
-        (window as Record<string, unknown>).JellyfinEnhanced = {
+        (window as unknown as Record<string, unknown>).JellyfinEnhanced = {
             pluginConfig: { DownloadsPagePollingEnabled: true, DownloadsPollIntervalSeconds: 0.01 },
             downloadsPage: {
                 injectStyles: () => { /* no-op */ },
@@ -132,7 +134,7 @@ describe('DownloadsPage fallback poll (SRV-5)', () => {
     it('stops the poll once the page (container) is gone', () => {
         const refresh = vi.fn();
         runDownloadsBootstrap(refresh);
-        const JE = (window as Record<string, any>).JellyfinEnhanced;
+        const JE = (window as unknown as Record<string, any>).JellyfinEnhanced;
         expect(JE.downloadsPage._pluginPagePollTimer).toBeTruthy();
 
         document.getElementById('je-downloads-container')!.remove();
