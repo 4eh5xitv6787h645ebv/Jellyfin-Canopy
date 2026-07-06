@@ -52,6 +52,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     {
         private readonly IJellyseerrClient _jellyseerr;
         private readonly Services.Arr.ArrFetchService _arrFetch;
+        private readonly ISeerrParentalFilter _parentalFilter;
 
         public ArrRequestsController(
             IHttpClientFactory httpClientFactory,
@@ -60,11 +61,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
             IJellyseerrClient jellyseerr,
-            Services.Arr.ArrFetchService arrFetch)
+            Services.Arr.ArrFetchService arrFetch,
+            ISeerrParentalFilter parentalFilter)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _jellyseerr = jellyseerr;
             _arrFetch = arrFetch;
+            _parentalFilter = parentalFilter;
         }
 
         [HttpGet("arr/queue")]
@@ -382,10 +385,42 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     });
                 }
 
+                // Enforce each caller's own parental-rating limit on the request list —
+                // the same gate the /jellyseerr/request route applies via ProxyRequestAsync.
+                // Reuses the "/api/v1/request" classification (Category.List, nested `media`),
+                // resolves the caller from the auth principal (never a client header), and is
+                // a no-op for admins / no-limit users / feature off. Never throws (the filter
+                // passes the body through on any fault). Runs before enrichment so the TMDB
+                // round-trips only fire for surviving rows.
+                var parental = await _parentalFilter.ApplyAsync(json!, "/api/v1/request", SeerrCaller());
+                json = parental.Body; // Block is never set for a list endpoint.
+
                 var data = JsonNode.Parse(json!)!.AsObject();
 
                 var requests = new List<object>();
                 var results = data["results"] as JsonArray;
+
+                // Defense-in-depth backstop: the admin-key fetch scopes to the caller by
+                // appending &requestedBy=; if that param were ever dropped or ignored
+                // upstream, a self-scoped caller must still never receive another user's
+                // rows. Drop any row not owned by the caller when they lack request-view
+                // permission (or explicitly asked for user-only), and track the count so the
+                // page total stays honest.
+                int removedByScope = 0;
+                bool selfScoped = !hasRequestViewPermission || userOnly;
+                if (selfScoped && results != null)
+                {
+                    for (var i = results.Count - 1; i >= 0; i--)
+                    {
+                        var ownerId = (int?)((results[i] as JsonObject)?["requestedBy"] as JsonObject)?["id"];
+                        if (ownerId != jellyseerrUser.Id)
+                        {
+                            results.RemoveAt(i);
+                            removedByScope++;
+                        }
+                    }
+                }
+
                 if (results != null)
                 {
                     // Enrich all requests in parallel for better performance
@@ -587,7 +622,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
 
                 var pageInfo = data["pageInfo"] as JsonObject;
-                var totalResults = isComingSoonFilter ? requests.Count : ((int?)pageInfo?["results"] ?? 0);
+                // pageInfo.results already reflects any parental removals (the filter
+                // decrements it); subtract the DiD-backstop removals on top so the page
+                // count never over-reports what the caller can actually see.
+                var totalResults = isComingSoonFilter ? requests.Count : Math.Max(0, ((int?)pageInfo?["results"] ?? 0) - removedByScope);
                 var totalPages = (int)Math.Ceiling((double)totalResults / take);
 
                 var canApproveRequests = IsAdminUser() || JellyseerrPermissionHelper.HasAnyPermission(
