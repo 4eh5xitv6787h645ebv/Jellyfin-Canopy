@@ -359,6 +359,73 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services.Jellyseerr
         }
 
         [Fact]
+        public async Task IsTmdbProxyPathBlocked_DenyByDefault_GatesRawTmdbPaths()
+        {
+            var filter = BuildFilter(maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>(), featureEnabled: true, seed: null);
+            var restricted = new JellyseerrCaller(CallerGuid, false);
+
+            // Enumerating / discovery shapes are Restricted -> blocked without a fetch.
+            Assert.True(await filter.IsTmdbProxyPathBlockedAsync("discover/movie", restricted));
+            Assert.True(await filter.IsTmdbProxyPathBlockedAsync("search/multi", restricted));
+
+            // Detail gate: blocked for the over-limit title, allowed for the in-limit one.
+            Assert.True(await filter.IsTmdbProxyPathBlockedAsync("movie/200", restricted));   // R
+            Assert.False(await filter.IsTmdbProxyPathBlockedAsync("movie/100", restricted));  // PG-13
+
+            // Neutral rating-free shape is allowed.
+            Assert.False(await filter.IsTmdbProxyPathBlockedAsync("genres/movie", restricted));
+
+            // Admins bypass the gate entirely.
+            var admin = new JellyseerrCaller(CallerGuid, true);
+            Assert.False(await filter.IsTmdbProxyPathBlockedAsync("discover/movie", admin));
+            Assert.False(await filter.IsTmdbProxyPathBlockedAsync("movie/200", admin));
+        }
+
+        [Fact]
+        public async Task ListFilter_DecrementsPageInfoCounts_WhenRowsRemoved()
+        {
+            const string body = @"{ ""results"": [
+                { ""id"": 100, ""mediaType"": ""movie"" },
+                { ""id"": 200, ""mediaType"": ""movie"" } ],
+                ""pageInfo"": { ""page"": 1, ""pages"": 2, ""pageSize"": 1, ""results"": 2 } }";
+
+            var result = await RunAsync(body, "/api/v1/search?query=x", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+
+            Assert.Equal(new[] { 100 }, Ids(result, "results")); // R-rated 200 removed
+            var pageInfo = (System.Text.Json.Nodes.JsonObject)result["pageInfo"]!;
+            Assert.Equal(1, (int)pageInfo["results"]!);          // 2 - 1 removed
+            Assert.Equal(1, (int)pageInfo["pages"]!);            // ceil(1 / pageSize 1)
+        }
+
+        [Fact]
+        public async Task ListFilter_DecrementsTopLevelTotals_WhenRowsRemoved()
+        {
+            const string body = @"{ ""results"": [
+                { ""id"": 100, ""mediaType"": ""movie"" },
+                { ""id"": 200, ""mediaType"": ""movie"" } ],
+                ""totalResults"": 2, ""totalPages"": 2 }";
+
+            var result = await RunAsync(body, "/api/v1/search?query=x", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+
+            Assert.Equal(new[] { 100 }, Ids(result, "results"));
+            Assert.Equal(1, (int)result["totalResults"]!); // 2 - 1 removed
+            Assert.Equal(1, (int)result["totalPages"]!);   // recomputed from surviving results
+        }
+
+        [Fact]
+        public async Task ListFilter_LeavesCountsUntouched_WhenNothingRemoved()
+        {
+            const string body = @"{ ""results"": [ { ""id"": 100, ""mediaType"": ""movie"" } ],
+                ""pageInfo"": { ""pages"": 5, ""pageSize"": 20, ""results"": 100 } }";
+
+            var result = await RunAsync(body, "/api/v1/search?query=x", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+
+            var pageInfo = (System.Text.Json.Nodes.JsonObject)result["pageInfo"]!;
+            Assert.Equal(100, (int)pageInfo["results"]!);
+            Assert.Equal(5, (int)pageInfo["pages"]!);
+        }
+
+        [Fact]
         public async Task IsBlockedAsync_AdminAndFeatureOff_NeverBlock()
         {
             var admin = new JellyseerrCaller(CallerGuid, true);
