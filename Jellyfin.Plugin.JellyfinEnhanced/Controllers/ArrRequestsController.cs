@@ -208,7 +208,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         var episodeNumber = (int?)episode?["episodeNumber"];
                         items.Add(new
                         {
-                            id = record?["id"]?.ToString(),
+                            // Namespace the per-instance queue id by source+instance so two Sonarr
+                            // instances that both number queue records from 1 can't collide.
+                            id = ArrIdHelper.NamespacedId(nameof(ArrType.Sonarr), instance.Name, record?["id"]),
                             source = nameof(ArrType.Sonarr),
                             instanceName = instance.Name,
                             title = (string?)series?["title"] ?? "Unknown",
@@ -250,7 +252,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                         items.Add(new
                         {
-                            id = record?["id"]?.ToString(),
+                            // Namespace the per-instance queue id by source+instance so two Radarr
+                            // instances that both number queue records from 1 can't collide.
+                            id = ArrIdHelper.NamespacedId(nameof(ArrType.Radarr), instance.Name, record?["id"]),
                             source = nameof(ArrType.Radarr),
                             instanceName = instance.Name,
                             title = (string?)movie?["title"] ?? "Unknown",

@@ -28,6 +28,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
             "int? tmdbId = (int?)media?[\"tmdbId\"];",
         };
 
+        // A client-facing event/queue id built from a per-instance arr row id node
+        // (episode/movie/record["id"]) — the request-list `id = (int?)req?["id"]` (the Seerr request
+        // id) is deliberately excluded by the accessor list. Each such site must be namespaced.
+        private static readonly Regex ArrRowIdAssign = new(
+            @"\b[Ii]d\s*=\s*.*\b(episode|movie|record)\?\[\s*""id""\s*\]", RegexOptions.Compiled);
+
+        // The two controllers that mint client-facing arr event/queue ids.
+        private static readonly HashSet<string> ArrIdControllers = new(StringComparer.Ordinal)
+        {
+            "ArrCalendarController.cs",
+            "ArrRequestsController.cs",
+        };
+
         // Signature (not call) of a request-item parser: ParseRequestItem[...](JsonElement ...).
         private static readonly Regex ParseRequestSig = new(
             @"ParseRequestItem\w*\s*\(\s*JsonElement", RegexOptions.Compiled);
@@ -81,6 +94,28 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
                 stale.Count == 0,
                 "Stale KnownPendingZeroCastSites entr(y/ies) — the site was fixed or moved, so drop it "
                 + "from the allowlist:\n" + string.Join("\n", stale));
+        }
+
+        [Fact]
+        public void ArrEventAndQueueIdsAreNamespacedPerInstance()
+        {
+            var offenders = new List<string>();
+            foreach (var file in SourceFiles().Where(f => ArrIdControllers.Contains(Path.GetFileName(f)!)))
+            {
+                var lines = File.ReadAllLines(file);
+                for (var i = 0; i < lines.Length; i++)
+                {
+                    if (ArrRowIdAssign.IsMatch(lines[i]) && !lines[i].Contains("ArrIdHelper.NamespacedId"))
+                        offenders.Add($"{Path.GetFileName(file)}:{i + 1}  {lines[i].Trim()}");
+                }
+            }
+
+            Assert.True(
+                offenders.Count == 0,
+                "Per-instance arr row id(s) handed to the client without ArrIdHelper.NamespacedId:\n"
+                + string.Join("\n", offenders) + "\n"
+                + "episode/movie/record[\"id\"] is unique only within one instance; two same-source "
+                + "instances can collide. Namespace it via ArrIdHelper.NamespacedId(source, instance.Name, id).");
         }
 
         [Fact]

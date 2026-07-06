@@ -427,7 +427,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                         items.Add(new ArrItem
                         {
-                            Id = episode?["id"]?.ToString(),
+                            // Namespace the per-instance row id by source+instance so two Sonarr
+                            // instances that both number episodes from 1 can't collide on a global key.
+                            Id = ArrIdHelper.NamespacedId(nameof(ArrType.Sonarr), instance.Name, episode?["id"]),
                             Source = nameof(ArrType.Sonarr),
                             InstanceName = instance.Name,
                             Type = "Series",
@@ -525,7 +527,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             if (releaseUtc < startDate || releaseUtc > endDate) continue;
                             items.Add(new ArrItem
                             {
-                                Id = $"{movie?["id"]}-{kvp.Key}",
+                                // Namespace the per-instance row id (plus release-type) by source+instance
+                                // so two Radarr instances numbering movies from 1 can't collide.
+                                Id = ArrIdHelper.NamespacedId(nameof(ArrType.Radarr), instance.Name, $"{movie?["id"]}-{kvp.Key}"),
                                 Source = nameof(ArrType.Radarr),
                                 InstanceName = instance.Name,
                                 Type = "Movie",
