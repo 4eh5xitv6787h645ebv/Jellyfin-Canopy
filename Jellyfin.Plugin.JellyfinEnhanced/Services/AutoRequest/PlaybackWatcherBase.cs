@@ -33,6 +33,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
         // Track which user+item combinations have already been checked to avoid duplicate checks
         private readonly Dictionary<string, DateTime> _checkedSessions = new();
         private readonly object _sessionLock = new();
+        private readonly object _subLock = new();
+        private bool _subscribed;
 
         protected PlaybackWatcherBase(
             ISessionManager sessionManager,
@@ -83,7 +85,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
                 return;
             }
 
-            SubscribeEvents();
+            // Guard against a second startup-task run double-subscribing (a dashboard "Run" button
+            // always exists). The disabled-feature early-return stays ahead of the lock so re-running
+            // the task after enabling the feature still subscribes.
+            lock (_subLock)
+            {
+                if (_subscribed) return;
+                SubscribeEvents();
+                _subscribed = true;
+            }
 
             _logger.LogInformation($"{LogPrefix} Successfully subscribed to playback events");
         }
@@ -138,7 +148,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
         {
             _logger.LogInformation($"{LogPrefix} Unsubscribing from playback events");
 
-            UnsubscribeEvents();
+            lock (_subLock)
+            {
+                UnsubscribeEvents();
+                _subscribed = false;
+            }
 
             GC.SuppressFinalize(this);
         }

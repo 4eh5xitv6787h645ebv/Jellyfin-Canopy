@@ -24,14 +24,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
         /// <summary>
         /// Subscribe to library events. Always subscribes regardless of cache state
-        /// so no events are missed between startup and first cache build.
+        /// so no events are missed between startup and first cache build. Delegates to
+        /// <see cref="EnsureSubscribed"/> so a second startup-task run (a dashboard "Run"
+        /// button always exists) re-subscribes idempotently instead of double-subscribing.
         /// </summary>
         public void Initialize()
         {
-            _libraryManager.ItemAdded += OnItemChanged;
-            _libraryManager.ItemUpdated += OnItemChanged;
-            _libraryManager.ItemRemoved += OnItemRemoved;
-            _logger.LogInformation("[TagCacheMonitor] Subscribed to ItemAdded, ItemUpdated, and ItemRemoved events");
+            EnsureSubscribed();
         }
 
         /// <summary>

@@ -29,6 +29,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         private readonly Dictionary<string, (List<RequestItemWithUser> Items, DateTime CachedAt)> _requestsCache = new();
         private readonly object _requestsCacheLock = new();
         private readonly ConcurrentDictionary<string, Task<List<RequestItemWithUser>?>> _requestsInFlight = new();
+        private readonly object _subLock = new();
+        private bool _subscribed;
 
         public WatchlistMonitor(
             ILibraryManager libraryManager,
@@ -75,9 +77,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 return;
             }
 
-            // _logger.LogInformation("[Watchlist] Initializing library event monitoring");
-            _libraryManager.ItemAdded += OnItemAdded;
-            _libraryManager.ItemUpdated += OnItemUpdated;
+            // Guard against a second startup-task run double-subscribing (a dashboard "Run" button
+            // always exists). The disabled-feature early-return stays ahead of the lock so re-running
+            // the task after enabling the feature still subscribes.
+            lock (_subLock)
+            {
+                if (_subscribed) return;
+                _libraryManager.ItemAdded += OnItemAdded;
+                _libraryManager.ItemUpdated += OnItemUpdated;
+                _subscribed = true;
+            }
             _logger.LogInformation("[Watchlist] Successfully subscribed to library ItemAdded and ItemUpdated events");
         }
 
@@ -422,8 +431,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         public void Dispose()
         {
             _logger.LogInformation("[Watchlist] Unsubscribing from library events");
-            _libraryManager.ItemAdded -= OnItemAdded;
-            _libraryManager.ItemUpdated -= OnItemUpdated;
+            lock (_subLock)
+            {
+                _libraryManager.ItemAdded -= OnItemAdded;
+                _libraryManager.ItemUpdated -= OnItemUpdated;
+                _subscribed = false;
+            }
             GC.SuppressFinalize(this);
         }
 

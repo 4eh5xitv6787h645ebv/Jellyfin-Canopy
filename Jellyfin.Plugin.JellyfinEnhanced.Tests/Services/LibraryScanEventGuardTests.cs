@@ -25,6 +25,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
         private static readonly Regex InlineHeavyWork = new(
             @"\bGet(ItemById|MediaSources|ItemList|FirstEpisode)\s*[<(]", RegexOptions.Compiled);
 
+        // A no-arg Initialize() method declaration (not a call) — the entry point re-invoked by a
+        // second run of the startup scheduled task.
+        private static readonly Regex InitializeDecl = new(
+            @"(?:public|private|protected|internal)(?:\s+(?:override|virtual|sealed|new|static))*\s+void\s+Initialize\s*\(\s*\)",
+            RegexOptions.Compiled);
+
+        // A direct event subscription to one of this repo's On*-named handlers.
+        private static readonly Regex SubscribeHandler = new(@"\+=\s*On", RegexOptions.Compiled);
+
         // Files whose scan-thread handler has been reviewed to be O(1) record-and-defer — no DB
         // query, no GetMediaSources, no I/O; heavy work is pushed to a debounced/off-thread worker.
         // Adding a new subscriber? Follow that pattern (TagCacheMonitor is the reference) and list it.
@@ -82,6 +91,66 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
                 hits.Count == 0,
                 "TagCacheMonitor must stay pure record-and-defer, but found inline heavy call(s): "
                 + string.Join(", ", hits) + ". Move id resolution/rebuild to the off-thread flush.");
+        }
+
+        [Fact]
+        public void AllMonitorInitializeMethodsAreIdempotent()
+        {
+            // (1) Any Initialize() that subscribes to events directly (+= On<handler>) must carry an
+            // idempotency guard (a _subscribed flag) or delegate to an idempotent EnsureSubscribed().
+            // A second run of the startup scheduled task (the dashboard "Run" button always exists)
+            // otherwise double-subscribes a handler that only unsubscribes on Dispose.
+            var offenders = SourceFiles()
+                .Select(f => (Name: Path.GetFileName(f)!, Body: ExtractInitializeBody(File.ReadAllText(f))))
+                .Where(x => x.Body != null && SubscribeHandler.IsMatch(x.Body!))
+                .Where(x => !x.Body!.Contains("_subscribed") && !x.Body!.Contains("EnsureSubscribed"))
+                .Select(x => x.Name)
+                .ToList();
+
+            Assert.True(
+                offenders.Count == 0,
+                "Monitor Initialize() subscribes to events without an idempotency guard: "
+                + string.Join(", ", offenders) + ".\n"
+                + "A second run of the startup scheduled task (the dashboard \"Run\" button) would double-subscribe. "
+                + "Add an `if (_subscribed) return;` guard (see WatchlistMonitor / SeerrScanTriggerService) or delegate "
+                + "to an idempotent EnsureSubscribed() (see TagCacheMonitor).");
+
+            // (2) The auto-request monitors subscribe inside SubscribeEvents(), whose only caller is
+            // PlaybackWatcherBase.Initialize — assert that base guard is intact so those overrides
+            // are covered too.
+            var basePath = SourceFiles().First(f => Path.GetFileName(f) == "PlaybackWatcherBase.cs");
+            var baseInit = ExtractInitializeBody(File.ReadAllText(basePath));
+            Assert.True(
+                baseInit != null && baseInit.Contains("_subscribed"),
+                "PlaybackWatcherBase.Initialize lost its _subscribed guard — the AutoMovie/AutoSeason request "
+                + "monitors subscribe via its SubscribeEvents() and would double-subscribe.");
+        }
+
+        // Returns the braced body of the first no-arg Initialize() declaration, or null if the file
+        // has none (e.g. a monitor whose Initialize is inherited).
+        private static string? ExtractInitializeBody(string source)
+        {
+            var m = InitializeDecl.Match(source);
+            if (!m.Success) return null;
+
+            var open = source.IndexOf('{', m.Index + m.Length);
+            if (open < 0) return null;
+
+            var depth = 0;
+            for (var i = open; i < source.Length; i++)
+            {
+                if (source[i] == '{')
+                {
+                    depth++;
+                }
+                else if (source[i] == '}')
+                {
+                    depth--;
+                    if (depth == 0) return source.Substring(open, i - open + 1);
+                }
+            }
+
+            return null;
         }
 
         private static IEnumerable<string> SourceFiles()
