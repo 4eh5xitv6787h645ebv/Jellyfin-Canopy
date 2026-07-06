@@ -32,6 +32,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         private long _lastModified;
         private Timer? _debounceSaveTimer;
         private volatile bool _dirty;
+        // Monotonic counter bumped every time the cache is marked dirty. SaveToDisk captures it
+        // BEFORE its snapshot and only clears _dirty if it is unchanged afterwards, so a flush that
+        // dirties the cache AFTER the snapshot (but before the clear) is never wiped — its change
+        // stays scheduled for the next save instead of being silently dropped.
+        private long _dirtyVersion;
+
+        // Test seam (Tests has InternalsVisibleTo): invoked inside SaveToDisk immediately AFTER the
+        // cache/version snapshot and BEFORE the dirty-bit clear, so a test can deterministically
+        // simulate a flush landing in that exact window.
+        internal Action? OnAfterSnapshotForTest;
 
         // Incremental cache maintenance. Library-scan events are recorded here (O(1),
         // no DB/probe work) and drained by a debounced background worker so scans are
@@ -387,6 +397,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     var dir = Path.GetDirectoryName(CacheFilePath);
                     if (dir != null) Directory.CreateDirectory(dir);
 
+                    // Capture the dirty version BEFORE reading _cache. A flush that lands after this
+                    // (mutating _cache and bumping _dirtyVersion) is then detected below so we don't
+                    // clear a dirty bit whose change we didn't actually persist.
+                    var versionAtSnapshot = Interlocked.Read(ref _dirtyVersion);
+
                     var data = new TagCacheDiskFormat
                     {
                         Version = Interlocked.Read(ref _version),
@@ -394,9 +409,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                         Items = new Dictionary<string, TagCacheEntry>(_cache)
                     };
 
+                    OnAfterSnapshotForTest?.Invoke();
+
                     var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = false });
                     AtomicFile.WriteAllText(CacheFilePath, json);
-                    _dirty = false;
+
+                    // Only clear the dirty bit if no flush recorded a change after our snapshot. If a
+                    // concurrent flush bumped _dirtyVersion in the snapshot→persist window, leave _dirty
+                    // set so the debounced timer persists the newer state — never wipe an unpersisted
+                    // change. (Also write-failure-safe: a throw above skips the clear entirely.)
+                    if (Interlocked.Read(ref _dirtyVersion) == versionAtSnapshot)
+                    {
+                        _dirty = false;
+                    }
+
                     _logger.LogInformation($"[TagCache] Saved {_cache.Count} entries to disk");
                 }
                 catch (Exception ex)
@@ -406,9 +432,22 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
         }
 
+        // Mark the cache dirty and advance the dirty version. SaveToDisk uses the version to detect
+        // a flush that dirtied the cache after its snapshot (see #3), so every dirty-mark must bump it.
+        private void MarkDirty()
+        {
+            Interlocked.Increment(ref _dirtyVersion);
+            _dirty = true;
+        }
+
+        // Test seams (Tests has InternalsVisibleTo) for the dirty-bit-preservation contract.
+        internal void MarkDirtyForTest() => MarkDirty();
+
+        internal bool IsDirtyForTest => _dirty;
+
         private void ScheduleDebouncedSave()
         {
-            _dirty = true;
+            MarkDirty();
             // Reuse existing timer if possible, otherwise create a new one.
             // Change() resets the countdown without creating a new object.
             var existing = _debounceSaveTimer;
@@ -464,7 +503,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 if (ApplyBatch(_pending.Drain(), RebuildEntry, RemoveEntry))
                 {
                     Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                    _dirty = true;
+                    MarkDirty();
                 }
             }
             catch (Exception ex)

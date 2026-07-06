@@ -138,6 +138,40 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
             Assert.Equal(0, svc.UserAccessCacheCount);
         }
 
+        // ---- Save must not clear a dirty bit set by a flush after the snapshot ---------------
+
+        [Fact]
+        public void SaveToDisk_PreservesDirtyBitSetByFlushAfterSnapshot()
+        {
+            using var svc = NewService();
+
+            // Simulate a concurrent flush landing in the snapshot→clear window: it marks the cache
+            // dirty (and bumps the dirty version) AFTER SaveToDisk has already snapshotted _cache.
+            svc.OnAfterSnapshotForTest = () => svc.MarkDirtyForTest();
+
+            svc.SaveToDisk();
+
+            // The dirty bit set by that flush must survive — otherwise its change is silently dropped
+            // (the debounced timer would see _dirty == false and skip the next save). RED against the
+            // old unconditional `_dirty = false;` at the end of SaveToDisk.
+            Assert.True(svc.IsDirtyForTest);
+
+            svc.OnAfterSnapshotForTest = null; // don't re-fire during dispose's flush
+        }
+
+        [Fact]
+        public void SaveToDisk_ClearsDirtyBitWhenNoConcurrentFlush()
+        {
+            using var svc = NewService();
+            svc.MarkDirtyForTest();
+            Assert.True(svc.IsDirtyForTest);
+
+            svc.SaveToDisk();
+
+            // Normal path: nothing dirtied the cache after the snapshot, so the save clears dirty.
+            Assert.False(svc.IsDirtyForTest);
+        }
+
         [Fact]
         public void IncrementalFlush_NoChange_DoesNotClearUserAccessCache()
         {
