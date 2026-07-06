@@ -14,13 +14,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.AutoRequest
     ///
     /// Subclasses keep only their trigger predicate and handling logic. The playback
     /// event handlers themselves stay in the subclasses as async void with their own
-    /// try/catch, exactly as before this refactor.
+    /// try/catch.
     ///
-    /// Known follow-up (deliberately NOT changed in this mechanical phase): the
-    /// subclasses' event handlers are async void, so exceptions escaping their
-    /// try/catch (e.g. from the catch block itself) would crash the process rather
-    /// than be observable by a caller. Consolidating them behind a single guarded
-    /// dispatcher is future work.
+    /// Because those handlers are async void, an exception escaping their catch (e.g. from
+    /// the catch block itself) would become an unobserved exception that crashes the host.
+    /// Each subclass handler therefore double-guards its catch — the logging call inside the
+    /// outer catch is itself wrapped in a swallowing try/catch.
     /// </summary>
     public abstract class PlaybackWatcherBase : IDisposable
     {
