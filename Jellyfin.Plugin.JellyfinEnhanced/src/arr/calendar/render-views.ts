@@ -417,9 +417,9 @@ export function renderPage(targetContainer?: HTMLElement): void {
         <div class="je-calendar-actions je-calendar-actions-center">
           <div class="je-calendar-nav">
             <div class="je-calendar-nav-group">
-              <button class="je-calendar-nav-btn" onclick="window.JellyfinEnhanced.calendarPage.shiftPeriod('prev'); event.stopPropagation();" aria-label="${JE.t?.('prev') || 'Previous'}">‹</button>
+              <button class="je-calendar-nav-btn" onclick="window.JellyfinEnhanced.calendarPage.shiftPeriod('prev'); event.stopPropagation();" aria-label="${JE.t?.('calendar_prev')}">‹</button>
               <button class="je-calendar-nav-btn je-calendar-nav-today" onclick="window.JellyfinEnhanced.calendarPage.goToday(); event.stopPropagation();">${JE.t?.('calendar_today')}</button>
-              <button class="je-calendar-nav-btn" onclick="window.JellyfinEnhanced.calendarPage.shiftPeriod('next'); event.stopPropagation();" aria-label="${JE.t?.('next') || 'Next'}">›</button>
+              <button class="je-calendar-nav-btn" onclick="window.JellyfinEnhanced.calendarPage.shiftPeriod('next'); event.stopPropagation();" aria-label="${JE.t?.('calendar_next')}">›</button>
             </div>
           </div>
         </div>

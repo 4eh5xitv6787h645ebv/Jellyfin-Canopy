@@ -280,8 +280,7 @@ export function injectNavigation(): void {
 
     const textSpan = document.createElement('span');
     textSpan.className = 'sectionName navMenuOptionText';
-    textSpan.textContent = JE.t!('bookmarks_library_title') !== 'bookmarks_library_title'
-      ? JE.t!('bookmarks_library_title') : 'Bookmarks';
+    textSpan.textContent = JE.t!('bookmarks_library_title');
     navItem.appendChild(textSpan);
 
     navItem.addEventListener('click', (e) => {
