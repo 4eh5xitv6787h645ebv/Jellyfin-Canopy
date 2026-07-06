@@ -352,6 +352,13 @@ Hide specific items from your Jellyfin library without deleting them.
 - Per-user hidden content
 - Manage via Enhanced panel or dedicated page
 
+!!! note "Continue Watching / Next Up on Home"
+
+    **Filter Continue Watching** and **Filter Next Up** work on the Home screen
+    independently of **Filter library views** — you can hide items from those
+    Home rows without turning on library filtering. See [Enhanced Settings → Home
+    Row Filtering](../enhanced/enhanced-settings.md#home-row-filtering).
+
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
