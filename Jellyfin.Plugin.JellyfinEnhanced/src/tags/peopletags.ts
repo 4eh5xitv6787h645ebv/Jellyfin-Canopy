@@ -19,12 +19,24 @@ import type { JELegacyHelpers, PluginConfig, UserSettings } from '../types/je';
 const JE = JEBase as typeof JEBase & {
     initializePeopleTags?: () => void;
     currentSettings: UserSettings & { peopleTagsEnabled?: boolean };
-    pluginConfig: PluginConfig & { PeopleTagsCacheTtlDays?: number };
+    pluginConfig: PluginConfig;
     helpers: JELegacyHelpers & {
         debounce<T extends (...args: any[]) => void>(fn: T, wait: number): T;
         createObserver(id: string, cb: MutationCallback, target: Node, config: MutationObserverInit): unknown;
     };
 };
+
+/**
+ * Effective people-tags cache TTL in milliseconds, derived from the
+ * admin-configurable TagsCacheTtlDays — the SAME setting every other tag family
+ * reads (core/tag-renderer-base.ts), default 30 days. People tags used to read a
+ * phantom `PeopleTagsCacheTtlDays` key that is not a PluginConfiguration property
+ * and is never projected to the client, so it was always undefined ⇒ pinned at
+ * 30 days. Exported so the derivation is deterministically unit-testable.
+ */
+export function peopleTagsCacheTtlMs(cfg: PluginConfig | null | undefined): number {
+    return ((cfg?.TagsCacheTtlDays) || 30) * 24 * 60 * 60 * 1000;
+}
 
 JE.initializePeopleTags = function() {
     if (!JE.currentSettings.peopleTagsEnabled) {
@@ -35,7 +47,7 @@ JE.initializePeopleTags = function() {
     const logPrefix = '🪼 Jellyfin Enhanced: People Tags:';
     const CACHE_KEY = 'JellyfinEnhanced-peopleTagsCache';
     const CACHE_TIMESTAMP_KEY = 'JellyfinEnhanced-peopleTagsCacheTimestamp';
-    const CACHE_TTL = (JE.pluginConfig?.PeopleTagsCacheTtlDays || 30) * 24 * 60 * 60 * 1000;
+    const CACHE_TTL = peopleTagsCacheTtlMs(JE.pluginConfig);
 
     // Country mapping dictionary
     const COUNTRY_MAP: Record<string, string> = {
