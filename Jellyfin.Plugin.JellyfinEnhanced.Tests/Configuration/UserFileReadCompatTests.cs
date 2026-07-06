@@ -226,15 +226,36 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Configuration
             Assert.Single(Directory.GetFiles(UserDir, "settings.json.corrupt-*"));
         }
 
-        /// <summary>JSON null on a non-nullable property is corruption on the STRICT
-        /// path (both serializers throw), unlike the lenient path which skips it.</summary>
+        /// <summary>
+        /// A legacy JSON null on a now-non-nullable property must be TOLERATED on the
+        /// strict/RMW path — skipped, keeping the constructor default — exactly as the
+        /// lenient GET path does. Previously the strict path threw, so a legacy file
+        /// 500'd on every save while the GET path read it fine (MB-4). Real values in
+        /// the same file must still bind, and no .corrupt-* backup is written.
+        /// </summary>
         [Fact]
-        public void StrictRead_NullIntoNonNullable_Throws_And_BacksUp()
+        public void StrictRead_LegacyNullOnNonNullable_IsTolerated_AndRmwSaves()
         {
-            SeedUserFileRaw("settings.json", "{\"AutoPauseEnabled\": null}");
+            SeedUserFileRaw("settings.json", "{\"AutoPauseEnabled\": null, \"LastOpenedTab\": \"keep-me\"}");
 
-            Assert.ThrowsAny<Exception>(() => _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
-            Assert.Single(Directory.GetFiles(UserDir, "settings.json.corrupt-*"));
+            // Strict read keeps the constructor default for the null field and binds the real value.
+            var strict = _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json");
+            Assert.False(strict.AutoPauseEnabled);          // null → default(bool)
+            Assert.Equal("keep-me", strict.LastOpenedTab);  // real value still binds
+
+            // A legacy null is not corruption — no backup left behind.
+            Assert.Empty(Directory.GetFiles(UserDir, "settings.json.corrupt-*"));
+
+            // The RMW write path now completes (previously threw on every save).
+            var changed = _manager.RmwUserConfiguration<UserSettings>(UserId, "settings.json", s =>
+            {
+                s.LastOpenedTab = "updated";
+                return 1;
+            });
+            Assert.Equal(1, changed);
+
+            var back = _manager.GetUserConfiguration<UserSettings>(UserId, "settings.json");
+            Assert.Equal("updated", back.LastOpenedTab);
         }
 
         [Fact]

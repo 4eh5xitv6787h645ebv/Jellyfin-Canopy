@@ -153,10 +153,19 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
 
             try
             {
-                // Strict path: no null-stripping — a JSON null on a non-nullable
-                // property is corruption here (Newtonsoft's default settings threw
-                // for that too) and must back up + throw rather than bind partially.
-                var parsed = JsonSerializer.Deserialize<T>(json, PersistedJson.ReadOptions);
+                // Tolerate the SAME legacy nulls the lenient GET path skips: a field
+                // that was once nullable (bool?/int?/string?) left a literal JSON null
+                // on disk and has since become non-nullable. Binding it directly throws,
+                // which used to 500 every save of an otherwise-fine file while the GET
+                // path read it correctly. Strip null members first (constructor defaults
+                // kept), exactly like GetUserConfiguration. Genuine corruption still
+                // fails: empty/whitespace/literal-null is rejected above, malformed JSON
+                // throws in JsonNode.Parse, and a non-object payload deserializes to null
+                // (or throws) — both caught below and backed up.
+                var node = JsonNode.Parse(json, documentOptions: PersistedJson.ParseOptions);
+                var parsed = PersistedJson.StripNullMembers(node) is JsonNode stripped
+                    ? stripped.Deserialize<T>(PersistedJson.ReadOptions)
+                    : default;
                 if (parsed == null)
                 {
                     _logger.LogError($"'{fileName}' for user '{userId}' deserialized to null; refusing to overwrite.");
