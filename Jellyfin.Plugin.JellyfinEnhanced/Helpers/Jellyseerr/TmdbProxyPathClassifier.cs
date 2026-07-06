@@ -73,6 +73,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr
                 return restricted;
             }
 
+            // Defense-in-depth: reject any dot-segment (./..) or its percent-encoded form.
+            // The host normalizes these away before the catch-all binds (verified: encoded
+            // %2e%2e is decoded + collapsed too), so the classifier never sees them today.
+            // But the outbound Uri DOES collapse dot-segments (genres/../movie/{id} ->
+            // movie/{id}), so if a future host/middleware ever delivered a raw, un-normalized
+            // path, a Neutral first segment (genres) could front a blocked title. Rejecting
+            // up front keeps the gate correct without depending on the host.
+            if (HasDotSegment(path, segments))
+            {
+                return restricted;
+            }
+
             var head = segments[0];
 
             // Rating-free genre lists (client: /tmdb/genres/{movie,tv}).
@@ -135,6 +147,28 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr
 
         private static bool Eq(string value, string literal)
             => string.Equals(value, literal, StringComparison.OrdinalIgnoreCase);
+
+        // True when the path carries a dot-segment (./..) or a percent-encoded dot
+        // (%2e / %2E) that a raw-path host could deliver undecoded. No legitimate TMDB
+        // resource segment is "." / ".." or contains a percent sign, so this never
+        // rejects a real passthrough path.
+        private static bool HasDotSegment(string path, string[] segments)
+        {
+            if (path.Contains("%2e", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            foreach (var segment in segments)
+            {
+                if (segment == "." || segment == "..")
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         // True when the query carries a non-empty append_to_response parameter. The
         // parameter name is ASCII and forwarded verbatim, so a case-insensitive name

@@ -80,5 +80,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Helpers.Jellyseerr
         [Fact]
         public void UnknownPath_DefaultsToRestricted()
             => Assert.Equal(TmdbProxyGate.Restricted, TmdbProxyPathClassifier.Classify("any/new/tmdb/endpoint").Gate);
+
+        // Defense-in-depth: a dot-segment (./..) or its percent-encoded form must be
+        // rejected up front, so a Neutral first segment (e.g. genres) can never front a
+        // path that the outbound Uri collapses onto a blocked title
+        // (genres/../movie/{id} -> movie/{id}). The host normally normalizes these away
+        // before the classifier sees them, but the gate must not depend on that.
+        [Theory]
+        [InlineData("genres/../movie/550")]
+        [InlineData("genres/%2e%2e/movie/550")]
+        [InlineData("genres/%2E%2E/movie/550")]
+        [InlineData("genres/./movie")]
+        [InlineData("movie/550/%2e/videos")]
+        [InlineData("search/%2e%2e/movie/550")]
+        public void DotSegmentPaths_AreRestricted(string apiPath)
+            => Assert.Equal(TmdbProxyGate.Restricted, TmdbProxyPathClassifier.Classify(apiPath).Gate);
     }
 }
