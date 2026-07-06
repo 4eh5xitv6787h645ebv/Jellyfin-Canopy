@@ -77,6 +77,12 @@ JE.showEnhancedPanel = async () => {
     const panelId = 'jellyfin-enhanced-panel';
     const existing = document.getElementById(panelId);
     if (existing) {
+        // Toggle-close: release the modal-a11y handle BEFORE removal so the
+        // je-modal-open gate drops, focus is restored and the capture-phase
+        // keydown listener is torn down — otherwise all JE shortcuts stay
+        // suppressed for the rest of the session (the normal close paths below
+        // already release; this early-return branch used to skip it).
+        (existing as unknown as { _a11y?: ModalA11yHandle })._a11y?.release();
         existing.remove();
         return;
     }
@@ -301,6 +307,10 @@ JE.showEnhancedPanel = async () => {
         label: JE.t!('panel_settings_tab'),
         onEscape: () => closeHelp({ type: 'keydown', key: 'Escape' }),
     });
+    // Stash the handle on the panel element so the toggle-close early-return
+    // branch (top of this function) can release it without re-entering this
+    // closure. The close paths that DO reach this closure use `a11y` directly.
+    (help as unknown as { _a11y?: ModalA11yHandle })._a11y = a11y;
     ctx.createToast = createToast;
 
     wireSettingsListeners(ctx);
