@@ -136,11 +136,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                 Directory.CreateDirectory(brandingDir);
 
-                // Save file
-                using (var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write))
-                {
-                    await uploadedFile.CopyToAsync(stream);
-                }
+                // Save file atomically: the upload lands in a temp sibling and only replaces
+                // the live asset on full success, so a client disconnect / mid-copy throw can
+                // no longer truncate the previously-good branding image.
+                await AtomicFile.WriteViaAsync(filePath, stream => uploadedFile.CopyToAsync(stream));
 
                 _logger.LogInformation($"Successfully uploaded branding image: {normalizedFileName} ({uploadedFile.Length} bytes) to {brandingDir}");
                 return Ok("File uploaded successfully");

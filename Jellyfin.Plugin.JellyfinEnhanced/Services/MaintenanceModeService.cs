@@ -218,7 +218,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             try
             {
                 // Newtonsoft equivalent: JsonConvert.SerializeObject(state, Formatting.Indented).
-                File.WriteAllText(_stateFilePath, JsonSerializer.Serialize(state, PersistedJson.WriteOptions));
+                AtomicFile.WriteAllText(_stateFilePath, JsonSerializer.Serialize(state, PersistedJson.WriteOptions));
             }
             catch (Exception ex)
             {

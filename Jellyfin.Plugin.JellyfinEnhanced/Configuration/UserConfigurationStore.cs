@@ -192,16 +192,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             }
         }
 
-        // Atomic save via temp file + File.Move(overwrite). RMW callers must hold GetUserFileLock.
+        // Atomic save via AtomicFile (temp file + File.Move(overwrite)). RMW callers must hold GetUserFileLock.
         public void SaveUserConfiguration(string userId, string fileName, object config)
         {
-            string configPath = string.Empty;
-            string tempPath = string.Empty;
             try
             {
-                configPath = ResolveUserFile(userId, fileName);
-                // Per-call random suffix avoids collisions between concurrent non-RMW writers on a shared .tmp.
-                tempPath = configPath + ".tmp." + Guid.NewGuid().ToString("N");
+                var configPath = ResolveUserFile(userId, fileName);
 
                 // Serialize with the runtime type: callers pass both typed DTOs and
                 // raw JsonElement payloads (client JSON pass-through). JsonElement is
@@ -210,14 +206,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 // Both forms read identically; pinned by RawClientJson_* tests.
                 var jsonToSave = JsonSerializer.Serialize(config, config.GetType(), PersistedJson.WriteOptions);
 
-                File.WriteAllText(tempPath, jsonToSave);
-                File.Move(tempPath, configPath, overwrite: true);
+                // AtomicFile owns the per-call temp sibling + rename + temp cleanup.
+                AtomicFile.WriteAllText(configPath, jsonToSave);
             }
             catch (Exception ex)
             {
                 _logger.LogError($"Failed to save user configuration for user '{userId}' to file '{fileName}'. Exception: {ex.Message}");
-                try { if (!string.IsNullOrEmpty(tempPath) && File.Exists(tempPath)) File.Delete(tempPath); }
-                catch (Exception cleanupEx) { _logger.LogWarning($"Failed to clean up stale .tmp for '{fileName}': {cleanupEx.Message}"); }
                 throw;
             }
         }

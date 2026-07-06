@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using Jellyfin.Plugin.JellyfinEnhanced.Model;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities;
@@ -377,9 +378,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     };
 
                     var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = false });
-                    var tempPath = CacheFilePath + ".tmp";
-                    File.WriteAllText(tempPath, json);
-                    File.Move(tempPath, CacheFilePath, overwrite: true);
+                    AtomicFile.WriteAllText(CacheFilePath, json);
                     _dirty = false;
                     _logger.LogInformation($"[TagCache] Saved {_cache.Count} entries to disk");
                 }
