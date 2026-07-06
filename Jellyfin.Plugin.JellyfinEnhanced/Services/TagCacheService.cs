@@ -67,6 +67,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         public long LastModified => Interlocked.Read(ref _lastModified);
         public int Count => _cache.Count;
 
+        // Test seams for the user-access cache invalidation contract (Tests has InternalsVisibleTo).
+        internal int UserAccessCacheCount => _userAccessCache.Count;
+
+        internal void SeedUserAccessCacheForTest(string userKey)
+            => _userAccessCache[userKey] = (new HashSet<string>(), DateTime.UtcNow);
+
         private string CacheFilePath =>
             Path.Combine(_applicationPaths.PluginsPath, "configurations", "Jellyfin.Plugin.JellyfinEnhanced", "tag-cache.json");
 
@@ -255,6 +261,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 {
                     _logger.LogWarning($"[TagCache] Failed to apply pending change for {id}: {ex.Message}");
                 }
+            }
+
+            if (changed)
+            {
+                // Symmetry with BuildFullCache: a changed incremental batch must also drop the 60s
+                // per-user accessible-id cache. Otherwise a freshly added/updated item's tag entry is
+                // filtered out of every user's GetCacheForUser response for up to UserAccessCacheTtl.
+                // Cleared here — the single choke point shared by the debounced flush and the
+                // dispose-time drain — so both incremental paths invalidate it. Only on an actual
+                // change, so a no-op flush doesn't force every user to recompute their accessible set.
+                _userAccessCache.Clear();
             }
 
             return changed;

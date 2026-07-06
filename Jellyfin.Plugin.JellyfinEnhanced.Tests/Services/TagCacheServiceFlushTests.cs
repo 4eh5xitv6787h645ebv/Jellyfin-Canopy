@@ -116,5 +116,43 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
             using var svc = NewService();
             Assert.False(svc.ApplyBatch(new List<(Guid, bool)>(), _ => true, _ => true));
         }
+
+        // ---- Incremental flush invalidates the 60s per-user access cache (CSSVC-5) ---------
+
+        [Fact]
+        public void IncrementalFlush_ChangingCache_ClearsUserAccessCache()
+        {
+            using var svc = NewService();
+            svc.SeedUserAccessCacheForTest("user-1");
+            Assert.Equal(1, svc.UserAccessCacheCount); // precondition
+
+            // A batch that actually changes the cache (rebuild returns true) must clear the
+            // per-user access cache, exactly as BuildFullCache does — otherwise a freshly added
+            // item's tags stay invisible to every user for up to 60s.
+            var changed = svc.ApplyBatch(
+                new List<(Guid, bool)> { (Guid.NewGuid(), false) },
+                _ => true,
+                _ => false);
+
+            Assert.True(changed);
+            Assert.Equal(0, svc.UserAccessCacheCount);
+        }
+
+        [Fact]
+        public void IncrementalFlush_NoChange_DoesNotClearUserAccessCache()
+        {
+            using var svc = NewService();
+            svc.SeedUserAccessCacheForTest("user-1");
+
+            // A no-op batch (nothing modified the cache) must NOT force every user to recompute
+            // their accessible-id set.
+            var changed = svc.ApplyBatch(
+                new List<(Guid, bool)> { (Guid.NewGuid(), false) },
+                _ => false,
+                _ => false);
+
+            Assert.False(changed);
+            Assert.Equal(1, svc.UserAccessCacheCount);
+        }
     }
 }
