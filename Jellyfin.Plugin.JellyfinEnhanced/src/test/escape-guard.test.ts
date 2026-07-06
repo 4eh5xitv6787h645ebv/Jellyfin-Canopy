@@ -1700,8 +1700,10 @@ describe('escape-guard (SEC X1): HTML-template interpolations are recognizably s
         expect(result.stats.files).toBeGreaterThan(100);
         expect(result.stats.htmlTemplates).toBeGreaterThan(100);
         expect(result.stats.interpolations).toBeGreaterThan(400);
-        // Keep the guard cheap enough to never be skipped.
-        expect(result.elapsedMs).toBeLessThan(10_000);
+        // Pathological-regression backstop (an accidental O(n^2) scan), NOT a CI-timing gate: a real
+        // blowup takes minutes, so keep the bound generous — the normal scan can balloon past 10s
+        // under CPU contention and must not flake there.
+        expect(result.elapsedMs).toBeLessThan(60_000);
         // Visible in the vitest output for the scan-stats record.
         console.info(
             `escape-guard: ${result.stats.files} files, ${result.stats.htmlTemplates} HTML templates, `

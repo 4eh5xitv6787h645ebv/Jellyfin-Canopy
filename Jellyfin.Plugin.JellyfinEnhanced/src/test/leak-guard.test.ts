@@ -424,7 +424,10 @@ describe('leak-guard: observers, object URLs, TTL caches and retry loops are bou
         expect(result.stats.files).toBeGreaterThan(100);
         expect(result.stats.observers).toBeGreaterThan(5);
         expect(result.stats.selfReschedulers).toBeGreaterThan(3);
-        expect(result.elapsedMs).toBeLessThan(10_000);
+        // Pathological-regression backstop (e.g. an accidental O(n^2) scan), NOT a CI-timing gate:
+        // a real blowup on this tree takes minutes, so keep the bound generous — the normal ~2-3s
+        // scan can balloon past 10s under CPU contention and must not flake there.
+        expect(result.elapsedMs).toBeLessThan(60_000);
         console.info(
             `leak-guard: ${result.stats.files} files, ${result.stats.observers} observers, `
             + `${result.stats.selfReschedulers} self-reschedulers, ${result.violations.length} raw findings, `
