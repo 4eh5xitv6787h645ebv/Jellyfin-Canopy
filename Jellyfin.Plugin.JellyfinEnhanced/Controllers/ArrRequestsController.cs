@@ -122,8 +122,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var radarrInstances = config.GetEnabledRadarrInstances();
 
             var ct = HttpContext.RequestAborted;
-            var sonarrTasks = sonarrInstances.Select(i => FetchSonarrQueue(i, allowedRequests, allowedTvTvdb, ct)).ToList();
-            var radarrTasks = radarrInstances.Select(i => FetchRadarrQueue(i, allowedRequests, ct)).ToList();
+            var sonarrTasks = sonarrInstances.Select((i, idx) => FetchSonarrQueue(i, idx, allowedRequests, allowedTvTvdb, ct)).ToList();
+            var radarrTasks = radarrInstances.Select((i, idx) => FetchRadarrQueue(i, idx, allowedRequests, ct)).ToList();
 
             var sonarrResults = await Task.WhenAll(sonarrTasks);
             var radarrResults = await Task.WhenAll(radarrTasks);
@@ -186,7 +186,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             return tmdbOk || tvdbOk;
         }
 
-        private Task<(List<object> Items, string? Error)> FetchSonarrQueue(ArrInstance instance, HashSet<(int TmdbId, string MediaType)>? allowedRequests, HashSet<int>? allowedTvTvdb, CancellationToken ct)
+        private Task<(List<object> Items, string? Error)> FetchSonarrQueue(ArrInstance instance, int instanceIndex, HashSet<(int TmdbId, string MediaType)>? allowedRequests, HashSet<int>? allowedTvTvdb, CancellationToken ct)
         {
             return _arrFetch.FetchAndMapAsync<List<object>>(
                 instance,
@@ -208,9 +208,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         var episodeNumber = (int?)episode?["episodeNumber"];
                         items.Add(new
                         {
-                            // Namespace the per-instance queue id by source+instance so two Sonarr
-                            // instances that both number queue records from 1 can't collide.
-                            id = ArrIdHelper.NamespacedId(nameof(ArrType.Sonarr), instance.Name, record?["id"]),
+                            // Namespace the per-instance queue id by source + the instance's unique
+                            // position so two Sonarr instances that both number queue records from 1 —
+                            // even with an identical or blank display name — can't collide.
+                            id = ArrIdHelper.NamespacedId(nameof(ArrType.Sonarr), instanceIndex, record?["id"]),
                             source = nameof(ArrType.Sonarr),
                             instanceName = instance.Name,
                             title = (string?)series?["title"] ?? "Unknown",
@@ -234,7 +235,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 ct: ct);
         }
 
-        private Task<(List<object> Items, string? Error)> FetchRadarrQueue(ArrInstance instance, HashSet<(int TmdbId, string MediaType)>? allowedRequests, CancellationToken ct)
+        private Task<(List<object> Items, string? Error)> FetchRadarrQueue(ArrInstance instance, int instanceIndex, HashSet<(int TmdbId, string MediaType)>? allowedRequests, CancellationToken ct)
         {
             return _arrFetch.FetchAndMapAsync<List<object>>(
                 instance,
@@ -252,9 +253,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                         items.Add(new
                         {
-                            // Namespace the per-instance queue id by source+instance so two Radarr
-                            // instances that both number queue records from 1 can't collide.
-                            id = ArrIdHelper.NamespacedId(nameof(ArrType.Radarr), instance.Name, record?["id"]),
+                            // Namespace the per-instance queue id by source + the instance's unique
+                            // position so two Radarr instances that both number queue records from 1 —
+                            // even with an identical or blank display name — can't collide.
+                            id = ArrIdHelper.NamespacedId(nameof(ArrType.Radarr), instanceIndex, record?["id"]),
                             source = nameof(ArrType.Radarr),
                             instanceName = instance.Name,
                             title = (string?)movie?["title"] ?? "Unknown",

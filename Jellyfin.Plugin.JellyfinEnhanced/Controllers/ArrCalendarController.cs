@@ -206,8 +206,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var radarrInstances = config.GetEnabledRadarrInstances();
             var ct = HttpContext.RequestAborted;
 
-            var sonarrTasks = sonarrInstances.Select(i => FetchSonarrCalendar(i, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, ct)).ToList();
-            var radarrTasks = radarrInstances.Select(i => FetchRadarrCalendar(i, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, AddRelease, ct)).ToList();
+            var sonarrTasks = sonarrInstances.Select((i, idx) => FetchSonarrCalendar(i, idx, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, ct)).ToList();
+            var radarrTasks = radarrInstances.Select((i, idx) => FetchRadarrCalendar(i, idx, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, AddRelease, ct)).ToList();
 
             var sonarrCalResults = await Task.WhenAll(sonarrTasks);
             var radarrCalResults = await Task.WhenAll(radarrTasks);
@@ -427,7 +427,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         private Task<(List<ArrItem> Items, string? Error)> FetchSonarrCalendar(
-            ArrInstance instance, string startIso, string endIso,
+            ArrInstance instance, int instanceIndex, string startIso, string endIso,
             DateTime startDate, DateTime endDate, string startDayKey, string endDayKey,
             Func<object?, DateTime?> parseDate, CancellationToken ct)
         {
@@ -478,9 +478,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                         items.Add(new ArrItem
                         {
-                            // Namespace the per-instance row id by source+instance so two Sonarr
-                            // instances that both number episodes from 1 can't collide on a global key.
-                            Id = ArrIdHelper.NamespacedId(nameof(ArrType.Sonarr), instance.Name, episode?["id"]),
+                            // Namespace the per-instance row id by source + the instance's unique
+                            // position so two Sonarr instances that both number episodes from 1 —
+                            // even with an identical or blank display name — can't collide.
+                            Id = ArrIdHelper.NamespacedId(nameof(ArrType.Sonarr), instanceIndex, episode?["id"]),
                             Source = nameof(ArrType.Sonarr),
                             InstanceName = instance.Name,
                             Type = "Series",
@@ -518,7 +519,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         }
 
         private Task<(List<ArrItem> Items, string? Error)> FetchRadarrCalendar(
-            ArrInstance instance, string startIso, string endIso,
+            ArrInstance instance, int instanceIndex, string startIso, string endIso,
             DateTime startDate, DateTime endDate, string startDayKey, string endDayKey,
             Func<object?, DateTime?> parseDate,
             Action<Dictionary<string, DateTime>, string, object?> addRelease,
@@ -588,9 +589,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                                 continue;
                             items.Add(new ArrItem
                             {
-                                // Namespace the per-instance row id (plus release-type) by source+instance
-                                // so two Radarr instances numbering movies from 1 can't collide.
-                                Id = ArrIdHelper.NamespacedId(nameof(ArrType.Radarr), instance.Name, $"{movie?["id"]}-{kvp.Key}"),
+                                // Namespace the per-instance row id (plus release-type) by source + the
+                                // instance's unique position so two Radarr instances numbering movies
+                                // from 1 — even with an identical or blank display name — can't collide.
+                                Id = ArrIdHelper.NamespacedId(nameof(ArrType.Radarr), instanceIndex, $"{movie?["id"]}-{kvp.Key}"),
                                 Source = nameof(ArrType.Radarr),
                                 InstanceName = instance.Name,
                                 Type = "Movie",

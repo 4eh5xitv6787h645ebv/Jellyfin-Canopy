@@ -20,10 +20,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers
             => raw is > 0 ? raw.Value.ToString(CultureInfo.InvariantCulture) : null;
 
         /// <summary>
-        /// Global event/queue id namespaced by source+instance so two same-source instances that both
-        /// number rows from 1 cannot collide. Value is opaque to the client (used only as a string key).
+        /// Global event/queue id namespaced by source + a STABLE UNIQUE instance key so two same-source
+        /// instances that both number rows from 1 cannot collide. The instance key must NOT be the
+        /// display Name — two instances can share a name (or be blank) and would then still collide;
+        /// callers pass a unique discriminator (the instance's position in the configured list, via the
+        /// int overload). Value is opaque to the client (used only as a string key).
         /// </summary>
-        public static string NamespacedId(string source, string? instanceName, object? rawId)
-            => $"{source}|{instanceName}|{rawId}";
+        public static string NamespacedId(string source, string? instanceKey, object? rawId)
+            => $"{source}|{instanceKey}|{rawId}";
+
+        /// <summary>
+        /// Namespaces by the instance's position in the configured fan-out list — a guaranteed-unique
+        /// discriminator within one response, unlike the display Name which can be duplicated or blank.
+        /// </summary>
+        public static string NamespacedId(string source, int instanceIndex, object? rawId)
+            => NamespacedId(source, instanceIndex.ToString(CultureInfo.InvariantCulture), rawId);
     }
 }

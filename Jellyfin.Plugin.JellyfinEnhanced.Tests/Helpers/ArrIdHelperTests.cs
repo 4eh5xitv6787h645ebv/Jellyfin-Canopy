@@ -59,7 +59,27 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Helpers
         [Fact]
         public void NamespacedId_NullInstanceName_IsStable()
         {
-            Assert.Equal("Sonarr||5", ArrIdHelper.NamespacedId("Sonarr", null, 5));
+            Assert.Equal("Sonarr||5", ArrIdHelper.NamespacedId("Sonarr", (string?)null, 5));
+        }
+
+        [Fact]
+        public void NamespacedId_ByPosition_DisambiguatesSameNamedInstances()
+        {
+            // The real-world bug: two instances share a display name (e.g. both "Radarr", or both
+            // blank), so keying the id by instance.Name collided them. Namespacing by the instance's
+            // position in the configured list gives each a distinct id even when the names — and the
+            // per-instance row id — are identical.
+            Assert.NotEqual(
+                ArrIdHelper.NamespacedId("Radarr", 0, 5),
+                ArrIdHelper.NamespacedId("Radarr", 1, 5));
+        }
+
+        [Fact]
+        public void NamespacedId_IntOverload_EqualsItsStringPosition()
+        {
+            Assert.Equal(
+                ArrIdHelper.NamespacedId("Radarr", "1", 5),
+                ArrIdHelper.NamespacedId("Radarr", 1, 5));
         }
     }
 }
