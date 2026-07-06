@@ -178,6 +178,12 @@ export function renderPage(targetContainer?: HTMLElement): void {
 
         if (state.isLoading && state.requests.length === 0) {
             html += `<div class="je-loading">...</div>`;
+        } else if (state.requestsError) {
+            html += `
+                    <div class="je-empty-state je-error-state">
+                        <div>${JE.t?.('requests_load_error') || 'Unable to load requests'}</div>
+                    </div>
+                `;
         } else if (state.requests.length === 0) {
             html += `
                     <div class="je-empty-state">

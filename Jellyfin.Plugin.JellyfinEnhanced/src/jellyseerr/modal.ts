@@ -249,6 +249,17 @@ modal.createAdvancedOptionsHTML = function(idPrefix) {
  * @param {string} idPrefix - The prefix ('movie' or 'tv') used for the element IDs.
  */
 modal.populateAdvancedOptions = function(modalElement, data, idPrefix) {
+    // Backend failed to load server options: show an error note instead of
+    // polling for selects that will only ever be populated with empty
+    // placeholders — three empty dropdowns look like a valid config (W4-ERR-5).
+    if (data && data.error) {
+        const container = modalElement.querySelector('.jellyseerr-advanced-options');
+        if (container) {
+            container.innerHTML = `<h3>${JE.t!('jellyseerr_advanced_options')}</h3><div class="jellyseerr-advanced-error">${JE.escapeHtml(data.error)}</div>`;
+        }
+        return;
+    }
+
     // Use a timer to ensure emby-select elements are ready
     let attempts = 0;
     const maxAttempts = 50; // 5 seconds

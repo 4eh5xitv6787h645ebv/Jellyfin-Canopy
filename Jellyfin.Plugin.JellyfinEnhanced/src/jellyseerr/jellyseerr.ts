@@ -150,6 +150,10 @@ JE.initializeJellyseerrScript = function() {
             if (searchHasMore) {
                 setupSearchInfiniteScroll(query);
             }
+        } else if (data.error) {
+            // Empty results WITH an error means the search backend failed —
+            // surface it once instead of silently rendering no section (W4-ERR-4).
+            JE.toast?.(JE.escapeHtml(data.error));
         }
     }
 

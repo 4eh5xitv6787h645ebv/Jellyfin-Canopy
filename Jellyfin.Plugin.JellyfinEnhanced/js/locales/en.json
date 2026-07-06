@@ -433,6 +433,7 @@
     "requests_episodes": "episodes",
     "requests_no_downloads_found": "No downloads found",
     "requests_no_requests_found": "No requests found",
+    "requests_load_error": "Unable to load requests",
     "downloads_status_downloading": "Downloading",
     "downloads_status_queued": "Queued",
     "downloads_status_paused": "Paused",
@@ -443,6 +444,7 @@
     "downloads_status_unknown": "Unknown",
     "requests_requests": "Requests",
     "requests_no_active_downloads": "No active downloads",
+    "downloads_load_error": "Unable to load downloads",
     "requests_coming_soon": "Coming Soon",
     "requests_today": "today",
     "requests_tomorrow": "tomorrow",
@@ -465,6 +467,7 @@
     "calendar_series": "Series",
     "calendar_loading": "Loading calendar…",
     "calendar_no_releases": "No upcoming releases",
+    "calendar_load_error": "Unable to load calendar",
     "calendar_watchlist": "Watchlist",
     "calendar_watched": "Watched",
     "calendar_include_unmonitored": "Unmonitored",
@@ -568,5 +571,6 @@
     "hidden_content_unknown_show": "Unknown Show",
     "hidden_content_experimental_label": "Experimental",
     "active_streams_count": "{count} Active Stream|{count} Active Streams",
+    "active_streams_load_error": "Failed to fetch sessions",
     "active_streams_none": "No Active Streams"
 }

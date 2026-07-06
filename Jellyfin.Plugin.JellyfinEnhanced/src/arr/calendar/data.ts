@@ -10,6 +10,7 @@
 import { JE } from '../arr-globals';
 import { renderPage } from './render-views';
 import { getEventDateKey } from './event-date';
+import { describeFetchError } from '../../core/fetch-error';
 import type { ApiApi } from '../../types/je';
 
 const logPrefix = '🪼 Jellyfin Enhanced: Calendar Page:';
@@ -67,6 +68,7 @@ export interface CalendarSettings {
 
 export interface CalendarState {
     events: CalendarEvent[];
+    eventsError: boolean;
     isLoading: boolean;
     pageVisible: boolean;
     previousPage: Element | null;
@@ -83,6 +85,7 @@ export interface CalendarState {
     requestedItems: Set<string>;
     requestedLoaded: boolean;
     requestedLoading: boolean;
+    requestedError: boolean;
     locationSignature: string | null;
     locationUnsubscribe: (() => void) | null;
     _customTabContainer: HTMLElement | null;
@@ -134,6 +137,7 @@ function getDefaultViewMode(): string {
 // State management
 export const state: CalendarState = {
     events: [],
+    eventsError: false,
     isLoading: false,
     pageVisible: false,
     previousPage: null,
@@ -158,6 +162,7 @@ export const state: CalendarState = {
     requestedItems: new Set(),
     requestedLoaded: false,
     requestedLoading: false,
+    requestedError: false,
     locationSignature: null,
     locationUnsubscribe: null,
     _customTabContainer: null,
@@ -212,6 +217,7 @@ export async function fetchCalendarEvents(startDate: Date, endDate: Date): Promi
         });
         const data = await api.plugin(`/arr/calendar?${query.toString()}`) as { events?: CalendarEvent[]; errors?: CalendarErrorEntry[] };
         state.events = (data.events || []).filter((evt) => evt && evt.releaseDate);
+        state.eventsError = false;
         // Surface per-instance errors from the backend envelope so a misconfigured or
         // unreachable arr instance doesn't silently leave the calendar looking fine.
         surfaceCalendarErrors(data.errors);
@@ -219,6 +225,13 @@ export async function fetchCalendarEvents(startDate: Date, endDate: Date): Promi
     } catch (error) {
         console.error(`${logPrefix} Failed to fetch calendar events:`, error);
         state.events = [];
+        // A total failure has no per-instance errors[] envelope to surface, so
+        // flag it + toast once — otherwise the calendar would render "No
+        // upcoming releases" as though the range were genuinely empty (W4-ERR-3).
+        state.eventsError = true;
+        if (typeof JE.toast === 'function') {
+            JE.toast('⚠ ' + esc(describeFetchError(error, JE.t?.('calendar_load_error') || 'Unable to load calendar')));
+        }
         return null;
     }
 }
@@ -322,6 +335,7 @@ async function fetchUserRequests(): Promise<void> {
     }
 
     state.requestedLoading = true;
+    state.requestedError = false;
     const requested = new Set<string>();
     const pageSize = 200;
     let page = 1;
@@ -352,6 +366,13 @@ async function fetchUserRequests(): Promise<void> {
         }
     } catch (error) {
         console.warn(`${logPrefix} Failed to fetch user requests:`, error);
+        // A mid-loop throw would otherwise under-populate the Requests filter
+        // silently (requestedLoaded still flips true in finally). Flag it +
+        // toast once so the "Requests"/force-only view isn't quietly incomplete.
+        state.requestedError = true;
+        if (typeof JE.toast === 'function') {
+            JE.toast('⚠ ' + esc(describeFetchError(error, JE.t?.('calendar_load_error') || 'Unable to load calendar')));
+        }
     } finally {
         state.requestedItems = requested;
         state.requestedLoaded = true;

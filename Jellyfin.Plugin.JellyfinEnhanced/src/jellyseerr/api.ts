@@ -1,5 +1,6 @@
 // src/jellyseerr/api.ts
 import { JE } from '../globals';
+import { describeFetchError } from '../core/fetch-error';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -24,7 +25,7 @@ export interface JellyseerrApi {
     requestTvSeasons: (tmdbId: any, seasonNumbers: any[], advancedSettings?: any, mediaData?: any, is4k?: boolean) => Promise<any>;
     fetchIssuesForMedia: (tmdbId: any, mediaType: any, options?: any) => Promise<any>;
     fetchIssueById: (issueId: any) => Promise<any>;
-    fetchAdvancedRequestData: (mediaType: any) => Promise<{ servers: any[]; tags: any[] }>;
+    fetchAdvancedRequestData: (mediaType: any) => Promise<{ servers: any[]; tags: any[]; error?: string }>;
     fetchUserQuota: (options?: any) => Promise<any>;
     fetchRequestSettings: () => Promise<{ partialRequestsEnabled: boolean; enableSpecialEpisodes: boolean }>;
     addToWatchlist: (tmdbId: any, mediaType: any) => Promise<boolean>;
@@ -296,7 +297,10 @@ api.search = async function(query, page = 1, options = {}) {
         return data;
     } catch (error: any) {
         console.error('%s Search failed for query "%s":', logPrefix, query, error);
-        return { results: [] };
+        // Carry a sanitized error so the caller can distinguish a backend
+        // failure from a genuinely empty result (which renders no section at
+        // all) and surface it once instead of silently swallowing it (W4-ERR-4).
+        return { results: [], error: describeFetchError(error, JE.t?.('toast_generic_error') || 'Search failed') };
     }
 };
 
@@ -729,7 +733,9 @@ api.fetchAdvancedRequestData = async function(mediaType) {
         return { servers: validServers, tags: [] };
     } catch (error: any) {
         console.error(`${logPrefix} Failed to fetch ${serverType} servers:`, error);
-        return { servers: [], tags: [] };
+        // Signal the failure so the advanced-request modal shows an error note
+        // instead of three empty dropdowns that look like a valid empty config.
+        return { servers: [], tags: [], error: describeFetchError(error, JE.t?.('jellyseerr_err_load_server_options') || 'Failed to load server options') };
     }
 };
 

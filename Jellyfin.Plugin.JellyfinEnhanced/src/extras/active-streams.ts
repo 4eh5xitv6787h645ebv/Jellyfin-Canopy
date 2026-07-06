@@ -2,6 +2,7 @@
 // Shows a live Active Streams counter in the Jellyfin header.
 
 import { JE as JEBase } from '../globals';
+import { describeFetchError } from '../core/fetch-error';
 import type { ApiApi, LifecycleApi, LifecycleHandle, NavigationApi, PluginConfig, UiApi } from '../types/je';
 
 /**
@@ -778,6 +779,24 @@ const renderPanel = (sessions: any[] | null): void => {
     const panel = document.getElementById('je-active-streams-panel');
     if (!panel) return;
 
+    // A null sessions arg means the fetch failed (not "zero streams"). Show an
+    // error row so the open panel agrees with the header button's red error
+    // state instead of collapsing null → "No active streams" (W4-ERR-7).
+    if (sessions === null) {
+        const errText = JE.t?.('active_streams_load_error') || 'Failed to fetch sessions';
+        const titleErr = panel.querySelector('.je-as-panel-title');
+        if (titleErr) titleErr.textContent = errText;
+        const errBody = panel.querySelector('.je-as-panel-body');
+        if (errBody) {
+            while (errBody.firstChild) errBody.removeChild(errBody.firstChild);
+            const errRow = document.createElement('div');
+            errRow.className = 'je-as-panel-empty je-as-panel-error';
+            errRow.textContent = errText;
+            errBody.appendChild(errRow);
+        }
+        return;
+    }
+
     const active = (sessions || []).filter(s => s.NowPlayingItem);
 
     const titleEl = panel.querySelector('.je-as-panel-title');
@@ -834,7 +853,7 @@ const updateCounter = async (): Promise<void> => {
         iconEl.textContent = 'cast';
         supEl.textContent = '';
         btn.classList.add('je-as-err');
-        btn.title = 'Failed to fetch sessions';
+        btn.title = JE.t?.('active_streams_load_error') || 'Failed to fetch sessions';
     } else {
         const playing = sessions.filter(s => s.NowPlayingItem && !s.PlayState?.IsPaused);
         const paused  = sessions.filter(s => s.NowPlayingItem &&  s.PlayState?.IsPaused);
@@ -1058,9 +1077,9 @@ const sendBroadcast = async (header: string | undefined, text: string, timeoutMs
     } catch (err: any) {
         resultEl.className = 'je-as-broadcast-result je-as-broadcast-err';
         if (err && err.status) {
-            // HTTP error: surface the response body like the old
-            // `await resp.text()` path did.
-            resultEl.textContent = `Error: ${err.responseText || err.message}`;
+            // HTTP error: surface a sanitized upstream message (never a raw
+            // URL-bearing / HTML blob) like the old `await resp.text()` path did.
+            resultEl.textContent = `Error: ${describeFetchError(err, err.message || 'Request failed')}`;
         } else {
             resultEl.textContent = `Failed: ${err.message}`;
         }

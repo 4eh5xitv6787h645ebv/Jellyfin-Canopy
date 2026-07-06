@@ -274,6 +274,11 @@ function renderDayView(): string {
 
 // Render calendar based on current view mode
 function renderCalendar(): string {
+    // A backend failure must show an explicit ERROR state, not the per-view
+    // "No upcoming releases" empty message that a genuinely empty range shows.
+    if (state.eventsError) {
+        return `<div class="je-calendar-empty je-error-state">${JE.t?.('calendar_load_error') || 'Unable to load calendar'}</div>`;
+    }
     if (state.viewMode === 'week') return renderWeekView();
     if (state.viewMode === 'agenda') return renderAgendaView();
     if (state.viewMode === 'day') return renderDayView();
