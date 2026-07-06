@@ -43,13 +43,7 @@ interface AllowlistEntry {
     why: string;
 }
 
-const ALLOWLIST: AllowlistEntry[] = [
-    {
-        file: 'extras/theme-selector.ts',
-        rule: 'retry-cap',
-        why: 'initialize polls for ApiClient at boot — a pre-existing LOADER-6-class poller in a bundle module, outside this group\'s js/plugin.js scope. Tracked for a follow-up bound.',
-    },
-];
+const ALLOWLIST: AllowlistEntry[] = [];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scanner
