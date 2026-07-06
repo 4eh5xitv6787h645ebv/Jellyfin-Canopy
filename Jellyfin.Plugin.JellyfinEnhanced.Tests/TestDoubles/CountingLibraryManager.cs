@@ -60,6 +60,15 @@ public sealed class CountingLibraryManager : ILibraryManager
     /// <summary>Live subscriber count for ItemRemoved.</summary>
     public int ItemRemovedCount => _itemRemoved?.GetInvocationList().Length ?? 0;
 
+    // ---- Optional query hooks (default null = throw, per convention). Set by tests that need
+    //      BuildFullCache's full scan (GetItemList) and per-id resolve (GetItemById<T>). ----
+
+    /// <summary>When set, backs the single-arg <see cref="GetItemList(InternalItemsQuery)"/>.</summary>
+    public Func<InternalItemsQuery, IReadOnlyList<BaseItem>>? GetItemListHook { get; set; }
+
+    /// <summary>When set, backs the generic <see cref="GetItemById{T}(Guid)"/>.</summary>
+    public Func<Guid, BaseItem?>? GetItemByIdHook { get; set; }
+
     // ---- Everything below is an unused NotImplemented stub (per the repo convention). ----
 
     public AggregateFolder RootFolder => throw new NotImplementedException();
@@ -105,7 +114,7 @@ public sealed class CountingLibraryManager : ILibraryManager
     public BaseItem? GetItemById(Guid id) => throw new NotImplementedException();
 
     public T? GetItemById<T>(Guid id)
-        where T : BaseItem => throw new NotImplementedException();
+        where T : BaseItem => GetItemByIdHook is null ? throw new NotImplementedException() : GetItemByIdHook(id) as T;
 
     public T? GetItemById<T>(Guid id, Guid userId)
         where T : BaseItem => throw new NotImplementedException();
@@ -209,7 +218,7 @@ public sealed class CountingLibraryManager : ILibraryManager
 
     public Task<ItemImageInfo> ConvertImageToLocal(BaseItem item, ItemImageInfo image, int imageIndex, bool removeOnFailure = true) => throw new NotImplementedException();
 
-    public IReadOnlyList<BaseItem> GetItemList(InternalItemsQuery query) => throw new NotImplementedException();
+    public IReadOnlyList<BaseItem> GetItemList(InternalItemsQuery query) => GetItemListHook is null ? throw new NotImplementedException() : GetItemListHook(query);
 
     public IReadOnlyList<BaseItem> GetItemList(InternalItemsQuery query, bool allowExternalContent) => throw new NotImplementedException();
 

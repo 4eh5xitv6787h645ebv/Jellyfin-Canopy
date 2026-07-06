@@ -1,5 +1,7 @@
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using Jellyfin.Plugin.JellyfinEnhanced.Tests.TestDoubles;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -136,6 +138,47 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
 
             Assert.True(changed);
             Assert.Equal(0, svc.UserAccessCacheCount);
+        }
+
+        // ---- Full rebuild must not discard a flush that fires mid-rebuild -------------------
+
+        [Fact]
+        public void BuildFullCache_AppliesFlushQueuedDuringRebuild_NotDiscardedBySwap()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "je-tagcache-rebuild-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var movieId = Guid.NewGuid();
+                var key = movieId.ToString("N").ToLowerInvariant();
+
+                var lib = new CountingLibraryManager
+                {
+                    GetItemListHook = _ => System.Array.Empty<BaseItem>(),                 // full scan finds nothing
+                    GetItemByIdHook = id => id == movieId ? new Movie { Id = movieId } : null,
+                };
+                using var svc = new TagCacheService(lib, new StubAppPaths(tempDir), NullLogger<TagCacheService>.Instance);
+
+                // Simulate an incremental flush firing mid-rebuild (while the rebuild owns the cache).
+                // With the fix the flush DEFERS — the change stays pending and is applied to the NEW
+                // cache after the swap. Without it, the flush applies to the OLD cache and the swap
+                // discards the entry (final Count == 0). Clear the hook so the deferred re-run is a no-op.
+                svc.OnBeforeSwapForTest = () =>
+                {
+                    svc.OnBeforeSwapForTest = null;
+                    svc.EnqueueUpdate(movieId);
+                    svc.FlushPendingForTest();
+                };
+
+                svc.BuildFullCache(progress: null, System.Threading.CancellationToken.None);
+
+                Assert.Equal(1, svc.Count);
+                Assert.True(svc.ContainsKeyForTest(key));
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+            }
         }
 
         // ---- Save must not clear a dirty bit set by a flush after the snapshot ---------------

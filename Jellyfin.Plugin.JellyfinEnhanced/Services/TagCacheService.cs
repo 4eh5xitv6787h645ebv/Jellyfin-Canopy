@@ -43,6 +43,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // simulate a flush landing in that exact window.
         internal Action? OnAfterSnapshotForTest;
 
+        // Test seam: invoked inside BuildFullCache while the flush guard is held, just BEFORE the
+        // cache swap, so a test can simulate an incremental flush firing mid-rebuild.
+        internal Action? OnBeforeSwapForTest;
+
         // Incremental cache maintenance. Library-scan events are recorded here (O(1),
         // no DB/probe work) and drained by a debounced background worker so scans are
         // never blocked and repeated hits on the same id coalesce to one rebuild.
@@ -83,6 +87,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         internal void SeedUserAccessCacheForTest(string userKey)
             => _userAccessCache[userKey] = (new HashSet<string>(), DateTime.UtcNow);
 
+        internal void FlushPendingForTest() => FlushPending();
+
+        internal bool ContainsKeyForTest(string key) => _cache.ContainsKey(key);
+
         private string CacheFilePath =>
             Path.Combine(_applicationPaths.PluginsPath, "configurations", "Jellyfin.Plugin.JellyfinEnhanced", "tag-cache.json");
 
@@ -95,46 +103,73 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             _logger.LogInformation("[TagCache] Starting full cache build...");
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
-            var allItems = _libraryManager.GetItemList(new InternalItemsQuery
+            // Serialize the rebuild against incremental flushes: hold the flush guard across the
+            // whole build + swap. While we hold it, a FlushPending that fires sees _flushing==1 and
+            // re-arms WITHOUT draining (it never mutates the OLD _cache we're about to discard), so
+            // events raised during the build stay in _pending and are applied onto the NEW cache
+            // below. Without this, a flush could apply to the old cache and the swap would silently
+            // discard it. Best-effort: if an unusually long in-flight flush blocks acquisition past
+            // the cap we proceed anyway (logged) rather than stalling the rebuild forever.
+            var acquiredFlushGuard = AcquireFlushGuard();
+            if (!acquiredFlushGuard)
             {
-                IncludeItemTypes = TaggableTypes.ToArray(),
-                IsVirtualItem = false,
-                Recursive = true
-            }).ToList();
-
-            _logger.LogInformation($"[TagCache] Found {allItems.Count} taggable items");
-
-            var newCache = new ConcurrentDictionary<string, TagCacheEntry>();
-            var processed = 0;
-
-            foreach (var item in allItems)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var entry = BuildEntryForItem(item);
-                if (entry != null)
-                {
-                    var key = item.Id.ToString("N").ToLowerInvariant();
-                    newCache[key] = entry;
-                }
-
-                processed++;
-                if (processed % 500 == 0)
-                {
-                    progress?.Report((double)processed / allItems.Count * 100);
-                }
+                _logger.LogWarning("[TagCache] Proceeding with full rebuild without the flush guard (an incremental flush is running long); a concurrent change may be re-applied on the next event.");
             }
 
-            // Atomic reference swap — readers see old or new cache, never partial
-            _cache = newCache;
-            Interlocked.Increment(ref _version);
-            Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-            // Invalidate user access cache since items may have changed
-            _userAccessCache.Clear();
-            progress?.Report(100);
+            try
+            {
+                var allItems = _libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    IncludeItemTypes = TaggableTypes.ToArray(),
+                    IsVirtualItem = false,
+                    Recursive = true
+                }).ToList();
 
-            sw.Stop();
-            _logger.LogInformation($"[TagCache] Full cache build complete: {_cache.Count} entries in {sw.Elapsed.TotalSeconds:F1}s");
+                _logger.LogInformation($"[TagCache] Found {allItems.Count} taggable items");
+
+                var newCache = new ConcurrentDictionary<string, TagCacheEntry>();
+                var processed = 0;
+
+                foreach (var item in allItems)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var entry = BuildEntryForItem(item);
+                    if (entry != null)
+                    {
+                        var key = item.Id.ToString("N").ToLowerInvariant();
+                        newCache[key] = entry;
+                    }
+
+                    processed++;
+                    if (processed % 500 == 0)
+                    {
+                        progress?.Report((double)processed / allItems.Count * 100);
+                    }
+                }
+
+                OnBeforeSwapForTest?.Invoke();
+
+                // Atomic reference swap — readers see old or new cache, never partial
+                _cache = newCache;
+                Interlocked.Increment(ref _version);
+                Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                // Invalidate user access cache since items may have changed
+                _userAccessCache.Clear();
+
+                // Apply any events queued while we were building onto the freshly-published cache,
+                // so the swap can't strand a change that arrived mid-rebuild.
+                ApplyBatch(_pending.Drain(), RebuildEntry, RemoveEntry);
+
+                progress?.Report(100);
+
+                sw.Stop();
+                _logger.LogInformation($"[TagCache] Full cache build complete: {_cache.Count} entries in {sw.Elapsed.TotalSeconds:F1}s");
+            }
+            finally
+            {
+                if (acquiredFlushGuard) Interlocked.Exchange(ref _flushing, 0);
+            }
 
             SaveToDisk();
         }
@@ -250,6 +285,28 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 // Ids recorded while we were draining/applying: run again (cap-aware).
                 if (!_pending.IsEmpty) ScheduleFlush();
             }
+        }
+
+        /// <summary>
+        /// Spin-acquire the single-flush guard (<c>_flushing</c>) so no incremental flush mutates
+        /// <c>_cache</c> concurrently. Returns false if it couldn't be taken within the cap (an
+        /// unusually long in-flight flush) — the caller then proceeds best-effort rather than
+        /// blocking a rebuild/shutdown indefinitely. Callers that acquired MUST release it with
+        /// <c>Interlocked.Exchange(ref _flushing, 0)</c>.
+        /// </summary>
+        private bool AcquireFlushGuard(int maxSpins = 500, int spinMs = 10)
+        {
+            for (var i = 0; i < maxSpins; i++) // ~5s cap by default, well under the shutdown grace period
+            {
+                if (Interlocked.CompareExchange(ref _flushing, 1, 0) == 0)
+                {
+                    return true;
+                }
+
+                Thread.Sleep(spinMs);
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -481,17 +538,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             // _pending, skip the save, and lose the in-flight flush's applied batch (it only
             // schedules a debounced save that never fires during shutdown). Waiting for _flushing
             // to release means that flush has finished and set _dirty, so the save below catches it.
-            var acquired = false;
-            for (var i = 0; i < 500; i++) // ~5s cap, well under the shutdown grace period
-            {
-                if (Interlocked.CompareExchange(ref _flushing, 1, 0) == 0)
-                {
-                    acquired = true;
-                    break;
-                }
-
-                Thread.Sleep(10);
-            }
+            var acquired = AcquireFlushGuard();
 
             // Apply anything still queued in the debounce window so a change made moments before
             // shutdown is persisted — matching the old synchronous handler, which applied to the
