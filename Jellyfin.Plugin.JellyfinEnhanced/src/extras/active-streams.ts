@@ -424,7 +424,7 @@ const injectStyles = (): void => {
   text-transform: uppercase;
   margin-bottom: 2px;
 }
-
+.je-as-broadcast-timeout-row {
   display: flex;
   align-items: center;
   gap: 8px;
