@@ -32,12 +32,21 @@
  *
  * Usage:
  *   node scripts/release/validate-manifest.js [path/to/manifest.json]
+ *   node scripts/release/validate-manifest.js manifest.json --assets-dir dist
  *
- * Also exports validateManifest(data) for reuse by update-manifest.js.
+ * With --assets-dir the checksum of every entry whose zip is present under that
+ * directory is re-verified against the actual bytes (checksum CORRECTNESS, not
+ * just format); entries without a local asset are skipped. Without the flag the
+ * run is format-only (the CI-on-PR path, where the zips aren't present).
+ *
+ * Also exports validateManifest(data) and verifyChecksums(data, assetsDir) for
+ * reuse by update-manifest.js and the tests.
  */
 
 const fs = require('fs');
 const path = require('path');
+
+const { computeZipChecksum } = require('../lib/md5.js');
 
 const VERSION_RE = /^\d+\.\d+\.\d+\.\d+$/;
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -174,8 +183,77 @@ function validateManifest(data) {
     return { errors, warnings };
 }
 
+/** Derive the local zip filename an entry's asset would carry. */
+function entryZipName(entry) {
+    if (entry && typeof entry.sourceUrl === 'string') {
+        const m = SOURCE_URL_RE.exec(entry.sourceUrl);
+        if (m) return m[1];
+    }
+    if (entry && typeof entry.targetAbi === 'string' && VERSION_RE.test(entry.targetAbi)) {
+        return expectedZipName(entry.targetAbi);
+    }
+    return null;
+}
+
+/**
+ * Verify each version entry's checksum against the ACTUAL asset bytes, for any
+ * asset present under assetsDir. This closes the gap validateManifest leaves —
+ * it only checks the checksum FORMAT, so a well-formed but wrong MD5 (a
+ * hand-edited manifest, or a zip rebuilt after generation) would still ship and
+ * brick in-app updates. Entries whose asset is not present locally (frozen
+ * history; CI-on-PR has no zips) are skipped, not errored.
+ * @param {unknown} data Parsed manifest.
+ * @param {string} assetsDir Directory that may hold the release zips.
+ * @returns {{ errors: string[] }}
+ */
+function verifyChecksums(data, assetsDir) {
+    const errors = [];
+    if (!Array.isArray(data)) return { errors };
+
+    data.forEach((plugin, pi) => {
+        if (typeof plugin !== 'object' || plugin === null || !Array.isArray(plugin.versions)) return;
+        plugin.versions.forEach((entry, vi) => {
+            const at = `plugin[${pi}].versions[${vi}]`;
+            const zipName = entryZipName(entry);
+            if (zipName === null) return;
+
+            const assetPath = path.join(assetsDir, zipName);
+            if (!fs.existsSync(assetPath)) return; // frozen history — no local asset to verify
+
+            const actual = computeZipChecksum(assetPath);
+            if (typeof entry.checksum === 'string' && entry.checksum.toUpperCase() !== actual) {
+                errors.push(
+                    `${at}: checksum ${entry.checksum} does not match ${zipName} (actual ${actual})`
+                );
+            }
+        });
+    });
+
+    return { errors };
+}
+
+/** Parses argv into { manifestPath, assetsDir }. */
+function parseCliArgs(argv) {
+    let manifestPath = null;
+    let assetsDir = null;
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i];
+        if (arg === '--assets-dir') {
+            assetsDir = argv[++i];
+            if (assetsDir === undefined) {
+                console.error('error: --assets-dir requires a directory argument');
+                process.exit(1);
+            }
+        } else if (manifestPath === null) {
+            manifestPath = arg;
+        }
+    }
+    return { manifestPath, assetsDir };
+}
+
 function main() {
-    const manifestPath = process.argv[2] || path.join(__dirname, '..', '..', 'manifest.json');
+    const { manifestPath: cliManifest, assetsDir } = parseCliArgs(process.argv.slice(2));
+    const manifestPath = cliManifest || path.join(__dirname, '..', '..', 'manifest.json');
 
     let raw;
     try {
@@ -195,6 +273,13 @@ function main() {
 
     const { errors, warnings } = validateManifest(data);
 
+    // Opt-in: when --assets-dir is passed (the release path, after packaging),
+    // verify checksum CORRECTNESS against the actual zips, not just format.
+    if (assetsDir) {
+        const { errors: checksumErrors } = verifyChecksums(data, assetsDir);
+        errors.push(...checksumErrors);
+    }
+
     for (const warning of warnings) console.warn(`warning: ${warning}`);
     for (const error of errors) console.error(`error: ${error}`);
 
@@ -213,4 +298,4 @@ if (require.main === module) {
     main();
 }
 
-module.exports = { validateManifest, compareVersions, expectedZipName };
+module.exports = { validateManifest, verifyChecksums, compareVersions, expectedZipName };
