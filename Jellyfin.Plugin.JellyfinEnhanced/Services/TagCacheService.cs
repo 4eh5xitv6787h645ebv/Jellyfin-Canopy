@@ -47,6 +47,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // cache swap, so a test can simulate an incremental flush firing mid-rebuild.
         internal Action? OnBeforeSwapForTest;
 
+        // Test seam: invoked inside FlushPending after the batch is applied but BEFORE the flush
+        // guard (_flushing) is released, so a test can park a flush in the "drained + applied, still
+        // holding the guard" state and drive the rebuild against it deterministically.
+        internal Action? OnAfterFlushApplyForTest;
+
         // Incremental cache maintenance. Library-scan events are recorded here (O(1),
         // no DB/probe work) and drained by a debounced background worker so scans are
         // never blocked and repeated hits on the same id coalesce to one rebuild.
@@ -56,6 +61,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         private int _flushing;           // 0/1 non-reentrancy guard for the worker
         private static readonly TimeSpan FlushDebounce = TimeSpan.FromSeconds(3);
         private static readonly TimeSpan FlushMaxWait = TimeSpan.FromSeconds(30);
+
+        // Spin budget the full rebuild uses to acquire the flush guard (spins × 10ms ≈ 30s). Far
+        // larger than Dispose's 5s default: a rebuild that can't take the guard must NOT fall back
+        // to a lossy swap (see BuildFullCache), so it waits out an in-flight flush instead. A field
+        // (not a const) only so a test can shrink it to exercise the wait/abort path without a real
+        // multi-second wait.
+        private int _rebuildFlushGuardSpins = 3000;
+        internal void SetRebuildFlushGuardSpinsForTest(int spins) => _rebuildFlushGuardSpins = spins;
 
         // User access cache: avoids expensive GetItemIds query on every request
         private readonly ConcurrentDictionary<string, (HashSet<string> Ids, DateTime CachedAt)> _userAccessCache = new();
@@ -107,13 +120,22 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             // whole build + swap. While we hold it, a FlushPending that fires sees _flushing==1 and
             // re-arms WITHOUT draining (it never mutates the OLD _cache we're about to discard), so
             // events raised during the build stay in _pending and are applied onto the NEW cache
-            // below. Without this, a flush could apply to the old cache and the swap would silently
-            // discard it. Best-effort: if an unusually long in-flight flush blocks acquisition past
-            // the cap we proceed anyway (logged) rather than stalling the rebuild forever.
-            var acquiredFlushGuard = AcquireFlushGuard();
-            if (!acquiredFlushGuard)
+            // below.
+            //
+            // Crucially we take the guard BEFORE the library snapshot below. If a flush is ALREADY
+            // running when we start it has already drained _pending and is mutating the OLD cache we
+            // will discard — its deltas are gone from _pending, so proceeding to swap would silently
+            // drop them (the post-swap drain finds nothing to re-apply). That is the lost-update
+            // window. So instead of a lossy timeout-and-proceed, we WAIT (bounded) for the in-flight
+            // flush to finish; once it does, its changes are committed to the library and the fresh
+            // scan below captures them. Only if a flush is STILL running after ~30s do we abort this
+            // rebuild rather than swap lossily — incremental flushes keep the cache fresh and the
+            // scheduled task retries next cycle. AcquireFlushGuard polls (10ms sleeps), so this
+            // neither busy-spins nor deadlocks (the single guard is always released by its holder).
+            if (!AcquireFlushGuard(maxSpins: _rebuildFlushGuardSpins, spinMs: 10))
             {
-                _logger.LogWarning("[TagCache] Proceeding with full rebuild without the flush guard (an incremental flush is running long); a concurrent change may be re-applied on the next event.");
+                _logger.LogWarning("[TagCache] Skipping full rebuild: an incremental flush is still running after the guard wait; retrying next cycle to avoid a lost-update swap.");
+                return;
             }
 
             try
@@ -168,7 +190,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
             finally
             {
-                if (acquiredFlushGuard) Interlocked.Exchange(ref _flushing, 0);
+                // We only reach the try after acquiring the guard above, so always release it.
+                Interlocked.Exchange(ref _flushing, 0);
             }
 
             SaveToDisk();
@@ -278,6 +301,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     ScheduleDebouncedSave();
                 }
+
+                OnAfterFlushApplyForTest?.Invoke();
             }
             finally
             {

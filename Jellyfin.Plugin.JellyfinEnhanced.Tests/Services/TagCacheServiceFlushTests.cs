@@ -181,6 +181,69 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
             }
         }
 
+        // ---- Rebuild must not swap lossily while an in-flight flush holds the guard -----------
+
+        [Fact]
+        public void BuildFullCache_WhileInFlightFlushHoldsGuard_DoesNotSwapLossily()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "je-tagcache-guardrace-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var movieId = Guid.NewGuid();
+                var key = movieId.ToString("N").ToLowerInvariant();
+
+                var lib = new CountingLibraryManager
+                {
+                    GetItemListHook = _ => System.Array.Empty<BaseItem>(),                 // rebuild's full scan finds nothing
+                    GetItemByIdHook = id => id == movieId ? new Movie { Id = movieId } : null,
+                };
+                using var svc = new TagCacheService(lib, new StubAppPaths(tempDir), NullLogger<TagCacheService>.Instance);
+
+                // Shrink the rebuild's guard wait so it resolves in ~30ms instead of ~30s while the
+                // flush keeps holding the guard.
+                svc.SetRebuildFlushGuardSpinsForTest(3);
+
+                using var flushHoldingGuard = new System.Threading.ManualResetEventSlim(false);
+                using var rebuildDone = new System.Threading.ManualResetEventSlim(false);
+
+                // Park the flush in the "drained _pending + applied movieId, still holding the guard"
+                // state — exactly the in-flight flush that used to lose its delta to the swap.
+                svc.OnAfterFlushApplyForTest = () =>
+                {
+                    svc.OnAfterFlushApplyForTest = null;
+                    flushHoldingGuard.Set();
+                    rebuildDone.Wait(TimeSpan.FromSeconds(10));
+                };
+
+                svc.EnqueueUpdate(movieId);
+                var flushThread = new System.Threading.Thread(() => svc.FlushPendingForTest());
+                flushThread.Start();
+
+                // Flush has drained _pending and written movieId into the (current) cache.
+                Assert.True(flushHoldingGuard.Wait(TimeSpan.FromSeconds(10)));
+                Assert.True(svc.ContainsKeyForTest(key));
+
+                // Rebuild runs while the flush still holds the guard: it must NOT swap in the empty
+                // newCache (which would drop the flush's delta, gone from _pending). With the fix it
+                // waits, times out, and aborts — leaving the applied entry intact. RED against the
+                // old timeout-and-proceed-lossy path (final Count == 0, key gone).
+                svc.BuildFullCache(progress: null, System.Threading.CancellationToken.None);
+
+                Assert.True(svc.ContainsKeyForTest(key));
+
+                rebuildDone.Set();
+                flushThread.Join(TimeSpan.FromSeconds(10));
+
+                Assert.True(svc.ContainsKeyForTest(key));
+                Assert.Equal(1, svc.Count);
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+            }
+        }
+
         // ---- Save must not clear a dirty bit set by a flush after the snapshot ---------------
 
         [Fact]
