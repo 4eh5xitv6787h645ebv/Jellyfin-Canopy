@@ -21,9 +21,21 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
         private static readonly Regex Subscribe = new(
             @"\.(ItemAdded|ItemUpdated|ItemRemoved)\s*\+=", RegexOptions.Compiled);
 
-        // Synchronous DB / media-probe calls that must never run in a scan-thread handler.
+        // Heavy work that must never run synchronously in a scan-thread handler — a SUPERSET
+        // denylist (one family per group). Each token is anchored with \s*[<(] (or \s*\() so it
+        // only matches an actual CALL, never a same-prefixed name: GetItem(s) but not
+        // GetItemKind / GetBaseItemKind; First( but not FirstOrDefault(; Single( but not
+        // SingleOrDefault(. Extend this list when a new heavy sink appears; never narrow it.
         private static readonly Regex InlineHeavyWork = new(
-            @"\bGet(ItemById|MediaSources|ItemList|FirstEpisode)\s*[<(]", RegexOptions.Compiled);
+            // ILibraryManager / repository reads + media probes:
+            @"\bGet(ItemById|Items?|ItemList|MediaSources|MediaStreams|FirstEpisode|People|ImageInfo|Instance|Children|RecursiveChildren|Genres|Studios)\s*[<(]"
+            + @"|\bQueryItems?\s*[<(]"
+            // Non-DB heavy sinks: file I/O, EF writes, async materialization, LINQ realization:
+            + @"|\bFile\.(Read|Write|Append|Open|Copy|Move|Delete)\w*\s*\("
+            + @"|\.SaveChanges\w*\s*\("
+            + @"|\.(ToListAsync|FirstAsync)\s*\("
+            + @"|\.(First|Single)\s*\(",
+            RegexOptions.Compiled);
 
         // A no-arg Initialize() method declaration (not a call) — the entry point re-invoked by a
         // second run of the startup scheduled task.
@@ -43,6 +55,25 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
             "SeerrScanTriggerService.cs",     // cheap config/kind check -> counter + debounce timer
             "WatchlistMonitor.cs",            // cheap Movie/Series reject -> Task.Run (lookup + writes off-thread)
             "ContinueWatchingPlaybackEvents.cs", // record id -> debounced timer drain (GetUsers + per-user prune off-thread, coalesced)
+        };
+
+        // Off-thread worker methods on the reviewed subscribers: invoked via a debounce Timer or
+        // Task.Run (NOT on the scan thread), so heavy work in THEIR bodies is legitimate and must
+        // be stripped before scanning so only the SYNCHRONOUS scan-thread portion is checked. Only
+        // methods whose sole caller is a timer/deferred invocation belong here (the inline
+        // Task.Run(...) lambdas are stripped separately). NEVER list a scan-thread handler — that
+        // would hide the exact regression this guard exists to catch. One justification per file.
+        private static readonly Dictionary<string, string[]> OffThreadWorkerMethods = new(StringComparer.Ordinal)
+        {
+            // ScheduleWatchlistCheck (sync handler) defers to Task.Run(() => ProcessItemForWatchlist(...));
+            // that method resolves ids, GetUsers() and writes watchlists off the scan thread.
+            ["WatchlistMonitor.cs"] = new[] { "ProcessItemForWatchlist" },
+            // OnItemRemoved (sync handler) only records ids + arms a debounce Timer; Drain is the
+            // timer callback and DrainBatch/PruneOrphans are its per-user workers (GetUsers + prune).
+            ["ContinueWatchingPlaybackEvents.cs"] = new[] { "Drain", "DrainBatch", "PruneOrphans" },
+            // OnItemAdded (sync handler) bumps a counter + arms a debounce Timer; OnDebounceElapsed
+            // is the timer callback dispatching the scan HTTP POSTs off-thread.
+            ["SeerrScanTriggerService.cs"] = new[] { "OnDebounceElapsed", "DispatchAsync", "PostScanTrigger", "TriggerNowAsync" },
         };
 
         [Fact]
@@ -79,18 +110,37 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
         }
 
         [Fact]
-        public void TagCacheMonitor_HandlerDoesNoInlineDbOrProbeWork()
+        public void ReviewedSubscribers_HaveNoInlineHeavyWorkOnTheScanThread()
         {
-            // The reference record-and-defer handler must only enqueue ids. Any GetItemById /
-            // GetMediaSources / GetItemList / GetFirstEpisode here reintroduces the scan-thread stall
-            // the fix removed — resolve ids in the off-thread flush (TagCacheService) instead.
-            var path = SourceFiles().First(f => Path.GetFileName(f) == "TagCacheMonitor.cs");
-            var hits = InlineHeavyWork.Matches(File.ReadAllText(path)).Select(m => m.Value).ToList();
+            // EVERY reviewed subscriber's SYNCHRONOUS scan-thread body must be O(1) record-and-defer
+            // — not just TagCacheMonitor. Strip comments, then the off-thread regions (Task.Run /
+            // Task.Factory.StartNew lambdas + the listed OffThreadWorkerMethods), then assert the
+            // broadened denylist finds nothing in what REMAINS (the scan-thread portion).
+            var offenders = new List<string>();
+            foreach (var name in ReviewedSubscribers)
+            {
+                var path = SourceFiles().First(f => Path.GetFileName(f) == name);
+
+                var synchronous = StripDeferredRegions(StripComments(File.ReadAllText(path)));
+                if (OffThreadWorkerMethods.TryGetValue(name, out var workers))
+                {
+                    synchronous = StripMethodBodies(synchronous, workers);
+                }
+
+                foreach (Match hit in InlineHeavyWork.Matches(synchronous))
+                {
+                    offenders.Add($"{name}: {hit.Value.Trim()}");
+                }
+            }
 
             Assert.True(
-                hits.Count == 0,
-                "TagCacheMonitor must stay pure record-and-defer, but found inline heavy call(s): "
-                + string.Join(", ", hits) + ". Move id resolution/rebuild to the off-thread flush.");
+                offenders.Count == 0,
+                "Inline heavy work found on the library-scan thread (the SYNCHRONOUS body of a reviewed subscriber):\n  "
+                + string.Join("\n  ", offenders) + "\n"
+                + "Jellyfin raises ItemAdded/ItemUpdated/ItemRemoved SYNCHRONOUSLY on the scan thread, so the handler "
+                + "must record ids only and push real work to a debounced/off-thread worker (TagCacheMonitor + "
+                + "TagCacheService is the reference). If the flagged call already runs off-thread but is not inside a "
+                + "Task.Run lambda, add its method to OffThreadWorkerMethods with a justification — never weaken the denylist.");
         }
 
         [Fact]
@@ -124,6 +174,92 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
                 baseInit != null && baseInit.Contains("_subscribed"),
                 "PlaybackWatcherBase.Initialize lost its _subscribed guard — the AutoMovie/AutoSeason request "
                 + "monitors subscribe via its SubscribeEvents() and would double-subscribe.");
+        }
+
+        // Strips /* */ block comments and // line comments (incl. ///) so a denylist token inside a
+        // comment can't false-positive. Over-stripping is safe: it can only HIDE work, and the
+        // reviewed files are known-clean — the guard's job is catching a NEW call in the sync body.
+        private static string StripComments(string source)
+        {
+            var withoutBlock = Regex.Replace(source, @"/\*.*?\*/", " ", RegexOptions.Singleline);
+            return Regex.Replace(withoutBlock, @"//[^\n]*", string.Empty);
+        }
+
+        // Removes the argument region of every Task.Run( / Task.Factory.StartNew( call — the
+        // off-thread lambda, expression- or block-bodied — via a paren-depth scan from the call's
+        // opening '(' to its matching ')'. Paren (not brace) matching so expression lambdas
+        // (Task.Run(() => Foo())) are stripped as cleanly as block lambdas.
+        private static string StripDeferredRegions(string source)
+        {
+            foreach (var marker in new[] { "Task.Run(", "Task.Factory.StartNew(" })
+            {
+                int index;
+                while ((index = source.IndexOf(marker, StringComparison.Ordinal)) >= 0)
+                {
+                    var close = MatchingDelimiter(source, index + marker.Length - 1, '(', ')');
+                    if (close < 0) break; // unbalanced — stop rather than corrupt the source
+                    source = source.Remove(index, close - index + 1);
+                }
+            }
+
+            return source;
+        }
+
+        // Removes the brace body of each named method DECLARATION (name '(' … ')' '{' … '}'). Used
+        // for off-thread workers invoked via a timer / deferred call rather than an inline Task.Run
+        // lambda, so their heavy work is not attributed to the scan thread. Bare CALLS to the method
+        // (followed by ')' or ';', not '{') are removed too so the scan can't loop on them.
+        private static string StripMethodBodies(string source, IEnumerable<string> methodNames)
+        {
+            foreach (var method in methodNames)
+            {
+                var callSite = new Regex(@"\b" + Regex.Escape(method) + @"\s*\(", RegexOptions.Compiled);
+                for (var match = callSite.Match(source); match.Success; match = callSite.Match(source))
+                {
+                    var open = source.IndexOf('(', match.Index);
+                    var close = MatchingDelimiter(source, open, '(', ')');
+                    if (close < 0) break;
+
+                    var next = FirstNonWhitespace(source, close + 1);
+                    if (next >= 0 && source[next] == '{')
+                    {
+                        var end = MatchingDelimiter(source, next, '{', '}');
+                        if (end < 0) break;
+                        source = source.Remove(match.Index, end - match.Index + 1); // declaration + body
+                    }
+                    else
+                    {
+                        source = source.Remove(match.Index, close - match.Index + 1); // a call — drop it
+                    }
+                }
+            }
+
+            return source;
+        }
+
+        // Index of the delimiter that closes the one at openIndex, honouring nesting. -1 if
+        // unbalanced. Deliberately literal (does not skip string/char literals): the reviewed
+        // regions use only balanced interpolation braces + parens, and over-stripping is safe.
+        private static int MatchingDelimiter(string source, int openIndex, char open, char close)
+        {
+            var depth = 0;
+            for (var i = openIndex; i < source.Length; i++)
+            {
+                if (source[i] == open) depth++;
+                else if (source[i] == close && --depth == 0) return i;
+            }
+
+            return -1;
+        }
+
+        private static int FirstNonWhitespace(string source, int start)
+        {
+            for (var i = start; i < source.Length; i++)
+            {
+                if (!char.IsWhiteSpace(source[i])) return i;
+            }
+
+            return -1;
         }
 
         // Returns the braced body of the first no-arg Initialize() declaration, or null if the file
