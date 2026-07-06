@@ -58,3 +58,87 @@ describe('config hot-reload reaction', () => {
         await vi.waitFor(() => expect(consoleError).toHaveBeenCalled());
     });
 });
+
+describe('config hot-reload delivery-flag re-sanitize (INIT-1)', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+        delete JE._deliveryPluginsInstalled;
+    });
+
+    it('re-forces a stale UsePluginPages flag to false after the live merge', async () => {
+        JE._deliveryPluginsInstalled = { customTabs: false, pluginPages: false };
+        (JE.pluginConfig as Record<string, unknown>).HiddenContentUsePluginPages = false;
+
+        // Server still stores the pre-uninstall `true`.
+        JE.core.api = {
+            plugin: vi.fn((path: string) => path.startsWith('/public-config')
+                ? Promise.resolve({ HiddenContentUsePluginPages: true, RefreshMarker: 'done' })
+                : Promise.resolve({}))
+        } as unknown as NonNullable<typeof JE.core.api>;
+
+        emit(LIVE.CONFIG_CHANGED, {});
+
+        // Gate on RefreshMarker so we assert AFTER the merge (not vacuously on the
+        // initial false); the flag must have been re-zeroed by the sanitizer.
+        await vi.waitFor(() => {
+            expect(JE.pluginConfig.RefreshMarker).toBe('done');
+            expect(JE.pluginConfig.HiddenContentUsePluginPages).toBe(false);
+        });
+    });
+});
+
+describe('config hot-reload in-flight guard (CORE-9)', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('a superseded (slower) refresh does not overwrite the newer one', async () => {
+        let resolveSlow: (value: unknown) => void = () => undefined;
+        const slow = new Promise<unknown>((resolve) => { resolveSlow = resolve; });
+        const fast = Promise.resolve({ Marker: 'new' });
+
+        let publicCall = 0;
+        JE.core.api = {
+            plugin: vi.fn((path: string) => {
+                if (path.startsWith('/public-config')) {
+                    publicCall += 1;
+                    return publicCall === 1 ? slow : fast; // first (older) refresh is the slow one
+                }
+                return Promise.resolve({});
+            })
+        } as unknown as NonNullable<typeof JE.core.api>;
+
+        emit(LIVE.CONFIG_CHANGED, {}); // refresh 1 (seq 1) -> awaits slow
+        emit(LIVE.CONFIG_CHANGED, {}); // refresh 2 (seq 2) -> awaits fast
+        await Promise.resolve();
+
+        // Fast (newer) settles first and wins.
+        await vi.waitFor(() => expect(JE.pluginConfig.Marker).toBe('new'));
+
+        // Slow (older) settles LAST — but must be discarded, not overwrite.
+        resolveSlow({ Marker: 'old' });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(JE.pluginConfig.Marker).toBe('new');
+    });
+
+    it('prunes keys the previous public payload had but the new one dropped', async () => {
+        let publicCall = 0;
+        JE.core.api = {
+            plugin: vi.fn((path: string) => {
+                if (path.startsWith('/public-config')) {
+                    publicCall += 1;
+                    return Promise.resolve(publicCall === 1 ? { Gone: 1, Keep: 1 } : { Keep: 2 });
+                }
+                return Promise.resolve({});
+            })
+        } as unknown as NonNullable<typeof JE.core.api>;
+
+        emit(LIVE.CONFIG_CHANGED, {});
+        await vi.waitFor(() => expect(JE.pluginConfig.Gone).toBe(1));
+
+        emit(LIVE.CONFIG_CHANGED, {});
+        await vi.waitFor(() => expect(JE.pluginConfig.Keep).toBe(2));
+
+        expect('Gone' in JE.pluginConfig).toBe(false);
+    });
+});

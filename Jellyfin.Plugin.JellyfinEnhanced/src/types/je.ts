@@ -568,6 +568,12 @@ export interface JEGlobal extends JellyfinEnhancedPublicApi {
      * back to its own fetch when absent. Resolves null on fetch failure.
      */
     _tagCachePrefetch?: Promise<unknown> | null;
+    /**
+     * Delivery-plugin (Custom Tabs / Plugin Pages) install state cached by
+     * js/plugin.js at boot; consumed by src/core/delivery-flags.ts to re-zero the
+     * stale `*UseCustomTabs`/`*UsePluginPages` flags after every live-config merge.
+     */
+    _deliveryPluginsInstalled?: { customTabs: boolean; pluginPages: boolean };
     CONFIG?: { TOAST_DURATION?: number; [key: string]: unknown };
     themer?: {
         getThemeVariables?: () => { secondaryBg?: string; primaryAccent?: string; blur?: string };

@@ -606,6 +606,10 @@
             if (Array.isArray(installedPlugins)) {
                 const hasCustomTabs = installedPlugins.some(p => p.Name === 'Custom Tabs');
                 const hasPluginPages = installedPlugins.some(p => p.Name === 'Plugin Pages');
+                // Cache for the bundle side (src/core/delivery-flags.ts) so the live-config
+                // hot-reload can re-apply this same sanitization; the inline zeroing below
+                // stays because it runs before the bundle is guaranteed loaded.
+                JE._deliveryPluginsInstalled = { customTabs: hasCustomTabs, pluginPages: hasPluginPages };
                 if (!hasCustomTabs) {
                     JE.pluginConfig.BookmarksUseCustomTabs = false;
                     JE.pluginConfig.CalendarUseCustomTabs = false;
