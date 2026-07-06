@@ -20,6 +20,7 @@
 
 import { JE } from '../globals';
 import { injectCss as uiInjectCss } from './ui-kit';
+import { createBoundedCache, type BoundedCache } from './bounded-cache';
 import type { TagPosition, TagRendererApi, TagRendererContext, TagSpec } from '../types/je';
 
 JE.core = JE.core || {};
@@ -105,7 +106,7 @@ function createTag(name: string, spec: TagSpec): TagInstance {
         /** persistent (localStorage-backed) cache */
         cache: {} as Record<string, unknown>,
         /** shared hot cache bucket */
-        hot: null as Map<string, unknown> | null,
+        hot: null as BoundedCache<string, unknown> | null,
         localStorageEnabled: false,
         cacheTtl: (30) * 24 * 60 * 60 * 1000,
         ignoreSelectors: null as string[] | null,
@@ -173,8 +174,9 @@ function createTag(name: string, spec: TagSpec): TagInstance {
             : {};
         if (spec.cache.hotBucket) {
             const Hot = (JE._hotCache = JE._hotCache || { ttl: state.cacheTtl });
-            Hot[spec.cache.hotBucket] = Hot[spec.cache.hotBucket] || new Map<string, unknown>();
-            state.hot = Hot[spec.cache.hotBucket] as Map<string, unknown>;
+            Hot[spec.cache.hotBucket] = Hot[spec.cache.hotBucket] ||
+                createBoundedCache<string, unknown>({ maxEntries: 1000, ttlMs: state.cacheTtl });
+            state.hot = Hot[spec.cache.hotBucket] as BoundedCache<string, unknown>;
         }
     }
 

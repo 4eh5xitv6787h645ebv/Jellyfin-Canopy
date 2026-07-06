@@ -6,6 +6,7 @@
 
 import { JE } from '../../globals';
 import { ensureMaterialSymbolsFont } from '../../core/ui-kit';
+import { createBoundedCache } from '../../core/bounded-cache';
 import { addCSS, getItemCached } from '../helpers';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -18,7 +19,10 @@ interface ReleaseInfo {
     titleKey: string;
 }
 
-const releaseDateCache = new Map<string, { infos: ReleaseInfo[]; ts: number }>(); // Map<itemId, { infos, ts }>
+// Bounded + TTL-swept via core/bounded-cache (no raw growing Map): the read-side
+// `now - cached.ts < RELEASEDATE_CACHE_TTL` guard below stays for identical
+// behavior, but the util now caps size and expires entries so nothing leaks.
+const releaseDateCache = createBoundedCache<string, { infos: ReleaseInfo[]; ts: number }>({ maxEntries: 300, ttlMs: RELEASEDATE_CACHE_TTL }); // Map<itemId, { infos, ts }>
 
 /**
  * Fetches a path from TMDB via the plugin's proxy endpoint.

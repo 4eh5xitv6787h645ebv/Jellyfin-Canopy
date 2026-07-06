@@ -6,6 +6,7 @@
 
 import { JE } from '../../globals';
 import { flagSvgUrl } from '../../core/asset-urls';
+import { createBoundedCache } from '../../core/bounded-cache';
 import { getItemCached } from '../helpers';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -22,9 +23,12 @@ interface WatchProgressEntry {
     ts?: number;
 }
 
-const watchProgressCache = new Map<string, WatchProgressEntry & { ts: number }>(); // Map<itemId, { progress, totalPlaybackTicks, totalRuntimeTicks, ts }>
-const fileSizeCache = new Map<string, { size: number | null; unavailable: boolean; ts: number }>(); // Map<itemId, { size, unavailable, ts }>
-const audioLanguageCache = new Map<string, { languages: { name: string; code: string }[]; unavailable: boolean; ts: number }>(); // Map<itemId, { languages, unavailable, ts }>
+// Bounded + TTL-swept via core/bounded-cache (no raw growing Map): the read-side
+// `now - cached.ts < *_CACHE_TTL` guards below stay for identical behavior, but
+// the util now also caps size and expires entries so nothing leaks per session.
+const watchProgressCache = createBoundedCache<string, WatchProgressEntry & { ts: number }>({ maxEntries: 500, ttlMs: WATCHPROGRESS_CACHE_TTL }); // Map<itemId, { progress, totalPlaybackTicks, totalRuntimeTicks, ts }>
+const fileSizeCache = createBoundedCache<string, { size: number | null; unavailable: boolean; ts: number }>({ maxEntries: 500, ttlMs: FILESIZE_CACHE_TTL }); // Map<itemId, { size, unavailable, ts }>
+const audioLanguageCache = createBoundedCache<string, { languages: { name: string; code: string }[]; unavailable: boolean; ts: number }>({ maxEntries: 500, ttlMs: LANGUAGE_CACHE_TTL }); // Map<itemId, { languages, unavailable, ts }>
 
 /**
  * Converts bytes into a human-readable format (e.g., KB, MB, GB).
