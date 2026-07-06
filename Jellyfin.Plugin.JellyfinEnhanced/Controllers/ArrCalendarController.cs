@@ -111,14 +111,39 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // worth of arr-side calendar fetches + dedup loops.
             const int maxCalendarRangeDays = 365;
             var requestedRange = (endDate - startDate).TotalDays;
+            bool capApplied = false;
             if (requestedRange > maxCalendarRangeDays)
             {
                 _logger.LogInformation($"Calendar range capped from {(int)requestedRange} days to {maxCalendarRangeDays} days.");
                 endDate = startDate.AddDays(maxCalendarRangeDays);
+                capApplied = true;
             }
 
-            var startIso = startDate.ToUniversalTime().ToString("o");
-            var endIso = endDate.ToUniversalTime().ToString("o");
+            // Local calendar-day bounds of the view (yyyy-MM-dd). The client sends these alongside
+            // the UTC instants so date-only releases (which carry no clock time) can be range-
+            // filtered by LOCAL day — a UTC-instant compare drops a midnight-UTC release whose local
+            // day is in view for any viewer off UTC (CRIT-1). Fall back to the UTC date portion when
+            // the params are absent/invalid, or when the abuse cap reshaped the requested range.
+            string startDayKey = startDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            string endDayKey = endDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            if (!capApplied
+                && Request.Query.TryGetValue("startDay", out var startDayValues) && IsDayKey(startDayValues.ToString())
+                && Request.Query.TryGetValue("endDay", out var endDayValues) && IsDayKey(endDayValues.ToString()))
+            {
+                startDayKey = startDayValues.ToString();
+                endDayKey = endDayValues.ToString();
+                if (string.CompareOrdinal(startDayKey, endDayKey) > 0)
+                {
+                    (startDayKey, endDayKey) = (endDayKey, startDayKey);
+                }
+            }
+
+            // Query the arr instances over a window widened by a day on each side so a date-only
+            // release whose LOCAL day intersects the view is RETURNED even though its midnight-UTC
+            // instant can sit up to a timezone offset outside [startDate,endDate]. The precise
+            // in-code filter (IsEventInView) trims the widened result back to the requested view.
+            var startIso = startDate.AddDays(-1).ToUniversalTime().ToString("o");
+            var endIso = endDate.AddDays(1).ToUniversalTime().ToString("o");
 
             DateTime? ParseDate(object? value)
             {
@@ -181,8 +206,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var radarrInstances = config.GetEnabledRadarrInstances();
             var ct = HttpContext.RequestAborted;
 
-            var sonarrTasks = sonarrInstances.Select(i => FetchSonarrCalendar(i, startIso, endIso, ParseDate, ct)).ToList();
-            var radarrTasks = radarrInstances.Select(i => FetchRadarrCalendar(i, startIso, endIso, startDate, endDate, ParseDate, AddRelease, ct)).ToList();
+            var sonarrTasks = sonarrInstances.Select(i => FetchSonarrCalendar(i, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, ct)).ToList();
+            var radarrTasks = radarrInstances.Select(i => FetchRadarrCalendar(i, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, AddRelease, ct)).ToList();
 
             var sonarrCalResults = await Task.WhenAll(sonarrTasks);
             var radarrCalResults = await Task.WhenAll(radarrTasks);
@@ -361,6 +386,34 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         // false-split the same item across a UTC-midnight boundary (the TZ drift the old normalizer
         // tried to absorb) — never a wrong merge. TvdbId/TmdbId are pre-normalized by
         // ArrIdHelper.ToNullableId, so a present-but-0 id takes the title fallback.
+        /// <summary>True for a well-formed "yyyy-MM-dd" local-day key.</summary>
+        internal static bool IsDayKey(string? value)
+            => !string.IsNullOrEmpty(value)
+            && DateTime.TryParseExact(value, "yyyy-MM-dd",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out _);
+
+        /// <summary>
+        /// Whether a mapped calendar event falls within the requested view. Date-only releases
+        /// (Radarr cinema/digital/physical; Sonarr airDate fallback) carry no clock time, so they
+        /// are compared by their LOCAL calendar day against the client's local-day bounds — a
+        /// UTC-instant comparison would drop a midnight-UTC release whose local day intersects the
+        /// view for any viewer off UTC (CRIT-1). Genuine instants keep the exact UTC-window compare.
+        /// </summary>
+        internal static bool IsEventInView(
+            bool dateOnly, string? releaseLocalDay, DateTime releaseUtc,
+            DateTime startUtc, DateTime endUtc, string startDay, string endDay)
+        {
+            if (dateOnly)
+            {
+                return !string.IsNullOrEmpty(releaseLocalDay)
+                    && string.CompareOrdinal(releaseLocalDay, startDay) >= 0
+                    && string.CompareOrdinal(releaseLocalDay, endDay) <= 0;
+            }
+
+            return releaseUtc >= startUtc && releaseUtc <= endUtc;
+        }
+
         internal static string BuildDedupKey(ArrItem evt)
         {
             if (evt.Source == nameof(ArrType.Sonarr))
@@ -375,6 +428,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         private Task<(List<ArrItem> Items, string? Error)> FetchSonarrCalendar(
             ArrInstance instance, string startIso, string endIso,
+            DateTime startDate, DateTime endDate, string startDayKey, string endDayKey,
             Func<object?, DateTime?> parseDate, CancellationToken ct)
         {
             return _arrFetch.FetchAndMapAsync<List<ArrItem>>(
@@ -414,7 +468,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         var episodeNumber = (int?)episode?["episodeNumber"] ?? 0;
                         var episodeTitle = (string?)episode?["title"] ?? "Unknown Episode";
 
-                        var (sonarrIso, sonarrLocal) = Helpers.Arr.ArrReleaseDate.Build(airDate.Value.ToUniversalTime(), sonarrDateOnly);
+                        var sonarrUtc = airDate.Value.ToUniversalTime();
+                        var (sonarrIso, sonarrLocal) = Helpers.Arr.ArrReleaseDate.Build(sonarrUtc, sonarrDateOnly);
+                        // Trim the day-widened arr query back to the requested view. A date-only
+                        // airDate is kept when its LOCAL day intersects the view; a genuine instant
+                        // (airDateUtc) keeps the exact UTC-window comparison (CRIT-1).
+                        if (!IsEventInView(sonarrDateOnly, sonarrLocal, sonarrUtc, startDate, endDate, startDayKey, endDayKey))
+                            continue;
 
                         items.Add(new ArrItem
                         {
@@ -459,7 +519,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         private Task<(List<ArrItem> Items, string? Error)> FetchRadarrCalendar(
             ArrInstance instance, string startIso, string endIso,
-            DateTime startDate, DateTime endDate,
+            DateTime startDate, DateTime endDate, string startDayKey, string endDayKey,
             Func<object?, DateTime?> parseDate,
             Action<Dictionary<string, DateTime>, string, object?> addRelease,
             CancellationToken ct)
@@ -517,11 +577,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         foreach (var kvp in releaseDates)
                         {
                             var releaseUtc = kvp.Value.ToUniversalTime();
-                            if (releaseUtc < startDate || releaseUtc > endDate) continue;
                             // Radarr cinema/digital/physical releases are date-granularity by
                             // definition — emit the date-only contract so the client buckets them
                             // on the correct local day and prints no bogus clock time.
                             var (releaseIso, releaseLocal) = Helpers.Arr.ArrReleaseDate.Build(releaseUtc, dateOnly: true);
+                            // Trim the day-widened arr query back to the view by LOCAL day: a
+                            // midnight-UTC release whose local day is in view must survive even
+                            // though its instant can sit a timezone offset outside [start,end] (CRIT-1).
+                            if (!IsEventInView(true, releaseLocal, releaseUtc, startDate, endDate, startDayKey, endDayKey))
+                                continue;
                             items.Add(new ArrItem
                             {
                                 // Namespace the per-instance row id (plus release-type) by source+instance

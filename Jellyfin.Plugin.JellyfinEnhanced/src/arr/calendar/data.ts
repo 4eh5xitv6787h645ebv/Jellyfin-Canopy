@@ -206,6 +206,14 @@ export function loadSettings(): void {
     }
 }
 
+/** "yyyy-MM-dd" for a Date's LOCAL calendar day (matches getEventDateKey's bucketing). */
+function toLocalDayKey(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
 /**
  * Fetch calendar events from backend
  */
@@ -214,6 +222,13 @@ export async function fetchCalendarEvents(startDate: Date, endDate: Date): Promi
         const query = new URLSearchParams({
             start: startDate.toISOString(),
             end: endDate.toISOString(),
+            // The view's LOCAL calendar-day bounds. Date-only releases (Radarr cinema/digital/
+            // physical; Sonarr airDate fallback) carry no clock time, so the server must range-
+            // filter them by LOCAL day: their midnight-UTC instant can fall a timezone offset
+            // outside [start,end] even though their local day is in view, and a UTC-instant
+            // compare would wrongly drop them for any viewer off UTC (CRIT-1).
+            startDay: toLocalDayKey(startDate),
+            endDay: toLocalDayKey(endDate),
         });
         const data = await api.plugin(`/arr/calendar?${query.toString()}`) as { events?: CalendarEvent[]; errors?: CalendarErrorEntry[] };
         state.events = (data.events || []).filter((evt) => evt && evt.releaseDate);
