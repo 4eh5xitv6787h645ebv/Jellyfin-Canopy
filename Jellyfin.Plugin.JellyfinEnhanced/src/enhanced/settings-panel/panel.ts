@@ -7,6 +7,7 @@
 // (Converted from js/enhanced/ui-panel.js — bodies semantically identical.)
 
 import { JE } from '../../globals';
+import { installModalA11y, type ModalA11yHandle } from '../../core/modal-a11y';
 import { buildPanelHtml } from './template';
 import { wireShortcutEditor } from './shortcut-editor';
 import { wireSettingsListeners, wireMiscSettingsControls } from './settings';
@@ -138,6 +139,7 @@ JE.showEnhancedPanel = async () => {
     let offset = { x: 0, y: 0 };
     let autoCloseTimer: number | null = null;
     let isMouseInside = false;
+    let a11y: ModalA11yHandle | null = null;
 
     const resetAutoCloseTimer = () => {
         if (autoCloseTimer) clearTimeout(autoCloseTimer);
@@ -147,9 +149,10 @@ JE.showEnhancedPanel = async () => {
                 document.removeEventListener('keydown', closeHelp);
                 document.removeEventListener('mousemove', handleMouseMove);
                 document.removeEventListener('mouseup', handleMouseUp);
-                if (!JE.pluginConfig.DisableAllShortcuts) {
-                    document.addEventListener('keydown', (JE as any).keyListener);
-                }
+                // release() restores focus and drops the je-modal-open gate that
+                // suppresses JE.keyListener — no manual re-add of the listener.
+                a11y?.release();
+                a11y = null;
             }
         }, JE.CONFIG!.HELP_PANEL_AUTOCLOSE_DELAY as number);
     };
@@ -278,9 +281,8 @@ JE.showEnhancedPanel = async () => {
             document.removeEventListener('keydown', closeHelp);
             document.removeEventListener('mousemove', handleMouseMove);
             document.removeEventListener('mouseup', handleMouseUp);
-            if (!JE.pluginConfig.DisableAllShortcuts) {
-                document.addEventListener('keydown', (JE as any).keyListener);
-            }
+            a11y?.release();
+            a11y = null;
         }
     };
 
@@ -292,9 +294,13 @@ JE.showEnhancedPanel = async () => {
     document.addEventListener('keydown', closeHelp);
     document.getElementById('closeSettingsPanel')!.addEventListener('click', closeHelp);
 
-    if (!JE.pluginConfig.DisableAllShortcuts) {
-        document.removeEventListener('keydown', (JE as any).keyListener);
-    }
+    // Make the panel an accessible modal dialog: dialog role, focus trap +
+    // restore, and the je-modal-open gate that suppresses JE.keyListener while
+    // it is open (INT-1) — replacing the former manual remove/re-add dance.
+    a11y = installModalA11y(help, {
+        label: JE.t!('panel_settings_tab'),
+        onEscape: () => closeHelp({ type: 'keydown', key: 'Escape' }),
+    });
     ctx.createToast = createToast;
 
     wireSettingsListeners(ctx);

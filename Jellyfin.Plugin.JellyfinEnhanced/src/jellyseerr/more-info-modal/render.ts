@@ -63,7 +63,7 @@ return `
                             </div>
                             <div class="header-info">
                                 <div class="title-row">
-                                <h1 class="title">${escapeHtml(title)} ${year ? `<span class="year">(${year})</span>` : ''}</h1>
+                                <h1 id="je-more-info-title" class="title">${escapeHtml(title)} ${year ? `<span class="year">(${year})</span>` : ''}</h1>
                                 <div class="title-chip" data-mount="je-status-chip"></div>
                                 </div>
                                 <div class="meta-info">

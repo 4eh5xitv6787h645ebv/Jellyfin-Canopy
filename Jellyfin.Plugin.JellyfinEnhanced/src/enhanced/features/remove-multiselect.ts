@@ -6,6 +6,7 @@
 // identical; the eager JE.internals.features destructure is now real imports.)
 
 import { JE } from '../../globals';
+import { installModalA11y, type ModalA11yHandle } from '../../core/modal-a11y';
 import {
     showNotification, REMOVE_SURFACES, buildNativeActionSheetItem, setActionSheetItemIcon,
     fitRemoveItemToMenu, removeFromHomeSurface, closeOpenActionSheet, hideEmptyHomeSections,
@@ -75,6 +76,7 @@ function confirmMultiRemove(targets: { name: string; surface: string }[]): Promi
         dialog.style.cssText = 'background:linear-gradient(135deg,rgba(30,30,35,0.98),rgba(20,20,25,0.98));border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:24px;max-width:460px;width:100%;color:#fff;max-height:80vh;display:flex;flex-direction:column;';
 
         const title = document.createElement('h3');
+        title.id = 'je-remove-confirm-title';
         title.textContent = JE.t!('remove_confirm_title');
         title.style.cssText = 'margin:0 0 16px 0;font-size:18px;font-weight:600;';
         dialog.appendChild(title);
@@ -112,22 +114,29 @@ function confirmMultiRemove(targets: { name: string; surface: string }[]): Promi
         buttons.appendChild(ok);
         dialog.appendChild(buttons);
 
+        let a11y: ModalA11yHandle | null = null;
         const close = (result: boolean): void => {
             if (activeConfirmClose === close) activeConfirmClose = null;
+            // release() restores focus, drops the je-modal-open gate, and removes
+            // the shared Tab-trap/Escape listener (replacing the ad-hoc escHandler).
+            a11y?.release();
             overlay.remove();
-            document.removeEventListener('keydown', escHandler);
             resolve(result);
         };
         activeConfirmClose = close;
-        const escHandler = (e: KeyboardEvent): void => { if (e.key === 'Escape') close(false); };
         cancel.addEventListener('click', () => close(false));
         ok.addEventListener('click', () => close(true));
         overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
-        document.addEventListener('keydown', escHandler);
 
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
-        ok.focus();
+        // Accessible modal dialog: role/aria, focus trap + restore, Escape, and
+        // the je-modal-open gate that suppresses JE global shortcuts (A11Y-3).
+        a11y = installModalA11y(dialog, {
+            labelledBy: 'je-remove-confirm-title',
+            initialFocus: ok,
+            onEscape: () => close(false),
+        });
     });
 }
 
