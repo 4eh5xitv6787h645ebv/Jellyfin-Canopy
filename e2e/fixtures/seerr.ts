@@ -38,3 +38,39 @@ export async function tmdbReady(page: Page): Promise<boolean> {
 export async function seerrReady(page: Page): Promise<boolean> {
     return publicConfigFlag(page, 'JellyseerrEnabled');
 }
+
+/**
+ * Resolve a Jellyfin user's id by name from an ADMIN session (needs /Users).
+ * Shared by the parental-rating specs so each drives the SAME restricted
+ * account whose per-user policy the server resolves the limit from.
+ */
+export async function findRestrictedUserId(page: Page, username: string): Promise<string> {
+    return page.evaluate(async (name: string) => {
+        const api = (window as any).ApiClient;
+        const users = await api.getJSON(api.getUrl('/Users'));
+        const match = (users || []).find((u: any) => u.Name === name);
+        if (!match) throw new Error(`user ${name} not found`);
+        return match.Id as string;
+    }, username);
+}
+
+/**
+ * Set (score) or clear (null) a user's MaxParentalRating via the Jellyfin
+ * policy API from an ADMIN session. The plugin's parental filter reads this
+ * per-user limit server-side, so flipping it is how the specs prove the gate
+ * is the CALLER's own, not a fixed one.
+ */
+export async function setMaxParentalRating(page: Page, userId: string, score: number | null): Promise<void> {
+    await page.evaluate(async (args: { userId: string; score: number | null }) => {
+        const api = (window as any).ApiClient;
+        const user = await api.getJSON(api.getUrl(`/Users/${args.userId}`));
+        const policy = user.Policy;
+        policy.MaxParentalRating = args.score;
+        await api.ajax({
+            type: 'POST',
+            url: api.getUrl(`/Users/${args.userId}/Policy`),
+            data: JSON.stringify(policy),
+            contentType: 'application/json',
+        });
+    }, { userId, score });
+}
