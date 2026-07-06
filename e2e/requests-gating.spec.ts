@@ -8,14 +8,22 @@
 // saving) so the scenario is deterministic regardless of the dev server's
 // stored config.
 import { test, expect, loginAs } from './fixtures/auth';
+import { tmdbReady } from './fixtures/seerr';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const CONFIG_HASH = '#/configurationpage?name=Jellyfin%20Enhanced';
 
+// The reproducible docker seed is bare: with no TMDB key the config page never
+// populates TMDB_API_KEY (this spec's "config page fully loaded" signal), so
+// the 60s waitForFunction would time out rather than guard anything. Skip
+// cleanly when TMDB is unconfigured (set TMDB_API_KEY at seed time to run).
+const NEEDS_TMDB = 'TMDB not configured — set TMDB_API_KEY at seed time to run';
+
 test.describe('requests page requirements gating', () => {
     test('Radarr-only (no Sonarr, no Seerr) satisfies the Requests Page requirement', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
+        test.skip(!(await tmdbReady(page)), NEEDS_TMDB);
 
         await page.evaluate((hash) => { window.location.hash = hash; }, CONFIG_HASH);
 
@@ -83,6 +91,7 @@ test.describe('requests page requirements gating', () => {
 
     test('With nothing configured, the requirement does not single out Sonarr as mandatory', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
+        test.skip(!(await tmdbReady(page)), NEEDS_TMDB);
 
         await page.evaluate((hash) => { window.location.hash = hash; }, CONFIG_HASH);
         // Wait for config-page.js to finish loading (populated TMDB key) so the

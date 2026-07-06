@@ -9,6 +9,7 @@
 // from) as both a restricted non-admin and a bypassed admin, and asserts the
 // server filtered the JSON — not the DOM.
 import { test, expect, loginAs } from './fixtures/auth';
+import { seerrReady, tmdbReady } from './fixtures/seerr';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -95,6 +96,14 @@ test.describe('seerr parental-rating filter', () => {
     test('restricted user is filtered server-side; admin and no-limit are not', async ({ page, consoleErrors }) => {
         // ── Admin: discover the restricted user and impose a PG-13 (13) limit ──
         await loginAs(page, 'admin', consoleErrors);
+        // The reproducible docker seed is bare: without a live Jellyseerr + TMDB
+        // backend the search returns nothing and this security guard can't run.
+        // Skip cleanly rather than fail on an unmet precondition (set
+        // JELLYSEERR_* / TMDB_API_KEY at seed time to run).
+        test.skip(
+            !(await seerrReady(page)) || !(await tmdbReady(page)),
+            'Seerr/TMDB not configured — set JELLYSEERR_* and TMDB_API_KEY at seed time to run'
+        );
         const restrictedUserId = await findRestrictedUserId(page, 'je_arruser');
 
         try {

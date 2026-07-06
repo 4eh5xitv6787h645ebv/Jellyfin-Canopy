@@ -11,9 +11,19 @@
 # Requirements: docker (compose v2), curl, jq. ffmpeg is used from the host
 # when available, otherwise from jellyfin-ffmpeg inside the pulled image.
 #
+# Optional Seerr/TMDB seeding (bare by default — no secrets in the repo/CI
+# unless supplied): export any of these before running to also wire the
+# TMDB and Jellyseerr integration the security specs exercise. When unset the
+# seed is bare and those specs SKIP (see e2e/fixtures/seerr.ts):
+#   TMDB_API_KEY               a TMDB v3 API key            -> TmdbEnabled
+#   JELLYSEERR_URL             a reachable Jellyseerr URL    \
+#   JELLYSEERR_API_KEY         its API key                   > JellyseerrEnabled
+#   JELLYSEERR_RESPECT_PARENTAL  true|false (default true) — parental gating
+#
 # Usage:
 #   dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release
-#   bash e2e/docker/seed.sh                # default port 8100
+#   bash e2e/docker/seed.sh                # default port 8100 (bare)
+#   TMDB_API_KEY=... JELLYSEERR_URL=... JELLYSEERR_API_KEY=... bash e2e/docker/seed.sh
 #   JF_BASE_URL=http://localhost:8100 npm run e2e
 #   docker compose -f e2e/docker/compose.yml down -v
 set -euo pipefail
@@ -134,16 +144,50 @@ api POST "/Library/VirtualFolders?name=Movies&collectionType=movies&paths=%2Fmed
 log "creating user ${USER_NAME}"
 api POST /Users/New "{\"Name\":\"${USER_NAME}\",\"Password\":\"${USER_PASS}\"}" >/dev/null
 
-# ── 5. plugin feature flags + scan wait ──────────────────────────────────────
+# ── 5. plugin feature flags (+ optional TMDB/Seerr) + scan wait ──────────────
 log "enabling the plugin features the specs exercise"
+
+# Optional Seerr/TMDB integration — bare unless the env vars are supplied
+# (never hardcode a key; CI passes these as secrets when it wants the security
+# specs to RUN rather than SKIP). See e2e/fixtures/seerr.ts for the gate.
+TMDB_API_KEY="${TMDB_API_KEY:-}"
+JELLYSEERR_URL="${JELLYSEERR_URL:-}"
+JELLYSEERR_API_KEY="${JELLYSEERR_API_KEY:-}"
+case "${JELLYSEERR_RESPECT_PARENTAL:-true}" in
+    false|FALSE|0|no) JELLYSEERR_RESPECT_PARENTAL=false ;;
+    *) JELLYSEERR_RESPECT_PARENTAL=true ;;
+esac
+
 PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration" \
-    | jq '.QualityTagsEnabled = true
+    | jq --arg tmdb "${TMDB_API_KEY}" \
+         --arg seerrUrl "${JELLYSEERR_URL}" \
+         --arg seerrKey "${JELLYSEERR_API_KEY}" \
+         --argjson seerrParental "${JELLYSEERR_RESPECT_PARENTAL}" \
+        '.QualityTagsEnabled = true
         | .GenreTagsEnabled = true
         | .LanguageTagsEnabled = true
         | .RatingTagsEnabled = true
         | .RandomButtonEnabled = true
-        | .HiddenContentEnabled = true')"
+        | .HiddenContentEnabled = true
+        | (if $tmdb != "" then .TMDB_API_KEY = $tmdb else . end)
+        | (if ($seerrUrl != "" and $seerrKey != "")
+             then .JellyseerrUrls = $seerrUrl
+                | .JellyseerrApiKey = $seerrKey
+                | .JellyseerrEnabled = true
+                | .JellyseerrRespectParentalRatings = $seerrParental
+             else . end)')"
 api POST "/Plugins/${PLUGIN_ID}/Configuration" "${PLUGIN_CONFIG}" >/dev/null
+
+if [ -n "${TMDB_API_KEY}" ]; then
+    log "optional: TMDB configured (TmdbEnabled)"
+else
+    log "optional: TMDB not configured — TMDB/reviews specs will SKIP"
+fi
+if [ -n "${JELLYSEERR_URL}" ] && [ -n "${JELLYSEERR_API_KEY}" ]; then
+    log "optional: Jellyseerr configured (${JELLYSEERR_URL}, respectParental=${JELLYSEERR_RESPECT_PARENTAL})"
+else
+    log "optional: Jellyseerr not configured — Seerr specs will SKIP"
+fi
 
 log "waiting for the library scan to index the movies"
 ADMIN_ID="$(api GET /Users | jq -r --arg name "${ADMIN_USER}" '.[] | select(.Name == $name) | .Id')"
