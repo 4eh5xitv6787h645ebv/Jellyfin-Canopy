@@ -48,9 +48,10 @@ public class ArrTagServiceTests
         var handler = new RecordingHttpMessageHandler();
         var service = CreateService(handler, _logger);
 
-        var result = await service.GetSeriesTagsByTvdbId("http://169.254.169.254:8989", "key");
+        var result = await service.GetSeriesTagsAsync("http://169.254.169.254:8989", "key");
 
-        Assert.Empty(result);
+        Assert.Empty(result.ByTvdbId);
+        Assert.Empty(result.ByImdbId);
         Assert.Empty(handler.Requests);
     }
 
@@ -84,7 +85,7 @@ public class ArrTagServiceTests
     }
 
     [Fact]
-    public async Task GetSeriesTags_MapsLabelsByImdbId_UsingSeriesEndpoint()
+    public async Task GetSeriesTags_MapsLabelsByTvdbId_AndImdbFallback()
     {
         var handler = new RecordingHttpMessageHandler();
         handler.AddResponse("/api/v3/tag", """[{"id":1,"label":"alice"}]""");
@@ -96,11 +97,19 @@ public class ArrTagServiceTests
             """);
         var service = CreateService(handler, _logger);
 
-        var result = await service.GetSeriesTagsByTvdbId("http://localhost:8989", "api-key");
+        var result = await service.GetSeriesTagsAsync("http://localhost:8989", "api-key");
 
-        var only = Assert.Single(result);
-        Assert.Equal("tt0000001", only.Key);
-        Assert.Equal(new[] { "alice" }, only.Value);
+        // TVDB is the canonical key: BOTH series map by TVDB, including the IMDb-less one
+        // that the former IMDb-only keying silently dropped.
+        Assert.Equal(2, result.ByTvdbId.Count);
+        Assert.Equal(new[] { "alice" }, result.ByTvdbId[5000]);
+        Assert.Equal(new[] { "alice" }, result.ByTvdbId[5001]);
+
+        // The IMDb fallback map carries only the series that has an IMDb id.
+        var imdb = Assert.Single(result.ByImdbId);
+        Assert.Equal("tt0000001", imdb.Key);
+        Assert.Equal(new[] { "alice" }, imdb.Value);
+
         Assert.Equal("http://localhost:8989/api/v3/series", handler.Requests[1].RequestUri!.ToString());
     }
 

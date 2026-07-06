@@ -179,7 +179,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
             ArrTagsSyncEnabled = false;
             SonarrApiKey = "";
             RadarrApiKey = "";
-            ArrTagsPrefix = "JE Arr Tag: ";
+            ArrTagsPrefix = DefaultArrTagsPrefix;
             ArrTagsClearOldTags = true;
             ArrTagsShowAsLinks = true;
             ArrTagsLinksFilter = "";
@@ -478,6 +478,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
         public string RadarrInstances { get; set; } = "[]";
 
         // Arr Tags Sync Settings
+
+        /// <summary>
+        /// The default prefix applied to synced *arr tags. Shared by the property
+        /// initializer above and the sync task's <c>ResolveTagPrefix</c> (and mirrored
+        /// by the client read side in <c>arr-tag-links.ts</c>) so the write and read
+        /// defaults can never diverge when the admin blanks the field. This is a const,
+        /// not a new configuration property — no public-config golden shift.
+        /// </summary>
+        public const string DefaultArrTagsPrefix = "JE Arr Tag: ";
+
         public bool ArrTagsSyncEnabled { get; set; }
         public string SonarrApiKey { get; set; }
         public string RadarrApiKey { get; set; }
