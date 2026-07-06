@@ -13,7 +13,10 @@ import type { JEGlobal } from '../types/je';
 (function (JE: JEGlobal) {
     'use strict';
 
-    const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/n00bcodr/Jellyfin-Enhanced/main/Jellyfin.Plugin.JellyfinEnhanced/js/locales';
+    // The v12 fork's locales — the upstream repo (n00bcodr/main) is a different
+    // codebase whose key set differs, so its JSON would introduce missing/mismatched
+    // strings. Only used as the last-resort fallback when AssetCacheEnabled === false.
+    const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Enhanced/v12/main/Jellyfin.Plugin.JellyfinEnhanced/js/locales';
     const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
     type LangResult = { translations: Record<string, string>; usedLang: string };
