@@ -96,6 +96,9 @@ jobs:
       - name: ESLint
         run: npm run lint
 
+      - name: Script unit tests (translation validator hardening)
+        run: npm run test:scripts
+
       - name: Type check (opt-in @ts-check files)
         run: npm run typecheck
 
