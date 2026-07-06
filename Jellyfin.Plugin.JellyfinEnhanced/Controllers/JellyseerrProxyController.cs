@@ -295,8 +295,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         [Authorize]
         public Task<IActionResult> GetJellyseerrRequests([FromQuery] int take = 500, [FromQuery] int skip = 0, [FromQuery] string filter = "all")
         {
-            return ProxyJellyseerrRequest($"/api/v1/request?take={take}&skip={skip}&filter={filter}", HttpMethod.Get);
+            return ProxyJellyseerrRequest(BuildRequestsProxyPath(take, skip, filter), HttpMethod.Get);
         }
+
+        // Escapes filter (take/skip are ints, already safe) so a crafted value can't smuggle extra
+        // query params into the upstream path — matching the sibling GetJellyseerrIssues route.
+        // Extracted so the escaping is unit-testable without a live proxy round-trip.
+        internal static string BuildRequestsProxyPath(int take, int skip, string filter)
+            => $"/api/v1/request?take={take}&skip={skip}&filter={Uri.EscapeDataString(filter)}";
 
         // Returns the user's Seerr quota with a nextResetAt added per side.
         [HttpGet("jellyseerr/quota")]

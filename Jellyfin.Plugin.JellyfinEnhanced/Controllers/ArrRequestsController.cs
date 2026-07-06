@@ -687,12 +687,24 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 {
                     error = true,
                     code = "requests_fetch_failed",
-                    message = $"Failed to fetch requests from Jellyseerr: {ex.Message}",
+                    // Sanitize for non-admins: an HttpRequestException/URI-bearing message can carry
+                    // the internal Seerr host:port, which a non-admin caller must not see. The full
+                    // detail stays in the server log above.
+                    message = BuildRequestsFetchErrorMessage(IsAdminUser(), ex.Message),
                     requests = new List<object>(),
                     totalPages = 0,
                     totalResults = 0,
                 });
             }
+        }
+
+        // Builds the outer-catch "requests fetch failed" message. Admins see the raw exception text;
+        // non-admins get the Seerr URL/host rewritten to <seerr-url>. Extracted so the redaction is
+        // unit-testable without a live HTTP round-trip.
+        internal static string BuildRequestsFetchErrorMessage(bool isAdmin, string exMessage)
+        {
+            var full = $"Failed to fetch requests from Jellyseerr: {exMessage}";
+            return isAdmin ? full : Helpers.Jellyseerr.SeerrError.SanitizeMessage(full);
         }
 
         [HttpPost("arr/requests/{requestId}/approve")]
