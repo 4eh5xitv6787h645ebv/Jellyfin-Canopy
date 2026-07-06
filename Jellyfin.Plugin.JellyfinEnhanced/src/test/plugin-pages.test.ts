@@ -28,9 +28,23 @@ function markupOf(html: string): string {
     return html.split('<script>')[0];
 }
 
-/** The first <script> IIFE body. */
+/** The first <script> body. */
 function firstScript(html: string): string {
     return html.match(/<script>([\s\S]*?)<\/script>/)![1];
+}
+
+/**
+ * Execute an inline page <script> body against the current jsdom document. The
+ * scripts are the plugin's OWN shipped page bootstraps read from disk (trusted,
+ * no interpolation), executed to exercise their real DOM wiring.
+ */
+function runInlineScript(text: string): void {
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval, @typescript-eslint/no-unsafe-call
+    new Function(text)();
+}
+
+interface DownloadsJE {
+    downloadsPage: { _pluginPagePollTimer: number | null };
 }
 
 describe('nav-page container never self-destructs (SRV-3)', () => {
@@ -59,8 +73,7 @@ describe('nav-page container never self-destructs (SRV-3)', () => {
             const selector = c.containerId ? `#${c.containerId}` : '.sections.bookmarks';
             expect(ownPage.querySelector(selector), 'authored container present before script').not.toBeNull();
 
-            // eslint-disable-next-line no-new-func
-            new Function(firstScript(readPage(c.file)))();
+            runInlineScript(firstScript(readPage(c.file)));
 
             // The container must still be mounted inside the page's own container.
             expect(ownPage.querySelector(selector), 'container removed and never recreated (blank page)').not.toBeNull();
@@ -76,8 +89,7 @@ describe('nav-page container never self-destructs (SRV-3)', () => {
                 const ownPage = document.querySelector(`.${c.pageClass}`)!;
                 ownPage.querySelector(`#${c.containerId}`)!.remove(); // simulate a stray-only state
 
-                // eslint-disable-next-line no-new-func
-                new Function(firstScript(readPage(c.file)))();
+                runInlineScript(firstScript(readPage(c.file)));
 
                 expect(ownPage.querySelector(`#${c.containerId}`), 'container not recreated into own page').not.toBeNull();
             });
@@ -115,8 +127,7 @@ describe('DownloadsPage fallback poll (SRV-5)', () => {
 
         // Run the real page script, then let the 50ms bootstrap poll fire once so it
         // reaches the "ready" branch and installs the fallback poll.
-        // eslint-disable-next-line no-new-func
-        new Function(readPage('DownloadsPage.html').match(/<script>([\s\S]*?)<\/script>/)![1])();
+        runInlineScript(firstScript(readPage('DownloadsPage.html')));
         vi.advanceTimersByTime(50);
     }
 
@@ -134,7 +145,7 @@ describe('DownloadsPage fallback poll (SRV-5)', () => {
     it('stops the poll once the page (container) is gone', () => {
         const refresh = vi.fn();
         runDownloadsBootstrap(refresh);
-        const JE = (window as unknown as Record<string, any>).JellyfinEnhanced;
+        const JE = (window as unknown as { JellyfinEnhanced: DownloadsJE }).JellyfinEnhanced;
         expect(JE.downloadsPage._pluginPagePollTimer).toBeTruthy();
 
         document.getElementById('je-downloads-container')!.remove();
