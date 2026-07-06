@@ -42,7 +42,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
             "TagCacheMonitor.cs",             // record id -> TagCacheService debounced flush worker
             "SeerrScanTriggerService.cs",     // cheap config/kind check -> counter + debounce timer
             "WatchlistMonitor.cs",            // cheap Movie/Series reject -> Task.Run (lookup + writes off-thread)
-            "ContinueWatchingPlaybackEvents.cs", // capture id -> Task.Run (GetUsers + per-user prune off-thread)
+            "ContinueWatchingPlaybackEvents.cs", // record id -> debounced timer drain (GetUsers + per-user prune off-thread, coalesced)
         };
 
         [Fact]

@@ -36,6 +36,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 _hcCache.TryRemove(userId, out _);
         }
 
+        // Test seam: seed an (empty) cache entry for a user so a test can prove a writer invalidated
+        // it. Kept internal (Tests has InternalsVisibleTo) so no public surface leaks.
+        internal static void SeedCacheForTest(string userIdN)
+        {
+            if (!string.IsNullOrEmpty(userIdN))
+                _hcCache[userIdN] = (HideContext.Empty, DateTime.UtcNow);
+        }
+
+        // Test seam: whether a cache entry currently exists for a user.
+        internal static bool IsCachedForTest(string userIdN)
+            => !string.IsNullOrEmpty(userIdN) && _hcCache.ContainsKey(userIdN);
+
         private static readonly Dictionary<(string, string), (string Surface, ResponseHandler Handler)> _routes
             = new(KeyComparer.Instance)
         {
