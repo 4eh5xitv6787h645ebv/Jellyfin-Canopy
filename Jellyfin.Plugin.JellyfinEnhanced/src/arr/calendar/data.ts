@@ -9,6 +9,7 @@
 
 import { JE } from '../arr-globals';
 import { renderPage } from './render-views';
+import { getEventDateKey } from './event-date';
 import type { ApiApi } from '../../types/je';
 
 const logPrefix = '🪼 Jellyfin Enhanced: Calendar Page:';
@@ -31,6 +32,11 @@ export interface CalendarEvent {
     seasonNumber?: number;
     episodeNumber?: number;
     releaseDate?: string;
+    // True when releaseDate is a calendar day with no meaningful clock time; the
+    // event must bucket by releaseDateLocal without timezone conversion (CRIT-1).
+    dateOnly?: boolean;
+    // The intended "yyyy-MM-dd" calendar day for a date-only release.
+    releaseDateLocal?: string;
     releaseType?: string;
     source?: string;
     instanceName?: string;
@@ -431,15 +437,10 @@ export function groupEventsByDate(events: CalendarEvent[]): Record<string, Calen
     const grouped: Record<string, CalendarEvent[]> = {};
 
     events.forEach((event) => {
-        if (!event.releaseDate) {
-            return;
-        }
-        // Convert UTC timestamp to user's local date
-        const date = new Date(event.releaseDate);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const dateKey = `${year}-${month}-${day}`;
+        // getEventDateKey is the single decision point: date-only releases bucket
+        // by their server-supplied local day; genuine instants convert to local.
+        const dateKey = getEventDateKey(event);
+        if (!dateKey) return;
 
         if (!grouped[dateKey]) {
             grouped[dateKey] = [];

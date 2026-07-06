@@ -5,6 +5,7 @@
 import { assetUrl } from '../../core/asset-urls';
 import { JE } from '../arr-globals';
 import { state, STATUS_COLORS } from './data';
+import { getEventTimeLabel } from './event-date';
 import type { CalendarEvent } from './data';
 
 const escapeHtml = JE.escapeHtml;
@@ -111,18 +112,6 @@ function formatReleaseLabel(event: CalendarEvent): string {
     return 'Release';
 }
 
-// Format event time for display
-function formatEventTime(releaseDate: string | undefined): string | null {
-    if (!releaseDate) return null;
-    const date = new Date(releaseDate);
-    if (Number.isNaN(date.getTime())) return null;
-
-    if (date.getHours() === 0 && date.getMinutes() === 0) return null;
-
-    const hour12 = state.settings.timeFormat === '5pm/5:30pm';
-    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12 });
-}
-
 // Format date range label for header
 export function formatRangeLabel(): string {
     if (!state.rangeStart || !state.rangeEnd) {
@@ -213,7 +202,7 @@ function buildInstanceLabel(event: CalendarEvent): string {
 }
 
 function buildTimePill(event: CalendarEvent): string {
-    const timeLabel = formatEventTime(event.releaseDate);
+    const timeLabel = getEventTimeLabel(event);
     if (!timeLabel) return '';
 
     const releaseDate = event.releaseDate ? new Date(event.releaseDate) : null;
@@ -230,7 +219,7 @@ function buildTimePill(event: CalendarEvent): string {
 }
 
 function formatTimeText(event: CalendarEvent): string {
-    const timeLabel = formatEventTime(event.releaseDate);
+    const timeLabel = getEventTimeLabel(event);
     return timeLabel ? `<span style="opacity: 0.85; font-size: 1em;">${escapeHtml(timeLabel)}</span>` : '';
 }
 
@@ -295,7 +284,7 @@ export function renderAgendaEvent(event: CalendarEvent): string {
     const sourceLabel = escapeHtml(sourceLabelRaw);
     const iconClass = event.source === 'Sonarr' ? 'je-sonarr-icon' : 'je-radarr-icon';
     const subtitle = event.subtitle || '';
-    const timeLabel = formatEventTime(event.releaseDate);
+    const timeLabel = getEventTimeLabel(event);
     const hasFileClass = event.hasFile ? ' je-has-file' : '';
 
     // Build indicators array (only add if they exist)

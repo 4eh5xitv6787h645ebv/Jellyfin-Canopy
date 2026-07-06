@@ -387,8 +387,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     foreach (var episode in data.AsArray())
                     {
                         var series = episode?["series"];
-                        var airDate = parseDate((string?)episode?["airDateUtc"] ?? (string?)episode?["airDate"]);
+                        var airDateUtcRaw = (string?)episode?["airDateUtc"];
+                        var airDate = parseDate(airDateUtcRaw ?? (string?)episode?["airDate"]);
                         if (!airDate.HasValue) continue;
+                        // Genuine instant only when airDateUtc was present; the airDate fallback
+                        // is a calendar day with no broadcast time and must render date-only.
+                        var sonarrDateOnly = string.IsNullOrWhiteSpace(airDateUtcRaw);
 
                         string? seriesPosterUrl = null;
                         string? seriesBackdropUrl = null;
@@ -410,6 +414,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         var episodeNumber = (int?)episode?["episodeNumber"] ?? 0;
                         var episodeTitle = (string?)episode?["title"] ?? "Unknown Episode";
 
+                        var (sonarrIso, sonarrLocal) = Helpers.Arr.ArrReleaseDate.Build(airDate.Value.ToUniversalTime(), sonarrDateOnly);
+
                         items.Add(new ArrItem
                         {
                             // Namespace the per-instance row id by source+instance so two Sonarr
@@ -420,7 +426,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             Type = "Series",
                             Title = (string?)series?["title"] ?? "Unknown Series",
                             Subtitle = $"S{seasonNumber:D2}E{episodeNumber:D2} - {episodeTitle}",
-                            ReleaseDate = airDate.Value.ToUniversalTime().ToString("o"),
+                            ReleaseDate = sonarrIso,
+                            ReleaseDateLocal = sonarrLocal,
+                            DateOnly = sonarrDateOnly,
                             ReleaseType = "Episode",
                             HasFile = (bool?)episode?["hasFile"] ?? false,
                             Monitored = (bool?)episode?["monitored"] ?? false,
@@ -510,6 +518,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         {
                             var releaseUtc = kvp.Value.ToUniversalTime();
                             if (releaseUtc < startDate || releaseUtc > endDate) continue;
+                            // Radarr cinema/digital/physical releases are date-granularity by
+                            // definition — emit the date-only contract so the client buckets them
+                            // on the correct local day and prints no bogus clock time.
+                            var (releaseIso, releaseLocal) = Helpers.Arr.ArrReleaseDate.Build(releaseUtc, dateOnly: true);
                             items.Add(new ArrItem
                             {
                                 // Namespace the per-instance row id (plus release-type) by source+instance
@@ -520,7 +532,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                                 Type = "Movie",
                                 Title = movieTitle,
                                 Subtitle = movieYear,
-                                ReleaseDate = releaseUtc.ToString("o"),
+                                ReleaseDate = releaseIso,
+                                ReleaseDateLocal = releaseLocal,
+                                DateOnly = true,
                                 ReleaseType = kvp.Key,
                                 HasFile = (bool?)movie?["hasFile"] ?? false,
                                 Monitored = (bool?)movie?["monitored"] ?? false,

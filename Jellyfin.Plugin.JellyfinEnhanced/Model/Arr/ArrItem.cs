@@ -42,6 +42,21 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Model.Arr {
         public string? ReleaseDate { get; set; }
 
         /// <summary>
+        /// True when ReleaseDate represents a calendar DAY with no meaningful clock time
+        /// (Radarr cinema/digital/physical releases; Sonarr airDate fallback). The client must
+        /// bucket these by ReleaseDateLocal WITHOUT timezone conversion and print no time.
+        /// </summary>
+        [JsonPropertyName("dateOnly")]
+        public bool DateOnly { get; set; }
+
+        /// <summary>
+        /// The intended calendar date as "yyyy-MM-dd" (no time, no zone) when DateOnly is true;
+        /// null for genuine instants. This is the timezone-proof bucket key for the client.
+        /// </summary>
+        [JsonPropertyName("releaseDateLocal")]
+        public string? ReleaseDateLocal { get; set; }
+
+        /// <summary>
         /// Release type (DigitalRelease, PhysicalRelease, Episode, etc.)
         /// </summary>
         [JsonPropertyName("releaseType")]
