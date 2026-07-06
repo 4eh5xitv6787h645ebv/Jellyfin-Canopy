@@ -8,6 +8,7 @@
 import { JE as JEBase } from '../globals';
 import { register, reinitialize, resolvePosition } from '../core/tag-renderer-base';
 import type { TagRendererContext, TagSpec } from '../types/je';
+import { shouldSuppressRatingTag as decideSuppressRatingTag, type SuppressionItem } from '../enhanced/spoiler-guard/suppression';
 
 /**
  * Local view of the shared namespace adding the public members this module
@@ -22,6 +23,27 @@ const JE = JEBase as typeof JEBase & {
 const logPrefix = '🪼 Jellyfin Enhanced: Rating Tags:';
 const containerClass = 'rating-overlay-container';
 const tagClass = 'rating-tag';
+
+/**
+ * True when a rating tag must be SUPPRESSED because the item is (or belongs to)
+ * a Spoiler-Guarded series and ratings are hidden for this user. Thin wrapper
+ * over the pure decision table (spoiler-guard/suppression.ts) that resolves the
+ * live config + JE.spoilerGuard accessors. Fails closed while state is loading
+ * / on error. The user's own rating overlay is intentionally kept.
+ */
+function shouldSuppressRatingTag(item: SuppressionItem | null | undefined): boolean {
+    const cfg = JE.pluginConfig;
+    if (!cfg || cfg.SpoilerBlurEnabled !== true) return false;
+    const sg = JE.spoilerGuard;
+    if (!sg || typeof sg.isEnabledFor !== 'function') return false;
+    return decideSuppressRatingTag(item, {
+        spoilerBlurEnabled: true,
+        stripRatings: cfg.SpoilerStripRatings !== false,
+        hideRatings: (sg.getUserPrefs?.().HideRatings) !== false,
+        loadOk: typeof sg.isLoadOk === 'function' ? sg.isLoadOk() === true : true,
+        isSeriesEnabled: (id) => sg.isEnabledFor(id) === true,
+    });
+}
 
 // PERF(R6): the RT tomato glyphs were `url(assets/img/{fresh,rotten}.svg)`, which
 // resolve relative to /web/ and do not exist anywhere in the tree (404, no icon).
@@ -223,6 +245,19 @@ const spec: TagSpec = {
             if (el.closest('.je-hidden')) return;
 
             const itemId = item.Id;
+
+            // Spoiler Guard: suppress the rating tag for guarded
+            // series/seasons/unwatched-episodes. Checked BEFORE the hot-cache
+            // path so a rating cached before the show was guarded can't replay
+            // onto the card. Keep the user's own rating — it isn't a spoiler.
+            if (shouldSuppressRatingTag(item)) {
+                ctx.markTagged(el);
+                if (typeof JE.appendUserRatingToContainer === 'function') {
+                    void JE.appendUserRatingToContainer(el, item, extras);
+                }
+                return;
+            }
+
             // Check hot cache
             const cached = getCachedEntry(ctx, itemId);
             if (cached && cached.tmdb !== undefined) {
@@ -257,7 +292,12 @@ const spec: TagSpec = {
             setCachedEntry(ctx, itemId, { ...rating, tmdbId, seriesTmdbId, tmdbMediaType,
                 seasonNumber: item.IndexNumber ?? null,
                 episodeNumber: item.Type === 'Episode' ? item.IndexNumber : null,
-                parentSeasonNumber: item.Type === 'Episode' ? item.ParentIndexNumber : null });
+                parentSeasonNumber: item.Type === 'Episode' ? item.ParentIndexNumber : null,
+                // Stash the Spoiler-Guard-relevant fields so renderFromCache can
+                // re-evaluate suppression without the full item DTO.
+                sgType: item.Type,
+                sgSeriesId: item.SeriesId || (item.Type === 'Series' ? item.Id : null),
+                sgPlayed: item.UserData ? item.UserData.Played === true : false });
 
             if (tmdb || critic !== null) {
                 applyRatingTag(ctx, el, rating);
@@ -274,6 +314,16 @@ const spec: TagSpec = {
             if (el.closest('.je-hidden')) return true;
             const cached = getCachedEntry(ctx, itemId);
             if (!cached) return false;
+            // Re-evaluate Spoiler-Guard suppression from the guard fields stashed
+            // at cache time — a rating cached before the show was guarded must not
+            // replay onto the card. Keep the user rating.
+            if (shouldSuppressRatingTag({ Type: cached.sgType, Id: itemId, SeriesId: cached.sgSeriesId, UserData: { Played: cached.sgPlayed } })) {
+                ctx.markTagged(el);
+                if (typeof JE.appendUserRatingToContainer === 'function' && (cached.tmdbId || cached.seriesTmdbId)) {
+                    void JE.appendUserRatingToContainer(el, { Type: cached.sgType, ProviderIds: cached.tmdbId ? { Tmdb: cached.tmdbId } : {}, SeriesProviderIds: cached.seriesTmdbId ? { Tmdb: cached.seriesTmdbId } : {} });
+                }
+                return true;
+            }
             if (cached.tmdb || cached.critic !== null) {
                 applyRatingTag(ctx, el, cached);
             }
@@ -301,6 +351,16 @@ const spec: TagSpec = {
         renderFromServerCache(ctx, el, entry: any) {
             if (ctx.isTagged(el)) return;
             if (ctx.shouldIgnore(el)) return;
+            // Series / Season guard: a guarded show's season entry can carry the
+            // series-fallback rating, so suppress it. Episodes are intentionally
+            // NOT gated here — this path has no Played info and the server strip
+            // is watched-aware, so suppressing would wrongly hide a WATCHED
+            // episode's rating.
+            if ((entry.Type === 'Series' || entry.Type === 'Season')
+                && shouldSuppressRatingTag({ Type: entry.Type, Id: entry.Id, SeriesId: entry.SeriesId })) {
+                ctx.markTagged(el);
+                return;
+            }
             const tmdb = entry.CommunityRating != null
                 ? parseFloat(entry.CommunityRating).toFixed(1)
                 : null;

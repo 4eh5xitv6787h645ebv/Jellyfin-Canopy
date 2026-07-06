@@ -469,6 +469,8 @@ export interface TagPipelineLike {
     getRenderer?(name: string): { injectCss?: () => void } | undefined;
     clearProcessed?(): void;
     scheduleScan?(): void;
+    /** Drop + reload the server tag cache and rescan (e.g. after a Spoiler Guard toggle). */
+    invalidateServerCache?(): Promise<void>;
 }
 
 // ── live-update contracts ────────────────────────────────────────────────────

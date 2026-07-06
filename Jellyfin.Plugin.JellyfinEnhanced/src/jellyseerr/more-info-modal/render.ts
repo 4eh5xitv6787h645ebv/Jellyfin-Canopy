@@ -74,6 +74,7 @@ return `
                                 ${data.tagline ? `<p class="tagline">${escapeHtml(data.tagline)}</p>` : ''}
                                 <div class="je-downloads" data-mount="je-downloads"></div>
                                 <div class="je-more-info-actions" data-mount="je-actions"></div>
+                                <div class="je-more-info-secondary-actions" data-mount="je-secondary-actions"></div>
                             </div>
                         </div>
 

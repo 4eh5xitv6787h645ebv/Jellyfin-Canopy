@@ -8,6 +8,7 @@ import { JE } from '../../globals';
 
 
 import { internal } from './internal';
+import { buildSeerrPendingToggle } from '../../enhanced/spoiler-guard/seerr-toggle';
 const state = internal.state;
 const logPrefix = '🪼 Jellyfin Enhanced: Jellyseerr More Info:';
 const escapeHtml = JE.escapeHtml;
@@ -280,6 +281,21 @@ const downloadsMount = state.currentModal.querySelector('[data-mount="je-downloa
 if (actionMount) actionMount.innerHTML = '';
 if (chipMount) chipMount.innerHTML = '';
 if (downloadsMount) downloadsMount.innerHTML = '';
+
+// Spoiler Guard pending toggle: a quiet secondary action that sits below the
+// primary Request CTA, independent of request status (pre-arm before request,
+// or register intent on a title someone else requested). Its own mount so the
+// actionMount.innerHTML resets above don't wipe it.
+const secondaryMount = state.currentModal.querySelector('[data-mount="je-secondary-actions"]');
+if (secondaryMount) {
+    secondaryMount.innerHTML = '';
+    try {
+        const spoilerBtn = buildSeerrPendingToggle(data, mediaType);
+        if (spoilerBtn) secondaryMount.appendChild(spoilerBtn);
+    } catch (err) {
+        console.warn(`${logPrefix} failed to render spoiler toggle button:`, err);
+    }
+}
 
 if (mediaType === 'movie') {
     const mediaInfo = data.mediaInfo || {};

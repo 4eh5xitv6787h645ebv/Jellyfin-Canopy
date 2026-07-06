@@ -2,6 +2,7 @@
 
 import { JE as JEBase } from '../globals';
 import { ensureMaterialSymbolsFont } from '../core/ui-kit';
+import { decideReviewSuppression } from '../enhanced/spoiler-guard/suppression';
 import type { ApiApi, JELegacyHelpers, UserSettings } from '../types/je';
 
 /**
@@ -56,6 +57,46 @@ JE.initializeReviewsScript = function () {
     }
 
     const logPrefix = '🪼 Jellyfin Enhanced: Reviews:';
+
+    // Suppress the reviews panel when the item has Spoiler Guard enabled by the
+    // user AND the admin has SpoilerStripReviews on — TMDB and user reviews
+    // routinely contain plot spoilers. Async because Spoiler Guard loads its
+    // state lazily; whenLoaded() gives an authoritative answer even on a cold
+    // page load before the state fetch completes. Fail-CLOSED (suppress) on load
+    // failure or any error — "show reviews" is the spoiler-leaking path.
+    async function shouldSuppressForSpoilerMode(item: any, mediaType: string | undefined): Promise<boolean> {
+        try {
+            if (!JE.pluginConfig?.SpoilerBlurEnabled) return false;
+            // Default-on when the field is missing (server returns the C# default true).
+            if (JE.pluginConfig?.SpoilerStripReviews === false) return false;
+            const sg = JE.spoilerGuard;
+            if (!sg) return false;
+            if (typeof sg.whenLoaded === 'function') await sg.whenLoaded();
+            return decideReviewSuppression(item, mediaType, {
+                spoilerBlurEnabled: true,
+                stripReviews: true,
+                hideReviews: (sg.getUserPrefs?.().HideReviews) !== false,
+                loadOk: typeof sg.isLoadOk === 'function' ? sg.isLoadOk() === true : true,
+                isMovieEnabled: (id) => (sg.isMovieEnabledFor ? sg.isMovieEnabledFor(id) === true : false),
+                isSeriesEnabled: (id) => (sg.isEnabledFor ? sg.isEnabledFor(id) === true : false),
+            });
+        } catch (e) {
+            console.warn(`${logPrefix} Spoiler Guard check failed; suppressing reviews:`, e);
+            return true;
+        }
+    }
+
+    // If suppression flips on between two visits to the same page, an existing
+    // reviews section may already be in the DOM. Strip it on suppress.
+    function removeReviewsSection(page: Element | null): void {
+        try {
+            const root = page || document.querySelector('#itemDetailPage:not(.hide)') || document;
+            const sec = root.querySelector('.tmdb-reviews-section');
+            sec?.parentNode?.removeChild(sec);
+        } catch (e) {
+            console.warn(`${logPrefix} removeReviewsSection failed:`, e);
+        }
+    }
 
     function fetchReviews(tmdbId: string, mediaType: string): Promise<any[] | null> {
         const apiMediaType = mediaType === 'Series' ? 'tv' : 'movie';
@@ -814,6 +855,11 @@ JE.initializeReviewsScript = function () {
                 : await ApiClient.getItem(userId, itemId)) as any;
             const mediaType = item?.Type;
 
+            if (await shouldSuppressForSpoilerMode(item, mediaType)) {
+                removeReviewsSection(contextPage);
+                return;
+            }
+
             let tmdbKey: string | null = null;
             let apiMediaType: string;
 
@@ -1084,6 +1130,11 @@ JE.initializeReviewsScript = function () {
                     ? await JE.helpers.getItemCached(itemId, { userId })
                     : await ApiClient.getItem(userId, itemId)) as any;
                 const mediaType = item?.Type;
+
+                if (await shouldSuppressForSpoilerMode(item, mediaType)) {
+                    removeReviewsSection(visiblePage);
+                    return;
+                }
 
                 // Resolve tmdbKey and apiMediaType based on item type
                 let tmdbKey: string | null = null;
