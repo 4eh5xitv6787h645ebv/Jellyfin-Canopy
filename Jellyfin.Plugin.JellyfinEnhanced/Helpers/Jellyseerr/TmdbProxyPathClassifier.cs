@@ -170,9 +170,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr
             return false;
         }
 
-        // True when the query carries a non-empty append_to_response parameter. The
-        // parameter name is ASCII and forwarded verbatim, so a case-insensitive name
-        // match is sufficient; the value is only checked for non-emptiness.
+        // True when the query carries a non-empty append_to_response parameter. TMDB
+        // percent-decodes query param NAMES before matching them, so the gate must decode
+        // too: otherwise `append%5Fto_response` (%5F = '_') — or any percent-encoded spelling
+        // — slips past a raw string compare here while TMDB still decodes it and enumerates
+        // above-limit/adult titles. Uri.UnescapeDataString mirrors TMDB's decode (and never
+        // throws on malformed input, preserving Classify's no-throw contract); the compare is
+        // case-insensitive. append_to_response is TMDB v3's only response-appending mechanism
+        // (no aliases), so decoding the name closes the whole hole. The value is only checked
+        // for non-emptiness.
         private static bool HasAppendToResponse(string? query)
         {
             if (string.IsNullOrEmpty(query))
@@ -183,7 +189,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr
             foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
             {
                 var eq = pair.IndexOf('=');
-                var name = eq >= 0 ? pair.Substring(0, eq) : pair;
+                var rawName = eq >= 0 ? pair.Substring(0, eq) : pair;
+                var name = Uri.UnescapeDataString(rawName);
                 if (Eq(name, "append_to_response"))
                 {
                     var value = eq >= 0 ? pair.Substring(eq + 1) : string.Empty;

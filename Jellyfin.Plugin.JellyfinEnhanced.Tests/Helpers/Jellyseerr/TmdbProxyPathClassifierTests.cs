@@ -75,6 +75,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Helpers.Jellyseerr
         public void AppendToResponse_ForcesRestricted(string apiPath)
             => Assert.Equal(TmdbProxyGate.Restricted, TmdbProxyPathClassifier.Classify(apiPath).Gate);
 
+        // ENCODED-NAME BYPASS: TMDB percent-decodes query param names, so a rating-limited
+        // caller who spells append_to_response with an encoded character — %5F for the
+        // underscore, %61 for 'a', etc. — must still be Restricted. RED before the name is
+        // decoded here: a raw string compare misses `append%5Fto_response` while TMDB still
+        // honors it and enumerates above-limit/adult titles the passthrough cannot body-filter.
+        [Theory]
+        [InlineData("movie/550?append%5Fto_response=similar")]
+        [InlineData("movie/550?append%5Fto_response=similar,recommendations")]
+        [InlineData("tv/1399?APPEND%5FTO_RESPONSE=recommendations")]
+        [InlineData("movie/550?language=en&append%5fto_response=videos")]
+        [InlineData("movie/550?%61ppend_to_response=similar")]
+        public void AppendToResponse_EncodedName_ForcesRestricted(string apiPath)
+            => Assert.Equal(TmdbProxyGate.Restricted, TmdbProxyPathClassifier.Classify(apiPath).Gate);
+
         // Class guard: a future dev adding a raw-TMDB shape without classifying it must
         // get Restricted (blocked-by-default), never a silent passthrough.
         [Fact]
