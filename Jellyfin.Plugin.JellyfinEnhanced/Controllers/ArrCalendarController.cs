@@ -380,12 +380,6 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             return Ok(new { events, errors });
         }
 
-        // Cross-instance dedup key. A series tvdbId + S/E (or a movie tmdbId + release-type) already
-        // uniquely identifies the item, so the release date is intentionally NOT part of the key: a
-        // given episode/movie-release can't legitimately occur twice, and including the date could only
-        // false-split the same item across a UTC-midnight boundary (the TZ drift the old normalizer
-        // tried to absorb) — never a wrong merge. TvdbId/TmdbId are pre-normalized by
-        // ArrIdHelper.ToNullableId, so a present-but-0 id takes the title fallback.
         /// <summary>True for a well-formed "yyyy-MM-dd" local-day key.</summary>
         internal static bool IsDayKey(string? value)
             => !string.IsNullOrEmpty(value)
@@ -414,15 +408,25 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             return releaseUtc >= startUtc && releaseUtc <= endUtc;
         }
 
+        // Cross-instance dedup key. A series tvdbId + S/E (or a movie tmdbId + release-type) already
+        // uniquely identifies the item, so the release date is intentionally NOT part of the key for
+        // the id path: a given episode/movie-release can't legitimately occur twice, and including the
+        // date could only false-split the same item across a UTC-midnight boundary — never a wrong
+        // merge. TvdbId/TmdbId are pre-normalized by ArrIdHelper.ToNullableId, so a present-but-0 id
+        // takes the title fallback. That fallback CANNOT prove two same-title rows are the same item,
+        // so it must carry discriminators (instance + year/air-date); otherwise two unmapped same-title
+        // shows or same-title movie remakes would collapse into one row and hide content (ARR-CS-2).
         internal static string BuildDedupKey(ArrItem evt)
         {
             if (evt.Source == nameof(ArrType.Sonarr))
             {
-                var seriesKey = evt.TvdbId?.ToString() ?? $"title:{evt.Title}";
+                var seriesKey = evt.TvdbId?.ToString()
+                    ?? $"title:{evt.Title}|inst:{evt.InstanceName}|date:{evt.ReleaseDateLocal ?? evt.ReleaseDate}";
                 return $"sonarr|{seriesKey}|S{evt.SeasonNumber}E{evt.EpisodeNumber}";
             }
 
-            var movieKey = evt.TmdbId?.ToString() ?? $"title:{evt.Title}";
+            var movieKey = evt.TmdbId?.ToString()
+                ?? $"title:{evt.Title}|inst:{evt.InstanceName}|year:{evt.Subtitle}";
             return $"radarr|{movieKey}|{evt.ReleaseType}";
         }
 

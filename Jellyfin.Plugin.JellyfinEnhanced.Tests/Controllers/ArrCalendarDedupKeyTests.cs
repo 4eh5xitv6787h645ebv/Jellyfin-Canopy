@@ -65,5 +65,79 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
 
             Assert.NotEqual(ArrCalendarController.BuildDedupKey(e2), ArrCalendarController.BuildDedupKey(e3));
         }
+
+        // ARR-CS-2: a 0/absent tvdbId/tmdbId takes the TITLE fallback. Without a provider id we cannot
+        // prove two same-title rows are the same item, so the fallback must carry discriminators or it
+        // merges genuinely-distinct items and hides content.
+
+        [Fact]
+        public void UnmappedSonarr_SameTitleAndEpisode_DifferentInstance_GetDistinctKeys()
+        {
+            var a = new ArrItem
+            {
+                Source = nameof(ArrType.Sonarr), TvdbId = null, Title = "The News",
+                InstanceName = "Anime", SeasonNumber = 1, EpisodeNumber = 1, ReleaseDateLocal = "2026-07-10",
+            };
+            var b = new ArrItem
+            {
+                Source = nameof(ArrType.Sonarr), TvdbId = null, Title = "The News",
+                InstanceName = "Docs", SeasonNumber = 1, EpisodeNumber = 1, ReleaseDateLocal = "2026-07-10",
+            };
+
+            Assert.NotEqual(ArrCalendarController.BuildDedupKey(a), ArrCalendarController.BuildDedupKey(b));
+        }
+
+        [Fact]
+        public void UnmappedSonarr_SameTitleAndEpisode_DifferentAirDate_GetDistinctKeys()
+        {
+            var a = new ArrItem
+            {
+                Source = nameof(ArrType.Sonarr), TvdbId = null, Title = "The News",
+                InstanceName = "Main", SeasonNumber = 1, EpisodeNumber = 1, ReleaseDateLocal = "2026-07-10",
+            };
+            var b = new ArrItem
+            {
+                Source = nameof(ArrType.Sonarr), TvdbId = null, Title = "The News",
+                InstanceName = "Main", SeasonNumber = 1, EpisodeNumber = 1, ReleaseDateLocal = "2026-07-11",
+            };
+
+            Assert.NotEqual(ArrCalendarController.BuildDedupKey(a), ArrCalendarController.BuildDedupKey(b));
+        }
+
+        [Fact]
+        public void UnmappedRadarr_SameTitleRemake_DifferentYear_SameReleaseType_GetDistinctKeys()
+        {
+            var original = new ArrItem
+            {
+                Source = nameof(ArrType.Radarr), TmdbId = null, Title = "The Batman",
+                Subtitle = "2004", InstanceName = "Movies", ReleaseType = "CinemaRelease",
+            };
+            var remake = new ArrItem
+            {
+                Source = nameof(ArrType.Radarr), TmdbId = null, Title = "The Batman",
+                Subtitle = "2022", InstanceName = "Movies", ReleaseType = "CinemaRelease",
+            };
+
+            Assert.NotEqual(ArrCalendarController.BuildDedupKey(original), ArrCalendarController.BuildDedupKey(remake));
+        }
+
+        [Fact]
+        public void UnmappedItems_TrulyIdentical_StillMerge()
+        {
+            // Same title, instance, year and release type with no provider id — as close to
+            // "identical" as the fallback can prove. These should still collapse to one row.
+            var a = new ArrItem
+            {
+                Source = nameof(ArrType.Radarr), TmdbId = null, Title = "Foo",
+                Subtitle = "2020", InstanceName = "Movies", ReleaseType = "CinemaRelease",
+            };
+            var b = new ArrItem
+            {
+                Source = nameof(ArrType.Radarr), TmdbId = null, Title = "Foo",
+                Subtitle = "2020", InstanceName = "Movies", ReleaseType = "CinemaRelease",
+            };
+
+            Assert.Equal(ArrCalendarController.BuildDedupKey(a), ArrCalendarController.BuildDedupKey(b));
+        }
     }
 }
