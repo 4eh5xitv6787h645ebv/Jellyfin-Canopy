@@ -5,8 +5,8 @@
 // exactly as it does in the browser; these tests drive it through real
 // history/event calls. URLs are unique per test because the dedup guard
 // (last dispatched href) is module state.
-import { describe, expect, it, vi } from 'vitest';
-import { handleHistoryUpdate, navDedupKey, offNavigate, onNavigate } from './navigation';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { handleHistoryUpdate, navDedupKey, offNavigate, onNavigate, onViewPage } from './navigation';
 
 describe('onNavigate dedup', () => {
     it('notifies exactly once for a pushState URL change', () => {
@@ -155,5 +155,67 @@ describe('HISTORY_UPDATE navigation source', () => {
         expect(callback).toHaveBeenCalledTimes(1);
 
         unsubscribe();
+    });
+});
+
+describe('viewshow rawEvent expiry', () => {
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('hands null to a router-internal onViewShow that had no fresh viewshow', () => {
+        vi.useFakeTimers();
+        const rawEvents: Array<CustomEvent | null> = [];
+        const unregister = onViewPage((_v, _el, _hash, _item, rawEvent) => {
+            rawEvents.push(rawEvent);
+        });
+
+        // A real DOM viewshow is captured (capture phase) and scheduled to expire.
+        document.dispatchEvent(new CustomEvent('viewshow', { detail: {} }));
+
+        // Let the captured event self-expire on the next macrotask.
+        vi.advanceTimersByTime(1);
+
+        // A later router-internal onViewShow (a same-path resolve with NO
+        // preceding viewshow) must receive null, never the previous view's event.
+        const page = window.Emby!.Page as unknown as {
+            onViewShow: (view: string, element: Element, hash: string) => void;
+        };
+        page.onViewShow('someView', document.createElement('div'), '');
+
+        expect(rawEvents.length).toBe(1);
+        expect(rawEvents[0]).toBeNull();
+
+        unregister();
+    });
+});
+
+describe('getItemFromHash id resolution', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+        window.location.hash = '';
+        history.replaceState({}, '', '/'); // neutral URL so search/hash don't bleed
+    });
+
+    it('resolves the item id from the hash query (legacy layout)', async () => {
+        const getItemSpy = vi.spyOn(ApiClient, 'getItem').mockResolvedValue({ Id: 'ABC' });
+        history.replaceState({}, '', '/web/'); // empty search
+        window.location.hash = '#/details?id=ABC';
+
+        const unregister = onViewPage(() => { /* noop */ }, { fetchItem: true, immediate: true });
+        await Promise.resolve();
+
+        expect(getItemSpy).toHaveBeenCalledWith('test-user-id', 'ABC');
+        unregister();
+    });
+
+    it('falls back to location.search when the hash carries no id (modern layout)', async () => {
+        const getItemSpy = vi.spyOn(ApiClient, 'getItem').mockResolvedValue({ Id: 'XYZ' });
+        window.location.hash = '';                        // modern layout: empty hash
+        history.replaceState({}, '', '/details?id=XYZ');  // id in location.search
+
+        const unregister = onViewPage(() => { /* noop */ }, { fetchItem: true, immediate: true });
+        await Promise.resolve();
+
+        expect(getItemSpy).toHaveBeenCalledWith('test-user-id', 'XYZ');
+        unregister();
     });
 });

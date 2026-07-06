@@ -192,14 +192,26 @@ let originalOnViewShow: ((view: string, element: Element, hash: string) => void)
 // router-internal onViewShow() calls (same-path resolves) don't see a
 // stale event from the previous view.
 let lastViewShowEvent: CustomEvent | null = null;
+// Same-tick expiry for lastViewShowEvent. A real onViewShow for the captured
+// view fires synchronously in the same bubble pass, so a genuine handoff never
+// needs the event to outlive the current macrotask. Anything still holding it on
+// the NEXT macrotask is a different view's router-internal resolve (no preceding
+// DOM viewshow) and must read `null`, not the previous view's stale event.
+let lastViewShowClearTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Get item from URL hash (cached via JE.helpers when available).
  */
 async function getItemFromHash(hash: string | undefined): Promise<unknown> {
     try {
-        const params = new URLSearchParams(String(hash || '').split('?')[1]);
-        const itemId = params.get('id');
+        // Legacy layout: the id lives in the hash query (`#/details?id=X`).
+        // Modern layout: the hash is empty and the id lives in location.search
+        // (`/details?id=X`). Check the hash first, then fall back to search.
+        const hashQuery = String(hash || '').split('?')[1] || '';
+        let itemId = new URLSearchParams(hashQuery).get('id');
+        if (!itemId && typeof window !== 'undefined' && window.location?.search) {
+            itemId = new URLSearchParams(window.location.search).get('id');
+        }
         if (!itemId) return null;
 
         if (typeof JE.helpers?.getItemCached === 'function') {
@@ -334,6 +346,10 @@ function installEmbyHook(): void {
 
         const rawEvent = lastViewShowEvent;
         lastViewShowEvent = null;
+        if (lastViewShowClearTimer) {
+            clearTimeout(lastViewShowClearTimer);
+            lastViewShowClearTimer = null;
+        }
         notifyViewHandlers(view, element, hash, rawEvent);
     };
 
@@ -343,9 +359,16 @@ function installEmbyHook(): void {
 
 function initialize(): void {
     // Capture the raw viewshow event before the router's bubble-phase
-    // listener forwards the show into our Emby.Page hook.
+    // listener forwards the show into our Emby.Page hook. Schedule a same-tick
+    // expiry so a router-internal onViewShow that fires WITHOUT a preceding
+    // viewshow (a later same-path resolve) can never consume this event.
     document.addEventListener('viewshow', (e) => {
         lastViewShowEvent = e as CustomEvent;
+        if (lastViewShowClearTimer) clearTimeout(lastViewShowClearTimer);
+        lastViewShowClearTimer = setTimeout(() => {
+            lastViewShowEvent = null;
+            lastViewShowClearTimer = null;
+        }, 0);
     }, true);
 
     // Fallback for hosts where Emby.Page never appears: drive view
@@ -355,6 +378,10 @@ function initialize(): void {
         if (embyHookInstalled) return;
         const rawEvent = e as CustomEvent<{ view?: Element } | undefined>;
         lastViewShowEvent = null;
+        if (lastViewShowClearTimer) {
+            clearTimeout(lastViewShowClearTimer);
+            lastViewShowClearTimer = null;
+        }
         notifyViewHandlers(getCurrentView() || undefined, rawEvent.detail?.view || null, window.location.hash, rawEvent);
     });
 
