@@ -231,6 +231,13 @@ export function disconnectAllObservers(): void {
     console.log('🪼 Jellyfin Enhanced: All observers and body subscribers disconnected');
 }
 
+// Process-lifetime monotonic counter for waitForElement subscriber ids.
+// Date.now() has millisecond granularity — two concurrent waitForElement calls
+// for the same selector in one ms would collide, so the second's onBodyMutation
+// callback would overwrite the first's and either timeout's unsubscribe() would
+// strand the shared key. A counter is collision-free by construction.
+let waitForElementSeq = 0;
+
 /**
  * Wait for an element to appear in the DOM
  * @param selector - CSS selector
@@ -244,7 +251,7 @@ export function waitForElement(selector: string, timeout = 10000): Promise<Eleme
             return;
         }
 
-        const observerId = `wait-${selector}-${Date.now()}`;
+        const observerId = `wait-${selector}-${++waitForElementSeq}`;
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
         const handle = onBodyMutation(observerId, () => {
@@ -288,6 +295,10 @@ interface InjectorEntry {
     anchorFn: () => HTMLElement | null;
     buildFn: (anchor: HTMLElement, ctx?: EnsureInjectedBuildContext) => HTMLElement | null | void;
     options: EnsureInjectedOptions;
+    // Set once when a buildFn returns void/null and leaves no [data-je-key] node:
+    // we warn a single time and then treat re-runs as cheap no-ops so a
+    // contract-breaking injector can't append an untagged node every batch.
+    _untaggedWarned?: boolean;
 }
 
 const injectors = new Map<string, InjectorEntry>();
@@ -296,6 +307,12 @@ let runAllScheduled = false;
 // Count of registered pre-paint injectors so the (hot) body-mutation callback
 // can skip the synchronous pass entirely when nothing opted in.
 let prePaintInjectorCount = 0;
+// PERF(R8): pre-paint injector loop budget. Matches the tag pipeline's
+// synchronous-scan budget: when a batch of pre-paint injectors exceeds this,
+// the remaining ones fall through to the rAF-coalesced runAllInjectors() pass
+// (still same-frame for most mutations, just not synchronous) so we never blow
+// the very frame the pre-paint pass means to join.
+const PREPAINT_BUDGET_MS = 2;
 
 const raf: (cb: () => void) => void =
     typeof requestAnimationFrame === 'function'
@@ -354,12 +371,35 @@ function runInjector(entry: InjectorEntry, prePaint = false): void {
             : isKeyedPresent(entry.key, entry.options.headerTray === true);
         if (present) return;
 
+        // A prior pass already ran a buildFn that produced no keyed node. Don't
+        // append again on every mutation — wait for an explicit run() or a
+        // re-register (which resets the entry) to try the contract again.
+        if (entry._untaggedWarned) return;
+
         const anchor = entry.anchorFn();
         if (!anchor) return; // host not mounted yet — a later re-run will retry
 
         const node = entry.buildFn(anchor, { prePaint });
         if (node instanceof HTMLElement && !node.dataset.jeKey) {
             node.dataset.jeKey = entry.key;
+            return;
+        }
+        // buildFn returned void/null (self-tagging contract). Verify it honoured
+        // the contract by leaving a keyed node behind; if not, warn ONCE and stop
+        // treating this as a productive pass so we don't append an untagged node
+        // every batch (a self-sustaining DOM flood).
+        if (!(node instanceof HTMLElement)) {
+            const stillPresent = entry.options.isPresent
+                ? entry.options.isPresent()
+                : isKeyedPresent(entry.key, entry.options.headerTray === true);
+            if (!stillPresent) {
+                entry._untaggedWarned = true;
+                console.warn(
+                    `🪼 Jellyfin Enhanced: ensureInjected("${entry.key}") buildFn returned no ` +
+                    `element and left no [data-je-key] node — it must self-tag or return the node. ` +
+                    `Suppressing re-runs for this key to avoid a DOM flood.`
+                );
+            }
         }
     } catch (err) {
         console.error(`🪼 Jellyfin Enhanced: Error in ensureInjected("${entry.key}"):`, err);
@@ -372,9 +412,21 @@ function runInjector(entry: InjectorEntry, prePaint = false): void {
  * that remounted their anchor, before that anchor's first paint.
  */
 function runPrePaintInjectors(): void {
+    const start = performance.now();
+    let deferred = false;
     injectors.forEach((entry) => {
-        if (entry.options.prePaint) runInjector(entry, true);
+        if (!entry.options.prePaint) return;
+        if (deferred) return; // budget already blown this batch — skip the rest
+        if (performance.now() - start > PREPAINT_BUDGET_MS) {
+            deferred = true;
+            return;
+        }
+        runInjector(entry, true);
     });
+    // Anything skipped for budget still gets injected by the rAF-coalesced pass
+    // the caller schedules right after us; scheduling it here too is harmless
+    // (it self-dedupes) and guarantees a follow-up even if the caller changes.
+    if (deferred) scheduleRunAll();
 }
 
 function runAllInjectors(): void {

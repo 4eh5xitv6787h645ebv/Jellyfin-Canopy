@@ -5,7 +5,7 @@
 // re-injection checks instead of one MutationObserver per feature).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JE } from '../globals';
-import { ensureInjected, onSidebarRebuild } from './dom-observer';
+import { ensureInjected, onSidebarRebuild, waitForElement } from './dom-observer';
 
 describe('ensureInjected', () => {
     beforeEach(() => {
@@ -208,6 +208,121 @@ describe('ensureInjected', () => {
         expect(tray.querySelector('[data-je-key="t-noprepaint"]')).not.toBeNull();
 
         handle.remove();
+    });
+});
+
+describe('ensureInjected untagged buildFn guard', () => {
+    beforeEach(() => { document.body.innerHTML = ''; });
+    afterEach(() => { document.body.innerHTML = ''; });
+
+    it('warns once and stops re-appending when buildFn returns void and never self-tags', () => {
+        const anchor = document.createElement('div');
+        document.body.appendChild(anchor);
+
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* silence */ });
+        let builds = 0;
+        const handle = ensureInjected('t-untagged', () => anchor, (a) => {
+            builds++;
+            a.appendChild(document.createElement('div')); // appends, returns void, never tags
+        });
+
+        // Boot pass appended exactly once and warned once.
+        expect(anchor.children.length).toBe(1);
+        expect(builds).toBe(1);
+
+        // Repeated passes must NOT append again (would be a DOM flood).
+        handle.run();
+        handle.run();
+        handle.run();
+
+        expect(anchor.children.length).toBe(1);
+        expect(builds).toBe(1);
+
+        const untaggedWarnings = warnSpy.mock.calls.filter((c) =>
+            String(c[0]).includes('buildFn returned no'));
+        expect(untaggedWarnings.length).toBe(1);
+
+        handle.remove();
+        warnSpy.mockRestore();
+    });
+});
+
+describe('runPrePaintInjectors R8 budget', () => {
+    beforeEach(() => { document.body.innerHTML = ''; });
+    afterEach(() => { document.body.innerHTML = ''; vi.restoreAllMocks(); });
+
+    it('defers pre-paint injectors past the ~2ms budget to the rAF pass', async () => {
+        const N = 4;
+        const tray = document.createElement('div');
+        document.body.appendChild(tray);
+
+        let builds = 0;
+        const handles = [];
+        for (let i = 0; i < N; i++) {
+            handles.push(ensureInjected(`t-budget-${i}`, () => tray, (a) => {
+                builds++;
+                const node = document.createElement('button');
+                a.appendChild(node);
+                return node;
+            }, { prePaint: true }));
+        }
+        // Boot passes injected all N.
+        expect(builds).toBe(N);
+
+        // Simulate the /video unmount: all N keyed nodes are destroyed so the
+        // next pass must rebuild them.
+        tray.querySelectorAll('[data-je-key]').forEach((n) => n.remove());
+
+        // Fake clock: each performance.now() advances 1.5ms, so after the first
+        // pre-paint rebuild the 2ms budget is already blown.
+        let clock = 0;
+        vi.spyOn(performance, 'now').mockImplementation(() => { const v = clock; clock += 1.5; return v; });
+
+        // Trigger a structural body mutation → the shared observer runs
+        // runPrePaintInjectors synchronously (a microtask), then schedules the
+        // rAF-coalesced pass (a macrotask).
+        tray.appendChild(document.createElement('div'));
+
+        // Flush ONLY microtasks: runPrePaintInjectors has run, the rAF pass has not.
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const rebuiltSynchronously = builds - N;
+        // Budget stopped the synchronous batch short — NOT every injector rebuilt.
+        expect(rebuiltSynchronously).toBeGreaterThanOrEqual(1);
+        expect(rebuiltSynchronously).toBeLessThan(N);
+
+        // Let the rAF-coalesced pass complete the deferred injectors.
+        await new Promise((r) => setTimeout(r, 50));
+        expect(tray.querySelectorAll('[data-je-key]').length).toBe(N);
+
+        handles.forEach((h) => h.remove());
+    });
+});
+
+describe('waitForElement unique subscriber ids', () => {
+    beforeEach(() => { document.body.innerHTML = ''; });
+    afterEach(() => { document.body.innerHTML = ''; vi.restoreAllMocks(); });
+
+    it('resolves both promises when two same-selector waits register in one ms', async () => {
+        // Freeze Date.now so the old timestamp-based id scheme would collide;
+        // the monotonic counter must still give each waiter a distinct id.
+        vi.spyOn(Date, 'now').mockReturnValue(1234);
+
+        const p1 = waitForElement('.dup-wait', 300);
+        const p2 = waitForElement('.dup-wait', 300);
+
+        const el = document.createElement('div');
+        el.className = 'dup-wait';
+        document.body.appendChild(el);
+
+        // Flush the shared body observer callback.
+        await new Promise((r) => setTimeout(r, 30));
+
+        const [r1, r2] = await Promise.all([p1, p2]);
+        expect(r1).toBe(el);
+        expect(r2).toBe(el);
     });
 });
 
