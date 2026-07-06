@@ -218,7 +218,13 @@ export function deduplicatedFetch<T>(key: string, fetchFn: () => Promise<T>, sig
 
     const promise = fetchFn()
         .finally(() => {
-            inFlightRequests.delete(key);
+            // Identity check: only evict if THIS promise still owns the key. After
+            // abortAllRequests() clears the map mid-flight, a later same-key caller
+            // may have registered a new promise under `key`; a blind delete would
+            // evict that live entry and strand a subsequent same-key caller.
+            if (inFlightRequests.get(key) === promise) {
+                inFlightRequests.delete(key);
+            }
         });
 
     inFlightRequests.set(key, promise);
@@ -307,7 +313,10 @@ function getCached(key: string): unknown {
     if (entry) {
         responseCache.delete(key);
     }
-    return null;
+    // `undefined` is the unambiguous miss sentinel: a faithfully-cached falsy
+    // value (false / 0 / '' / null) is still a hit and must not be re-fetched.
+    // coreFetch never stores `undefined` (smallest cacheable value is {}).
+    return undefined;
 }
 
 /**
@@ -499,7 +508,7 @@ async function coreFetch(url: string, options: CoreFetchOptions = {}): Promise<u
     // Check cache first (GET only)
     if (isGet && !skipCache && cacheKey) {
         const cached = getCached(cacheKey);
-        if (cached) return cached;
+        if (cached !== undefined) return cached;
     }
 
     const fetchFn = async (): Promise<unknown> => {

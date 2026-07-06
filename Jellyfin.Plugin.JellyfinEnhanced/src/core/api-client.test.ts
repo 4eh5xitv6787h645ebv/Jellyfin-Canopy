@@ -2,6 +2,7 @@
 // logic and the in-flight request deduplication.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { calculateBackoff, deduplicatedFetch, isRetryable } from './api-client';
+import { JE } from '../globals';
 import type { RetryConfig } from '../types/je';
 
 const baseConfig: RetryConfig = {
@@ -116,5 +117,77 @@ describe('deduplicatedFetch', () => {
             deduplicatedFetch('key-4', fetchFn, controller.signal)
         ]);
         expect(fetchFn).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('deduplicatedFetch identity eviction', () => {
+    // ABA hazard: abortAllRequests() clears the in-flight map mid-flight, then a
+    // new same-key promise B is registered. When the stale promise A settles, its
+    // .finally must NOT evict B (identity guard), or a later same-key caller misses
+    // dedup and issues a redundant request.
+    it('keeps a newer same-key promise when a stale one settles after abortAllRequests', async () => {
+        const manager = JE.core.api!.manager;
+        const key = 'aba-evict-key';
+
+        // A: register the key with a deferred promise we control; leave it pending.
+        let resolveA!: (value: string) => void;
+        const fetchA = vi.fn(() => new Promise<string>((resolve) => { resolveA = resolve; }));
+        void deduplicatedFetch(key, fetchA);
+        expect(fetchA).toHaveBeenCalledTimes(1);
+
+        // Navigation abort clears the map; A is uncancelled and still pending.
+        manager.abortAllRequests();
+
+        // B: register the same key again with a second deferred promise.
+        let resolveB!: (value: string) => void;
+        const fetchB = vi.fn(() => new Promise<string>((resolve) => { resolveB = resolve; }));
+        const bPromise = deduplicatedFetch(key, fetchB);
+        expect(fetchB).toHaveBeenCalledTimes(1);
+
+        // A third same-key caller must reuse B (dedup hit → its fetchFn never runs).
+        const thirdFn = vi.fn(() => Promise.resolve('third'));
+        void deduplicatedFetch(key, thirdFn);
+        expect(thirdFn).not.toHaveBeenCalled();
+
+        // Settle the STALE promise A: its .finally must not touch B's live entry.
+        resolveA('a-done');
+        await new Promise((resolve) => setTimeout(resolve, 0)); // flush A's finally
+
+        // A fourth same-key caller must STILL reuse B.
+        const fourthFn = vi.fn(() => Promise.resolve('fourth'));
+        void deduplicatedFetch(key, fourthFn);
+        expect(fourthFn).not.toHaveBeenCalled();
+
+        // Cleanup: settle B so no promise is left hanging.
+        resolveB('b-done');
+        await bPromise;
+    });
+});
+
+describe('getCached / coreFetch falsy-cache sentinel', () => {
+    it('serves a cached falsy value as a hit and reports a genuine miss as undefined', () => {
+        const manager = JE.core.api!.manager;
+        manager.setCache('falsy-hit-key', false);
+        expect(manager.getCached('falsy-hit-key')).toBe(false);
+        // A genuine miss is `undefined`, never a value that collides with a cached falsy.
+        expect(manager.getCached('never-cached-key')).toBeUndefined();
+    });
+
+    it('coreFetch returns a cached falsy value without hitting the network', async () => {
+        const api = JE.core.api!;
+        const key = 'http://jellyfin.test/falsy-endpoint';
+        const fakeResponse = {
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve('{"network":true}'),
+            clone() { return fakeResponse; }
+        } as unknown as Response;
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeResponse);
+
+        api.manager.setCache(key, false);
+        const result = await api.fetch(key, { cacheKey: key });
+
+        expect(result).toBe(false);
+        expect(fetchSpy).not.toHaveBeenCalled();
     });
 });
