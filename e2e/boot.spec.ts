@@ -1,6 +1,6 @@
 // Boot invariants: the plugin initializes, the typed core namespaces are all
 // present, and a full authenticated boot produces zero real console errors.
-import { test, expect, loginAs } from './fixtures/auth';
+import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -44,10 +44,27 @@ test.describe('boot', () => {
         });
         expect(state.facade).toEqual({ t: true, toast: true, escapeHtml: true });
 
-        // Give late boot work (home sections, tag pipeline) a moment to run so
-        // the zero-errors assertion covers it too.
+        // Cover late boot work (home sections, tag pipeline) with a CONCRETE
+        // signal, not a blind sleep: when any tag family is enabled wait for the
+        // pipeline to have processed a card; otherwise settle on network idle.
+        // Then the no-errors assertion (real() + unexpected4xx()) covers it.
         await page.waitForSelector('#indexPage .card', { timeout: 60_000 });
-        await page.waitForTimeout(3_000);
-        expect(consoleErrors.real()).toEqual([]);
+        const anyTagsEnabled = await page.evaluate(() => {
+            const settings = (window as any).JellyfinEnhanced?.currentSettings || {};
+            return ['qualityTagsEnabled', 'genreTagsEnabled', 'languageTagsEnabled', 'ratingTagsEnabled']
+                .some((key) => settings[key] === true);
+        });
+        if (anyTagsEnabled) {
+            await page.waitForFunction(
+                () => document.querySelectorAll(
+                    '[data-je-quality-tagged],[data-je-genre-tagged],[data-je-language-tagged],[data-je-rating-tagged]'
+                ).length > 0,
+                undefined,
+                { timeout: 60_000 }
+            );
+        } else {
+            await page.waitForLoadState('networkidle');
+        }
+        assertNoRuntimeErrors(consoleErrors);
     });
 });

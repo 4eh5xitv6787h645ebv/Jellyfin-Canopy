@@ -6,7 +6,7 @@
 //   - the /video round trip (the modern AppBar tray is DESTROYED on entering
 //     the player and NOT restored on exit — re-injection is mandatory,
 //     docs/v12-platform.md §6.5).
-import { test, expect, loginAs, showRoute, waitForHash } from './fixtures/auth';
+import { test, expect, loginAs, showRoute, waitForHash, assertNoRuntimeErrors } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -69,8 +69,15 @@ test.describe('navigation', () => {
         await expect(playButton).toBeVisible({ timeout: 30_000 });
         await playButton.click();
         await waitForHash(page, '/video');
-        // Let the player settle (the AppBar tray is unmounted at this point).
-        await page.waitForTimeout(4_000);
+        // Wait for the concrete precondition of the remount assertion instead of
+        // a blind sleep: the AppBar tray is destroyed (or hidden) on entering the
+        // player (docs/v12-platform.md §6.5), so the injected button stops
+        // satisfying the presence rule. That gone/hidden state is exactly what
+        // the later re-injection must recover from.
+        await page.waitForFunction(() => {
+            const button = document.getElementById('randomItemButton');
+            return !button || !button.isConnected || !!button.closest('.hide');
+        }, undefined, { timeout: 30_000 });
 
         await page.evaluate(() => history.back());
         await page.waitForFunction(
@@ -99,6 +106,6 @@ test.describe('navigation', () => {
             await waitForHeaderButton(page);
         }
 
-        expect(consoleErrors.real()).toEqual([]);
+        assertNoRuntimeErrors(consoleErrors);
     });
 });
