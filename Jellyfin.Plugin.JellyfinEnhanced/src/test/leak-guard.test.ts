@@ -45,11 +45,6 @@ interface AllowlistEntry {
 
 const ALLOWLIST: AllowlistEntry[] = [
     {
-        file: 'enhanced/playback.ts',
-        rule: 'retry-cap',
-        why: 'performAspectCycle polls (120ms) for the aspect-ratio action-sheet it just clicked open — a pre-existing user-triggered interaction poller outside the client-leaks group scope (CORE-5/LOADER-6 cover navigation.ts + js/plugin.js). Tracked for a follow-up bound.',
-    },
-    {
         file: 'extras/theme-selector.ts',
         rule: 'retry-cap',
         why: 'initialize polls for ApiClient at boot — a pre-existing LOADER-6-class poller in a bundle module, outside this group\'s js/plugin.js scope. Tracked for a follow-up bound.',

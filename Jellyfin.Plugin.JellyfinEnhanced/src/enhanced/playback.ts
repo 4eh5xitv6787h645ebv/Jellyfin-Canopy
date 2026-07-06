@@ -462,15 +462,21 @@ JE.cycleAudioTrack = () => {
     }
 };
 
+// ~3s at 120ms: the aspect-ratio action sheet always opens well within this.
+const ASPECT_CYCLE_MAX_ATTEMPTS = 25;
+
 /**
  * Cycles through video aspect ratio modes (Auto, Cover, Fill).
  */
-const performAspectCycle = () => {
+const performAspectCycle = (attempts = 0) => {
     const opts = [...document.querySelectorAll<HTMLElement>('.actionSheetContent button[data-id="auto"], .actionSheetContent button[data-id="cover"], .actionSheetContent button[data-id="fill"]')];
 
     if (!opts.length) {
+        // PERF: bound the self-reschedule so a never-opening action sheet can't
+        // poll forever (was an unbounded 120ms loop, leak-guard-allowlisted).
+        if (attempts >= ASPECT_CYCLE_MAX_ATTEMPTS) return;
         document.querySelector<HTMLElement>('.actionSheetContent button[data-id="aspectratio"]')?.click();
-        setTimeout(performAspectCycle, 120);
+        setTimeout(() => performAspectCycle(attempts + 1), 120);
         return;
     }
 
@@ -498,6 +504,11 @@ JE.initializeAutoSkipObserver = () => {
     if (skipButtonObserver) {
         return; // Observer is already running
     }
+    // PERF(R3): scope the attribute observation to the player container, never
+    // body-wide (mirrors osd-rating.ts's scoped observer). events.ts re-invokes
+    // this each video-page tick, so attach once the container exists.
+    const container = document.querySelector<HTMLElement>('.videoPlayerContainer');
+    if (!container) return;
     // PERF(R8): one presence probe per mutation BATCH — the old callback ran
     // document.querySelector once per mutation record inside the loop. The
     // observer itself is playback-scoped: events.ts attaches it on video-page
@@ -520,11 +531,11 @@ JE.initializeAutoSkipObserver = () => {
         }
     });
 
-    skipButtonObserver.observe(document.body, {
+    skipButtonObserver.observe(container, {
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ['class', 'style']
+        attributeFilter: ['class']
     });
 };
 

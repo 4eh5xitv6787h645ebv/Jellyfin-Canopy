@@ -47,27 +47,15 @@ export function wireLanguageControls(ctx: PanelContext): void {
             };
 
             try {
+                // PERF(R6/ENH-5): the server /JellyfinEnhanced/locales endpoint is the
+                // authoritative locale list for THIS build. The former per-open
+                // api.github.com fetch pointed at the UPSTREAM repo (wrong key set),
+                // leaked the client IP, and hit GitHub's 60/hr anonymous rate limit
+                // (→ 403) — dropped entirely; no replacement needed.
                 const [localeCodes, cultures]: [any, any] = await Promise.all([
                     ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('/JellyfinEnhanced/locales'), dataType: 'json' }),
                     ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('/Localization/Cultures'), dataType: 'json' })
                 ]);
-
-                // Check GitHub for any new locale files added since the last plugin release (1 request)
-                try {
-                    const ghResp = await fetch('https://api.github.com/repos/n00bcodr/Jellyfin-Enhanced/contents/Jellyfin.Plugin.JellyfinEnhanced/js/locales');
-                    if (ghResp.ok) {
-                        const files = await ghResp.json();
-                        const serverSet = new Set(localeCodes.map((c: any) => c.toLowerCase()));
-                        files.forEach((f: any) => {
-                            if (f.name.endsWith('.json') && f.name !== 'en.json') {
-                                const code = f.name.replace('.json', '');
-                                if (!serverSet.has(code.toLowerCase())) {
-                                    localeCodes.push(code);
-                                }
-                            }
-                        });
-                    }
-                } catch (_) { /* GitHub unavailable, server list is sufficient */ }
 
                 const cultureMap: Record<string, any> = {};
                 cultures.forEach((c: any) => {

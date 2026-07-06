@@ -22,7 +22,7 @@ type ThemerApi = {
     supportedThemes: Record<string, ThemeConfig>;
     activeTheme: ActiveTheme | null;
     detectActiveTheme(): ActiveTheme;
-    getThemeVariable(variableKey: string): string;
+    getThemeVariable(variableKey: string, rootStyle?: CSSStyleDeclaration): string;
     getThemeVariables(): Record<string, string>;
     registerTheme(themeKey: string, themeConfig: ThemeConfig): void;
     init(): void;
@@ -155,7 +155,7 @@ const themer: ThemerApi = {
      * @param variableKey - The key from the theme's variables object
      * @returns The CSS value or fallback value
      */
-    getThemeVariable(variableKey: string) {
+    getThemeVariable(variableKey: string, rootStyle?: CSSStyleDeclaration) {
         if (!this.activeTheme) {
             this.detectActiveTheme();
         }
@@ -168,8 +168,10 @@ const themer: ThemerApi = {
             return fallbackValue || '';
         }
 
-        const rootStyle = getComputedStyle(document.documentElement);
-        const value = rootStyle.getPropertyValue(cssVariable).trim();
+        // THEME-7 (R4): reuse a caller-supplied computed style when present so
+        // getThemeVariables reads getComputedStyle once, not once per key.
+        const style = rootStyle || getComputedStyle(document.documentElement);
+        const value = style.getPropertyValue(cssVariable).trim();
 
         // Special handling for logo variable (URL extraction)
         if (variableKey === 'logo' && value) {
@@ -193,11 +195,15 @@ const themer: ThemerApi = {
             this.detectActiveTheme();
         }
 
+        // THEME-7 (R4): read the computed style ONCE and reuse it for every key
+        // (was ~7 getComputedStyle reads per call). Safe because a theme switch
+        // forces window.location.reload() (theme-selector.ts), so no stale cache.
+        const rootStyle = getComputedStyle(document.documentElement);
         const variables: Record<string, string> = {};
         const variableKeys = Object.keys(this.activeTheme!.variables).filter(key => !key.endsWith('Fallback'));
 
         for (const key of variableKeys) {
-            variables[key] = this.getThemeVariable(key);
+            variables[key] = this.getThemeVariable(key, rootStyle);
         }
 
         return variables;

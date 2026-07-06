@@ -6,28 +6,25 @@
 
 import { JE } from '../../globals';
 import { onSidebarRebuild } from '../../core/dom-observer';
+import { onNavigate } from '../../core/navigation';
 import { renderIfSectionExists } from './library-render';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const logPrefix = '🪼 Jellyfin Enhanced: Bookmarks Library:';
 
-// Sidebar navigation state
-/** Polling interval for detecting pushState navigations. */
-const LOCATION_WATCH_INTERVAL_MS = 150;
-
 interface PageState {
   pageVisible: boolean;
   previousPage: HTMLElement | null;
   locationSignature: string | null;
-  locationTimer: number | null;
+  locationUnsubscribe: (() => void) | null;
 }
 
 const pageState: PageState = {
   pageVisible: false,
   previousPage: null,
   locationSignature: null,
-  locationTimer: null,
+  locationUnsubscribe: null,
 };
 
 /** Re-evaluated each call so it stays correct even when the sidebar renders late. */
@@ -167,28 +164,31 @@ function hidePage(): void {
 }
 
 /**
- * Starts polling for pushState-based navigation changes.
- * Jellyfin's router uses pushState which doesn't fire popstate/hashchange.
+ * Subscribes to router navigation via the push contract. PERF(R5/ENH-6): the
+ * former setInterval(150ms) poller is replaced by onNavigate, which covers
+ * pushState/replaceState/hashchange/popstate (Jellyfin's router uses pushState,
+ * which fires neither popstate nor hashchange). The locationSignature dedup is
+ * kept inside the callback so a re-dispatch for the same URL is a no-op.
  */
 function startLocationWatcher(): void {
-  if (pageState.locationTimer) return;
+  if (pageState.locationUnsubscribe) return;
   pageState.locationSignature = `${window.location.pathname}${window.location.hash}`;
-  pageState.locationTimer = window.setInterval(() => {
+  pageState.locationUnsubscribe = onNavigate(() => {
     const signature = `${window.location.pathname}${window.location.hash}`;
     if (signature !== pageState.locationSignature) {
       pageState.locationSignature = signature;
       handleNavigation();
     }
-  }, LOCATION_WATCH_INTERVAL_MS);
+  });
 }
 
 /**
- * Stops the location polling interval.
+ * Unsubscribes from router navigation.
  */
 function stopLocationWatcher(): void {
-  if (pageState.locationTimer) {
-    clearInterval(pageState.locationTimer);
-    pageState.locationTimer = null;
+  if (pageState.locationUnsubscribe) {
+    pageState.locationUnsubscribe();
+    pageState.locationUnsubscribe = null;
   }
 }
 
