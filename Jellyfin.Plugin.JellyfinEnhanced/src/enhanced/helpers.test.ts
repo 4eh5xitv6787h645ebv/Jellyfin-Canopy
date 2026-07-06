@@ -3,7 +3,8 @@
 // used to be re-read on every observer tick; it must now be read at most once
 // per navigation).
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getHeaderRightContainer, insertHeaderTrayButton, HeaderTrayOrder } from './helpers';
+import { getHeaderRightContainer } from './helpers';
+import { insertHeaderTrayButton, HeaderTrayOrder } from './header-tray';
 
 /** Builds a `.headerRight` whose offsetParent getter counts layout reads. */
 function buildLegacyHeader(reads: { count: number }): HTMLElement {

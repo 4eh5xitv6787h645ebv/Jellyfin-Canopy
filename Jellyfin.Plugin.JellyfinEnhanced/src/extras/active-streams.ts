@@ -3,7 +3,7 @@
 
 import { JE as JEBase } from '../globals';
 import { describeFetchError } from '../core/fetch-error';
-import { insertHeaderTrayButton, HeaderTrayOrder } from '../enhanced/helpers';
+import { insertHeaderTrayButton, HeaderTrayOrder } from '../enhanced/header-tray';
 import type { ApiApi, LifecycleApi, LifecycleHandle, NavigationApi, PluginConfig, UiApi } from '../types/je';
 
 /**

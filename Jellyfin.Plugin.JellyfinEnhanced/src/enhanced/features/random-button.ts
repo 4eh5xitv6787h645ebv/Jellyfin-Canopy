@@ -5,7 +5,8 @@
 
 import { JE } from '../../globals';
 import { toast } from '../../core/ui-kit';
-import { getHeaderRightContainer, insertHeaderTrayButton, HeaderTrayOrder } from '../helpers';
+import { getHeaderRightContainer } from '../helpers';
+import { insertHeaderTrayButton, HeaderTrayOrder } from '../header-tray';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
