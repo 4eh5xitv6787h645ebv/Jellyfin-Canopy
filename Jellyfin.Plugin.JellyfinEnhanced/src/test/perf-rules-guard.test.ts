@@ -26,11 +26,9 @@ interface Violation { file: string; line: number; detail: string; }
 const ALLOW_GITHUB: Allow[] = [
     { file: 'enhanced/settings-panel/release-notes.ts', why: 'user-triggered "check for updates" against GitHub releases — not a per-interaction poll' },
 ];
-// R6-assets: ratingtags.ts carries the same broken pattern but is outside the
-// ENH-7 (osd-rating) scope — tracked for its own follow-up.
-const ALLOW_ASSETS: Allow[] = [
-    { file: 'tags/ratingtags.ts', why: 'pre-existing url(assets/img/*.svg) in the ratings-tag CSS — outside the ENH-7 osd-rating scope; tracked separately' },
-];
+// R6-assets: no remaining `url(assets/img/…)` in injected styles — both
+// osd-rating.ts and ratingtags.ts inline their tomato glyphs as data URIs.
+const ALLOW_ASSETS: Allow[] = [];
 
 const R5_NAV_FILES = [
     'enhanced/hidden-content-page/nav.ts',
