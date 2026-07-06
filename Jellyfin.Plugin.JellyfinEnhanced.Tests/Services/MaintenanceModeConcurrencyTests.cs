@@ -80,6 +80,38 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
             Assert.True(state.AccountDisabledUserIds.All(id => expectedIds.Contains(id)));
         }
 
+        /// <summary>
+        /// Durability net: the enable path persists the restore intent (which users will be
+        /// disabled) DURABLY before mutating a single account. If that save fails, the whole
+        /// transition must abort with every account still enabled — never leave users
+        /// disabled-with-no-restore-list (the old code disabled everyone first and silently
+        /// swallowed the failed save). Confirmed RED by reverting to save-after-disable +
+        /// swallowed failure: EnableAsync then completes without throwing and DisabledCalls == 3.
+        /// </summary>
+        [Fact]
+        public async Task Enable_WhenStateSaveFails_AbortsBeforeDisablingAnyUser()
+        {
+            const int userCount = 3;
+            var users = Enumerable.Range(0, userCount)
+                .Select(i => new User($"user{i}", "Prov", "PwProv"))
+                .ToList();
+
+            var userManager = new RecordingUserManager(users, perUpdateDelayMs: 0);
+            var service = new MaintenanceModeService(userManager, new StubAppPaths(_baseDir), NullLogger<MaintenanceModeService>.Instance);
+
+            // Force the durable state save to fail: occupy the state-file path with a DIRECTORY so
+            // AtomicFile's rename over it throws. The restore-intent save runs BEFORE any account is
+            // mutated, so a failed save must abort with every user still enabled.
+            Directory.CreateDirectory(Path.GetDirectoryName(_stateFilePath)!);
+            Directory.CreateDirectory(_stateFilePath);
+
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                service.EnableAsync("maintenance", durationMinutes: 0, action: "disable_accounts", affectedUserIds: null));
+
+            // Root-cause guarantee: nothing was disabled, so there is no disabled-with-no-restore-list state.
+            Assert.Empty(userManager.DisabledCalls);
+        }
+
         private sealed class RecordingUserManager : IUserManager
         {
             private readonly List<User> _users;

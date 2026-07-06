@@ -73,7 +73,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 var currentState = LoadState();
                 if (currentState.IsActive)
                 {
-                    // Already active — just update message/duration; do not re-apply user changes
+                    // Already active — just update message/duration; do not re-apply user changes.
+                    // A failed save throws (SaveState no longer swallows) so the caller sees the
+                    // failure rather than a false success.
                     currentState.Message = message ?? string.Empty;
                     currentState.EndsAt = durationMinutes > 0 ? DateTime.UtcNow.AddMinutes(durationMinutes) : null;
                     SaveState(currentState);
@@ -103,9 +105,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     targetUsers = allNonAdmin.Where(u => idSet.Contains(u.Id));
                 }
 
-                var accountDisabled = new List<string>();
-                var remoteDisabled  = new List<string>();
-
+                // Pass 1 — plan the mutations WITHOUT touching any account. Resolve each user's
+                // current policy and record only the users we would actually change (accounts not
+                // already disabled / remote not already off). This set IS the restore list.
+                var plan = new List<(Guid Id, string Username, MediaBrowser.Model.Users.UserPolicy Policy, bool DisableAccount, bool DisableRemote)>();
                 foreach (var user in targetUsers)
                 {
                     try
@@ -113,35 +116,21 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                         var dto = _userManager.GetUserDto(user, string.Empty);
                         if (dto.Policy == null) continue;
 
-                        bool changed = false;
-
-                        if (doAccounts && !dto.Policy.IsDisabled)
+                        bool disableAccount = doAccounts && !dto.Policy.IsDisabled;
+                        bool disableRemote  = doRemote  && dto.Policy.EnableRemoteAccess;
+                        if (disableAccount || disableRemote)
                         {
-                            dto.Policy.IsDisabled = true;
-                            accountDisabled.Add(user.Id.ToString());
-                            changed = true;
-                        }
-
-                        if (doRemote && dto.Policy.EnableRemoteAccess)
-                        {
-                            dto.Policy.EnableRemoteAccess = false;
-                            remoteDisabled.Add(user.Id.ToString());
-                            changed = true;
-                        }
-
-                        if (changed)
-                        {
-                            await _userManager.UpdatePolicyAsync(user.Id, dto.Policy).ConfigureAwait(false);
-                            _logger.LogInformation($"[Maintenance] Updated user '{user.Username}'" +
-                                $"{(doAccounts && accountDisabled.Contains(user.Id.ToString()) ? " (account disabled)" : "")}" +
-                                $"{(doRemote  && remoteDisabled.Contains(user.Id.ToString())  ? " (remote disabled)"  : "")}");
+                            plan.Add((user.Id, user.Username, dto.Policy, disableAccount, disableRemote));
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError($"[Maintenance] Failed to update user '{user.Username}': {ex.Message}");
+                        _logger.LogError($"[Maintenance] Failed to read policy for user '{user.Username}': {ex.Message}");
                     }
                 }
+
+                var accountDisabled = plan.Where(p => p.DisableAccount).Select(p => p.Id.ToString()).ToList();
+                var remoteDisabled  = plan.Where(p => p.DisableRemote).Select(p => p.Id.ToString()).ToList();
 
                 var newState = new MaintenanceState
                 {
@@ -154,7 +143,33 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     RemoteDisabledUserIds  = remoteDisabled
                 };
 
+                // Persist the restore intent DURABLY *before* mutating a single account. If this
+                // throws we abort with every account still untouched — we never disable users
+                // without a recoverable record of how to restore them. (Previously the save ran
+                // AFTER disabling and silently swallowed failures, stranding disabled accounts
+                // with no restore list.)
                 SaveState(newState);
+
+                // Pass 2 — apply the planned mutations. The restore list is already on disk, so a
+                // crash mid-loop leaves a recoverable (still-active) state: the next disable restores
+                // every listed user, and re-enabling an account we never got to touch is a no-op.
+                foreach (var (id, username, policy, disableAccount, disableRemote) in plan)
+                {
+                    try
+                    {
+                        if (disableAccount) policy.IsDisabled = true;
+                        if (disableRemote)  policy.EnableRemoteAccess = false;
+                        await _userManager.UpdatePolicyAsync(id, policy).ConfigureAwait(false);
+                        _logger.LogInformation($"[Maintenance] Updated user '{username}'" +
+                            $"{(disableAccount ? " (account disabled)" : "")}" +
+                            $"{(disableRemote ? " (remote disabled)" : "")}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError($"[Maintenance] Failed to update user '{username}': {ex.Message}");
+                    }
+                }
+
                 _logger.LogInformation($"[Maintenance] Mode enabled. Action={action}, " +
                     $"AccountsDisabled={accountDisabled.Count}, RemoteDisabled={remoteDisabled.Count}");
             }
@@ -166,57 +181,75 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
         public async Task DisableAsync()
         {
-            MaintenanceState state;
+            // Hold the gate across the WHOLE transition — including the restore loop — so a
+            // concurrent EnableAsync can't interleave with an in-flight restore and re-toggle the
+            // same accounts. A SemaphoreSlim is async-compatible, so spanning the awaits is fine.
             await _stateGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                state = LoadState();
+                var state = LoadState();
                 if (!state.IsActive)
                 {
                     _logger.LogInformation("[Maintenance] Already inactive — skipping disable.");
                     return;
                 }
-                // Mark inactive immediately so concurrent calls short-circuit
-                SaveState(new MaintenanceState { IsActive = false });
+
+                // Collect all unique user IDs that need updating
+                var allIds = state.AccountDisabledUserIds
+                    .Union(state.RemoteDisabledUserIds)
+                    .Distinct()
+                    .ToList();
+
+                var accountSet = new HashSet<string>(state.AccountDisabledUserIds);
+                var remoteSet  = new HashSet<string>(state.RemoteDisabledUserIds);
+
+                // Restore users FIRST, while the durable state still holds the full restore list.
+                // Previously we wrote IsActive=false (which also clears the restore list) BEFORE
+                // restoring, so a crash mid-restore left an inactive state with an empty list and
+                // stranded the still-disabled accounts. Now the state stays active-with-list until
+                // every restore has been applied.
+                foreach (var idStr in allIds)
+                {
+                    if (!Guid.TryParse(idStr, out var userId)) continue;
+                    try
+                    {
+                        var user = _userManager.GetUserById(userId);
+                        if (user == null) continue;
+
+                        var dto = _userManager.GetUserDto(user, string.Empty);
+                        if (dto.Policy == null) continue;
+
+                        if (accountSet.Contains(idStr)) dto.Policy.IsDisabled = false;
+                        if (remoteSet.Contains(idStr))  dto.Policy.EnableRemoteAccess = true;
+
+                        await _userManager.UpdatePolicyAsync(userId, dto.Policy).ConfigureAwait(false);
+                        _logger.LogInformation($"[Maintenance] Restored user '{user.Username}'");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError($"[Maintenance] Failed to restore user {idStr}: {ex.Message}");
+                    }
+                }
+
+                // Every restore applied — now durably clear the maintenance state. If this write
+                // fails the state stays active-with-list and the next disable simply restores again
+                // (IsDisabled=false / EnableRemoteAccess=true is idempotent), so a failure here is
+                // self-healing rather than stranding disabled accounts.
+                try
+                {
+                    SaveState(new MaintenanceState { IsActive = false });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError($"[Maintenance] Failed to persist cleared state (restores already applied; will retry on next disable): {ex.Message}");
+                }
+
+                _logger.LogInformation("[Maintenance] Mode disabled.");
             }
             finally
             {
                 _stateGate.Release();
             }
-
-            // Collect all unique user IDs that need updating
-            var allIds = state.AccountDisabledUserIds
-                .Union(state.RemoteDisabledUserIds)
-                .Distinct()
-                .ToList();
-
-            var accountSet = new HashSet<string>(state.AccountDisabledUserIds);
-            var remoteSet  = new HashSet<string>(state.RemoteDisabledUserIds);
-
-            foreach (var idStr in allIds)
-            {
-                if (!Guid.TryParse(idStr, out var userId)) continue;
-                try
-                {
-                    var user = _userManager.GetUserById(userId);
-                    if (user == null) continue;
-
-                    var dto = _userManager.GetUserDto(user, string.Empty);
-                    if (dto.Policy == null) continue;
-
-                    if (accountSet.Contains(idStr)) dto.Policy.IsDisabled = false;
-                    if (remoteSet.Contains(idStr))  dto.Policy.EnableRemoteAccess = true;
-
-                    await _userManager.UpdatePolicyAsync(userId, dto.Policy).ConfigureAwait(false);
-                    _logger.LogInformation($"[Maintenance] Restored user '{user.Username}'");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError($"[Maintenance] Failed to restore user {idStr}: {ex.Message}");
-                }
-            }
-
-            _logger.LogInformation("[Maintenance] Mode disabled.");
         }
 
         private MaintenanceState LoadState()
@@ -237,15 +270,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
         private void SaveState(MaintenanceState state)
         {
-            try
-            {
-                // Newtonsoft equivalent: JsonConvert.SerializeObject(state, Formatting.Indented).
-                AtomicFile.WriteAllText(_stateFilePath, JsonSerializer.Serialize(state, PersistedJson.WriteOptions));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"[Maintenance] Failed to save state: {ex.Message}");
-            }
+            // Intentionally does NOT swallow write failures. The enable path persists the restore
+            // intent BEFORE mutating accounts and must be able to abort the whole transition when
+            // the save fails — a lost state save would otherwise strand disabled users with no
+            // restore list. Callers that can tolerate a save failure (the disable-path final clear)
+            // catch this explicitly.
+            // Newtonsoft equivalent: JsonConvert.SerializeObject(state, Formatting.Indented).
+            AtomicFile.WriteAllText(_stateFilePath, JsonSerializer.Serialize(state, PersistedJson.WriteOptions));
         }
     }
 }
