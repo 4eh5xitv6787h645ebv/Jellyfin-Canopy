@@ -58,6 +58,23 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Helpers.Jellyseerr
         public void QueryStringIsIgnored()
             => Assert.Equal(TmdbProxyGate.Neutral, TmdbProxyPathClassifier.Classify("genres/movie?language=en").Gate);
 
+        // A benign query on an otherwise-allowed detail keeps the DetailGate — only
+        // append_to_response flips the decision, not any query string.
+        [Fact]
+        public void BenignQueryOnDetail_StaysDetailGate()
+            => Assert.Equal(TmdbProxyGate.DetailGate, TmdbProxyPathClassifier.Classify("movie/550?language=en").Gate);
+
+        // append_to_response=similar,recommendations rides on an allowed detail and
+        // returns above-limit title lists the raw passthrough cannot body-filter, so
+        // the whole request must be Restricted (403 for a rating-limited caller).
+        [Theory]
+        [InlineData("movie/550?append_to_response=similar,recommendations")]
+        [InlineData("tv/1399?append_to_response=recommendations")]
+        [InlineData("movie/550?language=en&append_to_response=similar")]
+        [InlineData("movie/550?append_to_response=videos")]
+        public void AppendToResponse_ForcesRestricted(string apiPath)
+            => Assert.Equal(TmdbProxyGate.Restricted, TmdbProxyPathClassifier.Classify(apiPath).Gate);
+
         // Class guard: a future dev adding a raw-TMDB shape without classifying it must
         // get Restricted (blocked-by-default), never a silent passthrough.
         [Fact]

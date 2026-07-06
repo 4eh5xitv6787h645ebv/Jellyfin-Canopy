@@ -767,13 +767,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // rating-free shapes passes, movie/tv detail + sub-resources are parent-gated,
             // and every other shape (including future/unknown ones) is denied. (No-op
             // unless Seerr is configured + the caller is rating-limited.)
-            if (await _parentalFilter.IsTmdbProxyPathBlockedAsync(apiPath, SeerrCaller()))
+            //
+            // The FULL query is forwarded to TMDB below, so it is handed to the gate too:
+            // otherwise an append_to_response=similar,recommendations rides on an allowed
+            // detail and smuggles above-limit title lists the passthrough cannot body-filter.
+            var queryString = HttpContext.Request.QueryString;
+            if (await _parentalFilter.IsTmdbProxyPathBlockedAsync($"{apiPath}{queryString}", SeerrCaller()))
             {
                 return new StatusCodeResult(403);
             }
 
             var httpClient = Helpers.PluginHttpClients.CreateTmdbClient(_httpClientFactory);
-            var queryString = HttpContext.Request.QueryString;
             var separator = queryString.HasValue ? "&" : "?";
             var requestUri = $"https://api.themoviedb.org/3/{apiPath}{queryString}{separator}api_key={config.TMDB_API_KEY}";
 
