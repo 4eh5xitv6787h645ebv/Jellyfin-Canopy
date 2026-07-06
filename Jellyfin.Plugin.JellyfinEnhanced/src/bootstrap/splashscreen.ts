@@ -40,6 +40,10 @@
     let progressTimer: number | null = null;
     let hardTimeout: number | null = null;
     let isHidden = false;
+    // Named refs so the ready listeners added in startReadyObserver are removable
+    // on the hide path (they were anonymous closures removed by nothing before).
+    let onHashChangeReady: (() => void) | null = null;
+    let onVisibilityReady: (() => void) | null = null;
 
     /**
      * Installs preemptive CSS to hide competing splash screens before rendering
@@ -175,6 +179,22 @@
         if (readyObserver) {
             readyObserver.disconnect();
             readyObserver = null;
+        }
+        // Tear down the media-bar blocker + the ready listeners on the NORMAL
+        // hide path too (previously only cleanup() — the splash-disabled branch —
+        // did this, so the running path leaked them). The post-hide media-bar
+        // sweep is covered by the removalInterval below.
+        if (mediaBarBlocker) {
+            mediaBarBlocker.disconnect();
+            mediaBarBlocker = null;
+        }
+        if (onHashChangeReady) {
+            window.removeEventListener('hashchange', onHashChangeReady);
+            onHashChangeReady = null;
+        }
+        if (onVisibilityReady) {
+            document.removeEventListener('visibilitychange', onVisibilityReady);
+            onVisibilityReady = null;
         }
 
         const progressBar = document.getElementById('je-progress-bar');
@@ -390,17 +410,19 @@
         obs.observe(document.body, { childList: true, subtree: true });
         readyObserver = obs;
 
-        window.addEventListener('hashchange', () => {
+        onHashChangeReady = () => {
             if (isUIReady()) {
                 hideSplashScreen('hashchange ready');
             }
-        });
+        };
+        window.addEventListener('hashchange', onHashChangeReady);
 
-        document.addEventListener('visibilitychange', () => {
+        onVisibilityReady = () => {
             if (!document.hidden && isUIReady()) {
                 hideSplashScreen('visibilitychange ready');
             }
-        });
+        };
+        document.addEventListener('visibilitychange', onVisibilityReady);
     }
 
     /**
@@ -470,3 +492,7 @@
 
     console.log('🪼 Jellyfin Enhanced: Splash screen module loaded.');
 })();
+
+// Module marker so this out-of-band IIFE can be re-imported by its vitest
+// suite; type-only, erased by esbuild (iife) — no runtime effect.
+export {};
