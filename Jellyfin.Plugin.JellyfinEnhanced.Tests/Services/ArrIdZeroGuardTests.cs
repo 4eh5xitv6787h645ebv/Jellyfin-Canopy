@@ -26,11 +26,6 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
             // Enrichment-only lookup in GetRequests: a 0 tmdb just yields an empty TMDB enrichment
             // and falls back to the media title — it never becomes a key. Left as-is by design.
             "int? tmdbId = (int?)media?[\"tmdbId\"];",
-
-            // Per-user download-queue filter casts — normalized by the Sonarr-TV TVDB-fallback
-            // package (they gain the ArrIdHelper.ToNullableId wrap when the tvdb match is added).
-            "int? tmdbId = (int?)series?[\"tmdbId\"];",
-            "int? tmdbId = (int?)movie?[\"tmdbId\"];",
         };
 
         // Signature (not call) of a request-item parser: ParseRequestItem[...](JsonElement ...).

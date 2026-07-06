@@ -81,6 +81,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // Non-admin users can only see downloads for items they requested via Seerr
             // unless the admin has disabled per-user filtering
             HashSet<(int TmdbId, string MediaType)>? allowedRequests = null;
+            HashSet<int>? allowedTvTvdb = null;
             if (!IsAdminUser() && config.DownloadsFilterByUserRequests)
             {
                 if (!config.JellyseerrEnabled || string.IsNullOrWhiteSpace(config.JellyseerrUrls) || string.IsNullOrWhiteSpace(config.JellyseerrApiKey))
@@ -107,6 +108,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 }
 
                 allowedRequests = new HashSet<(int, string)>(userRequests.Select(r => (r.TmdbId, r.MediaType)));
+
+                // Sonarr is TVDB-native and routinely reports series.tmdbId 0 for its download
+                // records, so a TV request must also be matchable by TVDB id — otherwise the user's
+                // own TV download is silently dropped.
+                allowedTvTvdb = new HashSet<int>(userRequests
+                    .Where(r => r.MediaType == "tv" && r.TvdbId is > 0)
+                    .Select(r => r.TvdbId!.Value));
             }
 
             WarnIfArrInstancesCorrupt(config);
@@ -114,7 +122,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var radarrInstances = config.GetEnabledRadarrInstances();
 
             var ct = HttpContext.RequestAborted;
-            var sonarrTasks = sonarrInstances.Select(i => FetchSonarrQueue(i, allowedRequests, ct)).ToList();
+            var sonarrTasks = sonarrInstances.Select(i => FetchSonarrQueue(i, allowedRequests, allowedTvTvdb, ct)).ToList();
             var radarrTasks = radarrInstances.Select(i => FetchRadarrQueue(i, allowedRequests, ct)).ToList();
 
             var sonarrResults = await Task.WhenAll(sonarrTasks);
@@ -157,7 +165,28 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             return null;
         }
 
-        private Task<(List<object> Items, string? Error)> FetchSonarrQueue(ArrInstance instance, HashSet<(int TmdbId, string MediaType)>? allowedRequests, CancellationToken ct)
+        // Per-user download-queue match for a Sonarr record. A Seerr TV request carries both a TMDB
+        // and (usually) a TVDB id, but Sonarr download records report the series with tmdbId 0, so the
+        // record must match either the TMDB set or the TV-TVDB set. Both ids are re-normalized here so a
+        // 0 can never key a match. allowedRequests == null means unfiltered (admin) passthrough.
+        internal static bool IsSonarrQueueItemAllowed(
+            int? tmdbId,
+            int? tvdbId,
+            HashSet<(int TmdbId, string MediaType)>? allowedRequests,
+            HashSet<int>? allowedTvTvdb)
+        {
+            if (allowedRequests == null)
+                return true;
+
+            tmdbId = ArrIdHelper.ToNullableId(tmdbId);
+            tvdbId = ArrIdHelper.ToNullableId(tvdbId);
+
+            bool tmdbOk = tmdbId is int tm && allowedRequests.Contains((tm, "tv"));
+            bool tvdbOk = tvdbId is int tv && allowedTvTvdb != null && allowedTvTvdb.Contains(tv);
+            return tmdbOk || tvdbOk;
+        }
+
+        private Task<(List<object> Items, string? Error)> FetchSonarrQueue(ArrInstance instance, HashSet<(int TmdbId, string MediaType)>? allowedRequests, HashSet<int>? allowedTvTvdb, CancellationToken ct)
         {
             return _arrFetch.FetchAndMapAsync<List<object>>(
                 instance,
@@ -170,8 +199,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     {
                         var series = record?["series"];
                         var episode = record?["episode"];
-                        int? tmdbId = (int?)series?["tmdbId"];
-                        if (allowedRequests != null && (!tmdbId.HasValue || !allowedRequests.Contains((tmdbId.Value, "tv"))))
+                        int? tmdbId = ArrIdHelper.ToNullableId((int?)series?["tmdbId"]);
+                        int? tvdbId = ArrIdHelper.ToNullableId((int?)series?["tvdbId"]);
+                        if (!IsSonarrQueueItemAllowed(tmdbId, tvdbId, allowedRequests, allowedTvTvdb))
                             continue;
 
                         var seasonNumber = (int?)episode?["seasonNumber"];
@@ -214,7 +244,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                     foreach (var record in records)
                     {
                         var movie = record?["movie"];
-                        int? tmdbId = (int?)movie?["tmdbId"];
+                        int? tmdbId = ArrIdHelper.ToNullableId((int?)movie?["tmdbId"]);
                         if (allowedRequests != null && (!tmdbId.HasValue || !allowedRequests.Contains((tmdbId.Value, "movie"))))
                             continue;
 

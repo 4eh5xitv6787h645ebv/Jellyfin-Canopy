@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
+using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
 using Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr;
 using Jellyfin.Plugin.JellyfinEnhanced.Model.Jellyseerr;
 using MediaBrowser.Controller.Library;
@@ -1007,6 +1008,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
         private static WatchlistItem? ParseRequestItem(JsonElement requestElement)
         {
             int tmdbId = 0;
+            int? tvdbId = null;
             string mediaType = "";
 
             if (requestElement.TryGetProperty("media", out var media))
@@ -1014,6 +1016,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
                 if (media.TryGetProperty("tmdbId", out var tmdbProp))
                 {
                     tmdbId = tmdbProp.GetInt32();
+                }
+
+                // Seerr media objects carry tvdbId for TV — expose it (0/absent → null) so the
+                // download-queue filter can match a Sonarr record that reports tmdbId 0.
+                if (media.TryGetProperty("tvdbId", out var tvdbProp) && tvdbProp.ValueKind == JsonValueKind.Number)
+                {
+                    tvdbId = ArrIdHelper.ToNullableId(tvdbProp.GetInt32());
                 }
 
                 if (media.TryGetProperty("mediaType", out var mtProp) && mtProp.ValueKind == JsonValueKind.String)
@@ -1040,7 +1049,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
             return new WatchlistItem
             {
                 TmdbId = tmdbId,
-                MediaType = mediaType
+                MediaType = mediaType,
+                TvdbId = tvdbId
             };
         }
 

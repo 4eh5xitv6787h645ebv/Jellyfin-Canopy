@@ -27,6 +27,12 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
         public int TmdbId { get; set; }
 
         public string MediaType { get; set; } = "movie";
+
+        /// <summary>
+        /// TVDB id when Seerr carries one (TV requests). Lets the download-queue filter match a
+        /// Sonarr queue record via TVDB when Sonarr reports the series with tmdbId 0.
+        /// </summary>
+        public int? TvdbId { get; set; }
     }
 
     /// <summary>
