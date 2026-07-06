@@ -99,7 +99,7 @@
   "LetterboxdEnabled": false,
   "LongPress2xEnabled": false,
   "MaintenanceModeAction": "disable_accounts",
-  "MaintenanceModeAffectedUsers": "all",
+  "MaintenanceModeAffectedUsers": "",
   "MaintenanceModeEnabled": false,
   "MaintenanceModeMessage": "This server is currently undergoing maintenance. Please try again.",
   "MetadataIconsEnabled": false,

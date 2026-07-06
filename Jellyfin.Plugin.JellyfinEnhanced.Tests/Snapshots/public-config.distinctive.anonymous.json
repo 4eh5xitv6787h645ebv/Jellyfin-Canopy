@@ -99,7 +99,7 @@
   "LetterboxdEnabled": false,
   "LongPress2xEnabled": false,
   "MaintenanceModeAction": "cfg-MaintenanceModeAction",
-  "MaintenanceModeAffectedUsers": "cfg-MaintenanceModeAffectedUsers",
+  "MaintenanceModeAffectedUsers": "",
   "MaintenanceModeEnabled": false,
   "MaintenanceModeMessage": "cfg-MaintenanceModeMessage",
   "MetadataIconsEnabled": false,

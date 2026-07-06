@@ -54,5 +54,21 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Configuration
             Assert.DoesNotContain("WatchProgressDefaultMode", publicPayload.Keys);
             Assert.DoesNotContain("WatchProgressDefaultMode", privatePayload.Keys);
         }
+
+        [Fact]
+        public void MaintenanceModeAffectedUsers_RedactedForAnonymous()
+        {
+            var config = new PluginConfiguration { MaintenanceModeAffectedUsers = "guid1,guid2" };
+
+            var anonymous = SettingDescriptors.BuildPayload(
+                SettingExposure.Public, new SettingContext(config, IsAuthenticated: false));
+            var authenticated = SettingDescriptors.BuildPayload(
+                SettingExposure.Public, new SettingContext(config, IsAuthenticated: true));
+
+            // Pre-login callers must not enumerate the targeted account GUIDs.
+            Assert.Equal(string.Empty, anonymous["MaintenanceModeAffectedUsers"]);
+            // Authenticated callers still see the full value (unchanged behavior).
+            Assert.Equal("guid1,guid2", authenticated["MaintenanceModeAffectedUsers"]);
+        }
     }
 }
