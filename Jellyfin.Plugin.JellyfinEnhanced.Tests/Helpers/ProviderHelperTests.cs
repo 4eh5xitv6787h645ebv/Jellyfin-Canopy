@@ -51,5 +51,35 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Helpers
 
             Assert.Null(resolved);
         }
+
+        [Fact]
+        public void GetBestItemId_EqualScoreTie_DeterministicallyPicksSmallestGuid()
+        {
+            // Two providers each score 1, resolving to two distinct items. MaxBy resolved the tie by
+            // Dictionary enumeration order (nondeterministic); the fix returns the smallest Guid.
+            var larger = Guid.Parse("22222222-2222-2222-2222-222222222222");
+            var smaller = Guid.Parse("11111111-1111-1111-1111-111111111111");
+            var providers = new[] { ("Tvdb", "1"), ("Tmdb", "2") };
+
+            // Two insertion orders of the same logical map — the winner must not depend on order.
+            var mapA = new Dictionary<(string Provider, string Value), Guid>
+            {
+                [("Tvdb", "1")] = larger,
+                [("Tmdb", "2")] = smaller,
+            };
+            var mapB = new Dictionary<(string Provider, string Value), Guid>
+            {
+                [("Tmdb", "2")] = smaller,
+                [("Tvdb", "1")] = larger,
+            };
+
+            var resultA = ProviderHelper.GetBestItemId(providers, mapA);
+            var resultB = ProviderHelper.GetBestItemId(providers, mapB);
+
+            Assert.Equal(smaller, resultA);
+            Assert.Equal(smaller, resultB);
+            // Repeated calls are stable.
+            Assert.Equal(resultA, ProviderHelper.GetBestItemId(providers, mapA));
+        }
     }
 }

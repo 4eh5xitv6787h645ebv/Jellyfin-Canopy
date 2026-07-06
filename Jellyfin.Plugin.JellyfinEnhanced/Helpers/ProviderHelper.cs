@@ -28,7 +28,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers
             if (scoreMap.Count == 0)
                 return null;
 
-            return scoreMap.MaxBy(kv => kv.Value).Key;
+            // Deterministic tie-break: highest score first, then smallest Guid. MaxBy resolved equal
+            // scores by Dictionary enumeration order, so the chosen item could differ across runs;
+            // ThenBy(Guid) gives a total order so the same input always yields the same item id.
+            return scoreMap.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key).First().Key;
         }
 
         public static List<(string Provider, string Value)> GetProviders(ArrItem e) 

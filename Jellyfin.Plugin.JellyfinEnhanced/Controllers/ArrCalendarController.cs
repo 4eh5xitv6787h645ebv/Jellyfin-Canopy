@@ -282,43 +282,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             //   2. HasFile=true (if one instance has the file downloaded, show that).
             // The losing candidate's InstanceName is preserved in AlsoInInstances so the UI
             // can show "also in: X, Y" context instead of silently erasing other instances.
-            // normalize ReleaseDate to a calendar-day
-            // bucket before using it in the dedup key. Different Sonarr/Radarr
-            // versions emit different precision (`...000Z` vs `Z`, airDate vs
-            // airDateUtc fallbacks with TZ drift); using the raw string fails
-            // dedup and surfaces duplicate events on a per-instance basis.
-            static string NormalizeDateForDedup(string? raw)
-            {
-                if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
-                if (DateTimeOffset.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
-                        out var dto))
-                {
-                    return dto.UtcDateTime.ToString("yyyy-MM-dd");
-                }
-                // Fallback: strip everything after the first 10 chars when it
-                // already looks like an ISO date prefix.
-                return raw.Length >= 10 ? raw.Substring(0, 10) : raw;
-            }
-
             var deduped = new Dictionary<string, ArrItem>();
             foreach (var evt in events)
             {
-                string dedupeKey;
-                var normalizedDate = NormalizeDateForDedup(evt.ReleaseDate);
-                // TvdbId/TmdbId are pre-normalized by ArrIdHelper.ToNullableId at the producer, so a
-                // present-but-0 id is null here and takes the title fallback — two distinct un-mapped
-                // items no longer collide on a shared "0" key.
-                if (evt.Source == nameof(ArrType.Sonarr))
-                {
-                    var seriesKey = evt.TvdbId?.ToString() ?? $"title:{evt.Title}";
-                    dedupeKey = $"sonarr|{seriesKey}|S{evt.SeasonNumber}E{evt.EpisodeNumber}|{normalizedDate}";
-                }
-                else
-                {
-                    var movieKey = evt.TmdbId?.ToString() ?? $"title:{evt.Title}";
-                    dedupeKey = $"radarr|{movieKey}|{evt.ReleaseType}|{normalizedDate}";
-                }
+                var dedupeKey = BuildDedupKey(evt);
 
                 if (!deduped.TryGetValue(dedupeKey, out var existing))
                 {
@@ -386,6 +353,24 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             }
 
             return Ok(new { events, errors });
+        }
+
+        // Cross-instance dedup key. A series tvdbId + S/E (or a movie tmdbId + release-type) already
+        // uniquely identifies the item, so the release date is intentionally NOT part of the key: a
+        // given episode/movie-release can't legitimately occur twice, and including the date could only
+        // false-split the same item across a UTC-midnight boundary (the TZ drift the old normalizer
+        // tried to absorb) — never a wrong merge. TvdbId/TmdbId are pre-normalized by
+        // ArrIdHelper.ToNullableId, so a present-but-0 id takes the title fallback.
+        internal static string BuildDedupKey(ArrItem evt)
+        {
+            if (evt.Source == nameof(ArrType.Sonarr))
+            {
+                var seriesKey = evt.TvdbId?.ToString() ?? $"title:{evt.Title}";
+                return $"sonarr|{seriesKey}|S{evt.SeasonNumber}E{evt.EpisodeNumber}";
+            }
+
+            var movieKey = evt.TmdbId?.ToString() ?? $"title:{evt.Title}";
+            return $"radarr|{movieKey}|{evt.ReleaseType}";
         }
 
         private Task<(List<ArrItem> Items, string? Error)> FetchSonarrCalendar(
