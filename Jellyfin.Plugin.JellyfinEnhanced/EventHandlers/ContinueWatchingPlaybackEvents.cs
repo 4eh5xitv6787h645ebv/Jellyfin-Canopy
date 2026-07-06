@@ -153,6 +153,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.EventHandlers
         // Interlocked flush guard so a StopAsync flush and a concurrent timer tick don't double-drain
         // (mirrors TagCacheService.FlushPending).
         private int _draining;
+        private int _drainRearms; // count of times the finally re-armed the timer (test seam)
+
+        // Test seams (Tests has InternalsVisibleTo).
+        internal void EnqueueRemovalForTest(Guid id) => _pendingRemovals.TryAdd(id.ToString(), 0);
+
+        internal void DrainForTest() => Drain();
+
+        internal Action? OnDrainProcessingForTest;
+
+        internal int DrainRearmCountForTest => _drainRearms;
+
+        internal bool PendingIsEmptyForTest => _pendingRemovals.IsEmpty;
 
         public ContinueWatchingLibraryHook(
             ILibraryManager libraryManager,
@@ -211,6 +223,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.EventHandlers
                 var ids = _pendingRemovals.Keys.ToArray();
                 foreach (var k in ids) _pendingRemovals.TryRemove(k, out _);
 
+                OnDrainProcessingForTest?.Invoke();
+
                 var userIds = _userManager.GetUsers().Select(u => u.Id);
                 DrainBatch(ids, userIds, PruneOrphans);
             }
@@ -221,6 +235,20 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.EventHandlers
             finally
             {
                 Interlocked.Exchange(ref _draining, 0);
+                // Re-arm if work arrived while we were draining (a concurrent ItemRemoved, or a timer
+                // tick that bailed on the _draining guard): those ids weren't in this drain's snapshot,
+                // so without a re-arm they'd sit in _pendingRemovals until the next unrelated event.
+                // Fixed delay, no busy-spin. Guard against ObjectDisposedException: StopAsync may have
+                // disposed the timer (it drains once more itself), so a late re-arm is a harmless no-op.
+                if (!_pendingRemovals.IsEmpty)
+                {
+                    try
+                    {
+                        _drainTimer.Change(DrainDebounce, Timeout.InfiniteTimeSpan);
+                        Interlocked.Increment(ref _drainRearms);
+                    }
+                    catch (ObjectDisposedException) { /* shutting down; StopAsync already drained/stopped */ }
+                }
             }
         }
 

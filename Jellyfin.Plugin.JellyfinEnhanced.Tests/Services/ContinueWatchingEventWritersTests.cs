@@ -97,5 +97,46 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
 
             Assert.Equal(0, pruned);
         }
+
+        [Fact]
+        public void LibraryHook_Drain_RearmsTimer_WhenRemovalArrivesMidDrain()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "je-cw-drain-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var ucm = new UserConfigurationManager(new StubAppPaths(tempDir), NullLogger<UserConfigurationManager>.Instance);
+                using var hook = new ContinueWatchingLibraryHook(
+                    new CountingLibraryManager(),
+                    ucm,
+                    new StubUserManager(),   // no users -> DrainBatch is a no-op; we only test the re-arm
+                    NullLogger<ContinueWatchingLibraryHook>.Instance);
+
+                // Item A gives the drain work to snapshot.
+                hook.EnqueueRemovalForTest(Guid.NewGuid());
+
+                // Simulate a removal arriving mid-drain (a concurrent ItemRemoved, or a second timer
+                // tick that bailed on the _draining guard): it lands AFTER this drain snapshotted its
+                // ids, so it is NOT processed by this drain.
+                var b = Guid.NewGuid();
+                hook.OnDrainProcessingForTest = () =>
+                {
+                    hook.OnDrainProcessingForTest = null;
+                    hook.EnqueueRemovalForTest(b);
+                };
+
+                hook.DrainForTest();
+
+                // The drain's finally must re-arm because work (B) still remains — otherwise B sits in
+                // _pendingRemovals with no tick to process it until the next unrelated ItemRemoved.
+                // RED against the old finally that only reset _draining.
+                Assert.Equal(1, hook.DrainRearmCountForTest);
+                Assert.False(hook.PendingIsEmptyForTest);
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+            }
+        }
     }
 }
