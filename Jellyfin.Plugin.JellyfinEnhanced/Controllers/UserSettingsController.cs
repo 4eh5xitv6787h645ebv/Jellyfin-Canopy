@@ -272,7 +272,30 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
             try
             {
-                _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "bookmark.json", userConfiguration);
+                // Serialize this full-replace against the add/remove RMWs on the SAME per-user
+                // lock so a stale-snapshot full-save can't interleave inside an AddUserBookmark /
+                // RemoveUserBookmark read-modify-write and drop a just-committed change.
+                lock (_userConfigurationManager.GetUserFileLock(authorizedUserId, "bookmark.json"))
+                {
+                    // Pre-write strict read so a corrupt existing file 503s + backs up instead of being overwritten.
+                    try
+                    {
+                        _userConfigurationManager.GetUserConfigurationStrict<UserBookmark>(authorizedUserId, "bookmark.json");
+                    }
+                    catch (Exception strictEx) when (strictEx is InvalidDataException
+                                                  || strictEx is System.Text.Json.JsonException)
+                    {
+                        _logger.LogWarning($"bookmark.json corrupt for {ResolveUserDisplay(authorizedUserId)} (backed up): {strictEx.Message}");
+                        return StatusCode(503, new { success = false, message = "Bookmark store is corrupt; backed up. Please retry." });
+                    }
+                    catch (IOException ioEx)
+                    {
+                        _logger.LogWarning($"bookmark.json temporarily unreadable for {ResolveUserDisplay(authorizedUserId)}: {ioEx.Message}");
+                        return StatusCode(500, new { success = false, message = "Bookmark store is temporarily unavailable. Please retry." });
+                    }
+
+                    _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "bookmark.json", userConfiguration);
+                }
                 _logger.LogInformation($"Saved enhanced bookmarks for {ResolveUserDisplay(authorizedUserId)} to bookmark.json");
                 return Ok(new { success = true, file = "bookmark.json" });
             }

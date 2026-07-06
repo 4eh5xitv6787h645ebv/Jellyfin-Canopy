@@ -230,32 +230,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                         // Mark as processed if prevention is enabled
                         if (config.PreventWatchlistReAddition)
                         {
-                            var processedItems = _userConfigurationManager.GetProcessedWatchlistItems(user.Id);
-                            processedItems.Items.Add(new ProcessedWatchlistItem
-                            {
-                                TmdbId = tmdbId,
-                                MediaType = mediaType,
-                                ProcessedAt = System.DateTime.UtcNow,
-                                Source = "monitor"
-                            });
-                            _userConfigurationManager.SaveProcessedWatchlistItems(user.Id, processedItems);
+                            TryMarkProcessed(user.Id, tmdbId, mediaType, "monitor");
                         }
                     }
                     else if (userData != null && userData.Likes == true && config.PreventWatchlistReAddition)
                     {
                         // Item is already in watchlist, mark as processed if not already marked
-                        var processedItems = _userConfigurationManager.GetProcessedWatchlistItems(user.Id);
-                        if (!processedItems.Items.Any(p => p.TmdbId == tmdbId && p.MediaType == mediaType))
-                        {
-                            processedItems.Items.Add(new ProcessedWatchlistItem
-                            {
-                                TmdbId = tmdbId,
-                                MediaType = mediaType,
-                                ProcessedAt = System.DateTime.UtcNow,
-                                Source = "existing"
-                            });
-                            _userConfigurationManager.SaveProcessedWatchlistItems(user.Id, processedItems);
-                        }
+                        TryMarkProcessed(user.Id, tmdbId, mediaType, "existing");
                     }
                 }
 
@@ -268,6 +249,37 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             catch (Exception ex)
             {
                 _logger.LogError($"[Watchlist] Error in ProcessItemForWatchlist: {ex.Message}\nStack trace: {ex.StackTrace}");
+            }
+        }
+
+        // Serialize the processed-watchlist marker append through the locked RMW primitive so a
+        // concurrent scheduled sync (or another event) can't clobber a just-added marker. The
+        // in-lock re-check keeps the append idempotent; strict-read corruption is logged + skipped
+        // (this runs off the request path in Task.Run — never throw into the scan thread).
+        private void TryMarkProcessed(Guid userId, int tmdbId, string mediaType, string source)
+        {
+            try
+            {
+                _userConfigurationManager.RmwProcessedWatchlistItems(userId, items =>
+                {
+                    if (items.Items.Any(p => p.TmdbId == tmdbId && p.MediaType == mediaType))
+                    {
+                        return 0;
+                    }
+
+                    items.Items.Add(new ProcessedWatchlistItem
+                    {
+                        TmdbId = tmdbId,
+                        MediaType = mediaType,
+                        ProcessedAt = System.DateTime.UtcNow,
+                        Source = source
+                    });
+                    return 1;
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"[Watchlist] Failed to record processed marker for user {userId}: {ex.Message}");
             }
         }
 

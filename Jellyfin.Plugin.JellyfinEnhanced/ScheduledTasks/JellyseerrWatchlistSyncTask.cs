@@ -596,18 +596,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                     // Mark as processed if prevention is enabled and not already marked
                     if (config?.PreventWatchlistReAddition == true)
                     {
-                        var processedItems = _userConfigurationManager.GetProcessedWatchlistItems(user.Id);
-                        if (!processedItems.Items.Any(p => p.TmdbId == watchlistItem.TmdbId && p.MediaType == watchlistItem.MediaType))
-                        {
-                            processedItems.Items.Add(new ProcessedWatchlistItem
-                            {
-                                TmdbId = watchlistItem.TmdbId,
-                                MediaType = watchlistItem.MediaType,
-                                ProcessedAt = System.DateTime.UtcNow,
-                                Source = "existing"
-                            });
-                            _userConfigurationManager.SaveProcessedWatchlistItems(user.Id, processedItems);
-                        }
+                        TryMarkProcessed(user.Id, watchlistItem.TmdbId, watchlistItem.MediaType, "existing");
                     }
 
                     return Task.FromResult(WatchlistItemResult.AlreadyInWatchlist);
@@ -620,15 +609,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                 // Mark as processed if prevention is enabled
                 if (config?.PreventWatchlistReAddition == true)
                 {
-                    var processedItems = _userConfigurationManager.GetProcessedWatchlistItems(user.Id);
-                    processedItems.Items.Add(new ProcessedWatchlistItem
-                    {
-                        TmdbId = watchlistItem.TmdbId,
-                        MediaType = watchlistItem.MediaType,
-                        ProcessedAt = System.DateTime.UtcNow,
-                        Source = "sync"
-                    });
-                    _userConfigurationManager.SaveProcessedWatchlistItems(user.Id, processedItems);
+                    TryMarkProcessed(user.Id, watchlistItem.TmdbId, watchlistItem.MediaType, "sync");
                 }
 
                 _logger.LogInformation($"[Seerr→Jellyfin Watchlist Sync] ✓ Added to watchlist: {item.Name} for user {user.Username}");
@@ -638,6 +619,37 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             {
                 _logger.LogError($"[Seerr→Jellyfin Watchlist Sync] Error processing watchlist item: {ex.Message}");
                 return Task.FromResult(WatchlistItemResult.Skipped);
+            }
+        }
+
+        // Serialize the processed-watchlist marker append through the locked RMW primitive so this
+        // scheduled task can't clobber a marker the event monitor just added (or vice versa). The
+        // in-lock re-check keeps the append idempotent; strict-read corruption is logged + skipped
+        // so a single corrupt user file can't fail the whole sync task.
+        private void TryMarkProcessed(Guid userId, int tmdbId, string mediaType, string source)
+        {
+            try
+            {
+                _userConfigurationManager.RmwProcessedWatchlistItems(userId, items =>
+                {
+                    if (items.Items.Any(p => p.TmdbId == tmdbId && p.MediaType == mediaType))
+                    {
+                        return 0;
+                    }
+
+                    items.Items.Add(new ProcessedWatchlistItem
+                    {
+                        TmdbId = tmdbId,
+                        MediaType = mediaType,
+                        ProcessedAt = System.DateTime.UtcNow,
+                        Source = source
+                    });
+                    return 1;
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"[Seerr→Jellyfin Watchlist Sync] Failed to record processed marker for user {userId}: {ex.Message}");
             }
         }
 
