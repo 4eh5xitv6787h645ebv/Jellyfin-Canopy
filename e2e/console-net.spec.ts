@@ -13,12 +13,23 @@ import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
 const BAD = '/JellyfinEnhanced/does-not-exist';
 const ALLOWED = '/JellyfinEnhanced/admin/does-not-exist';
 
-/** Fetch a plugin path in the browser (same origin) and return its status. */
+/**
+ * Fetch a plugin path in the browser (same origin, authenticated) and return
+ * its status. The token matters: Jellyfin's auth layer runs BEFORE endpoint
+ * routing, so an UNauthenticated request to a missing route 401s instead of
+ * 404ing. We want the routing-miss 404 (a broken endpoint a logged-in client
+ * hits), so send the session token.
+ */
 async function fetchStatus(page: any, path: string): Promise<number> {
     return page.evaluate(async (p: string) => {
         const api = (window as any).ApiClient;
+        // JF12 authenticates from the Authorization header (it dropped the
+        // legacy X-Emby-Token); mirror the plugin's own config-page fetches.
+        const token = api.accessToken ? api.accessToken() : '';
         try {
-            const res = await fetch(api.getUrl(p));
+            const res = await fetch(api.getUrl(p), {
+                headers: { 'Authorization': `MediaBrowser Token="${token}"`, 'X-MediaBrowser-Token': token },
+            });
             return res.status;
         } catch {
             return 0;
@@ -33,8 +44,8 @@ test.describe('console 4xx safety net', () => {
         // Discard boot noise so only the two deliberate probes are on record.
         consoleErrors.reset();
 
-        // A bogus plugin route 404s (endpoint routing misses before auth), so
-        // both are genuine 4xx responses at two different urls.
+        // Authenticated, a bogus plugin route 404s (routing miss after auth),
+        // so both are genuine 4xx responses at two different urls.
         expect(await fetchStatus(page, BAD), 'bogus plugin route 404s').toBe(404);
         const allowedStatus = await fetchStatus(page, ALLOWED);
         expect(allowedStatus, 'bogus admin route is a 4xx').toBeGreaterThanOrEqual(400);
