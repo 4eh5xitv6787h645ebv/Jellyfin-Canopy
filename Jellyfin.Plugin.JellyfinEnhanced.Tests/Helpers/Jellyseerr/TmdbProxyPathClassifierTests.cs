@@ -15,7 +15,6 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Helpers.Jellyseerr
         [Theory]
         [InlineData("search/keyword")]
         [InlineData("search/company")]
-        [InlineData("search/person")]
         [InlineData("genres/movie")]
         [InlineData("genres/tv")]
         public void Neutral_ForRatingFreeShapes(string apiPath)
@@ -25,6 +24,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Helpers.Jellyseerr
         [InlineData("discover/movie")]
         [InlineData("discover/tv")]
         [InlineData("search/multi")]
+        // search/person returns results[].known_for[] full title objects
+        // (name/overview/poster/adult) the raw passthrough cannot body-filter,
+        // so a rating-limited caller must be denied it.
+        [InlineData("search/person")]
         [InlineData("trending/all")]
         [InlineData("movie/550/similar")]
         [InlineData("tv/1399/recommendations")]

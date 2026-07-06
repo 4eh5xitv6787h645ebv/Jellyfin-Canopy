@@ -68,14 +68,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Helpers.Jellyseerr
 
             if (Eq(head, "search"))
             {
-                // keyword / company / person search return no rating-gated title list.
+                // keyword / company search return no rating-gated title list.
+                // person is deliberately excluded: raw TMDB /3/search/person returns
+                // results[].known_for[] full title objects (name/overview/poster/adult),
+                // and the raw passthrough cannot body-filter — so it must fall through
+                // to Restricted rather than leak above-limit/adult titles.
                 if (segments.Length >= 2
-                    && (Eq(segments[1], "keyword") || Eq(segments[1], "company") || Eq(segments[1], "person")))
+                    && (Eq(segments[1], "keyword") || Eq(segments[1], "company")))
                 {
                     return neutral;
                 }
 
-                // multi / movie / tv / collection search enumerate titles.
+                // multi / movie / tv / collection / person search enumerate titles.
                 return restricted;
             }
 
