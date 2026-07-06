@@ -446,7 +446,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 {
                     var scopeParam = selfScoped ? $"&requestedBy={jellyseerrUser.Id}" : string.Empty;
 
-                    async Task<JsonArray?> FetchComingSoonPage(string upstreamFilter, int pageSkip, int pageTake)
+                    async Task<(int RawCount, JsonArray? Filtered)> FetchComingSoonPage(string upstreamFilter, int pageSkip, int pageTake)
                     {
                         var pageUri = $"{jellyseerrUrl}/api/v1/request?take={pageTake}&skip={pageSkip}&filter={upstreamFilter}{scopeParam}";
                         try
@@ -457,18 +457,26 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                             var (pageJson, pageError) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(pageResponse, pageUri);
                             if (pageError != null || pageJson == null)
                             {
-                                return null;
+                                return (0, null);
                             }
+
+                            // Count the RAW upstream rows BEFORE the parental filter shrinks the
+                            // page, so aggregation paginates by the true upstream page length
+                            // (SEC-SEERR-3): otherwise a rating-limited caller's filtered short
+                            // pages would stop the walk early and hide future-dated items.
+                            var rawCount = (JsonNode.Parse(pageJson) as JsonObject)?["results"] is JsonArray rawResults
+                                ? rawResults.Count
+                                : 0;
 
                             // Every aggregated page gets the same parental gate as the primary fetch.
                             var pageParental = await _parentalFilter.ApplyAsync(pageJson, "/api/v1/request", SeerrCaller());
                             var pageData = JsonNode.Parse(pageParental.Body)!.AsObject();
-                            return pageData["results"] as JsonArray;
+                            return (rawCount, pageData["results"] as JsonArray);
                         }
                         catch (Exception ex)
                         {
                             _logger.LogWarning($"Coming-soon page fetch failed ({upstreamFilter} skip={pageSkip}): {ex.Message}");
-                            return null;
+                            return (0, null);
                         }
                     }
 
@@ -777,12 +785,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
         /// <summary>
         /// Walks every upstream page for each coming-soon filter (via the injected page
-        /// fetcher) and returns the combined request rows, deduped by request id. Stops at a
-        /// short/empty page or the <paramref name="maxItems"/> cap. Extracted so the
+        /// fetcher) and returns the combined request rows, deduped by request id. The fetcher
+        /// returns the RAW upstream page length alongside the parental-filtered rows;
+        /// pagination terminates on the raw length so parental filtering (which shrinks a page
+        /// below <paramref name="pageSize"/>) cannot truncate the walk early. Stops at a
+        /// short/empty raw page or the <paramref name="maxItems"/> cap. Extracted so the
         /// aggregate-all-pages fix is unit-testable without a live Seerr.
         /// </summary>
         internal static async Task<List<JsonObject>> AggregateComingSoonPagesAsync(
-            Func<string, int, int, Task<JsonArray?>> fetchPage,
+            Func<string, int, int, Task<(int RawCount, JsonArray? Filtered)>> fetchPage,
             IReadOnlyList<string> upstreamFilters,
             int pageSize,
             int maxItems)
@@ -794,36 +805,42 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             {
                 for (int skip = 0; combined.Count < maxItems; skip += pageSize)
                 {
-                    var results = await fetchPage(filter, skip, pageSize).ConfigureAwait(false);
-                    if (results == null || results.Count == 0)
+                    var (rawCount, filtered) = await fetchPage(filter, skip, pageSize).ConfigureAwait(false);
+                    if (rawCount <= 0)
                     {
-                        break;
+                        break; // no upstream rows (empty page or fetch failure) → last page
                     }
 
-                    foreach (var node in results)
+                    if (filtered != null)
                     {
-                        if (node is not JsonObject obj)
+                        foreach (var node in filtered)
                         {
-                            continue;
-                        }
+                            if (node is not JsonObject obj)
+                            {
+                                continue;
+                            }
 
-                        var id = (int?)obj["id"];
-                        // Dedupe by request id so a row present under both processing and
-                        // approved (or across overlapping pages) is only counted once.
-                        if (id.HasValue && !seenIds.Add(id.Value))
-                        {
-                            continue;
-                        }
+                            var id = (int?)obj["id"];
+                            // Dedupe by request id so a row present under both processing and
+                            // approved (or across overlapping pages) is only counted once.
+                            if (id.HasValue && !seenIds.Add(id.Value))
+                            {
+                                continue;
+                            }
 
-                        combined.Add(obj);
-                        if (combined.Count >= maxItems)
-                        {
-                            break;
+                            combined.Add(obj);
+                            if (combined.Count >= maxItems)
+                            {
+                                break;
+                            }
                         }
                     }
 
-                    // A short page is the last page for this filter.
-                    if (results.Count < pageSize)
+                    // Terminate on the RAW upstream page length, not the filtered count: the
+                    // parental filter shrinks pages below pageSize, so breaking on the filtered
+                    // count would stop the walk early and hide future-dated items from a
+                    // rating-limited caller (SEC-SEERR-3).
+                    if (rawCount < pageSize)
                     {
                         break;
                     }

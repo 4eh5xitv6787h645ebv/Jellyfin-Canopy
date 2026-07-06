@@ -25,12 +25,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
             return arr;
         }
 
+        // Raw==filtered fetcher: the aggregate walk sees the whole page (no parental removals).
+        private static Task<(int RawCount, JsonArray? Filtered)> Unfiltered(JsonArray? page)
+            => Task.FromResult<(int, JsonArray?)>((page?.Count ?? 0, page));
+
         [Fact]
         public async Task AggregateComingSoonPages_WalksEveryPageAndFilter_DedupedById()
         {
             // Future-dated requests span multiple pages; `approved` carries one too. A single
             // page of `processing` (the old behavior) would miss ids 3,4,5,6 and 100.
-            Task<JsonArray?> Fetch(string filter, int skip, int take)
+            Task<(int, JsonArray?)> Fetch(string filter, int skip, int take)
             {
                 JsonArray? page = (filter, skip) switch
                 {
@@ -41,7 +45,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
                     ("approved", 0)   => Page(100),   // `approved` set → previously never fetched
                     _ => new JsonArray()
                 };
-                return Task.FromResult<JsonArray?>(page);
+                return Unfiltered(page);
             }
 
             var combined = await ArrRequestsController.AggregateComingSoonPagesAsync(
@@ -52,11 +56,35 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
         }
 
         [Fact]
+        public async Task AggregateComingSoonPages_PaginatesByRawLength_NotFilteredCount()
+        {
+            // SEC-SEERR-3: the parental filter shrinks each full upstream page (2 rows) below
+            // pageSize. Terminating on the FILTERED count would stop after page 0 and hide the
+            // future-dated id 3; the walk must continue while the RAW upstream page is full.
+            Task<(int, JsonArray?)> Fetch(string filter, int skip, int take)
+            {
+                (int RawCount, JsonArray? Filtered) page = (filter, skip) switch
+                {
+                    ("processing", 0) => (2, Page(1)), // raw full (2), one row filtered out
+                    ("processing", 2) => (1, Page(3)), // raw short (1) → last page, id 3 survives
+                    _ => (0, new JsonArray())
+                };
+                return Task.FromResult(page);
+            }
+
+            var combined = await ArrRequestsController.AggregateComingSoonPagesAsync(
+                Fetch, new[] { "processing" }, pageSize: 2, maxItems: 500);
+
+            var ids = combined.Select(o => (int)o["id"]!).ToArray();
+            Assert.Equal(new[] { 1, 3 }, ids); // id 3 reached only when paginating by raw length
+        }
+
+        [Fact]
         public async Task AggregateComingSoonPages_RespectsMaxItemsCap()
         {
             // A Seerr that never returns a short page must not drive unbounded upstream calls.
-            Task<JsonArray?> Fetch(string filter, int skip, int take)
-                => Task.FromResult<JsonArray?>(filter == "processing" ? Page(skip, skip + 1) : new JsonArray());
+            Task<(int, JsonArray?)> Fetch(string filter, int skip, int take)
+                => Unfiltered(filter == "processing" ? Page(skip, skip + 1) : new JsonArray());
 
             var combined = await ArrRequestsController.AggregateComingSoonPagesAsync(
                 Fetch, new[] { "processing" }, pageSize: 2, maxItems: 6);
