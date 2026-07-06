@@ -126,6 +126,31 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             serviceCollection.AddScoped<IEventConsumer<PlaybackStartEventArgs>, ContinueWatchingPlaybackConsumer>();
             serviceCollection.AddHostedService<ContinueWatchingLibraryHook>();
             serviceCollection.Configure<MvcOptions>(o => o.Filters.AddService<HiddenContentResponseFilter>());
+
+            // Spoiler Guard: two MVC action filters (image-byte substitution +
+            // DTO field stripping) plus their shared user-resolver, the SkiaSharp
+            // blur/stock-card engine, the Seerr pending-entry promoter, and the
+            // S1E1 first-play auto-enable event consumer. All per-user state lives
+            // in spoilerblur.json; both filters no-op fast when the master switch
+            // is off. The field-strip filter is registered BEFORE the image filter,
+            // both AFTER HiddenContentResponseFilter, so hidden items are dropped
+            // first, then surviving DTOs are stripped, then image bytes rewritten.
+            serviceCollection.AddSingleton<ImageBlurService>();
+            serviceCollection.AddSingleton<SpoilerUserResolver>();
+            serviceCollection.AddSingleton<SpoilerBlurImageFilter>();
+            serviceCollection.AddSingleton<SpoilerFieldStripFilter>();
+            // Shared pre-acquisition ("pending") pending-add core used by BOTH the
+            // SpoilerGuardController HTTP endpoints and the Seerr auto-request hook on
+            // JellyseerrProxyController. Depends only on the config store + library +
+            // user managers (never IJellyseerrClient), so it stays cycle-free.
+            serviceCollection.AddSingleton<SpoilerPendingService>();
+            serviceCollection.AddHostedService<SpoilerSeerrPendingPromoter>();
+            serviceCollection.AddScoped<IEventConsumer<PlaybackStartEventArgs>, SpoilerAutoEnableOnFirstPlayConsumer>();
+            serviceCollection.Configure<MvcOptions>(o =>
+            {
+                o.Filters.AddService<SpoilerFieldStripFilter>();
+                o.Filters.AddService<SpoilerBlurImageFilter>();
+            });
         }
     }
 }

@@ -332,6 +332,25 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Configuration
                 Public("HiddenContentUseNativeTab", c => c.HiddenContentUseNativeTab),
                 Public("HiddenContentAdmin", c => c.HiddenContentAdmin),
 
+                // Spoiler Guard Settings. Only the keys the client scripts need
+                // are projected: the master switch + the per-category strip
+                // toggles the settings panel exposes as user opt-outs, plus the
+                // strict-refresh flag. Everything else (Mode, Intensity, Artwork,
+                // KeepMoviePosters, CastMode, Placeholder, AutoEnable*) is
+                // server-side only — the dashboard config page edits the whole
+                // config object directly, so those need no descriptor.
+                Public("SpoilerBlurEnabled", c => c.SpoilerBlurEnabled),
+                Public("SpoilerStripOverview", c => c.SpoilerStripOverview),
+                Public("SpoilerStripTags", c => c.SpoilerStripTags),
+                Public("SpoilerStripChapters", c => c.SpoilerStripChapters),
+                Public("SpoilerStripTaglines", c => c.SpoilerStripTaglines),
+                Public("SpoilerStripRatings", c => c.SpoilerStripRatings),
+                Public("SpoilerStripPremiereDate", c => c.SpoilerStripPremiereDate),
+                Public("SpoilerReplaceTitle", c => c.SpoilerReplaceTitle),
+                Public("SpoilerStripCast", c => c.SpoilerStripCast),
+                Public("SpoilerStripReviews", c => c.SpoilerStripReviews),
+                Public("SpoilerBlurStrictRefresh", c => c.SpoilerBlurStrictRefresh),
+
                 // Maintenance Mode
                 Public("MaintenanceModeEnabled", c => c.MaintenanceModeEnabled),
                 Public("MaintenanceModeMessage", c => c.MaintenanceModeMessage),

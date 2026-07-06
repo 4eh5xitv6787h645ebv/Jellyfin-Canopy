@@ -1918,6 +1918,12 @@
                     return isNaN(v) || v < 1 ? 5 : Math.min(v, 60);
                 }
             },
+            SpoilerBlurIntensity: {
+                save: function (el) {
+                    const v = parseInt(el.value, 10);
+                    return isNaN(v) || v < 5 ? 40 : Math.min(v, 100);
+                }
+            },
         };
 
         function configBoundFields() {
