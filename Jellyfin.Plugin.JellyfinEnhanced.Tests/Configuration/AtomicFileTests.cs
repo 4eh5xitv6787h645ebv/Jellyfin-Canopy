@@ -53,6 +53,35 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Configuration
         }
 
         [Fact]
+        public void WriteAllText_FlushesContentsToDiskBeforeRename()
+        {
+            var dest = Dest("durable.json");
+
+            AtomicFile.LastDurableWriteFlushedContents = false;
+            AtomicFile.WriteAllText(dest, "payload");
+
+            // The load-bearing crash-durability guarantee: the temp file's CONTENTS must be
+            // fsync'd (FileStream.Flush(flushToDisk: true)) before the atomic rename. A naive
+            // File.WriteAllText only flushes to the OS page cache, so a power loss right after
+            // the rename could leave a present-but-empty destination. (RED against the old
+            // File.WriteAllText path: the flag is never set.)
+            Assert.True(AtomicFile.LastDurableWriteFlushedContents);
+            Assert.Equal("payload", File.ReadAllText(dest));
+        }
+
+        [Fact]
+        public void WriteAllBytes_FlushesContentsToDiskBeforeRename()
+        {
+            var dest = Dest("durable.bin");
+
+            AtomicFile.LastDurableWriteFlushedContents = false;
+            AtomicFile.WriteAllBytes(dest, new byte[] { 1, 2, 3 });
+
+            Assert.True(AtomicFile.LastDurableWriteFlushedContents);
+            Assert.Equal(new byte[] { 1, 2, 3 }, File.ReadAllBytes(dest));
+        }
+
+        [Fact]
         public void WriteAllText_NonAsciiRoundTrips_NoBom()
         {
             var dest = Dest("unicode.json");
