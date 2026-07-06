@@ -196,16 +196,6 @@ const ALLOWLIST: AllowlistEntry[] = [
     },
     {
         file: 'enhanced/settings-panel/template.ts',
-        expr: 'preset.bgColor',
-        why: 'plugin-defined subtitle preset tables (legacy js/ tree) — fixed CSS color values; isCssColor validation is the planned tightening',
-    },
-    {
-        file: 'enhanced/settings-panel/template.ts',
-        expr: 'preset.textColor',
-        why: 'plugin-defined subtitle preset tables (legacy js/ tree) — fixed CSS color values; isCssColor validation is the planned tightening',
-    },
-    {
-        file: 'enhanced/settings-panel/template.ts',
         expr: 'preset.size',
         why: 'plugin-defined font-size preset tables (legacy js/ tree) — fixed numeric em values',
     },

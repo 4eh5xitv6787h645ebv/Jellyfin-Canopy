@@ -7,10 +7,11 @@
 // identical; the JE.internals.hiddenContentPage bag is now real module imports.)
 
 import { JE } from '../../globals';
+import { isCssColor } from '../../core/css-safe';
 import { state, scopeBadgeText, showUnhideConfirmation } from './state';
 import {
     handleUnhide, handleUnhideMany, maybeInitAdminFilter, onAdminUserChange,
-    toOpaqueColor, applyAdminThemeVars, isCssColor, createAdminViewingBadge,
+    toOpaqueColor, applyAdminThemeVars, createAdminViewingBadge,
     openAdminAddModal
 } from './admin';
 import { createGroupCard, createSection } from './cards';

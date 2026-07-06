@@ -7,6 +7,7 @@
 
 import { JE } from '../../globals';
 import { state, POSTER_MAX_WIDTH } from './state';
+import { isCssColor } from '../../core/css-safe';
 // Cross-module reference (defined in hidden-content-page/render.ts). ES-module
 // cyclic edge — only ever invoked at call time, never during module evaluation.
 import { renderPage } from './render';
@@ -163,16 +164,6 @@ export function applyAdminThemeVars(container: HTMLElement): void {
     // unset), so we leave the property unset on anything the browser doesn't accept as a colour.
     if (isCssColor(tv.primaryAccent)) container.style.setProperty('--je-hc-accent', tv.primaryAccent);
     if (isCssColor(tv.textColor)) container.style.setProperty('--je-hc-text', tv.textColor);
-}
-
-/**
- * Returns true if `v` is a colour the browser accepts (so it's safe inside color-mix() / var()).
- * Falls back to a permissive check where the CSS API is unavailable.
- */
-export function isCssColor(v: unknown): boolean {
-    if (typeof v !== 'string' || v.trim() === '') return false;
-    if (typeof CSS === 'undefined' || typeof CSS.supports !== 'function') return true;
-    return CSS.supports('color', v.trim());
 }
 
 /**

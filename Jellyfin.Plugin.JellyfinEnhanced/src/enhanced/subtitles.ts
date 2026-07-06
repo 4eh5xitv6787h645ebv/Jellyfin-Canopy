@@ -5,6 +5,7 @@
 
 import { JE } from '../globals';
 import { onBodyMutation } from '../core/dom-observer';
+import { cssColorOr } from '../core/css-safe';
 import type { BodySubscriberHandle } from '../types/je';
 
 interface SubtitleStyle {
@@ -194,6 +195,22 @@ function startSubtitleObserver(): void {
  * Main function to apply styles. It sets the desired style and starts the process.
  */
 JE.applySubtitleStyles = (textColor: string, bgColor: string, fontSize: number, fontFamily: string, textShadow: string) => {
+    // THEME-6: the video-page driver re-invokes this on every ~100ms tick with
+    // the same resolved style. Skip the observer teardown/re-subscribe and the
+    // ::cue rewrite when nothing changed and the pipeline is already live; only
+    // do the heavy work when the resolved style actually changed.
+    const unchanged = currentSubtitleStyle.textColor === textColor
+        && currentSubtitleStyle.bgColor === bgColor
+        && currentSubtitleStyle.fontSize === fontSize
+        && currentSubtitleStyle.fontFamily === fontFamily
+        && currentSubtitleStyle.textShadow === textShadow;
+    const cueSheetLive = !!(document.getElementById('je-html-videoplayer-cuestyle') as HTMLStyleElement | null)?.sheet?.cssRules.length;
+    if (unchanged && subtitleObserver && cueSheetLive) {
+        // Position is cheap + idempotent — keep it; skip the rest.
+        applySubtitlePosition();
+        return;
+    }
+
     // Store the chosen style globally for the observer to use
     currentSubtitleStyle = { textColor, bgColor, fontSize, fontFamily, textShadow };
 
@@ -241,11 +258,20 @@ function applyNativeCueStyles(): void {
         while (sheet.cssRules.length > 0) sheet.deleteRule(0);
         if (JE.currentSettings?.disableCustomSubtitleStyles) return;
         const { textColor, bgColor, fontSize, fontFamily, textShadow } = currentSubtitleStyle;
+        // THEME-1: bgColor/textColor are free-text per-user settings landing in a
+        // live stylesheet rule — gate them through cssColorOr so a payload like
+        // `red;background-image:url(https://attacker/beacon)` can't inject an
+        // extra declaration; coerce the numeric font-size. fontFamily comes from
+        // the fixed fontFamilyPresets table and textShadow is a derived constant
+        // (transparent-bg ternary), so both are trusted producers left as-is.
+        const bg = cssColorOr(bgColor, '#00000000');
+        const fg = cssColorOr(textColor, '#FFFFFFFF');
+        const size = Number(fontSize) || 1.2;
         const cueRule = `
         video.htmlvideoplayer::cue {
-            background-color: ${bgColor!} !important;
-            color: ${textColor!} !important;
-            font-size: ${fontSize!}vw !important;
+            background-color: ${bg} !important;
+            color: ${fg} !important;
+            font-size: ${size}vw !important;
             font-family: ${fontFamily!} !important;
             text-shadow: ${textShadow || 'none'} !important;
         }`;
