@@ -39,3 +39,12 @@ If Weblate is temporarily unavailable, maintainers can still update locale files
 - Cached for 24 hours
 - Available immediately after merge
 - No plugin update needed
+
+### Language Discovery
+
+The language selector lists the available translations by asking the plugin's own
+server endpoint (`/JellyfinEnhanced/locales`) which locale files ship with the
+installed build. The browser does **not** call GitHub to discover languages, so
+the list is correct on isolated networks and is never affected by GitHub's
+anonymous rate limits. A newly-merged locale file becomes selectable once it is
+part of an installed plugin build.

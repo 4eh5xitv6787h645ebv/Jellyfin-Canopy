@@ -26,6 +26,13 @@ Jellyfin.Plugin.JellyfinEnhanced/
     │   ├── live-rows.ts     # Library/user-data pushes → coalesced tag rescans
     │   ├── live-update.ts   # Plugin self-update detection → one-time refresh toast
     │   ├── tag-renderer-base.ts  # Factory owning the shared tag-module plumbing
+    │   ├── bounded-cache.ts # Size-capped, lazily-TTL-swept LRU — the one item-cache primitive
+    │   ├── config-resolve.ts # PascalCase admin-config → camelCase view (admin-default resolution)
+    │   ├── delivery-flags.ts # Zeroes stale Custom-Tabs/Plugin-Pages flags when those plugins are gone
+    │   ├── fetch-error.ts   # Classifies a failed fetch so callers show an error state, not empty
+    │   ├── css-safe.ts      # isCssColor / cssColorOr — the CSS-context escape sink (see client-security.md)
+    │   ├── modal-a11y.ts    # Shared modal focus-trap + global-shortcut suppression for JE overlays
+    │   ├── locale.ts        # One display locale for every date/number format in a session
     │   └── *.test.ts        # Vitest unit tests, colocated (coverage ratchet in vitest.config.ts)
     ├── bootstrap/           # Out-of-band loaders compiled to their OWN dist/<name>.js files
     │   │                    # (fetched by plugin.js separately — before login / before the bundle)
@@ -48,7 +55,7 @@ Jellyfin.Plugin.JellyfinEnhanced/
     │                        # quota, results, request/season modals + internal.ts shared state)
     ├── arr/                 # Sonarr/Radarr integration. Flat singles: arr-links, arr-tag-links,
     │   │                    # arr-globals
-    │   ├── calendar/        # Calendar page (styles, data, render-*, actions, init) + custom-tab.ts
+    │   ├── calendar/        # Calendar page (styles, data, render-*, actions, init, event-date) + custom-tab.ts
     │   └── requests/        # Requests page (styles, data, render-*, actions, init) + custom-tab.ts
     ├── tags/                # Tag renderer specs over core/tag-renderer-base + enhanced/tag-pipeline
     ├── elsewhere/           # Streaming-availability + reviews
@@ -95,17 +102,23 @@ Jellyfin.Plugin.JellyfinEnhanced/
 ├── Configuration/
 │   ├── PluginConfiguration.cs # Flat XML-serialized settings bag (shape is frozen for upgrades)
 │   ├── SettingDescriptors.cs  # Settings-as-data registry: exposure + per-user pairing per setting
+│   ├── AtomicFile.cs          # Crash-safe write helper (temp-file + atomic rename) all config writes go through
 │   ├── UserConfiguration.cs / UserConfigurationManager.cs (+ store/migration/reviews classes)
 │   ├── PersistedJson.cs       # System.Text.Json options replicating the legacy on-disk tolerances
 │   └── configPage.html + config-page.js  # Admin page; simple fields bind via data-config-key
 ├── Services/                  # Seerr cache/scan/watchlist, Seerr parental-rating result filter,
-│   │                          # auto-request watchers, arr tag sync,
+│   │                          # auto-request watchers (AutoRequest/AutoRequestRetryPolicy —
+│   │                          # transport-only retry / already-requested handling), arr tag sync,
 │   │                          # maintenance mode, startup filters (script injection, branding)
 │   └── LiveNotifierService.cs # Pushes live updates (config-changed etc.) to open sessions
 │                              # via ISessionManager (see docs/advanced/live-updates.md)
 ├── EventHandlers/             # Server-side Jellyfin event subscribers (playback events)
 ├── Data/ItemLookupService.cs  # Provider-id lookups via the supported ILibraryManager query surface
-├── ScheduledTasks/ · Helpers/ · Model/ · Logging/ · PluginPages/
+├── Helpers/                  # Pure helpers: ArrIdHelper (zero-id normalize + per-instance id namespacing),
+│                              # ArrUrlGuard (SSRF guard: metadata/rebind blocked, LAN allowed),
+│                              # Arr/ArrReleaseDate (date-only vs instant calendar release contract),
+│                              # Jellyseerr/TmdbProxyPathClassifier (deny-by-default raw-TMDB gate)
+├── ScheduledTasks/ · Model/ · Logging/ · PluginPages/
 └── dist/                      # esbuild output (generated at build time, never committed)
 ```
 
@@ -117,6 +130,7 @@ The project targets **Jellyfin 12 / net10.0 only** and builds with `TreatWarning
 - `npm run build:bundle` — the client bundle (also run automatically by the C# build); `npm run watch` rebuilds it (unminified) on every source change
 - `npm run syntax` / `npm run typecheck` — `node --check` + opt-in `@ts-check` for the one remaining classic script (the loader)
 - `Jellyfin.Plugin.JellyfinEnhanced.Tests/` — xUnit tests, including golden snapshots for the config payloads and on-disk user-file formats, plus a line-coverage ratchet (`scripts/check-dotnet-coverage.js`)
-- `e2e/` — the committed Playwright suite (`npm run e2e`) + `e2e/docker/` (dockerized, seeded Jellyfin 12 for CI and local runs)
+- `src/test/` — cross-cutting **guard tests** that parse the shipped source and fail on a whole *class* of regression, not just one instance: `escape-guard` (HTML-injection, incl. an escape-first check of pre-escaping producers), `css-injection-guard` (CSS-context values), `leak-guard` (object URLs, observers, TTL maps, unbounded retry loops), `perf-rules-guard` (the R-rules), `error-as-empty-guard` (fetch errors surfaced, not swallowed), `locale-guard`, `ratings-css`, `injected-css-balance`, `legacy-auth-header`, `plugin-loader`, `build-scripts`. Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber's synchronous body (see [S1](performance-rules.md#s1-never-block-jellyfins-synchronous-threads))
+- `e2e/` — the committed Playwright suite (`npm run e2e`) + `e2e/docker/` (dockerized, seeded Jellyfin 12 for CI and local runs). The console safety net URL-scopes 4xx failures to a known-legacy allowlist (`e2e/console-net.spec.ts`), and `e2e/docker/seed.sh` accepts optional `TMDB_API_KEY` / `JELLYSEERR_*` env so Seerr/TMDB specs run when configured and skip cleanly (via `e2e/fixtures/seerr.ts`) when not
 - `node scripts/new-feature.js <name>` — the paved-road scaffolder: generates a typed client module, a controller, an e2e spec stub and a docs stub, wired into the area barrel (see CONTRIBUTING.md)
 - `scripts/release/` — release packaging + manifest generation/validation (see RELEASING.md)

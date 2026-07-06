@@ -2,6 +2,15 @@
 
 Customization options are available for many features
 
+!!! note "Admin-supplied colours are validated"
+
+    Where an admin setting supplies a **colour** that the plugin injects into a
+    style rule (for example theme or subtitle colours), the value is validated as
+    a real CSS colour before use and falls back to a safe default if it is not —
+    so a colour field can't be used to inject arbitrary CSS. This does not affect
+    the free-form **Custom CSS Code** box below, which is admin-authored and
+    applied verbatim by Jellyfin. See [Client Security → X2](client-security.md#x2-sanitize-css-context-values).
+
 <!-- preferred admonitions formatting -->
 !!! success "Applying Custom CSS"
 

@@ -21,6 +21,8 @@ grep -rn "PERF(R3" Jellyfin.Plugin.JellyfinEnhanced/src/
 
 Those eight are client-side (jank). There is also one **server-side** rule — [S1](#s1-never-block-jellyfins-synchronous-threads) — for plugin code that runs on Jellyfin's own threads (library-scan event handlers).
 
+Several of these rules are now backed by **source-scan guard tests** that fail `npm run test:client` on a new violation, not only on review: `src/test/perf-rules-guard.test.ts` (the R-rules), `src/test/leak-guard.test.ts` (object URLs, un-torn-down observers, unbounded TTL maps and self-rescheduling retry loops for R3/R5), plus the non-perf `css-injection-guard` and `error-as-empty-guard` companions described in [Client Security](client-security.md).
+
 ---
 
 ## R1 — Pre-paint or reserved space
@@ -218,13 +220,13 @@ private void OnItemChanged(object? sender, ItemChangeEventArgs e)
 
 Use a short debounce with a hard max-wait cap so a continuous scan still flushes periodically, and drain any queued work on `Dispose` so a shutdown mid-window doesn't lose it.
 
-**Enforced.** `LibraryScanEventGuardTests` fails the build when a new file subscribes to these events without being reviewed onto its allowlist, and when `TagCacheMonitor`'s handler regains an inline `GetItemById` / `GetMediaSources` / `GetItemList` / `GetFirstEpisode` call. Grep the record-and-defer sites:
+**Enforced.** `LibraryScanEventGuardTests` fails the build when a new file subscribes to these events without being reviewed onto its allowlist. It also checks the **synchronous body of *every* reviewed subscriber** — not just `TagCacheMonitor` — against a broadened denylist of DB queries and I/O sinks (`GetItem(s)` / `GetPeople` / `QueryItems` / `GetMediaSources` / `GetImageInfo` / `GetChildren`, plus `File.*`, `SaveChanges`, `ToListAsync` and LINQ materialization like `.First(...)`). Legitimately deferred work — the code inside a `Task.Run(...)` lambda or a named off-thread worker — is stripped before matching, so only work that would actually run on the scan thread trips the guard. A subscriber that regains inline heavy work in its synchronous prefix fails with the file and offending call named. Grep the record-and-defer sites:
 
 ```bash
 grep -rn "PERF(S1)" Jellyfin.Plugin.JellyfinEnhanced/
 ```
 
-**In the tree:** `Services/TagCacheMonitor.cs` (record-and-defer handler), `Services/TagCachePendingChanges.cs` (coalescing set), `Services/TagCacheService.cs` (debounced off-thread flush + `Dispose` drain), `Services/SeerrScanTriggerService.cs` (counter + debounce timer).
+**In the tree:** `Services/TagCacheMonitor.cs` (record-and-defer handler), `Services/TagCachePendingChanges.cs` (coalescing set), `Services/TagCacheService.cs` (debounced off-thread flush + `Dispose` drain), `Services/SeerrScanTriggerService.cs` (counter + debounce timer), `EventHandlers/ContinueWatchingPlaybackEvents.cs` (a bulk library removal coalesces to one hidden-content prune per user for the whole batch, not one per removed item).
 
 ---
 

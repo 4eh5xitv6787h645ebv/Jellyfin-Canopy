@@ -79,11 +79,18 @@ And one server-side rule (guarded by `LibraryScanEventGuardTests`):
 
 - [ ] **S1** Any handler for `ILibraryManager.ItemAdded/ItemUpdated/ItemRemoved` (raised synchronously on the library-scan thread) does only O(1) record-and-defer work — no DB query, no `GetMediaSources`, no I/O; heavy work runs on a debounced off-thread worker that coalesces by id. See [S1](docs/advanced/performance-rules.md) and `TagCacheMonitor`/`TagCacheService`.
 
-### Security rule
+### Security rules
 
-One client-side security rule, guarded by `src/test/escape-guard.test.ts` (it fails the build on any unrecognized interpolation):
+Two client-side security rules, each backed by a source-scan guard test that fails the build on a new violation:
 
-- [ ] **X1** Every `${...}` interpolated into HTML (templates, `innerHTML`, `toast()`, `insertAdjacentHTML`) is a compile-time constant / trusted producer, a coerced number (`Number(x) || 0`), or wrapped in `escapeHtml(...)` — in attribute **and** text positions; `toast()` renders innerHTML and `JE.t()` does **not** escape params. See [Client Security](docs/advanced/client-security.md).
+- [ ] **X1** Every `${...}` interpolated into HTML (templates, `innerHTML`, `toast()`, `insertAdjacentHTML`) is a compile-time constant / trusted producer, a coerced number (`Number(x) || 0`), or wrapped in `escapeHtml(...)` — in attribute **and** text positions; `toast()` renders innerHTML and `JE.t()` does **not** escape params. Guarded by `src/test/escape-guard.test.ts`.
+- [ ] **X2** Every config/user-derived value entering a CSS context (`style="..."`, a stylesheet rule, `insertRule`, `color-mix()`, a CSS `var()`) is validated — colours through `cssColorOr(...)`/`isCssColor(...)` (`src/core/css-safe.ts`), because `escapeHtml` does not neutralize a CSS payload. Guarded by `src/test/css-injection-guard.test.ts`.
+
+See [Client Security](docs/advanced/client-security.md).
+
+### Guard tests
+
+Beyond the per-feature unit tests, `npm run test:client` runs cross-cutting **guard tests** in `src/test/` that parse the shipped source and fail on a whole *class* of regression: `escape-guard` and `css-injection-guard` (injection, above), `leak-guard` (object URLs, un-torn-down observers, unbounded caches/retry loops), `perf-rules-guard` (the [performance rules](docs/advanced/performance-rules.md)), and `error-as-empty-guard` (a failed fetch must surface an error, never a silent empty state). Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber. A PR that reintroduces one of these bug classes fails CI without anyone having to spot it in review.
 
 ## 📝 Code Contribution Guidelines
 
