@@ -439,6 +439,14 @@
                             <div class="je-setting-description" data-desc-for="pauseScreenEnabled">
                                 <div class="fieldDescription je-field-desc-sm">This feature is a modified version of the original script by <a class="sectionTitle" href="https://github.com/BobHasNoSoul/Jellyfin-PauseScreen" target="_blank">BobHasNoSoul</a></div>
                             </div>
+
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="pauseScreenDelaySeconds">Pause Screen Delay (seconds)</label>
+                                <input id="pauseScreenDelaySeconds" data-config-key="PauseScreenDelaySeconds" data-config-int="" data-config-fallback="5" is="emby-input" type="number" min="1" max="60" value="5"/>
+                            </div>
+                            <div class="je-setting-description" data-desc-for="pauseScreenDelaySeconds">
+                                <div class="fieldDescription">Default seconds of pause before the custom pause screen appears. Users can override this in their own settings.</div>
+                            </div>
                         </div>
                     </fieldset>
 

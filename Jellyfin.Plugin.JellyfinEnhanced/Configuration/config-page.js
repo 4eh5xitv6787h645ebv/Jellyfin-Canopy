@@ -1912,6 +1912,12 @@
                     return pollInterval >= 30 ? pollInterval : 30;
                 }
             },
+            PauseScreenDelaySeconds: {
+                save: function (el) {
+                    const v = parseInt(el.value, 10);
+                    return isNaN(v) || v < 1 ? 5 : Math.min(v, 60);
+                }
+            },
         };
 
         function configBoundFields() {

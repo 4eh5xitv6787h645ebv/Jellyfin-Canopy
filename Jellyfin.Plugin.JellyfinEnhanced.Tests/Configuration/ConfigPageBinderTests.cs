@@ -80,6 +80,22 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Configuration
             Assert.True(duplicates.Count == 0, $"duplicate data-config-key: {string.Join(", ", duplicates)}");
         }
 
+        [Fact]
+        public void PauseScreenDelay_IsBoundAsAClampedIntControl()
+        {
+            var html = ReadConfigPageHtml();
+            var js = ReadConfigPageJs();
+
+            // XCUT-6: the admin control for the pre-existing PauseScreenDelaySeconds
+            // per-user default. Bound via the generic [data-config-key] int binder
+            // with a fallback, and clamped [1,60] in the save-path override.
+            Assert.Contains("data-config-key=\"PauseScreenDelaySeconds\"", html, StringComparison.Ordinal);
+            Assert.Matches(
+                "<input[^>]*id=\"pauseScreenDelaySeconds\"[^>]*data-config-int[^>]*data-config-fallback=\"5\"",
+                html);
+            Assert.Contains("PauseScreenDelaySeconds:", js, StringComparison.Ordinal);
+        }
+
         private static IReadOnlyList<string> BinderKeysWithDuplicates()
             => BinderKeyRegex.Matches(ReadConfigPageHtml()).Select(m => m.Groups[1].Value).ToList();
 
