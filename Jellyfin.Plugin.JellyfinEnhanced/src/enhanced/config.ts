@@ -5,6 +5,7 @@
 
 import { JE } from '../globals';
 import type { UserSettings } from '../types/je';
+import { adminDefaultsView } from '../core/config-resolve';
 
 /**
  * Constants derived from the plugin configuration.
@@ -95,6 +96,11 @@ JE.saveUserSettings = async (fileName: string, settings: unknown): Promise<void>
 JE.loadSettings = (): UserSettings => {
     const userSettings: Record<string, unknown> = JE.userConfig?.settings || {};
     const pluginDefaults: Record<string, unknown> = JE.pluginConfig || {};
+    // JE.pluginConfig is PascalCase; the merge below iterates camelCase keys, so
+    // the admin tier resolves through a camelCase VIEW (ENH-4). Without this the
+    // admin tier read `pluginDefaults[camelKey]` off the PascalCase object and
+    // always missed, silently falling every paired setting through to hardcoded.
+    const adminDefaults = adminDefaultsView(pluginDefaults);
 
     const hardcodedDefaults: Record<string, unknown> = {
         autoPauseEnabled: true, autoResumeEnabled: false, autoPipEnabled: false,
@@ -142,23 +148,23 @@ JE.loadSettings = (): UserSettings => {
             } else {
                 mergedSettings[key] = userSettings[key];
             }
-        } else if (Object.prototype.hasOwnProperty.call(pluginDefaults, key) && pluginDefaults[key] !== null && pluginDefaults[key] !== undefined) {
-            mergedSettings[key] = pluginDefaults[key];
+        } else if (Object.prototype.hasOwnProperty.call(adminDefaults, key) && adminDefaults[key] !== null && adminDefaults[key] !== undefined) {
+            mergedSettings[key] = adminDefaults[key];
         } else {
             mergedSettings[key] = hardcodedDefaults[key];
         }
     }
 
+    // displayLanguage stays an explicit override: its admin default is the
+    // RENAMED property DefaultLanguage, which the generic camelCase view maps to
+    // `defaultLanguage` (not `displayLanguage`), so the merge loop can't resolve
+    // it. removeContinueWatchingEnabled is NOT special-cased anymore — the admin
+    // tier now resolves RemoveContinueWatchingEnabled generically through
+    // adminDefaults.
     mergedSettings.displayLanguage = Object.prototype.hasOwnProperty.call(userSettings, 'displayLanguage')
         ? userSettings.displayLanguage
         : (pluginDefaults.DefaultLanguage || '');
     mergedSettings.lastOpenedTab = userSettings.lastOpenedTab || 'shortcuts';
-
-    // Admin default → per-user default (camelCase merge above misses PascalCase from GetPublicConfig). Sticky once explicitly set.
-    if (!Object.prototype.hasOwnProperty.call(userSettings, 'removeContinueWatchingEnabled')
-        && pluginDefaults.RemoveContinueWatchingEnabled === true) {
-        mergedSettings.removeContinueWatchingEnabled = true;
-    }
 
     // Ensure isAdmin is always present (even if undefined) so it can be set later
     if (!Object.prototype.hasOwnProperty.call(mergedSettings, 'isAdmin')) {
