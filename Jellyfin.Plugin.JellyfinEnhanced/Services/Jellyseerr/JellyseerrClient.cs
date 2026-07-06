@@ -759,7 +759,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr
 
                 try
                 {
-                    using var request = SeerrHttpHelper.BuildRequest(method, requestUri, config.JellyseerrApiKey, jellyseerrUserId, content);
+                    // Public-scope fetches (genres/person/keyword) are stored under the
+                    // shared `public:` cache key, so their bodies MUST stay user-neutral.
+                    // Omit X-Api-User on those requests — exactly as the certification
+                    // cache already does — so an upstream can never scope the response to
+                    // this caller and leak one user's view into every user's cache. The
+                    // invariant: a body cached under a shared key never carries a per-user
+                    // header on the fetch that produced it.
+                    var requestUserId = isPublicScope ? null : jellyseerrUserId;
+                    using var request = SeerrHttpHelper.BuildRequest(method, requestUri, config.JellyseerrApiKey, requestUserId, content);
                     if (content != null) _logger.LogDebug($"Request body: {content}");
 
                     using var response = await httpClient.SendAsync(request);
