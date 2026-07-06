@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
+using Jellyfin.Plugin.JellyfinEnhanced.Helpers;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -541,10 +542,35 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
             Skipped
         }
 
+        /// <summary>
+        /// Whether a Jellyfin item's TMDB provider-id string matches the watchlist item's TMDB id.
+        /// A watchlist item with no real TMDB id (absent → 0, or an explicit 0 for an unknown-provider
+        /// entry) matches NOTHING — otherwise it would "like" a Jellyfin item stored with
+        /// ProviderIds["Tmdb"]=="0" (an unknown-provider placeholder). Mirrors the WatchlistMonitor
+        /// drop-zero guard, routed through ArrIdHelper.
+        /// </summary>
+        internal static bool MatchesTmdb(string? itemTmdbId, int watchlistTmdbId)
+        {
+            var wanted = ArrIdHelper.ToNullableId(watchlistTmdbId);
+            return wanted.HasValue
+                && string.Equals(
+                    itemTmdbId,
+                    wanted.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    StringComparison.Ordinal);
+        }
+
         private Task<WatchlistItemResult> ProcessWatchlistItem(JUser user, WatchlistItem watchlistItem)
         {
             try
             {
+                // Drop items with no real TMDB id (absent → 0, or an explicit 0) before matching or
+                // recording them: a 0 would otherwise key the processed-items check and match a
+                // Jellyfin item stored with ProviderIds["Tmdb"]=="0", liking the wrong item.
+                if (ArrIdHelper.ToNullableId(watchlistItem.TmdbId) == null)
+                {
+                    return Task.FromResult(WatchlistItemResult.Skipped);
+                }
+
                 var config = _configProvider.ConfigurationOrNull;
                 if (config?.PreventWatchlistReAddition == true)
                 {
@@ -568,13 +594,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.ScheduledTasks
                 });
 
                 var item = items.FirstOrDefault(i =>
-                {
-                    if (i.ProviderIds != null && i.ProviderIds.TryGetValue("Tmdb", out var tmdbId))
-                    {
-                        return tmdbId == watchlistItem.TmdbId.ToString();
-                    }
-                    return false;
-                });
+                    i.ProviderIds != null
+                    && i.ProviderIds.TryGetValue("Tmdb", out var tmdbId)
+                    && MatchesTmdb(tmdbId, watchlistItem.TmdbId));
 
                 if (item == null)
                 {
