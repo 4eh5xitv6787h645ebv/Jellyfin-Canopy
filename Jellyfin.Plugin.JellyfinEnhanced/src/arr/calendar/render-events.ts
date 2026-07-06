@@ -3,6 +3,7 @@
 // agenda-event / card rendering (split from calendar-page.js).
 
 import { assetUrl } from '../../core/asset-urls';
+import { formatDate, formatTime } from '../../core/locale';
 import { JE } from '../arr-globals';
 import { state, STATUS_COLORS } from './data';
 import { getEventTimeLabel } from './event-date';
@@ -115,15 +116,15 @@ function formatReleaseLabel(event: CalendarEvent): string {
 // Format date range label for header
 export function formatRangeLabel(): string {
     if (!state.rangeStart || !state.rangeEnd) {
-        return new Date(state.currentDate).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+        return formatDate(new Date(state.currentDate), { month: 'long', year: 'numeric' });
     }
 
     if (state.viewMode === 'month') {
-        return new Date(state.currentDate).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+        return formatDate(new Date(state.currentDate), { month: 'long', year: 'numeric' });
     }
 
-    const startLabel = state.rangeStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    const endLabel = state.rangeEnd.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const startLabel = formatDate(state.rangeStart, { month: 'short', day: 'numeric' });
+    const endLabel = formatDate(state.rangeEnd, { month: 'short', day: 'numeric' });
 
     if (state.viewMode === 'week') {
         return `${startLabel} - ${endLabel}`;
@@ -148,13 +149,13 @@ function getRelativeDayLabel(date: Date): string {
     if (diffDays === 0) return JE.t?.('calendar_today') ?? '';
     if (diffDays === -1) return JE.t?.('calendar_yesterday') ?? '';
     if (diffDays === 1) return JE.t?.('calendar_tomorrow') ?? '';
-    return targetStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return formatDate(targetStart, { month: 'short', day: 'numeric' });
 }
 
 export function formatHourLabel(hour: number): string {
     const hour12 = state.settings.timeFormat === '5pm/5:30pm';
     const base = new Date(2000, 0, 1, hour, 0, 0, 0);
-    return base.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12 });
+    return formatTime(base, { hour: 'numeric', minute: '2-digit', hour12 });
 }
 
 /**

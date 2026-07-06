@@ -2,6 +2,7 @@
 // Calendar Page — month/week/day/agenda view rendering, legend, sidebar
 // collapse and the full page shell (split from calendar-page.js).
 
+import { formatDate } from '../../core/locale';
 import { JE } from '../arr-globals';
 import {
     filterEvents,
@@ -175,8 +176,8 @@ function renderAgendaView(): string {
     dates.forEach((dateKey) => {
         const [year, month, day] = dateKey.split('-');
         const dateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-        const weekday = dateObj.toLocaleDateString(undefined, { weekday: 'short' });
-        const monthDay = dateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const weekday = formatDate(dateObj, { weekday: 'short' });
+        const monthDay = formatDate(dateObj, { month: 'short', day: 'numeric' });
 
         const dayEvents = groupedEvents[dateKey] || [];
         dayEvents.sort((a, b) => new Date(a.releaseDate as string).getTime() - new Date(b.releaseDate as string).getTime());

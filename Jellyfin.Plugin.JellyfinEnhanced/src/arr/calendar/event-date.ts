@@ -7,6 +7,7 @@
 // day for any viewer west of UTC and printed a bogus clock time (CRIT-1).
 // Genuine instants (Sonarr airDateUtc) keep local conversion.
 
+import { formatTime } from '../../core/locale';
 import { state } from './data';
 import type { CalendarEvent } from './data';
 
@@ -35,5 +36,5 @@ export function getEventTimeLabel(event: CalendarEvent): string | null {
     if (Number.isNaN(date.getTime())) return null;
     if (date.getHours() === 0 && date.getMinutes() === 0) return null;
     const hour12 = state.settings.timeFormat === '5pm/5:30pm';
-    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12 });
+    return formatTime(date, { hour: 'numeric', minute: '2-digit', hour12 });
 }
