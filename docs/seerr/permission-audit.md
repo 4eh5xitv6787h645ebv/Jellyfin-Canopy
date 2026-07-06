@@ -41,4 +41,22 @@ Open the plugin configuration and navigate to the Seerr section. Click the **Run
 - If Seerr is unreachable the audit may report users as "Not linked"; verify Seerr availability via the plugin's Seerr status check.
 - If users should be linked but appear as not linked, try the **Import Users Now** action first.
 
+## Parental-rating enforcement
+
+The Seerr permissions above decide what a user may *do* in Seerr. Independently
+of them, the plugin also enforces each user's **Jellyfin content-rating limit**
+on every Seerr surface it serves — this is a separate, server-side control:
+
+- The filter resolves **each caller's own** Jellyfin user (from the authenticated
+  request, never a client-supplied header) and applies that user's **Maximum
+  Parental Rating** and **Block unrated items** settings. One user's limit is
+  never applied to another's results.
+- It covers Seerr search and discovery, the **Requests page**, the requested-items
+  feed shown on the **Calendar**, and the raw TMDB passthrough (which is
+  denied-by-default for a rating-limited caller).
+- Administrators and users with no rating limit are never filtered.
+
+See [Parental-Rating Filtering](seerr-features.md#parental-rating-filtering) for
+the full behaviour, configuration and limitations.
+
 ---

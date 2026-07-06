@@ -77,9 +77,20 @@ inspecting network traffic — a client-side hide would only conceal the cards.
   truth for what each user may watch.
 - Applies to search results, discovery rows (genre/network/keyword/studio),
   similar/recommended sections, collections, watchlists, person filmographies
-  (including the films listed under a person), and the requests list.
+  (including the films listed under a person), and the **Requests page** — as
+  well as the requested-items feed the **Calendar** draws from. Each list is
+  filtered against the caller's own limit before it reaches the browser, so no
+  user ever sees an above-limit title in their requests or upcoming releases.
 - A restricted user also cannot **open** a blocked title's detail/season or
   **request** it by id — both are rejected server-side, not just hidden.
+- The raw TMDB passthrough is **denied by default** for a rating-limited user.
+  Only rating-free lookups pass through untouched (genre lists, and keyword,
+  company or person *search*); a movie/TV detail or one of its own parts is
+  served only when the parent title is within the user's limit; and everything
+  else — discover, trending, title search, similar and recommendations, person
+  and collection browsing — is blocked. Any new or unknown passthrough shape is
+  blocked until it is explicitly reviewed as safe, so a future endpoint cannot
+  leak restricted results by accident.
 - A title's certification is read the same way the More Info modal shows it
   (region → US → first available), using your **Default Region** (Elsewhere
   setting) to choose the certification system.
@@ -230,6 +241,15 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 - Filter by status
 - Search functionality
 - **Approve / Decline buttons** — admins and users with Manage Requests permission see green approve and red decline icon buttons on pending requests
+
+!!! note "Complete lists and per-user filtering"
+
+    - The request list is filtered by **each caller's own Jellyfin parental-rating
+      limit** (see [Parental-Rating Filtering](#parental-rating-filtering)), and a
+      user who can only see their own requests never receives another user's rows.
+    - The **Coming Soon** view aggregates *all* pages of pending and approved
+      requests before paging locally, so it no longer stops at the first page and
+      its totals reflect the full future-dated set.
 
 ### Issues on Downloads Page
 
@@ -409,11 +429,25 @@ Automatically request media based on viewing behavior.
 - Require all episodes watched (optional)
 - Configurable threshold
 
+- **Next in collection** — when a movie belongs to a TMDB collection, the next
+  title is chosen by **release order**, not by the collection's raw list order,
+  so a prequel or spin-off is never requested ahead of the actual next film
+  (titles with no release date sort last).
+
 #### Auto Movie Request:
 
 - Trigger on playback start
 - Trigger after X minutes watched
 - Check release date (only request if released)
+
+!!! note "One request per title across multiple Seerr backends"
+
+    When more than one Seerr instance is configured, an automatic request only
+    fans out to the next backend on a **pure transport failure** (a backend that
+    could not be reached at all). A backend that answered — even with an error —
+    may already have committed the request, so it is not re-sent elsewhere, and
+    an "already requested" response is treated as success. This prevents the same
+    title being duplicated across two Seerr instances.
 
 ### Caching
 
