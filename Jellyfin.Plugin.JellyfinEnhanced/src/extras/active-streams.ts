@@ -34,6 +34,11 @@ let _lastUpdated: Date | null = null;
 // the first injection (boot / toggle-on, post-paint by architecture) gets the
 // one-time width-expand entrance; re-mount re-injections attach instantly.
 let _headerInjectedOnce = false;
+// The 500ms header-injection retry (fired when the header tray isn't mounted
+// yet). Stored so both teardown paths (stopObserver + destroy) can cancel a
+// pending retry — otherwise a disable racing the retry window re-injects the
+// full button + panel + poll after teardown (zombie UI).
+let _headerRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 const ticksToTime = (ticks: number): string => {
@@ -1161,7 +1166,7 @@ const tryInjectHeader = (attempts = 0): void => {
 
     const headerRight = JE.helpers.getHeaderRightContainer();
     if (!headerRight) {
-        setTimeout(() => tryInjectHeader(attempts + 1), 500);
+        _headerRetryTimer = setTimeout(() => tryInjectHeader(attempts + 1), 500);
         return;
     }
 
@@ -1217,6 +1222,9 @@ const startObserver = (): void => {
 
 const stopObserver = (): void => {
     if (_observer) { _observer.unsubscribe(); _observer = null; }
+    // The observer callback re-invokes tryInjectHeader; cancel any pending
+    // header-injection retry so it can't re-inject after teardown.
+    if (_headerRetryTimer) { clearTimeout(_headerRetryTimer); _headerRetryTimer = null; }
 };
 
 // ── Public API ───────────────────────────────────────────────────────────
@@ -1247,6 +1255,7 @@ JE.activeStreams = {
         if (_lifecycle) { _lifecycle.teardown(); _lifecycle = null; }
         if (_outsideClickListener) { document.removeEventListener('click', _outsideClickListener); _outsideClickListener = null; }
         if (_broadcastCollapseTimer) { clearTimeout(_broadcastCollapseTimer); _broadcastCollapseTimer = null; }
+        if (_headerRetryTimer) { clearTimeout(_headerRetryTimer); _headerRetryTimer = null; }
         document.getElementById('je-active-streams')?.remove();
         document.getElementById('je-active-streams-panel')?.remove();
         document.getElementById('je-active-streams-styles')?.remove();

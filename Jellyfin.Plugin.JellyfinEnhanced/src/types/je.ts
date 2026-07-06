@@ -554,6 +554,13 @@ export interface JEGlobal extends JellyfinEnhancedPublicApi {
     _cacheManager?: CacheManager;
     _hotCache?: HotCache;
     /**
+     * The retained pause-screen singleton (enhanced/pausescreen.ts). Held so a
+     * re-init (config hot-reload / account switch) can tear the prior instance
+     * down via destroy() before constructing a new one — instead of stacking a
+     * duplicate overlay + capturing keydown listener each time.
+     */
+    _pauseScreenInstance?: { destroy(): void };
+    /**
      * PERF(R7): in-flight tag-cache GET started by js/plugin.js as soon as
      * public config lands (boot Stage 1), so the tag pipeline's init awaits an
      * ALREADY-STARTED fetch instead of serializing it behind bundle boot.
