@@ -352,7 +352,7 @@ View recommendations and similar items on detail pages.
 **Setup:**
 
 1. Configure Seerr integration (see above)
-2. Check "Show Seerr Recommendations and Similar items"
+2. Check **"Show similar items"** and/or **"Show recommended items"**
 3. Optional: Enable "Exclude already in library items"
 4. Click **Save**
 
@@ -464,9 +464,9 @@ Display quality information (4K, HDR, Atmos) directly on posters.
 
 **Supported Tags:**
 
-- **Resolution:** 8K, 4K, 1080p, 720p, 480p, LOW-RES
+- **Resolution:** 8K, 4K, 1440p, 1080p, 720p, 480p, LOW-RES
 - **Video Format:** AV1, HEVC, H265, VP9, H264
-- **Video Features:** HDR, Dolby Vision, HDR10+, 3D
+- **Video Features:** HDR, Dolby Vision, HDR10+, HDR10, IMAX, 3D
 - **Audio:** ATMOS, DTS-X, TRUEHD, DTS, Dolby Digital+, 7.1, 5.1
 - **Media Stubs:** BluRay, HD DVD, DVD, VHS, HDTV, Physical (for physical media files)
 

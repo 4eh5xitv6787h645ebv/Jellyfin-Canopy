@@ -39,7 +39,7 @@ Jellyfin Enhanced is a comprehensive plugin that bundles advanced features and c
 
 **Translators:**
 
-- Thank you to all community members who have contributed translations in 15+ languages
+- Thank you to all community members who have contributed translations in 26 languages
 - Your work makes Jellyfin Enhanced accessible to users worldwide
 
 **Bug Reporters & Testers:**

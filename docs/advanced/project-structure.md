@@ -20,6 +20,8 @@ Jellyfin.Plugin.JellyfinEnhanced/
     │   ├── dom-observer.ts  # Multiplexed body MutationObserver, waitForElement, ensureInjected
     │   │                    # (keyed, idempotent, re-render-proof injection)
     │   ├── api-client.ts    # One fetch wrapper: auth headers, retry/dedup/concurrency
+    │   ├── asset-urls.ts    # CDN-URL ↔ local-asset map: same-origin when the asset cache
+    │   │                    # is on (AssetCacheEnabled, default ON), original CDN URL when off (R6)
     │   ├── ui-kit.ts        # escapeHtml, toast, injectCss + the theme-token MUI component kit
     │   ├── live.ts          # Live-update hub over the v12 SDK socket (JE.core.live)
     │   ├── live-config.ts   # Config hot-reload (admin saves apply to open sessions)
@@ -98,6 +100,7 @@ Jellyfin.Plugin.JellyfinEnhanced/
 │   │                          # Admin-only endpoints use [Authorize(Policy = Policies.RequiresElevation)]
 │   │                          # — authorization failures are bare 401/403 (empty body, see api.md)
 │   ├── ConfigController.cs    # public/private config (driven by SettingDescriptors), loader/bundle/locale serving
+│   ├── AssetsController.cs    # Serves locally cached third-party assets (/JellyfinEnhanced/assets/{key}) so browsers never hit a CDN
 │   ├── JellyseerrProxyController.cs / JellyseerrUserController.cs
 │   ├── ArrLinksController.cs / ArrCalendarController.cs / ArrRequestsController.cs
 │   ├── UserSettingsController.cs / HiddenContentController.cs / ReviewsController.cs

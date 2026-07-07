@@ -7,7 +7,7 @@ Quick access to Sonarr, Radarr, and Bazarr (admin only).
 1. Open plugin settings → **`*arr Settings`** tab
 2. Add one or more Sonarr and/or Radarr instances
 3. Enable `Enable *arr Links on Detail Pages`
-4. Optional: Enable "Show *arr Tags as Links"
+4. Optional: Enable "Show synced tags as links"
 5. Configure tag filters (show/hide specific tags)
 
 ### CSS Customization
@@ -109,6 +109,8 @@ Found in the **Pages** tab under "Calendar Page".
 | **Time Format** | 12-hour (`5pm/5:30pm`) or 24-hour (`17:00/17:30`) |
 | **Highlight Favorites** | Highlights favorite shows/movies based on Jellyfin favorites |
 | **Highlight Watched Series** | Highlights series you are currently watching |
+| **Filter by Library Access** | Only shows calendar items from libraries the user can access; upcoming items are matched by their Sonarr/Radarr root folder. Default on. |
+| **Force Only Requested Items** | Calendar always shows only the user's requested items and hides the Requests filter. |
 
 After enabling with Plugin Pages, restart Jellyfin for the sidebar link to appear.
 

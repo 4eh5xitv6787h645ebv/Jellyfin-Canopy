@@ -82,11 +82,11 @@ Controls how long certain UI elements stay visible before auto-closing.
 
 *Extras tab*
 
-Adds a Letterboxd external link to movie detail pages.
+Adds a Letterboxd external link to movie and person (cast/crew) detail pages.
 
 | Setting | Description |
 |---|---|
-| **Enable Letterboxd Links** | Shows a Letterboxd icon/link on movie pages |
+| **Enable Letterboxd Links** | Shows a Letterboxd icon/link on movie and person detail pages |
 | **Show as Text** | Displays the link as text instead of an icon |
 
 ---
@@ -136,8 +136,8 @@ Temporarily lock users out of the server while you perform maintenance. When ena
 | Setting | Default | Description |
 |---|---|---|
 | **Enable Maintenance Mode** | Off | Turns Maintenance Mode on. The selected action is applied to affected users as soon as you save. |
-| **Login Page Banner Message** | *(empty)* | Plain-text message shown as a red banner at the top of every page (login and home). |
-| **Active Session Notification** | *(empty)* | Sent as a native Jellyfin popup to anyone currently watching, reaching all clients (web, mobile, TV apps). |
+| **Login Page Banner Message** | `This server is currently undergoing maintenance. Please try again.` | Plain-text message shown as a red banner at the top of every page (login and home). |
+| **Active Session Notification** | `Server undergoing maintenance.` | Sent as a native Jellyfin popup to anyone currently watching, reaching all clients (web, mobile, TV apps). |
 | **Action** | Disable user accounts | What happens to affected users. *Disable user accounts* prevents them from logging in at all; *Disable remote connections* blocks connections from outside the local network while LAN access still works. |
 | **Affected Users** | All non-admin users | Scopes the lockout. Choose *All non-admin users*, or *Select specific users* to pick individual accounts. An empty targeted-user list is treated as all users. |
 

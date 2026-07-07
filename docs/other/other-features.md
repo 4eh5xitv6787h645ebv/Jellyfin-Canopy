@@ -12,6 +12,7 @@ Additional features including custom branding, extras, icons, and more.
 - [Hidden Content](#hidden-content)
 - [Splash Screen](#splash-screen)
 - [Internationalization](#internationalization)
+- [Cache Management](#cache-management)
 
 ---
 
@@ -37,7 +38,7 @@ Upload your own logos, banners, and favicon to personalize your Jellyfin instanc
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
 2. Navigate to the **Extras** tab
-3. Find **Custom Branding** section
+3. Find the **Custom Image Assets** section
 4. Upload your custom images:
    - **Icon Transparent** - Header logo (PNG/SVG recommended)
    - **Banner Light** - Dark theme splash image
@@ -181,19 +182,20 @@ Replace default plugin icons with Material Design icons.
 2. Check **"Custom Plugin Menu Icons"**
 3. Click **Save**
 
-**Custom Plugin Links:**
-Add custom links to plugin config pages.
+**Sidebar Custom Links:**
+Add sidebar links to plugin configuration pages. The field is labeled **Sidebar Custom Links** in the UI.
 
 **Format:**
 ```text
-PluginName|URL
+Configuration Page Name | Material Icon Name
 ```
 
 **Example:**
 ```text
-Jellyfin Enhanced|/web/configurationpage?name=JellyfinEnhanced
-Custom Plugin|https://example.com/config
+Jellyfin Tweaks | tune
 ```
+
+The second value is a [Material icon](https://fonts.google.com/icons) name, **not** a URL. The sidebar link is auto-generated as `#/configurationpage?name=<name>` from the first field, so arbitrary external URLs are not supported.
 
 ### Theme Selector
 
@@ -240,16 +242,16 @@ Choose from multiple Jellyfin theme color variants.
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
 2. Navigate to the **Extras** tab
-3. Enable **"Active Streams Widget"**
-4. Optional: Enable **"Show to all users"**
+3. Enable **"Active Streams Header Widget"**
+4. Optional: Enable **"Show widget to non-admins"**
 5. Click **Save**
 
 #### Settings
 
 | Setting | Default | Description |
 |---|---|---|
-| **Active Streams Widget** | Off | Adds the stream counter icon to the Jellyfin header |
-| **Show to all users** | Off | When enabled, non-admin users also see the widget (read-only, no broadcast, no IP addresses) |
+| **Active Streams Header Widget** | Off | Adds the stream counter icon to the Jellyfin header |
+| **Show widget to non-admins** | Off | When enabled, non-admin users also see the widget (read-only, no broadcast, no IP addresses) |
 
 #### Broadcast Form Fields
 
@@ -263,6 +265,25 @@ Admins can send a message to all active sessions from the panel header (megaphon
 
 !!! warning
     The Title field may not render on the Jellyfin web client. Always put the important information in the Message field.
+
+### Metadata Icons (Druidblack)
+
+Display item-detail metadata fields as icons instead of text.
+
+**Features:**
+
+- Swaps text metadata labels on item-detail pages for icons
+- Also switches the plugin's own Letterboxd and *arr links to icons
+- Uses the icon set from [Druidblack/jellyfin-icon-metadata](https://github.com/Druidblack/jellyfin-icon-metadata)
+
+**Enable:**
+
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+2. Navigate to the **Extras** tab
+3. Check **"Enable Metadata Icons (Druidblack)"**
+4. Click **Save**
+
+**Default:** Off
 
 
 ---

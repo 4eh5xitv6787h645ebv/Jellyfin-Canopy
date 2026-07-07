@@ -37,7 +37,7 @@ The ARR integration provides convenient links to your Sonarr, Radarr, and Bazarr
 3. Check **"Enable *arr Links"**
 4. Add one or more Sonarr and/or Radarr instances (see [Multi-Instance Support](#multi-instance-support) below)
 5. Optionally add a **Bazarr URL** for subtitle management links
-6. Optional: Check **"Show *arr Links as Text"** for text links instead of icons
+6. Optional: Check **"Show links as text"** for text links instead of icons
 7. Click **Save**
 
 ### Multi-Instance Support
@@ -136,8 +136,8 @@ Neither service is mandatory — tags sync from whichever you set up. A movie-on
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
 2. Navigate to ***arr Settings** tab
-3. Check **"Enable *arr Tags Sync"**
-4. Enter the **API key** for whichever service(s) you use — Sonarr, Radarr, or both
+3. Check **"Enable Tags Sync"**
+4. Ensure the Sonarr/Radarr instances you configured above have valid API keys — tag sync uses those instance keys (there is no separate key field in the Tags Sync section)
 5. Configure tag settings (see below)
 6. Click **Save**
 

@@ -214,7 +214,7 @@ Option B (manual in Seerr):
 
     - Spoiler Guard **per-user list and override prefs** `spoilerblur.json`
 
-   ** Stored in browsers' `localStorage`:**
+    **Stored in browsers' `localStorage`:**
 
     - [Users' **settings**](../enhanced/enhanced-features.md#smart-bookmarks)
 

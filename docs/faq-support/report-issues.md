@@ -3,15 +3,15 @@
 !!! success "Tip"
 
     **Good Bug Reports Include:**
-   
-   - Clear description
-   - Steps to reproduce
-   - Expected vs actual behavior
-   - Plugin version
-   - Jellyfin version
-   - Browser and OS
-   - Console/server logs
-   - Screenshots
+
+    - Clear description
+    - Steps to reproduce
+    - Expected vs actual behavior
+    - Plugin version
+    - Jellyfin version
+    - Browser and OS
+    - Console/server logs
+    - Screenshots
 
 ### Before Reporting
 1. Check [existing issues](https://github.com/n00bcodr/Jellyfin-Enhanced/issues)

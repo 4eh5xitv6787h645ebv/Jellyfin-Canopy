@@ -26,7 +26,6 @@ Access user-configured settings via the Enhanced panel:
 - Pause Screen
 - Auto-skip Intros
 - Auto Picture-in-Picture
-- Reviews
 - Show Watch Progress
 - Show File Sizes
 - Show Audio Languages
