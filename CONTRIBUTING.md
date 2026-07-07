@@ -187,7 +187,9 @@ npm install
 
 # Client
 npm run typecheck:src          # tsc --strict over the TypeScript module tree (src/)
-npm run lint                   # ESLint (errors gate CI; warnings are advisory)
+npm run lint                   # ESLint (errors gate CI; warning count is a ratchet
+                               # via --max-warnings — lower the cap in package.json
+                               # when you reduce warnings, never raise it)
 npm run test:client            # vitest unit tests for src/ modules
 npm run test:client:coverage   # + the src/core line-coverage ratchet
 npm run build:bundle           # esbuild bundle — fails on unreachable src/ modules
@@ -205,6 +207,8 @@ npm run e2e:headed             # watch it run
 ```
 
 Coverage thresholds are **ratchets**: they were set just below measured coverage when introduced (`vitest.config.ts` for `src/core`, `scripts/check-dotnet-coverage.js` for the plugin assembly). Raise them as you add tests; never lower them.
+
+The ESLint warning cap (`--max-warnings` in the `lint` script) is the same idea inverted: it is pinned at the current count of typed-lint `no-unsafe-*` warnings in the converted legacy feature areas (`src/core` and `src/types` treat those rules as errors). New code must not add warnings; when you type legacy shapes and the count drops, lower the cap to match — never raise it.
 
 ### E2E against a disposable server
 
