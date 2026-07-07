@@ -157,6 +157,11 @@ namespace Jellyfin.Plugin.JellyfinElevate
             serviceCollection.AddSingleton<SpoilerPendingService>();
             serviceCollection.AddHostedService<SpoilerSeerrPendingPromoter>();
             serviceCollection.AddScoped<IEventConsumer<PlaybackStartEventArgs>, SpoilerAutoEnableOnFirstPlayConsumer>();
+            // Identity-cache invalidation on user create/delete — the
+            // single-user shortcut and marker map must never serve a stale
+            // view of WHO EXISTS (see EventHandlers/UserTopologyEvents).
+            serviceCollection.AddScoped<IEventConsumer<Jellyfin.Data.Events.Users.UserCreatedEventArgs>, UserCreatedIdentityInvalidator>();
+            serviceCollection.AddScoped<IEventConsumer<Jellyfin.Data.Events.Users.UserDeletedEventArgs>, UserDeletedIdentityInvalidator>();
             serviceCollection.Configure<MvcOptions>(o =>
             {
                 // Identity-tag stamping is registered FIRST so its

@@ -101,8 +101,11 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         // F8: negative-cache for a je-spoiler-uid cookie that names a user
         // with NO session on the request IP. Without it, a stale/forged
         // cookie forces an uncached full session rescan on EVERY request (a
-        // scan storm). Keyed by "{ipKey}|{cookieUidN}" with a short TTL.
-        private static readonly TimeSpan CookieMissNegativeCacheTtl = TimeSpan.FromSeconds(5);
+        // scan storm). Keyed by "{ipKey}|{cookieUidN}". TTL matches the
+        // IP-scan cache TTL so a just-logged-in user whose cookie missed a
+        // moment earlier is never suppressed for longer than the ordinary
+        // scan staleness they'd face anyway.
+        private static readonly TimeSpan CookieMissNegativeCacheTtl = TimeSpan.FromSeconds(2);
         private static readonly ConcurrentDictionary<string, DateTime> _cookieMissCache = new(StringComparer.Ordinal);
 
         // TTL-cached user count for the single-user shortcut so we don't
@@ -132,6 +135,24 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             _userManager = userManager;
             _markers = markers;
             _logger = logger;
+        }
+
+        /// <summary>
+        /// Drops the cached single-user answer so the next request re-checks
+        /// the user set. Called by the user-created/deleted event consumers
+        /// (EventHandlers/UserTopologyEvents) — a stale "there is only user A"
+        /// after user B was created would attribute B's anonymous requests to
+        /// A, which is exactly the accidental misattribution the design
+        /// forbids. The TTL remains as belt-and-braces only.
+        /// </summary>
+        public void InvalidateUserTopology()
+        {
+            lock (_singleUserLock)
+            {
+                _singleUserKnown = false;
+                _singleUserId = null;
+                _singleUserCheckedAt = DateTime.MinValue;
+            }
         }
 
         // The lone user's id when the server has exactly one account, else

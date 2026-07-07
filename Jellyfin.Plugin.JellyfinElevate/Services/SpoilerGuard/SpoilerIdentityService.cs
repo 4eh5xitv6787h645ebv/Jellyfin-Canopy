@@ -116,6 +116,21 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         }
 
         /// <summary>
+        /// Forces the next resolution to rebuild the marker→user map. Called
+        /// by the user-created/deleted event consumers so a just-created
+        /// user's freshly stamped marker resolves immediately instead of
+        /// waiting out the rebuild throttle (which exists to stop unknown-
+        /// marker spray from forcing a user enumeration per request).
+        /// </summary>
+        public void InvalidateMap()
+        {
+            lock (_mapLock)
+            {
+                _mapBuiltAt = DateTime.MinValue;
+            }
+        }
+
+        /// <summary>
         /// Resolves a marker back to a CURRENT user id. Unknown markers
         /// (stale tag from a deleted user, forged value, hash of nobody)
         /// return false and the caller falls back to the IP ladder.

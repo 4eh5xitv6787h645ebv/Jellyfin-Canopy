@@ -303,6 +303,36 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         }
 
         [Fact]
+        public async System.Threading.Tasks.Task Invalidation_UserCreated_RefreshesSingleUserAndMarkerMap()
+        {
+            var userA = new User("first-user", "Prov", "PwProv");
+            var manager = new StubUserManager(userA);
+            var markers = new SpoilerIdentityService(manager, NullLogger<SpoilerIdentityService>.Instance);
+            var identity = new RequestIdentityService(
+                new CountingSessionManager(), manager, markers, NullLogger<RequestIdentityService>.Instance);
+
+            // Warm both caches: single-user shortcut fires; A's marker resolves.
+            Assert.Equal(IdentityConfidence.SingleUserServer, identity.Resolve(new DefaultHttpContext()).Confidence);
+            Assert.True(markers.TryResolveMarker(markers.MintMarker(userA.Id), out _));
+
+            // Second user appears; the event consumer invalidates both caches.
+            var userB = new User("second-user", "Prov", "PwProv");
+            manager.AddUser(userB);
+            await new EventHandlers.UserCreatedIdentityInvalidator(identity, markers)
+                .OnEvent(new Jellyfin.Data.Events.Users.UserCreatedEventArgs(userB));
+
+            // The stale "only user A" answer must be gone immediately…
+            var afterCreate = identity.Resolve(new DefaultHttpContext());
+            Assert.NotEqual(IdentityConfidence.SingleUserServer, afterCreate.Confidence);
+            Assert.Empty(afterCreate.Candidates);
+
+            // …and B's freshly minted marker must resolve without waiting out
+            // the rebuild throttle.
+            Assert.True(markers.TryResolveMarker(markers.MintMarker(userB.Id), out var resolvedB));
+            Assert.Equal(userB.Id, resolvedB);
+        }
+
+        [Fact]
         public void Resolver_ClaimsPrincipal_BeatsMarker()
         {
             var markerUser = new User("marker-user", "Prov", "PwProv");
