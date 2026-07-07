@@ -231,3 +231,42 @@ verbatim. je_arradmin (guarding): episode stills substituted, "Spoiler Guard
 activated" placeholder. je_arruser (same proxy IP): real overview + clean
 episode stills — the over-blur this project set out to fix is gone.
 Screenshots: research/evidence/atv-emulator-*.png
+
+### 2026-07-08 02:30 — exhaustive mechanism sweep (110 ideas, 7 lenses, 22 agents)
+Per the user's directive, a multi-agent workflow enumerated every conceivable
+identification mechanism (lenses: HTTP/TLS surface, Jellyfin internals, DTO
+echo channels, network-level, ecosystem prior art, web-client channels,
+creative wildcards), then adversarially evaluated each (strict,
+reject-by-default). Full record: `identity-mechanism-sweep-inventory.md`
+(every idea with mechanism/coverage/trust/risk/cost/verdict) and
+`identity-mechanism-sweep-synthesis.md` in this directory.
+
+Outcomes folded back into the code the same hour:
+- **Tag-in-path carrier** — Jellyfin's alternate image route embeds `{tag}`
+  as a PATH segment; the resolver now reads it (query → route value).
+- **If-None-Match carrier** — the image endpoint echoes the supplied tag as
+  the ETag verbatim, so caching clients return the marker in revalidations;
+  now parsed as a third carrier. Same token, zero new trust surface.
+- **Single-user-server shortcut** — with exactly one account, ambiguity is
+  structurally impossible; resolve immediately (also fixes the
+  no-session-on-IP gap) and skip session scans.
+- New milestone-3 issues: streaming/subtitle/trickplay echo-channel markers
+  (12), HMAC-signed cookie upgrade (13), user-consented device pinning (14);
+  issue 7 (XFF learned map) updated with the sweep's safe design + reduced
+  priority.
+Notable rejects (recorded in the inventory): ETag seeding (breaks immutable
+caching, shared-cache poisoning), per-user path-prefix/ports/subdomains
+(re-login churn on every client, cert/config burden), item-id aliasing
+(breaks playback reporting and cross-device resume), steganographic bytes
+(nothing ever echoes them back), mTLS (client support nonexistent on TVs),
+service-worker/fetch-patch web channels (dominated by cookie+marker; jank
+risk), TLS fingerprinting (proxy-terminated).
+
+### 2026-07-08 02:15 — RequestIdentityService extraction (user-approved design)
+The identity ladder moved out of SpoilerUserResolver into
+`Services/Identity/RequestIdentityService` as a feature-agnostic service
+returning `RequestIdentity(Candidates, Confidence)` with tiers Authenticated
+→ Marker → SingleUserServer → Cookie → SharedIpCandidates → None, so any
+future feature consumes identity through one documented choke point
+(milestone 3, issue 11). Spoiler resolver keeps only spoiler-state loading
+and delegates. 595 tests green; spoiler e2e 7/7 after redeploy.
