@@ -25,6 +25,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         /// <summary>Per-browser je-spoiler-uid cookie, validated against a session on the request IP. Strong for web.</summary>
         Cookie,
 
+        /// <summary>The server has exactly one user account — every request that reaches user-scoped behavior can only be that user.</summary>
+        SingleUserServer,
+
         /// <summary>Session-by-IP match only. One candidate when the IP is unshared; several behind a shared IP (reverse proxy/NAT) — ambiguous.</summary>
         SharedIpCandidates,
 
@@ -49,6 +52,8 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
     //      every client (web AND native TV/mobile). No IP involvement, which
     //      is what keeps per-user behavior precise behind reverse proxies
     //      that hide the real client IP.
+    //   2.5 Single-user server   — with exactly one account, ambiguity is
+    //      structurally impossible; skip all IP work.
     //   3. je-spoiler-uid cookie  — web browsers attach it to anonymous
     //      same-origin image fetches; trusted only to disambiguate among
     //      users that actually have a session on the request IP.
@@ -100,18 +105,74 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         private static readonly TimeSpan CookieMissNegativeCacheTtl = TimeSpan.FromSeconds(5);
         private static readonly ConcurrentDictionary<string, DateTime> _cookieMissCache = new(StringComparer.Ordinal);
 
+        // TTL-cached user count for the single-user shortcut so we don't
+        // enumerate users per request. 60s staleness only matters around the
+        // moment a SECOND user account is created; until the cache rolls, a
+        // brand-new second user could briefly be attributed the first user's
+        // preferences on anonymous fetches — they have no state of their own
+        // yet, so nothing can leak.
+        private static readonly TimeSpan UserCountCacheTtl = TimeSpan.FromSeconds(60);
+        private Guid? _singleUserId;
+        private bool _singleUserKnown;
+        private DateTime _singleUserCheckedAt = DateTime.MinValue;
+        private readonly object _singleUserLock = new();
+
         private readonly ISessionManager _sessionManager;
+        private readonly MediaBrowser.Controller.Library.IUserManager _userManager;
         private readonly SpoilerIdentityService _markers;
         private readonly ILogger<RequestIdentityService> _logger;
 
         public RequestIdentityService(
             ISessionManager sessionManager,
+            MediaBrowser.Controller.Library.IUserManager userManager,
             SpoilerIdentityService markers,
             ILogger<RequestIdentityService> logger)
         {
             _sessionManager = sessionManager;
+            _userManager = userManager;
             _markers = markers;
             _logger = logger;
+        }
+
+        // The lone user's id when the server has exactly one account, else
+        // null. Cached for UserCountCacheTtl.
+        private Guid? TryGetSingleUserId()
+        {
+            var now = DateTime.UtcNow;
+            if (_singleUserKnown && (now - _singleUserCheckedAt) < UserCountCacheTtl)
+            {
+                return _singleUserId;
+            }
+
+            lock (_singleUserLock)
+            {
+                if (_singleUserKnown && (DateTime.UtcNow - _singleUserCheckedAt) < UserCountCacheTtl)
+                {
+                    return _singleUserId;
+                }
+
+                try
+                {
+                    Guid? only = null;
+                    var count = 0;
+                    foreach (var u in _userManager.GetUsers())
+                    {
+                        if (++count > 1) { only = null; break; }
+                        only = u.Id;
+                    }
+                    _singleUserId = count == 1 ? only : null;
+                }
+                catch (Exception ex)
+                {
+                    WarnRateLimited(
+                        "single-user-count:" + ex.GetType().FullName,
+                        $"JE request identity: user enumeration for the single-user shortcut threw: {ex.Message}");
+                    _singleUserId = null;
+                }
+                _singleUserKnown = true;
+                _singleUserCheckedAt = DateTime.UtcNow;
+                return _singleUserId;
+            }
         }
 
         /// <summary>
@@ -143,12 +204,26 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             // protects users from their OWN spoilers, so that "attack" only
             // self-spoils (anonymous IPs with no sessions get clean bytes
             // today anyway).
-            if (httpContext.Request.Query.TryGetValue("tag", out var tagValues)
-                && SpoilerIdentityService.TryParseMarker(tagValues.ToString(), out _, out var markerHex)
+            var taggedValue = ExtractTagCandidate(httpContext);
+            if (taggedValue != null
+                && SpoilerIdentityService.TryParseMarker(taggedValue, out _, out var markerHex)
                 && _markers.TryResolveMarker(markerHex, out var markerUid)
                 && markerUid != Guid.Empty)
             {
                 return new RequestIdentity(new[] { markerUid }, IdentityConfidence.Marker);
+            }
+
+            // Tier 2.5: single-user server shortcut. With exactly one user
+            // account, ambiguity is structurally impossible — any request
+            // that reaches user-scoped behavior can only be that user. This
+            // also covers the case the IP ladder misses entirely: an
+            // anonymous fetch from an IP with no recorded session (e.g. a TV
+            // whose session row rotated) would otherwise get NO protection.
+            // Skips the session scan altogether on single-user servers.
+            var singleUser = TryGetSingleUserId();
+            if (singleUser != null)
+            {
+                return new RequestIdentity(new[] { singleUser.Value }, IdentityConfidence.SingleUserServer);
             }
 
             // Anonymous request (browser <img>/CSS-background, or a native
@@ -222,6 +297,44 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             return ipUsers.Count == 1
                 ? new RequestIdentity(ipUsers.ToArray(), IdentityConfidence.SharedIpCandidates)
                 : RequestIdentity.None;
+        }
+
+        // The stamped tag can reach the server on THREE carriers; check all:
+        //   • ?tag= query param — the standard form every client uses.
+        //   • the {tag} PATH segment of Jellyfin's alternate image route
+        //     (Items/{id}/Images/{type}/{index}/{tag}/{format}/…).
+        //   • If-None-Match — the image endpoint echoes the supplied tag as
+        //     the ETag verbatim, so a caching client's revalidation carries
+        //     the SAME marker back in the conditional header even if the
+        //     query string was dropped along the way. Same token, identical
+        //     trust — zero added misattribution surface.
+        private static string? ExtractTagCandidate(Microsoft.AspNetCore.Http.HttpContext httpContext)
+        {
+            if (httpContext.Request.Query.TryGetValue("tag", out var tagValues))
+            {
+                var q = tagValues.ToString();
+                if (!string.IsNullOrEmpty(q)) return q;
+            }
+
+            if (httpContext.Request.RouteValues.TryGetValue("tag", out var routeTag)
+                && routeTag is string routeStr
+                && !string.IsNullOrEmpty(routeStr))
+            {
+                return routeStr;
+            }
+
+            var inm = httpContext.Request.Headers.IfNoneMatch.ToString();
+            if (!string.IsNullOrEmpty(inm))
+            {
+                // Shape: optional W/ prefix, quoted value, possibly a list —
+                // take the first entry and strip weak prefix + quotes.
+                var first = inm.Split(',')[0].Trim();
+                if (first.StartsWith("W/", StringComparison.Ordinal)) first = first.Substring(2);
+                first = first.Trim('"');
+                if (!string.IsNullOrEmpty(first)) return first;
+            }
+
+            return null;
         }
 
         // Cached wrapper over the session scan. Keyed by normalized request

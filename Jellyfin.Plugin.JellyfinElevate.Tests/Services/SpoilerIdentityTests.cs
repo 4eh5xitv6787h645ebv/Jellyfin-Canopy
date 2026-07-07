@@ -201,8 +201,11 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "je-ident-" + Guid.NewGuid().ToString("N"));
             System.IO.Directory.CreateDirectory(dir);
             var mgr = new UserConfigurationManager(new StubAppPaths(dir), NullLogger<UserConfigurationManager>.Instance);
+            // The identity service gets an EMPTY user manager on purpose: the
+            // single-user-server shortcut must stay inert in these tests so
+            // they exercise the marker/cookie/IP tiers.
             var identity = new RequestIdentityService(
-                new CountingSessionManager(), markers, NullLogger<RequestIdentityService>.Instance);
+                new CountingSessionManager(), new StubUserManager(), markers, NullLogger<RequestIdentityService>.Instance);
             return new SpoilerUserResolver(mgr, new CountingLibraryManager(), NullLogger<SpoilerUserResolver>.Instance, identity);
         }
 
@@ -240,7 +243,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             var user = new User("conf-user", "Prov", "PwProv");
             var markers = NewService(user);
             var identity = new RequestIdentityService(
-                new CountingSessionManager(), markers, NullLogger<RequestIdentityService>.Instance);
+                new CountingSessionManager(), new StubUserManager(), markers, NullLogger<RequestIdentityService>.Instance);
 
             // Marker tier.
             var ctx = new DefaultHttpContext();
@@ -260,6 +263,43 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             var anon = identity.Resolve(new DefaultHttpContext());
             Assert.Equal(IdentityConfidence.None, anon.Confidence);
             Assert.Empty(anon.Candidates);
+        }
+
+        [Fact]
+        public void RequestIdentity_ReadsMarkerFromPathAndIfNoneMatch()
+        {
+            var user = new User("carrier-user", "Prov", "PwProv");
+            var markers = NewService(user);
+            var identity = new RequestIdentityService(
+                new CountingSessionManager(), new StubUserManager(), markers, NullLogger<RequestIdentityService>.Instance);
+            var marker = markers.MintMarker(user.Id);
+
+            // {tag} PATH segment of the alternate image route.
+            var pathCtx = new DefaultHttpContext();
+            pathCtx.Request.RouteValues["tag"] = "orig-jeu" + marker;
+            var viaPath = identity.Resolve(pathCtx);
+            Assert.Equal(IdentityConfidence.Marker, viaPath.Confidence);
+            Assert.Equal(new[] { user.Id }, viaPath.Candidates);
+
+            // If-None-Match revalidation (server echoes the tag as the ETag).
+            var inmCtx = new DefaultHttpContext();
+            inmCtx.Request.Headers.IfNoneMatch = "\"orig-jeu" + marker + "\"";
+            var viaInm = identity.Resolve(inmCtx);
+            Assert.Equal(IdentityConfidence.Marker, viaInm.Confidence);
+            Assert.Equal(new[] { user.Id }, viaInm.Candidates);
+        }
+
+        [Fact]
+        public void RequestIdentity_SingleUserServer_ShortCircuits()
+        {
+            var only = new User("only-user", "Prov", "PwProv");
+            var markers = NewService();
+            var identity = new RequestIdentityService(
+                new CountingSessionManager(), new StubUserManager(only), markers, NullLogger<RequestIdentityService>.Instance);
+
+            var res = identity.Resolve(new DefaultHttpContext());
+            Assert.Equal(IdentityConfidence.SingleUserServer, res.Confidence);
+            Assert.Equal(new[] { only.Id }, res.Candidates);
         }
 
         [Fact]

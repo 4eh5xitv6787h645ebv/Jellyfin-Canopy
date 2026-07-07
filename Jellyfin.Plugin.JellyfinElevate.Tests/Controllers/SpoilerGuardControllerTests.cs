@@ -61,6 +61,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Controllers
             var sessions = new CountingSessionManager();
             var requestIdentity = new RequestIdentityService(
                 sessions,
+                userManager,
                 new SpoilerIdentityService(userManager, NullLogger<SpoilerIdentityService>.Instance),
                 NullLogger<RequestIdentityService>.Instance);
             var resolver = new SpoilerUserResolver(mgr, lib, NullLogger<SpoilerUserResolver>.Instance, requestIdentity);
