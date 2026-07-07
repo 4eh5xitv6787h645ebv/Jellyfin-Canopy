@@ -150,7 +150,7 @@ Display a dedicated page showing active downloads from *arr and requests from Se
 **Configuration:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Seerr Settings** tab (look for the section titled "Requests Page")
+2. Navigate to the **Pages** tab (look for the section titled "Requests Page")
 3. Check **"Enable Requests Page"**
 4. Choose integration method:
    - **Use Plugin Pages** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin)

@@ -6,7 +6,7 @@ Settings for custom branding, icon styles, extras, timeouts, and more. These are
 
 ## Custom Branding
 
-*Extras tab → Custom Branding*
+*Extras tab → Custom Image Assets*
 
 Upload your own logos, banners, and favicon to personalize your Jellyfin instance.
 
@@ -59,7 +59,7 @@ Adds a live stream counter icon to the Jellyfin header.
 | Setting | Default | Description |
 |---|---|---|
 | **Active Streams Widget** | Off | Enables the stream counter in the header |
-| **Show to all users** | Off | When on, non-admin users see a read-only view (no broadcast, no IP addresses) |
+| **Show widget to non-admins** | Off | When on, non-admin users see a read-only view (no broadcast, no IP addresses) |
 
 See [Other Features — Active Streams Widget](other-features.md#active-streams-widget) for full details.
 

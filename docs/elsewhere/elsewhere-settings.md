@@ -113,7 +113,7 @@ Multiple patterns:
 
 - Optional icon shown next to the Custom Branding Message
 - Only appears when a message is set **and** the title has no available providers
-- Provide a full URL to the image file
+- Provide a URL or path to the image file (e.g. a full `https://` URL or a local path like `/web/assets/img/icon.png`)
 - Leave empty to show the message text with no icon
 
 ## Usage

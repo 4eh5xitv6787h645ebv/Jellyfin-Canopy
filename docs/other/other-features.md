@@ -143,7 +143,7 @@ Color-coded backgrounds for ratings on detail pages.
 **Enable:**
 
 1. Navigate to the **Extras** tab
-2. Check **"Enable Colored Ratings"**
+2. Check **"Colored Ratings Backgrounds"**
 3. Click **Save**
 
 ### Login Image Display
@@ -212,7 +212,7 @@ Choose from multiple Jellyfin theme color variants.
 **Enable:**
 
 1. Navigate to the **Extras** tab
-2. Check **"Enable Theme Selector"**
+2. Check **"Theme Selector (Jellyfish)"**
 3. Click **Save**
 
 **Usage:**
@@ -342,7 +342,7 @@ Add Letterboxd external links to movie and person (cast/crew) detail pages.
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
 2. Navigate to the **Extras** tab
 3. Check **"Enable Letterboxd Links"**
-4. Optional: Check **"Show Letterboxd Link as Text"** for text instead of icon
+4. Optional: Check **"Show link as text"** for text instead of icon
 5. Click **Save**
 
 ### Usage

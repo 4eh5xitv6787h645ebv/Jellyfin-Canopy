@@ -34,7 +34,7 @@ The ARR integration provides convenient links to your Sonarr, Radarr, and Bazarr
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
 2. Navigate to ***arr Settings** tab
-3. Check **"Enable *arr Links"**
+3. Check **"Enable *arr Links on Detail Pages"**
 4. Add one or more Sonarr and/or Radarr instances (see [Multi-Instance Support](#multi-instance-support) below)
 5. Optionally add a **Bazarr URL** for subtitle management links
 6. Optional: Check **"Show links as text"** for text links instead of icons
@@ -67,7 +67,7 @@ Toggle the **Enabled** switch off to temporarily disable an instance (e.g., duri
 
 **How links behave with multiple instances:**
 
-- **Single matching instance** — renders as a plain icon link (no badge clutter). Enable **"Show status badge for single-instance links"** to always show the status border and episode/file count.
+- **Single matching instance** — renders as a plain icon link (no badge clutter). Enable **"Show status badge for single-instance"** to always show the status border and episode/file count.
 - **Multiple matching instances** — the link becomes a dropdown button. Click it to see each instance with:
     - A colour-coded status dot (green = complete, amber = partial, grey = missing)
     - Episode count or download status
@@ -167,25 +167,28 @@ Neither service is mandatory — tags sync from whichever you set up. A movie-on
 
 **Links Filter (Show Only):**
 
-- Comma-separated list of tag names to show
+- Newline-separated list — one tag name per line
 - Only matching tags displayed as links
 - Leave empty to show all tags
 
 **Example:**
 
 ```text
-in-netflix,in-disney,4k-upgrade
+in-netflix
+in-disney
+4k-upgrade
 ```
 
 **Links Hide Filter:**
 
-- Comma-separated list of tag names to hide
+- Newline-separated list — one tag name per line
 - Matching tags not displayed as links
 - Overrides show filter
 
 **Example:**
 ```text
-internal-tag,do-not-show
+internal-tag
+do-not-show
 ```
 
 **Sync Filter:**

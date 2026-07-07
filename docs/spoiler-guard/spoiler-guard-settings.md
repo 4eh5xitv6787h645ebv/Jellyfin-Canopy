@@ -121,7 +121,7 @@ A collapsible sub-section of per-field hide toggles. When the master switch is o
 
 ### Hide tags
 
-**Default: On.** Hides both the TMDB Tags array (phrases like "Death of a main character") AND the Jellyfin Enhanced card overlays (genre, quality, and language tags drawn over thumbnails) on cards for unwatched episodes of Spoiler Guard series. (The rating overlay is governed separately by **Hide ratings**, below.)
+**Default: On.** Hides the TMDB Tags array (phrases like "Death of a main character") on cards for unwatched episodes of Spoiler Guard series. (The Jellyfin Enhanced rating overlay is governed separately by **Hide ratings**, below; genre/quality/language overlays are not affected by Spoiler Guard.)
 
 ### Hide chapter names (keep timestamps)
 

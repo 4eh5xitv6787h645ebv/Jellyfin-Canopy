@@ -450,7 +450,7 @@ Display user reviews from TMDB on item pages.
 - Expandable/collapsible reviews
 
 **Setup:**
-Enable **"Show TMDB Reviews"** in **Dashboard** → **Plugins** → **Jellyfin Enhanced** → **Elsewhere Settings** tab.
+Enable **"Show TMDB Reviews"** in **Dashboard** → **Plugins** → **Jellyfin Enhanced** → **Elsewhere** tab.
 
 See [Elsewhere Features](../elsewhere/elsewhere-features.md#tmdb-reviews) for full details.
 
