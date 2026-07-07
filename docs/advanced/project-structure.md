@@ -126,12 +126,18 @@ Jellyfin.Plugin.JellyfinElevate/
 │   │                          # registered as running the JE client (via ILiveSessionRegistry;
 │   │                          # see docs/advanced/live-updates.md)
 │   ├── LiveSessionRegistry.cs # Registry of sessions running the JE client — scopes live pushes
+│   ├── Identity/              # RequestIdentityService — the plugin-wide "who is making this request?"
+│   │                          # ladder (authenticated token → per-user ?tag= identity marker →
+│   │                          # je-spoiler-uid cookie → session-by-IP candidates), returned with a
+│   │                          # confidence tier so consumers pick single-user vs fail-closed posture
 │   └── SpoilerGuard/          # Spoiler Guard server core: ImageBlurService (SkiaSharp Gaussian blur +
 │                              # stock-card render + pre-encoded fail-closed JPEG, cached),
 │                              # SpoilerBlurImageFilter (per-user image-byte replacement over the Image/
 │                              # Trickplay routes), SpoilerFieldStripFilter (metadata strip/rewrite honoring
-│                              # per-user overrides), SpoilerUserResolver (per-user identity incl. cookie/IP
-│                              # hint), SpoilerSeerrPendingPromoter (pending pre-arm → real protection)
+│                              # per-user overrides), SpoilerIdentityService + SpoilerIdentityTagFilter
+│                              # (per-user "-jeu" markers stamped into DTO image tags — the reverse-proxy-
+│                              # safe identity channel), SpoilerUserResolver (spoiler-state load + identity
+│                              # delegation), SpoilerSeerrPendingPromoter (pending pre-arm → real protection)
 ├── EventHandlers/             # Server-side Jellyfin event subscribers (playback events;
 │                              # SpoilerAutoEnableEvents = auto-enable Spoiler Guard on a fresh S1E1 play)
 ├── Data/ItemLookupService.cs  # Provider-id lookups via the supported ILibraryManager query surface

@@ -208,6 +208,8 @@ Spoiler Guard preferences are **per user**. Your spoiler list doesn't affect any
 
 Cache-bust tokens are also per-user, so two users on the same family network seeing different blur states of the same image is fully supported. Native-client image caches (Glide, Coil, SDWebImage) automatically refetch when your watched-state changes, even though they otherwise cache strictly by URL.
 
+How the server knows *which* user an image request belongs to: image fetches are anonymous in Jellyfin, so the plugin embeds a small per-user **identity marker** in the image URLs each user receives (part of the image's `tag` value). Every client — web, Android TV, iOS, Roku — echoes that value back when it fetches the image, letting Spoiler Guard apply exactly your blur state with no dependence on your device's IP address. This works out of the box behind reverse proxies, VPNs, and shared/NAT networks. (Requests without a marker — for example a client replaying an old cached URL — fall back to matching your session by IP, failing closed if that's ambiguous.)
+
 ---
 
 ## Troubleshooting
@@ -228,4 +230,9 @@ Android TV clients cache image bytes locally using Glide / Coil. If you enabled 
 
 **A user sees another user's shows blurred (or their own non-guarded shows blurred) behind a reverse proxy.**
 
-Spoiler Guard protects images per user. Web browsers carry the user's identity to each image request automatically; other clients (Android TV, mobile) are matched by the **IP address** their request comes from. If Jellyfin is behind a reverse proxy (Caddy, Nginx, Traefik, etc.) that isn't configured to forward the real client IP, *every* remote user appears to come from the proxy's single IP — so Spoiler Guard can't tell them apart and, to avoid leaking a spoiler, it fails **closed** (blurs the image if *any* of those users guarded it). Fix it by configuring the proxy to send `X-Forwarded-For` and adding the proxy to **Dashboard → Networking → Known proxies** so Jellyfin sees each real client IP. On a normal LAN (each device has its own IP) this never happens.
+This should no longer happen in normal operation. Spoiler Guard identifies each image request by the per-user **identity marker** embedded in the image URL (see *Per-user isolation* above), which every client echoes back regardless of what IP address the request appears to come from — so reverse proxies (Caddy, Nginx, Traefik, …) that hide the real client IP no longer cause cross-user blurring.
+
+If you still see it, the affected client is fetching images from **old cached URLs** minted before this feature (those carry no marker, so the server falls back to IP matching and fails closed on a shared IP). Two fixes:
+
+- Clear the client's image cache once (or force-stop and reopen the app) so it refetches fresh, marker-carrying URLs — the same one-time step described for Android TV above; or
+- configure the proxy to send `X-Forwarded-For` and add it to **Dashboard → Networking → Known proxies**, which restores real client IPs for the fallback path too (also nice for Jellyfin's own logs and security features). The **Per-user image identity tags** admin setting must remain enabled (it is by default) for marker-based identification.
