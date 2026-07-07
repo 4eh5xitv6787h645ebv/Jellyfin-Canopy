@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Seed a throwaway dockerized Jellyfin 12 for the E2E suite:
 #   1. install the freshly built plugin DLL into a clean config volume,
-#   2. generate a handful of tiny valid movies with ffmpeg (testsrc2 clips),
+#   2. generate a handful of tiny valid movies + a 2×2-episode TV series with
+#      ffmpeg (testsrc2 clips),
 #   3. boot the compose stack and complete the startup wizard via the API,
-#   4. create the movie library + the two test users the specs expect,
+#   4. create the Movies + Shows libraries and the two test users the specs
+#      expect,
 #   5. enable the plugin features the specs exercise (tags, random button,
-#      hidden content) and wait for the library scan to index the movies.
+#      hidden content, Spoiler Guard), wait for the scan, seed episode
+#      titles/overviews, and mark S01E01 played for the non-admin user.
 #
 # Idempotent: every run starts from a wiped config/cache/media state.
 # Requirements: docker (compose v2), curl, jq. ffmpeg is used from the host
@@ -76,7 +79,12 @@ else
     }
 fi
 
-make_movie() { # <filename> <tone-hz>
+# Movies and Shows live in dedicated subfolders so the recursive Movies-library
+# scan never descends into the TV tree (and vice-versa) — a single /media root
+# shared by both collection types would misidentify episode files as movies.
+mkdir -p "${HERE}/media/Movies" "${HERE}/media/Shows"
+
+make_clip() { # <relative-path> <tone-hz>
     # Tag the audio stream as English so the language-tags renderer has a real
     # language to stamp (a bare testsrc clip reports "und", which the renderer
     # skips). Genres + a community rating are added post-scan via the API below.
@@ -88,10 +96,23 @@ make_movie() { # <filename> <tone-hz>
 }
 
 log "generating test movies"
-make_movie "Alpha Adventure (2021).mp4" 440
-make_movie "Beta Voyage (2022).mp4" 550
-make_movie "Gamma Quest (2023).mp4" 660
-make_movie "Delta Horizon (2024).mp4" 770
+make_clip "Movies/Alpha Adventure (2021).mp4" 440
+make_clip "Movies/Beta Voyage (2022).mp4" 550
+make_clip "Movies/Gamma Quest (2023).mp4" 660
+make_clip "Movies/Delta Horizon (2024).mp4" 770
+
+# ── TV: one series, 2 seasons × 2 episodes, for the Spoiler Guard specs ───────
+# Series/Season NN/… S0xE0y naming so Jellyfin's naming resolver builds the
+# Series → Season → Episode hierarchy. The episodes carry generic names on disk;
+# the real (spoiler-y) titles come from the metadata patch below so the strip
+# filter has something to replace with "Season X, Episode Y".
+SHOW_NAME="Guard Test Show"
+log "generating test series '${SHOW_NAME}' (2 seasons × 2 episodes)"
+mkdir -p "${HERE}/media/Shows/${SHOW_NAME}/Season 01" "${HERE}/media/Shows/${SHOW_NAME}/Season 02"
+make_clip "Shows/${SHOW_NAME}/Season 01/${SHOW_NAME} S01E01.mp4" 480
+make_clip "Shows/${SHOW_NAME}/Season 01/${SHOW_NAME} S01E02.mp4" 500
+make_clip "Shows/${SHOW_NAME}/Season 02/${SHOW_NAME} S02E01.mp4" 520
+make_clip "Shows/${SHOW_NAME}/Season 02/${SHOW_NAME} S02E02.mp4" 540
 
 # ── 3. boot + startup wizard ─────────────────────────────────────────────────
 log "starting compose stack on port ${JF_PORT}"
@@ -142,7 +163,11 @@ api GET /Plugins | jq -e --arg id "${PLUGIN_ID}" \
     || fail "Jellyfin Enhanced plugin did not load (check config/log/)"
 
 log "creating the Movies library"
-api POST "/Library/VirtualFolders?name=Movies&collectionType=movies&paths=%2Fmedia&refreshLibrary=true" \
+api POST "/Library/VirtualFolders?name=Movies&collectionType=movies&paths=%2Fmedia%2FMovies&refreshLibrary=true" \
+    '{"LibraryOptions":{"EnableRealtimeMonitor":false}}'
+
+log "creating the Shows library"
+api POST "/Library/VirtualFolders?name=Shows&collectionType=tvshows&paths=%2Fmedia%2FShows&refreshLibrary=true" \
     '{"LibraryOptions":{"EnableRealtimeMonitor":false}}'
 
 log "creating user ${USER_NAME}"
@@ -173,6 +198,7 @@ PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration" \
         | .RatingTagsEnabled = true
         | .RandomButtonEnabled = true
         | .HiddenContentEnabled = true
+        | .SpoilerBlurEnabled = true
         | (if $tmdb != "" then .TMDB_API_KEY = $tmdb else . end)
         | (if ($seerrUrl != "" and $seerrKey != "")
              then .JellyseerrUrls = $seerrUrl
@@ -203,6 +229,21 @@ for _ in $(seq 1 60); do
 done
 [ "${MOVIES}" -ge 3 ] || fail "library scan indexed only ${MOVIES} movies"
 
+log "waiting for the library scan to index the test series + episodes"
+SERIES_ID=""
+EPISODES=0
+for _ in $(seq 1 60); do
+    SERIES_ID="$(api GET "/Items?IncludeItemTypes=Series&Recursive=true&userId=${ADMIN_ID}" \
+        | jq -r --arg n "${SHOW_NAME}" 'first(.Items[]? | select(.Name == $n) | .Id) // empty')"
+    if [ -n "${SERIES_ID}" ]; then
+        EPISODES="$(api GET "/Shows/${SERIES_ID}/Episodes?userId=${ADMIN_ID}" | jq -r '.TotalRecordCount // 0')"
+        [ "${EPISODES}" -ge 4 ] 2>/dev/null && break
+    fi
+    sleep 5
+done
+[ -n "${SERIES_ID}" ] || fail "library scan never indexed the '${SHOW_NAME}' series"
+[ "${EPISODES}" -ge 4 ] || fail "library scan indexed only ${EPISODES} episodes of '${SHOW_NAME}'"
+
 # ── 6. per-movie metadata so every enabled tag family can render ─────────────
 # The generated testsrc clips carry no genre or rating, so the genre- and
 # rating-tags renderers had nothing to stamp (only quality + language, which
@@ -226,5 +267,50 @@ for MID in ${MOVIE_IDS}; do
 done
 log "updated metadata on ${i} movies (genres + community rating; audio lang baked at encode)"
 
-log "ready: ${BASE} (admin=${ADMIN_USER}, user=${USER_NAME}, ${MOVIES} movies)"
+# ── 7. episode titles + overviews so the strip filter has spoiler-y text ─────
+# The naming resolver names each episode "Guard Test Show S0xE0y" on disk, which
+# already looks like the strip placeholder. Give every episode a distinctive
+# real title + synopsis so the "Season X, Episode Y" title replacement and the
+# "Spoiler Guard activated" overview swap are observable (real → placeholder).
+log "seeding episode titles + overviews on '${SHOW_NAME}'"
+EP_JSON="$(api GET "/Shows/${SERIES_ID}/Episodes?userId=${ADMIN_ID}&fields=Overview")"
+EP_COUNT="$(printf '%s' "${EP_JSON}" | jq -r '.Items | length')"
+e=0
+while [ "${e}" -lt "${EP_COUNT}" ]; do
+    EID="$(printf '%s' "${EP_JSON}" | jq -r --argjson i "${e}" '.Items[$i].Id')"
+    S="$(printf '%s' "${EP_JSON}" | jq -r --argjson i "${e}" '.Items[$i].ParentIndexNumber // 0')"
+    N="$(printf '%s' "${EP_JSON}" | jq -r --argjson i "${e}" '.Items[$i].IndexNumber // 0')"
+    DTO="$(api GET "/Users/${ADMIN_ID}/Items/${EID}")"
+    PATCHED="$(printf '%s' "${DTO}" | jq \
+        --arg name "The Secret of Chapter ${S}.${N}" \
+        --arg ov "The villain is revealed and a hero falls in S${S}E${N}." \
+        '.Name = $name | .Overview = $ov')"
+    api POST "/Items/${EID}" "${PATCHED}" >/dev/null || fail "could not update metadata for episode ${EID}"
+    e=$((e + 1))
+done
+log "updated titles + overviews on ${e} episodes of '${SHOW_NAME}'"
+
+# ── 8. mark S1E1 played for the non-admin user (watched pass-through fixture) ─
+# The specs assert a WATCHED episode's real title survives while UNWATCHED ones
+# are stripped, and that per-user isolation holds — so exactly one episode must
+# be watched for je_arruser (and left untouched for the admin).
+log "marking S01E01 played for ${USER_NAME}"
+USER_ID="$(api GET /Users | jq -r --arg name "${USER_NAME}" '.[] | select(.Name == $name) | .Id')"
+USER_TOKEN="$(curl -fsS -X POST "${BASE}/Users/AuthenticateByName" \
+    -H "Authorization: ${CLIENT_AUTH}" -H 'Content-Type: application/json' \
+    -d "{\"Username\":\"${USER_NAME}\",\"Pw\":\"${USER_PASS}\"}" | jq -r .AccessToken)"
+[ -n "${USER_TOKEN}" ] && [ "${USER_TOKEN}" != "null" ] || fail "could not authenticate ${USER_NAME}"
+USER_AUTHED="Authorization: ${CLIENT_AUTH}, Token=\"${USER_TOKEN}\""
+S1E1_ID="$(printf '%s' "${EP_JSON}" \
+    | jq -r 'first(.Items[]? | select(.ParentIndexNumber == 1 and .IndexNumber == 1) | .Id) // empty')"
+[ -n "${S1E1_ID}" ] || fail "could not resolve S01E01 of '${SHOW_NAME}'"
+# v12 marks played via POST /UserPlayedItems/{itemId} in the calling user's
+# context (docs/v12-platform.md — the legacy /Users/{id}/PlayedItems path is
+# kept as a fallback for older builds).
+curl -fsS -X POST "${BASE}/UserPlayedItems/${S1E1_ID}" -H "${USER_AUTHED}" -H 'Content-Type: application/json' >/dev/null 2>&1 \
+    || curl -fsS -X POST "${BASE}/Users/${USER_ID}/PlayedItems/${S1E1_ID}" -H "${USER_AUTHED}" -H 'Content-Type: application/json' >/dev/null \
+    || fail "could not mark S01E01 played for ${USER_NAME}"
+log "marked S01E01 (${S1E1_ID}) played for ${USER_NAME}"
+
+log "ready: ${BASE} (admin=${ADMIN_USER}, user=${USER_NAME}, ${MOVIES} movies, series '${SHOW_NAME}' with ${EPISODES} episodes, Spoiler Guard enabled)"
 log "run the suite with: JF_BASE_URL=${BASE} npm run e2e"
