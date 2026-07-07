@@ -15,6 +15,14 @@ import { getItemCached } from '../helpers';
 const WATCHPROGRESS_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const FILESIZE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const LANGUAGE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+// PERF(R9): fail open — a TRANSIENT fetch error (flaky connection, busy server)
+// must not be remembered like a genuine "no data" answer. Error entries expire
+// fast so the next look at the page refetches, and the fetch itself retries
+// in place (bounded, backoff, page-scoped via placeholder.isConnected) so the
+// value usually still lands during the current view.
+const ERROR_CACHE_TTL = 30 * 1000;
+const FETCH_MAX_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 2000;
 
 interface WatchProgressEntry {
     progress: number;
@@ -26,9 +34,14 @@ interface WatchProgressEntry {
 // Bounded + TTL-swept via core/bounded-cache (no raw growing Map): the read-side
 // `now - cached.ts < *_CACHE_TTL` guards below stay for identical behavior, but
 // the util now also caps size and expires entries so nothing leaks per session.
-const watchProgressCache = createBoundedCache<string, WatchProgressEntry & { ts: number }>({ maxEntries: 500, ttlMs: WATCHPROGRESS_CACHE_TTL }); // Map<itemId, { progress, totalPlaybackTicks, totalRuntimeTicks, ts }>
-const fileSizeCache = createBoundedCache<string, { size: number | null; unavailable: boolean; ts: number }>({ maxEntries: 500, ttlMs: FILESIZE_CACHE_TTL }); // Map<itemId, { size, unavailable, ts }>
-const audioLanguageCache = createBoundedCache<string, { languages: { name: string; code: string }[]; unavailable: boolean; ts: number }>({ maxEntries: 500, ttlMs: LANGUAGE_CACHE_TTL }); // Map<itemId, { languages, unavailable, ts }>
+const watchProgressCache = createBoundedCache<string, WatchProgressEntry & { ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: WATCHPROGRESS_CACHE_TTL }); // Map<itemId, { progress, totalPlaybackTicks, totalRuntimeTicks, ts }>
+const fileSizeCache = createBoundedCache<string, { size: number | null; unavailable: boolean; ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: FILESIZE_CACHE_TTL }); // Map<itemId, { size, unavailable, ts }>
+const audioLanguageCache = createBoundedCache<string, { languages: { name: string; code: string }[]; unavailable: boolean; ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: LANGUAGE_CACHE_TTL }); // Map<itemId, { languages, unavailable, ts }>
+
+/** Effective read-side TTL: transient errors expire fast (PERF(R9)), real answers keep the full TTL. */
+function effectiveTtl(entry: { error?: boolean }, normalTtl: number): number {
+    return entry.error ? ERROR_CACHE_TTL : normalTtl;
+}
 
 /**
  * Converts bytes into a human-readable format (e.g., KB, MB, GB).
@@ -62,10 +75,6 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
         // Different item now; replace the element
         existing.remove();
     }
-
-    // Check cache first to avoid repeated network calls
-    const now = Date.now();
-    const cached = watchProgressCache.get(itemId);
 
     const placeholder = document.createElement('div');
     placeholder.className = 'mediaInfoItem mediaInfoItem-watchProgress';
@@ -218,9 +227,12 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
         placeholder.appendChild(getWatchProgressValue({ progress: 0, totalPlaybackTicks: 0, totalRuntimeTicks: 0 }));
     };
 
-    // Use requestIdleCallback to defer the work and not block page rendering
-    const performFetch = async (): Promise<void> => {
-        if (cached && (now - cached.ts) < WATCHPROGRESS_CACHE_TTL) {
+    const performFetch = async (attempt = 1): Promise<void> => {
+        // Check cache first to avoid repeated network calls (read inside so a
+        // retry sees fresh state, not values captured before the first attempt).
+        const now = Date.now();
+        const cached = watchProgressCache.get(itemId);
+        if (cached && (now - cached.ts) < effectiveTtl(cached, WATCHPROGRESS_CACHE_TTL)) {
             if (!cached.progress) {
                 renderUnavailable();
                 return;
@@ -249,9 +261,21 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
             watchProgressCache.set(itemId, watchProgress);
         } catch (error) {
             console.error('🪼 Jellyfin Enhanced: Error fetching watch progress for ID %s:', itemId, error);
-            // Keep placeholder with 0 to prevent repeated calls
+            // PERF(R9): fail open — render the 0 state now, but remember the
+            // failure only briefly (ERROR_CACHE_TTL) and retry in place while
+            // the chip is still on screen, so a flaky connection ends in a
+            // value, not a permanently empty ring. The value swap lands in the
+            // chip's reserved width (R1) — no shift.
             renderUnavailable();
-            watchProgressCache.set(itemId, { progress: 0, totalPlaybackTicks: 0, totalRuntimeTicks: 0, ts: now });
+            watchProgressCache.set(itemId, { progress: 0, totalPlaybackTicks: 0, totalRuntimeTicks: 0, ts: now, error: true });
+            if (attempt < FETCH_MAX_ATTEMPTS) {
+                window.setTimeout(() => {
+                    if (placeholder.isConnected) {
+                        watchProgressCache.delete(itemId);
+                        void performFetch(attempt + 1);
+                    }
+                }, RETRY_BASE_DELAY_MS * attempt);
+            }
         }
     };
 
@@ -276,10 +300,6 @@ export function displayItemSize(itemId: string, container: HTMLElement): void {
         existing.remove();
     }
 
-    // Check cache first to avoid repeated network calls
-    const now = Date.now();
-    const cached = fileSizeCache.get(itemId);
-
     const placeholder = document.createElement('div');
     placeholder.className = 'mediaInfoItem mediaInfoItem-fileSize';
     placeholder.dataset.itemId = itemId;
@@ -300,9 +320,12 @@ export function displayItemSize(itemId: string, container: HTMLElement): void {
         placeholder.innerHTML = `<span class="material-icons" style="font-size: inherit; margin-right: 0.3em;">save</span> -`;
     };
 
-    // Use requestIdleCallback to defer the work and not block page rendering
-    const performFetch = async (): Promise<void> => {
-        if (cached && (now - cached.ts) < FILESIZE_CACHE_TTL) {
+    const performFetch = async (attempt = 1): Promise<void> => {
+        // Check cache first to avoid repeated network calls (read inside so a
+        // retry sees fresh state, not values captured before the first attempt).
+        const now = Date.now();
+        const cached = fileSizeCache.get(itemId);
+        if (cached && (now - cached.ts) < effectiveTtl(cached, FILESIZE_CACHE_TTL)) {
             if (cached.unavailable || !cached.size) {
                 renderUnavailable();
                 return;
@@ -330,9 +353,20 @@ export function displayItemSize(itemId: string, container: HTMLElement): void {
             }
         } catch (error) {
             console.error('🪼 Jellyfin Enhanced: Error fetching item size for ID %s:', itemId, error);
-            // Keep placeholder with dash to prevent repeated calls
+            // PERF(R9): fail open — show the dash now, but only remember the
+            // failure briefly (ERROR_CACHE_TTL, not the 1h data TTL) and retry
+            // in place while the chip is on screen. The dash→value swap lands
+            // in the chip's reserved width (R1) — no shift.
             renderUnavailable();
-            fileSizeCache.set(itemId, { size: null, unavailable: true, ts: now });
+            fileSizeCache.set(itemId, { size: null, unavailable: true, ts: now, error: true });
+            if (attempt < FETCH_MAX_ATTEMPTS) {
+                window.setTimeout(() => {
+                    if (placeholder.isConnected) {
+                        fileSizeCache.delete(itemId);
+                        void performFetch(attempt + 1);
+                    }
+                }, RETRY_BASE_DELAY_MS * attempt);
+            }
         }
     };
 
@@ -542,12 +576,11 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
         placeholder.appendChild(scrollContainer);
     };
 
-    // Use requestIdleCallback to defer the work and not block page rendering
-    const performFetch = async (): Promise<void> => {
+    const performFetch = async (attempt = 1): Promise<void> => {
         // Check cache first
         const now = Date.now();
         const cached = audioLanguageCache.get(itemId);
-        if (cached && (now - cached.ts) < LANGUAGE_CACHE_TTL) {
+        if (cached && (now - cached.ts) < effectiveTtl(cached, LANGUAGE_CACHE_TTL)) {
             if (cached.unavailable || !cached.languages || cached.languages.length === 0) {
                 renderUnavailable();
                 return;
@@ -602,8 +635,19 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
             }
         } catch (error) {
             console.error('🪼 Jellyfin Enhanced: Error fetching audio languages for %s:', itemId, error);
+            // PERF(R9): fail open — show the dash now, remember the failure only
+            // briefly (ERROR_CACHE_TTL) and retry in place while the chip is on
+            // screen. The dash→flags swap lands in the chip's reserved width (R1).
             renderUnavailable();
-            audioLanguageCache.set(itemId, { languages: [], unavailable: true, ts: Date.now() });
+            audioLanguageCache.set(itemId, { languages: [], unavailable: true, ts: Date.now(), error: true });
+            if (attempt < FETCH_MAX_ATTEMPTS) {
+                window.setTimeout(() => {
+                    if (placeholder.isConnected) {
+                        audioLanguageCache.delete(itemId);
+                        void performFetch(attempt + 1);
+                    }
+                }, RETRY_BASE_DELAY_MS * attempt);
+            }
         }
     };
 

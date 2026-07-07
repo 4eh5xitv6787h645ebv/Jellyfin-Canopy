@@ -12,6 +12,12 @@ import { addCSS, getItemCached } from '../helpers';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const RELEASEDATE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+// PERF(R9): fail open — a transient TMDB/proxy failure must not be remembered
+// like a genuine "no release dates on TMDB" answer (which the 1h TTL is for).
+// Error entries expire fast and the fetch retries in place, bounded.
+const ERROR_CACHE_TTL = 30 * 1000;
+const FETCH_MAX_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 2000;
 
 interface ReleaseInfo {
     date: string;
@@ -22,10 +28,13 @@ interface ReleaseInfo {
 // Bounded + TTL-swept via core/bounded-cache (no raw growing Map): the read-side
 // `now - cached.ts < RELEASEDATE_CACHE_TTL` guard below stays for identical
 // behavior, but the util now caps size and expires entries so nothing leaks.
-const releaseDateCache = createBoundedCache<string, { infos: ReleaseInfo[]; ts: number }>({ maxEntries: 300, ttlMs: RELEASEDATE_CACHE_TTL }); // Map<itemId, { infos, ts }>
+const releaseDateCache = createBoundedCache<string, { infos: ReleaseInfo[]; ts: number; error?: boolean }>({ maxEntries: 300, ttlMs: RELEASEDATE_CACHE_TTL }); // Map<itemId, { infos, ts }>
 
 /**
- * Fetches a path from TMDB via the plugin's proxy endpoint.
+ * Fetches a path from TMDB via the plugin's proxy endpoint. Throws on
+ * failure — a transient transport error must reach displayReleaseDate's
+ * catch (short-TTL + retry), not masquerade as a genuine empty TMDB answer
+ * that gets cached for an hour.
  * @param path TMDB API path, e.g. `/movie/{id}/release_dates`.
  */
 function tmdbGet(path: string): Promise<any> {
@@ -34,7 +43,7 @@ function tmdbGet(path: string): Promise<any> {
         .then(r => r.ok ? r.json() : Promise.reject(new Error(`API Error: ${r.status}`)))
         .catch((error: unknown) => {
             console.error(`🪼 Jellyfin Enhanced: Release Date: TMDB request failed for ${path}`, error);
-            return null;
+            throw error;
         });
 }
 
@@ -158,10 +167,11 @@ async function resolveReleaseInfo(item: any, userId: string): Promise<ReleaseInf
     if (mediaType === 'Season' || mediaType === 'Episode') {
         let seriesTmdbId = item?.SeriesProviderIds?.Tmdb;
         if (!seriesTmdbId && item?.SeriesId) {
-            try {
-                const series: any = await ApiClient.getItem(userId, item.SeriesId);
-                seriesTmdbId = series?.ProviderIds?.Tmdb;
-            } catch (_) { /* fall through to empty below */ }
+            // PERF(R9): let a transient series-lookup failure propagate to the
+            // short-TTL retry path — swallowing it here would cache "no dates"
+            // for an hour on a network blip.
+            const series: any = await ApiClient.getItem(userId, item.SeriesId);
+            seriesTmdbId = series?.ProviderIds?.Tmdb;
         }
         if (!seriesTmdbId) return [];
 
@@ -201,9 +211,8 @@ export function displayReleaseDate(itemId: string, container: HTMLElement): void
         existing.remove();
     }
 
-    const now = Date.now();
     const cached = releaseDateCache.get(itemId);
-    if (cached && (now - cached.ts) < RELEASEDATE_CACHE_TTL) {
+    if (cached && (Date.now() - cached.ts) < (cached.error ? ERROR_CACHE_TTL : RELEASEDATE_CACHE_TTL)) {
         if (cached.infos.length > 0) renderReleaseDateChip(container, itemId, cached.infos);
         return;
     }
@@ -214,7 +223,8 @@ export function displayReleaseDate(itemId: string, container: HTMLElement): void
     placeholder.style.display = 'none';
     container.appendChild(placeholder);
 
-    const performFetch = async (): Promise<void> => {
+    const performFetch = async (attempt = 1): Promise<void> => {
+        const now = Date.now();
         try {
             const userId = ApiClient.getCurrentUserId();
             const item = await getItemCached(itemId, { userId });
@@ -229,8 +239,23 @@ export function displayReleaseDate(itemId: string, container: HTMLElement): void
             }
         } catch (error) {
             console.error(`🪼 Jellyfin Enhanced: Release Date: Error fetching release info for ${itemId}:`, error);
-            releaseDateCache.set(itemId, { infos: [], ts: now });
-            placeholder.remove();
+            // PERF(R9): fail open — a transient failure is remembered only
+            // briefly (ERROR_CACHE_TTL, not the 1h answer TTL) and retried in
+            // place while the page is still up. The hidden placeholder stays
+            // for dedup; it is removed only once retries are exhausted. The
+            // chip appearing late is a single insert (R7) into the misc-info
+            // row, same as the normal slow-TMDB path.
+            releaseDateCache.set(itemId, { infos: [], ts: now, error: true });
+            if (attempt < FETCH_MAX_ATTEMPTS && placeholder.isConnected) {
+                window.setTimeout(() => {
+                    if (placeholder.isConnected) {
+                        releaseDateCache.delete(itemId);
+                        void performFetch(attempt + 1);
+                    }
+                }, RETRY_BASE_DELAY_MS * attempt);
+            } else {
+                placeholder.remove();
+            }
         }
     };
 
