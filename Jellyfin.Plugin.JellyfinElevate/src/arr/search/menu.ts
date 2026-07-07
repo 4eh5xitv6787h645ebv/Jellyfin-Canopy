@@ -22,6 +22,15 @@ const INTERACTIVE_ID = 'je-arr-interactive';
 const MANAGE_ID = 'je-arr-manage';
 const ALL_IDS = [SEARCH_ID, INTERACTIVE_ID, MANAGE_ID];
 
+// Native per-item action ids present in a card OR a details action sheet (details sets play:false,
+// so we also accept edit/refresh/etc.). Their presence distinguishes a real per-item menu from a
+// sort / OSD / settings sheet, and also means the sheet has finished building.
+const PER_ITEM_MARKERS = ['resume', 'play', 'playallfromhere', 'instantmix', 'shuffle', 'edit', 'editimages', 'editsubtitles', 'identify', 'refresh', 'moremediainfo', 'addtoplaylist', 'addtocollection', 'download'];
+
+function isPerItemSheet(scroller: HTMLElement): boolean {
+    return PER_ITEM_MARKERS.some((id) => scroller.querySelector(`[data-id="${id}"]`) !== null);
+}
+
 let scheduled = false;
 
 /** rAF-coalesced injection request (also used by the body-mutation multiplexer and the capture refine). */
@@ -49,6 +58,11 @@ export function injectSearchItems(): void {
     // The multi-select / long-press sheet (data-id="selectall") is not a per-item menu — strip any
     // group that leaked into a reused sheet.
     if (scroller.querySelector('[data-id="selectall"]')) { removeExisting(scroller); return; }
+
+    // Only ever inject into a fully-built per-item action sheet. A non-item sheet (sort / OSD /
+    // settings) never carries these markers, so a stale-but-fresh capture can't leak our items into
+    // it; a mid-build item sheet reaches us on a later observer fire once its native items land.
+    if (!isPerItemSheet(scroller)) return;
 
     const existing = scroller.querySelector<HTMLElement>(`[data-id="${SEARCH_ID}"]`);
     const ctx = getCaptured();
@@ -92,14 +106,16 @@ export function injectSearchItems(): void {
         }));
     }
 
-    // Append the group at the end of the sheet and re-fit (a long "Interactive Search" label can
-    // otherwise spill past the sheet's pre-sized right edge).
+    // Append the group at the end of the sheet, then re-fit ONCE. PERF(R4/R7): all inserts (writes)
+    // happen before the single layout-reading fit pass, so we never interleave offsetWidth reads
+    // with DOM writes across the loop. One fit on the group handles the right-edge overflow (a long
+    // "Interactive Search" label can otherwise spill past the sheet's pre-sized width).
     let anchor: Element | null = scroller.lastElementChild;
     for (const item of items) {
         if (anchor) anchor.after(item); else scroller.appendChild(item);
         anchor = item;
-        fitRemoveItemToMenu(item, scroller);
     }
+    if (items.length > 0) fitRemoveItemToMenu(items[items.length - 1], scroller);
 
     // Consume the context so an unrelated sheet opened within the TTL can't reuse it.
     setCaptured(null);

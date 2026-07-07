@@ -56,18 +56,23 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Arr
                     };
 
                 case Season season:
+                {
+                    var series = ParentSeries(season.Series, season.SeriesId);
                     return new ArrResolvedItem
                     {
                         ItemId = itemId,
                         Kind = ArrMediaKind.Season,
                         // Season names ("Season 1") are unhelpful in a toast — prefer the show + season number.
-                        Name = season.Series?.Name ?? season.SeriesName ?? season.Name,
+                        Name = series?.Name ?? season.SeriesName ?? season.Name,
                         // Season.IndexNumber is the season number; specials are 0.
                         SeasonNumber = season.IndexNumber,
-                        SeriesTvdbId = ProviderId(season.Series, "Tvdb"),
+                        SeriesTvdbId = ProviderId(series, "Tvdb"),
                     };
+                }
 
                 case Episode episode:
+                {
+                    var series = ParentSeries(episode.Series, episode.SeriesId);
                     return new ArrResolvedItem
                     {
                         ItemId = itemId,
@@ -76,11 +81,30 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Arr
                         SeasonNumber = episode.ParentIndexNumber,
                         EpisodeNumber = episode.IndexNumber,
                         EpisodeTvdbId = ProviderId(episode, "Tvdb"),
-                        SeriesTvdbId = ProviderId(episode.Series, "Tvdb"),
+                        SeriesTvdbId = ProviderId(series, "Tvdb"),
                     };
+                }
 
                 default:
                     return new ArrResolvedItem { ItemId = itemId, Name = item.Name };
+            }
+        }
+
+        /// <summary>
+        /// The owning series for a season/episode. Prefers the hydrated navigation property but
+        /// falls back to loading it by <c>SeriesId</c> through <c>ILibraryManager</c> — some load
+        /// paths populate only the id, leaving <c>Series</c> null (which would otherwise drop the
+        /// TVDB id and make the item look unresolvable). Mirrors TagCacheService.GetParentSeries.
+        /// </summary>
+        private MediaBrowser.Controller.Entities.BaseItem? ParentSeries(Series? navigation, Guid seriesId)
+        {
+            if (navigation != null) return navigation;
+            if (seriesId == Guid.Empty) return null;
+            try { return _libraryManager.GetItemById(seriesId); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"Failed to resolve parent series {seriesId}: {ex.Message}");
+                return null;
             }
         }
 

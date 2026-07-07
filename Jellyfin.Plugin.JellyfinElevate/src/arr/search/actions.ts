@@ -90,14 +90,19 @@ export async function fetchStatus(itemId: string): Promise<ArrQueueRow[]> {
 
 export function toast(iconKey: string, message: string, duration = 4000): void {
     try {
-        JE.toast!(`{{icon:${iconKey}}} ${JE.escapeHtml(message)}`, duration);
+        // JE.t expands the {{icon:}} token to icon HTML (js/plugin.js) — JE.toast is a raw innerHTML
+        // sink and does NOT expand it. iconKey is a constant; the message is escaped separately
+        // (SEC(X1)) since JE.t does not escape and the message can carry item/error text.
+        const iconHtml = JE.t ? JE.t(`{{icon:${iconKey}}}`) : '';
+        JE.toast!(`${iconHtml} ${JE.escapeHtml(message)}`, duration);
     } catch (e) {
         console.log(`${logPrefix} ${message}`, e);
     }
 }
 
+// Icon keys must exist in the JE.t icon registry (js/locales use these): search, success, error.
 export function toastInfo(message: string): void { toast('search', message); }
-export function toastSuccess(message: string): void { toast('check_circle', message, 5000); }
+export function toastSuccess(message: string): void { toast('success', message, 5000); }
 export function toastError(message: string): void { toast('error', message, 6000); }
 
 // ── Downloads-page deep-link (reuses the existing page; never a second one) ──

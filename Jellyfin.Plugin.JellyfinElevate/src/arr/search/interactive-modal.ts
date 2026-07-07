@@ -69,6 +69,11 @@ class ReleaseView {
     private hideRejected = true;
     private sortKey: SortKey = 'default';
     private instanceName: string;
+    // The instance the currently-rendered releases actually came from — Grab must target THIS, not
+    // the (possibly since-changed) selection, so an out-of-order slow load can't grab cross-instance.
+    private loadedInstance: string;
+    // Monotonic load token: only the newest load() may apply its result.
+    private loadSeq = 0;
     private listEl = el('div', 'je-arr-release-list');
     private countEl = el('div', 'je-arr-release-count');
 
@@ -79,6 +84,7 @@ class ReleaseView {
         private instances: string[],
     ) {
         this.instanceName = instances[0];
+        this.loadedInstance = instances[0];
     }
 
     mount(): void {
@@ -128,14 +134,19 @@ class ReleaseView {
     }
 
     private async load(): Promise<void> {
+        const seq = ++this.loadSeq;
+        const instance = this.instanceName;
         renderCentered(this.listEl, spinner());
         this.countEl.textContent = '';
         try {
-            const result = await fetchReleases(this.itemId, this.instanceName);
+            const result = await fetchReleases(this.itemId, instance);
+            if (seq !== this.loadSeq) return; // a newer instance selection superseded this load
+            this.loadedInstance = instance;
             if (result.error) { renderCentered(this.listEl, message('error', result.error)); return; }
             this.releases = result.releases || [];
             this.renderList();
         } catch (e) {
+            if (seq !== this.loadSeq) return;
             renderCentered(this.listEl, message('error', errorMessage(e)));
         }
     }
@@ -214,7 +225,7 @@ class ReleaseView {
         grab.disabled = true;
         icon.className = 'material-icons hourglass_empty';
         try {
-            await grabRelease(this.service, this.instanceName, release.guid, release.indexerId);
+            await grabRelease(this.service, this.loadedInstance, release.guid, release.indexerId);
             grab.classList.add('je-arr-grabbed');
             icon.className = 'material-icons check';
             // Point the admin at the existing Downloads page for progress — never force-navigate

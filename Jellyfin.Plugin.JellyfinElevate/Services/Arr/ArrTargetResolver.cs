@@ -47,6 +47,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Arr
         public async Task<(List<ArrInstanceMatch> Matches, List<ArrErrorDto> Errors)> ResolveMatchesAsync(
             ArrResolvedItem item, IReadOnlyList<ArrInstance> instances, string service, CancellationToken ct)
         {
+            // Without a real provider id the arr query would be "?tmdbId=" / "?tvdbId=" (empty), which
+            // Sonarr/Radarr treat as "no filter" and answer with their ENTIRE library — First() would
+            // then pick an arbitrary unrelated item as a "match" and search/monitor/grab could hit the
+            // wrong media. Refuse to resolve until the item carries the id its service needs. This one
+            // gate protects every caller (context, auto-search, releases, monitor, queue).
+            if (!item.HasArrIdentity)
+                return (new List<ArrInstanceMatch>(), new List<ArrErrorDto>());
+
             var results = await Task.WhenAll(instances.Select(i => ResolveOneAsync(item, i, service, ct))).ConfigureAwait(false);
 
             var matches = new List<ArrInstanceMatch>();
@@ -142,26 +150,40 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Arr
         private async Task<(ArrInstanceMatch? Match, string? Error)> ResolveEpisodeAsync(
             ArrResolvedItem item, ArrInstance instance, int seriesId, CancellationToken ct)
         {
+            // When the episode carries its own TVDB id, match on that across the WHOLE series — a
+            // TVDB match survives Jellyfin/Sonarr disagreeing on ordering (DVD vs aired), where the
+            // same episode can sit under a different season/episode number. Otherwise fall back to
+            // season+episode number within the season.
+            var byTvdb = item.EpisodeTvdbId is > 0;
+            var path = byTvdb
+                ? $"/api/v3/episode?seriesId={seriesId}"
+                : $"/api/v3/episode?seriesId={seriesId}&seasonNumber={item.SeasonNumber}";
+
             return await _fetch.FetchAndMapAsync<ArrInstanceMatch?>(
                 instance,
-                $"/api/v3/episode?seriesId={seriesId}&seasonNumber={item.SeasonNumber}",
+                path,
                 node =>
                 {
                     if (node is not JsonArray episodes) return null;
-                    foreach (var ep in episodes)
+
+                    JsonNode? chosen = null;
+                    if (byTvdb)
+                        chosen = episodes.FirstOrDefault(e => ArrSearchMapping.IntN(e?["tvdbId"]) == item.EpisodeTvdbId);
+                    // Fall back to season+episode number (also the sole path when no episode TVDB id is known).
+                    chosen ??= episodes.FirstOrDefault(e =>
+                        ArrSearchMapping.IntN(e?["seasonNumber"]) == item.SeasonNumber
+                        && ArrSearchMapping.IntN(e?["episodeNumber"]) == item.EpisodeNumber);
+
+                    if (chosen == null) return null;
+                    return new ArrInstanceMatch
                     {
-                        if (ArrSearchMapping.IntN(ep?["episodeNumber"]) != item.EpisodeNumber) continue;
-                        return new ArrInstanceMatch
-                        {
-                            Instance = instance,
-                            Service = "sonarr",
-                            ArrId = seriesId,
-                            EpisodeId = ArrSearchMapping.IntN(ep?["id"]),
-                            Monitored = ArrSearchMapping.Bool(ep?["monitored"]),
-                            HasFile = ArrSearchMapping.Bool(ep?["hasFile"]),
-                        };
-                    }
-                    return null;
+                        Instance = instance,
+                        Service = "sonarr",
+                        ArrId = seriesId,
+                        EpisodeId = ArrSearchMapping.IntN(chosen["id"]),
+                        Monitored = ArrSearchMapping.Bool(chosen["monitored"]),
+                        HasFile = ArrSearchMapping.Bool(chosen["hasFile"]),
+                    };
                 },
                 emptyResult: null,
                 timeout: LookupTimeout,

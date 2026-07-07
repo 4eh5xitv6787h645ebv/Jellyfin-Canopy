@@ -98,6 +98,42 @@ public class ArrActionServiceTests
         Assert.Equal(701, (int?)body["episodeIds"]!.AsArray()[0]);
     }
 
+    [Fact]
+    public async Task DispatchAutoSearch_ItemWithoutProviderId_MakesNoArrCallAndSearchesNothing()
+    {
+        var (service, handler) = NewService();
+        // If the resolver ever queried the arr, an empty ?tmdbId= would match the whole library and
+        // this would be dispatched — so this response must never be reached.
+        handler.AddResponse("/api/v3/movie", """[{"id":42,"monitored":true}]""");
+        handler.AddResponse("/api/v3/command", """{"id":1}""");
+
+        var noId = new ArrResolvedItem { Kind = ArrMediaKind.Movie, TmdbId = null, Name = "Unmatched" };
+        var result = await service.DispatchAutoSearchAsync(noId, RadarrConfig(), null, CancellationToken.None);
+
+        Assert.Empty(result.Dispatched);
+        // The HasArrIdentity guard short-circuits before any fan-out — no query, no command.
+        Assert.Empty(handler.Sent);
+    }
+
+    [Fact]
+    public async Task ResolveEpisode_PrefersTvdbMatchOverSeasonEpisodeNumber()
+    {
+        var (service, handler) = NewService();
+        handler.AddResponse("/api/v3/series", """[{"id":7,"monitored":true}]""");
+        // Aired-vs-DVD ordering: the episode with our TVDB id sits at a different S/E than Jellyfin's.
+        handler.AddResponse("/api/v3/episode", """[{"id":900,"seasonNumber":1,"episodeNumber":2,"tvdbId":555000,"monitored":true},{"id":901,"seasonNumber":2,"episodeNumber":5,"tvdbId":999999,"monitored":true}]""");
+        handler.AddResponse("/api/v3/command", """{"id":3}""");
+
+        var ep = new ArrResolvedItem { Kind = ArrMediaKind.Episode, SeriesTvdbId = 81189, SeasonNumber = 1, EpisodeNumber = 2, EpisodeTvdbId = 999999 };
+        var result = await service.DispatchAutoSearchAsync(ep, SonarrConfig(), null, CancellationToken.None);
+
+        Assert.Single(result.Dispatched);
+        var body = BodyOf(handler, HttpMethod.Post, "/api/v3/command");
+        Assert.Equal("EpisodeSearch", (string?)body["name"]);
+        // Matched by TVDB id 999999 → episodeId 901, NOT the S1E2 numeric match (900).
+        Assert.Equal(901, (int?)body["episodeIds"]!.AsArray()[0]);
+    }
+
     // ── interactive search + grab ────────────────────────────────────────────
 
     [Fact]
