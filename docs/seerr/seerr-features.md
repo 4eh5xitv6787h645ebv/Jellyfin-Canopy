@@ -475,4 +475,4 @@ Automatically request media based on viewing behavior.
   every Seerr proxy request bypasses the response cache and is fetched fresh from
   Seerr. Useful for testing; increases load on Seerr and is not recommended for
   normal use.
-- Both caches are flushed automatically whenever plugin settings are saved.
+- All Seerr caches are flushed automatically whenever plugin settings are saved.

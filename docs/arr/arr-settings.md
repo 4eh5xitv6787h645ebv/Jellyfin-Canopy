@@ -105,7 +105,7 @@ Found in the **Pages** tab under "Calendar Page".
 | **Add Calendar as a native Home tab** | Adds Calendar as its own tab on the Home page, no external plugin needed (recommended on Jellyfin 12's experimental layout) |
 | **Use Plugin Pages** | Adds a sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)) |
 | **Use Custom Tabs** | Adds a custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)) |
-| **First Day of Week** | Monday or Sunday |
+| **First Day of Week** | Day the calendar week starts on — any weekday (Sunday through Saturday). Default Monday. |
 | **Time Format** | 12-hour (`5pm/5:30pm`) or 24-hour (`17:00/17:30`) |
 | **Highlight Favorites/Watchlist** | Highlights favorite shows/movies based on Jellyfin favorites |
 | **Highlight Watched Series** | Highlights series you are currently watching |

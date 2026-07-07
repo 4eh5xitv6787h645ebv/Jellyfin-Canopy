@@ -32,7 +32,7 @@ All classic anchors present and visible: `.headerRight`, `.headerLeft`, `.mainDr
 ### Current helper validity
 - `getHeaderRightContainer()`: `.headerRight` legacy-layout-only; the MUI tray fallback works — but the tray is **destroyed on entering `/video` and NOT restored on exit** (AppToolbar returns `null` there and remounts fresh). Header injection must be idempotent and re-run after leaving the player.
 - `getSidebarContainer()`: `.MuiDrawer-paper` correct but mobile-only; modern desktop genuinely has no sidebar.
-- `native-tabs.js` anchors (`.emby-tabs-slider`): hidden on modern; modern equivalents are UserViewNav links or `config.json` `menuLinks`.
+- `native-tabs.ts` anchors (`.emby-tabs-slider`): hidden on modern; modern equivalents are UserViewNav links or `config.json` `menuLinks`.
 
 ---
 

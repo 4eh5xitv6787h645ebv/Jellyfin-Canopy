@@ -228,7 +228,7 @@ Choose from multiple Jellyfin theme color variants.
 - Aurora
 - Jellyblue
 - Ocean
-- Sunset
+- Peach
 - Forest
 - And more...
 
