@@ -9,7 +9,7 @@ Evidence-first reference for building this plugin against Jellyfin 12 only. Veri
 ## 1. Layouts (S1)
 
 - The React/MUI layout is the **default** on non-TV browsers: `appHost.getDefaultLayout()` → `Modern` (`WEB src/components/apphost.js:185-187`); selection stored in the **unprefixed `localStorage` key `layout`** (`WEB src/components/layoutManager.js:18`, `appSettings.js:263-274`).
-- **Naming skew:** shipped 12.0.0 uses `experimental`/`stable` values (`LayoutMode {auto, desktop, experimental, mobile, tv}`); master renamed to `modern`/`legacy` + `desktop-legacy`/`mobile-legacy`. `layout='desktop-legacy'` is INVALID on the shipped build and silently falls back to the React layout. **Never hardcode layout values; detect by DOM** (visible `.MuiAppBar-root .MuiToolbar-root` vs visible `.headerRight`).
+- **Naming skew:** shipped 12.0.0 uses `experimental`/`desktop` values (`LayoutMode {auto, desktop, experimental, mobile, tv}`); master renamed to `modern`/`legacy` + `desktop-legacy`/`mobile-legacy`. `layout='desktop-legacy'` is INVALID on the shipped build and silently falls back to the React layout. **Never hardcode layout values; detect by DOM** (visible `.MuiAppBar-root .MuiToolbar-root` vs visible `.headerRight`).
 - Route tree is chosen **once at module init** (`WEB src/RootAppRouter.tsx:26`); layout change requires reload.
 - `html` classes cannot discriminate layouts (both produce `layout-desktop`).
 - **Present ≠ visible:** on the modern layout the whole legacy header block remains in the DOM inside a `display:none` wrapper (`WEB src/components/AppHeader.tsx:20-27`). Existence checks silently produce invisible UI. `.skinHeader`/`.MuiAppBar-root` are `position:fixed` → `offsetParent === null` even when visible; check children instead.
@@ -32,7 +32,7 @@ All classic anchors present and visible: `.headerRight`, `.headerLeft`, `.mainDr
 ### Current helper validity
 - `getHeaderRightContainer()`: `.headerRight` legacy-layout-only; the MUI tray fallback works — but the tray is **destroyed on entering `/video` and NOT restored on exit** (AppToolbar returns `null` there and remounts fresh). Header injection must be idempotent and re-run after leaving the player.
 - `getSidebarContainer()`: `.MuiDrawer-paper` correct but mobile-only; modern desktop genuinely has no sidebar.
-- `native-tabs.js` anchors (`.emby-tabs-slider`): hidden on modern; modern equivalents are UserViewNav links or `config.json` `menuLinks`.
+- `native-tabs.ts` anchors (`.emby-tabs-slider`): hidden on modern; modern equivalents are UserViewNav links or `config.json` `menuLinks`.
 
 ---
 

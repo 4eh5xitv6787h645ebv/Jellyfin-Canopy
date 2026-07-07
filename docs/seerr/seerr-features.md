@@ -84,8 +84,8 @@ inspecting network traffic — a client-side hide would only conceal the cards.
 - A restricted user also cannot **open** a blocked title's detail/season or
   **request** it by id — both are rejected server-side, not just hidden.
 - The raw TMDB passthrough is **denied by default** for a rating-limited user.
-  Only rating-free lookups pass through untouched (genre lists, and keyword,
-  company or person *search*); a movie/TV detail or one of its own parts is
+  Only rating-free lookups pass through untouched (genre lists, and keyword
+  or company *search*); a movie/TV detail or one of its own parts is
   served only when the parent title is within the user's limit; and everything
   else — discover, trending, title search, similar and recommendations, person
   and collection browsing — is blocked. Any new or unknown passthrough shape is
@@ -128,9 +128,9 @@ View Seerr recommendations and similar items on detail pages.
 - Real-time request status
 
 #### Configure
-1. Check **"Show Seerr Recommendations and Similar items"**
-2. Optional: Enable **"Exclude already in library items"**
-3. Optional: Enable **"Exclude rejected items"**
+1. Check **"Show similar items"** and/or **"Show recommended items"**
+2. Optional: Enable **"Exclude items already in library"**
+3. Optional: Enable **"Exclude blocklisted items"**
 
 ### Discovery Pages
 
@@ -191,13 +191,14 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Seerr Settings** tab
+2. Navigate to the **Pages** tab
 3. Check **"Enable Requests Page"**
 4. Optionally check **"Show Downloads in Requests Page"** to display active *arr downloads (enabled by default)
 5. Optionally check **"Show Seerr Issues Section"** to display Seerr issues
 6. Choose integration method:
-   - **Use Plugin Pages** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin)
-   - **Use Custom Tabs** - Adds custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin)
+   - **Use Plugin Pages for Requests** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin)
+   - **Use Custom Tabs for Requests** - Adds custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin)
+   - **Add Requests as a native Home tab** - Shows Requests as a native tab on the Home screen (experimental layout)
 7. Configure polling settings (see below)
 8. Click **Save**
 9. Restart Jellyfin if using Plugin Pages
@@ -212,7 +213,7 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 
 ### Polling Settings
 
-#### Enable Polling
+#### Enable Auto-Refresh
 
 - Auto-refresh download status
 - Recommended: Enabled
@@ -229,7 +230,7 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 
 - Click "Requests" in sidebar (Plugin Pages)
 - Navigate to custom tab (Custom Tabs)
-- Direct URL: `/web/index.html#!/jellyfinenhanced/requests`
+- Direct URL: `/web/index.html#/downloads`
 
 #### Features
 
@@ -266,7 +267,7 @@ View and manage Seerr issues directly from the Requests page.
 
 #### Configuration
 
-1. Go to plugin settings → Seerr Settings tab
+1. Go to plugin settings → **Pages** tab
 2. Check **"Enable Requests Page"**
 3. Check **"Show Seerr Issues Section"**
 4. Click **Save**
@@ -302,11 +303,11 @@ Automatically sync watchlist items between Seerr and Jellyfin in both directions
 
 #### Configuration:
 
-- **Add Requested Media to Watchlist** - Auto-add when available
-- **Sync Seerr Watchlist** - Sync Seerr watchlist to Jellyfin
-- **Sync Jellyfin Watchlist to Seerr** - Sync Jellyfin watchlist to Seerr
-- **Prevent Watchlist Re-Addition** - Remember removed items
-- **Memory Retention Days** - How long to remember (default: 365)
+- **Add requested media to Watchlist** - Auto-add when available
+- **Sync Seerr Watchlist → Jellyfin** - Sync Seerr watchlist to Jellyfin
+- **Sync Jellyfin Watchlist → Seerr** - Sync Jellyfin watchlist to Seerr
+- **Prevent re-adding removed items** - Remember removed items
+- **Memory retention (days)** - How long to remember (default: 365)
 
 
 ### Icon States
@@ -439,6 +440,17 @@ Automatically request media based on viewing behavior.
 - Trigger on playback start
 - Trigger after X minutes watched
 - Check release date (only request if released)
+- **Quality Profile Mode** — how the auto request picks its Radarr target:
+  *Default* (Seerr uses its default Radarr server and quality profile),
+  *Original* (uses the same quality profile as the movie being watched, falling
+  back to default if not found), or *Custom* (always uses the specific Radarr
+  server, quality profile, and root folder selected below).
+- **Use default instead of 4K fallback** (default on) — only applies when
+  Quality Profile Mode is set to *Original*. If the watched movie was requested
+  with a 4K profile, the auto-request uses Seerr's default profile instead,
+  preventing requests from failing or requiring manual approval for users who
+  lack 4K request permission in Seerr. Disable it to preserve the original 4K
+  profile when all your users have 4K request access.
 
 !!! note "One request per title across multiple Seerr backends"
 
@@ -457,4 +469,10 @@ Automatically request media based on viewing behavior.
   cached for the [parental-rating filter](#parental-rating-filtering). Ratings
   rarely change, so this is long by default (1440 minutes = 24 hours) and shared
   across all users, keeping the filter cheap after the first lookup of a title.
-- Both caches are flushed automatically whenever plugin settings are saved.
+- **User ID Cache TTL** — how long the resolved Jellyfin-user → Seerr-user id
+  mapping is cached before it is looked up again (default 30 minutes).
+- **Disable server-side response cache** (Debug section, default off) — when on,
+  every Seerr proxy request bypasses the response cache and is fetched fresh from
+  Seerr. Useful for testing; increases load on Seerr and is not recommended for
+  normal use.
+- All Seerr caches are flushed automatically whenever plugin settings are saved.

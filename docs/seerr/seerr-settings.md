@@ -46,17 +46,18 @@ This step is optional if you enable plugin-side auto import.
 ### Step 3: Configure Plugin
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Seerr Settings** tab
-3. Check **"Show Seerr Results in Search"**
-4. Enter your **Seerr URL(s)** (one per line)
+2. Navigate to the **Seerr** tab
+3. Check **"Enable Seerr integration"** (master toggle — nothing Seerr-related works until this is enabled)
+4. Check **"Show Seerr Results in Search"**
+5. Enter your **Seerr URL(s)** (one per line)
    - Use internal URL for best performance
    - Can provide multiple URLs (first successful connection used)
-5. Enter your **Seerr API Key**
+6. Enter your **Seerr API Key**
 
    - Found in Seerr: **Settings** → **General** → **API Key**
-6. Click **"Test Connection"** to verify
-7. Enable optional features (see below)
-8. Click **Save**
+7. Click the **"Test"** button next to the API Key field to verify the connection
+8. Enable optional features (see below)
+9. Click **Save**
 
 ### Step 4: Configure User Import (Optional)
 
@@ -65,9 +66,9 @@ Enable automatic import in the plugin if you do not want to manually import user
 When enabled, new Jellyfin users are automatically imported into Seerr the first time they use Seerr Search.
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Seerr Settings** tab
-3. In **User Import**, check **"Auto import Jellyfin users to Seerr"**
-4. Optional: expand **Blocked users** and select users to exclude
+2. Navigate to the **Seerr** tab
+3. In the **Users** section, check **"Auto import Jellyfin users to Seerr"**
+4. Optional: expand **Blocked Users** and select users to exclude
 5. Optional: click **Import Users Now** to run immediate bulk import
 6. Click **Save**
 
@@ -125,12 +126,23 @@ When enabled, new Jellyfin users are automatically imported into Seerr the first
 - Display advanced options in request modal
 - Season selection, quality options, etc.
 
+### Show Collections in Seerr Results
+- Display TMDB collections (e.g., Harry Potter, Marvel Cinematic Universe) in Seerr search results
+- Includes an option to request the entire collection at once
+- Enabled by default
+
 ### Auto Import Jellyfin Users to Seerr
 
 - Just-in-time import when a user first accesses Seerr search and is not linked yet
 - Scheduled bulk import via **Import Jellyfin Users to Seerr** task
 - Manual bulk import via **Import Users Now** button
 - Blocklist support to exclude selected Jellyfin users from lookup/import
+
+## Recently Added Sync to Seerr
+
+**Trigger Seerr recently-added scan when new Jellyfin items are added** (default off) — when on, the plugin asks Seerr to run its recently-added scan whenever new items are imported into your Jellyfin library, so Seerr marks matching requests as available sooner.
+
+- **Debounce (seconds)** (default 60, range 5-3600) — coalesces bursts of item-added events into a single Seerr scan, so a large library import triggers one scan after activity settles rather than one per item.
 
 ## Requests Page Management
 
@@ -144,14 +156,14 @@ Display a dedicated page showing active downloads from *arr and requests from Se
 **Configuration:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Seerr Settings** tab (look for the section titled "Requests Page")
+2. Navigate to the **Pages** tab (look for the section titled "Requests Page")
 3. Check **"Enable Requests Page"**
 4. Choose integration method:
-   - **Use Plugin Pages** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin)
-   - **Use Custom Tabs** - Adds custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin)
+   - **Use Plugin Pages for Requests** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin)
+   - **Use Custom Tabs for Requests** - Adds custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin)
 5. Click **Save** and restart Jellyfin if using Plugin Pages
 
-### Show Downloads Section
+### Show Downloads in Requests Page
 
 Control whether active downloads from Sonarr/Radarr appear on the Requests page.
 
@@ -170,6 +182,6 @@ Display Seerr issues on the Requests page.
 ### Auto-Refresh Settings
 
 - **Enable Auto-Refresh** - Automatically refresh download and request status
-- **Poll Interval** - How often to refresh (30-300 seconds, default: 30)
+- **Poll Interval (seconds)** - How often to refresh (30-300 seconds, default: 30)
   - Lower = more frequent updates (higher server load)
   - Higher = less frequent updates (lower server load)

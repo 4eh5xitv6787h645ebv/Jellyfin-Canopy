@@ -5,7 +5,7 @@
 **Check Configuration:**
 
 1. Verify *arr URLs are correct
-2. Ensure "Enable *arr Links" is checked
+2. Ensure "Enable *arr Links on Detail Pages" is checked
 3. Confirm you're logged in as administrator
 4. Check item has *arr metadata
 

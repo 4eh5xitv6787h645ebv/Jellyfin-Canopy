@@ -44,15 +44,15 @@ The userscript has been discontinued as the plugin functionality has grown signi
 
 ### Plugin not appearing after installation?
 
-**See [this page in Installation Troubleshooting](../installation/troubleshooting.md/#plugin-not-appearing-after-installation)**
+**See [this page in Installation Troubleshooting](../installation/troubleshooting.md#plugin-not-appearing-after-installation)**
 
 ### Scripts not loading after installation
 
-**See [this page in Installation Troubleshooting](../installation/troubleshooting.md/#scripts-not-loading)**
+**See [this page in Installation Troubleshooting](../installation/troubleshooting.md#scripts-not-loading)**
 
 ### Update not working properly?
 
-**See this page in [Installation Troubleshooting](../installation/troubleshooting.md/#update-not-working)**
+**See this page in [Installation Troubleshooting](../installation/troubleshooting.md#update-not-working)**
 
 
 ### I see "permission denied" errors in logs!!
@@ -102,7 +102,7 @@ Auto-skip requires the [Intro Skipper plugin](https://github.com/intro-skipper/i
 
 2. Verify API key is correct (from Seerr Settings → General)
 
-3. Click "Test Connection" in plugin settings
+3. Click "Test" in the Seerr plugin settings
 
 4. Check icon status on search page:
 
@@ -125,7 +125,7 @@ Auto-skip requires the [Intro Skipper plugin](https://github.com/intro-skipper/i
 
 Option A (automatic, recommended):
 
-1. In Jellyfin, go to Dashboard -> Plugins -> Jellyfin Enhanced -> Seerr Settings
+1. In Jellyfin, go to Dashboard -> Plugins -> Jellyfin Enhanced -> Seerr
 
 2. Enable "Auto import Jellyfin users to Seerr"
 
@@ -210,11 +210,11 @@ Option B (manual in Seerr):
 
     **Stored on Jellyfin server:**
 
-    - [Bookmark **data** `bookmarks.json`](../advanced/api.md#bookmark-api-info)
+    - [Bookmark **data** `bookmark.json`](../advanced/api.md#bookmark-api-info)
 
     - Spoiler Guard **per-user list and override prefs** `spoilerblur.json`
 
-   ** Stored in browsers' `localStorage`:**
+    **Stored in browsers' `localStorage`:**
 
     - [Users' **settings**](../enhanced/enhanced-features.md#smart-bookmarks)
 
@@ -226,7 +226,7 @@ Option B (manual in Seerr):
 
 - Check bookmark file exists on server
 
-- Look in `/config/data/users/{userId}/jellyfin-enhanced/bookmarks.json`
+- Look in `/config/plugins/configurations/Jellyfin.Plugin.JellyfinEnhanced/{userId}/bookmark.json`, where `{userId}` is your user ID with all hyphens removed and converted to lowercase (e.g. `12345678-90AB-...` becomes the folder `1234567890ab...`)
 
 - Check browser console for errors
 
@@ -239,7 +239,7 @@ Option B (manual in Seerr):
 
 2. Go to Settings tab
 
-3. Enable "Custom Pause Screen"
+3. Enable "Enable Custom Pause Screen"
 
 4. Adjust settings as desired
 
@@ -349,9 +349,9 @@ See [CSS Customization Guide](../advanced/css-customization.md) for complete CSS
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
 
-2. Navigate to **Other Settings** tab
+2. Navigate to the **Extras** tab
 
-3. Find **Custom Branding** section
+3. Find **Custom Image Assets** section
 
 4. Upload your images:
 
@@ -409,7 +409,7 @@ Yes, via Enhanced panel settings:
 
 2. Go to Console tab
 
-3. Filter by `🪼Jellyfin Enhanced`
+3. Filter by `🪼 Jellyfin Enhanced`
 
 4. Look for errors (red text)
 
@@ -465,7 +465,7 @@ Yes, via Enhanced panel settings:
 |-------|----------|
 | `Access to the path '/jellyfin/jellyfin-web/index.html' is denied.` | Install [file-transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) or follow [Docker workaround](../installation/troubleshooting.md#docker) |
 | `Access to the path 'C:\Program Files\Jellyfin\Server\jellyfin-web\index.html' is denied.` | Grant "NETWORK SERVICE" Read/Write permissions to Jellyfin folder |
-| Plugin installed but scripts don't load | Run "Jellyfin Enhanced Startup" scheduled task, verify trigger exists |
+| Plugin installed but scripts don't load | Scripts are injected at request time by the built-in middleware in the default config — see [Scripts Not Loading](../installation/troubleshooting.md#scripts-not-loading). The "Jellyfin Enhanced Startup" task only matters in the legacy on-disk index.html rewrite mode. |
 | Reviews/Elsewhere/Seerr icons not working | TMDB API may be blocked in your region, see [Seerr troubleshooting](https://docs.seerr.dev/troubleshooting#tmdb-failed-to-retrievefetch-xxx) |
 | Seerr search not working | Enable "Jellyfin Sign-In" in Seerr. Then either enable plugin auto import and run "Import Users Now", or import users manually in Seerr. Also verify user is not in blocked users list. |
 | Tags not appearing | Enable in settings, clear cache, verify metadata exists |

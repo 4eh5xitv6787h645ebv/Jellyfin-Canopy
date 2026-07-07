@@ -31,7 +31,7 @@ Open the plugin configuration and navigate to the Seerr section. Click the **Run
 ## Quick steps
 
 1. Ensure Seerr integration is configured and reachable (Seerr URLs + API key).
-2. Open plugin configuration → Seerr Settings → Permission Audit.
+2. Open plugin configuration → Seerr → Permission Audit.
 3. Click **Run Audit** and wait for results (may take time for large user lists).
 4. Review users flagged "Permissions Missing" or "Not linked" and address them in Seerr.
 

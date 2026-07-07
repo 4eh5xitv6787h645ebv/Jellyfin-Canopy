@@ -36,12 +36,12 @@ Per-user content hiding with server-side storage and granular filtering controls
 
 1. Navigate to any item detail page
 2. Click the hide button (visibility_off icon)
-3. Choose hide scope:
-   - **Global** - Hide everywhere
-   - **Episode** - Hide this episode only
-   - **Show** - Hide entire series
-   - **Next Up** - Hide from Next Up only
-   - **Continue Watching** - Hide from Continue Watching only
+3. Choose what to hide from the **"What would you like to hide?"** dialog:
+   - **Hide this episode everywhere**
+   - **Hide entire show everywhere**
+   - **Hide from Next Up & Continue Watching only**
+   - **Remove from Continue Watching**
+   - **Hide from Next Up only**
 4. Confirm the action
 
 **Management Panel:**
@@ -78,6 +78,7 @@ Access via:
    - Filter Continue Watching
    - Filter recommendations
    - Filter requests page
+   - Hide Collections & Libraries (experimental) — extends hiding beyond individual movies/series to whole My Media libraries, collections, and playlists. Off by default and strongly discouraged for typical users (can break browsing); exposed as a per-user toggle with a matching admin default ('Allow hiding collections, libraries, and playlists (experimental)') on the config page.
 6. Choose integration method:
    - Plugin Pages (requires Plugin Pages plugin)
    - Custom Tabs (requires Custom Tabs plugin)
@@ -170,6 +171,9 @@ Comprehensive hotkeys for navigation, playback control, and more.
  - `B` - Bookmark Current Time
  - `P` - Open Episode Preview
  - `O` - Skip Intro/Outro
+ - `,` - Step Back One Frame
+ - `.` - Step Forward One Frame
+ - `Z` - Jump to Last Position
 
 
 **Customization:**
@@ -178,6 +182,29 @@ Comprehensive hotkeys for navigation, playback control, and more.
 2. Go to **Shortcuts** tab
 3. Click on any key to set a custom shortcut
 4. Changes save automatically per user
+
+### Random Button
+
+A **Play Random** button in the Jellyfin header that opens a random item from your accessible libraries in a single click. It complements the `R` [Play Random Item](#advanced-keyboard-shortcuts) keyboard shortcut with an always-visible header control.
+
+**Features:**
+
+- Always-visible **Play Random** button in the header
+- Opens a random item drawn from the libraries you have access to
+- Optionally limits the pool to items you have not watched yet
+- Independent toggles to include movies and/or TV shows in the pool
+
+**Configuration:**
+
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+2. Navigate to the **Display** tab
+3. Find the **Random Button** section
+4. Enable **"Enable Random Button"**
+5. Optionally adjust the pool:
+   - **Show unwatched only** - only choose items you have not watched yet
+   - **Include movies** - include movies in the random pool
+   - **Include shows** - include TV shows in the random pool
+6. Click **Save**
 
 ### Smart Bookmarks
 
@@ -191,7 +218,7 @@ Save timestamps and jump to specific moments with visual timeline markers.
 - Visual markers on video timeline
 - Add custom labels to bookmarks
 - Sync bookmarks across duplicate items (same TMDB/TVDB ID)
-- Manage all bookmarks from Custom Tabs interface
+- Manage all bookmarks from the Bookmarks page (native tab, Plugin Pages, or Custom Tabs)
 - Export/import bookmark data
 
 **Usage:**
@@ -203,7 +230,7 @@ Save timestamps and jump to specific moments with visual timeline markers.
 
 **Bookmark Management:**
 
-- Access via Custom Tabs plugin
+- Access via a native Home tab, the Plugin Pages sidebar link, or the Custom Tabs plugin (configured under the Bookmarks section of the plugin config; the native tab is recommended on Jellyfin 12's experimental layout)
 - View all bookmarks across library
 - Clean up orphaned bookmarks
 - Detect and merge duplicates
@@ -229,7 +256,7 @@ Beautiful overlay with media info when you pause a video.
 You can set how many seconds of pause pass before the overlay fades in. Each user
 can set their own delay in the Enhanced panel (and it now persists across reloads),
 while an administrator sets the **default** for everyone in the plugin config page
-(**Enhanced Settings → Pause Screen Delay**). The default is 5 seconds (range
+(**Playback → Pause Screen Delay**). The default is 5 seconds (range
 1–60); a user's own value overrides the admin default.
 
 !!! tip
@@ -247,6 +274,7 @@ Intelligent playback features for better viewing experience.
 - **Auto-skip intros/outros** - Seamless binge-watching (requires Intro Skipper plugin)
 - **Playback speed control** - Adjust speed with keyboard shortcuts
 - **Auto Picture-in-Picture** - Enter PiP mode when switching tabs
+- **Long press/hold for 2x speed** (beta, touch devices only) - long-press anywhere on the player to temporarily play at 2x speed; release to return to normal speed. Per-user toggle in the Enhanced panel with a matching admin default on the config page.
 
 **Configuration:**
 Enable/disable in Enhanced panel → Settings tab
@@ -308,7 +336,7 @@ Search, request, and discover media directly from Jellyfin's search interface.
 2. Check "Show Seerr Results in Search"
 3. Enter Seerr URL(s) (one per line)
 4. Enter Seerr API Key (from Seerr Settings → General)
-5. Click "Test Connection"
+5. Click "Test"
 6. Enable optional features:
    - Add Requested Media to Watchlist
    - Sync Seerr Watchlist to Jellyfin
@@ -349,8 +377,8 @@ View recommendations and similar items on detail pages.
 **Setup:**
 
 1. Configure Seerr integration (see above)
-2. Check "Show Seerr Recommendations and Similar items"
-3. Optional: Enable "Exclude already in library items"
+2. Check **"Show similar items"** and/or **"Show recommended items"**
+3. Optional: Enable "Exclude items already in library"
 4. Click **Save**
 
 **Discovery Pages:**
@@ -419,10 +447,10 @@ Jellyfin users can write their own reviews for movies, series, seasons, and epis
 **Setup (admin):**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to the **Enhanced Settings** tab
-3. Enable **"Show User Reviews"**
-4. Optionally enable **"Show User Rating on Posters"** to display the average rating as a poster tag
-5. Optionally disable **"Show User Rating Dash"** to hide the `—` placeholder on posters when no ratings exist yet
+2. Navigate to the **Elsewhere** tab
+3. Enable **"Enable User Written Reviews"**
+4. Optionally enable **"Show average user rating on poster cards"** to display the average rating as a poster tag
+5. Optionally disable **"Show "—" on posters for unrated items"** to hide the `—` placeholder on posters when no ratings exist yet
 6. Click **Save**
 
 !!! note
@@ -447,7 +475,7 @@ Display user reviews from TMDB on item pages.
 - Expandable/collapsible reviews
 
 **Setup:**
-Enable **"Show TMDB Reviews"** in **Dashboard** → **Plugins** → **Jellyfin Enhanced** → **Elsewhere Settings** tab.
+Enable **"Show TMDB Reviews"** in **Dashboard** → **Plugins** → **Jellyfin Enhanced** → **Elsewhere** tab.
 
 See [Elsewhere Features](../elsewhere/elsewhere-features.md#tmdb-reviews) for full details.
 
@@ -461,9 +489,9 @@ Display quality information (4K, HDR, Atmos) directly on posters.
 
 **Supported Tags:**
 
-- **Resolution:** 8K, 4K, 1080p, 720p, 480p, LOW-RES
+- **Resolution:** 8K, 4K, 1440p, 1080p, 720p, 480p, LOW-RES
 - **Video Format:** AV1, HEVC, H265, VP9, H264
-- **Video Features:** HDR, Dolby Vision, HDR10+, 3D
+- **Video Features:** HDR, Dolby Vision, HDR10+, HDR10, IMAX, 3D
 - **Audio:** ATMOS, DTS-X, TRUEHD, DTS, Dolby Digital+, 7.1, 5.1
 - **Media Stubs:** BluRay, HD DVD, DVD, VHS, HDTV, Physical (for physical media files)
 
@@ -488,7 +516,7 @@ Display available audio languages as country flags on posters.
 
 **Features:**
 
-- Country flag icons from flagcdn.com
+- Country flag icons served from the plugin's local asset cache (mirrored from the flag-icons / flagcdn sets), so no third-party request is made
 - Show up to 3 unique languages
 - Positioned bottom-left by default
 - Also displays on item detail pages
@@ -555,7 +583,7 @@ A live stream counter in the Jellyfin header that shows who is currently playing
 - Playing / Paused state badge per session
 - Clickable title links to the item detail page
 - Admin-only broadcast button to message all active sessions
-- Polls every 15 seconds; updates automatically while the panel is open
+- Fetches on demand — the counter loads once on page load, and the panel refreshes when opened or via the manual refresh button (no background polling)
 
 **Header icon states:**
 
@@ -593,12 +621,12 @@ Admins see a megaphone icon (📣) in the panel header. Click it to open the bro
 **Setup:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to the **Other Settings** tab
-3. Enable **"Active Streams Widget"**
-4. Optional: Enable **"Show to all users"** to make the widget visible to non-admin users
+2. Navigate to the **Extras** tab
+3. Enable **"Active Streams Header Widget"**
+4. Optional: Enable **"Show widget to non-admins"** to make the widget visible to non-admin users
 
 !!! note
-    By default the widget is admin-only. Non-admin users see a read-only view (no broadcast button, no IP addresses) when "Show to all users" is enabled.
+    By default the widget is admin-only. Non-admin users see a read-only view (no broadcast button, no IP addresses) when "Show widget to non-admins" is enabled.
 
 ### 🎨 Colored Activity Icons
 
@@ -678,7 +706,7 @@ Choose from multiple Jellyfin theme color variants.
 
 1. Enable in Enhanced panel → Settings → Extras
 2. Select theme from dropdown
-3. Optional: Enable "Randomize Daily"
+3. Optional: click the shuffle button ("Random daily theme") to rotate themes daily
 
 ---
 
@@ -716,8 +744,8 @@ Upload your own logos, banners, and favicon.
 **Setup:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
-3. Find **Custom Branding** section
+2. Navigate to the **Extras** tab
+3. Find **Custom Image Assets** section
 4. Upload your custom images:
    - Icon Transparent (header logo)
    - Banner Light (dark theme splash)

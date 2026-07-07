@@ -12,6 +12,7 @@ Additional features including custom branding, extras, icons, and more.
 - [Hidden Content](#hidden-content)
 - [Splash Screen](#splash-screen)
 - [Internationalization](#internationalization)
+- [Cache Management](#cache-management)
 
 ---
 
@@ -36,13 +37,14 @@ Upload your own logos, banners, and favicon to personalize your Jellyfin instanc
 **Configuration:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
-3. Find **Custom Branding** section
+2. Navigate to the **Extras** tab
+3. Find the **Custom Image Assets** section
 4. Upload your custom images:
    - **Icon Transparent** - Header logo (PNG/SVG recommended)
    - **Banner Light** - Dark theme splash image
    - **Banner Dark** - Light theme splash image
    - **Favicon** - Browser tab icon
+   - **Apple Touch Icon** - Icon shown when adding to the iOS Home Screen (180×180 PNG)
 5. Click **Save**
 6. Force refresh browser (Ctrl+F5)
 
@@ -75,8 +77,8 @@ Enable or disable icons in toasts, settings panel, and other UI elements.
 **Enable:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
-3. Check **"Use Icons"**
+2. Navigate to the **Display** tab
+3. Check **"Use Icons in UI"**
 4. Click **Save**
 
 ### Icon Style
@@ -122,8 +124,8 @@ Replace default activity icons with Material Design icons with custom colors.
 **Enable:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
-3. Check **"Enable Colored Activity Icons"**
+2. Navigate to the **Extras** tab
+3. Check **"Colored Dashboard Icons"**
 4. Click **Save**
 
 ### Colored Ratings
@@ -140,8 +142,8 @@ Color-coded backgrounds for ratings on detail pages.
 
 **Enable:**
 
-1. Navigate to **Other Settings** tab
-2. Check **"Enable Colored Ratings"**
+1. Navigate to the **Extras** tab
+2. Check **"Colored Ratings Backgrounds"**
 3. Click **Save**
 
 ### Login Image Display
@@ -158,8 +160,8 @@ Show user profile images on manual login page.
 
 **Enable:**
 
-1. Navigate to **Other Settings** tab
-2. Check **"Enable Login Image"**
+1. Navigate to the **Extras** tab
+2. Check **"Profile Picture on Login"**
 3. Click **Save**
 
 ### Plugin Icons
@@ -176,23 +178,24 @@ Replace default plugin icons with Material Design icons.
 
 **Enable:**
 
-1. Navigate to **Other Settings** tab
-2. Check **"Enable Plugin Icons"**
+1. Navigate to the **Extras** tab
+2. Check **"Custom Plugin Menu Icons"**
 3. Click **Save**
 
-**Custom Plugin Links:**
-Add custom links to plugin config pages.
+**Sidebar Custom Links:**
+Add sidebar links to plugin configuration pages. The field is labeled **Sidebar Custom Links** in the UI.
 
 **Format:**
 ```text
-PluginName|URL
+Configuration Page Name | Material Icon Name
 ```
 
 **Example:**
 ```text
-Jellyfin Enhanced|/web/configurationpage?name=JellyfinEnhanced
-Custom Plugin|https://example.com/config
+Jellyfin Tweaks | tune
 ```
+
+The second value is a [Material icon](https://fonts.google.com/icons) name, **not** a URL. The sidebar link is auto-generated as `#/configurationpage?name=<name>` from the first field, so arbitrary external URLs are not supported.
 
 ### Theme Selector
 
@@ -208,8 +211,8 @@ Choose from multiple Jellyfin theme color variants.
 
 **Enable:**
 
-1. Navigate to **Other Settings** tab
-2. Check **"Enable Theme Selector"**
+1. Navigate to the **Extras** tab
+2. Check **"Theme Selector (Jellyfish)"**
 3. Click **Save**
 
 **Usage:**
@@ -225,7 +228,7 @@ Choose from multiple Jellyfin theme color variants.
 - Aurora
 - Jellyblue
 - Ocean
-- Sunset
+- Peach
 - Forest
 - And more...
 
@@ -238,17 +241,17 @@ Choose from multiple Jellyfin theme color variants.
 #### Admin Configuration
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to the **Other Settings** tab
-3. Enable **"Active Streams Widget"**
-4. Optional: Enable **"Show to all users"**
+2. Navigate to the **Extras** tab
+3. Enable **"Active Streams Header Widget"**
+4. Optional: Enable **"Show widget to non-admins"**
 5. Click **Save**
 
 #### Settings
 
 | Setting | Default | Description |
 |---|---|---|
-| **Active Streams Widget** | Off | Adds the stream counter icon to the Jellyfin header |
-| **Show to all users** | Off | When enabled, non-admin users also see the widget (read-only, no broadcast, no IP addresses) |
+| **Active Streams Header Widget** | Off | Adds the stream counter icon to the Jellyfin header |
+| **Show widget to non-admins** | Off | When enabled, non-admin users also see the widget (read-only, no broadcast, no IP addresses) |
 
 #### Broadcast Form Fields
 
@@ -263,6 +266,25 @@ Admins can send a message to all active sessions from the panel header (megaphon
 !!! warning
     The Title field may not render on the Jellyfin web client. Always put the important information in the Message field.
 
+### Metadata Icons (Druidblack)
+
+Display item-detail metadata fields as icons instead of text.
+
+**Features:**
+
+- Swaps text metadata labels on item-detail pages for icons
+- Also switches the plugin's own Letterboxd and *arr links to icons
+- Uses the icon set from [Druidblack/jellyfin-icon-metadata](https://github.com/Druidblack/jellyfin-icon-metadata)
+
+**Enable:**
+
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+2. Navigate to the **Extras** tab
+3. Check **"Enable Metadata Icons (Druidblack)"**
+4. Click **Save**
+
+**Default:** Off
+
 
 ---
 
@@ -270,26 +292,25 @@ Admins can send a message to all active sessions from the panel header (megaphon
 
 Configure durations for Enhanced panel UI elements.
 
-### Help Panel Auto-Close
+### Shortcuts Panel Autoclose Delay
 
-Control how long the help panel stays open before automatically closing.
+Control how long the shortcuts (help) panel stays open before automatically closing.
 
 **Configure:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
-3. Find **Timeout Settings** section
-4. Set **Help Panel Autoclose Delay** (milliseconds)
+2. Navigate to the **Playback** tab
+3. Find the timeout settings
+4. Set **Shortcuts Panel Autoclose Delay (ms)**
 5. Click **Save**
 
-**Default:** 8000ms (8 seconds)
-**Range:** 0-30000ms (0 = no auto-close)
+**Default:** 15000ms (15 seconds)
+**Range:** advisory only — the input enforces no min/max; a value of 0 (or blank) reverts to the 15000 ms default.
 
 **Use Cases:**
 
 - Longer delay for first-time users
 - Shorter delay for experienced users
-- Disable auto-close (0) for accessibility
 
 ### Toast Notification Duration
 
@@ -297,12 +318,12 @@ Control how long toast notifications are displayed.
 
 **Configure:**
 
-1. In **Timeout Settings** section
-2. Set **Toast Duration** (milliseconds)
+1. On the **Playback** tab
+2. Set **Toast Notification Duration (ms)**
 3. Click **Save**
 
-**Default:** 3000ms (3 seconds)
-**Range:** 1000-10000ms
+**Default:** 1500ms (1.5 seconds)
+**Range:** advisory — the input does not enforce a range (a value of 0 or blank reverts to the 1500 ms default)
 
 **Affects:**
 
@@ -314,14 +335,14 @@ Control how long toast notifications are displayed.
 
 ## Letterboxd Integration
 
-Add Letterboxd external links to movie item detail pages.
+Add Letterboxd external links to movie and person (cast/crew) detail pages.
 
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
+2. Navigate to the **Extras** tab
 3. Check **"Enable Letterboxd Links"**
-4. Optional: Check **"Show Letterboxd Link as Text"** for text instead of icon
+4. Optional: Check **"Show link as text"** for text instead of icon
 5. Click **Save**
 
 ### Usage
@@ -332,10 +353,16 @@ Add Letterboxd external links to movie item detail pages.
 2. Look for Letterboxd link in external links section
 3. Click to open movie on Letterboxd
 
+**On Person Detail Pages:**
+
+1. Open any cast or crew member
+2. Look for the Letterboxd link in the external links section
+3. Click to open that person's Letterboxd page
+
 **Features:**
 
-- Automatic TMDB ID to Letterboxd mapping
-- Direct links to movie pages
+- Automatic IMDb ID to Letterboxd mapping for movies
+- Person pages link to the actor's Letterboxd page (derived from the person's name slug)
 - Icon or text display option
 
 ---
@@ -362,10 +389,10 @@ Hide specific items from your Jellyfin library without deleting them.
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Enhanced Settings** tab
+2. Navigate to the **Pages** tab
 3. Find **Hidden Content** section
 4. Check **"Enable Hidden Content"**
-5. Optional: Check **"Use Plugin Pages for Hidden Content Library"**
+5. Optional: Check **"Use Plugin Pages for Hidden Content"**
 
    - Adds a sidebar link to dedicated Hidden Content page
    - Requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin
@@ -406,8 +433,8 @@ Custom splash screen that appears while Jellyfin is loading.
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
-3. Check **"Enable Custom Splash Screen"**
+2. Navigate to the **Extras** tab
+3. Check **"Enable Splash Screen Override"**
 4. Enter **Splash Screen Image URL**
 
    - Use full URL or relative path
@@ -447,9 +474,8 @@ Multi-language support with community translations.
 ### How It Works
 
 - Automatically detects Jellyfin user profile language
-- Fetches latest translations from GitHub on first load
-- Caches translations for 24 hours
-- Falls back to bundled translations if offline
+- Loads translations from the plugin's bundled locale files on first load and caches them for 24 hours
+- Only when the third-party asset cache is disabled does it fall back to fetching from GitHub
 - Clears outdated caches on plugin update
 
 ### Default Language Override
@@ -470,68 +496,46 @@ See the [Contributing Translations](../faq-support/contributing-translations.md)
 
 **Translation Updates:**
 
-- Fetched from GitHub on first load
-- Available immediately after merge
-- No plugin update needed
+- Bundled with the plugin as embedded resources
+- Updated when the plugin itself is updated
+- GitHub fetching only applies when the asset cache is disabled
 - Cached per plugin version
 
 ---
 
 ## Cache Management
 
-Clear various caches to force refresh of data.
+Force clients to refresh cached data.
 
-### Clear Local Storage
+### Clear All Client Caches
 
-Force all clients to clear their localStorage.
+The config page has a single **Clear All Client Caches** button. Clicking it sets a
+timestamp so that every client clears its localStorage and tag caches on next load.
 
 **Use Case:**
 
 - Reset all client-side settings
-- Fix corrupted data
-- Force fresh start
+- Update quality/genre/language/rating tags
+- Fix corrupted or stale cached data
+- Force a fresh start across all clients
 
 **How:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Find **Clear Local Storage** button
-3. Click to set timestamp
-4. All clients clear storage on next load
+2. Navigate to the **Display** tab
+3. Find the **Clear All Client Caches** button
+4. Click to set the timestamp
+5. All clients clear their storage and tag caches on next load
 
-### Clear Translation Cache
+**Note:** May cause slowness on the first load after clearing while data is re-fetched.
 
-Force all clients to re-fetch translations.
+### Translation Caches
 
-**Use Case:**
-
-- Update to latest translations
-- Fix translation issues
-- Force language refresh
-
-**How:**
-
-1. Find **Clear Translation Cache** button
-2. Click to set timestamp
-3. Clients re-fetch on next load
-
-### Clear Tags Cache
-
-Force all clients to clear tag caches.
-
-**Use Case:**
-
-- Update quality/genre/language/rating tags
-- Fix cached tag data
-- Force tag refresh
-
-**How:**
-
-1. Go to Enhanced Settings tab
-2. Find **Clear All Client Caches** button
-3. Click to clear
-4. Clients re-fetch tag data on next load
-
-**Note:** May cause slowness on first load after clearing.
+There is no config-page button for clearing translation caches. Translation caches are
+refreshed automatically for all clients by the **Refresh Translation Cache** scheduled
+task (Dashboard → Scheduled Tasks). Individual users can also clear their own browser's
+translation cache from the language section of the Enhanced settings panel — that button
+only affects the local browser.
 
 ---
 

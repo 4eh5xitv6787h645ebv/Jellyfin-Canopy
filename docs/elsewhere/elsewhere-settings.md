@@ -22,7 +22,7 @@
 ## Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Elsewhere Settings** tab
+2. Navigate to **Elsewhere** tab
 3. Check "Enable Elsewhere"
 4. Enter your **TMDB API Key**
 5. Select your **Default Region** (e.g., US, GB, DE)
@@ -103,23 +103,25 @@ Multiple patterns:
 
 ## Custom Branding
 
-**Custom Branding Text:**
+**Custom Branding Message** (labeled "Custom Branding Message" in the config page):
 
-- Replace "Jellyfin Elsewhere" with your own text
-- Leave empty to use default
+- The text shown in the Elsewhere panel when the title is **not** available on any streaming provider in the region — e.g. "Only available on My Server"
+- Replaces the default "Not available on any streaming services in [region]" message
+- Leave blank to fall back to the default message
 
-**Custom Branding Image URL:**
+**Custom Branding Icon URL** (labeled "Custom Branding Icon URL" in the config page):
 
-- Replace the Elsewhere logo with your own image
-- Provide full URL to image file
-- Leave empty to use default logo
+- Optional icon shown next to the Custom Branding Message
+- Only appears when a message is set **and** the title has no available providers
+- Provide a URL or path to the image file (e.g. a full `https://` URL or a local path like `/web/assets/img/icon.png`)
+- Leave empty to show the message text with no icon
 
 ## Usage
 
 ### On Item Detail Pages
 
 1. Open any movie or TV show detail page
-2. Scroll to the "Jellyfin Elsewhere" section
+2. Scroll to the streaming-availability panel (its title reads "Also available in _\<region\>_ on:" or, when nothing is found, "Not available on any streaming services in _\<region\>_")
 3. View available streaming options
 
 ### Information Displayed
@@ -168,8 +170,8 @@ Elsewhere can be displayed on Seerr discovery pages.
 **Enable:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Seerr Settings** tab
-3. Check "Show Elsewhere on Seerr"
+2. Navigate to **Seerr** tab
+3. Check "Show Streaming Providers on Posters"
 4. Click **Save**
 
 **Features:**

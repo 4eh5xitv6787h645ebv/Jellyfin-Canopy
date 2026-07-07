@@ -26,7 +26,9 @@ Access user-configured settings via the Enhanced panel:
 - Pause Screen
 - Auto-skip Intros
 - Auto Picture-in-Picture
-- Review tags
+- Show Watch Progress
+- Show File Sizes
+- Show Audio Languages
 - And more...
 
 
@@ -37,9 +39,9 @@ Access user-configured settings via the Enhanced panel:
 
 **Settings Persistence:**
 
-- Settings saved to browser localStorage
+- Settings saved server-side, per Jellyfin user (stored in the plugin's per-user settings.json via the `/JellyfinEnhanced/user-settings/{userId}/settings.json` endpoint)
 - Per-user configuration
-- Sync across devices (same browser profile)
+- Syncs across every device and browser where the same Jellyfin user logs in (settings live on the server, keyed to the user account)
 
 
 # Enhanced Settings — Admin configuration
@@ -61,6 +63,16 @@ Most features can be enabled/disabled individually:
 2. Enable and configure tags you want *(Eg: `Quality Tags`)*
 3. Adjust position (top-left, top-right, etc.)
 
+### Quality Tag categories
+
+Quality Tags break down into six independently toggleable categories —
+**Resolution** (4K/1080p…), **Source** (BluRay/DVD/HDTV…), **HDR**
+(HDR10+/Dolby Vision), **Special format** (IMAX/3D), **Video format**
+(HEVC/H264/AV1…), and **Sound** (Atmos/DTS/5.1/7.1…). Each category can be
+enabled/disabled and reordered independently. The config-page values are admin
+defaults; each user can override which categories show and their order in the
+Enhanced panel.
+
 ### Hide Tags on Hover
 Enable **Hide Tags on Hover** to fade the poster tag overlays (Quality, Genre,
 Language, Rating) out while you hover a card, so the artwork and Jellyfin's own
@@ -78,9 +90,9 @@ Enable **Disable Tags on Search Page** to stop poster tag overlays rendering on
 the search results page. This hides **all** four families — Quality, Genre,
 Language and Rating — not only Genre tags.
 
-### Tags Cache Duration
+### Tags Cache Duration (days)
 
-**Tags Cache Duration** (`TagsCacheTtlDays`, default 30 days) controls how long
+**Tags Cache Duration (days)** (`TagsCacheTtlDays`, default 30 days) controls how long
 the client keeps cached tag data before re-fetching. It applies to every tag
 family, **including People tags** — changing it now adjusts the people-tag cache
 lifetime too (previously that was fixed at 30 days regardless of this setting).
@@ -96,11 +108,68 @@ Screen](enhanced-features.md#custom-pause-screen) overlay appears.
 - **Per-user override** — each user can set their own delay in the Enhanced
   panel; their choice persists across reloads and overrides the admin default.
 
+## Watch Progress
+
+**Show Watch Progress** displays how far you are through each title on its item
+detail page.
+
+- **Per-user toggle** — turn **Show Watch Progress** on or off in the Enhanced
+  panel's **Settings** tab.
+- **Display mode** — choose how progress is shown: **Percentage**, **Time
+  Watched**, or **Time Remaining**. The admin default is set with **Watch
+  Progress Default** on the plugin config page (`WatchProgressDefaultMode`,
+  default *Percentage*).
+- **Time format** — when a time-based mode is used, choose **h:m** or
+  **y:mo:d:h:m**. The admin default is set with **Watch Progress Time Format**
+  (`WatchProgressTimeFormat`, default *h:m*).
+
+## Subtitle Defaults
+
+The admin sets the default subtitle **Style** (e.g. Clean White, Classic Black
+Box, Netflix Style), **Size**, and **Font** on the plugin config page (Playback
+→ Subtitles).
+
+- **Per-user override** — each user can override all three in the Enhanced
+  panel's **Settings** tab; their choice persists per user and wins over the
+  admin default.
+- **Disable Custom Subtitle Styles by default** — globally disables Jellyfin's
+  custom subtitle style overrides so the source subtitle styling is shown
+  unmodified. It is an admin default (config page) that each user can override
+  in the Enhanced panel.
+
+## Show File Sizes
+
+Enable **Show File Sizes** (per-user, in the Enhanced panel's **Settings** tab)
+to display each item's file size on its item detail and collection pages.
+
+## Show Audio Languages
+
+Enable **Show Audio Languages** (per-user, in the Enhanced panel's **Settings**
+tab) to list the available audio languages on a title's item detail page. This
+is distinct from the poster **Language Tags** overlay (see [Tags](#tags-quality-genre-language-rating-people)),
+which draws audio-language flags on poster cards in library and home views.
+
+## Show Release/Air Date
+
+**Show Release/Air Date** (`ShowReleaseDates`, admin-only) adds a chip on Movie,
+Series, Season and Episode detail pages showing the cinema/digital/physical
+release date (movies) or the next/last episode air date (series, seasons,
+episodes), sourced from TMDB.
+
+- **Admin config toggle** — enable it in the **Release Dates** section of the
+  plugin config page. There is no per-user override.
+- **Requires a TMDB API Key** — the chip only takes effect once a TMDB API Key
+  is set (see [Elsewhere Settings](../elsewhere/elsewhere-settings.md#getting-a-tmdb-api-key)).
+- **Region preference** — it uses the **Default Region** configured under
+  [Elsewhere](../elsewhere/elsewhere-settings.md#default-region) to choose which
+  country's release dates to prefer, falling back to US and then any region TMDB
+  has for that release type.
+
 ## Home Row Filtering
 
 **Filter Continue Watching** and **Filter Next Up** (in the Hidden Content
 settings) take effect on the Home screen on their own — independently of **Filter
-library views**. Enabling either one hides the matching cards from those Home rows
+Library**. Enabling either one hides the matching cards from those Home rows
 without requiring library filtering to be on. See [Hidden Content
 System](enhanced-features.md#hidden-content-system).
 

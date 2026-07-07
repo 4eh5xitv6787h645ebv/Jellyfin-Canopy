@@ -36,26 +36,26 @@ The maintenance-mode **message** and **action** stay public because the login pa
 ## Bookmark API + Info
 
 ### Storage Directory
-Bookmarks are stored in the server's user data directory at:
+Bookmarks are stored per-user under the plugin's configurations directory. The user id is normalized (dashes stripped, lowercased) to form the folder name, and the file is named `bookmark.json` (singular):
 ```
-/config/data/users/{userId}/jellyfin-enhanced/bookmarks.json
+<plugins>/configurations/Jellyfin.Plugin.JellyfinEnhanced/{userId-no-dashes-lowercase}/bookmark.json
 ```
 
-The data structure is:
+The data structure is (property names are persisted as-is, in PascalCase):
 ```json
 {
   "Bookmarks": {
     "unique-bookmark-id": {
-      "itemId": "jellyfin-item-id",
-      "tmdbId": "12345",
-      "tvdbId": "67890",
-      "mediaType": "movie" | "tv",
-      "name": "Item Name",
-      "timestamp": 123.45,
-      "label": "Epic scene",
-      "createdAt": "2026-01-03T12:00:00.000Z",
-      "updatedAt": "2026-01-03T12:00:00.000Z",
-      "syncedFrom": "original-item-id"
+      "ItemId": "jellyfin-item-id",
+      "TmdbId": "12345",
+      "TvdbId": "67890",
+      "MediaType": "movie" | "tv",
+      "Name": "Item Name",
+      "Timestamp": 123.45,
+      "Label": "Epic scene",
+      "CreatedAt": "2026-01-03T12:00:00.000Z",
+      "UpdatedAt": "2026-01-03T12:00:00.000Z",
+      "SyncedFrom": "original-item-id"
     }
   }
 }
@@ -65,27 +65,34 @@ The data structure is:
 
 External applications can read and write bookmarks using the Jellyfin Enhanced API endpoints
 
+`{userId}` is the 32-character hex (`"N"` format) Jellyfin user id.
+
 #### Get Bookmarks
 ```http
-GET /JellyfinEnhanced/user-settings?fileName=bookmarks.json
+GET /JellyfinEnhanced/user-settings/{userId}/bookmark.json
 Authorization: MediaBrowser Token="{your-api-key}"
 ```
 
 #### Save Bookmarks
+
+The request body is the `UserBookmark` object itself — a single `Bookmarks` map — not an envelope. This performs a full replace of the user's bookmarks.
+
 ```http
-POST /JellyfinEnhanced/user-settings
+POST /JellyfinEnhanced/user-settings/{userId}/bookmark.json
 Authorization: MediaBrowser Token="{your-api-key}"
 Content-Type: application/json
 
 {
-  "fileName": "bookmarks.json",
-  "data": { "Bookmarks": {...} }
+  "Bookmarks": { ... }
 }
 ```
 
 ## Seerr Integration API
 
 Plugin exposes proxy endpoints for Seerr:
+
+!!! note "About the `X-Jellyfin-User-Id` header"
+    The `X-Jellyfin-User-Id` header shown in the examples below is a client-side convention only — the server never reads it. The acting user is resolved solely from the auth token's `Jellyfin-UserId` claim, so each endpoint always acts as the token's own user. You cannot use this header to act as another user id, and it can be omitted entirely.
 
 ### Check Connection Status
 

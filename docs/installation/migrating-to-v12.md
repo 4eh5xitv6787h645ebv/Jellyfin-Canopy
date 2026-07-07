@@ -29,7 +29,7 @@ The on-disk formats of these files are **unchanged and frozen**: the plugin's te
 If you inject your own snippets that build on Jellyfin Enhanced, three things matter:
 
 1. **`window.JellyfinEnhanced` is the stable public surface — and it is now typed.**
-   The frozen contract lives in [`src/facade.ts`](https://github.com/n00bcodr/Jellyfin-Enhanced/blob/main/Jellyfin.Plugin.JellyfinEnhanced/src/facade.ts) (`JellyfinEnhancedPublicApi`). Its members will not be removed or renamed:
+   The frozen contract lives in [`src/facade.ts`](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Enhanced/blob/v12/main/Jellyfin.Plugin.JellyfinEnhanced/src/facade.ts) (`JellyfinEnhancedPublicApi`). Its members will not be removed or renamed:
 
     - `JE.core.*` — the platform layer: `navigation`, `lifecycle`, `dom`, `ui`, `api`, `tagRenderer`, `live`
     - `JE.pluginConfig` / `JE.currentSettings` — admin config and resolved per-user settings
@@ -50,4 +50,5 @@ Also note for anything calling the plugin's HTTP API directly: Jellyfin 12 ignor
 - **The configuration page is unchanged.** Same place (Dashboard → Plugins → Jellyfin Enhanced), same tabs, same settings.
 - **Config saves now apply live.** Saving plugin configuration pushes the change to every open browser session — users pick up the new settings without reloading. See [Live Updates](../advanced/live-updates.md).
 - **After a plugin update**, open sessions show a one-time toast asking for a refresh — that single reload is the only manual step left.
-- The [installation prerequisites](installation.md) are otherwise unchanged: the repository URL, the File Transformation recommendation, and the restart-after-install step all still apply.
+- **File Transformation is no longer needed for Enhanced's own script injection.** On Jellyfin 12 the client script is injected at request time by built-in middleware (on by default), so nothing is written to `index.html` on disk. The legacy on-disk `index.html` rewrite — which writes the script tag directly to the web folder (and needs a writable web folder) — is used solely as a fallback when an admin disables the injection middleware. File Transformation is unrelated to Enhanced's own injection and remains relevant only for other web-modifying plugins such as Custom Tabs / Plugin Pages.
+- The other [installation prerequisites](installation.md) are unchanged: the repository URL and the restart-after-install step still apply.

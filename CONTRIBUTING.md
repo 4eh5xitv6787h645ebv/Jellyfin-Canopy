@@ -20,7 +20,7 @@ Help make Jellyfin Enhanced accessible to more users by contributing translation
 
 - https://hosted.weblate.org/projects/jellyfinenhanced/
 
-See the [Contributing Translations](/Jellyfin-Enhanced/faq-support/contributing-translations/) section for details.
+See the [Contributing Translations](https://n00bcodr.github.io/Jellyfin-Enhanced/faq-support/contributing-translations/) section for details.
 
 ## 🚀 Getting Started
 
@@ -28,8 +28,8 @@ See the [Contributing Translations](/Jellyfin-Enhanced/faq-support/contributing-
 
 The plugin is one C# project (server) plus one TypeScript module tree (client), bundled into a single client artifact:
 
-- `Jellyfin.Plugin.JellyfinEnhanced/src/` — **the client.** TypeScript ES modules (strict mode, real imports), organized by area: `core/` (platform layer: navigation, lifecycle, dom-observer, ui-kit, api-client, live), `enhanced/`, `jellyseerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/`. Each area has an `index.ts` barrel; `src/main.ts` imports the barrels; `scripts/build-bundle.js` (esbuild) produces `dist/je.bundle.js`.
-- `Jellyfin.Plugin.JellyfinEnhanced/Controllers/` — one small feature controller per HTTP surface, all deriving from `JellyfinEnhancedControllerBase`.
+- `Jellyfin.Plugin.JellyfinEnhanced/src/` — **the client.** TypeScript ES modules (strict mode, real imports), organized by area: `core/` (platform layer: navigation, lifecycle, dom-observer, ui-kit, api-client, live) whose modules `src/main.ts` imports individually, plus the feature areas `enhanced/`, `jellyseerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/` — each feature area has an `index.ts` barrel that `src/main.ts` imports; `scripts/build-bundle.js` (esbuild) produces `dist/je.bundle.js`.
+- `Jellyfin.Plugin.JellyfinEnhanced/Controllers/` — one small feature controller per HTTP surface, nearly all deriving from `JellyfinEnhancedControllerBase` (the anonymous asset-serving `AssetsController` derives directly from `ControllerBase`).
 - `Jellyfin.Plugin.JellyfinEnhanced/Configuration/` — `PluginConfiguration.cs` (admin settings), `SettingDescriptors.cs` (the settings registry — the single source of truth for what reaches clients), the admin config page.
 - `Jellyfin.Plugin.JellyfinEnhanced.Tests/` — xUnit tests, including golden snapshots that pin the config payload contract.
 - `e2e/` — the committed Playwright suite + `e2e/docker/` (dockerized, seeded Jellyfin 12 for CI and local runs).

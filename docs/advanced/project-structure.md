@@ -1,6 +1,6 @@
 ## Project Structure
 
-The plugin is one C# project (the server side) plus one TypeScript module tree (the client), compiled into a single client artifact. The only entry point the browser loads directly is `js/plugin.js` — a small loader that boots the shared `JE` namespace (`window.JellyfinEnhanced`), fetches config/translations, and then loads the whole feature tree as **one esbuild bundle** (`dist/je.bundle.js`, built on every `dotnet build` and embedded in the plugin DLL — minified in production, served fresh with a sourcemap in dev mode).
+The plugin is one C# project (the server side) plus one TypeScript module tree (the client), compiled into a single client artifact. The only entry point the browser loads directly is `js/plugin.js` — a small loader that boots the shared `JE` namespace (`window.JellyfinEnhanced`), fetches config/translations, and then loads the whole feature tree as **one esbuild bundle** (`dist/je.bundle.js`, built on every `dotnet build` and embedded in the plugin DLL — minified in production, unminified and served fresh (no-store) in dev mode — an external sourcemap ships in both).
 
 ### The client (`Jellyfin.Plugin.JellyfinEnhanced/src/`)
 
@@ -15,11 +15,16 @@ Jellyfin.Plugin.JellyfinEnhanced/
     │                        # (JEGlobal extends it — the compiler proves the contract holds)
     ├── core/                # Shared platform layer — executes before every feature module
     │   ├── navigation.ts    # One place for SPA navigation (pushState patch, HISTORY_UPDATE,
-    │   │                    # hashchange/viewshow dedup — see v12-platform.md §2)
+    │   │                    # hashchange/viewshow dedup — see ../v12-platform.md §2)
+    │   ├── details-view.ts  # Resolves the details page for the URL's item across Jellyfin's
+    │   │                    # up-to-3 cached view slots (viewshow-tracked; fixes injections
+    │   │                    # targeting a hidden/outgoing view — see PR #128)
     │   ├── lifecycle.ts     # Per-feature teardown registry (observers, intervals, listeners)
     │   ├── dom-observer.ts  # Multiplexed body MutationObserver, waitForElement, ensureInjected
     │   │                    # (keyed, idempotent, re-render-proof injection)
     │   ├── api-client.ts    # One fetch wrapper: auth headers, retry/dedup/concurrency
+    │   ├── asset-urls.ts    # CDN-URL ↔ local-asset map: same-origin when the asset cache
+    │   │                    # is on (AssetCacheEnabled, default ON), original CDN URL when off (R6)
     │   ├── ui-kit.ts        # escapeHtml, toast, injectCss + the theme-token MUI component kit
     │   ├── live.ts          # Live-update hub over the v12 SDK socket (JE.core.live)
     │   ├── live-config.ts   # Config hot-reload (admin saves apply to open sessions)
@@ -86,7 +91,7 @@ Jellyfin.Plugin.JellyfinEnhanced/
     └── locales/             # 26 translation files, en.json is the base (Weblate-managed)
 ```
 
-Everything the browser runs comes from four served artifacts: the loader (`/JellyfinEnhanced/script`), the bundle (`/JellyfinEnhanced/dist/je.bundle.js`), and the out-of-band bootstrap files (`dist/splashscreen.js`, `dist/login-image.js`, `dist/translations.js`). Per-file serving of feature scripts no longer exists.
+Everything the browser runs comes from five served artifacts: the loader (`/JellyfinEnhanced/script`), the bundle (`/JellyfinEnhanced/dist/je.bundle.js`), and the out-of-band bootstrap files (`dist/splashscreen.js`, `dist/login-image.js`, `dist/translations.js`). Per-file serving of feature scripts no longer exists.
 
 ### Server side (`Jellyfin.Plugin.JellyfinEnhanced/`)
 
@@ -98,6 +103,7 @@ Jellyfin.Plugin.JellyfinEnhanced/
 │   │                          # Admin-only endpoints use [Authorize(Policy = Policies.RequiresElevation)]
 │   │                          # — authorization failures are bare 401/403 (empty body, see api.md)
 │   ├── ConfigController.cs    # public/private config (driven by SettingDescriptors), loader/bundle/locale serving
+│   ├── AssetsController.cs    # Serves locally cached third-party assets (/JellyfinEnhanced/assets/{key}) so browsers never hit a CDN
 │   ├── JellyseerrProxyController.cs / JellyseerrUserController.cs
 │   ├── ArrLinksController.cs / ArrCalendarController.cs / ArrRequestsController.cs
 │   ├── UserSettingsController.cs / HiddenContentController.cs / ReviewsController.cs
@@ -116,8 +122,10 @@ Jellyfin.Plugin.JellyfinEnhanced/
 │   │                          # auto-request watchers (AutoRequest/AutoRequestRetryPolicy —
 │   │                          # transport-only retry / already-requested handling), arr tag sync,
 │   │                          # maintenance mode, startup filters (script injection, branding)
-│   ├── LiveNotifierService.cs # Pushes live updates (config-changed etc.) to open sessions
-│   │                          # via ISessionManager (see docs/advanced/live-updates.md)
+│   ├── LiveNotifierService.cs # Pushes live updates (config-changed etc.) to the sessions
+│   │                          # registered as running the JE client (via ILiveSessionRegistry;
+│   │                          # see docs/advanced/live-updates.md)
+│   ├── LiveSessionRegistry.cs # Registry of sessions running the JE client — scopes live pushes
 │   └── SpoilerGuard/          # Spoiler Guard server core: ImageBlurService (SkiaSharp Gaussian blur +
 │                              # stock-card render + pre-encoded fail-closed JPEG, cached),
 │                              # SpoilerBlurImageFilter (per-user image-byte replacement over the Image/
@@ -143,7 +151,7 @@ The project targets **Jellyfin 12 / net10.0 only** and builds with `TreatWarning
 - `npm run build:bundle` — the client bundle (also run automatically by the C# build); `npm run watch` rebuilds it (unminified) on every source change
 - `npm run syntax` / `npm run typecheck` — `node --check` + opt-in `@ts-check` for the one remaining classic script (the loader)
 - `Jellyfin.Plugin.JellyfinEnhanced.Tests/` — xUnit tests, including golden snapshots for the config payloads and on-disk user-file formats, plus a line-coverage ratchet (`scripts/check-dotnet-coverage.js`). Its `Configuration/` tests bridge the `SettingDescriptors` registry to both ends of the admin config page over one shared source parser (`ConfigPageSource.cs`, read by both directions so they can never drift): `ConfigControlCoverageTests` fails if any admin-settable descriptor backed by a real `PluginConfiguration` property has no config-page control (an admin default stuck at its hardcoded value), and `ClientConfigKeyLivenessTests` scans the shipped client source and fails if any `JE.pluginConfig.X` read is not a projected (`Public`/`Private`) descriptor key (a client knob that is always `undefined`)
-- `src/test/` — cross-cutting **guard tests** that parse the shipped source and fail on a whole *class* of regression, not just one instance: `escape-guard` (HTML-injection, incl. an escape-first check of pre-escaping producers), `css-injection-guard` (CSS-context values), `leak-guard` (object URLs, observers, TTL maps, unbounded retry loops), `perf-rules-guard` (the R-rules), `error-as-empty-guard` (fetch errors surfaced, not swallowed), `locale-guard`, `ratings-css`, `injected-css-balance`, `legacy-auth-header`, `plugin-loader`, `build-scripts`. Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber's synchronous body (see [S1](performance-rules.md#s1-never-block-jellyfins-synchronous-threads))
+- `src/test/` — cross-cutting **guard tests** that parse the shipped source and fail on a whole *class* of regression, not just one instance: `escape-guard` (HTML-injection, incl. an escape-first check of pre-escaping producers), `css-injection-guard` (CSS-context values), `leak-guard` (object URLs, observers, TTL maps, unbounded retry loops), `perf-rules-guard` (the R-rules), `error-as-empty-guard` (fetch errors surfaced, not swallowed), `locale-guard`, `ratings-css`, `injected-css-balance`, `legacy-auth-header`, `plugin-loader`, `plugin-pages` (runs the shipped PluginPages/*.html inline scripts against jsdom), `build-scripts`. Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber's synchronous body (see [S1](performance-rules.md#s1-never-block-jellyfins-synchronous-threads))
 - `e2e/` — the committed Playwright suite (`npm run e2e`) + `e2e/docker/` (dockerized, seeded Jellyfin 12 for CI and local runs). Every spec closes on the shared `assertNoRuntimeErrors` net in `e2e/fixtures/auth.ts`: it fails on any un-whitelisted console error / pageerror and, because Chromium's generic 40x console line carries no url, on any 4xx response whose url is not on the known-legacy `ALLOWED_4XX_URL` allowlist (a real broken plugin endpoint) — `e2e/console-net.spec.ts` is the unit-of-behavior spec that pins that net. Alongside the boot / navigation / panel / live-update / tag specs, the security- and persistence-sensitive flows have their own: `arr-requests-parental.spec.ts` (the Requests page applies the caller's own parental limit server-side; an admin bypasses it), `search-tags.spec.ts` (`DisableTagsOnSearchPage` hides *every* tag family on the search page, not just genre), `settings-persist.spec.ts` (a per-user setting round-trips through the server across a reload) and `non-admin.spec.ts` (core surfaces from a non-admin session, where per-user gating bugs live). `e2e/docker/seed.sh` accepts optional `TMDB_API_KEY` / `JELLYSEERR_*` env so the Seerr/TMDB specs run when configured and skip cleanly when not — the readiness probes and per-user parental-limit helpers live in `e2e/fixtures/seerr.ts` (`tmdbReady` / `seerrReady` read the projected public-config)
 - `e2e/perf/` — hand-run (not CI) measurement tools that drive a real Chromium against a live server: `jank-benchmark.js` (aggregate jank/CLS/long-task/pop-in numbers behind [performance-rules.md](performance-rules.md#measured-impact)) and `capture-traces.js` (`npm run perf:trace`) — a Chrome DevTools performance-trace capture harness that runs a suite of realistic navigation scenarios (`details-to-details`, `back-forward`, `playback-roundtrip`, …), gzips a DevTools-loadable trace per scenario to the git-ignored `e2e/perf/traces/`, and prints a per-scenario summary of `/JellyfinEnhanced/*` requests, failures, long tasks and console errors, with optional `--cpu`/`--latency` slow-server emulation (see [perf-trace-capture.md](perf-trace-capture.md))
 - `node scripts/new-feature.js <name>` — the paved-road scaffolder: generates a typed client module, a controller, an e2e spec stub and a docs stub, wired into the area barrel (see CONTRIBUTING.md)

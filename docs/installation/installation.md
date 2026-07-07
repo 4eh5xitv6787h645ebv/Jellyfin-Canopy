@@ -33,34 +33,20 @@
 3. Click **Install**
 4. Wait for the installation to complete
 
-### Step 3: Install File Transformation Plugin (Recommended)
+### Step 3: Install File Transformation Plugin (Optional)
 
 <!-- use a custom title -->
-!!! info "Important"
+!!! info "When you need this"
 
-    **It is highly recommended to install the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation)**
+    In Jellyfin 12, Jellyfin Enhanced injects its client `<script>` at request time through ASP.NET middleware, so a default install **never modifies `index.html` on disk** and cannot produce `index.html` permission errors from JE's script injection. You do **not** need the File Transformation plugin for JE to work.
 
-    Why?
+    Install the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) only if you want to use the optional **Custom Tabs / Plugin Pages** integrations, which rely on it to register their pages.
 
-    - The File Transformation plugin helps avoid permission issues while modifying `index.html`
-    
-    - Recommended on all installation types:
+To add it:
 
-        - Docker
-        - Windows
-        - Linux
-        - etc
-
-    - Without it, you may encounter **permission errors**
-
-
-1. In the **Catalog** tab, search for "file-transformation"
+1. In the **All** tab, search for "file-transformation"
 2. Install the **File Transformation** plugin
 3. Restart your Jellyfin server
-4. Then install Jellyfin Enhanced normally
-
-
-If you do not have file-transformation installed, you might encounter permission issues. Refer [troubleshooting steps](troubleshooting.md)
 
 ### Step 4: Restart Server
 
@@ -72,6 +58,6 @@ After restart:
 
 1. Refresh your browser *(`Ctrl+F5` or `Cmd+Shift+R`)*
 2. Access the Jellyfin Enhanced settings panel. Options:
-    - In the sidebar: **Jellyfin Enhanced**
+    - In the sidebar, under the **Jellyfin Enhanced** heading: click **Enhanced Panel**
     - Press `?`
 3. If you see the panel, installation was successful!

@@ -4,14 +4,14 @@ Quick access to Sonarr, Radarr, and Bazarr (admin only).
 
 ## Setup
 
-1. Open plugin settings → **`*arr Settings`** tab
+1. Open plugin settings → **`*arr`** tab
 2. Add one or more Sonarr and/or Radarr instances
-3. Enable `Show *arr Links on Item Pages`
-4. Optional: Enable "Show *arr Tags as Links"
+3. Enable `Enable *arr Links on Detail Pages`
+4. Optional: Enable "Show synced tags as links"
 5. Configure tag filters (show/hide specific tags)
 
 ### CSS Customization
-See [ARR Tag Links CSS](../advanced/css-customization.md/#arr-tag-links) for styling options.
+See [ARR Tag Links CSS](../advanced/css-customization.md#arr-tag-links) for styling options.
 
 ---
 
@@ -31,8 +31,8 @@ Each Sonarr or Radarr instance has the following fields:
 
 ### Adding an Instance
 
-1. Open plugin settings → ***arr Settings** tab
-2. Click **"Add Sonarr Instance"** or **"Add Radarr Instance"**
+1. Open plugin settings → ***arr** tab
+2. Click **"+ Add Sonarr instance"** or **"+ Add Radarr instance"**
 3. Fill in Name, URL, and API Key
 4. Optionally add URL Mappings
 5. Click **Save**
@@ -65,7 +65,7 @@ http://sonarr-anime:8989|https://anime.example.com
 
 When only one instance matches an item, the link renders as a plain icon (no badge). To always show the status colour border and episode/file count on single-instance links, enable:
 
-> **"Show status badge for single-instance links"**
+> **"Show status badge for single-instance"**
 
 ### Multiple Instances (Dropdown)
 
@@ -97,37 +97,43 @@ The original `SonarrUrl`, `SonarrApiKey`, `RadarrUrl`, and `RadarrApiKey` fields
 
 ## Calendar Page Settings
 
-Found in the ***arr Settings** tab under "Calendar Page".
+Found in the **Pages** tab under "Calendar Page".
 
 | Setting | Description |
 |---|---|
 | **Enable Calendar Page** | Enables the calendar view for upcoming Sonarr/Radarr releases |
+| **Add Calendar as a native Home tab** | Adds Calendar as its own tab on the Home page, no external plugin needed (recommended on Jellyfin 12's experimental layout) |
 | **Use Plugin Pages** | Adds a sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)) |
 | **Use Custom Tabs** | Adds a custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)) |
-| **First Day of Week** | Monday or Sunday |
+| **First Day of Week** | Day the calendar week starts on — any weekday (Sunday through Saturday). Default Monday. |
 | **Time Format** | 12-hour (`5pm/5:30pm`) or 24-hour (`17:00/17:30`) |
-| **Highlight Favorites** | Highlights favorite shows/movies based on Jellyfin favorites |
+| **Highlight Favorites/Watchlist** | Highlights favorite shows/movies based on Jellyfin favorites |
 | **Highlight Watched Series** | Highlights series you are currently watching |
+| **Filter by Library Access** | Only shows calendar items from libraries the user can access; upcoming items are matched by their Sonarr/Radarr root folder. Default on. |
+| **Show Requested Only (Default)** | Calendar loads showing only requested items by default, but users can still change filters. |
+| **Force Only Requested Items** | Calendar always shows only the user's requested items and hides the Requests filter. |
 
 After enabling with Plugin Pages, restart Jellyfin for the sidebar link to appear.
 
-Direct URL: `/web/index.html#!/jellyfinenhanced/calendar`
+Direct URL: `/web/index.html#/calendar`
 
 ---
 
 ## Requests Page Settings
 
-Found in the ***arr Settings** tab under "Requests Page (Downloads)".
+Found in the **Pages** tab under "Requests Page".
 
 | Setting | Description |
 |---|---|
 | **Enable Requests Page** | Enables a dedicated page showing active downloads from Sonarr/Radarr |
-| **Use Plugin Pages** | Adds a sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)) |
-| **Use Custom Tabs** | Adds a custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)) |
+| **Add Requests as a native Home tab** | Adds Requests as its own tab on the Home page, no external plugin needed (recommended on Jellyfin 12's experimental layout) |
+| **Use Plugin Pages for Requests** | Adds a sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)) |
+| **Use Custom Tabs for Requests** | Adds a custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)) |
 | **Enable Auto-Refresh** | Automatically refreshes download status |
-| **Poll Interval** | How often to refresh, in seconds (30–300, default: 30) |
+| **Poll Interval (seconds)** | How often to refresh, in seconds (30–300, default: 30) |
+| **Filter Downloads by User Requests** | When on (default), non-admin users only see downloads for content they requested; when off, all authenticated users see the entire download queue, including items requested by others. |
 
 !!! note
-    The Requests page for downloads is separate from the Seerr Requests page. Both can be enabled independently. The Seerr Requests page (showing media requests and issues) is configured in the **Seerr Settings** tab.
+    The Requests page is a single page (Pages tab): it shows *arr downloads and, when Seerr is configured, Seerr media requests and issues. Toggle each source with "Show Downloads in Requests Page" and "Show Seerr Issues Section".
 
-Direct URL: `/web/index.html#!/jellyfinenhanced/downloads`
+Direct URL: `/web/index.html#/downloads`

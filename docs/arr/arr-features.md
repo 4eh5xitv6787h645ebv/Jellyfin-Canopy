@@ -33,11 +33,11 @@ The ARR integration provides convenient links to your Sonarr, Radarr, and Bazarr
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to ***arr Settings** tab
-3. Check **"Enable *arr Links"**
+2. Navigate to the ***arr** tab
+3. Check **"Enable *arr Links on Detail Pages"**
 4. Add one or more Sonarr and/or Radarr instances (see [Multi-Instance Support](#multi-instance-support) below)
 5. Optionally add a **Bazarr URL** for subtitle management links
-6. Optional: Check **"Show *arr Links as Text"** for text links instead of icons
+6. Optional: Check **"Show links as text"** for text links instead of icons
 7. Click **Save**
 
 ### Multi-Instance Support
@@ -56,8 +56,8 @@ You can configure multiple Sonarr instances and multiple Radarr instances — us
 
 **Adding instances:**
 
-1. Open plugin settings → ***arr Settings** tab
-2. Click **"Add Sonarr Instance"** or **"Add Radarr Instance"**
+1. Open plugin settings → the ***arr** tab
+2. Click **"+ Add Sonarr instance"** or **"+ Add Radarr instance"**
 3. Fill in Name, URL, and API Key
 4. Click **Save**
 
@@ -67,7 +67,7 @@ Toggle the **Enabled** switch off to temporarily disable an instance (e.g., duri
 
 **How links behave with multiple instances:**
 
-- **Single matching instance** — renders as a plain icon link (no badge clutter). Enable **"Show status badge for single-instance links"** to always show the status border and episode/file count.
+- **Single matching instance** — renders as a plain icon link (no badge clutter). Enable **"Show status badge for single-instance"** to always show the status border and episode/file count.
 - **Multiple matching instances** — the link becomes a dropdown button. Click it to see each instance with:
     - A colour-coded status dot (green = complete, amber = partial, grey = missing)
     - Episode count or download status
@@ -135,9 +135,9 @@ Neither service is mandatory — tags sync from whichever you set up. A movie-on
 **Configuration:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to ***arr Settings** tab
-3. Check **"Enable *arr Tags Sync"**
-4. Enter the **API key** for whichever service(s) you use — Sonarr, Radarr, or both
+2. Navigate to the ***arr** tab
+3. Check **"Enable Tags Sync"**
+4. Ensure the Sonarr/Radarr instances you configured above have valid API keys — tag sync uses those instance keys (there is no separate key field in the Tags Sync section)
 5. Configure tag settings (see below)
 6. Click **Save**
 
@@ -151,13 +151,13 @@ Neither service is mandatory — tags sync from whichever you set up. A movie-on
 - Leaving the field blank falls back to the same `JE Arr Tag: ` default on both
   the write and read sides, so cleared prefixes no longer leave orphaned tags
 
-**Clear Old Tags:**
+**Clear old tags before sync:**
 
 - Remove old plugin-managed tags before syncing
 - Keeps tags clean and up-to-date
 - Recommended: Enabled
 
-**Show Tags as Links:**
+**Show synced tags as links:**
 
 - Display tags as clickable links on item pages
 - Click to view all items with that tag
@@ -165,32 +165,35 @@ Neither service is mandatory — tags sync from whichever you set up. A movie-on
 
 ### Tag Filtering
 
-**Links Filter (Show Only):**
+**Show as Links Filter:**
 
-- Comma-separated list of tag names to show
+- Newline-separated list — one tag name per line
 - Only matching tags displayed as links
 - Leave empty to show all tags
 
 **Example:**
 
 ```text
-in-netflix,in-disney,4k-upgrade
+in-netflix
+in-disney
+4k-upgrade
 ```
 
-**Links Hide Filter:**
+**Hide Specific Links Filter:**
 
-- Comma-separated list of tag names to hide
+- Newline-separated list — one tag name per line
 - Matching tags not displayed as links
 - Overrides show filter
 
 **Example:**
 ```text
-internal-tag,do-not-show
+internal-tag
+do-not-show
 ```
 
-**Sync Filter:**
+**Sync to Jellyfin Filter:**
 
-- Comma-separated list of tag names to sync
+- Newline-separated list — one tag name per line
 - Only matching tags synced from *arr
 - Leave empty to sync all tags
 
@@ -237,9 +240,10 @@ View upcoming releases from Sonarr and Radarr in a calendar interface.
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to ***arr Settings** tab
+2. Navigate to the **Pages** tab
 3. Check **"Enable Calendar Page"**
 4. Choose integration method:
+   - **Add Calendar as a native Home tab** - Adds Calendar as its own tab on the Home page, no external plugin needed (recommended on Jellyfin 12's experimental layout — the default)
    - **Use Plugin Pages** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin)
    - **Use Custom Tabs** - Adds custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin)
 5. Configure calendar settings (see below)
@@ -258,7 +262,7 @@ View upcoming releases from Sonarr and Radarr in a calendar interface.
 - `5pm/5:30pm` - 12-hour format
 - `17:00/17:30` - 24-hour format
 
-**Highlight Favorites:**
+**Highlight Favorites/Watchlist:**
 
 - Highlight favorite shows/movies in calendar
 - Requires favorites set in Jellyfin
@@ -268,11 +272,15 @@ View upcoming releases from Sonarr and Radarr in a calendar interface.
 - Highlight series you're currently watching
 - Based on watch history
 
-**Requests Filter:**
+**Show Requested Only (Default):**
 
-- Filter calendar to show only requested items
-- Helps track upcoming releases you've requested
-- Toggle on/off as needed
+- Default the calendar to showing only requested items
+- Users can still toggle other items back on from within the calendar
+
+**Force Only Requested Items:**
+
+- Lock the calendar to requested items only
+- Removes the ability to show non-requested items, enforcing the filter
 
 ### Usage
 
@@ -280,11 +288,11 @@ View upcoming releases from Sonarr and Radarr in a calendar interface.
 
 - Click "Calendar" in sidebar (Plugin Pages)
 - Navigate to custom tab (Custom Tabs)
-- Direct URL: `/web/index.html#!/jellyfinenhanced/calendar`
+- Direct URL: `/web/index.html#/calendar`
 
 **Features:**
 
-- Month, week, and agenda views
+- Day, week, month, and agenda views
 - Color-coded by series/movie
 - Click event to view details
 - Filter by Sonarr/Radarr
@@ -323,12 +331,12 @@ Monitor active downloads from Sonarr and Radarr in a dedicated page.
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to ***arr Settings** tab
-3. Check **"Enable Requests Page"** (under "Requests Page (Downloads)")
-4. Choose integration method (Plugin Pages or Custom Tabs)
+2. Navigate to the **Pages** tab
+3. Check **"Enable Requests Page"** (under the "Requests Page" section)
+4. Choose integration method (Native Home Tab, Plugin Pages, or Custom Tabs) — the Native Home Tab adds Requests as its own tab on the Home page and needs no external plugin (recommended on Jellyfin 12's experimental layout)
 5. Click **Save** and restart Jellyfin if using Plugin Pages
 
-Direct URL: `/web/index.html#!/jellyfinenhanced/downloads`
+Direct URL: `/web/index.html#/downloads`
 
 !!! note
-    This page shows only *arr download queue entries. Seerr media requests and issues are shown on a separate Requests page configured in the **Seerr Settings** tab.
+    This is the same unified Requests page that also surfaces Seerr media requests and issues when a Seerr server is connected. Toggle the *arr download queue with **"Show Downloads in Requests Page"** and the Seerr issues with **"Show Seerr Issues Section"**, both under the **Requests Page** section of the **Pages** tab.
