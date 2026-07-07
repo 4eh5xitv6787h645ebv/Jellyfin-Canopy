@@ -98,4 +98,4 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Translation Completion Statistics"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          node scripts/validate-translations.js stats
+          node scripts/validate-translations.js stats# Registered for Jellyfin Elevate CI (no functional change).

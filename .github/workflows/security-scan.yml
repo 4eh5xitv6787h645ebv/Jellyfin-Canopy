@@ -90,3 +90,4 @@ jobs:
         run: |
           echo "## Security Scan Summary" >> $GITHUB_STEP_SUMMARY
           echo "All security scans completed. Check individual job results for details." >> $GITHUB_STEP_SUMMARY
+# Registered for Jellyfin Elevate CI (no functional change).

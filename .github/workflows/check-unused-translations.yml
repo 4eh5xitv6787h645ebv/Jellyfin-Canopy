@@ -27,3 +27,4 @@ jobs:
         run: |
           echo "Scanning for unused translation keys..."
           node scripts/validate-translations.js find-unused
+# Registered for Jellyfin Elevate CI (no functional change).

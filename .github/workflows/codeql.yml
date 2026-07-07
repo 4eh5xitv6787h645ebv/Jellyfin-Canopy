@@ -66,3 +66,4 @@ jobs:
       uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e
       with:
         category: "/language:${{matrix.language}}"
+# Registered for Jellyfin Elevate CI (no functional change).
