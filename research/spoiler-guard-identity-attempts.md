@@ -293,3 +293,31 @@ Milestone 2 issues resolved (5 closed as shipped; 6, 8, 9, 10 closed as
 rejected). Follow-ups on milestone 3: issues 7 (XFF learned map, priority
 reduced), 12 (streaming echo channels), 13 (HMAC cookie), 14 (device
 pinning), 11 closed (ladder shipped).
+
+### 2026-07-08 03:15 — completeness-critic round: idea space declared saturated
+A final critic agent audited the 110-idea inventory for missed angles.
+Verdict: **near-saturated on mechanism classes**, with one materially new
+find and two documentation corrections:
+- **NEW (actionable): forward-auth / SSO / VPN user-identity headers**
+  (`Remote-User`, `X-Forwarded-User`, `Cf-Access-Authenticated-User-Email`,
+  `Tailscale-User-Login`, …) — the sweep mined proxy headers carrying the
+  client IP but never headers carrying the USER. Authoritative tier when
+  trusted-proxy-gated; uniquely covers the cold-cache native-behind-proxy
+  window; simpler than the XFF learned map. Filed as issue 16 (milestone 3).
+- **Correction:** the inventory's premise "no stock client ever replays a
+  server-authored image URL" has one exception — DLNA DIDL-Lite, where the
+  server writes the full image URLs and renderers replay them verbatim.
+  Moot in practice (DLNA binds a renderer to a configured user already, and
+  DLNA is plugin-extracted in JF12), but the premise now reads accurately.
+- **Correction:** one anonymous image path DOES carry a userId —
+  `/Users/{userId}/Images/Primary` (avatars). Only safe as an additive
+  candidate signal; dominated by session-by-IP. Recorded, not pursued.
+- Coverage-audit notes (not new mechanisms): confirm the tag filter stamps
+  LiveTv program/channel DTOs and the image filter fires on the LiveTv
+  image routes; spot-check third-party clients (Findroid, Streamyfin,
+  Delfin, Feishin) — structurally they land in existing tiers (SDK tag echo
+  or credentialed image fetches → ClaimsPrincipal).
+Everything else probed (SyncPlay, Chromecast receiver, offline sync, HTTP/3,
+Alt-Svc, request smuggling, plugin-to-plugin sharing, server push) is a
+variant of an already-evaluated idea or already covered by the shipped
+marker. **The loop's research charter is complete: out of ideas.**
