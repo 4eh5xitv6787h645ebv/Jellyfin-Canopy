@@ -552,8 +552,8 @@ Yes, via Enhanced panel settings:
 
 **Official Channels:**
 
-- [GitHub Issues](https://github.com/n00bcodr/Jellyfin-Enhanced/issues) - Bug reports and feature requests
-- [GitHub Discussions](https://github.com/n00bcodr/Jellyfin-Enhanced/discussions) - General questions and discussion
+- [GitHub Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues) - Bug reports and feature requests
+- [GitHub Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/discussions) - General questions and discussion
 - [Discord Community](https://discord.gg/EYNFf7y4CG) - Real-time chat and support
 
 **Before Asking:**
@@ -596,6 +596,6 @@ Yes, via Enhanced panel settings:
 
 If your question isn't answered here:
 
-1. Search [GitHub Discussions](https://github.com/n00bcodr/Jellyfin-Enhanced/discussions)
+1. Search [GitHub Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/discussions)
 2. Ask in [Discord Community](https://discord.gg/EYNFf7y4CG)
-3. Create a [GitHub Issue](https://github.com/n00bcodr/Jellyfin-Enhanced/issues/new)
+3. Create a [GitHub Issue](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues/new)

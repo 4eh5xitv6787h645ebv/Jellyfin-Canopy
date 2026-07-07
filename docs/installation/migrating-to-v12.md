@@ -39,7 +39,7 @@ If you inject your own snippets that build on Jellyfin Elevate, three things mat
     - `JE.escapeHtml()` / `JE.toast()` — HTML escaping and toast notifications
     - `JE.customPlugins.refresh()` — custom sidebar plugin links
 
-2. **`JE.internals` is gone.** The legacy `JE.internals.<feature>` bags were private cross-file state for the old classic-script tree; the TypeScript modules share state through real imports now. Anything you were reaching into via `JE.internals` was never public — if you depended on something there, [open a discussion](https://github.com/n00bcodr/Jellyfin-Enhanced/discussions) about promoting an equivalent to the facade.
+2. **`JE.internals` is gone.** The legacy `JE.internals.<feature>` bags were private cross-file state for the old classic-script tree; the TypeScript modules share state through real imports now. Anything you were reaching into via `JE.internals` was never public — if you depended on something there, [open a discussion](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/discussions) about promoting an equivalent to the facade.
 
 3. **Per-file script serving is gone.** Feature code is no longer served as individual `/JellyfinElevate/js/<area>/<file>.js` files — the whole client ships as one bundle (`/JellyfinElevate/dist/je.bundle.js`) loaded by the one remaining loader script. Don't fetch or patch individual plugin files; build on the `window.JellyfinElevate` facade instead.
 

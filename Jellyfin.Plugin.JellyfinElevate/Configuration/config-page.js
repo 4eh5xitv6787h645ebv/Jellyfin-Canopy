@@ -2784,22 +2784,8 @@
                     ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('/Localization/Cultures'), dataType: 'json' })
                 ]);
 
-                // Check GitHub for any new locale files added since the last plugin release (1 request)
-                try {
-                    const ghResp = await fetch('https://api.github.com/repos/4eh5xitv6787h645ebv/Jellyfin-Elevate/contents/Jellyfin.Plugin.JellyfinElevate/js/locales');
-                    if (ghResp.ok) {
-                        const files = await ghResp.json();
-                        const serverSet = new Set(localeCodes.map(c => c.toLowerCase()));
-                        files.forEach(f => {
-                            if (f.name.endsWith('.json') && f.name !== 'en.json') {
-                                const code = f.name.replace('.json', '');
-                                if (!serverSet.has(code.toLowerCase())) {
-                                    localeCodes.push(code);
-                                }
-                            }
-                        });
-                    }
-                } catch (_) { /* GitHub unavailable, server list is sufficient */ }
+                // The server's /locales endpoint is authoritative: locale files ship
+                // embedded in the plugin DLL, so no external listing is consulted.
 
                 const cultureMap = {};
                 cultures.forEach(c => {

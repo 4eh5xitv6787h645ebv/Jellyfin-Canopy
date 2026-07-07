@@ -169,7 +169,7 @@ See [GitHub issue #175](https://github.com/n00bcodr/Jellyfin-Enhanced/issues/175
 If you encounter issues:
 
 1. Check the [FAQ](../faq-support/faq.md) for common solutions
-2. [GitHub Issues](https://github.com/n00bcodr/Jellyfin-Enhanced/issues)
+2. [GitHub Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues)
     - Search existing issues
     - Create a new issue *(please include log and details)*
 3. Join the [Discord Community](https://discord.gg/EYNFf7y4CG)

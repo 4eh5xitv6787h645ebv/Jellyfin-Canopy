@@ -7,8 +7,8 @@ Thank you for your interest in contributing to Jellyfin Elevate! This document p
 ### 1. Code Contributions
 
 You can contribute code through:
-- **Open Pull Requests**: Check the [open PRs](https://github.com/n00bcodr/Jellyfin-Enhanced/pulls) for issues that need help
-- **Discussions**: Browse [Discussions](https://github.com/n00bcodr/Jellyfin-Enhanced/discussions) for feature requests and ideas that interest you
+- **Open Pull Requests**: Check the [open PRs](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/pulls) for issues that need help
+- **Discussions**: Browse [Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/discussions) for feature requests and ideas that interest you
 - **Bug Fixes**: Fix any bugs you encounter and submit a PR
 
 > [!NOTE]

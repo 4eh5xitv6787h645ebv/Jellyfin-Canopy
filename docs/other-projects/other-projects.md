@@ -145,7 +145,7 @@ A beautiful, modern theme for Jellyfin with multiple color variants.
 **Repository URL:** Unified Manifest for all plugins
 
 ```
-https://raw.githubusercontent.com/n00bcodr/jellyfin-plugins/main/10.11/manifest.json
+https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/main/manifest.json
 ```
 
 ### Installing Themes
@@ -184,9 +184,9 @@ https://raw.githubusercontent.com/n00bcodr/jellyfin-plugins/main/10.11/manifest.
 
 **For Jellyfin Elevate:**
 
-- [GitHub Issues](https://github.com/n00bcodr/Jellyfin-Enhanced/issues)
+- [GitHub Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues)
 - [Discord Community](https://discord.gg/EYNFf7y4CG)
-- [Discussions](https://github.com/n00bcodr/Jellyfin-Enhanced/discussions)
+- [Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/discussions)
 
 **For Jellyfin Tweaks:**
 

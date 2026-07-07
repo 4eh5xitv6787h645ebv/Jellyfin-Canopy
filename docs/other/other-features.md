@@ -546,4 +546,4 @@ If you encounter issues:
 1. Check [FAQ](../faq-support/faq.md) for common solutions
 2. Verify settings are correct
 3. Check browser console for errors
-4. Report issues on [GitHub](https://github.com/n00bcodr/Jellyfin-Enhanced/issues)
+4. Report issues on [GitHub](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues)
