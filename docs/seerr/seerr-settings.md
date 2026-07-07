@@ -126,6 +126,11 @@ When enabled, new Jellyfin users are automatically imported into Seerr the first
 - Display advanced options in request modal
 - Season selection, quality options, etc.
 
+### Show Collections in Seerr Results
+- Display TMDB collections (e.g., Harry Potter, Marvel Cinematic Universe) in Seerr search results
+- Includes an option to request the entire collection at once
+- Enabled by default
+
 ### Auto Import Jellyfin Users to Seerr
 
 - Just-in-time import when a user first accesses Seerr search and is not linked yet

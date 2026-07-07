@@ -43,6 +43,7 @@ Upload your own logos, banners, and favicon to personalize your Jellyfin instanc
    - **Banner Light** - Dark theme splash image
    - **Banner Dark** - Light theme splash image
    - **Favicon** - Browser tab icon
+   - **Apple Touch Icon** - Icon shown when adding to the iOS Home Screen (180×180 PNG)
 5. Click **Save**
 6. Force refresh browser (Ctrl+F5)
 
@@ -123,7 +124,7 @@ Replace default activity icons with Material Design icons with custom colors.
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
 2. Navigate to the **Extras** tab
-3. Check **"Enable Colored Activity Icons"**
+3. Check **"Colored Dashboard Icons"**
 4. Click **Save**
 
 ### Colored Ratings
@@ -159,7 +160,7 @@ Show user profile images on manual login page.
 **Enable:**
 
 1. Navigate to the **Extras** tab
-2. Check **"Enable Login Image"**
+2. Check **"Profile Picture on Login"**
 3. Click **Save**
 
 ### Plugin Icons
@@ -177,7 +178,7 @@ Replace default plugin icons with Material Design icons.
 **Enable:**
 
 1. Navigate to the **Extras** tab
-2. Check **"Enable Plugin Icons"**
+2. Check **"Custom Plugin Menu Icons"**
 3. Click **Save**
 
 **Custom Plugin Links:**
@@ -283,7 +284,7 @@ Control how long the shortcuts (help) panel stays open before automatically clos
 5. Click **Save**
 
 **Default:** 15000ms (15 seconds)
-**Range:** advisory 0-30000ms (not enforced by the input; the panel always auto-closes, and a value of 0 reverts to the 15000ms default)
+**Range:** advisory only — the input enforces no min/max; a value of 0 (or blank) reverts to the 15000 ms default.
 
 **Use Cases:**
 
@@ -301,7 +302,7 @@ Control how long toast notifications are displayed.
 3. Click **Save**
 
 **Default:** 1500ms (1.5 seconds)
-**Range:** 1000-10000ms
+**Range:** advisory — the input does not enforce a range (a value of 0 or blank reverts to the 1500 ms default)
 
 **Affects:**
 
@@ -313,7 +314,7 @@ Control how long toast notifications are displayed.
 
 ## Letterboxd Integration
 
-Add Letterboxd external links to movie item detail pages.
+Add Letterboxd external links to movie and person (cast/crew) detail pages.
 
 ### Setup
 
@@ -331,10 +332,16 @@ Add Letterboxd external links to movie item detail pages.
 2. Look for Letterboxd link in external links section
 3. Click to open movie on Letterboxd
 
+**On Person Detail Pages:**
+
+1. Open any cast or crew member
+2. Look for the Letterboxd link in the external links section
+3. Click to open that person's Letterboxd page
+
 **Features:**
 
-- Automatic TMDB ID to Letterboxd mapping
-- Direct links to movie pages
+- Automatic IMDb ID to Letterboxd mapping for movies
+- Person pages link to the actor's Letterboxd page (derived from the person's name slug)
 - Icon or text display option
 
 ---
@@ -406,7 +413,7 @@ Custom splash screen that appears while Jellyfin is loading.
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
 2. Navigate to the **Extras** tab
-3. Check **"Enable Custom Splash Screen"**
+3. Check **"Enable Splash Screen Override"**
 4. Enter **Splash Screen Image URL**
 
    - Use full URL or relative path
@@ -446,9 +453,8 @@ Multi-language support with community translations.
 ### How It Works
 
 - Automatically detects Jellyfin user profile language
-- Fetches latest translations from GitHub on first load
-- Caches translations for 24 hours
-- Falls back to bundled translations if offline
+- Loads translations from the plugin's bundled locale files on first load and caches them for 24 hours
+- Only when the third-party asset cache is disabled does it fall back to fetching from GitHub
 - Clears outdated caches on plugin update
 
 ### Default Language Override
@@ -469,9 +475,9 @@ See the [Contributing Translations](../faq-support/contributing-translations.md)
 
 **Translation Updates:**
 
-- Fetched from GitHub on first load
-- Available immediately after merge
-- No plugin update needed
+- Bundled with the plugin as embedded resources
+- Updated when the plugin itself is updated
+- GitHub fetching only applies when the asset cache is disabled
 - Cached per plugin version
 
 ---

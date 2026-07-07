@@ -194,7 +194,7 @@ Save timestamps and jump to specific moments with visual timeline markers.
 - Visual markers on video timeline
 - Add custom labels to bookmarks
 - Sync bookmarks across duplicate items (same TMDB/TVDB ID)
-- Manage all bookmarks from Custom Tabs interface
+- Manage all bookmarks from the Bookmarks page (native tab, Plugin Pages, or Custom Tabs)
 - Export/import bookmark data
 
 **Usage:**
@@ -206,7 +206,7 @@ Save timestamps and jump to specific moments with visual timeline markers.
 
 **Bookmark Management:**
 
-- Access via Custom Tabs plugin
+- Access via a native Home tab, the Plugin Pages sidebar link, or the Custom Tabs plugin (configured under the Bookmarks section of the plugin config; the native tab is recommended on Jellyfin 12's experimental layout)
 - View all bookmarks across library
 - Clean up orphaned bookmarks
 - Detect and merge duplicates
@@ -601,7 +601,7 @@ Admins see a megaphone icon (📣) in the panel header. Click it to open the bro
 4. Optional: Enable **"Show widget to non-admins"** to make the widget visible to non-admin users
 
 !!! note
-    By default the widget is admin-only. Non-admin users see a read-only view (no broadcast button, no IP addresses) when "Show to all users" is enabled.
+    By default the widget is admin-only. Non-admin users see a read-only view (no broadcast button, no IP addresses) when "Show widget to non-admins" is enabled.
 
 ### 🎨 Colored Activity Icons
 

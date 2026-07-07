@@ -26,7 +26,10 @@ Access user-configured settings via the Enhanced panel:
 - Pause Screen
 - Auto-skip Intros
 - Auto Picture-in-Picture
-- Review tags
+- Reviews
+- Show Watch Progress
+- Show File Sizes
+- Show Audio Languages
 - And more...
 
 
@@ -96,11 +99,38 @@ Screen](enhanced-features.md#custom-pause-screen) overlay appears.
 - **Per-user override** — each user can set their own delay in the Enhanced
   panel; their choice persists across reloads and overrides the admin default.
 
+## Watch Progress
+
+**Show Watch Progress** displays how far you are through each title on its item
+detail page.
+
+- **Per-user toggle** — turn **Show Watch Progress** on or off in the Enhanced
+  panel's **Settings** tab.
+- **Display mode** — choose how progress is shown: **Percentage**, **Time
+  Watched**, or **Time Remaining**. The admin default is set with **Watch
+  Progress Default** on the plugin config page (`WatchProgressDefaultMode`,
+  default *Percentage*).
+- **Time format** — when a time-based mode is used, choose **h:m** or
+  **y:mo:d:h:m**. The admin default is set with **Watch Progress Time Format**
+  (`WatchProgressTimeFormat`, default *h:m*).
+
+## Show File Sizes
+
+Enable **Show File Sizes** (per-user, in the Enhanced panel's **Settings** tab)
+to display each item's file size on its item detail and collection pages.
+
+## Show Audio Languages
+
+Enable **Show Audio Languages** (per-user, in the Enhanced panel's **Settings**
+tab) to list the available audio languages on a title's item detail page. This
+is distinct from the poster **Language Tags** overlay (see [Tags](#tags-quality-genre-language-rating-people)),
+which draws audio-language flags on poster cards in library and home views.
+
 ## Home Row Filtering
 
 **Filter Continue Watching** and **Filter Next Up** (in the Hidden Content
 settings) take effect on the Home screen on their own — independently of **Filter
-library views**. Enabling either one hides the matching cards from those Home rows
+Library**. Enabling either one hides the matching cards from those Home rows
 without requiring library filtering to be on. See [Hidden Content
 System](enhanced-features.md#hidden-content-system).
 

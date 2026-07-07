@@ -121,7 +121,7 @@ A collapsible sub-section of per-field hide toggles. When the master switch is o
 
 ### Hide tags
 
-**Default: On.** Hides both the TMDB Tags array (phrases like "Death of a main character") AND the Jellyfin Enhanced card overlays (genre, quality, language, rating tags drawn over thumbnails) on cards for unwatched episodes of Spoiler Guard series.
+**Default: On.** Hides both the TMDB Tags array (phrases like "Death of a main character") AND the Jellyfin Enhanced card overlays (genre, quality, and language tags drawn over thumbnails) on cards for unwatched episodes of Spoiler Guard series. (The rating overlay is governed separately by **Hide ratings**, below.)
 
 ### Hide chapter names (keep timestamps)
 
@@ -158,7 +158,7 @@ Some clients use the title in navigation tooltips and breadcrumbs where the synt
 | **Guest stars only (default)** | Only `Type=GuestStar` entries are removed. Regular cast stays — they appear in every episode anyway, so they don't reveal anything new about *this* episode. |
 | **All** | Strict mode. Every People entry (regular + guest + crew) is removed. Use for shows where the regular cast appearing or *not* appearing in a given episode is itself a spoiler (e.g. a recurring villain return). |
 
-In both modes the character name (`Role`) is also stripped from any surviving People entries — a role like "Resurrected Optimus" is a major spoiler regardless of cast strip mode.
+Whenever **Replace episode titles** or **Hide episode descriptions** is on, the character name (`Role`) is also stripped from any surviving People entries — a role like "Resurrected Optimus" is a major spoiler regardless of cast strip mode. (With both of those toggles off, surviving People keep their `Role`.)
 
 ### Hide reviews on Spoiler Guard series
 

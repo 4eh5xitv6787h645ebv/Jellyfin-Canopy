@@ -35,12 +35,9 @@
 
 ## Scripts Not Loading
 
-**Check Scheduled Task:**
+!!! note "How the script is delivered on Jellyfin 12"
 
-1. Jellyfin: `Dashboard` → `Scheduled Tasks`
-2. Look for the tasks under `Jellyfin Enhanced` — mainly `Jellyfin Enhanced Startup`
-3. `Jellyfin Enhanced Startup` should have the trigger: `On application startup`
-4. If missing, add the trigger manually
+    By default the client script is injected at request time by the built-in injection middleware, which runs on every `/web/` index request independently of any scheduled task. Re-adding the `On application startup` trigger to the `Jellyfin Enhanced Startup` task will **not** fix scripts failing to load in the default configuration — the task only performs background initialisation and cleanup and no longer governs script delivery.
 
 **Check Browser Console:**
 
@@ -48,6 +45,15 @@
 2. Go to `Console` tab
 3. Look for errors mentioning "Jellyfin Enhanced"
 4. Report errors on GitHub if found
+
+**Legacy on-disk fallback:**
+
+The `Jellyfin Enhanced Startup` scheduled task and its `On application startup` trigger only matter when an admin has switched to the legacy on-disk `index.html` rewrite (see [Permission Issues](#permission-issues)). In that mode the task performs the on-disk `index.html` rewrite at startup, so it should have the `On application startup` trigger:
+
+1. Jellyfin: `Dashboard` → `Scheduled Tasks`
+2. Look for the tasks under `Jellyfin Enhanced` — mainly `Jellyfin Enhanced Startup`
+3. `Jellyfin Enhanced Startup` should have the trigger: `On application startup`
+4. If missing, add the trigger manually
 
 
 ## Update Not Working
@@ -67,7 +73,7 @@
 
 !!! note "Applies only to the legacy on-disk rewrite"
 
-    On Jellyfin 12, the plugin injects its client script at request time via built-in middleware and does **not** write to `index.html` on disk, so these permission errors do not occur by default. This section only applies if an admin has disabled the script-injection middleware (**Disable Script Injection Middleware**, off by default) to fall back to the legacy on-disk `index.html` rewrite, which requires a writable web folder.
+    On Jellyfin 12, the plugin injects its client script at request time via built-in middleware and does **not** write to `index.html` on disk, so these permission errors do not occur by default. This section only applies if an admin has disabled the script-injection middleware to fall back to the legacy on-disk `index.html` rewrite, which requires a writable web folder. This is not a toggle in the plugin config page — it can only be enabled by setting `DisableScriptInjectionMiddleware` to `true` in the plugin's configuration XML (default `false`).
 
 If you see errors like this in a log file:
 

@@ -169,7 +169,7 @@ Customize quality tag appearance.
 
 ### *arr Tag Links
 
-When "Show *arr Tags as Links" is enabled in plugin config settings, the plugin injects tags into the item page under the external links section.
+When "Show synced tags as links" is enabled in plugin config settings, the plugin injects tags into the item page under the external links section.
 
 Structure of each link:
 

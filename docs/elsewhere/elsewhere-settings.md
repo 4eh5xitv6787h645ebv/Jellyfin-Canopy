@@ -22,7 +22,7 @@
 ## Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Elsewhere Settings** tab
+2. Navigate to **Elsewhere** tab
 3. Check "Enable Elsewhere"
 4. Enter your **TMDB API Key**
 5. Select your **Default Region** (e.g., US, GB, DE)
@@ -106,7 +106,7 @@ Multiple patterns:
 **Custom Branding Message** (labeled "Custom Branding Message" in the config page):
 
 - The text shown in the Elsewhere panel when the title is **not** available on any streaming provider in the region — e.g. "Only available on My Server"
-- Replaces the default "Not available in [region]" message
+- Replaces the default "Not available on any streaming services in [region]" message
 - Leave blank to fall back to the default message
 
 **Custom Branding Icon URL** (labeled "Custom Branding Icon URL" in the config page):

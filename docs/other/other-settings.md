@@ -19,6 +19,7 @@ Upload your own logos, banners, and favicon to personalize your Jellyfin instanc
 | **Banner Light** | Splash image shown on the dark-theme login screen |
 | **Banner Dark** | Splash image shown on the light-theme login screen |
 | **Favicon** | Browser tab icon |
+| **Apple Touch Icon** | Icon shown when adding the site to the iOS Home Screen |
 
 Files are stored in:
 ```text
@@ -98,7 +99,7 @@ Shows a custom image while Jellyfin is loading.
 
 | Setting | Description |
 |---|---|
-| **Enable Custom Splash Screen** | Enables the custom splash screen |
+| **Enable Splash Screen Override** | Enables the custom splash screen |
 | **Splash Screen Image URL** | Full URL or relative path to the image. Defaults to `/web/assets/img/banner-light.png` |
 
 ---
@@ -122,7 +123,23 @@ Override the language used by the plugin for all users.
 |---|---|
 | **Clear All Client Caches** | Forces all connected clients to clear their localStorage on next page load. Use to reset client-side settings or fix corrupted state. |
 
-Translations are refreshed automatically by the **Refresh Translation Cache** scheduled task (cadence adjustable in Jellyfin's *Scheduled Tasks* dashboard) — there is no separate translation-cache button.
+Translations are refreshed automatically by the **Refresh Translation Cache** scheduled task, which runs on server startup to signal connected clients to pick up fresh translations after a plugin update — there is no separate translation-cache button. By default the task has no periodic schedule; add an interval trigger in Jellyfin's *Scheduled Tasks* dashboard if you want it to run on a cadence.
+
+---
+
+## Maintenance Mode
+
+*Admin tab → Maintenance Mode*
+
+Temporarily lock users out of the server while you perform maintenance. When enabled, the selected action is applied to the affected users immediately on save, and a banner is shown on the Jellyfin login page. Administrators are **never** affected. Disabling Maintenance Mode restores all affected users automatically.
+
+| Setting | Default | Description |
+|---|---|---|
+| **Enable Maintenance Mode** | Off | Turns Maintenance Mode on. The selected action is applied to affected users as soon as you save. |
+| **Login Page Banner Message** | *(empty)* | Plain-text message shown as a red banner at the top of every page (login and home). |
+| **Active Session Notification** | *(empty)* | Sent as a native Jellyfin popup to anyone currently watching, reaching all clients (web, mobile, TV apps). |
+| **Action** | Disable user accounts | What happens to affected users. *Disable user accounts* prevents them from logging in at all; *Disable remote connections* blocks connections from outside the local network while LAN access still works. |
+| **Affected Users** | All non-admin users | Scopes the lockout. Choose *All non-admin users*, or *Select specific users* to pick individual accounts. An empty targeted-user list is treated as all users. |
 
 ---
 

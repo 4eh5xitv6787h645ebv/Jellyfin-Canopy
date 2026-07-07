@@ -237,7 +237,7 @@ View upcoming releases from Sonarr and Radarr in a calendar interface.
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to ***arr Settings** tab
+2. Navigate to the **Pages** tab
 3. Check **"Enable Calendar Page"**
 4. Choose integration method:
    - **Use Native Home Tab** - Adds Calendar as its own tab on the Home page, no external plugin needed (recommended on Jellyfin 12's experimental layout — the default)
@@ -281,7 +281,7 @@ View upcoming releases from Sonarr and Radarr in a calendar interface.
 
 - Click "Calendar" in sidebar (Plugin Pages)
 - Navigate to custom tab (Custom Tabs)
-- Direct URL: `/web/index.html#!/jellyfinenhanced/calendar`
+- Direct URL: `/web/index.html#/calendar`
 
 **Features:**
 
@@ -324,12 +324,12 @@ Monitor active downloads from Sonarr and Radarr in a dedicated page.
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to ***arr Settings** tab
-3. Check **"Enable Requests Page"** (under "Requests Page (Downloads)")
+2. Navigate to the **Pages** tab
+3. Check **"Enable Requests Page"** (under the "Requests Page" section)
 4. Choose integration method (Native Home Tab, Plugin Pages, or Custom Tabs) — the Native Home Tab adds Requests as its own tab on the Home page and needs no external plugin (recommended on Jellyfin 12's experimental layout)
 5. Click **Save** and restart Jellyfin if using Plugin Pages
 
-Direct URL: `/web/index.html#!/jellyfinenhanced/downloads`
+Direct URL: `/web/index.html#/downloads`
 
 !!! note
-    This page shows only *arr download queue entries. Seerr media requests and issues are shown on a separate Requests page configured in the **Seerr Settings** tab.
+    This is the same unified Requests page that also surfaces Seerr media requests and issues when a Seerr server is connected. Toggle the *arr download queue with **"Show Downloads in Requests Page"** and the Seerr issues with **"Show Seerr Issues Section"**, both under the **Requests Page** section of the **Pages** tab.

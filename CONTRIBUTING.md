@@ -20,7 +20,7 @@ Help make Jellyfin Enhanced accessible to more users by contributing translation
 
 - https://hosted.weblate.org/projects/jellyfinenhanced/
 
-See the [Contributing Translations](/Jellyfin-Enhanced/faq-support/contributing-translations/) section for details.
+See the [Contributing Translations](https://n00bcodr.github.io/Jellyfin-Enhanced/faq-support/contributing-translations/) section for details.
 
 ## 🚀 Getting Started
 

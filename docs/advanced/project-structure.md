@@ -1,6 +1,6 @@
 ## Project Structure
 
-The plugin is one C# project (the server side) plus one TypeScript module tree (the client), compiled into a single client artifact. The only entry point the browser loads directly is `js/plugin.js` — a small loader that boots the shared `JE` namespace (`window.JellyfinEnhanced`), fetches config/translations, and then loads the whole feature tree as **one esbuild bundle** (`dist/je.bundle.js`, built on every `dotnet build` and embedded in the plugin DLL — minified in production, served fresh with a sourcemap in dev mode).
+The plugin is one C# project (the server side) plus one TypeScript module tree (the client), compiled into a single client artifact. The only entry point the browser loads directly is `js/plugin.js` — a small loader that boots the shared `JE` namespace (`window.JellyfinEnhanced`), fetches config/translations, and then loads the whole feature tree as **one esbuild bundle** (`dist/je.bundle.js`, built on every `dotnet build` and embedded in the plugin DLL — minified in production, unminified and served fresh (no-store) in dev mode — an external sourcemap ships in both).
 
 ### The client (`Jellyfin.Plugin.JellyfinEnhanced/src/`)
 
@@ -15,7 +15,7 @@ Jellyfin.Plugin.JellyfinEnhanced/
     │                        # (JEGlobal extends it — the compiler proves the contract holds)
     ├── core/                # Shared platform layer — executes before every feature module
     │   ├── navigation.ts    # One place for SPA navigation (pushState patch, HISTORY_UPDATE,
-    │   │                    # hashchange/viewshow dedup — see v12-platform.md §2)
+    │   │                    # hashchange/viewshow dedup — see ../v12-platform.md §2)
     │   ├── lifecycle.ts     # Per-feature teardown registry (observers, intervals, listeners)
     │   ├── dom-observer.ts  # Multiplexed body MutationObserver, waitForElement, ensureInjected
     │   │                    # (keyed, idempotent, re-render-proof injection)

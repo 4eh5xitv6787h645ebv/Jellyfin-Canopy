@@ -226,7 +226,7 @@ Option B (manual in Seerr):
 
 - Check bookmark file exists on server
 
-- Look in `/config/plugins/configurations/Jellyfin.Plugin.JellyfinEnhanced/{userId}/bookmark.json`
+- Look in `/config/plugins/configurations/Jellyfin.Plugin.JellyfinEnhanced/{userId}/bookmark.json`, where `{userId}` is your user ID with all hyphens removed and converted to lowercase (e.g. `12345678-90AB-...` becomes the folder `1234567890ab...`)
 
 - Check browser console for errors
 

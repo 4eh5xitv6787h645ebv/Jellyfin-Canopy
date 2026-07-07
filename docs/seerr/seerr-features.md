@@ -84,8 +84,8 @@ inspecting network traffic — a client-side hide would only conceal the cards.
 - A restricted user also cannot **open** a blocked title's detail/season or
   **request** it by id — both are rejected server-side, not just hidden.
 - The raw TMDB passthrough is **denied by default** for a rating-limited user.
-  Only rating-free lookups pass through untouched (genre lists, and keyword,
-  company or person *search*); a movie/TV detail or one of its own parts is
+  Only rating-free lookups pass through untouched (genre lists, and keyword
+  or company *search*); a movie/TV detail or one of its own parts is
   served only when the parent title is within the user's limit; and everything
   else — discover, trending, title search, similar and recommendations, person
   and collection browsing — is blocked. Any new or unknown passthrough shape is
@@ -196,7 +196,7 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 4. Optionally check **"Show Downloads in Requests Page"** to display active *arr downloads (enabled by default)
 5. Optionally check **"Show Seerr Issues Section"** to display Seerr issues
 6. Choose integration method:
-   - **Use Plugin Pages** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin, default-on)
+   - **Use Plugin Pages** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin)
    - **Use Custom Tabs** - Adds custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin)
    - **Add Requests as a native Home tab** - Shows Requests as a native tab on the Home screen (experimental layout)
 7. Configure polling settings (see below)
@@ -230,7 +230,7 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 
 - Click "Requests" in sidebar (Plugin Pages)
 - Navigate to custom tab (Custom Tabs)
-- Direct URL: `/web/index.html#!/jellyfinenhanced/downloads`
+- Direct URL: `/web/index.html#/downloads`
 
 #### Features
 

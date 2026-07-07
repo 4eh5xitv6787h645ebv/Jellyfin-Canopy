@@ -6,12 +6,12 @@ Quick access to Sonarr, Radarr, and Bazarr (admin only).
 
 1. Open plugin settings → **`*arr Settings`** tab
 2. Add one or more Sonarr and/or Radarr instances
-3. Enable `Show *arr Links on Item Pages`
+3. Enable `Enable *arr Links on Detail Pages`
 4. Optional: Enable "Show *arr Tags as Links"
 5. Configure tag filters (show/hide specific tags)
 
 ### CSS Customization
-See [ARR Tag Links CSS](../advanced/css-customization.md/#arr-tag-links) for styling options.
+See [ARR Tag Links CSS](../advanced/css-customization.md#arr-tag-links) for styling options.
 
 ---
 
@@ -97,7 +97,7 @@ The original `SonarrUrl`, `SonarrApiKey`, `RadarrUrl`, and `RadarrApiKey` fields
 
 ## Calendar Page Settings
 
-Found in the ***arr Settings** tab under "Calendar Page".
+Found in the **Pages** tab under "Calendar Page".
 
 | Setting | Description |
 |---|---|
@@ -118,7 +118,7 @@ Direct URL: `/web/index.html#/calendar`
 
 ## Requests Page Settings
 
-Found in the ***arr Settings** tab under "Requests Page (Downloads)".
+Found in the **Pages** tab under "Requests Page".
 
 | Setting | Description |
 |---|---|
@@ -130,6 +130,6 @@ Found in the ***arr Settings** tab under "Requests Page (Downloads)".
 | **Poll Interval** | How often to refresh, in seconds (30–300, default: 30) |
 
 !!! note
-    The Requests page for downloads is separate from the Seerr Requests page. Both can be enabled independently. The Seerr Requests page (showing media requests and issues) is configured in the **Seerr Settings** tab.
+    The Requests page is a single page (Pages tab): it shows *arr downloads and, when Seerr is configured, Seerr media requests and issues. Toggle each source with "Show Downloads in Requests Page" and "Show Seerr Issues Section".
 
 Direct URL: `/web/index.html#/downloads`
