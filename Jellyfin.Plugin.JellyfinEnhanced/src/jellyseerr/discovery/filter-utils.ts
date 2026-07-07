@@ -542,11 +542,16 @@ function waitForPageReady(signal?: AbortSignal, options: any = {}): Promise<any>
         }
 
         let observerHandle: any = null;
+        let backstopTimer: ReturnType<typeof setTimeout> | null = null;
 
         const cleanup = () => {
             if (observerHandle) {
                 observerHandle.unsubscribe();
                 observerHandle = null;
+            }
+            if (backstopTimer) {
+                clearTimeout(backstopTimer);
+                backstopTimer = null;
             }
         };
 
@@ -555,24 +560,24 @@ function waitForPageReady(signal?: AbortSignal, options: any = {}): Promise<any>
                 cleanup();
                 resolve(null);
             }, { once: true });
+        } else {
+            // Leak backstop for a (future) signal-less caller ONLY: without an
+            // abort to end the wait, retire the subscription after a generous
+            // absolute deadline. A real timer, not a lazy mutation-time check —
+            // a page that stops mutating would otherwise never trigger it.
+            // Never a UX budget (R9): every current caller passes a signal and
+            // never takes this path.
+            backstopTimer = setTimeout(() => {
+                cleanup();
+                resolve(checkContainer());
+            }, 120_000);
         }
-
-        // Backstop for a (future) signal-less caller: without an abort to end
-        // the wait, retire the subscription after a generous absolute deadline
-        // so it cannot outlive a stuck page forever. Checked lazily on
-        // mutation — no timer, no poll (R5).
-        const deadline = signal ? Infinity : Date.now() + 120_000;
 
         observerHandle = JE.helpers!.onBodyMutation!(`jellyseerr-discovery-container-detect-${++pageReadySeq}`, () => {
             const container = checkContainer();
             if (container) {
                 cleanup();
                 resolve(container);
-                return;
-            }
-            if (Date.now() > deadline) {
-                cleanup();
-                resolve(null);
             }
         });
     });

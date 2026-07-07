@@ -391,30 +391,30 @@ const languageToCountryMap: Record<string, string> = {English:"gb",eng:"gb",Japa
 
 /**
  * Fetches the first episode of a series or season for language detection.
+ * Throws on transport failure — PERF(R9): a transient error must reach
+ * displayAudioLanguages' catch (short error TTL + in-place retry), not
+ * masquerade as a genuine "series has no episodes" answer that gets cached
+ * for an hour.
  * @param userId The user ID.
  * @param parentId The series or season ID.
- * @returns The first episode item or null.
+ * @returns The first episode item, or null when the series genuinely has none.
  */
 async function fetchFirstEpisodeForLanguage(userId: string, parentId: string): Promise<any> {
-    try {
-        const response: any = await ApiClient.ajax({
-            type: 'GET',
-            url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl('/Items', {
-                ParentId: parentId,
-                IncludeItemTypes: 'Episode',
-                Recursive: true,
-                SortBy: 'PremiereDate',
-                SortOrder: 'Ascending',
-                Limit: 1,
-                Fields: 'MediaStreams,MediaSources',
-                userId: userId
-            }),
-            dataType: 'json'
-        });
-        return response.Items?.[0] || null;
-    } catch {
-        return null;
-    }
+    const response: any = await ApiClient.ajax({
+        type: 'GET',
+        url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl('/Items', {
+            ParentId: parentId,
+            IncludeItemTypes: 'Episode',
+            Recursive: true,
+            SortBy: 'PremiereDate',
+            SortOrder: 'Ascending',
+            Limit: 1,
+            Fields: 'MediaStreams,MediaSources',
+            userId: userId
+        }),
+        dataType: 'json'
+    });
+    return response.Items?.[0] || null;
 }
 
 /**

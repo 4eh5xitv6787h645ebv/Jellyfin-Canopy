@@ -614,6 +614,11 @@ async function processQueue(): Promise<void> {
         }
     } finally {
         isProcessing = false;
+        // PERF(R9): cards queued while this run was in flight (a new page's
+        // scan during a stale batch — scheduleFetchIfQueued no-ops when
+        // isProcessing) would otherwise sit until the next mutation.
+        // Reschedule so the queue always drains.
+        if (requestQueue.length > 0) scheduleFetchIfQueued();
     }
 }
 
@@ -693,6 +698,15 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
             const itemId = item.Id.toString().replace(/-/g, '').toLowerCase();
             const batchEntries = elMap.get(itemId);
             if (!batchEntries || batchEntries.length === 0) return;
+            // PERF(R9): renders can land after further awaits (parent-series and
+            // first-episode fetches) — if navigation invalidated the batch in the
+            // meantime, un-mark instead of rendering into a stale page, so a
+            // surviving card element (cached legacy re-show) gets retried rather
+            // than staying marked-but-hollow.
+            if (generation !== batchGeneration) {
+                for (const entry of batchEntries) processedCards.delete(entry.el);
+                return;
+            }
             if (!MEDIA_TYPES.has(item.Type)) return;
 
             let parentSeries: any = null;

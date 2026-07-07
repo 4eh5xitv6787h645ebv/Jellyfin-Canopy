@@ -11,17 +11,31 @@ import { test, expect, loginAs, showRoute } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-/** First movie id on the server, resolved through the logged-in ApiClient. */
-async function firstMovieId(page: import('playwright/test').Page): Promise<string> {
-    const movieId: string | null = await page.evaluate(async () => {
+/**
+ * A movie id that satisfies what the assertions need — an arbitrary first
+ * movie may legitimately have no file size (stub/remote) or no TMDB id
+ * (report button silently skips those), which would fail the spec despite
+ * correct plugin code.
+ */
+async function suitableMovieId(
+    page: import('playwright/test').Page,
+    needs: { size?: boolean; tmdb?: boolean }
+): Promise<string> {
+    const movieId: string | null = await page.evaluate(async ({ needSize, needTmdb }) => {
         const apiClient = (window as any).ApiClient;
         const url = apiClient.getUrl(
-            `/Items?IncludeItemTypes=Movie&Recursive=true&Limit=1&userId=${apiClient.getCurrentUserId()}`
+            '/Items?IncludeItemTypes=Movie&Recursive=true&Limit=50' +
+            `&Fields=MediaSources,ProviderIds&userId=${apiClient.getCurrentUserId()}`
         );
         const result = await apiClient.ajax({ type: 'GET', url, dataType: 'json' });
-        return result.Items?.[0]?.Id || null;
-    });
-    expect(movieId, 'server must have at least one movie').toBeTruthy();
+        const match = (result.Items || []).find((item: any) => {
+            if (needSize && !(item.MediaSources || []).some((s: any) => (s.Size || 0) > 0)) return false;
+            if (needTmdb && !item.ProviderIds?.Tmdb) return false;
+            return true;
+        });
+        return match?.Id || null;
+    }, { needSize: !!needs.size, needTmdb: !!needs.tmdb });
+    expect(movieId, `server must have a movie with${needs.size ? ' a file size' : ''}${needs.tmdb ? ' a TMDB id' : ''}`).toBeTruthy();
     return movieId as string;
 }
 
@@ -67,7 +81,14 @@ test.describe('late-load resilience (R9)', () => {
             return route.continue();
         });
 
-        const movieId = await firstMovieId(page);
+        const movieId = await suitableMovieId(page, { size: true });
+        // The fallback render (progress 0) is visually identical to a real
+        // unwatched answer, so the recovery proof for watch-progress is a
+        // SUCCESSFUL response arriving after the two induced failures.
+        const progressRecovered = page.waitForResponse(
+            (response) => response.url().includes('/JellyfinEnhanced/watch-progress/') && response.ok(),
+            { timeout: 30_000 }
+        );
         await showRoute(page, `/details?id=${movieId}`);
 
         // The chip renders its dash/zero fallback first, then the in-place
@@ -77,13 +98,11 @@ test.describe('late-load resilience (R9)', () => {
         await expect(fileSize).toContainText(/\d[\d.]*\s*(Bytes|KB|MB|GB|TB|PB)/, { timeout: 30_000 });
         expect(fileSizeFailures, 'file-size fetch was never actually failed').toBe(2);
 
+        await progressRecovered; // the third (post-failures) fetch succeeded
+        expect(progressFailures, 'watch-progress fetch was never actually failed').toBe(2);
         const progress = page.locator('.page:not(.hide) .mediaInfoItem-watchProgress');
         await expect(progress).toBeVisible({ timeout: 30_000 });
-        // The real payload appends a -value element; the transient-failure
-        // fallback alone renders it too (progress 0), but the two induced
-        // failures above prove the value came from the retried fetch.
         await expect(progress.locator('.mediaInfoItem-watchProgress-value')).toBeVisible({ timeout: 30_000 });
-        expect(progressFailures, 'watch-progress fetch was never actually failed').toBe(2);
 
         assertOnlyInducedErrors(
             consoleErrors.real(),
@@ -117,7 +136,7 @@ test.describe('late-load resilience (R9)', () => {
         // Restore the endpoint and open a details page: lazy re-verification
         // must bring the feature up in the SAME session.
         blockStatus = false;
-        const movieId = await firstMovieId(page);
+        const movieId = await suitableMovieId(page, { tmdb: true });
         await showRoute(page, `/details?id=${movieId}`);
 
         const reportButton = page.locator(

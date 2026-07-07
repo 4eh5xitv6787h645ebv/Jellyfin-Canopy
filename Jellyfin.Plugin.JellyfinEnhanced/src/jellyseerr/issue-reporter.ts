@@ -966,6 +966,13 @@ issueReporter.tryAddButton = async function () {
                         console.debug(`${logPrefix} Report button appeared during async work, skipping duplicate (unavailable)`);
                         return true;
                     }
+                    // Stale-navigation guard (same as the active-button insert):
+                    // don't pin the old item's disabled button onto a new page.
+                    const currentUnavailItemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
+                    if (currentUnavailItemId !== itemId) {
+                        console.debug(`${logPrefix} Item changed during async work (${itemId} -> ${currentUnavailItemId}), discarding stale unavailable button`);
+                        return false;
+                    }
                     const moreButton = buttonContainerUnavail.querySelector('.btnMoreCommands');
                     if (moreButton) {
                         buttonContainerUnavail.insertBefore(unavailButton, moreButton);
@@ -1105,6 +1112,16 @@ issueReporter.tryAddButton = async function () {
             if (hasReportButton()) {
                 console.debug(`${logPrefix} Report button appeared during async work, skipping duplicate`);
                 return true;
+            }
+            // Stale-navigation guard: those same awaits mean the user may have
+            // navigated to a DIFFERENT item while this call was in flight —
+            // inserting now would pin the OLD item's report action onto the new
+            // page (and its dedup would block the correct button). Verify the
+            // URL still points at the item this call resolved.
+            const currentItemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
+            if (currentItemId !== itemId) {
+                console.debug(`${logPrefix} Item changed during async work (${itemId} -> ${currentItemId}), discarding stale button`);
+                return false;
             }
             // Try to insert before btnMoreCommands, otherwise append
             const moreButton = buttonContainer.querySelector('.btnMoreCommands');

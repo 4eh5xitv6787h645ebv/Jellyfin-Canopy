@@ -127,11 +127,16 @@ function waitForDetailPageReady(signal?: AbortSignal): Promise<any> {
 
         // Set up observer
         let observerHandle: any = null;
+        let backstopTimer: ReturnType<typeof setTimeout> | null = null;
 
         const cleanup = () => {
             if (observerHandle) {
                 observerHandle.unsubscribe();
                 observerHandle = null;
+            }
+            if (backstopTimer) {
+                clearTimeout(backstopTimer);
+                backstopTimer = null;
             }
         };
 
@@ -141,23 +146,22 @@ function waitForDetailPageReady(signal?: AbortSignal): Promise<any> {
                 cleanup();
                 resolve(null);
             }, { once: true });
+        } else {
+            // Leak backstop for a (future) signal-less caller ONLY: a real
+            // timer (a lazy mutation-time check never fires once a stuck page
+            // stops mutating). Never a UX budget (R9); every current caller
+            // passes a signal and never takes this path.
+            backstopTimer = setTimeout(() => {
+                cleanup();
+                resolve(checkPage());
+            }, 120_000);
         }
-
-        // Backstop for a (future) signal-less caller: retire the subscription
-        // after a generous absolute deadline, checked lazily on mutation — no
-        // timer, no poll (R5).
-        const deadline = signal ? Infinity : Date.now() + 120_000;
 
         observerHandle = JE.helpers!.onBodyMutation!(`jellyseerr-item-details-page-detect-${++detailReadySeq}`, () => {
             const result = checkPage();
             if (result) {
                 cleanup();
                 resolve(result);
-                return;
-            }
-            if (Date.now() > deadline) {
-                cleanup();
-                resolve(null);
             }
         });
     });
@@ -479,6 +483,14 @@ function pollUntil(predicate: () => any, opts: any = {}): Promise<any> {
         if (signal) signal.addEventListener('abort', onAbort, { once: true });
         const tick = () => {
             if (signal?.aborted) return finish(null);
+            // PERF(R5/R9): visibility-gated — a hidden tab skips the DOM probe
+            // and the deadline check; on return to visibility the probe runs
+            // BEFORE the deadline check, so a page that finished loading while
+            // hidden still resolves. Nav abort ends the wait either way.
+            if (document.visibilityState === 'hidden') {
+                timerId = setTimeout(tick, maxIntervalMs);
+                return;
+            }
             const result = predicate();
             if (result) return finish(result);
             if (Date.now() >= deadline) return finish(null);
