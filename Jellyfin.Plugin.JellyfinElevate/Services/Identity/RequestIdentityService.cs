@@ -109,15 +109,25 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         private static readonly ConcurrentDictionary<string, DateTime> _cookieMissCache = new(StringComparer.Ordinal);
 
         // TTL-cached user count for the single-user shortcut so we don't
-        // enumerate users per request. 60s staleness only matters around the
-        // moment a SECOND user account is created; until the cache rolls, a
-        // brand-new second user could briefly be attributed the first user's
-        // preferences on anonymous fetches — they have no state of their own
-        // yet, so nothing can leak.
+        // enumerate users per request (GetUsers() is a DB query in JF12).
+        // 60s staleness only matters around user creation/deletion, and the
+        // UserTopologyEvents consumers invalidate on exactly those events —
+        // the TTL is belt-and-braces. Published as ONE immutable snapshot
+        // behind a volatile reference: Nullable<Guid> is a multi-word struct
+        // whose lock-free reads could tear during a value transition (a
+        // torn HasValue=true garbage id would flow into LoadUserState as a
+        // nonexistent user with empty spoiler state → clean bytes), and a
+        // volatile reference swap is atomic with correct ordering on weak
+        // memory models (ARM) too.
         private static readonly TimeSpan UserCountCacheTtl = TimeSpan.FromSeconds(60);
-        private Guid? _singleUserId;
-        private bool _singleUserKnown;
-        private DateTime _singleUserCheckedAt = DateTime.MinValue;
+
+        private sealed class SingleUserSnapshot
+        {
+            public required Guid? Value { get; init; }
+            public required DateTime CheckedAt { get; init; }
+        }
+
+        private volatile SingleUserSnapshot? _singleUser;
         private readonly object _singleUserLock = new();
 
         private readonly ISessionManager _sessionManager;
@@ -147,31 +157,28 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         /// </summary>
         public void InvalidateUserTopology()
         {
-            lock (_singleUserLock)
-            {
-                _singleUserKnown = false;
-                _singleUserId = null;
-                _singleUserCheckedAt = DateTime.MinValue;
-            }
+            _singleUser = null; // atomic volatile reference write
         }
 
         // The lone user's id when the server has exactly one account, else
         // null. Cached for UserCountCacheTtl.
         private Guid? TryGetSingleUserId()
         {
-            var now = DateTime.UtcNow;
-            if (_singleUserKnown && (now - _singleUserCheckedAt) < UserCountCacheTtl)
+            var snapshot = _singleUser; // one volatile read; immutable after publish
+            if (snapshot != null && (DateTime.UtcNow - snapshot.CheckedAt) < UserCountCacheTtl)
             {
-                return _singleUserId;
+                return snapshot.Value;
             }
 
             lock (_singleUserLock)
             {
-                if (_singleUserKnown && (DateTime.UtcNow - _singleUserCheckedAt) < UserCountCacheTtl)
+                snapshot = _singleUser;
+                if (snapshot != null && (DateTime.UtcNow - snapshot.CheckedAt) < UserCountCacheTtl)
                 {
-                    return _singleUserId;
+                    return snapshot.Value;
                 }
 
+                Guid? result;
                 try
                 {
                     Guid? only = null;
@@ -181,18 +188,17 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                         if (++count > 1) { only = null; break; }
                         only = u.Id;
                     }
-                    _singleUserId = count == 1 ? only : null;
+                    result = count == 1 ? only : null;
                 }
                 catch (Exception ex)
                 {
                     WarnRateLimited(
                         "single-user-count:" + ex.GetType().FullName,
                         $"JE request identity: user enumeration for the single-user shortcut threw: {ex.Message}");
-                    _singleUserId = null;
+                    result = null;
                 }
-                _singleUserKnown = true;
-                _singleUserCheckedAt = DateTime.UtcNow;
-                return _singleUserId;
+                _singleUser = new SingleUserSnapshot { Value = result, CheckedAt = DateTime.UtcNow };
+                return result;
             }
         }
 

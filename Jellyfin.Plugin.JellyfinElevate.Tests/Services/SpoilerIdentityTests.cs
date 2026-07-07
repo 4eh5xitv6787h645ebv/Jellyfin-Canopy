@@ -6,6 +6,7 @@ using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinElevate.Configuration;
 using Jellyfin.Plugin.JellyfinElevate.Services;
 using Jellyfin.Plugin.JellyfinElevate.Tests.TestDoubles;
+using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Http;
@@ -227,14 +228,31 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         [Fact]
         public void Resolver_UnknownMarker_FallsThroughToIpLadder()
         {
-            var identity = NewService(); // no users → marker resolves to nobody
-            var resolver = NewResolver(identity);
+            // Two users so the single-user shortcut stays inert; one of them
+            // has a session on the request IP. The unknown marker must be
+            // IGNORED and the ladder must CONTINUE to the session-by-IP tier
+            // and find that candidate — proving real fall-through rather than
+            // an early empty return.
+            var userA = new User("ladder-a", "Prov", "PwProv");
+            var userB = new User("ladder-b", "Prov", "PwProv");
+            var manager = new StubUserManager(userA, userB);
+            var markers = new SpoilerIdentityService(manager, NullLogger<SpoilerIdentityService>.Instance);
+            var sessions = new CountingSessionManager();
+            sessions.SetSessions(new SessionInfo(sessions, NullLogger<SessionInfo>.Instance)
+            {
+                UserId = userA.Id,
+                RemoteEndPoint = "10.9.8.7:41234",
+            });
+            var identity = new RequestIdentityService(
+                sessions, manager, markers, NullLogger<RequestIdentityService>.Instance);
 
             var ctx = new DefaultHttpContext();
+            ctx.Connection.RemoteIpAddress = System.Net.IPAddress.Parse("10.9.8.7");
             ctx.Request.QueryString = new QueryString("?tag=orig-jeu123456789abc");
 
-            // No sessions in CountingSessionManager either → empty candidate set.
-            Assert.Empty(resolver.ResolveCandidateUserIds(ctx));
+            var resolved = identity.Resolve(ctx);
+            Assert.Equal(IdentityConfidence.SharedIpCandidates, resolved.Confidence);
+            Assert.Equal(new[] { userA.Id }, resolved.Candidates);
         }
 
         [Fact]

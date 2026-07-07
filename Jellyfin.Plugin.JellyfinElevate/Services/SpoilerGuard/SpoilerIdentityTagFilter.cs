@@ -51,13 +51,17 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             _configProvider = configProvider;
         }
 
-        public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
+        // Non-async on purpose: this filter is registered globally (no route
+        // allowlist), so the disabled/anonymous fast paths run on EVERY MVC
+        // response the server serves — `return next()` synchronously there so
+        // no async state machine is allocated when we will do no work
+        // (mirrors SpoilerFieldStripFilter's fast-path pattern).
+        public Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
         {
             var cfg = _configProvider.ConfigurationOrNull;
             if (cfg?.SpoilerBlurEnabled != true || !cfg.SpoilerIdentityTags)
             {
-                await next().ConfigureAwait(false);
-                return;
+                return next();
             }
 
             // Only authenticated user responses get stamped — the DTO is the
@@ -66,16 +70,20 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             var userId = UserHelper.GetCurrentUserId(context.HttpContext.User);
             if (userId == null || userId.Value == Guid.Empty)
             {
-                await next().ConfigureAwait(false);
-                return;
+                return next();
             }
 
+            return StampAfterActionAsync(next, userId.Value);
+        }
+
+        private async Task StampAfterActionAsync(ActionExecutionDelegate next, Guid userId)
+        {
             var executed = await next().ConfigureAwait(false);
             if (executed.Exception != null || executed.Canceled) return;
 
             try
             {
-                StampIfApplicable(executed.Result, _identity.MintMarker(userId.Value));
+                StampIfApplicable(executed.Result, _identity.MintMarker(userId));
             }
             catch (Exception ex)
             {
