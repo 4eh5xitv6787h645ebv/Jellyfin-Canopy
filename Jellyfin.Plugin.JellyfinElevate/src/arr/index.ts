@@ -19,3 +19,5 @@ import './calendar/actions';
 import './calendar/init';
 import './requests/custom-tab';
 import './calendar/custom-tab';
+// Admin-only action-sheet Search / Interactive Search / Manage (Sonarr/Radarr).
+import './search';
