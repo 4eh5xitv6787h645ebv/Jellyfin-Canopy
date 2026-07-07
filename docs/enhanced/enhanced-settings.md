@@ -125,6 +125,22 @@ tab) to list the available audio languages on a title's item detail page. This
 is distinct from the poster **Language Tags** overlay (see [Tags](#tags-quality-genre-language-rating-people)),
 which draws audio-language flags on poster cards in library and home views.
 
+## Show Release/Air Date
+
+**Show Release/Air Date** (`ShowReleaseDates`, admin-only) adds a chip on Movie,
+Series, Season and Episode detail pages showing the cinema/digital/physical
+release date (movies) or the next/last episode air date (series, seasons,
+episodes), sourced from TMDB.
+
+- **Admin config toggle** — enable it in the **Release Dates** section of the
+  plugin config page. There is no per-user override.
+- **Requires a TMDB API Key** — the chip only takes effect once a TMDB API Key
+  is set (see [Elsewhere Settings](../elsewhere/elsewhere-settings.md#getting-a-tmdb-api-key)).
+- **Region preference** — it uses the **Default Region** configured under
+  [Elsewhere](../elsewhere/elsewhere-settings.md#default-region) to choose which
+  country's release dates to prefer, falling back to US and then any region TMDB
+  has for that release type.
+
 ## Home Row Filtering
 
 **Filter Continue Watching** and **Filter Next Up** (in the Hidden Content

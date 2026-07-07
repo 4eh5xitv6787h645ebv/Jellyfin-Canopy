@@ -78,7 +78,7 @@ Enable or disable icons in toasts, settings panel, and other UI elements.
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
 2. Navigate to the **Display** tab
-3. Check **"Use Icons"**
+3. Check **"Use Icons in UI"**
 4. Click **Save**
 
 ### Icon Style

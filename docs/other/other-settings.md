@@ -58,7 +58,7 @@ Adds a live stream counter icon to the Jellyfin header.
 
 | Setting | Default | Description |
 |---|---|---|
-| **Active Streams Widget** | Off | Enables the stream counter in the header |
+| **Active Streams Header Widget** | Off | Enables the stream counter in the header |
 | **Show widget to non-admins** | Off | When on, non-admin users see a read-only view (no broadcast, no IP addresses) |
 
 See [Other Features — Active Streams Widget](other-features.md#active-streams-widget) for full details.
@@ -74,7 +74,7 @@ Controls how long certain UI elements stay visible before auto-closing.
 | Setting | Default | Description |
 |---|---|---|
 | **Shortcuts Panel Autoclose Delay** | 15000 ms | How long the shortcuts panel stays open before closing automatically. Values are advisory — the input does not enforce a range. |
-| **Toast Duration** | 1500 ms | How long toast notifications are displayed. Values are advisory — the input does not enforce a range. |
+| **Toast Notification Duration** | 1500 ms | How long toast notifications are displayed. Values are advisory — the input does not enforce a range. |
 
 ---
 
@@ -87,7 +87,7 @@ Adds a Letterboxd external link to movie and person (cast/crew) detail pages.
 | Setting | Description |
 |---|---|
 | **Enable Letterboxd Links** | Shows a Letterboxd icon/link on movie and person detail pages |
-| **Show as Text** | Displays the link as text instead of an icon |
+| **Show link as text** | Displays the link as text instead of an icon |
 
 ---
 

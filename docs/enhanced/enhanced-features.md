@@ -182,6 +182,29 @@ Comprehensive hotkeys for navigation, playback control, and more.
 3. Click on any key to set a custom shortcut
 4. Changes save automatically per user
 
+### Random Button
+
+A **Play Random** button in the Jellyfin header that opens a random item from your accessible libraries in a single click. It complements the `R` [Play Random Item](#advanced-keyboard-shortcuts) keyboard shortcut with an always-visible header control.
+
+**Features:**
+
+- Always-visible **Play Random** button in the header
+- Opens a random item drawn from the libraries you have access to
+- Optionally limits the pool to items you have not watched yet
+- Independent toggles to include movies and/or TV shows in the pool
+
+**Configuration:**
+
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+2. Navigate to the **Display** tab
+3. Find the **Random Button** section
+4. Enable **"Enable Random Button"**
+5. Optionally adjust the pool:
+   - **Show unwatched only** - only choose items you have not watched yet
+   - **Include movies** - include movies in the random pool
+   - **Include shows** - include TV shows in the random pool
+6. Click **Save**
+
 ### Smart Bookmarks
 
 ![Bookmark markers on the video timeline](../images/bookmarks-timeline.png)
@@ -311,7 +334,7 @@ Search, request, and discover media directly from Jellyfin's search interface.
 2. Check "Show Seerr Results in Search"
 3. Enter Seerr URL(s) (one per line)
 4. Enter Seerr API Key (from Seerr Settings → General)
-5. Click "Test Connection"
+5. Click "Test"
 6. Enable optional features:
    - Add Requested Media to Watchlist
    - Sync Seerr Watchlist to Jellyfin
@@ -353,7 +376,7 @@ View recommendations and similar items on detail pages.
 
 1. Configure Seerr integration (see above)
 2. Check **"Show similar items"** and/or **"Show recommended items"**
-3. Optional: Enable "Exclude already in library items"
+3. Optional: Enable "Exclude items already in library"
 4. Click **Save**
 
 **Discovery Pages:**

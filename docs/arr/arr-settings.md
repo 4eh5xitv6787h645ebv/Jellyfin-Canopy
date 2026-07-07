@@ -65,7 +65,7 @@ http://sonarr-anime:8989|https://anime.example.com
 
 When only one instance matches an item, the link renders as a plain icon (no badge). To always show the status colour border and episode/file count on single-instance links, enable:
 
-> **"Show status badge for single-instance links"**
+> **"Show status badge for single-instance"**
 
 ### Multiple Instances (Dropdown)
 
@@ -107,9 +107,10 @@ Found in the **Pages** tab under "Calendar Page".
 | **Use Custom Tabs** | Adds a custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)) |
 | **First Day of Week** | Monday or Sunday |
 | **Time Format** | 12-hour (`5pm/5:30pm`) or 24-hour (`17:00/17:30`) |
-| **Highlight Favorites** | Highlights favorite shows/movies based on Jellyfin favorites |
+| **Highlight Favorites/Watchlist** | Highlights favorite shows/movies based on Jellyfin favorites |
 | **Highlight Watched Series** | Highlights series you are currently watching |
 | **Filter by Library Access** | Only shows calendar items from libraries the user can access; upcoming items are matched by their Sonarr/Radarr root folder. Default on. |
+| **Show Requested Only (Default)** | Calendar loads showing only requested items by default, but users can still change filters. |
 | **Force Only Requested Items** | Calendar always shows only the user's requested items and hides the Requests filter. |
 
 After enabling with Plugin Pages, restart Jellyfin for the sidebar link to appear.
@@ -130,6 +131,7 @@ Found in the **Pages** tab under "Requests Page".
 | **Use Custom Tabs** | Adds a custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)) |
 | **Enable Auto-Refresh** | Automatically refreshes download status |
 | **Poll Interval** | How often to refresh, in seconds (30–300, default: 30) |
+| **Filter Downloads by User Requests** | When on (default), non-admin users only see downloads for content they requested; when off, all authenticated users see the entire download queue, including items requested by others. |
 
 !!! note
     The Requests page is a single page (Pages tab): it shows *arr downloads and, when Seerr is configured, Seerr media requests and issues. Toggle each source with "Show Downloads in Requests Page" and "Show Seerr Issues Section".

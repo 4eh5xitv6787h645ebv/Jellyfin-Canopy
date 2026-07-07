@@ -465,7 +465,7 @@ Yes, via Enhanced panel settings:
 |-------|----------|
 | `Access to the path '/jellyfin/jellyfin-web/index.html' is denied.` | Install [file-transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) or follow [Docker workaround](../installation/troubleshooting.md#docker) |
 | `Access to the path 'C:\Program Files\Jellyfin\Server\jellyfin-web\index.html' is denied.` | Grant "NETWORK SERVICE" Read/Write permissions to Jellyfin folder |
-| Plugin installed but scripts don't load | Run "Jellyfin Enhanced Startup" scheduled task, verify trigger exists |
+| Plugin installed but scripts don't load | Scripts are injected at request time by the built-in middleware in the default config — see [Scripts Not Loading](../installation/troubleshooting.md#scripts-not-loading). The "Jellyfin Enhanced Startup" task only matters in the legacy on-disk index.html rewrite mode. |
 | Reviews/Elsewhere/Seerr icons not working | TMDB API may be blocked in your region, see [Seerr troubleshooting](https://docs.seerr.dev/troubleshooting#tmdb-failed-to-retrievefetch-xxx) |
 | Seerr search not working | Enable "Jellyfin Sign-In" in Seerr. Then either enable plugin auto import and run "Import Users Now", or import users manually in Seerr. Also verify user is not in blocked users list. |
 | Tags not appearing | Enable in settings, clear cache, verify metadata exists |
