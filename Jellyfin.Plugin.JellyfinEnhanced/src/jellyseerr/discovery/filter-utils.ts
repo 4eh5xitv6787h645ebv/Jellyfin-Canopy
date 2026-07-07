@@ -1,6 +1,7 @@
 // src/jellyseerr/discovery/filter-utils.ts
 // Shared utilities for discovery section content type filtering
 import { JE } from '../../globals';
+import { getVisibleDetailsPage } from '../../core/details-view';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -522,11 +523,18 @@ function waitForPageReady(signal?: AbortSignal, options: any = {}): Promise<any>
 
         const checkContainer = () => {
             if (type === 'detail') {
+                // Resolve through core/details-view: the page must be the view
+                // SHOWN for the item the URL names — during a details→details
+                // push the outgoing page is still visible, and a bare
+                // :not(.hide) query resolved it, inserting this page's rows
+                // into a view about to be hidden.
+                const detailPage = getVisibleDetailsPage()?.page ?? null;
                 // Jellyfin 12 dropped the .detailPageContent wrapper; fall back to
                 // .detailPageSecondaryContainer, then the page itself.
-                const detailContent: Element | null = document.querySelector('.itemDetailPage:not(.hide) .detailPageContent') ||
-                                      document.querySelector('.itemDetailPage:not(.hide) .detailPageSecondaryContainer') ||
-                                      document.querySelector('.itemDetailPage:not(.hide)');
+                const detailContent: Element | null = detailPage && (
+                    detailPage.querySelector('.detailPageContent') ||
+                    detailPage.querySelector('.detailPageSecondaryContainer') ||
+                    detailPage);
                 return detailContent;
             }
             // List page

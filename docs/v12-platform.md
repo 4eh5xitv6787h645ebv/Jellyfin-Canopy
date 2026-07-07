@@ -69,6 +69,12 @@ Empirical (modern layout, rc2, marker elements + resize / websocket-driven refet
 
 Universal strategy: idempotent keyed injectors re-driven by (1) `HISTORY_UPDATE`/`je:navigate` for every URL change, (2) `viewshow` for legacy views, (3) the multiplexed body MutationObserver as catch-all. React pages tolerate foreign appended children through any in-place re-render; only unmount kills them. No React errors were produced by injected markers.
 
+Item-detail view-cache traps (live-verified, the "loads only on revisit" bug class):
+
+- Up to **three `#itemDetailPage` elements coexist** (`WEB src/components/viewContainer.js`, `pageContainerCount = 3`, fixed round-robin slots). `document.getElementById('itemDetailPage')` returns whichever occupies the LOWEST slot — visible or not — so a visibility gate built on it goes permanently dead once two details views exist. Resolve the page through `core/details-view` (`isDetailsPageVisible()` / `getVisibleDetailsPage()`), never getElementById.
+- On a **details→details push**, navigation callbacks (`HISTORY_UPDATE`) fire while the OUTGOING page is still the visible one — `#itemDetailPage:not(.hide)`-style lookups at nav time resolve the old view and injections land in a page about to be hidden. `getVisibleDetailsPage()` only returns the page once its `viewshow` recorded it for the item the URL names.
+- When item data arrives, the host's `renderMiscInfo` → `fillPrimaryMediaInfo` does `elem.innerHTML = html` on `.itemMiscInfo-primary` (`WEB src/components/mediainfo/mediainfo.js`), destroying injected chips. On slow servers this lands AFTER a feature's first fill, so misc-info injectors MUST be re-driven by the body-observer catch-all (which the getElementById gate above silently disabled). `.mainDetailButtons` is only class-toggled, never rebuilt — which is why button injections survived while chips vanished.
+
 ---
 
 ## 4. Server API surface (S3)

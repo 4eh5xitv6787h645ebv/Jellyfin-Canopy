@@ -39,9 +39,15 @@ test.describe('reviews gating', () => {
             return !!(key && elsewhere && reviews && key.value.trim().length > 0);
         }, undefined, { timeout: 60_000 });
 
-        // Preconditions that make this test meaningful (the reported scenario).
+        // Establish the reported scenario client-side (same pattern as the
+        // provider-inputs test below): the plugin DEFAULT is Elsewhere ON, so a
+        // default-config server can never satisfy a hard "already unchecked"
+        // precondition — force it OFF and re-run the dependency passes.
         const state = await page.evaluate(() => {
             const elsewhere = document.getElementById('elsewhereEnabled') as HTMLInputElement;
+            if (elsewhere.checked) { elsewhere.checked = false; }
+            elsewhere.dispatchEvent(new Event('change', { bubbles: true }));
+            elsewhere.dispatchEvent(new Event('input', { bubbles: true }));
             const reviews = document.getElementById('showReviews') as HTMLInputElement;
             const label = reviews.closest('label');
             const container = reviews.closest('.checkboxContainer');
