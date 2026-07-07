@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using Jellyfin.Plugin.JellyfinEnhanced.Services.Jellyseerr;
 using MediaBrowser.Common.Plugins;
-using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Session;
@@ -26,10 +25,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
     /// <see cref="BasePlugin{T}.ConfigurationChanged"/> — the event raised by the
     /// dashboard/API save path. On each change it (1) flushes the Seerr caches
     /// (the behaviour the removed override used to provide) and (2) pushes a
-    /// JE-marked <see cref="SessionMessageType.GeneralCommand"/> to every user
-    /// session. The client's live hub (src/core/live.ts) filters GeneralCommands
-    /// for the marker and refetches public-config; native clients ignore the
-    /// carrier command (it hits the default branch of serverNotifications.js).
+    /// JE-marked <see cref="SessionMessageType.GeneralCommand"/> to the sessions
+    /// of devices REGISTERED as running the JE client (<see cref="ILiveSessionRegistry"/>,
+    /// populated by authenticated public-config fetches). The client's live hub
+    /// (src/core/live.ts) filters GeneralCommands for the marker and refetches
+    /// public-config. Native clients (Android, Android TV, Kodi, …) never receive
+    /// the carrier at all — the old broadcast to every user session delivered a
+    /// playback-shaped command to clients whose handling is outside our control.
     /// </summary>
     public sealed class LiveNotifierService : IHostedService
     {
@@ -51,7 +53,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
         private readonly IPluginManager _pluginManager;
         private readonly ISessionManager _sessionManager;
-        private readonly IUserManager _userManager;
+        private readonly ILiveSessionRegistry _liveSessionRegistry;
         private readonly ISeerrCache _seerrCache;
         private readonly ILogger<LiveNotifierService> _logger;
 
@@ -61,13 +63,13 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         public LiveNotifierService(
             IPluginManager pluginManager,
             ISessionManager sessionManager,
-            IUserManager userManager,
+            ILiveSessionRegistry liveSessionRegistry,
             ISeerrCache seerrCache,
             ILogger<LiveNotifierService> logger)
         {
             _pluginManager = pluginManager;
             _sessionManager = sessionManager;
-            _userManager = userManager;
+            _liveSessionRegistry = liveSessionRegistry;
             _seerrCache = seerrCache;
             _logger = logger;
         }
@@ -140,20 +142,71 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             {
                 var version = JellyfinEnhanced.Instance?.Version?.ToString() ?? string.Empty;
                 var command = BuildConfigChangedCommand(version);
-                var userIds = _userManager.GetUsers().Select(u => u.Id).ToList();
-                if (userIds.Count > 0)
+
+                // Target ONLY devices that registered as running the JE client
+                // (via authenticated JE endpoint calls). The old broadcast to
+                // every user session delivered the playback-shaped carrier to
+                // native clients (Android, Android TV, Kodi, …) whose handling of
+                // it is outside our control. An empty registry (fresh server, no
+                // JE session booted yet) means there is nobody to hot-reload —
+                // those sessions pick the new config up when they next load.
+                //
+                // The device id claim is caller-supplied, so each entry is only
+                // honoured when its REGISTERING user has a live session on that
+                // device — a user can register pushes for their own devices,
+                // never someone else's.
+                var liveSessions = _sessionManager.Sessions
+                    .Select(s => new LiveSessionEntry(s.DeviceId, s.UserId))
+                    .ToList();
+                var deviceIds = SelectDeliverableDeviceIds(_liveSessionRegistry.GetActiveEntries(), liveSessions);
+                foreach (var deviceId in deviceIds)
                 {
-                    await _sessionManager
-                        .SendMessageToUserSessions(userIds, SessionMessageType.GeneralCommand, command, cancellationToken)
-                        .ConfigureAwait(false);
+                    try
+                    {
+                        await _sessionManager
+                            .SendMessageToUserDeviceSessions(deviceId, SessionMessageType.GeneralCommand, command, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        // A transient send failure for one device must not stop
+                        // the push to the rest.
+                        _logger.LogDebug(ex, "LiveNotifier: config-changed send failed for device {DeviceId}.", deviceId);
+                    }
                 }
 
-                _logger.LogInformation("LiveNotifier: pushed config-changed to {Count} user session group(s).", userIds.Count);
+                _logger.LogInformation("LiveNotifier: pushed config-changed to {Count} JE device(s).", deviceIds.Count);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "LiveNotifier: failed to push config-changed to sessions.");
             }
+        }
+
+        /// <summary>
+        /// Pure selector for the devices a push may be sent to: a registered
+        /// entry is deliverable only when its registering user currently has a
+        /// live session on that device (device ids are matched case-insensitively,
+        /// like the server's own session lookup). Distinct so one device is never
+        /// pushed twice. Internal for direct unit-testing.
+        /// </summary>
+        internal static IReadOnlyList<string> SelectDeliverableDeviceIds(
+            IReadOnlyList<LiveSessionEntry> registered,
+            IReadOnlyList<LiveSessionEntry> liveSessions)
+        {
+            var result = new List<string>();
+            foreach (var entry in registered)
+            {
+                var hasOwnSession = liveSessions.Any(s =>
+                    s.UserId == entry.UserId
+                    && string.Equals(s.DeviceId, entry.DeviceId, StringComparison.OrdinalIgnoreCase));
+                if (hasOwnSession && !result.Contains(entry.DeviceId, StringComparer.OrdinalIgnoreCase))
+                {
+                    result.Add(entry.DeviceId);
+                }
+            }
+
+            return result;
         }
 
         /// <summary>

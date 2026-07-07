@@ -77,11 +77,22 @@ export function notifyIfNewer(serverVersion: string | null | undefined): void {
     console.log(`${logPrefix} server ${serverVersion} newer than loaded ${loadedVersion} — prompted refresh`);
 }
 
-/** Fetch the server's current plugin version (plain text) and compare. */
+/**
+ * Fetch the server's current plugin version (plain text) and compare.
+ *
+ * Authenticated deliberately: the /version endpoint doubles as this session's
+ * live-push registry heartbeat (the server records the device id claim, so a
+ * web session that outlives a server restart re-registers for config-changed
+ * pushes within one recheck). An anonymous fetch would still return the
+ * version but register nothing. Keeps running after a notify so the heartbeat
+ * never stops — notifyIfNewer itself is one-shot.
+ */
 async function checkNow(): Promise<void> {
-    if (notified || typeof ApiClient === 'undefined') return;
+    if (typeof ApiClient === 'undefined') return;
     try {
-        const res = await fetch(ApiClient.getUrl(`/JellyfinEnhanced/version?_je=${Date.now()}`));
+        const res = await fetch(ApiClient.getUrl(`/JellyfinEnhanced/version?_je=${Date.now()}`), {
+            headers: { Authorization: `MediaBrowser Token="${ApiClient.accessToken()}"` }
+        });
         if (!res.ok) return;
         const serverVersion = (await res.text()).trim();
         notifyIfNewer(serverVersion);
@@ -104,7 +115,8 @@ const initialCheck = setTimeout(() => { void checkNow(); }, 5000);
 handle.onTeardown(() => clearTimeout(initialCheck));
 
 const recheck = setInterval(() => {
-    if (notified) return;
+    // NOT gated on `notified`: beyond the one-shot toast, this ping is the
+    // session's live-push registry heartbeat and must outlive the notify.
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
     void checkNow();
 }, RECHECK_INTERVAL_MS);

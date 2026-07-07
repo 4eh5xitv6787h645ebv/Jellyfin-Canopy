@@ -49,14 +49,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
     [ApiController]
     public class ConfigController : JellyfinEnhancedControllerBase
     {
+        private readonly ILiveSessionRegistry _liveSessionRegistry;
+
         public ConfigController(
             IHttpClientFactory httpClientFactory,
             ILogger<ConfigController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
-            IPluginConfigProvider configProvider)
+            IPluginConfigProvider configProvider,
+            ILiveSessionRegistry liveSessionRegistry)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
+            _liveSessionRegistry = liveSessionRegistry;
         }
 
         [HttpGet("script")]
@@ -84,7 +88,41 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         // exposes its own version pre-auth too. CVEs against JE are tracked publicly
         // so attackers do not need this endpoint to fingerprint a vulnerable version.
         [HttpGet("version")]
-        public ActionResult GetVersion() => Content(JellyfinEnhanced.Instance?.Version.ToString() ?? "unknown");
+        public ActionResult GetVersion()
+        {
+            // A JE session pings this every 15 min (live-update recheck), so it
+            // doubles as the live-push registry heartbeat: a web session that was
+            // already open across a server restart (and therefore never refetched
+            // public-config) re-registers here within one recheck interval and
+            // resumes receiving config-changed pushes. Native clients never call
+            // JE endpoints, so this can only ever register JE sessions.
+            TouchLiveSessionRegistry();
+            return Content(JellyfinEnhanced.Instance?.Version.ToString() ?? "unknown");
+        }
+
+        /// <summary>
+        /// Record the calling session's device id as running the JE client (no-op
+        /// for unauthenticated callers, who carry no device claim). Claim type is
+        /// the server's InternalClaimTypes.DeviceId ("Jellyfin-DeviceId"). The
+        /// registering user is stored so the notifier can refuse pushes to devices
+        /// the user has no live session on (the claim is caller-supplied).
+        /// </summary>
+        private void TouchLiveSessionRegistry()
+        {
+            if (User?.Identity?.IsAuthenticated != true)
+            {
+                return;
+            }
+
+            var deviceId = User.FindFirst("Jellyfin-DeviceId")?.Value;
+            if (!string.IsNullOrWhiteSpace(deviceId))
+            {
+                // NOTE: UserHelper reads the JF12 claim ("Jellyfin-UserId");
+                // the base controller's GetCurrentUserId() probes legacy claim
+                // types (NameIdentifier/sub/Sid) that JF12 does not set.
+                _liveSessionRegistry.Touch(deviceId, UserHelper.GetCurrentUserId(User) ?? Guid.Empty);
+            }
+        }
 
         [HttpGet("private-config")]
         [Authorize]
@@ -141,6 +179,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             // client-side deep links and would otherwise leak network topology to
             // unauthenticated visitors hitting the login page.
             bool isAuthed = User?.Identity?.IsAuthenticated == true;
+
+            // Every JE client boot AND every config-changed hot-reload refetches
+            // this endpoint authenticated — record the session's device id so
+            // LiveNotifierService pushes reach ONLY devices that actually run JE
+            // (never native clients). Anonymous login-image fetches carry no
+            // device claim and are skipped. The version endpoint doubles as the
+            // 15-min heartbeat for sessions that outlive a server restart.
+            TouchLiveSessionRegistry();
 
             return new JsonResult(BuildPublicConfigPayload(config, isAuthed));
         }
