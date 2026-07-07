@@ -5,6 +5,7 @@
 
 import { JE as JEBase } from '../globals';
 import { assetUrl } from '../core/asset-urls';
+import { isDetailsPageVisible } from '../core/details-view';
 import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate, onViewPage } from '../core/navigation';
 import type { ApiApi, JELegacyHelpers, PluginConfig } from '../types/je';
@@ -1211,14 +1212,20 @@ JE.initializeElsewhereScript = function() {
     // attributeFilter:['class'] — the filter opted it out of the multiplexer
     // and made it fire on every hover/focus/class write on EVERY page.
     // Structural changes (the detail section / external links mounting) now
-    // arrive via the shared multiplexed body observer behind a cheap O(1)
+    // arrive via the shared multiplexed body observer behind a cheap
     // details-page gate, and the cached-page re-show (a class flip with no
     // structural mutation — the only thing the attribute filter actually
     // caught) is covered by the navigation/viewshow probes below.
     // addStreamingLookup re-validates and de-dupes per section itself.
+    // Gate on the VISIBLE details view, never getElementById: up to three
+    // cached `#itemDetailPage` elements coexist (v12-platform.md §3) and
+    // getElementById returns the lowest slot — usually an old hidden one —
+    // which made this gate permanently dead after two details visits. The
+    // TMDB external link this feature anchors on only mounts when the host
+    // renders item data, so with the gate dead the lookup never ran at all
+    // on a slow first visit (only the too-early nav/viewshow probes fired).
     onBodyMutation('elsewhere', () => {
-        const page = document.getElementById('itemDetailPage');
-        if (!page || page.classList.contains('hide')) return;
+        if (!isDetailsPageVisible()) return;
         scheduleStreamingLookup();
     });
     onNavigate(() => scheduleStreamingLookup());
