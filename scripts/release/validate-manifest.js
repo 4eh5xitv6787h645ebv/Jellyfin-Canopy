@@ -99,8 +99,11 @@ function validateManifest(data) {
         if (typeof plugin.guid !== 'string' || !GUID_RE.test(plugin.guid)) {
             errors.push(`${where}: "guid" must be a UUID`);
         }
-        if (!Array.isArray(plugin.versions) || plugin.versions.length === 0) {
-            errors.push(`${where}: "versions" must be a non-empty array`);
+        // An empty array is valid: it is the pre-first-release state of a fresh
+        // repo (the release workflow prepends the first entry). Only a missing
+        // or non-array "versions" is an error.
+        if (!Array.isArray(plugin.versions)) {
+            errors.push(`${where}: "versions" must be an array`);
             return;
         }
 
