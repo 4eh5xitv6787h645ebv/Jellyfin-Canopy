@@ -270,3 +270,26 @@ returning `RequestIdentity(Candidates, Confidence)` with tiers Authenticated
 future feature consumes identity through one documented choke point
 (milestone 3, issue 11). Spoiler resolver keeps only spoiler-state loading
 and delegates. 595 tests green; spoiler e2e 7/7 after redeploy.
+
+### 2026-07-08 03:05 — shipped: PR 15
+Branch pushed and PR opened (fork PR 15 → main): per-user image identity
+tags + the RequestIdentityService ladder. Final verification: 596 dotnet +
+390 client tests, full e2e 37/37 on the deployed build, docs mkdocs-strict
+green. Review loop fully clean:
+- Codex GPT-5.5 xhigh: 3 findings, all fixed (single-user cache staleness →
+  event-driven invalidation on user create/delete; marker-map rebuild
+  throttle for just-created users → same events; cookie negative-cache TTL
+  tightened to the scan TTL).
+- 5-dimension adversarial-verified workflow (Opus xhigh): 3 confirmed, all
+  fixed (Nullable<Guid> torn-read on the single-user fast path → immutable
+  snapshot behind a volatile reference; global filter allocated an async
+  state machine on every MVC response when disabled → sync fast paths;
+  vacuous ladder fall-through test → now proves the IP tier is reached);
+  5 findings refuted with verified reasons (incl. the "marker
+  de-anonymizes users" claim — markers are already only exposed alongside
+  content the observer could fetch anonymously, and the evaluator's own
+  threat-model check agreed).
+Milestone 2 issues resolved (5 closed as shipped; 6, 8, 9, 10 closed as
+rejected). Follow-ups on milestone 3: issues 7 (XFF learned map, priority
+reduced), 12 (streaming echo channels), 13 (HMAC cookie), 14 (device
+pinning), 11 closed (ladder shipped).
