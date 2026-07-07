@@ -42,8 +42,9 @@
  *   JE_TRACE_USER / JE_TRACE_PASS          trace login (falls back to the e2e
  *   JF_ADMIN_USER / JF_ADMIN_PASS          suite's admin env, then je_arradmin)
  *
- * Each output is <outdir>/<scenario>-<timestamp>.json.gz (default outdir
- * e2e/perf/traces/, git-ignored).
+ * Each output is <outdir>/<scenario>-<timestamp>-<seq>.json.gz (default outdir
+ * e2e/perf/traces/, git-ignored). <seq> is the per-run invocation index, so
+ * repeating a scenario name never overwrites an earlier capture.
  */
 
 const fs = require('fs');
@@ -82,14 +83,27 @@ function parseArgs(argv) {
     };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
-        if (a === '--base') args.base = argv[++i];
-        else if (a === '--user') args.user = argv[++i];
-        else if (a === '--pass') args.pass = argv[++i];
-        else if (a === '--out') args.out = argv[++i];
-        else if (a === '--scenarios') args.scenarios.push(...String(argv[++i] || '').split(',').filter(Boolean));
-        else if (a === '--cpu') args.cpu = Number(argv[++i]) || 1;
-        else if (a === '--latency') args.latency = Number(argv[++i]) || 0;
-        else if (a === '--download') args.download = Number(argv[++i]) || 0;
+        // Consume the value for a value-taking flag, failing fast when it is
+        // missing (end of argv) or is actually the next flag — otherwise `--out`
+        // with no value crashes deep in path.join and `--latency` with no value
+        // silently starts the default full run.
+        const value = () => {
+            const v = argv[i + 1];
+            if (v === undefined || v.startsWith('--')) {
+                console.error(`FATAL: ${a} requires a value`);
+                process.exit(2);
+            }
+            i += 1;
+            return v;
+        };
+        if (a === '--base') args.base = value();
+        else if (a === '--user') args.user = value();
+        else if (a === '--pass') args.pass = value();
+        else if (a === '--out') args.out = value();
+        else if (a === '--scenarios') args.scenarios.push(...String(value()).split(',').filter(Boolean));
+        else if (a === '--cpu') args.cpu = Number(value()) || 1;
+        else if (a === '--latency') args.latency = Number(value()) || 0;
+        else if (a === '--download') args.download = Number(value()) || 0;
         else if (a === '--headed') args.headed = true;
         else if (a === '--list') args.list = true;
         else if (a === '--help' || a === '-h') { args.list = true; }
@@ -107,6 +121,13 @@ const round = (n, dp = 1) => (n === null || n === undefined ? null : Number(n.to
 /** Thrown by a scenario to skip itself (missing content etc.) without failing the run. */
 class SkipScenario extends Error {}
 const skip = (reason) => { throw new SkipScenario(reason); };
+
+/**
+ * Thrown by a cold (traced-boot) scenario when its reload bounces back to
+ * sign-in. The driver discards the (bounced) trace and retries the whole
+ * scenario from scratch, matching the retry login() does for non-cold scenarios.
+ */
+class BounceRetry extends Error {}
 
 // ── Login (mirrors e2e/fixtures/auth.ts) ───────────────────────────────────────
 
@@ -182,6 +203,23 @@ async function waitJEReady(page) {
         undefined,
         { timeout: 60000 }
     );
+}
+
+/**
+ * After a cold scenario's traced boot reload, confirm the session survived it.
+ * Returns true when the app bounced back to sign-in — the same clobbered-session
+ * race attemptLogin() detects and retries, except here the reload happened
+ * INSIDE the trace window, so the driver must discard that trace and retry the
+ * whole scenario rather than retry inside a trace it can no longer trust. JE
+ * initializes on the sign-in page too, so waitJEReady passing is not proof of an
+ * authenticated session — getCurrentUserId() is (mirrors attemptLogin/auth.ts).
+ */
+async function bouncedToSignIn(page) {
+    if (!(await hasStoredSession(page))) return true;
+    const authed = await page
+        .waitForFunction(() => !!window.ApiClient?.getCurrentUserId?.(), undefined, { timeout: 15000 })
+        .then(() => true, () => false);
+    return !authed;
 }
 
 // ── SPA navigation helpers (v12 router — docs/v12-platform.md §6) ──────────────
@@ -347,6 +385,10 @@ const SCENARIOS = {
         async run(page) {
             await page.reload({ waitUntil: 'domcontentloaded' });
             await waitJEReady(page);
+            // The boot reload lives inside the trace, so it can't lean on
+            // attemptLogin's retry — detect the clobbered-session bounce here and
+            // bubble it up so the driver discards this trace and retries.
+            if (await bouncedToSignIn(page)) throw new BounceRetry('cold boot bounced back to sign-in');
             await ensureHome(page);
             await wait(3000); // let boot-tail work land in the trace
         }
@@ -642,8 +684,34 @@ function printSummary(log, scenario, file, sizeBytes, summary, consoleErrors, no
 
 // ── Per-scenario driver ────────────────────────────────────────────────────────
 
-async function runScenario(name, args, timestamp, log) {
+/**
+ * Run one scenario, retrying from scratch when a cold (traced-boot) scenario's
+ * reload bounces back to sign-in. Cold scenarios own the boot reload INSIDE the
+ * trace, so a clobbered session can't be retried inside the trace — the whole
+ * scenario (new browser, re-login, re-trace) is retried up to the same attempt
+ * count login() uses. Non-cold scenarios get their retry inside attemptLogin, so
+ * they run once here.
+ */
+async function runScenario(name, args, seq, log) {
+    const maxAttempts = SCENARIOS[name].cold ? 3 : 1;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const result = await runScenarioOnce(name, args, seq, log);
+        if (result.status !== 'bounced') return result;
+        if (attempt < maxAttempts) {
+            log(`  cold boot bounced to sign-in — discarded trace, retrying scenario (attempt ${attempt}/${maxAttempts})`);
+        }
+    }
+    log(`--- ${name}: ERROR — cold boot kept bouncing to sign-in after ${maxAttempts} attempts`);
+    return { name, status: 'error', error: `cold boot kept bouncing to sign-in after ${maxAttempts} attempts` };
+}
+
+async function runScenarioOnce(name, args, seq, log) {
     const scenario = SCENARIOS[name];
+    // Timestamp is generated per invocation and paired with the per-run sequence
+    // index so repeating a scenario name (e.g. `details-to-details
+    // details-to-details`) never overwrites an earlier capture.
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+    const fileName = `${name}-${timestamp}-${String(seq).padStart(2, '0')}.json.gz`;
     const browser = await chromium.launch({ headless: !args.headed });
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
@@ -687,7 +755,7 @@ async function runScenario(name, args, timestamp, log) {
 
         // Write the trace BEFORE any analysis so an analysis error never loses it.
         fs.mkdirSync(args.out, { recursive: true });
-        outFile = path.join(args.out, `${name}-${timestamp}.json.gz`);
+        outFile = path.join(args.out, fileName);
         const gz = zlib.gzipSync(buffer);
         fs.writeFileSync(outFile, gz);
 
@@ -701,11 +769,17 @@ async function runScenario(name, args, timestamp, log) {
             return { name, status: 'ok-noanalysis', file: outFile, error: err.message };
         }
     } catch (err) {
+        // A cold-boot bounce is a retryable non-result: discard the (bounced)
+        // trace entirely and let runScenario re-run the scenario from scratch.
+        if (err instanceof BounceRetry) {
+            log(`--- ${name}: cold boot bounced to sign-in — discarding trace`);
+            return { name, status: 'bounced' };
+        }
         // If tracing had started, still try to salvage the buffer/file.
         if (buffer && !outFile) {
             try {
                 fs.mkdirSync(args.out, { recursive: true });
-                outFile = path.join(args.out, `${name}-${timestamp}.json.gz`);
+                outFile = path.join(args.out, fileName);
                 fs.writeFileSync(outFile, zlib.gzipSync(buffer));
             } catch { /* best effort */ }
         }
@@ -737,16 +811,17 @@ async function main() {
     const unknown = requested.filter((n) => !SCENARIOS[n]);
     if (unknown.length) { console.error(`unknown scenario(s): ${unknown.join(', ')}\ntry --list`); process.exit(2); }
 
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
     const log = (msg) => console.log(msg);
     log(`capture-traces @ ${args.base} as ${args.user} — ${requested.length} scenario(s)` +
         `${args.cpu > 1 ? `, CPU ${args.cpu}x` : ''}${args.latency ? `, +${args.latency}ms latency` : ''}`);
     log(`output → ${path.relative(process.cwd(), args.out)}/\n`);
 
     const results = [];
+    let seq = 0;
     for (const name of requested) {
+        seq += 1; // per-invocation index → unique filename even for a repeated name
         log(`### ${name}`);
-        results.push(await runScenario(name, args, timestamp, log));
+        results.push(await runScenario(name, args, seq, log));
         log('');
     }
 

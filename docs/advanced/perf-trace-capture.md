@@ -58,9 +58,17 @@ npm run perf:trace -- --list
 npm run perf:trace -- details-to-details --latency 300 --cpu 4
 ```
 
-Each output is written to `e2e/perf/traces/<scenario>-<timestamp>.json.gz`
-(git-ignored). The trace is written **before** analysis, so an analysis error
-never costs you the capture.
+Each output is written to `e2e/perf/traces/<scenario>-<timestamp>-<seq>.json.gz`
+(git-ignored), where `<seq>` is the per-run invocation index. That suffix means
+repeating a scenario name (`npm run perf:trace -- details-to-details
+details-to-details`) writes **two distinct** files instead of the second
+overwriting the first. The trace is written **before** analysis, so an analysis
+error never costs you the capture.
+
+Value-taking flags (`--out`, `--latency`, `--cpu`, `--download`, `--base`,
+`--user`, `--pass`, `--scenarios`) fail fast with a one-line error and a non-zero
+exit when their value is missing (end of args, or the next token is another
+flag) — rather than crashing or silently falling through to a default run.
 
 ### Flags
 
@@ -112,6 +120,14 @@ with a logged reason instead of failing the run.
 
 Each scenario is a fresh browser + login (trace capture is browser-global in
 Playwright, so isolating per scenario keeps the traces clean).
+
+`cold-load` is special: its boot reload happens **inside** the trace window, so
+it can't lean on the login helper's reload-retry. Instead, after the traced
+reload it checks for the same clobbered-session bounce (session gone / no
+`getCurrentUserId()`); on a bounce it **discards that trace and re-runs the whole
+scenario** — new browser, re-login, re-trace — up to 3 attempts, matching the
+login helper's attempt count. A trace is only kept once the boot lands
+authenticated.
 
 ## Slow-server emulation
 
