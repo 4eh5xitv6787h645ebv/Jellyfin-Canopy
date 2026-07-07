@@ -196,14 +196,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
 
         // ─── resolver tier ordering ───────────────────────────────────────────
 
-        private static SpoilerUserResolver NewResolver(SpoilerIdentityService identity)
+        private static SpoilerUserResolver NewResolver(SpoilerIdentityService markers)
         {
             var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "je-ident-" + Guid.NewGuid().ToString("N"));
             System.IO.Directory.CreateDirectory(dir);
             var mgr = new UserConfigurationManager(new StubAppPaths(dir), NullLogger<UserConfigurationManager>.Instance);
-            return new SpoilerUserResolver(
-                mgr, new CountingSessionManager(), new CountingLibraryManager(),
-                NullLogger<SpoilerUserResolver>.Instance, identity);
+            var identity = new RequestIdentityService(
+                new CountingSessionManager(), markers, NullLogger<RequestIdentityService>.Instance);
+            return new SpoilerUserResolver(mgr, new CountingLibraryManager(), NullLogger<SpoilerUserResolver>.Instance, identity);
         }
 
         [Fact]
@@ -232,6 +232,34 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
 
             // No sessions in CountingSessionManager either → empty candidate set.
             Assert.Empty(resolver.ResolveCandidateUserIds(ctx));
+        }
+
+        [Fact]
+        public void RequestIdentity_ReportsConfidenceTiers()
+        {
+            var user = new User("conf-user", "Prov", "PwProv");
+            var markers = NewService(user);
+            var identity = new RequestIdentityService(
+                new CountingSessionManager(), markers, NullLogger<RequestIdentityService>.Instance);
+
+            // Marker tier.
+            var ctx = new DefaultHttpContext();
+            ctx.Request.QueryString = new QueryString("?tag=orig-jeu" + markers.MintMarker(user.Id));
+            var viaMarker = identity.Resolve(ctx);
+            Assert.Equal(IdentityConfidence.Marker, viaMarker.Confidence);
+            Assert.Equal(new[] { user.Id }, viaMarker.Candidates);
+
+            // Authenticated tier beats the marker.
+            var principal = new ClaimsPrincipal(new ClaimsIdentity(
+                new[] { new Claim("Jellyfin-UserId", user.Id.ToString()) }, "TestAuth"));
+            var authedCtx = new DefaultHttpContext { User = principal };
+            authedCtx.Request.QueryString = ctx.Request.QueryString;
+            Assert.Equal(IdentityConfidence.Authenticated, identity.Resolve(authedCtx).Confidence);
+
+            // Nothing at all → None with no candidates.
+            var anon = identity.Resolve(new DefaultHttpContext());
+            Assert.Equal(IdentityConfidence.None, anon.Confidence);
+            Assert.Empty(anon.Candidates);
         }
 
         [Fact]

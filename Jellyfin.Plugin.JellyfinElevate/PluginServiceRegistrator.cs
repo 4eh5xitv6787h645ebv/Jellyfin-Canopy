@@ -141,6 +141,11 @@ namespace Jellyfin.Plugin.JellyfinElevate
             // first, then surviving DTOs are stripped, then image bytes rewritten.
             serviceCollection.AddSingleton<ImageBlurService>();
             serviceCollection.AddSingleton<SpoilerIdentityService>();
+            // The plugin-wide "who is making this request?" ladder
+            // (Services/Identity) — consumed by SpoilerUserResolver today and
+            // available to any future feature that needs per-user behavior on
+            // anonymous requests.
+            serviceCollection.AddSingleton<RequestIdentityService>();
             serviceCollection.AddSingleton<SpoilerIdentityTagFilter>();
             serviceCollection.AddSingleton<SpoilerUserResolver>();
             serviceCollection.AddSingleton<SpoilerBlurImageFilter>();
