@@ -17,6 +17,9 @@ public sealed class StubUserManager : IUserManager
 
     public StubUserManager(params User[] users) => _users = users.ToList();
 
+    /// <summary>Mutates the fixed user set — used by identity-cache invalidation tests.</summary>
+    public void AddUser(User user) => _users.Add(user);
+
     public event EventHandler<GenericEventArgs<User>> OnUserUpdated { add { } remove { } }
 
     public IEnumerable<User> GetUsers() => _users;

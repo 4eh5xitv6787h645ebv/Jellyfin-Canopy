@@ -52,7 +52,13 @@ public sealed class CountingSessionManager : ISessionManager
 
     // ---- Everything below is an unused NotImplemented stub (per the repo convention). ----
 
-    public IEnumerable<SessionInfo> Sessions => throw new NotImplementedException();
+    // Settable for identity-ladder tests; retains the throwing stub
+    // convention until a test opts in via SetSessions.
+    private List<SessionInfo>? _sessions;
+
+    public void SetSessions(params SessionInfo[] sessions) => _sessions = sessions.ToList();
+
+    public IEnumerable<SessionInfo> Sessions => _sessions ?? throw new NotImplementedException();
 
     public Task<SessionInfo> LogSessionActivity(string appName, string appVersion, string deviceId, string deviceName, string remoteEndPoint, User user) => throw new NotImplementedException();
 
