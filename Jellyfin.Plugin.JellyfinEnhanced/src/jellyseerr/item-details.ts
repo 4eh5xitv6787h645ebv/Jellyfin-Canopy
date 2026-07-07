@@ -3,6 +3,7 @@
 // Also adds a "Request More" button next to the Seasons section heading on
 // Series detail pages when the show has unrequested seasons in Seerr.
 import { JE } from '../globals';
+import { getItemIdFromUrl, getVisibleDetailsPage } from '../core/details-view';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -89,10 +90,15 @@ let detailReadySeq = 0;
  * (R3) until the anchor mounts or the caller's AbortSignal fires — cleanup()
  * aborts both controllers on every navigation, so the subscription's lifetime
  * is exactly the page view.
+ * @param {string} itemId - The item the caller is rendering sections for; the
+ * wait only resolves a page that was SHOWN for this item. During a
+ * details→details push the outgoing page is still visible (with its own
+ * #similarCollapsible) when this is first called — resolving it inserted the
+ * new item's sections into a view about to be hidden.
  * @param {AbortSignal} [signal] - Abort signal (aborted on navigation).
  * @returns {Promise<HTMLElement|null>}
  */
-function waitForDetailPageReady(signal?: AbortSignal): Promise<any> {
+function waitForDetailPageReady(itemId: string, signal?: AbortSignal): Promise<any> {
     return new Promise((resolve) => {
         // Check for abort
         if (signal?.aborted) {
@@ -101,8 +107,9 @@ function waitForDetailPageReady(signal?: AbortSignal): Promise<any> {
         }
 
         const checkPage = () => {
-            const activePage = document.querySelector('.libraryPage:not(.hide)');
-            if (!activePage) return null;
+            const resolved = getVisibleDetailsPage();
+            if (!resolved || resolved.itemId !== itemId) return null;
+            const activePage = resolved.page;
 
             // Jellyfin 12 dropped the .detailPageContent wrapper; fall back to
             // .detailPageSecondaryContainer, then the page itself. #similarCollapsible
@@ -337,7 +344,7 @@ async function renderSimilarAndRecommended(itemId: string) {
         // Wait for page to be ready in parallel with data fetch
         const [similarData, recommendedData, pageReady] = await Promise.all([
             ...promises,
-            waitForDetailPageReady(signal)
+            waitForDetailPageReady(itemId, signal)
         ]);
 
         if (signal.aborted) return;
@@ -517,13 +524,19 @@ function pollUntil(predicate: () => any, opts: any = {}): Promise<any> {
  * (span text set) mutations, which the project's shared body observer
  * does not dispatch on.
  *
+ * @param {string} itemId - The series the button is for; only the page shown
+ * for this item can match (see waitForDetailPageReady).
  * @param {AbortSignal} [signal]
  * @returns {Promise<HTMLElement|null>}
  */
-function waitForSeasonsHeading(signal?: AbortSignal): Promise<any> {
+function waitForSeasonsHeading(itemId: string, signal?: AbortSignal): Promise<any> {
     return pollUntil(() => {
-        const activePage = document.querySelector('.libraryPage:not(.hide)');
-        if (!activePage) return null;
+        // Only the page shown for THIS item — on a series→series push the
+        // outgoing page's seasons heading is still visible and matching it
+        // would hang the button on a view about to be hidden.
+        const resolved = getVisibleDetailsPage();
+        if (!resolved || resolved.itemId !== itemId) return null;
+        const activePage = resolved.page;
         const collapsible = activePage.querySelector('#listChildrenCollapsible');
         if (!collapsible || collapsible.classList.contains('hide')) return null;
         const heading = collapsible.querySelector('h2.sectionTitle.sectionTitle-cards');
@@ -653,7 +666,7 @@ async function renderSeriesRequestMoreButton(itemId: string) {
         // it at section-render time makes the (visually identical) layout the
         // heading's first painted state, and the later button append displaces
         // nothing but trailing free space.
-        const headingPromise = waitForSeasonsHeading(signal);
+        const headingPromise = waitForSeasonsHeading(itemId, signal);
         void headingPromise.then((h: any) => {
             if (h && !signal.aborted) h.classList.add('je-series-request-more-heading');
         });
@@ -717,24 +730,24 @@ async function renderSeriesRequestMoreButton(itemId: string) {
  * Handles item details page navigation
  */
 function handleItemDetailsPage() {
-    // Get item ID from URL
-    const hash = window.location.hash;
-    if (!hash.includes('/details?id=')) {
+    // Details route on either layout: the legacy layout keeps it in the hash
+    // (#/details?id=X), the modern layout in the path + search
+    // (/web/details?id=X with an empty hash). The old hash-only check meant
+    // these sections could never inject on the modern layout at all.
+    const onDetailsRoute = window.location.hash.includes('/details?')
+        || window.location.pathname.endsWith('/details');
+    if (!onDetailsRoute) {
         return;
     }
 
-    try {
-        const itemId = new URLSearchParams(hash.split('?')[1]).get('id');
-        if (itemId) {
-            // Use requestAnimationFrame instead of fixed timeout
-            // This ensures we're in sync with the rendering cycle
-            requestAnimationFrame(() => {
-                void renderSimilarAndRecommended(itemId);
-                void renderSeriesRequestMoreButton(itemId);
-            });
-        }
-    } catch (error: any) {
-        console.error(`${logPrefix} Error parsing item ID from URL:`, error);
+    const itemId = getItemIdFromUrl();
+    if (itemId) {
+        // Use requestAnimationFrame instead of fixed timeout
+        // This ensures we're in sync with the rendering cycle
+        requestAnimationFrame(() => {
+            void renderSimilarAndRecommended(itemId);
+            void renderSeriesRequestMoreButton(itemId);
+        });
     }
 }
 

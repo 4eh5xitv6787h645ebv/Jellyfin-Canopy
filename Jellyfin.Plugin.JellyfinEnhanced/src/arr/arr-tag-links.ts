@@ -3,6 +3,7 @@
 // page. Public surface (frozen): JE.initializeArrTagLinksScript (called by
 // js/plugin.js Stage 6).
 
+import { isDetailsPageVisible } from '../core/details-view';
 import { onBodyMutation } from '../core/dom-observer';
 import { register as registerLifecycle } from '../core/lifecycle';
 import { onNavigate, onViewPage } from '../core/navigation';
@@ -201,17 +202,20 @@ JE.initializeArrTagLinksScript = async function () {
     // attributes + attributeFilter:['class'] — the filter opted it out of the
     // multiplexer and made it fire on every hover/focus/class write on EVERY
     // page. Structural changes (the external-links section mounting) now
-    // arrive via the shared multiplexed body observer behind a cheap O(1)
+    // arrive via the shared multiplexed body observer behind a cheap
     // details-page gate, and the cached-page re-show (a class flip with no
     // structural mutation — the only thing the attribute filter actually
-    // caught) is covered by the navigation/viewshow probes below.
+    // caught) is covered by the navigation/viewshow probes below. The gate
+    // must scope to the VISIBLE view, never getElementById: up to three
+    // cached #itemDetailPage duplicates coexist (v12-platform.md §3) and
+    // getElementById returns the lowest slot — usually an old hidden one —
+    // which left this gate permanently dead after two details visits.
     const lifecycle = registerLifecycle('arr-tag-links');
     lifecycle.track(onBodyMutation('arr-tag-links', () => {
         if (!JE?.pluginConfig?.ArrTagsShowAsLinks) {
             return;
         }
-        const page = document.getElementById('itemDetailPage');
-        if (!page || page.classList.contains('hide')) return;
+        if (!isDetailsPageVisible()) return;
 
         // Debounce to avoid excessive processing on rapid DOM changes
         if (debounceTimer) {

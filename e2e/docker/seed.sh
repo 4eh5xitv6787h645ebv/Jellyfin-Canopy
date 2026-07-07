@@ -199,6 +199,8 @@ PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration" \
         | .RandomButtonEnabled = true
         | .HiddenContentEnabled = true
         | .SpoilerBlurEnabled = true
+        | .ShowFileSizes = true
+        | .ShowWatchProgress = true
         | (if $tmdb != "" then .TMDB_API_KEY = $tmdb else . end)
         | (if ($seerrUrl != "" and $seerrKey != "")
              then .JellyseerrUrls = $seerrUrl

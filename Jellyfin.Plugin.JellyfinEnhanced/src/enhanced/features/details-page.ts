@@ -6,6 +6,7 @@
 // identical; the eager JE.internals.features destructure is now real imports.)
 
 import { JE } from '../../globals';
+import { getVisibleDetailsPage, isDetailsPageVisible } from '../../core/details-view';
 import { onBodyMutation } from '../../core/dom-observer';
 import { onNavigate, onViewPage } from '../../core/navigation';
 import { debounce, getItemCached } from '../helpers';
@@ -238,15 +239,21 @@ function addHideContentButton(itemId: string, visiblePage: Element): void {
 }
 
 const handleItemDetails = debounce(() => {
-    const visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
-    if (!visiblePage) return;
+    // Resolve the visible details view ONLY when it belongs to the current
+    // URL's item. During a details→details push the outgoing page is still
+    // the visible one when navigation callbacks fire — injecting there put
+    // the NEW item's chips into a view about to be hidden (and left the new
+    // page bare). getVisibleDetailsPage returns null for that window; the
+    // viewshow probe / body-mutation probes re-run this once the right page
+    // is up.
+    const resolved = getVisibleDetailsPage();
+    if (!resolved) return;
+    const { page: visiblePage, itemId } = resolved;
 
     const container = visiblePage.querySelector<HTMLElement>('.itemMiscInfo.itemMiscInfo-primary');
     if (!container) return;
 
     try {
-        const itemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
-        if (!itemId) return;
 
         // Reset cache when navigating to a new item
         if (lastDetailsItemId !== itemId) {
@@ -341,13 +348,18 @@ const handleItemDetails = debounce(() => {
 // PERF(R3): this used to be a dedicated body-wide MutationObserver with
 // attributes:['class','style'], firing on every hover/focus/style write on
 // EVERY page. Structural changes now arrive via the shared multiplexed body
-// observer behind a cheap O(1) details-page gate, and the cached-page re-show
+// observer behind a cheap details-page gate, and the cached-page re-show
 // (a class flip with no structural mutation — the only thing the attribute
 // filter actually caught) is covered by the navigation/viewshow probes below.
 // handleItemDetails is debounced and re-validates page visibility itself.
+// The gate MUST scope to the visible view: up to three cached
+// `#itemDetailPage` elements coexist (v12-platform.md §3), and
+// getElementById returned whichever sat in the lowest slot — usually an old
+// HIDDEN one — so this gate went permanently dead after two details visits
+// and the wipe-recovery re-inject pass (host renderMiscInfo innerHTML-wipes
+// the chips when item data arrives) never ran.
 onBodyMutation('item-details-info', () => {
-    const page = document.getElementById('itemDetailPage');
-    if (!page || page.classList.contains('hide')) return;
+    if (!isDetailsPageVisible()) return;
     handleItemDetails();
 });
 onNavigate(() => { handleItemDetails(); });

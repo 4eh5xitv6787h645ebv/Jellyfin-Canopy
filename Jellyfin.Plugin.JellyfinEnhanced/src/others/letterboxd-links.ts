@@ -2,6 +2,7 @@
 
 import { JE as JEBase } from '../globals';
 import { assetUrl } from '../core/asset-urls';
+import { isDetailsPageVisible } from '../core/details-view';
 import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate, onViewPage } from '../core/navigation';
 import type { JELegacyHelpers, PluginConfig } from '../types/je';
@@ -238,19 +239,22 @@ JE.initializeLetterboxdLinksScript = async function () {
     // attributeFilter:['class'] — the filter opted it out of the multiplexer
     // and made it fire on every hover/focus/class write on EVERY page.
     // Structural changes (the external-links section mounting) now arrive via
-    // the shared multiplexed body observer behind a cheap O(1) details-page
+    // the shared multiplexed body observer behind a cheap details-page
     // gate, and the cached-page re-show (a class flip with no structural
     // mutation — the only thing the attribute filter actually caught) is
     // covered by the navigation/viewshow probes below. addLetterboxdLinks
-    // re-validates page visibility and de-dupes per item itself.
+    // re-validates page visibility and de-dupes per item itself. The gate
+    // must scope to the VISIBLE view, never getElementById: up to three
+    // cached #itemDetailPage duplicates coexist (v12-platform.md §3) and
+    // getElementById returns the lowest slot — usually an old hidden one —
+    // which left this gate permanently dead after two details visits.
     const letterboxdSubscription = onBodyMutation('letterboxd-links', () => {
         if (!JE?.pluginConfig?.LetterboxdEnabled) {
             letterboxdSubscription.unsubscribe();
             console.log(`${logPrefix} Stopped - feature disabled`);
             return;
         }
-        const page = document.getElementById('itemDetailPage');
-        if (!page || page.classList.contains('hide')) return;
+        if (!isDetailsPageVisible()) return;
         scheduleLetterboxdLinks();
     });
     onNavigate(() => {
