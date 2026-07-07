@@ -371,8 +371,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             // exactly one candidate, so this is identical to a direct lookup.
             // Resolution lives in SpoilerUserResolver so both filters share it.
             var candidates = _resolver.ResolveCandidateUserIds(context.HttpContext);
-            Guid effectiveUserId = Guid.Empty;
-            UserSpoilerBlur? userState = null;
+
+            // Collect the IN-SCOPE candidates (spoiler state + Jellyfin user).
+            // Hot path: the authenticated/cookie path yields exactly one user,
+            // so this is a single-element list with one state read. Only a
+            // shared anonymous IP produces several. A candidate whose state
+            // doesn't cover this item is skipped — it can't (and mustn't) force
+            // a blur. A collection's own BoxSet art is never in scope (it's the
+            // shortcut entry point, not the spoiler), so it passes through here.
+            List<(UserSpoilerBlur State, JUser User)>? inScope = null;
             foreach (var candidate in candidates)
             {
                 if (candidate == Guid.Empty) continue;
@@ -383,197 +390,51 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 {
                     continue; // this candidate protects nothing
                 }
-                if (ItemInSpoilerScope(candidateState, item))
-                {
-                    effectiveUserId = candidate;
-                    userState = candidateState;
-                    break;
-                }
+                if (!ItemInSpoilerScope(candidateState, item)) continue;
+                var candidateUser = _userManager.GetUserById(candidate);
+                if (candidateUser == null) continue;
+                (inScope ??= new List<(UserSpoilerBlur, JUser)>()).Add((candidateState, candidateUser));
             }
-            if (userState == null)
+            if (inScope == null)
             {
                 await next().ConfigureAwait(false);
                 return;
             }
 
-            var jUser = _userManager.GetUserById(effectiveUserId);
-            if (jUser == null)
+            // F1 fail-closed aggregation. On a shared anonymous IP several
+            // candidates may guard this item; evaluate the per-user pass-through
+            // decision (watched / keep-posters / progressive reveal / S<=1
+            // exemption) for EACH and take the MOST RESTRICTIVE outcome: pass
+            // through ONLY if EVERY in-scope candidate would pass through; if
+            // ANY would blur, blur. This prevents a watched user from unblurring
+            // an unwatched user's artwork when both share one IP. Blur
+            // parameters (mode/intensity) are admin-level, so identical for all.
+            var decisions = new bool[inScope.Count];
+            for (var i = 0; i < inScope.Count; i++)
             {
+                decisions[i] = await CandidatePassesThroughAsync(
+                    context, pluginConfig, item, imageType, isTrickplay,
+                    inScope[i].State, inScope[i].User).ConfigureAwait(false);
+            }
+            if (!ShouldBlur(decisions))
+            {
+                // Every in-scope candidate passes through. Force `no-store`
+                // (BEFORE awaiting next(), so streaming FileStreamResult paths
+                // that flush headers inside next() still get the override) so a
+                // future toggle / watched-state flip re-evaluates on next fetch.
+                RegisterNoStoreOnStarting(context.HttpContext, imageType);
                 await next().ConfigureAwait(false);
                 return;
             }
 
-            // Collections are a SHORTCUT for "blur all movies in this
-            // collection" — the collection's own art and Overview pass
-            // through clear (it's the entry point the user just clicked,
-            // same model as Series). The blur is applied per-movie based
-            // on each movie's individual watched state.
-            if (item is MediaBrowser.Controller.Entities.Movies.BoxSet)
+            // At least one candidate blurs. Keep a BLURRING candidate's state
+            // for stock-card parent-art selection (a collection-opted movie
+            // picks art from that specific user's Collections). First blurring
+            // candidate wins.
+            UserSpoilerBlur userState = inScope[0].State;
+            for (var i = 0; i < inScope.Count; i++)
             {
-                await next().ConfigureAwait(false);
-                return;
-            }
-            else if (item is MediaBrowser.Controller.Entities.Movies.Movie movie)
-            {
-                if (!_resolver.IsMovieInSpoilerScope(userState, movie.Id))
-                {
-                    await next().ConfigureAwait(false);
-                    return;
-                }
-                var movieUd = _userDataManager.GetUserData(jUser, movie);
-                if (movieUd?.Played == true)
-                {
-                    RegisterNoStoreOnStarting(context.HttpContext);
-                    await next().ConfigureAwait(false);
-                    return;
-                }
-                // Admin opt-out for movie posters: when SpoilerKeepMoviePosters
-                // is on, the Primary and Thumb image types (the movie's
-                // poster surface) pass through unblurred. Chapter thumbs,
-                // Screenshots, and (when SpoilerBlurArtwork is on)
-                // Backdrop / Art continue to follow the protection logic.
-                if (pluginConfig.SpoilerKeepMoviePosters
-                    && (string.Equals(imageType, "Primary", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(imageType, "Thumb", StringComparison.OrdinalIgnoreCase)))
-                {
-                    RegisterNoStoreOnStarting(context.HttpContext, imageType);
-                    await next().ConfigureAwait(false);
-                    return;
-                }
-                // Progressive chapter ("Scenes" rail) blur for unwatched
-                // movies in the spoiler list: chapters whose
-                // StartPositionTicks are BEFORE the user's resume point
-                // pass through unblurred (they've already seen those
-                // scenes); chapters at-or-after the resume point blur.
-                if (string.Equals(imageType, "Chapter", StringComparison.OrdinalIgnoreCase)
-                    && TryGetImageIndex(context, out var chapterIdx))
-                {
-                    long? watchedThroughTicks = null;
-                    if (movieUd != null)
-                    {
-                        if (movieUd.Played) watchedThroughTicks = long.MaxValue;
-                        else if (movieUd.PlaybackPositionTicks > 0) watchedThroughTicks = movieUd.PlaybackPositionTicks;
-                    }
-                    if (watchedThroughTicks.HasValue)
-                    {
-                        try
-                        {
-                            var chapter = _chapterManager.GetChapter(movie.Id, chapterIdx);
-                            if (chapter != null
-                                && chapter.StartPositionTicks < watchedThroughTicks.Value)
-                            {
-                                // Pre-resume-point scene — pass through.
-                                // Short-cache (30s) so timeline-hover scrubbing
-                                // doesn't round-trip every hover.
-                                RegisterNoStoreOnStarting(context.HttpContext, imageType);
-                                await next().ConfigureAwait(false);
-                                return;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            // Lookup failure — fail-CLOSED (blur all chapters
-                            // by falling through). Rate-limited warn so a
-                            // future Jellyfin API change is observable.
-                            _resolver.WarnRateLimited(
-                                "image-chapter-lookup:" + ex.GetType().FullName,
-                                $"Spoiler Guard: chapter lookup failed for movie {movie.Id} idx {chapterIdx}: {ex.Message}");
-                        }
-                    }
-                }
-                // Progressive trickplay reveal, mirroring the chapter reveal
-                // above: a scrubbing-preview tile SHEET whose entire timeline
-                // range is before the user's resume point holds only
-                // already-watched scenes, so pass it through unblurred. The
-                // played case is handled earlier, so here the movie is
-                // partially watched (PlaybackPositionTicks > 0). Tiles that
-                // straddle or lead the resume point still blur (fail-closed).
-                if (isTrickplay
-                    && movieUd != null && !movieUd.Played && movieUd.PlaybackPositionTicks > 0
-                    && await TrickplayTileFullyWatchedAsync(context, movie.Id, movieUd.PlaybackPositionTicks).ConfigureAwait(false))
-                {
-                    RegisterNoStoreOnStarting(context.HttpContext, imageType);
-                    await next().ConfigureAwait(false);
-                    return;
-                }
-            }
-            else
-            {
-                // Episode / Season path: spoiler-list keyed by parent series.
-                Guid seriesId;
-                switch (item)
-                {
-                    case Episode ep:
-                        seriesId = ep.SeriesId;
-                        break;
-                    case Season seasonItem:
-                        seriesId = seasonItem.SeriesId;
-                        break;
-                    default:
-                        await next().ConfigureAwait(false);
-                        return;
-                }
-
-                if (seriesId == Guid.Empty
-                    || !userState.Series.ContainsKey(seriesId.ToString("N")))
-                {
-                    await next().ConfigureAwait(false);
-                    return;
-                }
-
-                if (item is Episode episode)
-                {
-                    var userData = _userDataManager.GetUserData(jUser, episode);
-                    if (userData?.Played == true)
-                    {
-                        // Pass-through, but force `no-store` so a watched
-                        // episode's image isn't cached permanently in the
-                        // user's browser. If the user later marks the
-                        // episode unwatched again, the next fetch must
-                        // re-evaluate through this filter.
-                        //
-                        // Register on Response.OnStarting BEFORE awaiting
-                        // next(). For streaming FileStreamResult paths the
-                        // response headers can be flushed inside next()'s
-                        // execution, so a post-next() header write would
-                        // be a no-op.
-                        RegisterNoStoreOnStarting(context.HttpContext);
-                        await next().ConfigureAwait(false);
-                        return;
-                    }
-                    // Progressive trickplay reveal for a partially-watched
-                    // episode: tile sheets whose whole range is before the
-                    // resume point are scenes already seen — pass them through.
-                    if (isTrickplay
-                        && userData != null && userData.PlaybackPositionTicks > 0
-                        && await TrickplayTileFullyWatchedAsync(context, episode.Id, userData.PlaybackPositionTicks).ConfigureAwait(false))
-                    {
-                        RegisterNoStoreOnStarting(context.HttpContext);
-                        await next().ConfigureAwait(false);
-                        return;
-                    }
-                }
-                else
-                {
-                    // Season path: blur if S2+ and the user has watched zero
-                    // episodes from this season; pass-through otherwise.
-                    var season = (Season)item;
-                    var seasonNum = season.IndexNumber.GetValueOrDefault(int.MaxValue);
-                    // Always show Season 1 (and Specials S0) so the user has some
-                    // entry point. Future seasons get blurred until at least one
-                    // episode is watched.
-                    if (seasonNum <= 1)
-                    {
-                        await next().ConfigureAwait(false);
-                        return;
-                    }
-                    if (HasWatchedAnyEpisodeInSeason(jUser, season))
-                    {
-                        RegisterNoStoreOnStarting(context.HttpContext);
-                        await next().ConfigureAwait(false);
-                        return;
-                    }
-                }
+                if (!decisions[i]) { userState = inScope[i].State; break; }
             }
 
             // Artwork tier with the toggle OFF — pass through the original
@@ -927,6 +788,148 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
         }
 
+        // F1 fail-closed aggregation over the per-candidate decisions: pass
+        // through (return false) ONLY when EVERY in-scope candidate would pass
+        // through; blur (return true) if ANY candidate would blur. An empty set
+        // means nothing to blur. Pure + internal so it can be unit-tested.
+        internal static bool ShouldBlur(IReadOnlyList<bool> candidatePassesThrough)
+        {
+            for (var i = 0; i < candidatePassesThrough.Count; i++)
+            {
+                if (!candidatePassesThrough[i]) return true;
+            }
+            return false;
+        }
+
+        // Per-candidate pass-through decision. PURE with respect to the
+        // response — writes no headers, does not call next() — so the caller can
+        // evaluate it for every in-scope candidate and aggregate (see F1 above).
+        // Returns true = this candidate would PASS THROUGH (no blur); false =
+        // this candidate would BLUR. The item is guaranteed in this candidate's
+        // scope (ItemInSpoilerScope filtered the set), but the scope re-checks
+        // are kept as cheap guards. Mirrors the former inline per-branch logic;
+        // pass-through variants (watched, keep-posters, progressive chapter /
+        // trickplay reveal, S<=1 exemption) each return true for THIS candidate.
+        private async Task<bool> CandidatePassesThroughAsync(
+            ActionExecutingContext context,
+            Configuration.PluginConfiguration pluginConfig,
+            MediaBrowser.Controller.Entities.BaseItem item,
+            string imageType,
+            bool isTrickplay,
+            UserSpoilerBlur userState,
+            JUser jUser)
+        {
+            if (item is MediaBrowser.Controller.Entities.Movies.Movie movie)
+            {
+                // Not in THIS candidate's movie scope → nothing to blur for them.
+                if (!_resolver.IsMovieInSpoilerScope(userState, movie.Id)) return true;
+
+                var movieUd = _userDataManager.GetUserData(jUser, movie);
+                if (movieUd?.Played == true) return true;
+
+                // Admin opt-out for movie posters: when SpoilerKeepMoviePosters
+                // is on, the Primary/Thumb poster surface passes through.
+                // Chapter thumbs, Screenshots, and (when SpoilerBlurArtwork is
+                // on) Backdrop/Art continue to follow the protection logic.
+                if (pluginConfig.SpoilerKeepMoviePosters
+                    && (string.Equals(imageType, "Primary", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(imageType, "Thumb", StringComparison.OrdinalIgnoreCase)))
+                {
+                    return true;
+                }
+
+                // Progressive chapter ("Scenes" rail) reveal: chapters whose
+                // StartPositionTicks are BEFORE the user's resume point are
+                // already-seen scenes and pass through; at-or-after blur.
+                if (string.Equals(imageType, "Chapter", StringComparison.OrdinalIgnoreCase)
+                    && TryGetImageIndex(context, out var chapterIdx))
+                {
+                    long? watchedThroughTicks = null;
+                    if (movieUd != null)
+                    {
+                        if (movieUd.Played) watchedThroughTicks = long.MaxValue;
+                        else if (movieUd.PlaybackPositionTicks > 0) watchedThroughTicks = movieUd.PlaybackPositionTicks;
+                    }
+                    if (watchedThroughTicks.HasValue)
+                    {
+                        try
+                        {
+                            var chapter = _chapterManager.GetChapter(movie.Id, chapterIdx);
+                            if (chapter != null && chapter.StartPositionTicks < watchedThroughTicks.Value)
+                            {
+                                return true; // pre-resume-point scene — pass through
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            // Lookup failure — fail CLOSED (blur) by falling
+                            // through. Rate-limited warn so a future Jellyfin
+                            // API change is observable.
+                            _resolver.WarnRateLimited(
+                                "image-chapter-lookup:" + ex.GetType().FullName,
+                                $"Spoiler Guard: chapter lookup failed for movie {movie.Id} idx {chapterIdx}: {ex.Message}");
+                        }
+                    }
+                }
+
+                // Progressive trickplay reveal: a scrubbing-preview tile SHEET
+                // whose entire timeline range is before the resume point holds
+                // only already-watched scenes. Played is handled above, so here
+                // the movie is partially watched. Straddling/ahead tiles blur.
+                if (isTrickplay
+                    && movieUd != null && !movieUd.Played && movieUd.PlaybackPositionTicks > 0
+                    && await TrickplayTileFullyWatchedAsync(context, movie.Id, movieUd.PlaybackPositionTicks).ConfigureAwait(false))
+                {
+                    return true;
+                }
+
+                return false; // blur
+            }
+
+            // Episode / Season path: spoiler-list keyed by parent series.
+            Guid seriesId;
+            switch (item)
+            {
+                case Episode ep:
+                    seriesId = ep.SeriesId;
+                    break;
+                case Season seasonItem:
+                    seriesId = seasonItem.SeriesId;
+                    break;
+                default:
+                    return true; // unknown type — not protected here
+            }
+
+            if (seriesId == Guid.Empty
+                || !userState.Series.ContainsKey(seriesId.ToString("N")))
+            {
+                return true; // not in this candidate's series scope
+            }
+
+            if (item is Episode episode)
+            {
+                var userData = _userDataManager.GetUserData(jUser, episode);
+                if (userData?.Played == true) return true;
+                // Progressive trickplay reveal for a partially-watched episode.
+                if (isTrickplay
+                    && userData != null && userData.PlaybackPositionTicks > 0
+                    && await TrickplayTileFullyWatchedAsync(context, episode.Id, userData.PlaybackPositionTicks).ConfigureAwait(false))
+                {
+                    return true;
+                }
+                return false; // blur
+            }
+
+            // Season: blur if S2+ and zero episodes watched; pass-through
+            // otherwise. Always show Season 1 (and Specials S0) as an entry
+            // point.
+            var season = (Season)item;
+            var seasonNum = season.IndexNumber.GetValueOrDefault(int.MaxValue);
+            if (seasonNum <= 1) return true;
+            if (HasWatchedAnyEpisodeInSeason(jUser, season)) return true;
+            return false; // blur
+        }
+
         // Per-(user, season) "any episode watched?" probe with a short TTL
         // cache. Fail-CLOSED (blur) on any determination failure — the user
         // opted into spoiler protection for this series, so blur on
@@ -1039,8 +1042,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             var (originalBytes, _) = await ExtractBytesAsync(executed.Result).ConfigureAwait(false);
             if (originalBytes == null || originalBytes.Length == 0)
             {
-                MaybeWarnShapeMismatch(executed.Result);
-                ApplyNoStoreToResponse(executed.HttpContext);
+                FailClosedOnEmptyExtraction(executed, imageType);
                 return;
             }
 
@@ -1190,8 +1192,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             var (originalBytes, _) = await ExtractBytesAsync(executed.Result).ConfigureAwait(false);
             if (originalBytes == null || originalBytes.Length == 0)
             {
-                MaybeWarnShapeMismatch(executed.Result);
-                ApplyNoStoreToResponse(executed.HttpContext);
+                FailClosedOnEmptyExtraction(executed, imageType);
                 return;
             }
 
@@ -1256,7 +1257,72 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
         }
 
-        private void MaybeWarnShapeMismatch(IActionResult result)
+        // F2 fail-closed on empty extraction. ExtractBytesAsync returned no
+        // bytes. Two very different situations produce that:
+        //   • A RECOGNIZED no-content result — an empty file result (null
+        //     stream / missing path / empty contents), a status-only result
+        //     (204/404/5xx), or an error ObjectResult. These carry no image
+        //     payload, so letting MVC write them is safe: pass through + no-store.
+        //   • An UNRECOGNIZED result shape (e.g. a Jellyfin upgrade changed the
+        //     image controller's return type to something ExtractBytesAsync
+        //     doesn't decode). We CANNOT prove it is empty, so a content-bearing
+        //     unknown shape would LEAK the spoiler bytes. Fail CLOSED: replace
+        //     the body with the hardcoded fallback JPEG. Keep the rate-limited
+        //     shape warn so the new shape is observable.
+        private void FailClosedOnEmptyExtraction(ActionExecutedContext executed, string imageType)
+        {
+            if (IsRecognizedNoContentResult(executed.Result))
+            {
+                ApplyNoStoreToResponse(executed.HttpContext);
+                return;
+            }
+
+            MaybeWarnShapeMismatch(executed.Result);
+            if (!executed.HttpContext.Response.HasStarted)
+            {
+                executed.Result = new FileContentResult(_blurService.HardcodedFallbackJpeg, "image/jpeg");
+                ApplyNoStoreToResponse(executed.HttpContext);
+                return;
+            }
+
+            // Headers already flushed — the body is on its way out and we can no
+            // longer swap it. Surface it (rate-limited) so this observably-unsafe
+            // path isn't silent.
+            _resolver.WarnRateLimited(
+                "unrecognized-shape-started:" + (executed.Result?.GetType().FullName ?? "(null)"),
+                "Spoiler Guard: unrecognized image result shape after Response.HasStarted=true — could not fail-closed replace the body. Likely a Jellyfin upgrade changed the image controller's return type.");
+        }
+
+        // True when `result` is a recognized shape that provably carries NO
+        // image payload (so passing it through leaks nothing). Anything else is
+        // treated as content-bearing-until-proven-otherwise → fail closed.
+        // Pure + internal for unit testing (F2).
+        internal static bool IsRecognizedNoContentResult(IActionResult? result)
+        {
+            switch (result)
+            {
+                case null:
+                    return true; // nothing to write
+                case FileResult:
+                    // Recognized file shape (Content/Stream/Physical/Virtual)
+                    // that yielded no bytes → an empty body, no leak.
+                    return true;
+                case EmptyResult:
+                    return true;
+                case StatusCodeResult:
+                    // Status-only: NotFoundResult, NoContentResult, 500, ... — no payload.
+                    return true;
+                case Microsoft.AspNetCore.Mvc.Infrastructure.IStatusCodeActionResult sc
+                    when sc.StatusCode is int code && code >= 400 && code <= 599:
+                    // e.g. NotFoundObjectResult / ObjectResult carrying an ERROR
+                    // body (not spoiler image bytes).
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private void MaybeWarnShapeMismatch(IActionResult? result)
         {
             var key = result?.GetType().FullName ?? "(null)";
             var now = DateTime.UtcNow;

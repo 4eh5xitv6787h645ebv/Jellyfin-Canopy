@@ -34,6 +34,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         private readonly UserConfigurationManager _userConfigurationManager;
         private readonly ILibraryManager _libraryManager;
         private readonly SpoilerPendingService _pendingService;
+        private readonly SpoilerUserResolver _resolver;
+        private readonly IUserDataManager _userDataManager;
 
         public SpoilerGuardController(
             IHttpClientFactory httpClientFactory,
@@ -43,12 +45,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             IPluginConfigProvider configProvider,
             UserConfigurationManager userConfigurationManager,
             ILibraryManager libraryManager,
-            SpoilerPendingService pendingService)
+            SpoilerPendingService pendingService,
+            SpoilerUserResolver resolver,
+            IUserDataManager userDataManager)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _userConfigurationManager = userConfigurationManager;
             _libraryManager = libraryManager;
             _pendingService = pendingService;
+            _resolver = resolver;
+            _userDataManager = userDataManager;
         }
 
         private const string SpoilerFileName = "spoilerblur.json";
@@ -160,6 +166,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
 
                     _userConfigurationManager.SaveUserConfiguration(authorizedUserId, SpoilerFileName, userConfiguration);
                 }
+
+                // Drop the cross-request state cache so the image/strip filters
+                // re-read the new state immediately (F7).
+                SpoilerUserResolver.InvalidateUser(authorizedUserId);
 
                 // Reconcile the promoter's fast-path gate with the new PendingTmdb
                 // set: register keys the payload added, unregister keys it removed.
@@ -341,6 +351,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         };
                         return 1;
                     });
+                SpoilerUserResolver.InvalidateUser(userKey);
                 return Ok(new { success = true, prefs = body });
             }
             catch (Exception strictEx) when (strictEx is InvalidDataException || strictEx is JsonException)
@@ -417,6 +428,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         };
                         return 1;
                     });
+                SpoilerUserResolver.InvalidateUser(userKey);
                 _logger.LogInformation($"Spoiler Guard enabled for series '{series.Name}' ({key}) by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, seriesId = key, name = series.Name });
             }
@@ -455,6 +467,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         removed = state.Series.Remove(key);
                         return removed ? 1 : 0;
                     });
+                SpoilerUserResolver.InvalidateUser(userKey);
                 if (!removed)
                 {
                     _logger.LogInformation($"Spoiler Guard disable was a no-op for series {key} by {ResolveUserDisplay(userKey)} — series was not in the user's spoiler-blur list.");
@@ -541,6 +554,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         };
                         return 1;
                     });
+                SpoilerUserResolver.InvalidateUser(userKey);
                 _logger.LogInformation($"Spoiler Guard enabled for movie '{movie.Name}' ({key}) by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, movieId = key, name = movie.Name });
             }
@@ -579,6 +593,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         removed = state.Movies.Remove(key);
                         return removed ? 1 : 0;
                     });
+                SpoilerUserResolver.InvalidateUser(userKey);
                 if (!removed)
                 {
                     _logger.LogInformation($"Spoiler Guard disable was a no-op for movie {key} by {ResolveUserDisplay(userKey)} — movie was not in the user's spoiler-blur list.");
@@ -596,6 +611,57 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                 _logger.LogError($"Failed to disable spoiler blur for movie {key}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to save spoiler blur state." });
             }
+        }
+
+        // ─── Movie scope probe (for client-side reviews suppression) ─────────────
+        // The client can't tell whether a movie is in spoiler scope via a
+        // COLLECTION opt-in (that requires the server-side library walk), so it
+        // can't decide on its own whether to suppress reviews for a movie. This
+        // cheap probe answers "is this movie guarded for ME, and have I played
+        // it" so the client can suppress accordingly. Lenient reads throughout:
+        // a UI hint must never 503; a missing/corrupt store just yields
+        // inScope=false.
+        [HttpGet("spoiler-blur/scope/movie/{movieId}")]
+        [Authorize]
+        [Produces("application/json")]
+        public IActionResult GetMovieSpoilerScope(string movieId)
+        {
+            var userId = UserHelper.GetCurrentUserId(User);
+            if (userId == null || userId == Guid.Empty) return Forbid();
+
+            if (!Guid.TryParse(movieId, out var movieGuid) && !Guid.TryParseExact(movieId, "N", out movieGuid))
+            {
+                return BadRequest(new { success = false, message = "Invalid movieId." });
+            }
+
+            var userKey = userId.Value.ToString("N");
+            var state = _userConfigurationManager.GetUserConfiguration<UserSpoilerBlur>(userKey, SpoilerFileName);
+            var inScope = _resolver.IsMovieInSpoilerScope(state, movieGuid);
+
+            // Only resolve the item + user-data when the movie is actually in
+            // scope — keeps the common not-guarded answer allocation-light.
+            var played = false;
+            if (inScope)
+            {
+                var jUser = _userManager.GetUserById(userId.Value);
+                if (jUser != null)
+                {
+                    try
+                    {
+                        if (_libraryManager.GetItemById<BaseItem>(movieGuid, jUser) is Movie movie)
+                        {
+                            played = _userDataManager.GetUserData(jUser, movie)?.Played == true;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Inaccessible / partially-stored row — leave played=false.
+                        _logger.LogWarning($"GetMovieSpoilerScope: item/user-data lookup threw for {movieGuid}: {ex.GetType().Name}: {ex.Message}");
+                    }
+                }
+            }
+
+            return Ok(new { inScope, played });
         }
 
         // ─── Per-collection opt-in (shortcut: protects member movies) ────────────
@@ -661,6 +727,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         };
                         return 1;
                     });
+                SpoilerUserResolver.InvalidateUser(userKey);
                 _logger.LogInformation($"Spoiler Guard enabled for collection '{boxSet.Name}' ({key}) by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, collectionId = key, name = boxSet.Name });
             }
@@ -699,6 +766,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         removed = state.Collections.Remove(key);
                         return removed ? 1 : 0;
                     });
+                SpoilerUserResolver.InvalidateUser(userKey);
                 if (!removed)
                 {
                     _logger.LogInformation($"Spoiler Guard disable was a no-op for collection {key} by {ResolveUserDisplay(userKey)} — collection was not in the user's spoiler-blur list.");
@@ -807,6 +875,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
                         else if (pendingRemoved) resultBox[0] = (true, "pending", null);
                         return resultBox[0].Removed ? 1 : 0;
                     });
+                SpoilerUserResolver.InvalidateUser(userKey);
                 // Either way the key is no longer pending for this user — keep the
                 // promoter's gate consistent so it stops sweeping this user.
                 SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, userId.Value);

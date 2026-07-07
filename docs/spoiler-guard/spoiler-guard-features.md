@@ -22,7 +22,7 @@ Once you turn Spoiler Guard on for a show or movie, the plugin hides every spoil
 
 | Surface | What's hidden |
 |---|---|
-| **Episode thumbnails** | Replaced with a parent-level placeholder (Series Backdrop, Series Primary, or Collection art) or blurred, depending on the admin's Image Replacement mode. |
+| **Episode thumbnails** | Replaced with a parent-level placeholder (Series Backdrop, Series Primary, or Collection art) or blurred, depending on the admin's artwork protection mode. |
 | **Season posters** | Same treatment as episode thumbnails — Season 1 always shows so you have an entry point; later seasons hide until any episode in them is watched. |
 | **Episode titles** | Replaced with `Season X, Episode Y` so a title like "The Death of Y" can't spoil the reveal. |
 | **Episode synopses** | Replaced with a configurable placeholder (default: `Spoiler Guard activated`). |
@@ -57,7 +57,7 @@ Every other Jellyfin client you use will pick up the same protection on its next
 
 ### Per movie
 
-The same toggle button appears on Movie detail pages. Click the toggle and the poster blurs (or hides, depending on Image Replacement mode), the description swaps to the placeholder, and chapters / cast on unwatched cards get the same treatment:
+The same toggle button appears on Movie detail pages. Click the toggle and the poster blurs (or hides, depending on the artwork protection mode), the description swaps to the placeholder, and chapters / cast on unwatched cards get the same treatment:
 
 | Before toggle | After toggle |
 |---|---|
@@ -89,11 +89,11 @@ You can also pre-arm a title another user requested. Your pending intent only ac
 
 ---
 
-## Image Replacement Mode — Show stock cards vs Blur
+## Protection mode for guarded artwork — Hide vs Blur
 
 The admin chooses how unwatched cards are visually hidden. There are two modes:
 
-=== "Show stock cards (default)"
+=== "Hide (default)"
 
     The episode-specific image is replaced with a **parent-level placeholder** picked so the aspect ratio matches the card slot:
 
@@ -104,7 +104,7 @@ The admin chooses how unwatched cards are visually hidden. There are two modes:
 
     Useful when partial-blur feels like a tease. The viewer sees a consistent grid of "this show / this franchise" art instead of mystery boxes — and when no safe parent is available, a blur rather than a blank box.
 
-=== "Blur images"
+=== "Blur"
 
     The original image runs through a server-side Gaussian blur. Silhouettes and dominant colours stay visible — you can tell *something* is there, but not what.
 

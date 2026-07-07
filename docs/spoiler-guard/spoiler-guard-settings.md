@@ -18,11 +18,11 @@ This is the only switch that requires explicit admin opt-in. Everything below it
 
 ---
 
-## Image Replacement Mode
+## Protection mode for guarded artwork
 
 How an unwatched card looks once a user has opted into Spoiler Guard for it.
 
-### Show stock cards (default)
+### Hide (substitute a safe parent-level placeholder) — default
 
 The episode-specific image is replaced with a **parent-level placeholder** picked so the aspect ratio matches the card slot:
 
@@ -37,11 +37,11 @@ When no safe parent art exists (a movie opted in directly, a series without a Ba
 
 Useful when partial-blur feels like a tease — the user sees a consistent grid of "this show" / "this franchise" art instead of mystery boxes.
 
-### Blur images
+### Blur (Gaussian-blur the original bytes)
 
 The original image runs through SkiaSharp's `CreateBlur` (a separable Gaussian, native code, ~130 ms on a 1280×720 frame). Silhouettes and dominant colours stay visible — useful for users who prefer a softer "something is there" hint over a clean placeholder.
 
-The **Blur intensity** field (5-100, default 40) controls the sigma. 5 is mild, 40 hides scene content while keeping silhouettes and dominant colours visible, 100 is a solid blob. The value also applies in Show stock cards mode — it sets the intensity of the fallback blur used when no safe parent art is available.
+The **Blur intensity** field (5-100, default 40) controls the sigma. 5 is mild, 40 hides scene content while keeping silhouettes and dominant colours visible, 100 is a solid blob. The value also applies in Hide mode — it sets the intensity of the fallback blur used when no safe parent art is available.
 
 ![Heavily blurred episode card](web-03-bluey-s2.png)
 
@@ -208,7 +208,7 @@ Most logs are at INFO; corruption + unexpected shapes log at WARNING.
 | Setting | Default |
 |---|---|
 | Enable Spoiler Guard | Off (admin must opt in) |
-| Image Replacement Mode | Show stock cards |
+| Protection mode for guarded artwork | Hide |
 | Blur intensity | 40 |
 | Also blur Backdrop / Art | Off |
 | Show movie posters even when Spoiler Guard is on | On |

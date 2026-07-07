@@ -69,6 +69,9 @@ public sealed class CountingLibraryManager : ILibraryManager
     /// <summary>When set, backs the generic <see cref="GetItemById{T}(Guid)"/>.</summary>
     public Func<Guid, BaseItem?>? GetItemByIdHook { get; set; }
 
+    /// <summary>When set, backs the user-scoped <see cref="GetItemById{T}(Guid, User?)"/>.</summary>
+    public Func<Guid, User?, BaseItem?>? GetItemByIdUserHook { get; set; }
+
     // ---- Everything below is an unused NotImplemented stub (per the repo convention). ----
 
     public AggregateFolder RootFolder => throw new NotImplementedException();
@@ -120,7 +123,7 @@ public sealed class CountingLibraryManager : ILibraryManager
         where T : BaseItem => throw new NotImplementedException();
 
     public T? GetItemById<T>(Guid id, User? user)
-        where T : BaseItem => throw new NotImplementedException();
+        where T : BaseItem => GetItemByIdUserHook is null ? throw new NotImplementedException() : GetItemByIdUserHook(id, user) as T;
 
     public Task<IEnumerable<Video>> GetIntros(BaseItem item, User user) => throw new NotImplementedException();
 

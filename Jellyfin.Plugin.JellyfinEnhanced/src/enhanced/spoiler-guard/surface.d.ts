@@ -3,6 +3,7 @@
 // reviews, the Seerr modal) read JE.spoilerGuard by these exact names.
 import type {} from '../../types/je';
 import type { SpoilerUserPrefs, PromoteResponse, RemoveResponse } from './state';
+import type { MovieScope } from './suppression';
 
 declare module '../../types/je' {
     /** The public JE.spoilerGuard surface (assigned by the module init). */
@@ -12,6 +13,8 @@ declare module '../../types/je' {
         isEnabledFor(seriesId: unknown): boolean;
         isMovieEnabledFor(movieId: unknown): boolean;
         isCollectionEnabledFor(collectionId: unknown): boolean;
+        hasEnabledCollections(): boolean;
+        fetchMovieScope(movieId: string): Promise<MovieScope | null>;
         enableForSeries(seriesId: string): Promise<void>;
         disableForSeries(seriesId: string): Promise<void>;
         enableForMovie(movieId: string, movieName?: string): Promise<void>;

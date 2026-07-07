@@ -126,6 +126,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.EventHandlers
 
                 if (changed > 0)
                 {
+                    // F7: Series set changed — drop the user's cached spoiler
+                    // state so the image/strip filters see the new series at once.
+                    SpoilerUserResolver.InvalidateUser(userId.ToString("N"));
                     _logger.LogInformation($"SpoilerAutoEnable: enabled Spoiler Guard for series '{seriesName}' ({seriesIdN}) on first-play of S1E1 by user {userId}");
                 }
             }

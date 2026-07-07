@@ -115,6 +115,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         private readonly IUserManager _userManager;
         private readonly UserConfigurationManager _configManager;
         private readonly IPluginConfigProvider _configProvider;
+        private readonly SpoilerPendingService _pendingService;
         private readonly ILogger<SpoilerSeerrPendingPromoter> _logger;
 
         public SpoilerSeerrPendingPromoter(
@@ -122,12 +123,17 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             IUserManager userManager,
             UserConfigurationManager configManager,
             IPluginConfigProvider configProvider,
+            SpoilerPendingService pendingService,
             ILogger<SpoilerSeerrPendingPromoter> logger)
         {
             _libraryManager = libraryManager;
             _userManager = userManager;
             _configManager = configManager;
             _configProvider = configProvider;
+            // Reused for the F5 user-scoped TMDB duplicate lookup. Depends only
+            // on the config/library/user managers (never IJellyseerrClient nor
+            // this promoter), so injecting it here introduces no DI cycle.
+            _pendingService = pendingService;
             _logger = logger;
         }
 
@@ -303,14 +309,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
         }
 
-        private enum PromotionOutcome
+        // Internal (Tests has InternalsVisibleTo) so the F5 duplicate-fallback
+        // path can be driven directly without racing the async sweep.
+        internal enum PromotionOutcome
         {
             Promoted,      // pending row consumed (or already promoted earlier)
             NotPending,    // user deleted / file no longer has the key
             StillPending,  // user can't see the item yet — retry on later events
         }
 
-        private PromotionOutcome PromoteForUser(Guid userId, Guid itemId, string pendingKey, string itemName, bool isSeries)
+        internal PromotionOutcome PromoteForUser(Guid userId, Guid itemId, string pendingKey, string itemName, bool isSeries)
         {
             var jUser = _userManager.GetUserById(userId);
             if (jUser == null) return PromotionOutcome.NotPending;
@@ -328,7 +336,18 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 _logger.LogWarning($"SpoilerSeerrPromoter: GetItemById({itemId},{userId}) threw {ex.GetType().Name}: {ex.Message}");
                 return PromotionOutcome.StillPending;
             }
-            if (visibleItem == null) return PromotionOutcome.StillPending;
+            if (visibleItem == null)
+            {
+                // F5: the event's itemId may be a library DUPLICATE this user
+                // cannot access (the same TMDB id also exists in a library they
+                // do have access to). Stranding the pending entry in that case
+                // is a bug — try a user-scoped TMDB lookup for an accessible
+                // duplicate of the right type and promote THAT id instead.
+                var dup = TryFindAccessibleDuplicate(jUser, pendingKey, isSeries);
+                if (dup == null) return PromotionOutcome.StillPending;
+                itemId = dup.Id;
+                if (!string.IsNullOrEmpty(dup.Name)) itemName = dup.Name;
+            }
 
             var userKey = userId.ToString("N");
             var fileName = SpoilerBlurImageFilter.SpoilerBlurFileName;
@@ -366,6 +385,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     });
                 if (stillHadPending[0])
                 {
+                    // F7: Series/Movies changed — drop the user's cached state so
+                    // the image/strip filters blur the promoted title immediately.
+                    SpoilerUserResolver.InvalidateUser(userKey);
                     _logger.LogInformation($"SpoilerSeerrPromoter: promoted {pendingKey} -> {(isSeries ? "series" : "movie")} {itemKey} for user {userId}");
                     return PromotionOutcome.Promoted;
                 }
@@ -380,6 +402,30 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 // keep the user registered so repair + a later event recovers.
                 return PromotionOutcome.StillPending;
             }
+        }
+
+        // F5 helper: resolve an accessible library duplicate for the pending key
+        // (parsed as "{tv|movie}:{tmdbId}") scoped to the user, when the event's
+        // own itemId wasn't visible to them. Returns the item only when its type
+        // matches the pending media type. Reuses SpoilerPendingService's indexed
+        // TMDB lookup so the matching happens in the DB, not a client-side scan.
+        private BaseItem? TryFindAccessibleDuplicate(JUser jUser, string pendingKey, bool isSeries)
+        {
+            var sep = pendingKey.IndexOf(':');
+            if (sep <= 0 || sep >= pendingKey.Length - 1) return null;
+            var mediaType = pendingKey.Substring(0, sep);
+            var tmdb = pendingKey.Substring(sep + 1);
+            try
+            {
+                var dup = _pendingService.FindLibraryItemByTmdb(jUser, mediaType, tmdb);
+                if (isSeries && dup is Series) return dup;
+                if (!isSeries && dup is Movie) return dup;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"SpoilerSeerrPromoter: duplicate TMDB lookup for {pendingKey} threw {ex.GetType().Name}: {ex.Message}");
+            }
+            return null;
         }
     }
 }

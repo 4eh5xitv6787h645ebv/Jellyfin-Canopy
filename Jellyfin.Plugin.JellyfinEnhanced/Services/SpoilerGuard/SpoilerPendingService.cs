@@ -87,6 +87,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                         return 1;
                     });
                 SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, userId);
+                SpoilerUserResolver.InvalidateUser(userKey); // F7: state changed (Series/Movies)
                 _logger.LogInformation($"Spoiler Guard pending resolved to existing series '{existingSeries.Name}' ({seriesKey}) for {ResolveUserDisplay(userKey)}");
                 return new SpoilerBlurPendingResult("series", seriesKey, existingSeries.Name, changed > 0);
             }
@@ -107,6 +108,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                         return 1;
                     });
                 SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, userId);
+                SpoilerUserResolver.InvalidateUser(userKey); // F7: state changed (Series/Movies)
                 _logger.LogInformation($"Spoiler Guard pending resolved to existing movie '{existingMovie.Name}' ({movieKey}) for {ResolveUserDisplay(userKey)}");
                 return new SpoilerBlurPendingResult("movie", movieKey, existingMovie.Name, changed > 0);
             }
@@ -190,6 +192,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     return 1;
                 });
             SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, userId);
+            SpoilerUserResolver.InvalidateUser(userKey); // F7: state changed (Series)
             _logger.LogInformation($"Spoiler Guard pending TOCTOU-promoted to series '{series.Name}' ({seriesKey}) for {ResolveUserDisplay(userKey)}");
             return new SpoilerBlurPendingResult("series", seriesKey, series.Name, true);
         }
@@ -212,6 +215,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     return 1;
                 });
             SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, userId);
+            SpoilerUserResolver.InvalidateUser(userKey); // F7: state changed (Movies)
             _logger.LogInformation($"Spoiler Guard pending TOCTOU-promoted to movie '{movie.Name}' ({movieKey}) for {ResolveUserDisplay(userKey)}");
             return new SpoilerBlurPendingResult("movie", movieKey, movie.Name, true);
         }

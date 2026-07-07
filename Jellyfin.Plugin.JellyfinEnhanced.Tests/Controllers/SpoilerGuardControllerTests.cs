@@ -38,6 +38,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
             public required CountingLibraryManager Lib { get; init; }
             public required SpoilerPendingService Pending { get; init; }
             public required SpoilerGuardController Controller { get; init; }
+            public required StubUserDataManager UserData { get; init; }
             public required User User { get; init; }
 
             public void Dispose()
@@ -57,6 +58,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
             var userManager = includeUserInManager ? new StubUserManager(user) : new StubUserManager();
             var provider = new FakePluginConfigProvider(cfg);
             var pending = new SpoilerPendingService(mgr, lib, userManager, NullLogger<SpoilerPendingService>.Instance);
+            var sessions = new CountingSessionManager();
+            var resolver = new SpoilerUserResolver(mgr, sessions, lib, NullLogger<SpoilerUserResolver>.Instance);
+            var userData = new StubUserDataManager();
 
             var controller = new SpoilerGuardController(
                 new RecordingHttpClientFactory(new HttpClientHandler()),
@@ -66,7 +70,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
                 provider,
                 mgr,
                 lib,
-                pending);
+                pending,
+                resolver,
+                userData);
 
             var identity = new ClaimsIdentity(new[] { new Claim("Jellyfin-UserId", user.Id.ToString()) }, "TestAuth");
             controller.ControllerContext = new ControllerContext
@@ -74,7 +80,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
                 HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(identity) },
             };
 
-            return new Harness { Dir = dir, Mgr = mgr, Lib = lib, Pending = pending, Controller = controller, User = user };
+            return new Harness { Dir = dir, Mgr = mgr, Lib = lib, Pending = pending, Controller = controller, UserData = userData, User = user };
         }
 
         // ─── Display-name sanitizer ───────────────────────────────────────────────
@@ -280,6 +286,94 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
                 SpoilerUserResolver.ClearCorruption(meKey);
                 SpoilerUserResolver.ClearCorruption(otherKey);
             }
+        }
+
+        // ─── F4: movie scope probe endpoint ───────────────────────────────────────
+
+        [Fact]
+        public void GetMovieSpoilerScope_BadGuid_Returns400()
+        {
+            using var h = Build();
+            Assert.IsType<BadRequestObjectResult>(h.Controller.GetMovieSpoilerScope("not-a-guid"));
+        }
+
+        [Fact]
+        public void GetMovieSpoilerScope_NotInScope_ReturnsInScopeFalse()
+        {
+            using var h = Build();
+            var ok = Assert.IsType<OkObjectResult>(h.Controller.GetMovieSpoilerScope(Guid.NewGuid().ToString()));
+            var json = JsonSerializer.Serialize(ok.Value);
+            Assert.Contains("\"inScope\":false", json);
+            Assert.Contains("\"played\":false", json);
+        }
+
+        [Fact]
+        public void GetMovieSpoilerScope_DirectlyOptedIn_ReturnsInScopeTrue_WithPlayedState()
+        {
+            using var h = Build();
+            var movieId = Guid.NewGuid();
+
+            // Opt the movie in directly so IsMovieInSpoilerScope is true without a
+            // library collection walk.
+            var state = new UserSpoilerBlur();
+            state.Movies[movieId.ToString("N")] = new SpoilerBlurMovieEntry { MovieId = movieId.ToString("N") };
+            h.Mgr.SaveUserConfiguration(h.User.Id.ToString("N"), SpoilerFile, state);
+
+            var movie = new Movie { Id = movieId, Name = "Film" };
+            h.Lib.GetItemByIdUserHook = (_, _) => movie;
+            h.UserData.GetUserDataHook = (_, _) => new UserItemData { Key = "k", Played = true };
+
+            var ok = Assert.IsType<OkObjectResult>(h.Controller.GetMovieSpoilerScope(movieId.ToString()));
+            var json = JsonSerializer.Serialize(ok.Value);
+            Assert.Contains("\"inScope\":true", json);
+            Assert.Contains("\"played\":true", json);
+        }
+
+        // ─── F5: promoter promotes an accessible TMDB duplicate ───────────────────
+
+        [Fact]
+        public void PromoteForUser_EventItemInaccessible_PromotesAccessibleTmdbDuplicate()
+        {
+            using var h = Build();
+            var userManager = new StubUserManager(h.User);
+            var promoter = new SpoilerSeerrPendingPromoter(
+                h.Lib, userManager, h.Mgr, new FakePluginConfigProvider(null), h.Pending,
+                NullLogger<SpoilerSeerrPendingPromoter>.Instance);
+
+            const string pendingKey = "tv:555";
+            var state = new UserSpoilerBlur();
+            state.PendingTmdb[pendingKey] = new SpoilerBlurPendingEntry { MediaType = "tv", TmdbId = "555" };
+            h.Mgr.SaveUserConfiguration(h.User.Id.ToString("N"), SpoilerFile, state);
+
+            var eventItemId = Guid.NewGuid();   // library duplicate the user can't access
+            var dupId = Guid.NewGuid();         // accessible duplicate (same TMDB id)
+            h.Lib.GetItemByIdUserHook = (_, _) => null;                                    // event item not visible
+            h.Lib.GetItemListHook = _ => new List<BaseItem> { new Series { Id = dupId, Name = "Dup Show" } };
+
+            var outcome = promoter.PromoteForUser(h.User.Id, eventItemId, pendingKey, "Orig", isSeries: true);
+
+            Assert.Equal(SpoilerSeerrPendingPromoter.PromotionOutcome.Promoted, outcome);
+            var stored = h.Mgr.GetUserConfiguration<UserSpoilerBlur>(h.User.Id.ToString("N"), SpoilerFile);
+            Assert.True(stored.Series.ContainsKey(dupId.ToString("N")));            // promoted the ACCESSIBLE dup
+            Assert.False(stored.Series.ContainsKey(eventItemId.ToString("N")));
+            Assert.Empty(stored.PendingTmdb);
+        }
+
+        // ─── F7: controller writes invalidate the cross-request state cache ───────
+
+        [Fact]
+        public void EnableSpoilerBlurForSeries_InvalidatesUserStateCache()
+        {
+            using var h = Build();
+            var seriesId = Guid.NewGuid();
+            h.Lib.GetItemByIdUserHook = (_, _) => new Series { Id = seriesId, Name = "Show" };
+            var userKey = h.User.Id.ToString("N");
+
+            SpoilerUserResolver.SeedUserStateCacheForTest(userKey);
+            Assert.True(SpoilerUserResolver.IsUserStateCachedForTest(userKey));
+
+            Assert.IsType<OkObjectResult>(h.Controller.EnableSpoilerBlurForSeries(seriesId.ToString()));
+            Assert.False(SpoilerUserResolver.IsUserStateCachedForTest(userKey));
         }
     }
 }

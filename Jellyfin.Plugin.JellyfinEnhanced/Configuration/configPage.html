@@ -888,7 +888,7 @@
                                         <input id="spoilerOverviewPlaceholder" data-config-key="SpoilerOverviewPlaceholder" data-config-fallback="Spoiler Guard activated" is="emby-input" type="text" value="Spoiler Guard activated"/>
                                     </div>
                                     <div class="je-setting-description" data-desc-for="spoilerOverviewPlaceholder">
-                                        <div class="fieldDescription">Shown in place of a stripped description so clients don't render an empty "Description" header. Tags and quotes are stripped on save. Configurable for localisation.</div>
+                                        <div class="fieldDescription">Shown in place of a stripped description so clients don't render an empty "Description" header. Any HTML tags and quotes are sanitized when it's rendered, not on save. Configurable for localisation.</div>
                                     </div>
 
                                     <div class="checkboxContainer"><label><input id="spoilerReplaceTitle" data-config-key="SpoilerReplaceTitle" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Replace episode titles with "Season X, Episode Y"</span></label></div>

@@ -72,13 +72,39 @@ JE.initializeReviewsScript = function () {
             const sg = JE.spoilerGuard;
             if (!sg) return false;
             if (typeof sg.whenLoaded === 'function') await sg.whenLoaded();
+
+            const hideReviews = (sg.getUserPrefs?.().HideReviews) !== false;
+            const loadOk = typeof sg.isLoadOk === 'function' ? sg.isLoadOk() === true : true;
+            const isMovieEnabled = (id: string) => (sg.isMovieEnabledFor ? sg.isMovieEnabledFor(id) === true : false);
+            const hasEnabledCollections = typeof sg.hasEnabledCollections === 'function'
+                ? sg.hasEnabledCollections() === true : false;
+
+            // A movie can be guarded via an opted-in COLLECTION, which the local
+            // sets can't resolve. Consult the server scope endpoint — but only
+            // when every gate that could lead to the collection branch holds,
+            // so users without spoiler state pay no extra request:
+            //   feature on (above) + strip on (above) + state loaded + user not
+            //   opted out + this is a Movie + not directly enabled + at least
+            //   one collection opted in. movieScope stays undefined otherwise
+            //   (the pure decision then never reaches the scope branch).
+            let movieScope: Awaited<ReturnType<NonNullable<typeof sg.fetchMovieScope>>> | undefined;
+            const movieId: string = item?.Id || '';
+            if (mediaType === 'Movie' && loadOk && hideReviews
+                && movieId && !isMovieEnabled(movieId) && hasEnabledCollections
+                && typeof sg.fetchMovieScope === 'function') {
+                // fetchMovieScope resolves null on error/non-200 → decision fails CLOSED.
+                movieScope = await sg.fetchMovieScope(movieId);
+            }
+
             return decideReviewSuppression(item, mediaType, {
                 spoilerBlurEnabled: true,
                 stripReviews: true,
-                hideReviews: (sg.getUserPrefs?.().HideReviews) !== false,
-                loadOk: typeof sg.isLoadOk === 'function' ? sg.isLoadOk() === true : true,
-                isMovieEnabled: (id) => (sg.isMovieEnabledFor ? sg.isMovieEnabledFor(id) === true : false),
+                hideReviews,
+                loadOk,
+                isMovieEnabled,
                 isSeriesEnabled: (id) => (sg.isEnabledFor ? sg.isEnabledFor(id) === true : false),
+                hasEnabledCollections,
+                movieScope,
             });
         } catch (e) {
             console.warn(`${logPrefix} Spoiler Guard check failed; suppressing reviews:`, e);

@@ -53,6 +53,59 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             public required IReadOnlyCollection<Guid> IpUsers { get; init; }
         }
 
+        // F7: cross-request in-memory cache of each user's spoiler state, keyed
+        // by userId (N-format). An anonymous image burst on a shared IP probes
+        // every candidate's state on every image request; without this each
+        // probe re-reads + re-parses spoilerblur.json from disk. Invalidated by
+        // every controller/pending/promoter write path via InvalidateUser, and
+        // per-request the HttpContext.Items layer still short-circuits repeats.
+        private static readonly TimeSpan UserStateCacheTtl = TimeSpan.FromSeconds(30);
+        private static readonly ConcurrentDictionary<string, (UserSpoilerBlur State, DateTime CachedAt)> _userStateCache
+            = new(StringComparer.OrdinalIgnoreCase);
+
+        // F6: memoized result of the O(opted-collections × members) collection
+        // walk in FindOptedInCollectionForMovie (runs 2-3× per movie image/DTO).
+        // Keyed by (movieId + the SORTED set of opted collection GUIDs), because
+        // the result is a pure function of those two inputs plus user-independent
+        // library structure — so a collection opt-in/out changes the key set
+        // automatically (self-invalidating) and two users with the same set share
+        // safely. Short TTL bounds staleness from library edits.
+        private static readonly TimeSpan CollectionScopeCacheTtl = TimeSpan.FromSeconds(30);
+        private static readonly ConcurrentDictionary<string, (Guid? CollectionId, DateTime CachedAt)> _collectionScopeCache
+            = new(StringComparer.Ordinal);
+
+        // F8: negative-cache for a je-spoiler-uid cookie that names a user with
+        // NO session on the request IP. Without it, a stale/forged cookie forces
+        // an uncached full session rescan on EVERY request (scan storm). Keyed by
+        // "{ipKey}|{cookieUidN}" with a short TTL.
+        private static readonly TimeSpan CookieMissNegativeCacheTtl = TimeSpan.FromSeconds(5);
+        private static readonly ConcurrentDictionary<string, DateTime> _cookieMissCache = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Drops the cross-request caches for a user so the next request re-reads
+        /// spoilerblur.json from disk. MUST be called immediately after any write
+        /// to that user's spoiler state (add/remove/promote), or the image filter
+        /// would serve stale (possibly UN-blurred) bytes for up to the cache TTL.
+        /// </summary>
+        public static void InvalidateUser(string userIdN)
+        {
+            if (string.IsNullOrEmpty(userIdN)) return;
+            _userStateCache.TryRemove(userIdN, out _);
+            // The collection-scope memo is self-invalidating (its key includes
+            // the collection set), so no per-user sweep is required there.
+        }
+
+        // Test seams (Tests has InternalsVisibleTo) over the F7 cross-request
+        // state cache, mirroring HiddenContentResponseFilter's.
+        internal static void SeedUserStateCacheForTest(string userIdN)
+        {
+            if (!string.IsNullOrEmpty(userIdN))
+                _userStateCache[userIdN] = (new UserSpoilerBlur(), DateTime.UtcNow);
+        }
+
+        internal static bool IsUserStateCachedForTest(string userIdN)
+            => !string.IsNullOrEmpty(userIdN) && _userStateCache.ContainsKey(userIdN);
+
         private readonly UserConfigurationManager _userConfigManager;
         private readonly ISessionManager _sessionManager;
         private readonly ILibraryManager _libraryManager;
@@ -77,6 +130,21 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         public Guid? FindOptedInCollectionForMovie(UserSpoilerBlur userState, Guid movieId)
         {
             if (movieId == Guid.Empty || userState.Collections.Count == 0) return null;
+
+            // F6 memo. The static cache serves BOTH within-request repeats (the
+            // 2-3 calls per movie hit the same entry) AND repeats across the
+            // page/session, so a separate HttpContext.Items layer would be
+            // redundant.
+            var cacheKey = BuildCollectionScopeKey(userState, movieId);
+            var now = DateTime.UtcNow;
+            if (cacheKey != null
+                && _collectionScopeCache.TryGetValue(cacheKey, out var hit)
+                && (now - hit.CachedAt) < CollectionScopeCacheTtl)
+            {
+                return hit.CollectionId;
+            }
+
+            Guid? result = null;
             try
             {
                 foreach (var collKeyN in userState.Collections.Keys)
@@ -85,8 +153,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     if (_libraryManager.GetItemById(collGuid) is not MediaBrowser.Controller.Entities.Movies.BoxSet bs) continue;
                     foreach (var child in bs.GetLinkedChildren())
                     {
-                        if (child != null && child.Id == movieId) return collGuid;
+                        if (child != null && child.Id == movieId) { result = collGuid; break; }
                     }
+                    if (result.HasValue) break;
                 }
             }
             catch (Exception ex)
@@ -94,8 +163,38 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 WarnRateLimited(
                     "movie-in-collection:" + ex.GetType().FullName,
                     $"Spoiler Guard: movie-in-collection linked-children walk failed for {movieId}: {ex.Message}");
+                return null; // don't cache a transient failure
             }
-            return null;
+
+            if (cacheKey != null)
+            {
+                _collectionScopeCache[cacheKey] = (result, now);
+                // Opportunistic eviction, mirroring the season-watched cache in
+                // SpoilerBlurImageFilter: snapshot-free, only removes expired.
+                if (_collectionScopeCache.Count > 1024)
+                {
+                    foreach (var kvp in _collectionScopeCache)
+                    {
+                        if ((now - kvp.Value.CachedAt) >= CollectionScopeCacheTtl)
+                            _collectionScopeCache.TryRemove(kvp.Key, out _);
+                    }
+                }
+            }
+            return result;
+        }
+
+        // Stable memo key for FindOptedInCollectionForMovie: movieId + the
+        // SORTED opted-collection GUID set. Returns null (skip caching) when the
+        // set is large enough that the key string would be unwieldy — such users
+        // are vanishingly rare and simply pay the uncached walk.
+        private static string? BuildCollectionScopeKey(UserSpoilerBlur userState, Guid movieId)
+        {
+            var count = userState.Collections.Count;
+            if (count == 0 || count > 64) return null;
+            var keys = new string[count];
+            userState.Collections.Keys.CopyTo(keys, 0);
+            Array.Sort(keys, StringComparer.OrdinalIgnoreCase);
+            return movieId.ToString("N") + "|" + string.Join(",", keys);
         }
 
         // True when the movie is opted in directly OR is a member of an opted-in
@@ -157,9 +256,36 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 // set may be a JUST-logged-in user the cache hasn't seen yet —
                 // re-scan uncached once before rejecting, else a fresh login
                 // leaks its own guarded images for up to the cache TTL.
+                //
+                // F8: but a STALE/forged cookie naming an absent user would
+                // trigger that uncached full session rescan on EVERY request (a
+                // scan storm). Negative-cache the (ip, cookieUid) miss for a
+                // short window so repeated requests with the same stale cookie
+                // reuse the last scan instead of re-scanning.
                 if (!ipUsers.Contains(cookieUid))
                 {
-                    ipUsers = ScanActiveSessionUsersFresh(httpContext);
+                    var ipKey = TryGetNormalizedIpKey(httpContext);
+                    var missKey = ipKey != null ? ipKey + "|" + cookieUid.ToString("N") : null;
+                    var now = DateTime.UtcNow;
+                    var recentMiss = missKey != null
+                        && _cookieMissCache.TryGetValue(missKey, out var missAt)
+                        && (now - missAt) < CookieMissNegativeCacheTtl;
+                    if (!recentMiss)
+                    {
+                        ipUsers = ScanActiveSessionUsersFresh(httpContext);
+                        if (missKey != null && !ipUsers.Contains(cookieUid))
+                        {
+                            _cookieMissCache[missKey] = now;
+                            if (_cookieMissCache.Count > 512)
+                            {
+                                foreach (var kvp in _cookieMissCache)
+                                {
+                                    if ((now - kvp.Value) >= CookieMissNegativeCacheTtl)
+                                        _cookieMissCache.TryRemove(kvp.Key, out _);
+                                }
+                            }
+                        }
+                    }
                 }
                 if (ipUsers.Contains(cookieUid))
                 {
@@ -238,18 +364,33 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
         // the SAME user still reads the file once (shared key).
         public UserSpoilerBlur LoadUserState(Microsoft.AspNetCore.Http.HttpContext httpContext, Guid userId)
         {
-            var cacheKey = ContextKeyUserState + ":" + userId.ToString("N");
+            var userIdN = userId.ToString("N");
+            var cacheKey = ContextKeyUserState + ":" + userIdN;
+
+            // 1. Per-request cache — also lets several shared-IP candidates in one
+            //    request each read once without the first masking the others.
             if (httpContext.Items.TryGetValue(cacheKey, out var cached)
                 && cached is UserSpoilerBlur hit)
             {
                 return hit;
             }
 
+            // 2. F7 cross-request cache — skips the disk read + parse when a
+            //    recent copy exists. Invalidated by every write path.
+            var now = DateTime.UtcNow;
+            if (_userStateCache.TryGetValue(userIdN, out var entry)
+                && (now - entry.CachedAt) < UserStateCacheTtl)
+            {
+                httpContext.Items[cacheKey] = entry.State;
+                return entry.State;
+            }
+
+            // 3. Miss — read from disk.
             UserSpoilerBlur state;
             try
             {
                 state = _userConfigManager.GetUserConfiguration<UserSpoilerBlur>(
-                    userId.ToString("N"),
+                    userIdN,
                     SpoilerBlurImageFilter.SpoilerBlurFileName);
             }
             catch (Exception ex)
@@ -262,11 +403,27 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 // outer catch-all only fires for exceptions that escape the
                 // lenient path (e.g. ResolveUserFile throwing on a bad
                 // userId). Rate-limited so a flood of bad requests doesn't
-                // spam logs.
+                // spam logs. Do NOT populate the cross-request cache with a
+                // spurious empty on this rare escape — only the per-request
+                // layer, so a retry re-reads.
                 WarnRateLimited(
                     "userstate-load:" + ex.GetType().FullName,
                     $"Spoiler Guard resolver: failed to read user state for {userId} — passing through unblurred. {ex.Message}");
                 state = new UserSpoilerBlur();
+                httpContext.Items[cacheKey] = state;
+                return state;
+            }
+
+            _userStateCache[userIdN] = (state, now);
+            // Opportunistic prune so the cache can't grow unbounded across many
+            // users over a long uptime (mirrors the IP-scan cache prune).
+            if (_userStateCache.Count > 512)
+            {
+                foreach (var kvp in _userStateCache)
+                {
+                    if ((now - kvp.Value.CachedAt) >= UserStateCacheTtl)
+                        _userStateCache.TryRemove(kvp.Key, out _);
+                }
             }
             httpContext.Items[cacheKey] = state;
             return state;
@@ -328,6 +485,15 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
 
             return ipUsers;
+        }
+
+        // Normalized request-IP key (or null when the remote IP is unavailable),
+        // used for the F8 cookie-miss negative cache. Same normalization the
+        // per-IP session-scan cache uses so keys line up.
+        private static string? TryGetNormalizedIpKey(Microsoft.AspNetCore.Http.HttpContext httpContext)
+        {
+            var raw = httpContext.Connection.RemoteIpAddress;
+            return raw == null ? null : NormalizeIp(raw).ToString();
         }
 
         // Returns the canonical IPAddress for comparison: IPv4-mapped-IPv6

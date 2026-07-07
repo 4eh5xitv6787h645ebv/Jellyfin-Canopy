@@ -30,12 +30,19 @@ export interface SpoilerUserPrefs {
     [key: string]: boolean | null | undefined;
 }
 
-/** The four in-memory guarded-id sets. */
+/** The in-memory guarded-id sets plus the pending→promoted id map. */
 export interface SpoilerCaches {
     series: Set<string>;
     movies: Set<string>;
     collections: Set<string>;
     pendingTmdb: Set<string>;
+    /**
+     * Maps a pending key ("tv:{tmdb}" / "movie:{tmdb}") to the normalized
+     * Jellyfin id it promoted to. Lets isTmdbEnabled resolve live enabled state
+     * for a title whose Seerr mediaInfo.jellyfinMediaId is null (not yet synced)
+     * right after an enable promoted it into the series/movies set.
+     */
+    tmdbToJellyfin: Map<string, string>;
 }
 
 /** Response from POST /spoiler-blur/pending/{type}/{id}. */
@@ -55,7 +62,17 @@ const caches: SpoilerCaches = {
     movies: new Set<string>(),
     collections: new Set<string>(),
     pendingTmdb: new Set<string>(),
+    tmdbToJellyfin: new Map<string, string>(),
 };
+
+/**
+ * Short-lived cache of GET /spoiler-blur/scope/movie/{id} answers, so a page
+ * that checks review suppression for a movie doesn't re-hit the endpoint on
+ * every re-render / navigation within the TTL window.
+ */
+interface MovieScopeResult { inScope: boolean; played: boolean; }
+const SCOPE_TTL_MS = 30_000;
+const scopeCache = new Map<string, { value: MovieScopeResult; ts: number }>();
 
 let userPrefs: SpoilerUserPrefs = {};
 
@@ -73,6 +90,8 @@ export function resetState(): void {
     caches.movies.clear();
     caches.collections.clear();
     caches.pendingTmdb.clear();
+    caches.tmdbToJellyfin.clear();
+    scopeCache.clear();
     userPrefs = {};
     loaded = false;
     loadOk = false;
@@ -94,6 +113,11 @@ export function loadState(): Promise<void> {
             caches.movies.clear();
             caches.collections.clear();
             caches.pendingTmdb.clear();
+            // Drop the pending→promoted map: the reloaded sets are authoritative,
+            // so isTmdbEnabled resolves directly and stale mappings would only
+            // risk pointing at an id no longer guarded. The server payload has no
+            // tmdb→jellyfin field to repopulate from (don't invent one).
+            caches.tmdbToJellyfin.clear();
             for (const key of Object.keys(d.Series ?? {})) caches.series.add(normalizeId(key));
             for (const key of Object.keys(d.Movies ?? {})) caches.movies.add(normalizeId(key));
             for (const key of Object.keys(d.Collections ?? {})) caches.collections.add(normalizeId(key));
@@ -151,6 +175,40 @@ export function isMovieEnabledFor(movieId: unknown): boolean {
 export function isCollectionEnabledFor(collectionId: unknown): boolean {
     return caches.collections.has(normalizeId(collectionId));
 }
+/**
+ * True when the user has opted at least one collection into Spoiler Guard. Cheap
+ * gate for the reviews-suppression path: with no collections opted in, a movie
+ * can only be guarded directly, so no per-item server scope lookup is needed.
+ */
+export function hasEnabledCollections(): boolean {
+    return caches.collections.size > 0;
+}
+
+/**
+ * Resolve whether a Movie is in Spoiler Guard scope for the calling user
+ * (directly OR via an opted-in collection) and whether they've played it, via
+ * GET /spoiler-blur/scope/movie/{id}. Short-TTL cached per normalized id.
+ * Resolves to null on any error / non-200 so callers can FAIL CLOSED — a
+ * transient failure is not cached, so the next navigation retries.
+ * @param movieId - The Jellyfin movie id (any format).
+ */
+export function fetchMovieScope(movieId: string): Promise<MovieScopeResult | null> {
+    const n = normalizeId(movieId);
+    if (!n) return Promise.resolve(null);
+    const hit = scopeCache.get(n);
+    if (hit && Date.now() - hit.ts < SCOPE_TTL_MS) return Promise.resolve(hit.value);
+    return JE.core.api!.plugin(`/spoiler-blur/scope/movie/${encodeURIComponent(n)}`)
+        .then((resp: unknown) => {
+            const r = (resp ?? {}) as Partial<MovieScopeResult>;
+            const value: MovieScopeResult = { inScope: r.inScope === true, played: r.played === true };
+            scopeCache.set(n, { value, ts: Date.now() });
+            return value;
+        })
+        .catch((err: unknown) => {
+            console.warn(`${logPrefix} fetchMovieScope failed; failing closed:`, err);
+            return null;
+        });
+}
 
 // ── Series / Movie / Collection enable + disable ──────────────────────────
 
@@ -198,9 +256,14 @@ export function disableForCollection(collectionId: string): Promise<void> {
 export function isTmdbEnabled(mediaType: string, tmdbId: string, jellyfinMediaId?: string | null): boolean {
     const k = pendingKey(mediaType, tmdbId);
     if (k && caches.pendingTmdb.has(k)) return true;
-    if (!jellyfinMediaId) return false;
-    if (mediaType === 'movie') return isMovieEnabledFor(jellyfinMediaId);
-    if (mediaType === 'tv') return isEnabledFor(jellyfinMediaId);
+    // Fall back to the pending→promoted id map when Seerr didn't supply a
+    // jellyfinMediaId (common for titles Seerr hasn't synced): a prior enable
+    // recorded the id it promoted to, so the toggle reflects live state instead
+    // of reporting OFF right after a successful enable.
+    const jid = jellyfinMediaId || (k ? caches.tmdbToJellyfin.get(k) : undefined);
+    if (!jid) return false;
+    if (mediaType === 'movie') return isMovieEnabledFor(jid);
+    if (mediaType === 'tv') return isEnabledFor(jid);
     return false;
 }
 
@@ -214,17 +277,19 @@ export function applyPromoteResponse(c: SpoilerCaches, key: string, resp: Promot
     if (resp.promoted === 'pending') {
         if (key) c.pendingTmdb.add(key);
     } else if (resp.promoted === 'series' && resp.jellyfinId) {
-        c.series.add(normalizeId(resp.jellyfinId));
-        if (key) c.pendingTmdb.delete(key);
+        const jid = normalizeId(resp.jellyfinId);
+        c.series.add(jid);
+        if (key) { c.pendingTmdb.delete(key); c.tmdbToJellyfin.set(key, jid); }
     } else if (resp.promoted === 'movie' && resp.jellyfinId) {
-        c.movies.add(normalizeId(resp.jellyfinId));
-        if (key) c.pendingTmdb.delete(key);
+        const jid = normalizeId(resp.jellyfinId);
+        c.movies.add(jid);
+        if (key) { c.pendingTmdb.delete(key); c.tmdbToJellyfin.set(key, jid); }
     }
 }
 
 /** Pure cache transition for a pending-disable response. Exported for testing. */
 export function applyRemoveResponse(c: SpoilerCaches, key: string, resp: RemoveResponse | undefined): void {
-    if (key) c.pendingTmdb.delete(key);
+    if (key) { c.pendingTmdb.delete(key); c.tmdbToJellyfin.delete(key); }
     if (!resp) return;
     if (resp.removedFrom === 'series' && resp.jellyfinId) {
         c.series.delete(normalizeId(resp.jellyfinId));
@@ -288,9 +353,4 @@ export function setUserPrefs(next: SpoilerUserPrefs): Promise<SpoilerUserPrefs> 
 export function hasAnyState(): boolean {
     return caches.series.size > 0 || caches.movies.size > 0 || caches.collections.size > 0
         || caches.pendingTmdb.size > 0;
-}
-
-/** Internal accessor for tests / same-module consumers. */
-export function _caches(): SpoilerCaches {
-    return caches;
 }

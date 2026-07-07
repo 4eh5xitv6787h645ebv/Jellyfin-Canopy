@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using Jellyfin.Plugin.JellyfinEnhanced.Tests.TestDoubles;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -32,6 +35,55 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
         public void ShouldStrip_HonorsAdminCapAndUserOverride(bool adminOn, bool? userOverride, bool expected)
         {
             Assert.Equal(expected, SpoilerFieldStripFilter.ShouldStrip(adminOn, userOverride));
+        }
+
+        // ─── F1: fail-closed aggregation across shared-IP candidates ──────────────
+
+        [Fact]
+        public void ShouldBlur_BlursWhenAnyInScopeCandidateWouldBlur()
+        {
+            // The security case: a WATCHED user (passesThrough=true) sharing an
+            // IP with an UNWATCHED user (passesThrough=false) must STILL blur —
+            // the watched user must not unblur the unwatched user's artwork.
+            Assert.True(SpoilerBlurImageFilter.ShouldBlur(new[] { true, false }));
+            Assert.True(SpoilerBlurImageFilter.ShouldBlur(new[] { false, true }));
+            Assert.True(SpoilerBlurImageFilter.ShouldBlur(new[] { false }));
+        }
+
+        [Fact]
+        public void ShouldBlur_PassesThroughOnlyWhenEveryCandidatePassesThrough()
+        {
+            Assert.False(SpoilerBlurImageFilter.ShouldBlur(new[] { true, true }));
+            Assert.False(SpoilerBlurImageFilter.ShouldBlur(new[] { true }));
+            Assert.False(SpoilerBlurImageFilter.ShouldBlur(Array.Empty<bool>()));
+        }
+
+        // ─── F2: fail-closed on an unrecognized (content-bearing) result shape ────
+
+        private sealed class FakeUnknownResult : IActionResult
+        {
+            public Task ExecuteResultAsync(ActionContext context) => Task.CompletedTask;
+        }
+
+        [Fact]
+        public void IsRecognizedNoContentResult_TreatsEmptyRecognizedShapesAsSafe()
+        {
+            // Recognized file shape that yielded no bytes, status-only results,
+            // and error ObjectResults carry no image payload → safe pass-through.
+            Assert.True(SpoilerBlurImageFilter.IsRecognizedNoContentResult(new FileContentResult(Array.Empty<byte>(), "image/jpeg")));
+            Assert.True(SpoilerBlurImageFilter.IsRecognizedNoContentResult(new NotFoundResult()));
+            Assert.True(SpoilerBlurImageFilter.IsRecognizedNoContentResult(new StatusCodeResult(500)));
+            Assert.True(SpoilerBlurImageFilter.IsRecognizedNoContentResult(new ObjectResult("err") { StatusCode = 404 }));
+            Assert.True(SpoilerBlurImageFilter.IsRecognizedNoContentResult(null));
+        }
+
+        [Fact]
+        public void IsRecognizedNoContentResult_FailsClosedForUnrecognizedOrContentBearingShapes()
+        {
+            // A 2xx ObjectResult (could carry a body) and an entirely unknown
+            // IActionResult must NOT be trusted to be empty → fail closed.
+            Assert.False(SpoilerBlurImageFilter.IsRecognizedNoContentResult(new ObjectResult("body") { StatusCode = 200 }));
+            Assert.False(SpoilerBlurImageFilter.IsRecognizedNoContentResult(new FakeUnknownResult()));
         }
 
         // ─── SanitizePlaceholder ──────────────────────────────────────────────────

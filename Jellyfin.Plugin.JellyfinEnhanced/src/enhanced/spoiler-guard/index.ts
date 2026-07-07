@@ -18,6 +18,7 @@ import { addSpoilerBlurButton } from './detail-button';
 import {
     loadState, resetState, whenLoaded, isLoadOk,
     isEnabledFor, isMovieEnabledFor, isCollectionEnabledFor,
+    hasEnabledCollections, fetchMovieScope,
     enableForSeries, disableForSeries,
     enableForMovie, disableForMovie,
     enableForCollection, disableForCollection,
@@ -55,6 +56,8 @@ JE.spoilerGuard = {
     isEnabledFor,
     isMovieEnabledFor,
     isCollectionEnabledFor,
+    hasEnabledCollections,
+    fetchMovieScope,
     enableForSeries,
     disableForSeries,
     enableForMovie,
