@@ -75,6 +75,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
             Assert.True(SpoilerBlurImageFilter.IsRecognizedNoContentResult(new StatusCodeResult(500)));
             Assert.True(SpoilerBlurImageFilter.IsRecognizedNoContentResult(new ObjectResult("err") { StatusCode = 404 }));
             Assert.True(SpoilerBlurImageFilter.IsRecognizedNoContentResult(null));
+
+            // 304 Not Modified is NOT safe: it instructs the client to reuse a
+            // previously cached body, which may be pre-guard CLEAR bytes.
+            Assert.False(SpoilerBlurImageFilter.IsRecognizedNoContentResult(new StatusCodeResult(304)));
         }
 
         [Fact]

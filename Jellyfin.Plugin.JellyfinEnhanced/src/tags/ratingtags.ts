@@ -100,10 +100,18 @@ interface RatingCacheEntry {
 function getCachedEntry(ctx: TagRendererContext, itemId: string): RatingCacheEntry | null {
     const entry = (ctx.getPersistent(itemId) ?? ctx.hot?.get(itemId)) as any;
     if (!entry) return null;
+    // Spoiler Guard: entries cached BEFORE the guard fields existed (legacy
+    // string/number shorthand, or objects without sgType) carry no suppression
+    // context, so renderFromCache could replay a rating for a newly guarded
+    // item. While the feature is enabled, treat them as cache misses — the
+    // re-fetch stores a fresh entry WITH sg fields. Feature off → identical
+    // legacy behavior.
+    const guardOn = JE.pluginConfig?.SpoilerBlurEnabled === true;
     if (typeof entry === 'string' || typeof entry === 'number') {
-        return { tmdb: String(entry), critic: null };
+        return guardOn ? null : { tmdb: String(entry), critic: null };
     }
     if (typeof entry === 'object') {
+        if (guardOn && typeof entry.sgType !== 'string') return null;
         // Expose tmdb/critic PLUS the Spoiler-Guard fields (sgType/sgSeriesId/
         // sgPlayed) stashed by render(). Without them, renderFromCache's
         // suppression re-check saw Type=undefined and never suppressed, so a

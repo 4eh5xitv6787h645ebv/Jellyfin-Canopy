@@ -237,12 +237,20 @@ export function enableForCollection(collectionId: string, collectionName?: strin
     const n = normalizeId(collectionId);
     return JE.core.api!.plugin(`/spoiler-blur/collections/${encodeURIComponent(n)}`, {
         method: 'POST', body: { CollectionName: collectionName || '' },
-    }).then(() => { caches.collections.add(n); });
+    }).then(() => {
+        caches.collections.add(n);
+        // Collection membership changes movie scope — cached scope answers
+        // (keyed by movie id only) are now stale, so drop them all.
+        scopeCache.clear();
+    });
 }
 export function disableForCollection(collectionId: string): Promise<void> {
     const n = normalizeId(collectionId);
     return JE.core.api!.plugin(`/spoiler-blur/collections/${encodeURIComponent(n)}`, { method: 'DELETE' })
-        .then(() => { caches.collections.delete(n); });
+        .then(() => {
+            caches.collections.delete(n);
+            scopeCache.clear();
+        });
 }
 
 // ── Pending TMDB (Seerr modal) ────────────────────────────────────────────

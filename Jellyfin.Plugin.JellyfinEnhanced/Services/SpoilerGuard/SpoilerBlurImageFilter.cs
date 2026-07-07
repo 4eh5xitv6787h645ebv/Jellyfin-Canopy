@@ -172,19 +172,25 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
 
             if (!seasonId.HasValue && !seriesId.HasValue) return;
 
-            // Per-(user, scope) coalesce. A "Mark season watched" sweep on
-            // a 24-episode season fires 24 events → 24 queued threadpool
-            // tasks all racing the same _watchedCache; coalescing per-user
-            // only would collapse cross-season events (seasons A and B for
-            // the same user collide and drop B's eviction). Keyed by
-            // (userId, scopeId) where scopeId is seasonId for
-            // episode/season events and seriesId for series events.
-            // Same-season repeats coalesce; cross-season events each get
-            // their own dispatch.
-            var scopeId = seasonId.HasValue && seasonId.Value != Guid.Empty
-                ? seasonId.Value
-                : seriesId!.Value;
-            var dedupKey = (userId, scopeId);
+            // Season-scoped events: evict the single affected key SYNCHRONOUSLY.
+            // A ConcurrentDictionary.TryRemove is O(1) and allocation-free, so it
+            // is safe on the publish thread — and it closes the race where a user
+            // marks the season's only watched episode unplayed and immediately
+            // re-requests the season art before a queued eviction has run (the
+            // stale "AnyWatched=true" entry would pass CLEAR bytes through).
+            // Series-scoped events still defer to Task.Run below: the prefix
+            // sweep iterates the whole cache and does not belong on this thread.
+            if (seasonId.HasValue && seasonId.Value != Guid.Empty)
+            {
+                _watchedCache.TryRemove(userId.ToString("N") + ":" + seasonId.Value.ToString("N"), out _);
+                return;
+            }
+
+            // Series-scoped events only from here on (season events returned
+            // above). Per-(user, series) coalesce: a metadata sweep can fire
+            // many series-level events in a burst → without dedup each queues
+            // its own threadpool task racing the same prefix sweep.
+            var dedupKey = (userId, seriesId!.Value);
             if (!_pendingInvalidations.TryAdd(dedupKey, 0))
             {
                 return;
@@ -204,28 +210,16 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                         // Instance-field _disposed read at execution time
                         // so post-Dispose lambdas no-op fast.
                         if (_disposed) return;
-                        if (seasonId.HasValue && seasonId.Value != Guid.Empty)
+                        // Series-level event — invalidate every cached season
+                        // for this user (keys are "{userN}:{seasonN}", so we
+                        // iterate). Cheap: cache is small (≤512) and this is
+                        // rare. ToArray so the snapshot survives a concurrent
+                        // insert and future framework changes to Keys.
+                        var prefix = userId.ToString("N") + ":";
+                        foreach (var k in _watchedCache.Keys.ToArray())
                         {
-                            var key = userId.ToString("N") + ":" + seasonId.Value.ToString("N");
-                            // Surface eviction-key-mismatch as a debug
-                            // breadcrumb. If a future refactor desyncs the
-                            // build-key from the read-key, evictions
-                            // silently become no-ops.
-                            _watchedCache.TryRemove(key, out _);
-                        }
-                        else if (seriesId.HasValue && seriesId.Value != Guid.Empty)
-                        {
-                            // Series-level event — invalidate every cached season
-                            // for this user (keys are "{userN}:{seasonN}", so we
-                            // iterate). Cheap: cache is small (≤512) and this is
-                            // rare. ToArray so the snapshot survives a concurrent
-                            // insert and future framework changes to Keys.
-                            var prefix = userId.ToString("N") + ":";
-                            foreach (var k in _watchedCache.Keys.ToArray())
-                            {
-                                if (k.StartsWith(prefix, StringComparison.Ordinal))
-                                    _watchedCache.TryRemove(k, out _);
-                            }
+                            if (k.StartsWith(prefix, StringComparison.Ordinal))
+                                _watchedCache.TryRemove(k, out _);
                         }
                     }
                     catch (Exception ex)
@@ -252,11 +246,11 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             }
         }
 
-        // Per-(user, scope) dedup gate for the OnUserDataSaved Task.Run
-        // dispatch. Scope is seasonId for episode/season events, seriesId
-        // for series events. Static so a hot-reload preserves the dedup
-        // state across plugin instances (matches _watchedCache,
-        // _warnedShapeAt pattern in this file).
+        // Per-(user, series) dedup gate for the OnUserDataSaved Task.Run
+        // dispatch (season-scoped events are evicted synchronously and never
+        // dispatch). Static so a hot-reload preserves the dedup state across
+        // plugin instances (matches _watchedCache, _warnedShapeAt pattern in
+        // this file).
         private static readonly ConcurrentDictionary<(Guid, Guid), byte> _pendingInvalidations = new();
 
         // This filter is a Singleton subscribed to
@@ -1309,9 +1303,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     return true;
                 case EmptyResult:
                     return true;
-                case StatusCodeResult:
-                    // Status-only: NotFoundResult, NoContentResult, 500, ... — no payload.
-                    return true;
+                case StatusCodeResult scr:
+                    // Status-only with no payload — but a 304 Not Modified tells the
+                    // client to reuse a previously cached body. If that cache predates
+                    // the guard it holds CLEAR bytes, so a 304 on a guarded item is a
+                    // leak vector, not a no-content pass: fail closed to the fallback
+                    // JPEG (guarded responses are no-store, so this costs nothing on
+                    // repeat views). Every other status-only result carries no image.
+                    return scr.StatusCode != Microsoft.AspNetCore.Http.StatusCodes.Status304NotModified;
                 case Microsoft.AspNetCore.Mvc.Infrastructure.IStatusCodeActionResult sc
                     when sc.StatusCode is int code && code >= 400 && code <= 599:
                     // e.g. NotFoundObjectResult / ObjectResult carrying an ERROR
