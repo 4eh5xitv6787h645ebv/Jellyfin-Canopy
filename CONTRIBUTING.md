@@ -64,7 +64,7 @@ It generates a typed client module, a controller, an e2e spec stub and a docs st
 
 ### Performance rules
 
-Injected UI must never jank the host client. The full doctrine — each rule with its reasoning and the pattern to copy — is [docs/advanced/performance-rules.md](docs/advanced/performance-rules.md); the implementation sites are marked `// PERF(Rn):` in the source. Check your PR against all eight:
+Injected UI must never jank the host client — and must never silently fail to appear on a slow server or connection. The full doctrine — each rule with its reasoning and the pattern to copy — is [docs/advanced/performance-rules.md](docs/advanced/performance-rules.md); the implementation sites are marked `// PERF(Rn):` in the source. Check your PR against all nine:
 
 - [ ] **R1** Injected UI is pre-paint (`ensureInjected(..., { prePaint: true })`) or occupies reserved dimensions (`min-width` chips / `expandIn`). No insert-then-move, no placeholder-then-swap-width.
 - [ ] **R2** Decorations on existing content (tags, badges, buttons on cards) are `position:absolute` overlays — they cannot shift layout.
@@ -74,6 +74,7 @@ Injected UI must never jank the host client. The full doctrine — each rule wit
 - [ ] **R6** No remote assets: every third-party asset goes through `src/core/asset-urls.ts` + the `AssetCacheManifest` mirror. A CDN URL anywhere else fails review (content images and user-clicked links exempt).
 - [ ] **R7** Feature DOM is built off-DOM and inserted once, content ready; late async data gets a compositor-only fade, never a layout-affecting swap.
 - [ ] **R8** Synchronous per-mutation-batch work stays under ~2 ms (`performance.now()` guard) and overflows to the async path.
+- [ ] **R9** Fail open — late beats never: readiness waits persist until the anchor mounts or navigation aborts them (no give-up timers); transient fetch errors are never cached like genuine empty answers (short error TTL, in-place bounded retry); failed async prerequisites reschedule (bounded + backoff + nav-scoped); dedup marks placed before work completes are removed when the work is dropped.
 
 And one server-side rule (guarded by `LibraryScanEventGuardTests`):
 
