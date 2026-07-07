@@ -41,6 +41,11 @@ JE.initializeLetterboxdLinksScript = async function () {
     let isAddingLinks = false; // Lock to prevent concurrent runs
     const processedItemIds = new Set<string>(); // Cache of items we've already processed
     let lastVisibleItemId: string | null = null; // Track the currently visible item
+    // PERF(R9): transient-failure counter per item — the processed set is only
+    // poisoned after repeated failures, so one blip doesn't hide the link for
+    // the whole page view. Cleared alongside processedItemIds.
+    const errorAttempts = new Map<string, number>();
+    const ERROR_MAX_ATTEMPTS = 3;
 
     // PERF(R6): no remote assets — icon served from the local asset cache.
     const LETTERBOXD_ICON_URL = assetUrl('icons/letterboxd.svg');
@@ -124,6 +129,7 @@ JE.initializeLetterboxdLinksScript = async function () {
         // If item changed, clear the processed set to allow reprocessing on new item
         if (lastVisibleItemId && lastVisibleItemId !== itemId) {
             processedItemIds.clear();
+            errorAttempts.clear();
         }
         lastVisibleItemId = itemId;
 
@@ -168,7 +174,10 @@ JE.initializeLetterboxdLinksScript = async function () {
                 }
                 letterboxdUrl = `https://letterboxd.com/actor/${personSlug}`;
             } else {
-                const imdbId = getImdbId(visiblePage);
+                // PERF(R9): prefer the item's authoritative provider id — the DOM
+                // link scan raced the host rendering the external-links row and
+                // marked the item processed before its IMDb link had mounted.
+                const imdbId = item.ProviderIds?.Imdb || getImdbId(visiblePage);
                 if (!imdbId) {
                     console.log(`${logPrefix} No IMDb ID found for ${item.Type}.`);
                     processedItemIds.add(itemId);
@@ -182,7 +191,15 @@ JE.initializeLetterboxdLinksScript = async function () {
             processedItemIds.add(itemId);
         } catch (err) {
             console.error(`${logPrefix} Error adding Letterboxd link:`, err);
-            processedItemIds.add(itemId);
+            // PERF(R9): fail open — only poison the processed set after repeated
+            // failures; the shared body observer / nav probes retry until then.
+            const attempts = (errorAttempts.get(itemId) || 0) + 1;
+            if (attempts >= ERROR_MAX_ATTEMPTS) {
+                processedItemIds.add(itemId);
+                errorAttempts.delete(itemId);
+            } else {
+                errorAttempts.set(itemId, attempts);
+            }
         } finally {
             isAddingLinks = false;
         }

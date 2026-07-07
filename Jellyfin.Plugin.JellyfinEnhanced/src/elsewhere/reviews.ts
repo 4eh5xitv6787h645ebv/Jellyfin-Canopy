@@ -1242,13 +1242,17 @@ JE.initializeReviewsScript = function () {
         }
 
         // PERF(R7): no unconditional 150ms sleep — process immediately when the
-        // detail page is already visible (the common case); keep one 150ms
-        // retry for clients that fire viewshow before the page unhides. The
-        // section itself is built fully off-DOM in addReviewsToPage and
-        // inserted once, post-fetch (single insert, below the fold).
+        // detail page is already visible (the common case). PERF(R9): fail
+        // open — a single 150ms retry lost the whole reviews section whenever
+        // the page unhid later than that (routine on slow servers); back off
+        // over a bounded window instead, bailing if the URL changed underneath
+        // us. The section itself is built fully off-DOM in addReviewsToPage
+        // and inserted once, post-fetch (single insert, below the fold).
         let visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
-        if (!visiblePage) {
-            await new Promise(resolve => setTimeout(resolve, 150));
+        const RETRY_DELAYS_MS = [150, 500, 1000, 2000, 4000, 8000];
+        for (let i = 0; !visiblePage && i < RETRY_DELAYS_MS.length; i++) {
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS_MS[i]));
+            if (window.location.hash !== currentHash) return; // navigated away
             visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
         }
         if (visiblePage) {

@@ -79,6 +79,11 @@ interface QueueEntry {
 
 const renderers = new Map<string, RendererEntry>(); // name → { render, isEnabled, needsFirstEpisode, needsParentSeries }
 let processedCards = new WeakSet<Element>(); // let, not const — needs reassignment on reinit
+// PERF(R9): per-element failure counter — a card whose data fetch failed is
+// un-marked from processedCards (so later mutation/nav passes retry it) up to
+// this cap, then stays marked so an unreachable server isn't hammered forever.
+const cardFetchFailures = new WeakMap<Element, number>();
+const CARD_FETCH_MAX_FAILURES = 3;
 const firstEpisodeCache = new Map<string, Promise<any>>(); // seriesId → Promise<item|null>
 const parentSeriesCache = new Map<string, Promise<any>>(); // seriesId → Promise<item|null>
 let fetchTimer: number | null = null;
@@ -641,8 +646,14 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
 
         const items: any[] = response?.Items || [];
 
-        // Abort if navigation happened while we were waiting for the API response
-        if (generation !== batchGeneration) return;
+        // Abort if navigation happened while we were waiting for the API response.
+        // PERF(R9): un-mark the batch's cards first — if their elements survive
+        // the navigation (cached legacy page re-show), a later pass must be
+        // able to pick them up again instead of seeing a hollow "processed".
+        if (generation !== batchGeneration) {
+            for (const b of batch) processedCards.delete(b.el);
+            return;
+        }
 
         // Build parent series lookup for rating fallback
         const parentSeriesNeeded = new Set<string>();
@@ -742,7 +753,8 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
     } catch (err) {
         console.warn(`${logPrefix} Batch fetch failed, falling back to individual fetches:`, err);
         // Fallback: process items individually
-        for (const { renderTarget, itemId } of batch) {
+        for (const entry of batch) {
+            const { el, renderTarget, itemId } = entry;
             try {
                 const item: any = await getItemCached(itemId, { userId });
                 if (!item || !MEDIA_TYPES.has(item.Type)) continue;
@@ -758,7 +770,13 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
                         try { renderer.render(renderTarget, item, extras); } catch {}
                     }
                 });
-            } catch {}
+            } catch {
+                // PERF(R9): fail open — un-mark the card (bounded) so a later
+                // pass retries its tags instead of leaving it hollow forever.
+                const failures = (cardFetchFailures.get(el) || 0) + 1;
+                cardFetchFailures.set(el, failures);
+                if (failures < CARD_FETCH_MAX_FAILURES) processedCards.delete(el);
+            }
         }
     }
 }
@@ -817,6 +835,12 @@ function initialize(): void {
         batchGeneration++;
         firstEpisodeCache.clear();
         parentSeriesCache.clear();
+        // PERF(R9): fail open — queued cards were already marked processed at
+        // scan time; if we drop them here without un-marking, a card element
+        // that survives navigation (cached legacy page re-show, §6.8) keeps
+        // its "processed" mark with no tags rendered, permanently. Un-mark so
+        // a later pass over the same elements retries.
+        for (const entry of requestQueue) processedCards.delete(entry.el);
         requestQueue = [];
         firstFetchAfterNav = true; // PERF(R7): fast-track the next batch fetch
         // Pick up any new items added since last load
