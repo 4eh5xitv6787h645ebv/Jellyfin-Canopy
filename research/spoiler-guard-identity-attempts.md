@@ -206,3 +206,28 @@ action filter over Image/Trickplay controller actions with full HttpContext,
 so headers/query/cookies are all reachable. Research fan-out launched:
 JF12 auth+tag semantics, native client request contents, DTO tag-rewrite
 feasibility.
+
+### 2026-07-08 01:40 — A2 implemented and verified end-to-end ✅
+Implementation: `SpoilerIdentityService` (12-hex unkeyed marker per user,
+TTL-cached marker→user map, collision detection), `SpoilerIdentityTagFilter`
+(global action filter stamping all 12 tag fields + chapters + search hints on
+authenticated DTO responses, re-keying `ImageBlurHashes` in lockstep — also
+fixing the pre-existing sb- prefix blurhash breakage), resolver tier 2
+(marker from `?tag=` → single candidate, ahead of session-by-IP). New
+server-side toggle `SpoilerIdentityTags` (default on). 592 dotnet + 390
+client tests green.
+
+**Live curl proof (jellyfin-12, all anonymous, one shared IP):** guarded
+episode Primary with guarding user's marker → blurred bytes (39783); with
+non-guarding user's marker → clean bytes byte-identical to authenticated
+ground truth (27400); with plain unmarked tag → fail-closed blur (legacy
+ladder preserved).
+
+**Android TV emulator proof (Plethorafin_TV AVD, jellyfin-androidtv fork,
+via the deliberately misconfigured nginx proxy on :8102):** wire capture
+shows the app's image requests are fully anonymous (`auth:""`, no cookie,
+`okhttp/5.3.2`, no XFF) and echo the stamped tag (`…-jeu56c6f557be45`)
+verbatim. je_arradmin (guarding): episode stills substituted, "Spoiler Guard
+activated" placeholder. je_arruser (same proxy IP): real overview + clean
+episode stills — the over-blur this project set out to fix is gone.
+Screenshots: research/evidence/atv-emulator-*.png
