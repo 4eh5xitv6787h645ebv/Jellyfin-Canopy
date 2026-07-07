@@ -140,6 +140,8 @@ namespace Jellyfin.Plugin.JellyfinElevate
             // both AFTER HiddenContentResponseFilter, so hidden items are dropped
             // first, then surviving DTOs are stripped, then image bytes rewritten.
             serviceCollection.AddSingleton<ImageBlurService>();
+            serviceCollection.AddSingleton<SpoilerIdentityService>();
+            serviceCollection.AddSingleton<SpoilerIdentityTagFilter>();
             serviceCollection.AddSingleton<SpoilerUserResolver>();
             serviceCollection.AddSingleton<SpoilerBlurImageFilter>();
             serviceCollection.AddSingleton<SpoilerFieldStripFilter>();
@@ -152,6 +154,12 @@ namespace Jellyfin.Plugin.JellyfinElevate
             serviceCollection.AddScoped<IEventConsumer<PlaybackStartEventArgs>, SpoilerAutoEnableOnFirstPlayConsumer>();
             serviceCollection.Configure<MvcOptions>(o =>
             {
+                // Identity-tag stamping is registered FIRST so its
+                // post-processing runs LAST (filters unwind inner-to-outer):
+                // it must see the strip filter's final "sb-…-" cache-bust
+                // prefix to append the user marker onto the FINAL tag string
+                // and re-key ImageBlurHashes to exactly what clients hold.
+                o.Filters.AddService<SpoilerIdentityTagFilter>();
                 o.Filters.AddService<SpoilerFieldStripFilter>();
                 o.Filters.AddService<SpoilerBlurImageFilter>();
             });

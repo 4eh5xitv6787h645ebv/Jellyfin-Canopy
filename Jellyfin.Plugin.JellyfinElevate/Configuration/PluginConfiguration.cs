@@ -318,6 +318,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
             SpoilerAutoEnableOnSeerrRequest = false;
             SpoilerBlurStrictRefresh = false;
             SpoilerKeepMoviePosters = true;
+            SpoilerIdentityTags = true;
             SpoilerOverviewPlaceholder = "Spoiler Guard activated";
         }
 
@@ -748,6 +749,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         // are usually curated marketing art, while chapter scene-thumbs (and
         // synopsis/cast) are the real spoiler vector. Off = hide posters too.
         public bool SpoilerKeepMoviePosters { get; set; } = true;
+        // Per-user identity markers appended to image tags in item DTO
+        // responses ("-jeu{12hex}") so anonymous image requests can be
+        // attributed to the requesting user via the echoed `?tag=` value
+        // instead of the client IP. This is what keeps blur per-user precise
+        // for native clients (Android TV, Swiftfin, Roku) behind reverse
+        // proxies that hide the real client IP. Off = legacy session-by-IP
+        // matching only (fails closed / over-blurs on shared IPs).
+        public bool SpoilerIdentityTags { get; set; } = true;
         // Placeholder for stripped Overview so the client doesn't render a
         // "Description" header over blank. Configurable for localisation.
         public string SpoilerOverviewPlaceholder { get; set; } = "Spoiler Guard activated";

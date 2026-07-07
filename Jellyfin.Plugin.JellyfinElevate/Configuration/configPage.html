@@ -863,6 +863,11 @@
                                     <div class="je-setting-description" data-desc-for="spoilerBlurArtwork">
                                         <div class="fieldDescription">Off by default: only posters/thumbnails/screenshots are protected. Turn on to also blur/hide Backdrop and Art images (wider aesthetic images shown on detail pages), which some users find over-aggressive.</div>
                                     </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerIdentityTags" data-config-key="SpoilerIdentityTags" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Per-user image identity tags (reverse-proxy safe)</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerIdentityTags">
+                                        <div class="fieldDescription">Embeds a per-user marker in the image URLs each user receives, so Spoiler Guard can tell users apart on every client (Android TV, iOS, Roku, web) even behind a reverse proxy that hides the real client IP. Leave on unless you see image-caching oddities; when off, non-web clients are matched by IP address only, which over-blurs when several users share one IP.</div>
+                                    </div>
                                 </div>
                             </details>
 

@@ -109,17 +109,20 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         private readonly UserConfigurationManager _userConfigManager;
         private readonly ISessionManager _sessionManager;
         private readonly ILibraryManager _libraryManager;
+        private readonly SpoilerIdentityService _identity;
         private readonly ILogger<SpoilerUserResolver> _logger;
 
         public SpoilerUserResolver(
             UserConfigurationManager userConfigManager,
             ISessionManager sessionManager,
             ILibraryManager libraryManager,
-            ILogger<SpoilerUserResolver> logger)
+            ILogger<SpoilerUserResolver> logger,
+            SpoilerIdentityService identity)
         {
             _userConfigManager = userConfigManager;
             _sessionManager = sessionManager;
             _libraryManager = libraryManager;
+            _identity = identity;
             _logger = logger;
         }
 
@@ -238,6 +241,29 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             if (primary != null && primary.Value != Guid.Empty)
             {
                 return new[] { primary.Value };
+            }
+
+            // Tier 2: per-user identity marker embedded in the `?tag=` value
+            // (see SpoilerIdentityService / SpoilerIdentityTagFilter). Present
+            // whenever the client built this URL from an item DTO we stamped —
+            // which every client does, native TV/mobile included, because
+            // clients never invent image URLs; they echo the DTO's tag. No IP
+            // involvement, so this stays per-user precise behind reverse
+            // proxies that hide the real client IP. A marker naming no current
+            // user (stale device cache after a user was deleted, forged value)
+            // falls through to the ladder below. No session check on purpose:
+            // the tag only reaches a client inside that user's authenticated
+            // DTO response, and a forged marker merely lets a client
+            // deliberately opt into another user's blur policy — Spoiler Guard
+            // protects users from their OWN spoilers, so that "attack" only
+            // self-spoils (anonymous IPs with no sessions get clean bytes
+            // today anyway).
+            if (httpContext.Request.Query.TryGetValue("tag", out var tagValues)
+                && SpoilerIdentityService.TryParseMarker(tagValues.ToString(), out _, out var markerHex)
+                && _identity.TryResolveMarker(markerHex, out var markerUid)
+                && markerUid != Guid.Empty)
+            {
+                return new[] { markerUid };
             }
 
             // Anonymous request (browser <img>/CSS-background, or a native

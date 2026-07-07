@@ -59,7 +59,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Controllers
             var provider = new FakePluginConfigProvider(cfg);
             var pending = new SpoilerPendingService(mgr, lib, userManager, NullLogger<SpoilerPendingService>.Instance);
             var sessions = new CountingSessionManager();
-            var resolver = new SpoilerUserResolver(mgr, sessions, lib, NullLogger<SpoilerUserResolver>.Instance);
+            var resolver = new SpoilerUserResolver(
+                mgr, sessions, lib, NullLogger<SpoilerUserResolver>.Instance,
+                new SpoilerIdentityService(userManager, NullLogger<SpoilerIdentityService>.Instance));
             var userData = new StubUserDataManager();
 
             var controller = new SpoilerGuardController(
