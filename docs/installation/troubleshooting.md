@@ -151,7 +151,7 @@ sudo chmod -R 755 /usr/lib/jellyfin/
 
 ## Admin Config Page Tabs Not Switching
 
-If clicking tabs in the plugin's admin configuration page (Elsewhere Settings, Jellyseerr Settings, *arr Links, etc.) does nothing, this may be caused by **Cloudflare** interfering with JavaScript execution when accessing Jellyfin through a Cloudflare tunnel or proxy.
+If clicking tabs in the plugin's admin configuration page (Elsewhere, Seerr, *arr, etc.) does nothing, this may be caused by **Cloudflare** interfering with JavaScript execution when accessing Jellyfin through a Cloudflare tunnel or proxy.
 
 **Solution:** Try disabling Cloudflare features that modify JavaScript behaviour for your Jellyfin domain:
 

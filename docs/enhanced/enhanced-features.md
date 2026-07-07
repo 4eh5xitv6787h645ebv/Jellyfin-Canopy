@@ -36,12 +36,12 @@ Per-user content hiding with server-side storage and granular filtering controls
 
 1. Navigate to any item detail page
 2. Click the hide button (visibility_off icon)
-3. Choose hide scope:
-   - **Global** - Hide everywhere
-   - **Episode** - Hide this episode only
-   - **Show** - Hide entire series
-   - **Next Up** - Hide from Next Up only
-   - **Continue Watching** - Hide from Continue Watching only
+3. Choose what to hide from the **"What would you like to hide?"** dialog:
+   - **Hide this episode everywhere**
+   - **Hide entire show everywhere**
+   - **Hide from Next Up & Continue Watching only**
+   - **Remove from Continue Watching**
+   - **Hide from Next Up only**
 4. Confirm the action
 
 **Management Panel:**
@@ -78,6 +78,7 @@ Access via:
    - Filter Continue Watching
    - Filter recommendations
    - Filter requests page
+   - Hide Collections & Libraries (experimental) — extends hiding beyond individual movies/series to whole My Media libraries, collections, and playlists. Off by default and strongly discouraged for typical users (can break browsing); exposed as a per-user toggle with a matching admin default ('Allow hiding collections, libraries, and playlists (experimental)') on the config page.
 6. Choose integration method:
    - Plugin Pages (requires Plugin Pages plugin)
    - Custom Tabs (requires Custom Tabs plugin)
@@ -273,6 +274,7 @@ Intelligent playback features for better viewing experience.
 - **Auto-skip intros/outros** - Seamless binge-watching (requires Intro Skipper plugin)
 - **Playback speed control** - Adjust speed with keyboard shortcuts
 - **Auto Picture-in-Picture** - Enter PiP mode when switching tabs
+- **Long press/hold for 2x speed** (beta, touch devices only) - long-press anywhere on the player to temporarily play at 2x speed; release to return to normal speed. Per-user toggle in the Enhanced panel with a matching admin default on the config page.
 
 **Configuration:**
 Enable/disable in Enhanced panel → Settings tab
@@ -704,7 +706,7 @@ Choose from multiple Jellyfin theme color variants.
 
 1. Enable in Enhanced panel → Settings → Extras
 2. Select theme from dropdown
-3. Optional: Enable "Randomize Daily"
+3. Optional: click the shuffle button ("Random daily theme") to rotate themes daily
 
 ---
 
@@ -743,7 +745,7 @@ Upload your own logos, banners, and favicon.
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
 2. Navigate to the **Extras** tab
-3. Find **Custom Branding** section
+3. Find **Custom Image Assets** section
 4. Upload your custom images:
    - Icon Transparent (header logo)
    - Banner Light (dark theme splash)

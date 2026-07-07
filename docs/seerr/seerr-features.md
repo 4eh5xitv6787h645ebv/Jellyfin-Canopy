@@ -196,8 +196,8 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 4. Optionally check **"Show Downloads in Requests Page"** to display active *arr downloads (enabled by default)
 5. Optionally check **"Show Seerr Issues Section"** to display Seerr issues
 6. Choose integration method:
-   - **Use Plugin Pages** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin)
-   - **Use Custom Tabs** - Adds custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin)
+   - **Use Plugin Pages for Requests** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin)
+   - **Use Custom Tabs for Requests** - Adds custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin)
    - **Add Requests as a native Home tab** - Shows Requests as a native tab on the Home screen (experimental layout)
 7. Configure polling settings (see below)
 8. Click **Save**
@@ -213,7 +213,7 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 
 ### Polling Settings
 
-#### Enable Polling
+#### Enable Auto-Refresh
 
 - Auto-refresh download status
 - Recommended: Enabled
@@ -303,11 +303,11 @@ Automatically sync watchlist items between Seerr and Jellyfin in both directions
 
 #### Configuration:
 
-- **Add Requested Media to Watchlist** - Auto-add when available
-- **Sync Seerr Watchlist** - Sync Seerr watchlist to Jellyfin
-- **Sync Jellyfin Watchlist to Seerr** - Sync Jellyfin watchlist to Seerr
-- **Prevent Watchlist Re-Addition** - Remember removed items
-- **Memory Retention Days** - How long to remember (default: 365)
+- **Add requested media to Watchlist** - Auto-add when available
+- **Sync Seerr Watchlist → Jellyfin** - Sync Seerr watchlist to Jellyfin
+- **Sync Jellyfin Watchlist → Seerr** - Sync Jellyfin watchlist to Seerr
+- **Prevent re-adding removed items** - Remember removed items
+- **Memory retention (days)** - How long to remember (default: 365)
 
 
 ### Icon States
@@ -440,6 +440,17 @@ Automatically request media based on viewing behavior.
 - Trigger on playback start
 - Trigger after X minutes watched
 - Check release date (only request if released)
+- **Quality Profile Mode** — how the auto request picks its Radarr target:
+  *Default* (Seerr uses its default Radarr server and quality profile),
+  *Original* (uses the same quality profile as the movie being watched, falling
+  back to default if not found), or *Custom* (always uses the specific Radarr
+  server, quality profile, and root folder selected below).
+- **Use default instead of 4K fallback** (default on) — only applies when
+  Quality Profile Mode is set to *Original*. If the watched movie was requested
+  with a 4K profile, the auto-request uses Seerr's default profile instead,
+  preventing requests from failing or requiring manual approval for users who
+  lack 4K request permission in Seerr. Disable it to preserve the original 4K
+  profile when all your users have 4K request access.
 
 !!! note "One request per title across multiple Seerr backends"
 
@@ -458,4 +469,10 @@ Automatically request media based on viewing behavior.
   cached for the [parental-rating filter](#parental-rating-filtering). Ratings
   rarely change, so this is long by default (1440 minutes = 24 hours) and shared
   across all users, keeping the filter cheap after the first lookup of a title.
+- **User ID Cache TTL** — how long the resolved Jellyfin-user → Seerr-user id
+  mapping is cached before it is looked up again (default 30 minutes).
+- **Disable server-side response cache** (Debug section, default off) — when on,
+  every Seerr proxy request bypasses the response cache and is fetched fresh from
+  Seerr. Useful for testing; increases load on Seerr and is not recommended for
+  normal use.
 - Both caches are flushed automatically whenever plugin settings are saved.

@@ -102,7 +102,7 @@ Auto-skip requires the [Intro Skipper plugin](https://github.com/intro-skipper/i
 
 2. Verify API key is correct (from Seerr Settings → General)
 
-3. Click "Test Connection" in plugin settings
+3. Click "Test" in the Seerr plugin settings
 
 4. Check icon status on search page:
 
@@ -125,7 +125,7 @@ Auto-skip requires the [Intro Skipper plugin](https://github.com/intro-skipper/i
 
 Option A (automatic, recommended):
 
-1. In Jellyfin, go to Dashboard -> Plugins -> Jellyfin Enhanced -> Seerr Settings
+1. In Jellyfin, go to Dashboard -> Plugins -> Jellyfin Enhanced -> Seerr
 
 2. Enable "Auto import Jellyfin users to Seerr"
 
@@ -239,7 +239,7 @@ Option B (manual in Seerr):
 
 2. Go to Settings tab
 
-3. Enable "Custom Pause Screen"
+3. Enable "Enable Custom Pause Screen"
 
 4. Adjust settings as desired
 
@@ -351,7 +351,7 @@ See [CSS Customization Guide](../advanced/css-customization.md) for complete CSS
 
 2. Navigate to the **Extras** tab
 
-3. Find **Custom Branding** section
+3. Find **Custom Image Assets** section
 
 4. Upload your images:
 

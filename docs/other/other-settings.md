@@ -34,7 +34,7 @@ After saving, do a hard refresh (++ctrl+f5++) to see changes.
 
 *Display tab*
 
-### Use Icons
+### Use Icons in UI
 
 Enable or disable icons in toasts, settings panel, and other UI elements.
 
@@ -73,8 +73,8 @@ Controls how long certain UI elements stay visible before auto-closing.
 
 | Setting | Default | Description |
 |---|---|---|
-| **Shortcuts Panel Autoclose Delay** | 15000 ms | How long the shortcuts panel stays open before closing automatically. Values are advisory — the input does not enforce a range. |
-| **Toast Notification Duration** | 1500 ms | How long toast notifications are displayed. Values are advisory — the input does not enforce a range. |
+| **Shortcuts Panel Autoclose Delay (ms)** | 15000 ms | How long the shortcuts panel stays open before closing automatically. Values are advisory — the input does not enforce a range. |
+| **Toast Notification Duration (ms)** | 1500 ms | How long toast notifications are displayed. Values are advisory — the input does not enforce a range. |
 
 ---
 
@@ -110,8 +110,8 @@ Shows a custom image while Jellyfin is loading.
 
 Override the language used by the plugin for all users.
 
-- Leave empty to use each user's Jellyfin profile language.
-- Accepts a language code (e.g. `en`, `de`, `fr`).
+- Select a language from the dropdown to apply it to the plugin UI.
+- Choose **System Default** to use each user's own Jellyfin profile language.
 
 ---
 

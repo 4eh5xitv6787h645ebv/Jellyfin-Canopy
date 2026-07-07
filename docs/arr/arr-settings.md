@@ -4,7 +4,7 @@ Quick access to Sonarr, Radarr, and Bazarr (admin only).
 
 ## Setup
 
-1. Open plugin settings → **`*arr Settings`** tab
+1. Open plugin settings → **`*arr`** tab
 2. Add one or more Sonarr and/or Radarr instances
 3. Enable `Enable *arr Links on Detail Pages`
 4. Optional: Enable "Show synced tags as links"
@@ -31,8 +31,8 @@ Each Sonarr or Radarr instance has the following fields:
 
 ### Adding an Instance
 
-1. Open plugin settings → ***arr Settings** tab
-2. Click **"Add Sonarr Instance"** or **"Add Radarr Instance"**
+1. Open plugin settings → ***arr** tab
+2. Click **"+ Add Sonarr instance"** or **"+ Add Radarr instance"**
 3. Fill in Name, URL, and API Key
 4. Optionally add URL Mappings
 5. Click **Save**
@@ -127,10 +127,10 @@ Found in the **Pages** tab under "Requests Page".
 |---|---|
 | **Enable Requests Page** | Enables a dedicated page showing active downloads from Sonarr/Radarr |
 | **Add Requests as a native Home tab** | Adds Requests as its own tab on the Home page, no external plugin needed (recommended on Jellyfin 12's experimental layout) |
-| **Use Plugin Pages** | Adds a sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)) |
-| **Use Custom Tabs** | Adds a custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)) |
+| **Use Plugin Pages for Requests** | Adds a sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)) |
+| **Use Custom Tabs for Requests** | Adds a custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)) |
 | **Enable Auto-Refresh** | Automatically refreshes download status |
-| **Poll Interval** | How often to refresh, in seconds (30–300, default: 30) |
+| **Poll Interval (seconds)** | How often to refresh, in seconds (30–300, default: 30) |
 | **Filter Downloads by User Requests** | When on (default), non-admin users only see downloads for content they requested; when off, all authenticated users see the entire download queue, including items requested by others. |
 
 !!! note

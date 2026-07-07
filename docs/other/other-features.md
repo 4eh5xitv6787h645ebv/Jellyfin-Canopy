@@ -319,7 +319,7 @@ Control how long toast notifications are displayed.
 **Configure:**
 
 1. On the **Playback** tab
-2. Set **Toast Duration** (milliseconds)
+2. Set **Toast Notification Duration (ms)**
 3. Click **Save**
 
 **Default:** 1500ms (1.5 seconds)

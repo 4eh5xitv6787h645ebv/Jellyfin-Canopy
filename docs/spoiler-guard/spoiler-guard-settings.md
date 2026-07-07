@@ -47,7 +47,7 @@ The **Blur intensity** field (5-100, default 40) controls the sigma. 5 is mild, 
 
 ---
 
-## Also blur Backdrop / Art
+## Also protect backdrops / art images
 
 **Default: Off.** When off, only **Primary** / **Thumb** / **Screenshot** images get replaced — the wider Backdrop / Art images shown on detail pages and in collections pass through unblurred. Turn on for the strictest mode.
 
@@ -55,7 +55,7 @@ Most spoilers live in the per-episode thumbnails and per-season posters; backdro
 
 ---
 
-## Show movie posters even when Spoiler Guard is on
+## Keep movie posters unblurred
 
 **Default: On.** A Spoiler-Guard-listed movie's **Primary** (poster) and **Thumb** images pass through unblurred. Movie posters are typically curated marketing art that doesn't reveal plot, while the per-chapter scene-thumbs inside the movie's detail page (plus the synopsis, chapter names, cast) are the real spoiler vector. Turn off for maximum obscurity — protected movies will also have their posters hidden until each one is marked watched.
 
@@ -63,7 +63,7 @@ What's still protected when this toggle is on:
 
 - **Chapter** thumbnails — the "Scenes" rail on the movie detail page. Progressive-strip rules still apply (chapters before the user's resume point pass through; chapters at-or-after the resume point are protected).
 - **Screenshot** images.
-- **Backdrop / Art** — only if "Also blur Backdrop / Art" is also on.
+- **Backdrop / Art** — only if "Also protect backdrops / art images" is also on.
 
 What passes through clear:
 
@@ -74,7 +74,7 @@ Series and Episodes are unaffected by this toggle — they have their own per-as
 
 ---
 
-## Auto-enable on first play of a new show
+## Auto-enable on first play of a series' S1E1
 
 **Default: Off.** When on, the first time a user plays S1E1 of a series they've never watched before, the plugin automatically adds that series to their Spoiler Guard list. They don't have to remember to toggle it before starting.
 
@@ -92,7 +92,7 @@ Users can also manually opt in via the **Enable Spoiler Guard** toggle in the Se
 
 ---
 
-## Strict refresh mode
+## Full page reload on toggle (strict refresh)
 
 **Default: Off.** Controls what happens visually on the user's screen after they toggle Spoiler Guard for a series / movie:
 
@@ -111,19 +111,19 @@ The in-place refresh is also what runs automatically when a user marks an episod
 
 A collapsible sub-section of per-field hide toggles. When the master switch is on **all of these default to on** — that's the strict-by-default posture a user opted into when they enabled Spoiler Guard for a show. Admins can relax anything they don't want.
 
-### Hide episode descriptions
+### Hide episode/movie descriptions (Overview)
 
 **Default: On.** Replaces the episode synopsis with the placeholder text below. The single biggest spoiler vector.
 
-#### Placeholder text
+#### Overview placeholder text
 
 **Default: `Spoiler Guard activated`.** Shown in place of the description so the client doesn't render an empty section header. The text is server-side-sanitized (HTML tags + angle brackets stripped, capped at 200 chars) whenever it is served — so even an admin who edits the plugin XML directly gets the same defense-in-depth at render time.
 
 ### Hide tags
 
-**Default: On.** Hides the TMDB Tags array (phrases like "Death of a main character") on cards for unwatched episodes of Spoiler Guard series. (The Jellyfin Enhanced rating overlay is governed separately by **Hide ratings**, below; genre/quality/language overlays are not affected by Spoiler Guard.)
+**Default: On.** Hides the TMDB Tags array (phrases like "Death of a main character") on cards for unwatched episodes of Spoiler Guard series. (The Jellyfin Enhanced rating overlay is governed separately by **Hide ratings (community & critic)**, below; genre/quality/language overlays are not affected by Spoiler Guard.)
 
-### Hide chapter names (keep timestamps)
+### Hide chapter names
 
 **Default: On.** Strips chapter names like "X reveals Y" but keeps the timestamp markers — the seek bar still shows chapter dividers, the user can navigate via timestamp without the spoiler text. Chapter thumbnails are stripped too.
 
@@ -133,34 +133,34 @@ For movies, this is a **progressive strip**: only chapters whose start position 
 
 **Default: On.** TMDB taglines like "Everything changes tonight" are pure spoiler bait. Hidden via empty array (not null) to match what Jellyfin returns for an item legitimately without tags.
 
-### Hide ratings
+### Hide ratings (community & critic)
 
 **Default: On.** Hides **both** the community/TMDB rating and the critic rating — a 9.8/10 rating on a specific episode implies a major event ("the one where X dies"). Hidden by null so clients don't render "0/10", and the Jellyfin Enhanced card rating overlay is suppressed too on the **series, season, and unwatched-episode cards** of a guarded show (it won't fall back to the parent series' rating). Watched episodes keep their rating, and if you turn this toggle off — or a user unchecks the **Ratings** override — the overlay renders normally again.
 
-### Hide air date
+### Hide air / premiere dates
 
 **Default: On.** A multi-month gap before an episode can imply "season finale" or "long-anticipated reveal" via release-date scheduling. Hidden by null.
 
-### Replace episode titles
+### Replace episode titles with "Season X, Episode Y"
 
 **Default: On.** Episode names become `Season X, Episode Y` instead of leaking the actual title (e.g. `The Death of Optimus`). Affects every surface where the title appears — list views, Next Up, Continue Watching, search results, the player's "now playing" overlay.
 
 Some clients use the title in navigation tooltips and breadcrumbs where the synthesized title can look jarring. Turn off if that's a deal-breaker for your users.
 
-### Hide cast on unwatched episodes
+### Hide cast
 
 **Default: On.** Strips the cast list on unwatched episodes of Spoiler Guard series. Has a sub-option:
 
-#### Cast hiding scope
+#### Cast strip mode
 
 | Mode | What's hidden |
 |---|---|
-| **Guest stars only (default)** | Only `Type=GuestStar` entries are removed. Regular cast stays — they appear in every episode anyway, so they don't reveal anything new about *this* episode. |
-| **All** | Strict mode. Every People entry (regular + guest + crew) is removed. Use for shows where the regular cast appearing or *not* appearing in a given episode is itself a spoiler (e.g. a recurring villain return). |
+| **Guest stars only (keep regular cast)** — default | Only `Type=GuestStar` entries are removed. Regular cast stays — they appear in every episode anyway, so they don't reveal anything new about *this* episode. |
+| **All cast & crew** | Strict mode. Every People entry (regular + guest + crew) is removed. Use for shows where the regular cast appearing or *not* appearing in a given episode is itself a spoiler (e.g. a recurring villain return). |
 
-Whenever **Replace episode titles** or **Hide episode descriptions** is on, the character name (`Role`) is also stripped from any surviving People entries — a role like "Resurrected Optimus" is a major spoiler regardless of cast strip mode. (With both of those toggles off, surviving People keep their `Role`.)
+Whenever **Replace episode titles with "Season X, Episode Y"** or **Hide episode/movie descriptions (Overview)** is on, the character name (`Role`) is also stripped from any surviving People entries — a role like "Resurrected Optimus" is a major spoiler regardless of cast strip mode. (With both of those toggles off, surviving People keep their `Role`.)
 
-### Hide reviews on Spoiler Guard series
+### Hide the Reviews panel on guarded series
 
 **Default: On.** Suppresses the JE Reviews panel on series detail pages where the user has Spoiler Guard enabled. TMDB reviews routinely contain plot spoilers from arbitrary points in the show, and user-written reviews share that risk. Recommended on.
 
@@ -210,21 +210,21 @@ Most logs are at INFO; corruption + unexpected shapes log at WARNING.
 | Enable Spoiler Guard | Off (admin must opt in) |
 | Protection mode for guarded artwork | Hide |
 | Blur intensity | 40 |
-| Also blur Backdrop / Art | Off |
-| Show movie posters even when Spoiler Guard is on | On |
+| Also protect backdrops / art images | Off |
+| Keep movie posters unblurred | On |
 | Auto-enable on first play | Off |
 | Auto-enable on Seerr request | Off |
-| Strict refresh mode | Off |
-| Hide episode descriptions | On |
-| Placeholder text | `Spoiler Guard activated` |
+| Full page reload on toggle (strict refresh) | Off |
+| Hide episode/movie descriptions (Overview) | On |
+| Overview placeholder text | `Spoiler Guard activated` |
 | Hide tags | On |
 | Hide chapter names | On |
 | Hide taglines | On |
-| Hide ratings | On |
-| Hide air date | On |
-| Replace episode titles | On |
-| Hide cast on unwatched episodes | On |
-| Cast hiding scope | Guest stars only |
-| Hide reviews on Spoiler Guard series | On |
+| Hide ratings (community & critic) | On |
+| Hide air / premiere dates | On |
+| Replace episode titles with "Season X, Episode Y" | On |
+| Hide cast | On |
+| Cast strip mode | Guest stars only |
+| Hide the Reviews panel on guarded series | On |
 
 The strict-by-default posture means once an admin flips the master switch and a user opts a show in, every spoiler surface is protected without further configuration. Admins who want a looser setup can untick anything they don't need.

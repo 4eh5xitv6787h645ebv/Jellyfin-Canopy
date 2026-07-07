@@ -33,7 +33,7 @@ Once you turn Spoiler Guard on for a show or movie, the plugin hides every spoil
 | **Taglines** | TMDB taglines like "Everything changes tonight" are dropped. |
 | **Ratings** | The community/TMDB rating and the critic rating are both hidden — a 9.8/10 rating on a specific episode is a hint that something big happens. The Jellyfin Enhanced card rating overlay is suppressed too on the series, season, and unwatched-episode cards of a guarded show (it won't fall back to the parent series' rating); watched episodes keep theirs. |
 | **Air date** | Hidden — a multi-month gap before an episode can imply "season finale" or "long-anticipated reveal". |
-| **Cast** | By default, only guest stars on unwatched episodes are hidden (regular cast appears in every episode anyway). Strict mode hides the entire cast. |
+| **Cast** | By default, only guest stars on unwatched episodes are hidden (regular cast appears in every episode anyway). Setting **Cast strip mode** to "All cast & crew" hides the entire cast. |
 | **TMDB + user reviews** | The Reviews panel is suppressed on series detail pages for shows you have Spoiler Guard on for. |
 | **Search results** | Episode hints in search are rewritten to `Season X, Episode Y` and the matched-term echo is suppressed. |
 
@@ -57,7 +57,7 @@ Every other Jellyfin client you use will pick up the same protection on its next
 
 ### Per movie
 
-The same toggle button appears on Movie detail pages. Click the toggle and the poster blurs (or hides, depending on the artwork protection mode), the description swaps to the placeholder, and chapters / cast on unwatched cards get the same treatment:
+The same toggle button appears on Movie detail pages. Click the toggle and the description swaps to the placeholder, and chapters / cast on unwatched cards get the same treatment. By default the movie poster itself stays unblurred — the admin's **Keep movie posters unblurred** setting is on out of the box, so the movie's Primary/Thumb art passes through clear while chapter thumbs, backdrops, and screenshots follow the protection mode. If your admin turns **Keep movie posters unblurred** off, the poster blurs (or hides, depending on the artwork protection mode) too:
 
 | Before toggle | After toggle |
 |---|---|
@@ -124,7 +124,7 @@ By default Spoiler Guard does a **soft refresh**: it immediately rewrites every 
 |---|---|
 | ![Before](web-refresh-after-toggle-off.png) | ![After ON](web-refresh-after-toggle-on.png) |
 
-If your admin enables **Strict refresh mode**, the page also auto-reloads after every toggle so the text updates immediately — at the cost of a brief page flash.
+If your admin enables **Full page reload on toggle (strict refresh)**, the page also auto-reloads after every toggle so the text updates immediately — at the cost of a brief page flash.
 
 ---
 
@@ -156,7 +156,7 @@ There are no client-side tweaks to install. Once an admin turns the master switc
 
 Two admin toggles can save you from manually opting in for every new show:
 
-- **Auto-enable on first play of a new show** — the first time you press play on S1E1 of a series you've never watched, the plugin adds it to your Spoiler Guard list automatically. Rewatches and jumping in at later episodes don't trigger it.
+- **Auto-enable on first play of a series' S1E1** — the first time you press play on S1E1 of a series you've never watched, the plugin adds it to your Spoiler Guard list automatically. Rewatches and jumping in at later episodes don't trigger it.
 - **Auto-enable on Seerr request** — every successful Seerr request you submit via JE automatically registers a pending Spoiler Guard intent. When the content lands, Spoiler Guard is already on for you.
 
 Both are admin-level (off by default). Ask your admin to turn them on if you want a hands-free experience.

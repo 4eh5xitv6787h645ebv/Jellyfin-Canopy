@@ -121,7 +121,7 @@ Multiple patterns:
 ### On Item Detail Pages
 
 1. Open any movie or TV show detail page
-2. Scroll to the "Jellyfin Elsewhere" section
+2. Scroll to the streaming-availability panel (its title reads "Also available in _\<region\>_ on:" or, when nothing is found, "Not available on any streaming services in _\<region\>_")
 3. View available streaming options
 
 ### Information Displayed

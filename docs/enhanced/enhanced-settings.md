@@ -63,6 +63,16 @@ Most features can be enabled/disabled individually:
 2. Enable and configure tags you want *(Eg: `Quality Tags`)*
 3. Adjust position (top-left, top-right, etc.)
 
+### Quality Tag categories
+
+Quality Tags break down into six independently toggleable categories —
+**Resolution** (4K/1080p…), **Source** (BluRay/DVD/HDTV…), **HDR**
+(HDR10+/Dolby Vision), **Special format** (IMAX/3D), **Video format**
+(HEVC/H264/AV1…), and **Sound** (Atmos/DTS/5.1/7.1…). Each category can be
+enabled/disabled and reordered independently. The config-page values are admin
+defaults; each user can override which categories show and their order in the
+Enhanced panel.
+
 ### Hide Tags on Hover
 Enable **Hide Tags on Hover** to fade the poster tag overlays (Quality, Genre,
 Language, Rating) out while you hover a card, so the artwork and Jellyfin's own
@@ -80,9 +90,9 @@ Enable **Disable Tags on Search Page** to stop poster tag overlays rendering on
 the search results page. This hides **all** four families — Quality, Genre,
 Language and Rating — not only Genre tags.
 
-### Tags Cache Duration
+### Tags Cache Duration (days)
 
-**Tags Cache Duration** (`TagsCacheTtlDays`, default 30 days) controls how long
+**Tags Cache Duration (days)** (`TagsCacheTtlDays`, default 30 days) controls how long
 the client keeps cached tag data before re-fetching. It applies to every tag
 family, **including People tags** — changing it now adjusts the people-tag cache
 lifetime too (previously that was fixed at 30 days regardless of this setting).
@@ -112,6 +122,20 @@ detail page.
 - **Time format** — when a time-based mode is used, choose **h:m** or
   **y:mo:d:h:m**. The admin default is set with **Watch Progress Time Format**
   (`WatchProgressTimeFormat`, default *h:m*).
+
+## Subtitle Defaults
+
+The admin sets the default subtitle **Style** (e.g. Clean White, Classic Black
+Box, Netflix Style), **Size**, and **Font** on the plugin config page (Playback
+→ Subtitles).
+
+- **Per-user override** — each user can override all three in the Enhanced
+  panel's **Settings** tab; their choice persists per user and wins over the
+  admin default.
+- **Disable Custom Subtitle Styles by default** — globally disables Jellyfin's
+  custom subtitle style overrides so the source subtitle styling is shown
+  unmodified. It is an admin default (config page) that each user can override
+  in the Enhanced panel.
 
 ## Show File Sizes
 
