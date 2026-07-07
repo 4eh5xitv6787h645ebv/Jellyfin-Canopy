@@ -102,6 +102,7 @@ Found in the ***arr Settings** tab under "Calendar Page".
 | Setting | Description |
 |---|---|
 | **Enable Calendar Page** | Enables the calendar view for upcoming Sonarr/Radarr releases |
+| **Add Calendar as a native Home tab** | Adds Calendar as its own tab on the Home page, no external plugin needed (recommended on Jellyfin 12's experimental layout) |
 | **Use Plugin Pages** | Adds a sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)) |
 | **Use Custom Tabs** | Adds a custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)) |
 | **First Day of Week** | Monday or Sunday |
@@ -111,7 +112,7 @@ Found in the ***arr Settings** tab under "Calendar Page".
 
 After enabling with Plugin Pages, restart Jellyfin for the sidebar link to appear.
 
-Direct URL: `/web/index.html#!/jellyfinenhanced/calendar`
+Direct URL: `/web/index.html#/calendar`
 
 ---
 
@@ -122,6 +123,7 @@ Found in the ***arr Settings** tab under "Requests Page (Downloads)".
 | Setting | Description |
 |---|---|
 | **Enable Requests Page** | Enables a dedicated page showing active downloads from Sonarr/Radarr |
+| **Add Requests as a native Home tab** | Adds Requests as its own tab on the Home page, no external plugin needed (recommended on Jellyfin 12's experimental layout) |
 | **Use Plugin Pages** | Adds a sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)) |
 | **Use Custom Tabs** | Adds a custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)) |
 | **Enable Auto-Refresh** | Automatically refreshes download status |
@@ -130,4 +132,4 @@ Found in the ***arr Settings** tab under "Requests Page (Downloads)".
 !!! note
     The Requests page for downloads is separate from the Seerr Requests page. Both can be enabled independently. The Seerr Requests page (showing media requests and issues) is configured in the **Seerr Settings** tab.
 
-Direct URL: `/web/index.html#!/jellyfinenhanced/downloads`
+Direct URL: `/web/index.html#/downloads`

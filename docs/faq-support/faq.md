@@ -44,15 +44,15 @@ The userscript has been discontinued as the plugin functionality has grown signi
 
 ### Plugin not appearing after installation?
 
-**See [this page in Installation Troubleshooting](../installation/troubleshooting.md/#plugin-not-appearing-after-installation)**
+**See [this page in Installation Troubleshooting](../installation/troubleshooting.md#plugin-not-appearing-after-installation)**
 
 ### Scripts not loading after installation
 
-**See [this page in Installation Troubleshooting](../installation/troubleshooting.md/#scripts-not-loading)**
+**See [this page in Installation Troubleshooting](../installation/troubleshooting.md#scripts-not-loading)**
 
 ### Update not working properly?
 
-**See this page in [Installation Troubleshooting](../installation/troubleshooting.md/#update-not-working)**
+**See this page in [Installation Troubleshooting](../installation/troubleshooting.md#update-not-working)**
 
 
 ### I see "permission denied" errors in logs!!
@@ -210,7 +210,7 @@ Option B (manual in Seerr):
 
     **Stored on Jellyfin server:**
 
-    - [Bookmark **data** `bookmarks.json`](../advanced/api.md#bookmark-api-info)
+    - [Bookmark **data** `bookmark.json`](../advanced/api.md#bookmark-api-info)
 
     - Spoiler Guard **per-user list and override prefs** `spoilerblur.json`
 
@@ -226,7 +226,7 @@ Option B (manual in Seerr):
 
 - Check bookmark file exists on server
 
-- Look in `/config/data/users/{userId}/jellyfin-enhanced/bookmarks.json`
+- Look in `/config/plugins/configurations/Jellyfin.Plugin.JellyfinEnhanced/{userId}/bookmark.json`
 
 - Check browser console for errors
 
@@ -349,7 +349,7 @@ See [CSS Customization Guide](../advanced/css-customization.md) for complete CSS
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
 
-2. Navigate to **Other Settings** tab
+2. Navigate to the **Extras** tab
 
 3. Find **Custom Branding** section
 
@@ -409,7 +409,7 @@ Yes, via Enhanced panel settings:
 
 2. Go to Console tab
 
-3. Filter by `🪼Jellyfin Enhanced`
+3. Filter by `🪼 Jellyfin Enhanced`
 
 4. Look for errors (red text)
 

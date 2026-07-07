@@ -37,9 +37,9 @@ Access user-configured settings via the Enhanced panel:
 
 **Settings Persistence:**
 
-- Settings saved to browser localStorage
+- Settings saved server-side, per Jellyfin user (stored in the plugin's per-user settings.json via the `/JellyfinEnhanced/user-settings/{userId}/settings.json` endpoint)
 - Per-user configuration
-- Sync across devices (same browser profile)
+- Syncs across every device and browser where the same Jellyfin user logs in (settings live on the server, keyed to the user account)
 
 
 # Enhanced Settings — Admin configuration

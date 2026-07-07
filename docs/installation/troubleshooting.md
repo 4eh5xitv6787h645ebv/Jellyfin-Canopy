@@ -65,6 +65,10 @@
 
 ## Permission Issues
 
+!!! note "Applies only to the legacy on-disk rewrite"
+
+    On Jellyfin 12, the plugin injects its client script at request time via built-in middleware and does **not** write to `index.html` on disk, so these permission errors do not occur by default. This section only applies if an admin has disabled the script-injection middleware (**Disable Script Injection Middleware**, off by default) to fall back to the legacy on-disk `index.html` rewrite, which requires a writable web folder.
+
 If you see errors like this in a log file:
 
 ```text

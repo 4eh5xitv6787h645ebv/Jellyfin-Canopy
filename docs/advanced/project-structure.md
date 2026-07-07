@@ -86,7 +86,7 @@ Jellyfin.Plugin.JellyfinEnhanced/
     └── locales/             # 26 translation files, en.json is the base (Weblate-managed)
 ```
 
-Everything the browser runs comes from four served artifacts: the loader (`/JellyfinEnhanced/script`), the bundle (`/JellyfinEnhanced/dist/je.bundle.js`), and the out-of-band bootstrap files (`dist/splashscreen.js`, `dist/login-image.js`, `dist/translations.js`). Per-file serving of feature scripts no longer exists.
+Everything the browser runs comes from five served artifacts: the loader (`/JellyfinEnhanced/script`), the bundle (`/JellyfinEnhanced/dist/je.bundle.js`), and the out-of-band bootstrap files (`dist/splashscreen.js`, `dist/login-image.js`, `dist/translations.js`). Per-file serving of feature scripts no longer exists.
 
 ### Server side (`Jellyfin.Plugin.JellyfinEnhanced/`)
 
@@ -116,8 +116,10 @@ Jellyfin.Plugin.JellyfinEnhanced/
 │   │                          # auto-request watchers (AutoRequest/AutoRequestRetryPolicy —
 │   │                          # transport-only retry / already-requested handling), arr tag sync,
 │   │                          # maintenance mode, startup filters (script injection, branding)
-│   ├── LiveNotifierService.cs # Pushes live updates (config-changed etc.) to open sessions
-│   │                          # via ISessionManager (see docs/advanced/live-updates.md)
+│   ├── LiveNotifierService.cs # Pushes live updates (config-changed etc.) to the sessions
+│   │                          # registered as running the JE client (via ILiveSessionRegistry;
+│   │                          # see docs/advanced/live-updates.md)
+│   ├── LiveSessionRegistry.cs # Registry of sessions running the JE client — scopes live pushes
 │   └── SpoilerGuard/          # Spoiler Guard server core: ImageBlurService (SkiaSharp Gaussian blur +
 │                              # stock-card render + pre-encoded fail-closed JPEG, cached),
 │                              # SpoilerBlurImageFilter (per-user image-byte replacement over the Image/

@@ -36,7 +36,7 @@ Upload your own logos, banners, and favicon to personalize your Jellyfin instanc
 **Configuration:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
+2. Navigate to the **Extras** tab
 3. Find **Custom Branding** section
 4. Upload your custom images:
    - **Icon Transparent** - Header logo (PNG/SVG recommended)
@@ -75,7 +75,7 @@ Enable or disable icons in toasts, settings panel, and other UI elements.
 **Enable:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
+2. Navigate to the **Display** tab
 3. Check **"Use Icons"**
 4. Click **Save**
 
@@ -122,7 +122,7 @@ Replace default activity icons with Material Design icons with custom colors.
 **Enable:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
+2. Navigate to the **Extras** tab
 3. Check **"Enable Colored Activity Icons"**
 4. Click **Save**
 
@@ -140,7 +140,7 @@ Color-coded backgrounds for ratings on detail pages.
 
 **Enable:**
 
-1. Navigate to **Other Settings** tab
+1. Navigate to the **Extras** tab
 2. Check **"Enable Colored Ratings"**
 3. Click **Save**
 
@@ -158,7 +158,7 @@ Show user profile images on manual login page.
 
 **Enable:**
 
-1. Navigate to **Other Settings** tab
+1. Navigate to the **Extras** tab
 2. Check **"Enable Login Image"**
 3. Click **Save**
 
@@ -176,7 +176,7 @@ Replace default plugin icons with Material Design icons.
 
 **Enable:**
 
-1. Navigate to **Other Settings** tab
+1. Navigate to the **Extras** tab
 2. Check **"Enable Plugin Icons"**
 3. Click **Save**
 
@@ -208,7 +208,7 @@ Choose from multiple Jellyfin theme color variants.
 
 **Enable:**
 
-1. Navigate to **Other Settings** tab
+1. Navigate to the **Extras** tab
 2. Check **"Enable Theme Selector"**
 3. Click **Save**
 
@@ -238,7 +238,7 @@ Choose from multiple Jellyfin theme color variants.
 #### Admin Configuration
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to the **Other Settings** tab
+2. Navigate to the **Extras** tab
 3. Enable **"Active Streams Widget"**
 4. Optional: Enable **"Show to all users"**
 5. Click **Save**
@@ -270,26 +270,25 @@ Admins can send a message to all active sessions from the panel header (megaphon
 
 Configure durations for Enhanced panel UI elements.
 
-### Help Panel Auto-Close
+### Shortcuts Panel Autoclose Delay
 
-Control how long the help panel stays open before automatically closing.
+Control how long the shortcuts (help) panel stays open before automatically closing.
 
 **Configure:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
-3. Find **Timeout Settings** section
-4. Set **Help Panel Autoclose Delay** (milliseconds)
+2. Navigate to the **Playback** tab
+3. Find the timeout settings
+4. Set **Shortcuts Panel Autoclose Delay (ms)**
 5. Click **Save**
 
-**Default:** 8000ms (8 seconds)
-**Range:** 0-30000ms (0 = no auto-close)
+**Default:** 15000ms (15 seconds)
+**Range:** advisory 0-30000ms (not enforced by the input; the panel always auto-closes, and a value of 0 reverts to the 15000ms default)
 
 **Use Cases:**
 
 - Longer delay for first-time users
 - Shorter delay for experienced users
-- Disable auto-close (0) for accessibility
 
 ### Toast Notification Duration
 
@@ -297,11 +296,11 @@ Control how long toast notifications are displayed.
 
 **Configure:**
 
-1. In **Timeout Settings** section
+1. On the **Playback** tab
 2. Set **Toast Duration** (milliseconds)
 3. Click **Save**
 
-**Default:** 3000ms (3 seconds)
+**Default:** 1500ms (1.5 seconds)
 **Range:** 1000-10000ms
 
 **Affects:**
@@ -319,7 +318,7 @@ Add Letterboxd external links to movie item detail pages.
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
+2. Navigate to the **Extras** tab
 3. Check **"Enable Letterboxd Links"**
 4. Optional: Check **"Show Letterboxd Link as Text"** for text instead of icon
 5. Click **Save**
@@ -362,10 +361,10 @@ Hide specific items from your Jellyfin library without deleting them.
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Enhanced Settings** tab
+2. Navigate to the **Pages** tab
 3. Find **Hidden Content** section
 4. Check **"Enable Hidden Content"**
-5. Optional: Check **"Use Plugin Pages for Hidden Content Library"**
+5. Optional: Check **"Use Plugin Pages for Hidden Content"**
 
    - Adds a sidebar link to dedicated Hidden Content page
    - Requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin
@@ -406,7 +405,7 @@ Custom splash screen that appears while Jellyfin is loading.
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
+2. Navigate to the **Extras** tab
 3. Check **"Enable Custom Splash Screen"**
 4. Enter **Splash Screen Image URL**
 
@@ -479,59 +478,37 @@ See the [Contributing Translations](../faq-support/contributing-translations.md)
 
 ## Cache Management
 
-Clear various caches to force refresh of data.
+Force clients to refresh cached data.
 
-### Clear Local Storage
+### Clear All Client Caches
 
-Force all clients to clear their localStorage.
+The config page has a single **Clear All Client Caches** button. Clicking it sets a
+timestamp so that every client clears its localStorage and tag caches on next load.
 
 **Use Case:**
 
 - Reset all client-side settings
-- Fix corrupted data
-- Force fresh start
+- Update quality/genre/language/rating tags
+- Fix corrupted or stale cached data
+- Force a fresh start across all clients
 
 **How:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Find **Clear Local Storage** button
-3. Click to set timestamp
-4. All clients clear storage on next load
+2. Navigate to the **Display** tab
+3. Find the **Clear All Client Caches** button
+4. Click to set the timestamp
+5. All clients clear their storage and tag caches on next load
 
-### Clear Translation Cache
+**Note:** May cause slowness on the first load after clearing while data is re-fetched.
 
-Force all clients to re-fetch translations.
+### Translation Caches
 
-**Use Case:**
-
-- Update to latest translations
-- Fix translation issues
-- Force language refresh
-
-**How:**
-
-1. Find **Clear Translation Cache** button
-2. Click to set timestamp
-3. Clients re-fetch on next load
-
-### Clear Tags Cache
-
-Force all clients to clear tag caches.
-
-**Use Case:**
-
-- Update quality/genre/language/rating tags
-- Fix cached tag data
-- Force tag refresh
-
-**How:**
-
-1. Go to Enhanced Settings tab
-2. Find **Clear All Client Caches** button
-3. Click to clear
-4. Clients re-fetch tag data on next load
-
-**Note:** May cause slowness on first load after clearing.
+There is no config-page button for clearing translation caches. Translation caches are
+refreshed automatically for all clients by the **Refresh Translation Cache** scheduled
+task (Dashboard → Scheduled Tasks). Individual users can also clear their own browser's
+translation cache from the language section of the Enhanced settings panel — that button
+only affects the local browser.
 
 ---
 

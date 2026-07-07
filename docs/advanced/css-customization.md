@@ -181,7 +181,7 @@ Structure of each link:
    data-tag="JE Arr Tag: in-netflix"
    data-tag-name="in-netflix"
    data-tag-prefix="JE Arr Tag: ">
-  <span class="arr-tag-link-icon" aria-hidden="true">🏷️</span>
+  <span class="arr-tag-link-icon" aria-hidden="true"><!-- inline tag SVG --></span>
   <span class="arr-tag-link-text"
         data-id="in-netflix"
         data-tag="JE Arr Tag: in-netflix"
@@ -256,9 +256,11 @@ Available hooks:
 5) Service-specific colors using the data-id
 
 ```css
-.itemExternalLinks a.arr-tag-link[data-id="1 - n00bcodr"]  { background: #d81f26; color: #fff; }
-.itemExternalLinks a.arr-tag-link[data-id="2 - jellyfish"] { background: #00a8e1; color: #fff; }
-.itemExternalLinks a.arr-tag-link[data-id="3 - admin"] { background: #0c1a38; color: #8dd0ff; }
+/* Note: data-id is a slugified form of the raw tag (lowercased, spaces → dashes),
+   so a tag named "1 - n00bcodr" is matched as "1-n00bcodr". */
+.itemExternalLinks a.arr-tag-link[data-id="1-n00bcodr"]  { background: #d81f26; color: #fff; }
+.itemExternalLinks a.arr-tag-link[data-id="2-jellyfish"] { background: #00a8e1; color: #fff; }
+.itemExternalLinks a.arr-tag-link[data-id="3-admin"] { background: #0c1a38; color: #8dd0ff; }
 ```
 
 

@@ -61,4 +61,4 @@ The essential enhancement suite for Jellyfin, bundling advanced features and cus
 - **Theme Selector** - Choose from multiple color variants
 - **Colored Icons** - Activity and plugin icons
 - **Login Images** - User avatars on login page
-- **Multi-language** - Available in 15+ languages
+- **Multi-language** - Available in 26 languages

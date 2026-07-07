@@ -128,9 +128,9 @@ View Seerr recommendations and similar items on detail pages.
 - Real-time request status
 
 #### Configure
-1. Check **"Show Seerr Recommendations and Similar items"**
-2. Optional: Enable **"Exclude already in library items"**
-3. Optional: Enable **"Exclude rejected items"**
+1. Check **"Show similar items"** and/or **"Show recommended items"**
+2. Optional: Enable **"Exclude items already in library"**
+3. Optional: Enable **"Exclude blocklisted items"**
 
 ### Discovery Pages
 
@@ -191,13 +191,14 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 ### Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Seerr Settings** tab
+2. Navigate to the **Pages** tab
 3. Check **"Enable Requests Page"**
 4. Optionally check **"Show Downloads in Requests Page"** to display active *arr downloads (enabled by default)
 5. Optionally check **"Show Seerr Issues Section"** to display Seerr issues
 6. Choose integration method:
-   - **Use Plugin Pages** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin)
+   - **Use Plugin Pages** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin, default-on)
    - **Use Custom Tabs** - Adds custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin)
+   - **Add Requests as a native Home tab** - Shows Requests as a native tab on the Home screen (experimental layout)
 7. Configure polling settings (see below)
 8. Click **Save**
 9. Restart Jellyfin if using Plugin Pages
@@ -229,7 +230,7 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 
 - Click "Requests" in sidebar (Plugin Pages)
 - Navigate to custom tab (Custom Tabs)
-- Direct URL: `/web/index.html#!/jellyfinenhanced/requests`
+- Direct URL: `/web/index.html#!/jellyfinenhanced/downloads`
 
 #### Features
 
@@ -266,7 +267,7 @@ View and manage Seerr issues directly from the Requests page.
 
 #### Configuration
 
-1. Go to plugin settings → Seerr Settings tab
+1. Go to plugin settings → **Pages** tab
 2. Check **"Enable Requests Page"**
 3. Check **"Show Seerr Issues Section"**
 4. Click **Save**

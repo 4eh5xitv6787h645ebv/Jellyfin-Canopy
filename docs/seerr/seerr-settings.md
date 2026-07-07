@@ -47,16 +47,17 @@ This step is optional if you enable plugin-side auto import.
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
 2. Navigate to **Seerr Settings** tab
-3. Check **"Show Seerr Results in Search"**
-4. Enter your **Seerr URL(s)** (one per line)
+3. Check **"Enable Seerr integration"** (master toggle — nothing Seerr-related works until this is enabled)
+4. Check **"Show Seerr Results in Search"**
+5. Enter your **Seerr URL(s)** (one per line)
    - Use internal URL for best performance
    - Can provide multiple URLs (first successful connection used)
-5. Enter your **Seerr API Key**
+6. Enter your **Seerr API Key**
 
    - Found in Seerr: **Settings** → **General** → **API Key**
-6. Click **"Test Connection"** to verify
-7. Enable optional features (see below)
-8. Click **Save**
+7. Click the **"Test"** button next to the API Key field to verify the connection
+8. Enable optional features (see below)
+9. Click **Save**
 
 ### Step 4: Configure User Import (Optional)
 

@@ -170,6 +170,9 @@ Comprehensive hotkeys for navigation, playback control, and more.
  - `B` - Bookmark Current Time
  - `P` - Open Episode Preview
  - `O` - Skip Intro/Outro
+ - `,` - Step Back One Frame
+ - `.` - Step Forward One Frame
+ - `Z` - Jump to Last Position
 
 
 **Customization:**
@@ -229,7 +232,7 @@ Beautiful overlay with media info when you pause a video.
 You can set how many seconds of pause pass before the overlay fades in. Each user
 can set their own delay in the Enhanced panel (and it now persists across reloads),
 while an administrator sets the **default** for everyone in the plugin config page
-(**Enhanced Settings → Pause Screen Delay**). The default is 5 seconds (range
+(**Playback → Pause Screen Delay**). The default is 5 seconds (range
 1–60); a user's own value overrides the admin default.
 
 !!! tip
@@ -419,10 +422,10 @@ Jellyfin users can write their own reviews for movies, series, seasons, and epis
 **Setup (admin):**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to the **Enhanced Settings** tab
-3. Enable **"Show User Reviews"**
-4. Optionally enable **"Show User Rating on Posters"** to display the average rating as a poster tag
-5. Optionally disable **"Show User Rating Dash"** to hide the `—` placeholder on posters when no ratings exist yet
+2. Navigate to the **Elsewhere** tab
+3. Enable **"Enable User Written Reviews"**
+4. Optionally enable **"Show average user rating on poster cards"** to display the average rating as a poster tag
+5. Optionally disable **"Show "—" on posters for unrated items"** to hide the `—` placeholder on posters when no ratings exist yet
 6. Click **Save**
 
 !!! note
@@ -488,7 +491,7 @@ Display available audio languages as country flags on posters.
 
 **Features:**
 
-- Country flag icons from flagcdn.com
+- Country flag icons served from the plugin's local asset cache (mirrored from the flag-icons / flagcdn sets), so no third-party request is made
 - Show up to 3 unique languages
 - Positioned bottom-left by default
 - Also displays on item detail pages
@@ -555,7 +558,7 @@ A live stream counter in the Jellyfin header that shows who is currently playing
 - Playing / Paused state badge per session
 - Clickable title links to the item detail page
 - Admin-only broadcast button to message all active sessions
-- Polls every 15 seconds; updates automatically while the panel is open
+- Fetches on demand — the counter loads once on page load, and the panel refreshes when opened or via the manual refresh button (no background polling)
 
 **Header icon states:**
 
@@ -593,9 +596,9 @@ Admins see a megaphone icon (📣) in the panel header. Click it to open the bro
 **Setup:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to the **Other Settings** tab
-3. Enable **"Active Streams Widget"**
-4. Optional: Enable **"Show to all users"** to make the widget visible to non-admin users
+2. Navigate to the **Extras** tab
+3. Enable **"Active Streams Header Widget"**
+4. Optional: Enable **"Show widget to non-admins"** to make the widget visible to non-admin users
 
 !!! note
     By default the widget is admin-only. Non-admin users see a read-only view (no broadcast button, no IP addresses) when "Show to all users" is enabled.
@@ -716,7 +719,7 @@ Upload your own logos, banners, and favicon.
 **Setup:**
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
-2. Navigate to **Other Settings** tab
+2. Navigate to the **Extras** tab
 3. Find **Custom Branding** section
 4. Upload your custom images:
    - Icon Transparent (header logo)

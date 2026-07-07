@@ -67,7 +67,7 @@ Jellyfin Enhanced is a comprehensive plugin that bundles advanced features and c
 **[Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)**
 
 - Add custom pages to Jellyfin sidebar
-- Used by Jellyfin Enhanced for Calendar, Requests, Bookmarks, Hidden Content pages
+- Optionally used by Jellyfin Enhanced to host its Calendar, Requests, Bookmarks, and Hidden Content pages when the corresponding `*UsePluginPages` options are enabled (Jellyfin Enhanced renders these natively by default)
 
 **[File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation)**
 
