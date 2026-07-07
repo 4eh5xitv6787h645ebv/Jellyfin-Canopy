@@ -96,6 +96,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced
             // (via IPluginManager), flushes the Seerr caches and pushes a JE-marked
             // GeneralCommand to open sessions so admin saves hot-reload with no
             // manual refresh. Replaces the former SeerrCache.Instance static bridge.
+            // The registry scopes the push to devices that actually run the JE
+            // client (populated by authenticated public-config fetches) so native
+            // clients never receive the carrier command.
+            serviceCollection.AddSingleton<Services.ILiveSessionRegistry, Services.LiveSessionRegistry>();
             serviceCollection.AddHostedService<Services.LiveNotifierService>();
             serviceCollection.AddSingleton<UserConfigurationManager>();
             serviceCollection.AddSingleton<AutoSeasonRequestService>();
