@@ -102,7 +102,101 @@ attributions would *unblur* guarded art. Fail-closed posture forbids it.
 
 ---
 
+## Tracking
+
+GitHub milestone **“Spoiler Guard: identity beyond IP”** (milestone 2) collects
+one research issue per approach, with `outcome: worked / not-worked / partial`
+labels; rejected approaches are closed as not-planned. Issues: 5 (A2, adopted),
+6 (A1/A6, rejected), 7 (A3, partial/complement), 8 (A4, rejected), 9 (A5,
+rejected), 10 (A7/A8, rejected).
+
 ## Findings log
+
+### 2026-07-08 01:25 — native-client image requests (source-verified, all 5 clients)
+| Client | Auth header | Token in query | deviceId | UA | Cookies |
+|---|---|---|---|---|---|
+| Android TV (+ Plethorafin/Moonfin) | no | no | no | `okhttp/x.y.z` | no |
+| Android mobile (WebView UI) | no | no | no | WebView UA | JE cookie ✅ (it IS jellyfin-web) |
+| Android mobile (native ImageProvider, launcher tiles only) | **yes** (full `MediaBrowser …Token=`) | no | in header | okhttp | no |
+| Swiftfin (iOS/tvOS) | no | no | no | `Swiftfin/… CFNetwork/…` | no |
+| Roku | no (impossible on Poster nodes) | no | no | Roku firmware UA | no |
+| Web | no | no | no | browser UA | JE cookie ✅ |
+
+Every client passes the DTO tag verbatim into `?tag=` (Kotlin SDK
+`getItemImageUrl`, Swift SDK `url(with:)` with `queryAPIKey=false`, Roku
+`ImageURL()`, JS apiclient `getScaledImageUrl`). The Kotlin SDK's image URL
+builder has NO credential support at all — no client generation ever
+authenticated image fetches. ⇒ A1/A6 dead (nothing on the wire), A5 dead
+(`okhttp/x.y.z` UA can't distinguish two ATV devices), **A2 confirmed as the
+one reliable channel**.
+
+### 2026-07-08 01:15 — JF12 auth pipeline on image endpoints (source-verified)
+The three item-image GET actions are anonymous (no [Authorize], no fallback
+policy), but the default-scheme auth middleware still runs on every request:
+a `MediaBrowser Token="…"` header or `?ApiKey=` query param populates
+`HttpContext.User` (claims incl. `Jellyfin-UserId`, `Jellyfin-DeviceId`) even
+there. Legacy carriers (`?api_key=`, `X-Emby-Token`, `X-MediaBrowser-Token`,
+`Emby` header) are OFF by default in JF12 (`DisableLegacyAuthorization`
+migration). Server-side `tag` is cache-cosmetic only: non-empty ⇒ 365-day
+immutable caching, ETag echoes the supplied tag verbatim, never validated,
+never 404s. Token→user resolution for a plugin: `IAuthorizationContext.
+GetAuthorizationInfo(HttpContext)` or `IDeviceManager.GetDevices(new
+DeviceQuery { AccessToken = … })` — both plugin-referenceable.
+⇒ A1 needs no plugin work for clients that send credentials (they already hit
+the ClaimsPrincipal tier); it's dead only because the problem clients send
+nothing.
+
+### 2026-07-08 01:15 — repo feasibility for A2 (source-verified)
+- The strip filter already mutates tags (`sb-{8hex}-{origTag}` cache-bust
+  prefix in `MutateImageTagsForCacheBust`) and the image filter already reads
+  `?tag=` (cache-keying only) — the identity decode is the only missing piece,
+  and the marker must COMPOSE with the `sb-` prefix scheme.
+- But identity stamping can't just piggyback the strip filter: (a) its route
+  allowlist misses Sessions/Channels/LiveTv/Genres/Persons/Studios/Artists/
+  InstantMix/UserViews/Trailers; (b) it mutates tags only for spoiler-scoped
+  items — identity needs ALL items; (c) it touches only ImageTags +
+  BackdropImageTags of the ~12 tag-bearing BaseItemDto fields (ImageTags,
+  BackdropImageTags, ScreenshotImageTags, ParentBackdropImageTags,
+  AlbumPrimaryImageTag, SeriesPrimaryImageTag, ParentLogoImageTag,
+  ParentArtImageTag, SeriesThumbImageTag, ParentThumbImageTag,
+  ParentPrimaryImageTag, ChannelPrimaryImageTag).
+- `ImageBlurHashes` is keyed BY tag string (ImageType → tag → blurhash): any
+  tag rewrite must re-key it in lockstep or client blurhash placeholders break.
+- No HMAC utility / persisted secret exists in the repo — consistent with the
+  unkeyed-short-hash decision above (forgery is harmless; only collision
+  resistance + staleness matter). Resolver will validate marker → real user
+  via an IUserManager-derived map (deleted/unknown ⇒ fall back to IP ladder).
+- Docs to revise once shipped: docs/spoiler-guard/spoiler-guard-features.md
+  line ~229 (the reverse-proxy caveat this work retires).
+
+### 2026-07-08 01:05 — A2 premise verified empirically on jellyfin-12
+`GET /Items/{id}/Images/Primary?tag=<anything>` returns identical 200 bytes
+for the real tag, a bogus tag, and a suffixed real tag; the tag's only effect
+is `Cache-Control: … immutable` (present with any non-empty tag). So an
+appended per-user marker cannot break image serving. Verified with curl
+against the live server.
+
+### 2026-07-08 01:05 — threat model reframed (lowers the trust bar)
+Spoiler Guard protects each user from **their own** spoilers. A *forged*
+identity signal only lets someone deliberately see clean art — i.e. spoil
+themselves (or see art that was never confidential to begin with). The
+fail-closed ladder exists to prevent **accidental** misattribution, not to
+resist adversaries. Consequence: an identity marker needs collision
+resistance and staleness handling, not cryptographic unforgeability. (The
+existing cookie's session-on-IP validation is best understood the same way:
+it guards against stale/wrong cookies, not attackers.)
+
+### 2026-07-08 01:02 — A1 pre-finding from prior verified work
+Recent source verification (jellyfin-androidtv `ImageHelper` + Kotlin SDK
+`getItemImageUrl`) found ATV image requests carry **no api_key and no auth
+header** — the app fetches images fully anonymously. A1/A6 likely dead for
+the flagship problem client; awaiting fresh source confirmation.
+
+### 2026-07-08 01:00 — capture harness up
+nginx header-capture proxy on :8102 → jellyfin-12 (:8099), deliberately NOT
+forwarding X-Forwarded-For — reproduces the misconfigured-proxy scenario and
+logs every identity-bearing header clients send (Authorization, X-Emby-Token,
+cookies, UA). Log: JSON lines in the container's /var/log/nginx/capture.log.
 
 ### 2026-07-08 00:55 — baseline mapped
 `SpoilerUserResolver.ResolveCandidateUserIds` is the single choke point; both
