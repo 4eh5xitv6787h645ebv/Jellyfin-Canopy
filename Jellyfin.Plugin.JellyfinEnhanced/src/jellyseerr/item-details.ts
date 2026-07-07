@@ -73,9 +73,23 @@ async function getTmdbIdFromItem(itemId: string, signal?: AbortSignal): Promise<
     }
 }
 
+// Process-lifetime monotonic counter so concurrent waiters (similar/
+// recommended + request-more run in parallel per page) never share an
+// onBodyMutation subscriber id — a fixed id meant the later waiter silently
+// evicted the earlier one, and either waiter's cleanup stranded the survivor.
+let detailReadySeq = 0;
+
 /**
- * Wait for the detail page content to be ready
- * @param {AbortSignal} [signal] - Optional abort signal
+ * Wait for the detail page content to be ready.
+ *
+ * PERF(R9): fail open — no give-up timeout. On a slow server the host page
+ * can take arbitrarily long to mount #similarCollapsible; the old 3s timeout
+ * skipped the sections for the whole page view (nothing re-triggers except
+ * navigation). The wait now stays subscribed to the multiplexed body observer
+ * (R3) until the anchor mounts or the caller's AbortSignal fires — cleanup()
+ * aborts both controllers on every navigation, so the subscription's lifetime
+ * is exactly the page view.
+ * @param {AbortSignal} [signal] - Abort signal (aborted on navigation).
  * @returns {Promise<HTMLElement|null>}
  */
 function waitForDetailPageReady(signal?: AbortSignal): Promise<any> {
@@ -113,16 +127,16 @@ function waitForDetailPageReady(signal?: AbortSignal): Promise<any> {
 
         // Set up observer
         let observerHandle: any = null;
-        let timeoutId: any = null;
+        let backstopTimer: ReturnType<typeof setTimeout> | null = null;
 
         const cleanup = () => {
             if (observerHandle) {
                 observerHandle.unsubscribe();
                 observerHandle = null;
             }
-            if (timeoutId) {
-                clearTimeout(timeoutId);
-                timeoutId = null;
+            if (backstopTimer) {
+                clearTimeout(backstopTimer);
+                backstopTimer = null;
             }
         };
 
@@ -132,22 +146,24 @@ function waitForDetailPageReady(signal?: AbortSignal): Promise<any> {
                 cleanup();
                 resolve(null);
             }, { once: true });
+        } else {
+            // Leak backstop for a (future) signal-less caller ONLY: a real
+            // timer (a lazy mutation-time check never fires once a stuck page
+            // stops mutating). Never a UX budget (R9); every current caller
+            // passes a signal and never takes this path.
+            backstopTimer = setTimeout(() => {
+                cleanup();
+                resolve(checkPage());
+            }, 120_000);
         }
 
-        observerHandle = JE.helpers!.onBodyMutation!('jellyseerr-item-details-page-detect', () => {
+        observerHandle = JE.helpers!.onBodyMutation!(`jellyseerr-item-details-page-detect-${++detailReadySeq}`, () => {
             const result = checkPage();
             if (result) {
                 cleanup();
                 resolve(result);
             }
         });
-
-        // Timeout fallback (3 seconds)
-        timeoutId = setTimeout(() => {
-            cleanup();
-            const result = checkPage();
-            resolve(result);
-        }, 3000);
     });
 }
 
@@ -438,7 +454,13 @@ async function renderSimilarAndRecommended(itemId: string) {
  * @returns {Promise<any|null>}
  */
 function pollUntil(predicate: () => any, opts: any = {}): Promise<any> {
-    const { intervalMs = 100, timeoutMs = 5000, signal } = opts;
+    // PERF(R9): fail open — the deadline exists as a leak backstop, not a UX
+    // budget; callers pass generous timeouts and the poll interval decays
+    // (doubling up to maxIntervalMs) so holding the wait open on a slow host
+    // costs almost nothing. Every caller passes the per-page-view AbortSignal,
+    // so navigation ends the poll immediately (R5: page-scoped, no standing
+    // timer beyond the view).
+    const { intervalMs = 100, timeoutMs = 5000, maxIntervalMs = intervalMs, signal } = opts;
     return new Promise((resolve) => {
         if (signal?.aborted) {
             resolve(null);
@@ -449,7 +471,11 @@ function pollUntil(predicate: () => any, opts: any = {}): Promise<any> {
             resolve(immediate);
             return;
         }
-        const deadline = Date.now() + timeoutMs;
+        // The soft budget counts VISIBLE time only — a tab hidden past the
+        // whole window would otherwise get a single probe on return and give
+        // up. Decremented by the nominal interval on each visible tick.
+        let remainingVisibleMs = timeoutMs;
+        let currentInterval = intervalMs;
         let timerId: any = null;
         const finish = (value: any) => {
             if (timerId) clearTimeout(timerId);
@@ -460,12 +486,21 @@ function pollUntil(predicate: () => any, opts: any = {}): Promise<any> {
         if (signal) signal.addEventListener('abort', onAbort, { once: true });
         const tick = () => {
             if (signal?.aborted) return finish(null);
+            // PERF(R5/R9): visibility-gated — a hidden tab skips the DOM probe
+            // and does not burn the budget; the wait resumes with its full
+            // remaining window when the tab returns. Nav abort ends it either way.
+            if (document.visibilityState === 'hidden') {
+                timerId = setTimeout(tick, maxIntervalMs);
+                return;
+            }
             const result = predicate();
             if (result) return finish(result);
-            if (Date.now() >= deadline) return finish(null);
-            timerId = setTimeout(tick, intervalMs);
+            remainingVisibleMs -= currentInterval;
+            if (remainingVisibleMs <= 0) return finish(null);
+            currentInterval = Math.min(maxIntervalMs, currentInterval * 2);
+            timerId = setTimeout(tick, currentInterval);
         };
-        timerId = setTimeout(tick, intervalMs);
+        timerId = setTimeout(tick, currentInterval);
     });
 }
 
@@ -497,7 +532,9 @@ function waitForSeasonsHeading(signal?: AbortSignal): Promise<any> {
         const span = heading.querySelector('span');
         if (!span || !span.textContent.trim()) return null;
         return heading;
-    }, { intervalMs: 100, timeoutMs: 5000, signal });
+        // PERF(R9): 5s was a give-up that lost the button on slow hosts; the
+        // decayed poll makes a long window nearly free and nav aborts it.
+    }, { intervalMs: 100, maxIntervalMs: 1000, timeoutMs: 60_000, signal });
 }
 
 /**
@@ -516,7 +553,9 @@ function waitForChecker(signal?: AbortSignal): Promise<any> {
             const fn = JE.jellyseerrMoreInfo && JE.jellyseerrMoreInfo.checkForUnrequestedSeasons;
             return typeof fn === 'function' ? fn : null;
         },
-        { intervalMs: 50, timeoutMs: 3000, signal }
+        // PERF(R9): on a slow connection the module scripts themselves load
+        // slowly — 3s lost the button for the page view. Decayed poll + nav abort.
+        { intervalMs: 50, maxIntervalMs: 500, timeoutMs: 30_000, signal }
     );
 }
 

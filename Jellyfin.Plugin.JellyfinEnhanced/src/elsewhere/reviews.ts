@@ -1242,14 +1242,35 @@ JE.initializeReviewsScript = function () {
         }
 
         // PERF(R7): no unconditional 150ms sleep — process immediately when the
-        // detail page is already visible (the common case); keep one 150ms
-        // retry for clients that fire viewshow before the page unhides. The
-        // section itself is built fully off-DOM in addReviewsToPage and
-        // inserted once, post-fetch (single insert, below the fold).
+        // detail page is already visible (the common case). PERF(R9): fail
+        // open — a single 150ms retry lost the whole reviews section whenever
+        // the page unhid later than that (routine on slow servers). The unhide
+        // is a `hide` class flip, which the structural body observer
+        // deliberately drops (attribute-only batch), so there is no mutation
+        // signal to wait on — poll instead, R5-compliant: nav-guarded,
+        // visibility-gated, decaying interval, with the deadline as a leak
+        // backstop only (nav/hash change is the real terminator). The section
+        // itself is built fully off-DOM in addReviewsToPage and inserted
+        // once, post-fetch (single insert, below the fold).
         let visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
         if (!visiblePage) {
-            await new Promise(resolve => setTimeout(resolve, 150));
-            visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
+            const hardDeadline = Date.now() + 10 * 60 * 1000; // absolute termination guarantee
+            // Soft leak backstop counts VISIBLE time only — a tab hidden past
+            // the whole window would otherwise get one probe on return and
+            // drop the reviews for the view.
+            let remainingVisibleMs = 120_000;
+            let delay = 150;
+            while (!visiblePage) {
+                await new Promise(resolve => setTimeout(resolve, delay));
+                if (window.location.hash !== currentHash) return; // navigated away
+                if (Date.now() >= hardDeadline) break;
+                if (document.visibilityState !== 'hidden') {
+                    visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
+                    remainingVisibleMs -= delay;
+                    if (!visiblePage && remainingVisibleMs <= 0) break;
+                }
+                delay = Math.min(8000, delay * 2);
+            }
         }
         if (visiblePage) {
             void processPage(visiblePage);

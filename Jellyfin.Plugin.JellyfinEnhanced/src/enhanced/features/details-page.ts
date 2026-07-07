@@ -21,6 +21,14 @@ import { displayReleaseDate } from './release-dates';
 let lastDetailsItemId: string | null = null;
 let lastDetailsItemType: string | null = null;
 let itemTypeFetchInProgress: Promise<unknown> | null = null;
+// PERF(R9): fail open — a transient failure of the item-type fetch used to
+// leave the page bare for the whole view (nothing re-runs the dispatcher on a
+// quiet page except navigation). Retry with backoff while the user is still on
+// the same item. The cap bounds the TIMER-driven retries; mutation-driven
+// dispatcher runs may still probe while the page keeps mutating (debounced,
+// pre-existing behavior) — both stop once the type resolves or the item changes.
+let itemTypeFetchAttempts = 0;
+const ITEM_TYPE_FETCH_MAX_ATTEMPTS = 4;
 
 // Types that support file size and watch progress
 const FEATURES_SUPPORTED_TYPES = ['Episode', 'Season', 'Series', 'Movie', 'BoxSet', 'Playlist'];
@@ -244,20 +252,52 @@ const handleItemDetails = debounce(() => {
         if (lastDetailsItemId !== itemId) {
             lastDetailsItemId = itemId;
             lastDetailsItemType = null;
+            itemTypeFetchAttempts = 0;
         }
 
         // Fetch item type once per item to decide applicability
         if (!lastDetailsItemType) {
             if (!itemTypeFetchInProgress) {
                 const userId = ApiClient.getCurrentUserId();
+                const fetchItemId = itemId;
                 itemTypeFetchInProgress = getItemCached(itemId, { userId })
                     .then((item: any) => {
-                        lastDetailsItemType = item?.Type || null;
                         itemTypeFetchInProgress = null;
+                        // The user navigated to a DIFFERENT item while this was in
+                        // flight — discard the stale type (it belongs to the old
+                        // item) and re-dispatch so the current item starts its own
+                        // fetch instead of rendering with the wrong feature gates.
+                        if (lastDetailsItemId !== fetchItemId) {
+                            handleItemDetails();
+                            return;
+                        }
+                        lastDetailsItemType = item?.Type || null;
+                        itemTypeFetchAttempts = 0;
                         // Re-run once type is known to render features
                         handleItemDetails();
                     })
-                    .catch(() => { itemTypeFetchInProgress = null; });
+                    .catch(() => {
+                        itemTypeFetchInProgress = null;
+                        if (lastDetailsItemId !== fetchItemId) {
+                            // Different item now — let it start its own fetch.
+                            handleItemDetails();
+                            return;
+                        }
+                        // PERF(R9): fail open — getItemCached drops failed entries,
+                        // so a bounded backoff retry refetches for real. Guarded to
+                        // the same item; abandoned on navigation. Runs even in a
+                        // hidden tab (one cheap bounded fetch) so backgrounding
+                        // during the retry window doesn't turn late into never.
+                        itemTypeFetchAttempts++;
+                        if (itemTypeFetchAttempts < ITEM_TYPE_FETCH_MAX_ATTEMPTS) {
+                            const delay = 1000 * Math.pow(2, itemTypeFetchAttempts - 1);
+                            window.setTimeout(() => {
+                                if (lastDetailsItemId === fetchItemId) {
+                                    handleItemDetails();
+                                }
+                            }, delay);
+                        }
+                    });
             }
             return;
         }

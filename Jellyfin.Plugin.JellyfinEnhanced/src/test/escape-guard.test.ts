@@ -189,13 +189,13 @@ const ALLOWLIST: AllowlistEntry[] = [
     {
         file: 'enhanced/features/release-dates.ts',
         expr: 'info.titleKey',
-        line: 278,
+        line: 303,
         why: 'ReleaseInfo entries are built by this module: titleKey is a fixed translation key literal',
     },
     {
         file: 'enhanced/features/release-dates.ts',
         expr: 'info.icon',
-        line: 278,
+        line: 303,
         why: 'ReleaseInfo entries are built by this module: icon is a Material Symbols glyph name literal',
     },
     {

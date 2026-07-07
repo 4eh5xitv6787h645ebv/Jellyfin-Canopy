@@ -484,9 +484,29 @@ function createCardsFragment(results: any[], options: any = {}): DocumentFragmen
     return fragment;
 }
 
+// Process-lifetime monotonic counter for waitForPageReady subscriber ids.
+// Several discovery modules (genre/tag/network on list pages; person/
+// collection/hss on detail pages) wait concurrently: a shared fixed id meant
+// onBodyMutation REPLACED the earlier waiter (it could then only resolve via
+// its give-up timeout), and the evicted waiter's cleanup deleted the shared
+// key out from under the survivor. A counter makes every wait collision-free —
+// the same fix waitForElement in core/dom-observer.ts already carries.
+let pageReadySeq = 0;
+
 /**
- * Wait for the page to be ready (active page only, not hidden)
- * @param {AbortSignal} [signal] - Optional abort signal
+ * Wait for the page to be ready (active page only, not hidden).
+ *
+ * PERF(R9): fail open — no give-up timeout. On a slow server or connection the
+ * host page can take arbitrarily long to mount its containers; the old 3s
+ * timeout resolved null and the section was silently skipped for the whole
+ * page view (nothing re-triggers a render except navigation). The wait now
+ * stays subscribed to the multiplexed body observer (R3: no new observer, no
+ * polling) until the container mounts or the caller's AbortSignal fires — the
+ * discovery chassis aborts on every navigation, so the subscription's
+ * lifetime is exactly the page view. Late sections insert once, fully built,
+ * per R7.
+ * @param {AbortSignal} [signal] - Abort signal (every caller passes the
+ *   discovery chassis's per-page-view controller; aborted on navigation).
  * @param {object} [options] - Options
  * @param {string} [options.type] - Type of page: 'list' or 'detail'
  * @returns {Promise<HTMLElement|null>}
@@ -522,16 +542,16 @@ function waitForPageReady(signal?: AbortSignal, options: any = {}): Promise<any>
         }
 
         let observerHandle: any = null;
-        let timeoutId: any = null;
+        let backstopTimer: ReturnType<typeof setTimeout> | null = null;
 
         const cleanup = () => {
             if (observerHandle) {
                 observerHandle.unsubscribe();
                 observerHandle = null;
             }
-            if (timeoutId) {
-                clearTimeout(timeoutId);
-                timeoutId = null;
+            if (backstopTimer) {
+                clearTimeout(backstopTimer);
+                backstopTimer = null;
             }
         };
 
@@ -540,19 +560,26 @@ function waitForPageReady(signal?: AbortSignal, options: any = {}): Promise<any>
                 cleanup();
                 resolve(null);
             }, { once: true });
+        } else {
+            // Leak backstop for a (future) signal-less caller ONLY: without an
+            // abort to end the wait, retire the subscription after a generous
+            // absolute deadline. A real timer, not a lazy mutation-time check —
+            // a page that stops mutating would otherwise never trigger it.
+            // Never a UX budget (R9): every current caller passes a signal and
+            // never takes this path.
+            backstopTimer = setTimeout(() => {
+                cleanup();
+                resolve(checkContainer());
+            }, 120_000);
         }
 
-        observerHandle = JE.helpers!.onBodyMutation!('jellyseerr-discovery-container-detect', () => {
+        observerHandle = JE.helpers!.onBodyMutation!(`jellyseerr-discovery-container-detect-${++pageReadySeq}`, () => {
             const container = checkContainer();
             if (container) {
                 cleanup();
                 resolve(container);
             }
         });
-        timeoutId = setTimeout(() => {
-            cleanup();
-            resolve(checkContainer());
-        }, 3000);
     });
 }
 

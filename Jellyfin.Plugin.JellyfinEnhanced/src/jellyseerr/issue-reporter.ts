@@ -966,6 +966,13 @@ issueReporter.tryAddButton = async function () {
                         console.debug(`${logPrefix} Report button appeared during async work, skipping duplicate (unavailable)`);
                         return true;
                     }
+                    // Stale-navigation guard (same as the active-button insert):
+                    // don't pin the old item's disabled button onto a new page.
+                    const currentUnavailItemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
+                    if (currentUnavailItemId !== itemId) {
+                        console.debug(`${logPrefix} Item changed during async work (${itemId} -> ${currentUnavailItemId}), discarding stale unavailable button`);
+                        return false;
+                    }
                     const moreButton = buttonContainerUnavail.querySelector('.btnMoreCommands');
                     if (moreButton) {
                         buttonContainerUnavail.insertBefore(unavailButton, moreButton);
@@ -1106,6 +1113,16 @@ issueReporter.tryAddButton = async function () {
                 console.debug(`${logPrefix} Report button appeared during async work, skipping duplicate`);
                 return true;
             }
+            // Stale-navigation guard: those same awaits mean the user may have
+            // navigated to a DIFFERENT item while this call was in flight —
+            // inserting now would pin the OLD item's report action onto the new
+            // page (and its dedup would block the correct button). Verify the
+            // URL still points at the item this call resolved.
+            const currentItemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
+            if (currentItemId !== itemId) {
+                console.debug(`${logPrefix} Item changed during async work (${itemId} -> ${currentItemId}), discarding stale button`);
+                return false;
+            }
             // Try to insert before btnMoreCommands, otherwise append
             const moreButton = buttonContainer.querySelector('.btnMoreCommands');
             if (moreButton) {
@@ -1144,29 +1161,66 @@ issueReporter.initialize = async function () {
 
     console.log(`${logPrefix} Initializing... (verifying Jellyseerr status)`);
 
-    // Verify Jellyseerr is reachable and active via the server-side status endpoint
-    try {
-        const statusUrl = ApiClient.getUrl('/JellyfinEnhanced/jellyseerr/status');
-        const statusRes: any = await ApiClient.ajax({ type: 'GET', url: statusUrl, dataType: 'json' });
-        if (!statusRes || !statusRes.active) {
+    /** One status probe: 'active' | 'inactive' (a real server answer) | 'error' (transient). */
+    const verifyStatus = async (): Promise<'active' | 'inactive' | 'error'> => {
+        try {
+            const statusUrl = ApiClient.getUrl('/JellyfinEnhanced/jellyseerr/status');
+            const statusRes: any = await ApiClient.ajax({ type: 'GET', url: statusUrl, dataType: 'json' });
+            return statusRes && statusRes.active ? 'active' : 'inactive';
+        } catch (e: any) {
+            console.warn(`${logPrefix} Jellyseerr status probe failed:`, e);
+            return 'error';
+        }
+    };
+
+    // PERF(R9): fail open — the old one-shot check disabled the report button
+    // for the ENTIRE session (until a hard reload) on a single transient
+    // failure at boot. Only a genuine "inactive" answer from the server skips
+    // init; transient errors retry with backoff and, if still failing, fall
+    // through to lazy re-verification on each view below.
+    let statusVerified = false;
+    const STATUS_RETRY_DELAYS_MS = [2000, 5000, 10000];
+    for (let i = 0; ; i++) {
+        const status = await verifyStatus();
+        if (status === 'active') { statusVerified = true; break; }
+        if (status === 'inactive') {
             console.debug(`${logPrefix} Jellyseerr status check returned inactive, skipping reporter init`);
             return;
         }
-    } catch (e: any) {
-        console.warn(`${logPrefix} Failed to verify Jellyseerr status, skipping reporter init:`, e);
-        return;
+        if (i >= STATUS_RETRY_DELAYS_MS.length) {
+            console.warn(`${logPrefix} Could not verify Jellyseerr status at boot; will re-verify lazily per view`);
+            break;
+        }
+        await new Promise(r => setTimeout(r, STATUS_RETRY_DELAYS_MS[i]));
     }
 
-    // eslint-disable-next-line @typescript-eslint/require-await -- legacy shape: work happens in a fire-and-forget timeout
+    // Distinguishes view generations so a retry chain from a previous view
+    // stops as soon as a new view shows (and chains never stack up).
+    let viewGeneration = 0;
+
     const handleViewShow = async () => {
-        try {
-            // Small delay to ensure DOM is ready
-             
-            setTimeout(async () => {
-                await issueReporter.tryAddButton();
-            }, 100);
-        } catch (error: any) {
-            console.warn(`${logPrefix} Error in viewShow handler:`, error);
+        const generation = ++viewGeneration;
+        // PERF(R9): fail open — the old single 100ms shot lost the button
+        // whenever the page or its button row mounted later than that (routine
+        // on slow servers/connections). Bounded backoff retries instead,
+        // abandoned the moment another view shows; the synchronous dedup in
+        // tryAddButton keeps double-fires idempotent.
+        const RETRY_DELAYS_MS = [100, 500, 1000, 2000, 4000];
+        for (const delay of RETRY_DELAYS_MS) {
+            await new Promise(r => setTimeout(r, delay));
+            if (generation !== viewGeneration) return;
+            try {
+                if (!statusVerified) {
+                    const status = await verifyStatus();
+                    if (status === 'inactive') return;
+                    if (status === 'error') continue; // transient — try again next round
+                    statusVerified = true;
+                }
+                if (generation !== viewGeneration) return;
+                if (await issueReporter.tryAddButton()) return;
+            } catch (error: any) {
+                console.warn(`${logPrefix} Error in viewShow handler:`, error);
+            }
         }
     };
 

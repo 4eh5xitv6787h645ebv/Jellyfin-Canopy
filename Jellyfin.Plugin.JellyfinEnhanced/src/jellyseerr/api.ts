@@ -79,6 +79,12 @@ const api = {} as JellyseerrApi;
 let cachedUserStatus: any = null;
 let cachedUserStatusAt = 0;
 const NEGATIVE_USER_STATUS_TTL_MS = 60 * 1000;
+// PERF(R9): a TRANSIENT transport failure (no answer from the server at all)
+// is remembered even more briefly than a genuine negative answer — one blip
+// on a flaky connection hides every Seerr section at once, so it must clear
+// on the next look, not 60s later.
+const ERROR_USER_STATUS_TTL_MS = 10 * 1000;
+let cachedUserStatusTtl = NEGATIVE_USER_STATUS_TTL_MS;
 
 // Cache for override rules
 let cachedOverrideRules: any[] | null = null;
@@ -198,9 +204,10 @@ api.checkUserStatus = async function() {
         if (cachedUserStatus.active && cachedUserStatus.userFound) {
             return cachedUserStatus;
         }
-        // Negative result expires after 60s so a transient outage doesn't
+        // Negative result expires (60s for a genuine "inactive/not linked"
+        // answer, 10s for a transport error) so a transient outage doesn't
         // permanently hide discovery.
-        if (Date.now() - cachedUserStatusAt < NEGATIVE_USER_STATUS_TTL_MS) {
+        if (Date.now() - cachedUserStatusAt < cachedUserStatusTtl) {
             return cachedUserStatus;
         }
     }
@@ -209,6 +216,7 @@ api.checkUserStatus = async function() {
         const status = await get('/user-status', { skipCache: true });
         cachedUserStatus = status;
         cachedUserStatusAt = Date.now();
+        cachedUserStatusTtl = NEGATIVE_USER_STATUS_TTL_MS;
         // Surface the typed reason as a banner so users aren't left staring
         // at silently-hidden discovery sections.
         api.surfaceUserStatusBanner(status);
@@ -223,6 +231,9 @@ api.checkUserStatus = async function() {
         };
         cachedUserStatus = fallback;
         cachedUserStatusAt = Date.now();
+        // PERF(R9): a typed business answer keeps the normal negative TTL; a
+        // bare transport failure (nothing came back) expires fast.
+        cachedUserStatusTtl = error?.responseJSON?.code ? NEGATIVE_USER_STATUS_TTL_MS : ERROR_USER_STATUS_TTL_MS;
         api.surfaceUserStatusBanner(fallback);
         return fallback;
     }

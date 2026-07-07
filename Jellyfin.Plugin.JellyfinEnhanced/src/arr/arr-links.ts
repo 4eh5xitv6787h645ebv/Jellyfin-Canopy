@@ -85,30 +85,37 @@ JE.initializeArrLinksScript = async function () {
     // Check admin status on every script initialization
     let isAdmin = false;
 
-    try {
-        // Use the user object pre-fetched during plugin.js init (Stage 2) when available.
-        // Falls back to a short direct fetch so the module isn't blocked for up to 10 s.
-        let user = JE.currentUser || null;
-        if (!user) {
-            for (let i = 0; i < 5; i++) {  // shortened retry window (~2.5s)
-                try {
-                    user = await ApiClient.getCurrentUser() as typeof user;
-                    if (user) break;
-                } catch {
-                    // swallow error, retry
-                }
-                await new Promise(r => setTimeout(r, 500));
+    // Use the user object pre-fetched during plugin.js init (Stage 2) when available.
+    // PERF(R9): fail open — this init runs ONCE per web-client boot (nothing
+    // re-invokes it on navigation), so giving up after the old ~2.5s window
+    // killed every arr button for the entire session on a slow server. Back
+    // off over a ~60s bounded budget instead.
+    let user = JE.currentUser || null;
+    if (!user) {
+        const RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 8000, 8000, 8000, 8000, 8000, 8000];
+        for (let i = 0; !user && i <= RETRY_DELAYS_MS.length; i++) {
+            try {
+                user = await ApiClient.getCurrentUser() as typeof user;
+                if (user) break;
+            } catch {
+                // swallow error, retry
+            }
+            if (i < RETRY_DELAYS_MS.length) {
+                await new Promise(r => setTimeout(r, RETRY_DELAYS_MS[i]));
             }
         }
+    }
 
-        if (!user) {
-            console.error(`${logPrefix} Could not get current user after retries.`);
-            return;
-        }
+    if (!user) {
+        console.error(`${logPrefix} Could not get current user after retries.`);
+        return;
+    }
 
-        isAdmin = user?.Policy?.IsAdministrator === true;
+    isAdmin = user?.Policy?.IsAdministrator === true;
 
-        // Update settings.json if the value changed
+    // Update settings.json if the value changed. In its own try so a failed
+    // settings save (transient) can't disable the whole feature for the session.
+    try {
         if (JE?.currentSettings && JE.currentSettings.isAdmin !== isAdmin && typeof JE.saveUserSettings === 'function') {
             JE.currentSettings.isAdmin = isAdmin;
             await JE.saveUserSettings('settings.json', JE.currentSettings);
@@ -118,8 +125,7 @@ JE.initializeArrLinksScript = async function () {
             console.log(`${logPrefix} Admin status: ${isAdmin}`);
         }
     } catch (err) {
-        console.error(`${logPrefix} Error checking admin status:`, err);
-        return;
+        console.warn(`${logPrefix} Could not persist admin status (continuing):`, err);
     }
 
     if (!isAdmin) {
