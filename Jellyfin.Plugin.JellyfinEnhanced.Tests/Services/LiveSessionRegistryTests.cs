@@ -7,25 +7,46 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services;
 
 /// <summary>
 /// Pins the JE-device registry LiveNotifierService pushes are scoped by:
-/// only devices seen within the TTL are targeted, blank ids never register,
-/// and the size cap evicts stalest-first — so a native client's device id
-/// (which never fetches public-config through the JE client) can never be
-/// pushed to, and the map can never grow unbounded.
+/// only devices seen within the TTL are targeted, blank ids and empty users
+/// never register, and the size cap evicts stalest-first — so a native
+/// client's device id (which never calls JE endpoints through the JE client)
+/// can never be pushed to, and the map can never grow unbounded. The
+/// send-time (user, device) validation lives in
+/// <see cref="LiveNotifierService.SelectDeliverableDeviceIds"/>, tested in
+/// <see cref="LiveNotifierServiceTests"/>.
 /// </summary>
 public class LiveSessionRegistryTests
 {
+    private static readonly Guid User1 = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid User2 = Guid.Parse("22222222-2222-2222-2222-222222222222");
+
     [Fact]
-    public void Touch_RecordsDevice_AndGetReturnsIt()
+    public void Touch_RecordsDeviceWithUser_AndGetReturnsIt()
     {
         var registry = new LiveSessionRegistry();
 
-        registry.Touch("web-device-1");
-        registry.Touch("web-device-2");
+        registry.Touch("web-device-1", User1);
+        registry.Touch("web-device-2", User2);
 
-        var active = registry.GetActiveDeviceIds();
-        Assert.Contains("web-device-1", active);
-        Assert.Contains("web-device-2", active);
+        var active = registry.GetActiveEntries();
+        Assert.Contains(new LiveSessionEntry("web-device-1", User1), active);
+        Assert.Contains(new LiveSessionEntry("web-device-2", User2), active);
         Assert.Equal(2, active.Count);
+    }
+
+    [Fact]
+    public void Touch_LastUserWins_ForASharedDevice()
+    {
+        // Two users on one browser profile share a device id; the most recent
+        // JE session owns the registration (and must have a live session at
+        // send time for the push to go out).
+        var registry = new LiveSessionRegistry();
+
+        registry.Touch("shared-device", User1);
+        registry.Touch("shared-device", User2);
+
+        var entry = Assert.Single(registry.GetActiveEntries());
+        Assert.Equal(User2, entry.UserId);
     }
 
     [Theory]
@@ -36,26 +57,37 @@ public class LiveSessionRegistryTests
     {
         var registry = new LiveSessionRegistry();
 
-        registry.Touch(deviceId!);
+        registry.Touch(deviceId!, User1);
 
-        Assert.Empty(registry.GetActiveDeviceIds());
+        Assert.Empty(registry.GetActiveEntries());
     }
 
     [Fact]
-    public void GetActiveDeviceIds_PrunesEntriesPastTtl()
+    public void Touch_IgnoresEmptyUserId()
+    {
+        // An unauthenticated / unresolvable caller must never register.
+        var registry = new LiveSessionRegistry();
+
+        registry.Touch("web-device", Guid.Empty);
+
+        Assert.Empty(registry.GetActiveEntries());
+    }
+
+    [Fact]
+    public void GetActiveEntries_PrunesEntriesPastTtl()
     {
         var now = DateTimeOffset.UtcNow;
         var registry = new LiveSessionRegistry(() => now);
 
-        registry.Touch("stale-device");
+        registry.Touch("stale-device", User1);
         now += LiveSessionRegistry.EntryTtl + TimeSpan.FromMinutes(1);
-        registry.Touch("fresh-device");
+        registry.Touch("fresh-device", User1);
 
-        var active = registry.GetActiveDeviceIds();
-        Assert.Equal(new[] { "fresh-device" }, active);
+        var active = registry.GetActiveEntries();
+        Assert.Equal("fresh-device", Assert.Single(active).DeviceId);
 
         // Pruning is physical, not just filtered — a second read stays clean.
-        Assert.Equal(new[] { "fresh-device" }, registry.GetActiveDeviceIds());
+        Assert.Equal("fresh-device", Assert.Single(registry.GetActiveEntries()).DeviceId);
     }
 
     [Fact]
@@ -64,12 +96,12 @@ public class LiveSessionRegistryTests
         var now = DateTimeOffset.UtcNow;
         var registry = new LiveSessionRegistry(() => now);
 
-        registry.Touch("long-lived");
+        registry.Touch("long-lived", User1);
         now += LiveSessionRegistry.EntryTtl - TimeSpan.FromMinutes(1);
-        registry.Touch("long-lived"); // hot-reload refetch refreshes the entry
+        registry.Touch("long-lived", User1); // heartbeat/refetch refreshes the entry
         now += LiveSessionRegistry.EntryTtl - TimeSpan.FromMinutes(1);
 
-        Assert.Contains("long-lived", registry.GetActiveDeviceIds());
+        Assert.Contains(registry.GetActiveEntries(), e => e.DeviceId == "long-lived");
     }
 
     [Fact]
@@ -80,14 +112,14 @@ public class LiveSessionRegistryTests
 
         for (var i = 0; i < LiveSessionRegistry.MaxEntries + 10; i++)
         {
-            registry.Touch($"device-{i}");
+            registry.Touch($"device-{i}", User1);
             now += TimeSpan.FromSeconds(1);
         }
 
-        var active = registry.GetActiveDeviceIds();
+        var active = registry.GetActiveEntries();
         Assert.True(active.Count <= LiveSessionRegistry.MaxEntries, $"count {active.Count} exceeds cap");
         // The oldest entries were evicted; the newest survive.
-        Assert.Contains($"device-{LiveSessionRegistry.MaxEntries + 9}", active);
-        Assert.DoesNotContain("device-0", active);
+        Assert.Contains(active, e => e.DeviceId == $"device-{LiveSessionRegistry.MaxEntries + 9}");
+        Assert.DoesNotContain(active, e => e.DeviceId == "device-0");
     }
 }

@@ -103,7 +103,9 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
         /// <summary>
         /// Record the calling session's device id as running the JE client (no-op
         /// for unauthenticated callers, who carry no device claim). Claim type is
-        /// the server's InternalClaimTypes.DeviceId ("Jellyfin-DeviceId").
+        /// the server's InternalClaimTypes.DeviceId ("Jellyfin-DeviceId"). The
+        /// registering user is stored so the notifier can refuse pushes to devices
+        /// the user has no live session on (the claim is caller-supplied).
         /// </summary>
         private void TouchLiveSessionRegistry()
         {
@@ -115,7 +117,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Controllers
             var deviceId = User.FindFirst("Jellyfin-DeviceId")?.Value;
             if (!string.IsNullOrWhiteSpace(deviceId))
             {
-                _liveSessionRegistry.Touch(deviceId);
+                // NOTE: UserHelper reads the JF12 claim ("Jellyfin-UserId");
+                // the base controller's GetCurrentUserId() probes legacy claim
+                // types (NameIdentifier/sub/Sid) that JF12 does not set.
+                _liveSessionRegistry.Touch(deviceId, UserHelper.GetCurrentUserId(User) ?? Guid.Empty);
             }
         }
 

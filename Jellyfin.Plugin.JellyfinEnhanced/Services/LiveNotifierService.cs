@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinEnhanced.Configuration;
@@ -142,13 +144,21 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                 var command = BuildConfigChangedCommand(version);
 
                 // Target ONLY devices that registered as running the JE client
-                // (via authenticated public-config fetches). The old broadcast to
+                // (via authenticated JE endpoint calls). The old broadcast to
                 // every user session delivered the playback-shaped carrier to
                 // native clients (Android, Android TV, Kodi, …) whose handling of
                 // it is outside our control. An empty registry (fresh server, no
                 // JE session booted yet) means there is nobody to hot-reload —
                 // those sessions pick the new config up when they next load.
-                var deviceIds = _liveSessionRegistry.GetActiveDeviceIds();
+                //
+                // The device id claim is caller-supplied, so each entry is only
+                // honoured when its REGISTERING user has a live session on that
+                // device — a user can register pushes for their own devices,
+                // never someone else's.
+                var liveSessions = _sessionManager.Sessions
+                    .Select(s => new LiveSessionEntry(s.DeviceId, s.UserId))
+                    .ToList();
+                var deviceIds = SelectDeliverableDeviceIds(_liveSessionRegistry.GetActiveEntries(), liveSessions);
                 foreach (var deviceId in deviceIds)
                 {
                     try
@@ -159,8 +169,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
                     }
                     catch (Exception ex)
                     {
-                        // One device with no live session (or a transient send
-                        // failure) must not stop the push to the rest.
+                        // A transient send failure for one device must not stop
+                        // the push to the rest.
                         _logger.LogDebug(ex, "LiveNotifier: config-changed send failed for device {DeviceId}.", deviceId);
                     }
                 }
@@ -171,6 +181,32 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Services
             {
                 _logger.LogWarning(ex, "LiveNotifier: failed to push config-changed to sessions.");
             }
+        }
+
+        /// <summary>
+        /// Pure selector for the devices a push may be sent to: a registered
+        /// entry is deliverable only when its registering user currently has a
+        /// live session on that device (device ids are matched case-insensitively,
+        /// like the server's own session lookup). Distinct so one device is never
+        /// pushed twice. Internal for direct unit-testing.
+        /// </summary>
+        internal static IReadOnlyList<string> SelectDeliverableDeviceIds(
+            IReadOnlyList<LiveSessionEntry> registered,
+            IReadOnlyList<LiveSessionEntry> liveSessions)
+        {
+            var result = new List<string>();
+            foreach (var entry in registered)
+            {
+                var hasOwnSession = liveSessions.Any(s =>
+                    s.UserId == entry.UserId
+                    && string.Equals(s.DeviceId, entry.DeviceId, StringComparison.OrdinalIgnoreCase));
+                if (hasOwnSession && !result.Contains(entry.DeviceId, StringComparer.OrdinalIgnoreCase))
+                {
+                    result.Add(entry.DeviceId);
+                }
+            }
+
+            return result;
         }
 
         /// <summary>

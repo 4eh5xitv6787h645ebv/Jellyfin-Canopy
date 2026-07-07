@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using MediaBrowser.Model.Session;
@@ -101,5 +102,63 @@ public class LiveNotifierServiceTests
         Assert.Contains(GeneralCommandType.Play, WebHandledCommands);
         Assert.Contains(GeneralCommandType.GoHome, WebHandledCommands);
         Assert.True(WebHandledCommands.Count >= 20, "the web-handled set looks truncated");
+    }
+
+    // ── Send-time (user, device) validation ────────────────────────────────
+    // The device id claim a session registers with is caller-supplied, so a
+    // registered entry is only deliverable when the REGISTERING user has a live
+    // session on that device — a user can direct pushes at their own devices,
+    // never anyone else's.
+
+    private static readonly Guid Alice = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    private static readonly Guid Bob = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+
+    [Fact]
+    public void SelectDeliverableDeviceIds_AllowsOwnLiveDevice()
+    {
+        var deliverable = LiveNotifierService.SelectDeliverableDeviceIds(
+            registered: new[] { new LiveSessionEntry("alice-browser", Alice) },
+            liveSessions: new[] { new LiveSessionEntry("alice-browser", Alice) });
+
+        Assert.Equal(new[] { "alice-browser" }, deliverable);
+    }
+
+    [Fact]
+    public void SelectDeliverableDeviceIds_RejectsForeignDevice()
+    {
+        // Alice registered Bob's device id (spoofed claim): Bob has a live
+        // session on it, Alice does not — no push may target it.
+        var deliverable = LiveNotifierService.SelectDeliverableDeviceIds(
+            registered: new[] { new LiveSessionEntry("bobs-android", Alice) },
+            liveSessions: new[] { new LiveSessionEntry("bobs-android", Bob) });
+
+        Assert.Empty(deliverable);
+    }
+
+    [Fact]
+    public void SelectDeliverableDeviceIds_SkipsDevicesWithNoLiveSession()
+    {
+        // Registered but the tab closed: nothing to deliver to, nothing sent.
+        var deliverable = LiveNotifierService.SelectDeliverableDeviceIds(
+            registered: new[] { new LiveSessionEntry("closed-tab", Alice) },
+            liveSessions: Array.Empty<LiveSessionEntry>());
+
+        Assert.Empty(deliverable);
+    }
+
+    [Fact]
+    public void SelectDeliverableDeviceIds_MatchesDeviceIdCaseInsensitively_AndDedupes()
+    {
+        // The server's own session lookup is OrdinalIgnoreCase; ours must agree,
+        // and one device must never be pushed twice.
+        var deliverable = LiveNotifierService.SelectDeliverableDeviceIds(
+            registered: new[]
+            {
+                new LiveSessionEntry("Device-X", Alice),
+                new LiveSessionEntry("device-x", Alice),
+            },
+            liveSessions: new[] { new LiveSessionEntry("DEVICE-X", Alice) });
+
+        Assert.Single(deliverable);
     }
 }
