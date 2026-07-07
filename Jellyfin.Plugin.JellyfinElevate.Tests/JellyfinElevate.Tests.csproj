@@ -6,6 +6,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
+    <!-- Coverlet must resolve shared-framework assemblies (e.g.
+         Microsoft.Extensions.Logging.Abstractions) when instrumenting the plugin
+         DLL; without the compilation context it throws CecilAssemblyResolutionException
+         on SDK 10.0.3xx and silently emits an EMPTY cobertura report. -->
+    <PreserveCompilationContext>true</PreserveCompilationContext>
     <!-- Same analyzer ratchet as the plugin project: warning-free stays warning-free. -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
