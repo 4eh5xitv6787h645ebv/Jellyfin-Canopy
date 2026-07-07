@@ -3,3 +3,4 @@ playwright-report/
 docker/media/
 docker/config/
 docker/cache/
+perf/traces/
