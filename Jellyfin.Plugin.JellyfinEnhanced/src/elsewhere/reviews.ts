@@ -1255,17 +1255,19 @@ JE.initializeReviewsScript = function () {
         let visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
         if (!visiblePage) {
             const hardDeadline = Date.now() + 10 * 60 * 1000; // absolute termination guarantee
-            const softDeadline = Date.now() + 120_000;        // leak backstop while visible
+            // Soft leak backstop counts VISIBLE time only — a tab hidden past
+            // the whole window would otherwise get one probe on return and
+            // drop the reviews for the view.
+            let remainingVisibleMs = 120_000;
             let delay = 150;
             while (!visiblePage) {
                 await new Promise(resolve => setTimeout(resolve, delay));
                 if (window.location.hash !== currentHash) return; // navigated away
                 if (Date.now() >= hardDeadline) break;
                 if (document.visibilityState !== 'hidden') {
-                    // Probe BEFORE the deadline check so a page that finished
-                    // loading while the tab was hidden still resolves.
                     visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
-                    if (!visiblePage && Date.now() >= softDeadline) break;
+                    remainingVisibleMs -= delay;
+                    if (!visiblePage && remainingVisibleMs <= 0) break;
                 }
                 delay = Math.min(8000, delay * 2);
             }

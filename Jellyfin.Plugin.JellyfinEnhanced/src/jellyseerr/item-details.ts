@@ -471,7 +471,10 @@ function pollUntil(predicate: () => any, opts: any = {}): Promise<any> {
             resolve(immediate);
             return;
         }
-        const deadline = Date.now() + timeoutMs;
+        // The soft budget counts VISIBLE time only — a tab hidden past the
+        // whole window would otherwise get a single probe on return and give
+        // up. Decremented by the nominal interval on each visible tick.
+        let remainingVisibleMs = timeoutMs;
         let currentInterval = intervalMs;
         let timerId: any = null;
         const finish = (value: any) => {
@@ -484,16 +487,16 @@ function pollUntil(predicate: () => any, opts: any = {}): Promise<any> {
         const tick = () => {
             if (signal?.aborted) return finish(null);
             // PERF(R5/R9): visibility-gated — a hidden tab skips the DOM probe
-            // and the deadline check; on return to visibility the probe runs
-            // BEFORE the deadline check, so a page that finished loading while
-            // hidden still resolves. Nav abort ends the wait either way.
+            // and does not burn the budget; the wait resumes with its full
+            // remaining window when the tab returns. Nav abort ends it either way.
             if (document.visibilityState === 'hidden') {
                 timerId = setTimeout(tick, maxIntervalMs);
                 return;
             }
             const result = predicate();
             if (result) return finish(result);
-            if (Date.now() >= deadline) return finish(null);
+            remainingVisibleMs -= currentInterval;
+            if (remainingVisibleMs <= 0) return finish(null);
             currentInterval = Math.min(maxIntervalMs, currentInterval * 2);
             timerId = setTimeout(tick, currentInterval);
         };
