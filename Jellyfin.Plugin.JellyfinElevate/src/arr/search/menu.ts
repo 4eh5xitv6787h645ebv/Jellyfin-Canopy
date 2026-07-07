@@ -46,20 +46,30 @@ export function injectSearchItems(): void {
     const scroller = getActiveActionSheetScroller();
     if (!scroller) return;
 
-    // The multi-select / long-press sheet (data-id="selectall") is not a per-item menu.
+    // The multi-select / long-press sheet (data-id="selectall") is not a per-item menu — strip any
+    // group that leaked into a reused sheet.
     if (scroller.querySelector('[data-id="selectall"]')) { removeExisting(scroller); return; }
 
+    const existing = scroller.querySelector<HTMLElement>(`[data-id="${SEARCH_ID}"]`);
     const ctx = getCaptured();
-    if (!ctx || !ctx.itemId) { removeExisting(scroller); return; }
+
+    // No fresh trigger: leave an already-injected group untouched. Crucially we must NOT strip here
+    // — the observer fires again right after we insert (from our own mutations), and once the
+    // context is consumed that fire would otherwise remove our just-added items. A fresh trigger
+    // reconciles a reused sheet.
+    if (!ctx || !ctx.itemId) return;
+
+    // Type not yet resolved (details more button mid-resolve): wait without consuming — the capture
+    // layer re-runs us once the item type lands. Consuming here would drop the trigger.
+    if (!ctx.type) return;
 
     const service = serviceForType(ctx.type);
-    // Type not yet known (details more button mid-resolve) or not an arr type — show nothing;
-    // the capture layer re-runs us once the type resolves.
-    if (!service || !serviceConfigured(service)) { removeExisting(scroller); return; }
+    // Known type, but not an arr item / service not configured — strip any stale group and consume
+    // so this fresh-but-irrelevant context can't reinject into a later sheet.
+    if (!service || !serviceConfigured(service)) { removeExisting(scroller); setCaptured(null); return; }
 
-    // Already injected for this exact item — leave it (avoids flicker on repeated observer fires).
-    const existing = scroller.querySelector<HTMLElement>(`[data-id="${SEARCH_ID}"]`);
-    if (existing && existing.dataset.jeItemId === ctx.itemId) return;
+    // Already injected for this exact item — keep it (avoids flicker) and consume the context.
+    if (existing && existing.dataset.jeItemId === ctx.itemId) { setCaptured(null); return; }
     removeExisting(scroller);
 
     const items: HTMLButtonElement[] = [];
