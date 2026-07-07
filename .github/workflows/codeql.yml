@@ -15,6 +15,12 @@ permissions:
 
 jobs:
   analyze:
+    # Code-scanning upload needs GitHub Advanced Security on private repos
+    # (not included in Pro). `== false` is deliberate: schedule events carry no
+    # repository payload, so this also (safely) skips cron runs — push/PR runs
+    # activate automatically when the repo goes public; drop the gate then to
+    # re-enable the weekly scheduled scan too.
+    if: ${{ github.event.repository.private == false }}
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 360

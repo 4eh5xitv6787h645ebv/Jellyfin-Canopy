@@ -13,6 +13,11 @@ permissions: read-all
 
 jobs:
   analysis:
+    # OpenSSF Scorecard only supports public repositories. `== false` is
+    # deliberate: schedule events carry no repository payload, so this also
+    # (safely) skips cron runs — push runs activate automatically when the repo
+    # goes public; drop the gate then to re-enable the weekly scheduled scan.
+    if: ${{ github.event.repository.private == false }}
     name: Scorecard analysis
     runs-on: ubuntu-latest
     permissions:
