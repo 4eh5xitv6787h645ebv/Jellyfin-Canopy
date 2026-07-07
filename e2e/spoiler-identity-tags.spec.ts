@@ -114,8 +114,8 @@ test.describe('spoiler guard identity tags (reverse-proxy-safe attribution)', ()
         test.skip(!enabled, 'SpoilerBlurEnabled is off on the target server');
         test.skip(!target, 'no unwatched episode with a Primary image found');
 
-        // Guard the series for the ADMIN only.
-        await api(BASE, `/JellyfinElevate/spoiler-blur/series/${target!.seriesId}?enabled=true`, admin.token, {
+        // Guard the series for the ADMIN only (POST enables, DELETE disables).
+        await api(BASE, `/JellyfinElevate/spoiler-blur/series/${target!.seriesId}`, admin.token, {
             method: 'POST',
         });
         try {
@@ -148,8 +148,8 @@ test.describe('spoiler guard identity tags (reverse-proxy-safe attribution)', ()
                 true
             );
         } finally {
-            await api(BASE, `/JellyfinElevate/spoiler-blur/series/${target!.seriesId}?enabled=false`, admin.token, {
-                method: 'POST',
+            await api(BASE, `/JellyfinElevate/spoiler-blur/series/${target!.seriesId}`, admin.token, {
+                method: 'DELETE',
             }).catch(() => undefined);
         }
     });
