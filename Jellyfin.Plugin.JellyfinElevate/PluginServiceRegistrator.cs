@@ -92,6 +92,11 @@ namespace Jellyfin.Plugin.JellyfinElevate
             serviceCollection.AddSingleton<Services.Jellyseerr.IJellyseerrClient, Services.Jellyseerr.JellyseerrClient>();
             // Shared SSRF-guarded Sonarr/Radarr fetch plumbing for the Arr controllers.
             serviceCollection.AddSingleton<Services.Arr.ArrFetchService>();
+            // Search / Interactive Search feature: itemId → arr identity resolution, instance
+            // discovery, and the search/grab/monitor/add orchestration behind ArrSearchController.
+            serviceCollection.AddSingleton<Services.Arr.IArrItemResolver, Services.Arr.ArrItemResolver>();
+            serviceCollection.AddSingleton<Services.Arr.ArrTargetResolver>();
+            serviceCollection.AddSingleton<Services.Arr.ArrActionService>();
             // Live config hot-reload: subscribes to the plugin's ConfigurationChanged
             // (via IPluginManager), flushes the Seerr caches and pushes a JE-marked
             // GeneralCommand to open sessions so admin saves hot-reload with no

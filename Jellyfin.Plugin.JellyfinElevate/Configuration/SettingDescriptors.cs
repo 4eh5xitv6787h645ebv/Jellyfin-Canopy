@@ -275,6 +275,11 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                 Public("ShowArrLinksAsText", c => c.ShowArrLinksAsText),
                 Public("ArrLinksShowStatusSingle", c => c.ArrLinksShowStatusSingle),
 
+                // Arr Search Settings (client hides the action-sheet items when off;
+                // endpoints stay policy-gated). No secrets — plain booleans.
+                Public("ArrSearchEnabled", c => c.ArrSearchEnabled),
+                Public("ArrSearchManageEnabled", c => c.ArrSearchManageEnabled),
+
                 // Arr Tags Sync Settings
                 Public("ArrTagsSyncEnabled", c => c.ArrTagsSyncEnabled),
                 Public("ArrTagsPrefix", c => c.ArrTagsPrefix),

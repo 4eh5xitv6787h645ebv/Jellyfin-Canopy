@@ -4,6 +4,8 @@
   "AddRequestedMediaToWatchlist",
   "ArrLinksEnabled",
   "ArrLinksShowStatusSingle",
+  "ArrSearchEnabled",
+  "ArrSearchManageEnabled",
   "ArrTagsClearOldTags",
   "ArrTagsLinksFilter",
   "ArrTagsLinksHideFilter",

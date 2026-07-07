@@ -1760,6 +1760,20 @@
                     </fieldset>
 
                     <fieldset>
+                        <legend class="sectionTitle"><i class="material-icons je-legend-icon" aria-hidden="true">search</i>Search &amp; Interactive Search</legend>
+                        <div class="configSection">
+                            <div class="checkboxContainer je-main-feature"><label><input id="arrSearchEnabled" data-config-key="ArrSearchEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable Search in the item menu</span></label></div>
+                            <div class="je-setting-description" data-desc-for="arrSearchEnabled">
+                                <div class="fieldDescription je-field-desc-xl">Adds <strong>Search</strong> (automatic) and <strong>Interactive Search</strong> (manual release picker) to the item action menu for movies, series, seasons and episodes, driving the Sonarr/Radarr instances configured above. <strong>Admins only</strong>.<br/>Uses each item's TVDB/TMDB id to find it in the arr — the item must already be tracked there (or use <em>Add to Sonarr/Radarr</em> below).</div>
+                            </div>
+                            <div class="checkboxContainer"><label><input id="arrSearchManageEnabled" data-config-key="ArrSearchManageEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable management actions (Monitor / Add)</span></label></div>
+                            <div class="je-setting-description" data-desc-for="arrSearchManageEnabled">
+                                <div class="fieldDescription je-field-desc-xl">Also adds <strong>Monitor / Unmonitor</strong> and <strong>Add to Sonarr/Radarr</strong> to the menu, so an item can be started and grabbed without opening the arr UI. Turn off to keep search-only and prevent changes to the arr library from Jellyfin.</div>
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
                         <legend class="sectionTitle"><i class="material-icons je-legend-icon" aria-hidden="true">label</i>Tags Sync</legend>
                         <div class="configSection">
                             <div class="checkboxContainer je-main-feature"><label><input id="arrTagsSyncEnabled" data-config-key="ArrTagsSyncEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Tags Sync</span></label></div>

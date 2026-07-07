@@ -43,9 +43,29 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Arr
             return allowed;
         }
 
-        public async Task<(T Result, string? Error)> FetchAndMapAsync<T>(
+        public Task<(T Result, string? Error)> FetchAndMapAsync<T>(
             ArrInstance instance,
             string endpointPath,
+            Func<JsonNode?, T> mapper,
+            T emptyResult,
+            TimeSpan timeout,
+            string contextLabel,
+            CancellationToken ct)
+            => SendAndMapAsync(instance, HttpMethod.Get, endpointPath, jsonBody: null, mapper, emptyResult, timeout, contextLabel, ct);
+
+        /// <summary>
+        /// Generalized SSRF-guarded arr call for any verb, sharing the exact error taxonomy
+        /// and per-request-API-key hygiene of <see cref="FetchAndMapAsync{T}"/>. A non-null
+        /// <paramref name="jsonBody"/> is serialized as <c>application/json</c> (used by the
+        /// Search feature's command/grab/monitor/add POST+PUT endpoints). Sonarr/Radarr return
+        /// 200/201/202 for these; every 2xx is treated as success and its body handed to the
+        /// mapper (which may ignore it for fire-and-forget calls).
+        /// </summary>
+        public async Task<(T Result, string? Error)> SendAndMapAsync<T>(
+            ArrInstance instance,
+            HttpMethod method,
+            string endpointPath,
+            object? jsonBody,
             Func<JsonNode?, T> mapper,
             T emptyResult,
             TimeSpan timeout,
@@ -66,7 +86,13 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Arr
                 var client = Helpers.PluginHttpClients.CreateArrClient(_httpClientFactory);
                 client.Timeout = timeout;
 
-                using var request = Helpers.PluginHttpClients.BuildArrRequest(HttpMethod.Get, $"{url}{endpointPath}", instance.ApiKey);
+                using var request = Helpers.PluginHttpClients.BuildArrRequest(method, $"{url}{endpointPath}", instance.ApiKey);
+                if (jsonBody != null)
+                {
+                    var payload = JsonSerializer.Serialize(jsonBody);
+                    request.Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+                }
+
                 var response = await client.SendAsync(request, ct);
 
                 if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized
