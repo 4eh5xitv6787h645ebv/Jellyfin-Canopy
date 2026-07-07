@@ -325,3 +325,6 @@ auth.json
 
 # Generated client bundle (esbuild output; built by the csproj BuildClientBundle target)
 Jellyfin.Plugin.JellyfinElevate/dist/
+
+# Playwright artifacts (root-level runs)
+test-results/
