@@ -44,7 +44,11 @@ Jellyfin.Plugin.JellyfinEnhanced/
     │   ├── settings-panel/  # Split settings-panel modules (entry points, styles, panel, sections)
     │   ├── bookmarks/       # Bookmarks + the bookmarks library page (library-*.ts)
     │   ├── hidden-content/  # Hidden-content engine (data, save, filter, dialogs, panel, buttons)
-    │   └── hidden-content-page/  # Hidden-content admin page (state, render, cards, nav, custom tab)
+    │   ├── hidden-content-page/  # Hidden-content admin page (state, render, cards, nav, custom tab)
+    │   └── spoiler-guard/   # Spoiler Guard client: detail/movie/collection toggle button, Seerr
+    │                        # discovery toggle, per-user state + overrides, settings-panel tab,
+    │                        # disable-confirm dialog/snooze, soft image-refresh on toggle, and the
+    │                        # live-update-driven watched-refresh (UserDataChanged). Blur/strip is server-side
     ├── jellyseerr/          # Seerr integration. Flat singles: api, request-manager, jellyseerr,
     │   │                    # seerr-status, modal, item-details, issue-reporter, seamless-scroll,
     │   │                    # hss-discovery-handler
@@ -98,6 +102,8 @@ Jellyfin.Plugin.JellyfinEnhanced/
 │   ├── ArrLinksController.cs / ArrCalendarController.cs / ArrRequestsController.cs
 │   ├── UserSettingsController.cs / HiddenContentController.cs / ReviewsController.cs
 │   ├── TagCacheController.cs / ItemInfoController.cs / BrandingController.cs
+│   ├── SpoilerGuardController.cs # Spoiler Guard opt-in list (series/movies/collections), Seerr
+│   │                          # pending pre-arm, and the corruption-recovery health endpoints
 │   └── ActiveStreamsController.cs / MaintenanceModeController.cs / ViewsController.cs
 ├── Configuration/
 │   ├── PluginConfiguration.cs # Flat XML-serialized settings bag (shape is frozen for upgrades)
@@ -110,9 +116,16 @@ Jellyfin.Plugin.JellyfinEnhanced/
 │   │                          # auto-request watchers (AutoRequest/AutoRequestRetryPolicy —
 │   │                          # transport-only retry / already-requested handling), arr tag sync,
 │   │                          # maintenance mode, startup filters (script injection, branding)
-│   └── LiveNotifierService.cs # Pushes live updates (config-changed etc.) to open sessions
-│                              # via ISessionManager (see docs/advanced/live-updates.md)
-├── EventHandlers/             # Server-side Jellyfin event subscribers (playback events)
+│   ├── LiveNotifierService.cs # Pushes live updates (config-changed etc.) to open sessions
+│   │                          # via ISessionManager (see docs/advanced/live-updates.md)
+│   └── SpoilerGuard/          # Spoiler Guard server core: ImageBlurService (SkiaSharp Gaussian blur +
+│                              # stock-card render + pre-encoded fail-closed JPEG, cached),
+│                              # SpoilerBlurImageFilter (per-user image-byte replacement over the Image/
+│                              # Trickplay routes), SpoilerFieldStripFilter (metadata strip/rewrite honoring
+│                              # per-user overrides), SpoilerUserResolver (per-user identity incl. cookie/IP
+│                              # hint), SpoilerSeerrPendingPromoter (pending pre-arm → real protection)
+├── EventHandlers/             # Server-side Jellyfin event subscribers (playback events;
+│                              # SpoilerAutoEnableEvents = auto-enable Spoiler Guard on a fresh S1E1 play)
 ├── Data/ItemLookupService.cs  # Provider-id lookups via the supported ILibraryManager query surface
 ├── Helpers/                  # Pure helpers: ArrIdHelper (zero-id normalize + per-instance id namespacing),
 │                              # ArrUrlGuard (SSRF guard: metadata/rebind blocked, LAN allowed),

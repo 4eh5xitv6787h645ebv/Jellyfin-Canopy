@@ -267,6 +267,15 @@ const handleItemDetails = debounce(() => {
             addHideContentButton(itemId, visiblePage);
         }
 
+        // Spoiler Guard toggle on Series (blurs all unwatched episode images via
+        // the server filter), Movie (blurs its own poster/backdrop until Played),
+        // and Collection/BoxSet (protects every movie inside) detail pages.
+        // Rides this existing dispatcher — no new observer (R3).
+        if ((lastDetailsItemType === 'Series' || lastDetailsItemType === 'Movie' || lastDetailsItemType === 'BoxSet')
+            && JE.spoilerGuard?.addSpoilerBlurButton) {
+            JE.spoilerGuard.addSpoilerBlurButton(itemId, visiblePage, lastDetailsItemType);
+        }
+
         // Skip unsupported item types for media features
         if (!FEATURES_SUPPORTED_TYPES.includes(lastDetailsItemType)) {
             return;

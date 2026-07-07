@@ -55,6 +55,7 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
             "SeerrScanTriggerService.cs",     // cheap config/kind check -> counter + debounce timer
             "WatchlistMonitor.cs",            // cheap Movie/Series reject -> Task.Run (lookup + writes off-thread)
             "ContinueWatchingPlaybackEvents.cs", // record id -> debounced timer drain (GetUsers + per-user prune off-thread, coalesced)
+            "SpoilerSeerrPendingPromoter.cs", // cheap gate ContainsKey -> coalesced Task.Run sweep (GetItemById + RMW off-thread)
         };
 
         // Off-thread worker methods on the reviewed subscribers: invoked via a debounce Timer or
@@ -74,6 +75,10 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Services
             // OnItemAdded (sync handler) bumps a counter + arms a debounce Timer; OnDebounceElapsed
             // is the timer callback dispatching the scan HTTP POSTs off-thread.
             ["SeerrScanTriggerService.cs"] = new[] { "OnDebounceElapsed", "DispatchAsync", "PostScanTrigger", "TriggerNowAsync" },
+            // OnItemAdded (sync handler) does a ContainsKey gate then ScheduleSweep (Task.Run only);
+            // SweepPendingUsers + PromoteForUser are the coalesced background workers that run the
+            // library reads (GetItemById) + per-user RMW writes off the scan thread.
+            ["SpoilerSeerrPendingPromoter.cs"] = new[] { "SweepPendingUsers", "PromoteForUser" },
         };
 
         [Fact]

@@ -903,6 +903,39 @@ function initialize(): void {
     console.log(`${logPrefix} Initialized`);
 }
 
+/**
+ * Drop the entire server-side tag cache and re-fetch it from scratch, then
+ * rescan visible cards. Used when an event outside the tag pipeline changes
+ * what the server would return for already-cached items — above all a Spoiler
+ * Guard toggle, which makes the server begin (or stop) stripping tags for a
+ * series' unwatched episodes. Without this, NextUp / home-rail cards keep their
+ * pre-toggle (unstripped) overlays until the next full page reload. Each
+ * renderer's derived cache is cleared via onServerCacheRefresh(null) so it
+ * recomputes from the refreshed, spoiler-stripped server data.
+ */
+async function invalidateServerCache(): Promise<void> {
+    try {
+        serverCache = null;
+        serverCacheVersion = 0;
+        serverCacheTimestamp = 0;
+        processedCards = new WeakSet();
+        requestQueue = [];
+        batchGeneration++;
+        firstEpisodeCache.clear();
+        parentSeriesCache.clear();
+        for (const [, renderer] of renderers) {
+            if (renderer.onServerCacheRefresh) {
+                try { renderer.onServerCacheRefresh(null); } catch { /* renderer cache clear best-effort */ }
+            }
+        }
+        await loadServerCache();
+        processedCards = new WeakSet();
+        runScan();
+    } catch (e) {
+        console.warn(`${logPrefix} invalidateServerCache failed:`, e);
+    }
+}
+
 // ── Expose API ─────────────────────────────────────────────────────
 
 const tagPipelineApi = {
@@ -921,6 +954,7 @@ const tagPipelineApi = {
         parentSeriesCache.clear();
     },
     scheduleScan,
+    invalidateServerCache,
 };
 
 // JEGlobal types tagPipeline as the narrow TagPipelineLike consumer view; the

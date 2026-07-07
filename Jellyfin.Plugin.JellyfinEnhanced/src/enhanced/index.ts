@@ -45,6 +45,9 @@ import './hidden-content-page/init';
 import './hidden-content-page/custom-tab';
 import './subtitles';
 import './themer';
+// spoiler-guard — loads after tag-pipeline (uses invalidateServerCache) and
+// before the settings panel (which wires its per-user override section).
+import './spoiler-guard/index';
 // ui modules — order matters: -release-notes exports GITHUB_REPO + the release-
 // notes panel the template/settings wiring import; ui-panel hosts
 // JE.showEnhancedPanel and orchestrates the buildPanelHtml/wire* pieces last.

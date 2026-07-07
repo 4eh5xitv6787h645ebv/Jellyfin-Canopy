@@ -816,6 +816,157 @@
                     </fieldset>
 
                     <fieldset>
+                        <legend class="sectionTitle">Spoiler Guard</legend>
+                        <div class="configSection">
+                            <div class="je-info-banner-inline-center" style="margin-bottom: 15px;">
+                                <div class="je-info-banner-row">
+                                    <i class="material-icons je-info-icon">visibility_off</i>
+                                    <div>
+                                        <strong>Spoiler Guard</strong> lets users opt individual series, movies and collections into spoiler protection. Server-side, every client gets blurred/hidden artwork and stripped metadata for the unwatched episodes/movies they chose to protect — no client changes needed. Per-user state with a server-wide enable/disable kill switch.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="checkboxContainer je-main-feature"><label><input id="spoilerBlurEnabled" data-config-key="SpoilerBlurEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Spoiler Guard</span></label></div>
+                            <div class="je-setting-description" data-desc-for="spoilerBlurEnabled">
+                                <div class="fieldDescription je-field-desc-xl">Enable or disable Spoiler Guard server-wide. When disabled, no images are blurred and no metadata is stripped, and the settings-panel controls are removed. User opt-in data is preserved and restored when re-enabled.</div>
+                            </div>
+
+                            <details class="je-details-section" data-gated-by="spoilerBlurEnabled">
+                                <summary>Image protection</summary>
+                                <div class="je-details-body">
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="spoilerBlurMode">Protection mode for guarded artwork</label>
+                                        <select is="emby-select" id="spoilerBlurMode" data-config-key="SpoilerBlurMode" data-config-fallback="hide" name="spoilerBlurMode" class="emby-select">
+                                            <option value="hide">Hide (substitute a safe parent-level placeholder)</option>
+                                            <option value="blur">Blur (Gaussian-blur the original bytes)</option>
+                                        </select>
+                                    </div>
+                                    <div class="je-setting-description" data-desc-for="spoilerBlurMode">
+                                        <div class="fieldDescription">"Hide" swaps in a parent image (Series backdrop for episodes, Series poster for seasons, Collection poster for collection movies) so episode-specific imagery is fully hidden. "Blur" keeps silhouettes and dominant colours visible.</div>
+                                    </div>
+
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="spoilerBlurIntensity">Blur intensity (5–100)</label>
+                                        <input id="spoilerBlurIntensity" data-config-key="SpoilerBlurIntensity" data-config-int="" data-config-fallback="40" is="emby-input" type="number" min="5" max="100" value="40"/>
+                                    </div>
+                                    <div class="je-setting-description" data-desc-for="spoilerBlurIntensity">
+                                        <div class="fieldDescription">Gaussian blur strength used in "Blur" mode (and the hide-mode fallback when no safe parent art exists). 5 = barely blurred, 100 = heavily blurred. Default 40.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerKeepMoviePosters" data-config-key="SpoilerKeepMoviePosters" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Keep movie posters unblurred</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerKeepMoviePosters">
+                                        <div class="fieldDescription">When on, a guarded movie's Primary/Thumb poster passes through unblurred (posters are usually curated marketing art), while its chapter thumbnails, screenshots and backdrops still follow protection. Turn off to hide movie posters too.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerBlurArtwork" data-config-key="SpoilerBlurArtwork" is="emby-checkbox" type="checkbox"/><span>Also protect backdrops / art images</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerBlurArtwork">
+                                        <div class="fieldDescription">Off by default: only posters/thumbnails/screenshots are protected. Turn on to also blur/hide Backdrop and Art images (wider aesthetic images shown on detail pages), which some users find over-aggressive.</div>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <details class="je-details-section" data-gated-by="spoilerBlurEnabled">
+                                <summary>Metadata stripping</summary>
+                                <div class="je-details-body">
+                                    <div class="je-info-banner-inline-center" style="margin-bottom: 15px;">
+                                        <div class="je-info-banner-row">
+                                            <i class="material-icons je-info-icon">tune</i>
+                                            <div>
+                                                Each category is stripped from guarded unwatched items. All default <strong>on</strong> (strictest posture); users can opt out of individual categories from their settings panel unless you disable the category here.
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerStripOverview" data-config-key="SpoilerStripOverview" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Hide episode/movie descriptions (Overview)</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerStripOverview">
+                                        <div class="fieldDescription">Replaces the synopsis with the placeholder below — the single biggest spoiler vector.</div>
+                                    </div>
+
+                                    <div class="inputContainer" data-gated-by="spoilerStripOverview">
+                                        <label class="inputLabel inputLabelUnfocused" for="spoilerOverviewPlaceholder">Overview placeholder text</label>
+                                        <input id="spoilerOverviewPlaceholder" data-config-key="SpoilerOverviewPlaceholder" data-config-fallback="Spoiler Guard activated" is="emby-input" type="text" value="Spoiler Guard activated"/>
+                                    </div>
+                                    <div class="je-setting-description" data-desc-for="spoilerOverviewPlaceholder">
+                                        <div class="fieldDescription">Shown in place of a stripped description so clients don't render an empty "Description" header. Any HTML tags and quotes are sanitized when it's rendered, not on save. Configurable for localisation.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerReplaceTitle" data-config-key="SpoilerReplaceTitle" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Replace episode titles with "Season X, Episode Y"</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerReplaceTitle">
+                                        <div class="fieldDescription">Spoiler-y episode titles become generic. Some clients show the title in nav tooltips/breadcrumbs where the change can feel jarring, so it can be disabled.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerStripTags" data-config-key="SpoilerStripTags" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Hide tags</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerStripTags">
+                                        <div class="fieldDescription">TMDB tags often contain spoiler phrases like "Death of a main character".</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerStripTaglines" data-config-key="SpoilerStripTaglines" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Hide taglines</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerStripTaglines">
+                                        <div class="fieldDescription">Taglines like "Everything changes tonight" are pure spoiler bait.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerStripChapters" data-config-key="SpoilerStripChapters" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Hide chapter names</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerStripChapters">
+                                        <div class="fieldDescription">A chapter named "X reveals Y" is a major spoiler. The timestamp is kept so the seek bar still shows dividers. For partially-watched movies, only chapters after the resume point are hidden.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerStripRatings" data-config-key="SpoilerStripRatings" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Hide ratings (community &amp; critic)</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerStripRatings">
+                                        <div class="fieldDescription">A high community/critic rating on a specific episode implies a major event.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerStripPremiereDate" data-config-key="SpoilerStripPremiereDate" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Hide air / premiere dates</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerStripPremiereDate">
+                                        <div class="fieldDescription">A gap before an episode can imply "season finale" / "long-anticipated reveal".</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerStripCast" data-config-key="SpoilerStripCast" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Hide cast</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerStripCast">
+                                        <div class="fieldDescription">An unexpected guest star or recurring villain in the cast is a major spoiler.</div>
+                                    </div>
+
+                                    <div class="inputContainer" data-gated-by="spoilerStripCast">
+                                        <label class="inputLabel inputLabelUnfocused" for="spoilerStripCastMode">Cast strip mode</label>
+                                        <select is="emby-select" id="spoilerStripCastMode" data-config-key="SpoilerStripCastMode" data-config-fallback="GuestStars" name="spoilerStripCastMode" class="emby-select">
+                                            <option value="GuestStars">Guest stars only (keep regular cast)</option>
+                                            <option value="All">All cast &amp; crew</option>
+                                        </select>
+                                    </div>
+                                    <div class="je-setting-description" data-desc-for="spoilerStripCastMode">
+                                        <div class="fieldDescription">"Guest stars only" removes just per-episode guest stars (most series leak via those); "All" removes the entire People list.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerStripReviews" data-config-key="SpoilerStripReviews" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Hide the Reviews panel on guarded series</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerStripReviews">
+                                        <div class="fieldDescription">TMDB and user-written reviews routinely leak plot spoilers on guarded series pages.</div>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <details class="je-details-section" data-gated-by="spoilerBlurEnabled">
+                                <summary>Automatic opt-in &amp; behaviour</summary>
+                                <div class="je-details-body">
+                                    <div class="checkboxContainer"><label><input id="spoilerAutoEnableOnFirstPlay" data-config-key="SpoilerAutoEnableOnFirstPlay" is="emby-checkbox" type="checkbox"/><span>Auto-enable on first play of a series' S1E1</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerAutoEnableOnFirstPlay">
+                                        <div class="fieldDescription">When a user starts a series from S1E1 for the first time, the series is automatically added to their Spoiler Guard list. Rewatches don't re-trigger.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerAutoEnableOnSeerrRequest" data-config-key="SpoilerAutoEnableOnSeerrRequest" is="emby-checkbox" type="checkbox"/><span>Auto-enable on Seerr request</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerAutoEnableOnSeerrRequest">
+                                        <div class="fieldDescription">Each successful Seerr request via Jellyfin Enhanced registers a pending entry; when the content lands in the library, Spoiler Guard is enabled for that user automatically. Manual opt-in from the Seerr modal stays available regardless.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="spoilerBlurStrictRefresh" data-config-key="SpoilerBlurStrictRefresh" is="emby-checkbox" type="checkbox"/><span>Full page reload on toggle (strict refresh)</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="spoilerBlurStrictRefresh">
+                                        <div class="fieldDescription">On: toggling Spoiler Guard fires a full page reload so DTO-derived text (overview, titles, ratings) updates immediately. Off (default): only the in-place image refresh runs — smoother, but page text stays stale until the next navigation.</div>
+                                    </div>
+                                </div>
+                            </details>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
                         <legend class="sectionTitle">Requests Page</legend>
                         <div class="configSection">
                             <div class="je-info-banner-inline-center" style="margin-bottom: 15px;">

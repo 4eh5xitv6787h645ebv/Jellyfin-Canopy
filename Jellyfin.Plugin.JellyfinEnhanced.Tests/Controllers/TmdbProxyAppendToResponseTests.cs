@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Security.Claims;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyfinEnhanced.Services;
 using Jellyfin.Data.Enums;
 using Jellyfin.Data.Events;
 using Jellyfin.Database.Implementations.Entities;
@@ -70,6 +72,14 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
             var parentalFilter = new SeerrParentalFilter(
                 factory, NullLogger<SeerrParentalFilter>.Instance, userManager, new ScoreLocalization(), seerrCache, provider);
 
+            var spoilerPending = new SpoilerPendingService(
+                new UserConfigurationManager(
+                    new StubAppPaths(Path.Combine(Path.GetTempPath(), "je-tmdb-" + Guid.NewGuid().ToString("N"))),
+                    NullLogger<UserConfigurationManager>.Instance),
+                new CountingLibraryManager(),
+                userManager,
+                NullLogger<SpoilerPendingService>.Instance);
+
             var controller = new JellyseerrProxyController(
                 factory,
                 NullLogger<JellyseerrProxyController>.Instance,
@@ -77,7 +87,8 @@ namespace Jellyfin.Plugin.JellyfinEnhanced.Tests.Controllers
                 seerrCache,
                 provider,
                 new UnusedJellyseerrClient(),
-                parentalFilter);
+                parentalFilter,
+                spoilerPending);
 
             var identity = new ClaimsIdentity(new[] { new Claim("Jellyfin-UserId", CallerGuid) }, "TestAuth");
             var httpContext = new DefaultHttpContext { User = new ClaimsPrincipal(identity) };

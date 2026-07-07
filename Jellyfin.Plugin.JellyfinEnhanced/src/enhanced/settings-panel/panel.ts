@@ -12,6 +12,7 @@ import { buildPanelHtml } from './template';
 import { wireShortcutEditor } from './shortcut-editor';
 import { wireSettingsListeners, wireMiscSettingsControls } from './settings';
 import { wireHiddenContentListeners } from './hidden-content-tab';
+import { wireSpoilerGuardListeners } from '../spoiler-guard/settings-tab';
 import { wireLanguageControls } from './language';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -319,6 +320,7 @@ JE.showEnhancedPanel = async () => {
 
     wireSettingsListeners(ctx);
     wireHiddenContentListeners(ctx);
+    wireSpoilerGuardListeners(ctx.resetAutoCloseTimer);
     wireMiscSettingsControls(ctx);
     wireLanguageControls(ctx);
 };
