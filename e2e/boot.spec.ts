@@ -9,7 +9,7 @@ test.describe('boot', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         const state = await page.evaluate(() => {
-            const JE = (window as any).JellyfinEnhanced;
+            const JE = (window as any).JellyfinElevate;
             return {
                 initialized: JE.initialized === true,
                 pluginVersion: typeof JE.pluginVersion === 'string' && JE.pluginVersion.length > 0,
@@ -50,7 +50,7 @@ test.describe('boot', () => {
         // Then the no-errors assertion (real() + unexpected4xx()) covers it.
         await page.waitForSelector('#indexPage .card', { timeout: 60_000 });
         const anyTagsEnabled = await page.evaluate(() => {
-            const settings = (window as any).JellyfinEnhanced?.currentSettings || {};
+            const settings = (window as any).JellyfinElevate?.currentSettings || {};
             return ['qualityTagsEnabled', 'genreTagsEnabled', 'languageTagsEnabled', 'ratingTagsEnabled']
                 .some((key) => settings[key] === true);
         });

@@ -6,7 +6,7 @@ import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-const ADMIN_ENDPOINT = '/JellyfinEnhanced/admin/hidden-content-users';
+const ADMIN_ENDPOINT = '/JellyfinElevate/admin/hidden-content-users';
 
 const FAMILIES = [
     { setting: 'qualityTagsEnabled', attr: 'data-je-quality-tagged' },
@@ -20,7 +20,7 @@ test.describe('non-admin session', () => {
         await loginAs(page, 'user', consoleErrors);
 
         const state = await page.evaluate(() => {
-            const JE = (window as any).JellyfinEnhanced;
+            const JE = (window as any).JellyfinElevate;
             return {
                 initialized: JE.initialized === true,
                 pluginConfig: !!JE.pluginConfig && typeof JE.pluginConfig === 'object',
@@ -56,8 +56,8 @@ test.describe('non-admin session', () => {
     test('the enhanced panel opens with the settings tab and closes on Escape', async ({ page, consoleErrors }) => {
         await loginAs(page, 'user', consoleErrors);
 
-        await page.evaluate(() => { (window as any).JellyfinEnhanced.showEnhancedPanel(); });
-        const panel = page.locator('#jellyfin-enhanced-panel');
+        await page.evaluate(() => { (window as any).JellyfinElevate.showEnhancedPanel(); });
+        const panel = page.locator('#jellyfin-elevate-panel');
         await expect(panel).toBeVisible({ timeout: 15_000 });
 
         expect(await panel.locator('.tab-button').count()).toBeGreaterThanOrEqual(1);
@@ -76,7 +76,7 @@ test.describe('non-admin session', () => {
         await loginAs(page, 'user', consoleErrors);
 
         const enabled: string[] = await page.evaluate((families) => {
-            const settings = (window as any).JellyfinEnhanced?.currentSettings || {};
+            const settings = (window as any).JellyfinElevate?.currentSettings || {};
             return families.filter((f) => settings[f.setting] === true).map((f) => f.attr);
         }, FAMILIES.map((f) => ({ setting: f.setting, attr: f.attr })));
         test.skip(enabled.length === 0, 'no tag renderer enabled for this user');
@@ -108,7 +108,7 @@ test.describe('non-admin session', () => {
         // not stranded in a hidden subtree (offsetParent is unusable on the
         // fixed AppBar).
         const randomButtonEnabled = await page.evaluate(
-            () => (window as any).JellyfinEnhanced?.currentSettings?.randomButtonEnabled === true
+            () => (window as any).JellyfinElevate?.currentSettings?.randomButtonEnabled === true
         );
         if (randomButtonEnabled) {
             await page.waitForFunction(() => {

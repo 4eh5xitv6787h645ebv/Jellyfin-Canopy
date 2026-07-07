@@ -290,12 +290,12 @@ Example:
 
     /*
     * ===================================================================
-    * Universal Style Override for the Jellyfin Enhanced Panel
+    * Universal Style Override for the Jellyfin Elevate Panel
     * ===================================================================
     */
 
     /* --- Main Panel & Backdrop --- */
-    #jellyfin-enhanced-panel {
+    #jellyfin-elevate-panel {
         background: rgba(25, 35, 45, 0.85) !important;
         border: 1px solid rgba(125, 150, 175, 0.3) !important;
         backdrop-filter: blur(20px) !important;
@@ -304,50 +304,50 @@ Example:
     }
 
     /* --- Panel Header --- */
-    #jellyfin-enhanced-panel > div:first-child {
+    #jellyfin-elevate-panel > div:first-child {
         background: rgba(0, 0, 0, 0.25) !important;
         border-bottom: 1px solid rgba(125, 150, 175, 0.3) !important;
     }
 
-    /* --- Main Title ("Jellyfin Enhanced") --- */
-    #jellyfin-enhanced-panel div[style*="-webkit-background-clip: text"] {
+    /* --- Main Title ("Jellyfin Elevate") --- */
+    #jellyfin-elevate-panel div[style*="-webkit-background-clip: text"] {
         background: linear-gradient(135deg, #00a4dc, #aa5cc3) !important;
         -webkit-background-clip: text !important;
         -webkit-text-fill-color: transparent !important;
     }
 
     /* --- Tab Buttons --- */
-    #jellyfin-enhanced-panel .tab-button {
+    #jellyfin-elevate-panel .tab-button {
         background: rgba(0, 0, 0, 0.2) !important;
         color: rgba(255, 255, 255, 0.6) !important;
         border-bottom: 3px solid transparent !important;
     }
 
-    #jellyfin-enhanced-panel .tab-button:hover {
+    #jellyfin-elevate-panel .tab-button:hover {
         background: rgba(0, 0, 0, 0.4) !important;
         color: #ffffff !important;
     }
 
-    #jellyfin-enhanced-panel .tab-button.active {
+    #jellyfin-elevate-panel .tab-button.active {
         color: #ffffff !important;
         border-bottom-color: #00a4dc !important;
         background: rgba(0, 0, 0, 0.3) !important;
     }
 
     /* --- Section Headers & <details> Summary --- */
-    #jellyfin-enhanced-panel h3,
-    #jellyfin-enhanced-panel details summary {
+    #jellyfin-elevate-panel h3,
+    #jellyfin-elevate-panel details summary {
         color: #00a4dc !important;
     }
 
     /* --- Collapsible <details> Sections --- */
-    #jellyfin-enhanced-panel details {
+    #jellyfin-elevate-panel details {
         background-color: rgba(0, 0, 0, 0.2) !important;
         border: 1px solid rgba(125, 150, 175, 0.2) !important;
     }
 
     /* --- Keyboard Key Styling (<kbd>) --- */
-    #jellyfin-enhanced-panel kbd,
+    #jellyfin-elevate-panel kbd,
     .shortcut-key {
         background: #34495e !important;
         color: #ecf0f1 !important;
@@ -356,30 +356,30 @@ Example:
     }
 
     /* --- Toggles & Checkboxes --- */
-    #jellyfin-enhanced-panel input[type="checkbox"] {
+    #jellyfin-elevate-panel input[type="checkbox"] {
         accent-color: #aa5cc3 !important;
     }
 
     /* --- Panel Footer --- */
-    #jellyfin-enhanced-panel .panel-footer {
+    #jellyfin-elevate-panel .panel-footer {
         background: rgba(0, 0, 0, 0.25) !important;
         border-top: 1px solid rgba(125, 150, 175, 0.3) !important;
     }
 
     /* --- Buttons in Footer --- */
-    #jellyfin-enhanced-panel .footer-buttons a,
-    #jellyfin-enhanced-panel .footer-buttons button {
+    #jellyfin-elevate-panel .footer-buttons a,
+    #jellyfin-elevate-panel .footer-buttons button {
         background-color: rgba(255, 255, 255, 0.08) !important;
         transition: background-color 0.2s ease;
     }
 
-    #jellyfin-enhanced-panel .footer-buttons a:hover,
-    #jellyfin-enhanced-panel .footer-buttons button:hover {
+    #jellyfin-elevate-panel .footer-buttons a:hover,
+    #jellyfin-elevate-panel .footer-buttons button:hover {
         background-color: rgba(255, 255, 255, 0.15) !important;
     }
 
     /* --- Style for Toast Notifications --- */
-    .jellyfin-enhanced-toast {
+    .jellyfin-elevate-toast {
         background: linear-gradient(135deg, #00a4dc, #aa5cc3) !important;
         color: white !important;
         border: none !important;

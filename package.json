@@ -1,11 +1,11 @@
 {
-  "name": "jellyfin-enhanced",
+  "name": "jellyfin-elevate",
   "version": "0.0.0",
   "private": true,
-  "description": "Development tooling for the Jellyfin Enhanced plugin (lint, type-check, translation validation). The plugin itself ships as embedded resources from the C# project.",
+  "description": "Development tooling for the Jellyfin Elevate plugin (lint, type-check, translation validation). The plugin itself ships as embedded resources from the C# project.",
   "scripts": {
-    "lint": "eslint \"Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js\" \"Jellyfin.Plugin.JellyfinEnhanced/src/**/*.ts\" \"Jellyfin.Plugin.JellyfinEnhanced/Configuration/*.js\" \"scripts/**/*.js\"",
-    "lint:fix": "eslint --fix \"Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js\" \"Jellyfin.Plugin.JellyfinEnhanced/src/**/*.ts\" \"Jellyfin.Plugin.JellyfinEnhanced/Configuration/*.js\" \"scripts/**/*.js\"",
+    "lint": "eslint \"Jellyfin.Plugin.JellyfinElevate/js/**/*.js\" \"Jellyfin.Plugin.JellyfinElevate/src/**/*.ts\" \"Jellyfin.Plugin.JellyfinElevate/Configuration/*.js\" \"scripts/**/*.js\"",
+    "lint:fix": "eslint --fix \"Jellyfin.Plugin.JellyfinElevate/js/**/*.js\" \"Jellyfin.Plugin.JellyfinElevate/src/**/*.ts\" \"Jellyfin.Plugin.JellyfinElevate/Configuration/*.js\" \"scripts/**/*.js\"",
     "typecheck": "tsc -p jsconfig.json",
     "typecheck:src": "tsc -p tsconfig.src.json",
     "test:client": "vitest run",

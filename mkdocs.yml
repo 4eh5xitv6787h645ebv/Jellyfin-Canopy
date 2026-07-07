@@ -1,10 +1,10 @@
-site_name: Jellyfin Enhanced
-site_url: https://n00bcodr.github.io/Jellyfin-Enhanced/
-repo_name: n00bcodr/Jellyfin-Enhanced
-repo_url: https://github.com/n00bcodr/Jellyfin-Enhanced
-site_description: The essential enhancement suite for Jellyfin, bundling advanced features and customizations into one convenient plugin.
-site_author: n00bcodr
-copyright: Copyright &copy;2026 n00bcodr. Made with 💜 for Jellyfin and the community
+site_name: Jellyfin Elevate
+site_url: https://4eh5xitv6787h645ebv.github.io/Jellyfin-Elevate/
+repo_name: 4eh5xitv6787h645ebv/Jellyfin-Elevate
+repo_url: https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate
+site_description: Jellyfin Elevate is an independent fork and extensive modernization of Jellyfin Enhanced, providing an integrated suite of playback, discovery, customization and media-management features for Jellyfin 12.
+site_author: Jellyfin Elevate contributors
+copyright: Copyright &copy;2026 Jellyfin Elevate contributors. A fork of Jellyfin Enhanced by n00bcodr — made with 💜 for Jellyfin and the community
 
 theme:
   name: material
@@ -47,11 +47,11 @@ extra:
   404_page: true
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/n00bcodr/Jellyfin-Enhanced
+      link: https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate
       name: GitHub Repository
     - icon: fontawesome/brands/discord
       link: https://discord.gg/EYNFf7y4CG
-      name: Jellyfin Community Discord - Jellyfin Enhanced Channel
+      name: Jellyfin Community Discord - Jellyfin Elevate Channel
 
 plugins:
   - search:

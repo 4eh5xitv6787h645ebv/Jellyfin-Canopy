@@ -1,4 +1,4 @@
-# Jellyfin Enhanced
+# Jellyfin Elevate
 
 <p align="center">
   <img src="https://img.shields.io/github/last-commit/n00bcodr/Jellyfin-Enhanced/main?logo=semantic-release&logoColor=white&label=Last%20Updated&labelColor=black&color=AA5CC3&cacheSeconds=3600" alt="Last Updated">
@@ -9,7 +9,7 @@
 
 <p align="center">
 The essential enhancement suite for Jellyfin, bundling advanced features and customizations into one convenient plugin.<br><br>
-  <img src="images/icon.png" alt="Jellyfin Enhanced Logo" width="50%" />
+  <img src="images/icon.png" alt="Jellyfin Elevate Logo" width="50%" />
 </p>
 
 ## Compatibility

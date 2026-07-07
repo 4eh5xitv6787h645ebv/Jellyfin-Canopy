@@ -10,7 +10,7 @@
 
 const CLIENT_AUTH = 'MediaBrowser Client="JE-E2E", Device="je-e2e", DeviceId="je-e2e", Version="1.0.0"';
 
-export const PLUGIN_ID = 'f69e946a-4b3c-4e9a-8f0a-8d7c1b2c4d9b';
+export const PLUGIN_ID = '9ffa12bc-f4b5-406c-ab1d-d575acbeea7b';
 
 export interface Session {
     token: string;

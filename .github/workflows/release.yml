@@ -11,7 +11,7 @@ name: Release
 #      JS syntax/lint/type checks) — any failure aborts the release,
 #   2. stamps the assembly with the tag version (no version-churn commits),
 #   3. packages the Jellyfin 12 ZIP with the DLL at the zip root
-#      (Jellyfin.Plugin.JellyfinEnhanced_12.0.0.zip — the exact layout and
+#      (Jellyfin.Plugin.JellyfinElevate_12.0.0.zip — the exact layout and
 #      naming of the existing release assets),
 #   4. creates the GitHub Release (or attaches assets to a pre-drafted one,
 #      reusing its body as the changelog),
@@ -112,7 +112,7 @@ jobs:
         run: npm run build:bundle
 
       - name: Unit tests
-        run: dotnet test Jellyfin.Plugin.JellyfinEnhanced.Tests/JellyfinEnhanced.Tests.csproj -c Release --logger "console;verbosity=normal"
+        run: dotnet test Jellyfin.Plugin.JellyfinElevate.Tests/JellyfinElevate.Tests.csproj -c Release --logger "console;verbosity=normal"
 
       - name: Validate current manifest
         run: node scripts/release/validate-manifest.js manifest.json
@@ -126,13 +126,13 @@ jobs:
         run: |
           mkdir -p dist
           # Jellyfin 12 / net10.0
-          dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj \
+          dotnet build Jellyfin.Plugin.JellyfinElevate/JellyfinElevate.csproj \
             -c Release \
             -p:AssemblyVersion="$VERSION" -p:FileVersion="$VERSION"
           # Existing release-asset layout: exactly one file, the plugin DLL
           # at the zip root, named after the targetAbi.
-          zip -j dist/Jellyfin.Plugin.JellyfinEnhanced_12.0.0.zip \
-            Jellyfin.Plugin.JellyfinEnhanced/bin/Release/net10.0/Jellyfin.Plugin.JellyfinEnhanced.dll
+          zip -j dist/Jellyfin.Plugin.JellyfinElevate_12.0.0.zip \
+            Jellyfin.Plugin.JellyfinElevate/bin/Release/net10.0/Jellyfin.Plugin.JellyfinElevate.dll
           ls -l dist/
 
       # Changelog precedence: a pre-drafted release body for this tag wins;
@@ -172,7 +172,7 @@ jobs:
             --tag "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --changelog-file changelog.txt \
-            --asset "12.0.0.0=dist/Jellyfin.Plugin.JellyfinEnhanced_12.0.0.zip" > new-entries.json
+            --asset "12.0.0.0=dist/Jellyfin.Plugin.JellyfinElevate_12.0.0.zip" > new-entries.json
           node scripts/release/validate-manifest.js manifest.json --assets-dir dist
           {
             echo '### New manifest entries'

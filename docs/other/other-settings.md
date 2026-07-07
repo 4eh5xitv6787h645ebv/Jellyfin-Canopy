@@ -1,6 +1,6 @@
 # Other Settings
 
-Settings for custom branding, icon styles, extras, timeouts, and more. These are spread across several tabs of the plugin configuration page (**Dashboard** → **Plugins** → **Jellyfin Enhanced**) rather than a single tab — each section below notes which tab (**Display**, **Playback**, **Extras**, or **Admin**) holds the setting.
+Settings for custom branding, icon styles, extras, timeouts, and more. These are spread across several tabs of the plugin configuration page (**Dashboard** → **Plugins** → **Jellyfin Elevate**) rather than a single tab — each section below notes which tab (**Display**, **Playback**, **Extras**, or **Admin**) holds the setting.
 
 ---
 
@@ -23,7 +23,7 @@ Upload your own logos, banners, and favicon to personalize your Jellyfin instanc
 
 Files are stored in:
 ```text
-/plugins/configurations/Jellyfin.Plugin.JellyfinEnhanced/custom_branding/
+/plugins/configurations/Jellyfin.Plugin.JellyfinElevate/custom_branding/
 ```
 
 After saving, do a hard refresh (++ctrl+f5++) to see changes.
@@ -147,7 +147,7 @@ Temporarily lock users out of the server while you perform maintenance. When ena
 
 *Admin tab → Third-Party Assets*
 
-**Serve third-party assets locally (recommended)** — mirrors every remote asset the plugin's client scripts use (Material Symbols fonts, arr/Seerr/Letterboxd icons, country flags, metadata-icon and ratings CSS, Jellyfish theme styles, Elsewhere region/provider lists) onto your server and serves them from `/JellyfinEnhanced/assets/…`, so browsers never contact third-party CDNs (jsDelivr, Google Fonts, cdnjs, flagcdn).
+**Serve third-party assets locally (recommended)** — mirrors every remote asset the plugin's client scripts use (Material Symbols fonts, arr/Seerr/Letterboxd icons, country flags, metadata-icon and ratings CSS, Jellyfish theme styles, Elsewhere region/provider lists) onto your server and serves them from `/JellyfinElevate/assets/…`, so browsers never contact third-party CDNs (jsDelivr, Google Fonts, cdnjs, flagcdn).
 
 - **Default: ON.** Assets are downloaded server-side on first use and refreshed daily by the **Refresh Cached Assets** scheduled task (cadence adjustable in Jellyfin's *Scheduled Tasks* dashboard). Cached copies live next to the plugin configuration under `asset_cache/`; the last good copy is kept if an upstream is temporarily unreachable.
 - When **disabled**, clients load these assets directly from the original CDN URLs, as older plugin versions did.

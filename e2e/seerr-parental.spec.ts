@@ -23,7 +23,7 @@ const QUERY = 'Deadpool';
 async function searchIds(page: any): Promise<{ movies: number[]; all: number[] }> {
     return page.evaluate(async (query: string) => {
         const api = (window as any).ApiClient;
-        const url = api.getUrl(`/JellyfinEnhanced/jellyseerr/search?query=${encodeURIComponent(query)}&page=1&language=en`);
+        const url = api.getUrl(`/JellyfinElevate/jellyseerr/search?query=${encodeURIComponent(query)}&page=1&language=en`);
         const res = await api.getJSON(url);
         const results = (res.results || []) as any[];
         return {
@@ -53,7 +53,7 @@ async function postRequestStatus(page: any, mediaType: string, tmdbId: number): 
         try {
             await api.ajax({
                 type: 'POST',
-                url: api.getUrl('/JellyfinEnhanced/jellyseerr/request'),
+                url: api.getUrl('/JellyfinElevate/jellyseerr/request'),
                 data: JSON.stringify({ mediaType: args.mediaType, mediaId: args.tmdbId }),
                 contentType: 'application/json',
                 dataType: 'json',
@@ -116,9 +116,9 @@ test.describe('seerr parental-rating filter', () => {
 
             // Admin can also open any title's detail (no gate) — via both the Seerr
             // detail endpoint and the raw TMDB passthrough.
-            expect(await getStatus(page, `/JellyfinEnhanced/jellyseerr/movie/${DEADPOOL_R}`),
+            expect(await getStatus(page, `/JellyfinElevate/jellyseerr/movie/${DEADPOOL_R}`),
                 'admin detail fetch is not gated').toBe(200);
-            expect(await getStatus(page, `/JellyfinEnhanced/tmdb/movie/${DEADPOOL_R}`),
+            expect(await getStatus(page, `/JellyfinElevate/tmdb/movie/${DEADPOOL_R}`),
                 'admin raw TMDB fetch is not gated').toBe(200);
 
             // ── Restricted user: R titles removed, subset of admin, person kept ──
@@ -140,9 +140,9 @@ test.describe('seerr parental-rating filter', () => {
 
             // The same restriction gates the detail endpoint and the request POST, so a
             // restricted user can neither open nor request a blocked title by tmdbId.
-            expect(await getStatus(page, `/JellyfinEnhanced/jellyseerr/movie/${DEADPOOL_R}`),
+            expect(await getStatus(page, `/JellyfinElevate/jellyseerr/movie/${DEADPOOL_R}`),
                 'restricted user is blocked from a blocked title detail').toBe(403);
-            expect(await getStatus(page, `/JellyfinEnhanced/tmdb/movie/${DEADPOOL_R}`),
+            expect(await getStatus(page, `/JellyfinElevate/tmdb/movie/${DEADPOOL_R}`),
                 'restricted user is blocked from the raw TMDB detail too').toBe(403);
             expect(await postRequestStatus(page, 'movie', DEADPOOL_R),
                 'restricted user cannot request a blocked title').toBe(403);

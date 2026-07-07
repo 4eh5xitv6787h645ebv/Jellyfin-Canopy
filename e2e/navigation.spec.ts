@@ -27,7 +27,7 @@ test.describe('navigation', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         const enabled = await page.evaluate(
-            () => (window as any).JellyfinEnhanced?.currentSettings?.randomButtonEnabled === true
+            () => (window as any).JellyfinElevate?.currentSettings?.randomButtonEnabled === true
         );
         test.skip(!enabled, 'random button disabled for this user');
 

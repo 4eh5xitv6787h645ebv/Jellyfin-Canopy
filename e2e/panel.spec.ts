@@ -10,9 +10,9 @@ test.describe('panel', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         await page.evaluate(() => {
-            void (window as any).JellyfinEnhanced.showEnhancedPanel();
+            void (window as any).JellyfinElevate.showEnhancedPanel();
         });
-        const panel = page.locator('#jellyfin-enhanced-panel');
+        const panel = page.locator('#jellyfin-elevate-panel');
         await expect(panel).toBeVisible({ timeout: 15_000 });
 
         // Tab strip: at least the Settings tab is always rendered (Shortcuts is

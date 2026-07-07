@@ -24,7 +24,7 @@ test.describe('tags', () => {
         // them independently. (The old test summed all four and asserted the
         // total > 0, so one working family masked three dead ones.)
         const enabled: string[] = await page.evaluate((families) => {
-            const settings = (window as any).JellyfinEnhanced?.currentSettings || {};
+            const settings = (window as any).JellyfinElevate?.currentSettings || {};
             return families.filter((f) => settings[f.setting] === true).map((f) => f.attr);
         }, FAMILIES.map((f) => ({ setting: f.setting, attr: f.attr })));
         test.skip(enabled.length === 0, 'no tag renderer enabled for this user');
@@ -67,7 +67,7 @@ test.describe('tags', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         const anyTagsEnabled = await page.evaluate(() => {
-            const settings = (window as any).JellyfinEnhanced?.currentSettings || {};
+            const settings = (window as any).JellyfinElevate?.currentSettings || {};
             return ['qualityTagsEnabled', 'genreTagsEnabled', 'languageTagsEnabled', 'ratingTagsEnabled']
                 .some((key) => settings[key] === true);
         });

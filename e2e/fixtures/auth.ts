@@ -4,7 +4,7 @@
 // Login convention (proven by this repo's ad-hoc verification scripts):
 // authenticate through the web client's own ApiClient.authenticateUserByName,
 // reload so the app boots authenticated, then wait for the plugin's
-// window.JellyfinEnhanced.initialized === true flag.
+// window.JellyfinElevate.initialized === true flag.
 import { test as base, expect, type Page } from 'playwright/test';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -54,7 +54,7 @@ const CONSOLE_NOISE: RegExp[] = [
 //   - favicon                  : optional favicon asset
 //   - cast_sender / gstatic cast: Google Cast sender SDK, absent in the
 //                                 headless test env
-//   - /JellyfinEnhanced/admin/ : RequiresElevation endpoints a non-admin
+//   - /JellyfinElevate/admin/ : RequiresElevation endpoints a non-admin
 //                                 session legitimately hits and degrades on
 //                                 (bare 403 — docs/v12-platform.md §5)
 //   - /Plugins (bare list)     : the core Jellyfin plugin-list endpoint JE
@@ -63,7 +63,7 @@ const CONSOLE_NOISE: RegExp[] = [
 //                                 It is admin-gated, so a non-admin session gets
 //                                 a 403 that JE catches and degrades on (leaves
 //                                 the delivery flags as reported). Same
-//                                 authz-degrade shape as /JellyfinEnhanced/admin/.
+//                                 authz-degrade shape as /JellyfinElevate/admin/.
 //                                 Scoped to the bare list — /Plugins/{id}/… is
 //                                 NOT matched, so a broken per-plugin call still
 //                                 surfaces.
@@ -75,7 +75,7 @@ const ALLOWED_4XX_URL: RegExp[] = [
     /\/socket(\?|$)/i,
     /favicon/i,
     /cast_sender|gstatic\.com\/cast/i,
-    /\/JellyfinEnhanced\/admin\//i,
+    /\/JellyfinElevate\/admin\//i,
     /\/Plugins(\?|$)/i,
 ];
 
@@ -210,7 +210,7 @@ async function attemptLogin(
     // retry the whole attempt instead of timing out.
     const initialized = await page
         .waitForFunction(
-            () => (window as any).JellyfinEnhanced?.initialized === true,
+            () => (window as any).JellyfinElevate?.initialized === true,
             undefined,
             { timeout: 60_000 }
         )

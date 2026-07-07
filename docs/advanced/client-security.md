@@ -1,11 +1,11 @@
 # Client Security Rules
 
-Jellyfin Enhanced builds a lot of UI as HTML strings — cards, modals, panels, toasts — and much of what those strings interpolate comes from places an attacker can influence: Jellyfin item fields, Seerr/TMDB payloads, *arr metadata, user names, search queries, error messages. Every one of those interpolations is a potential XSS sink. Rule X1 below is the escaping doctrine that closed that class of bug across the tree; like the [performance rules](performance-rules.md), it is **enforceable in review** — and, unlike them, it is also **enforced by a test** that fails the build on any unrecognized interpolation.
+Jellyfin Elevate builds a lot of UI as HTML strings — cards, modals, panels, toasts — and much of what those strings interpolate comes from places an attacker can influence: Jellyfin item fields, Seerr/TMDB payloads, *arr metadata, user names, search queries, error messages. Every one of those interpolations is a potential XSS sink. Rule X1 below is the escaping doctrine that closed that class of bug across the tree; like the [performance rules](performance-rules.md), it is **enforceable in review** — and, unlike them, it is also **enforced by a test** that fails the build on any unrecognized interpolation.
 
 Non-obvious escape sites are marked in the source with `// SEC(X1):` comments:
 
 ```bash
-grep -rn "SEC(X1" Jellyfin.Plugin.JellyfinEnhanced/src/
+grep -rn "SEC(X1" Jellyfin.Plugin.JellyfinElevate/src/
 ```
 
 | # | Rule | One line |

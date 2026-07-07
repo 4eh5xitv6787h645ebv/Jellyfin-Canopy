@@ -1,4 +1,4 @@
-// The Requests page (GET /JellyfinEnhanced/arr/requests, backing
+// The Requests page (GET /JellyfinElevate/arr/requests, backing
 // JE.downloadsPage) must apply each caller's OWN Jellyfin parental-rating
 // limit server-side — exactly the gap SEERR-1 found: the controller returned
 // every row regardless of the caller's MaxParentalRating. A restricted user
@@ -36,7 +36,7 @@ async function ensureRequest(page: any, mediaType: string, tmdbId: number): Prom
         try {
             await api.ajax({
                 type: 'POST',
-                url: api.getUrl('/JellyfinEnhanced/jellyseerr/request'),
+                url: api.getUrl('/JellyfinElevate/jellyseerr/request'),
                 data: JSON.stringify({ mediaType: args.mediaType, mediaId: args.tmdbId }),
                 contentType: 'application/json',
                 dataType: 'json',
@@ -51,7 +51,7 @@ async function ensureRequest(page: any, mediaType: string, tmdbId: number): Prom
 async function requestTmdbIds(page: any): Promise<number[]> {
     return page.evaluate(async () => {
         const api = (window as any).ApiClient;
-        const res = await api.getJSON(api.getUrl('/JellyfinEnhanced/arr/requests?take=200'));
+        const res = await api.getJSON(api.getUrl('/JellyfinElevate/arr/requests?take=200'));
         return ((res?.requests || []) as any[])
             .map((r) => Number(r.tmdbId))
             .filter((n) => Number.isFinite(n));
@@ -61,7 +61,7 @@ async function requestTmdbIds(page: any): Promise<number[]> {
 /** Open the ACTUAL Requests page and read the rendered request-card titles. */
 async function renderedRequestTitles(page: any): Promise<string[]> {
     await page.evaluate(() => {
-        (window as any).JellyfinEnhanced.downloadsPage.showPage();
+        (window as any).JellyfinElevate.downloadsPage.showPage();
     });
     // Wait for the page container, then for the requests section to SETTLE:
     // either it rendered cards or an empty/error state (loadAllData resolved) —
@@ -84,13 +84,13 @@ async function declineRequestsFor(page: any, tmdbIds: number[]): Promise<void> {
     await page.evaluate(async (ids: number[]) => {
         const api = (window as any).ApiClient;
         try {
-            const res = await api.getJSON(api.getUrl('/JellyfinEnhanced/arr/requests?take=200'));
+            const res = await api.getJSON(api.getUrl('/JellyfinElevate/arr/requests?take=200'));
             for (const row of (res?.requests || []) as any[]) {
                 if (ids.includes(Number(row.tmdbId)) && row.id != null) {
                     try {
                         await api.ajax({
                             type: 'POST',
-                            url: api.getUrl(`/JellyfinEnhanced/arr/requests/${row.id}/decline`),
+                            url: api.getUrl(`/JellyfinElevate/arr/requests/${row.id}/decline`),
                             dataType: 'json',
                         });
                     } catch { /* best effort */ }

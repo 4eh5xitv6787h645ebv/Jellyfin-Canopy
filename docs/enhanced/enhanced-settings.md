@@ -12,7 +12,7 @@ Access user-configured settings via the Enhanced panel:
 
 **Open Panel:**
 
-- Click **Jellyfin Enhanced** in sidebar
+- Click **Jellyfin Elevate** in sidebar
 - Press `?` keyboard shortcut
 
 
@@ -39,7 +39,7 @@ Access user-configured settings via the Enhanced panel:
 
 **Settings Persistence:**
 
-- Settings saved server-side, per Jellyfin user (stored in the plugin's per-user settings.json via the `/JellyfinEnhanced/user-settings/{userId}/settings.json` endpoint)
+- Settings saved server-side, per Jellyfin user (stored in the plugin's per-user settings.json via the `/JellyfinElevate/user-settings/{userId}/settings.json` endpoint)
 - Per-user configuration
 - Syncs across every device and browser where the same Jellyfin user logs in (settings live on the server, keyed to the user account)
 
@@ -176,6 +176,6 @@ System](enhanced-features.md#hidden-content-system).
 ## Language Discovery
 
 The plugin's language selector lists the available translations by querying the
-plugin's **own server endpoint** (`/JellyfinEnhanced/locales`) — the browser no
+plugin's **own server endpoint** (`/JellyfinElevate/locales`) — the browser no
 longer calls GitHub to discover locales, so language discovery works on isolated
 networks and doesn't depend on GitHub's rate limits.

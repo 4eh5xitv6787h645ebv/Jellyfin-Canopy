@@ -19,7 +19,7 @@ test.describe('live updates', () => {
 
         // Register the live listener inside the open session.
         const hub = await page.evaluate(() => {
-            const JE = (window as any).JellyfinEnhanced;
+            const JE = (window as any).JellyfinElevate;
             if (!JE.core?.live) return { present: false };
             (window as any).__jeE2eLiveEvents = [];
             JE.core.live.on('user-data-changed', () => {
@@ -46,7 +46,7 @@ test.describe('live updates', () => {
         // itself may still be connecting right after boot — give it a moment,
         // and retry the (state-restoring) toggle once if the push was missed.
         await page.waitForFunction(
-            () => (window as any).JellyfinEnhanced.core.live.isConnected() === true,
+            () => (window as any).JellyfinElevate.core.live.isConnected() === true,
             undefined,
             { timeout: 15_000 }
         );
@@ -103,7 +103,7 @@ test.describe('live updates', () => {
         });
 
         const before = await page.evaluate(
-            () => (window as any).JellyfinEnhanced.pluginConfig.ToastDuration
+            () => (window as any).JellyfinElevate.pluginConfig.ToastDuration
         );
 
         const admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
@@ -119,7 +119,7 @@ test.describe('live updates', () => {
             });
 
             await page.waitForFunction(
-                (previous) => (window as any).JellyfinEnhanced.pluginConfig.ToastDuration !== previous,
+                (previous) => (window as any).JellyfinElevate.pluginConfig.ToastDuration !== previous,
                 before,
                 { timeout: 30_000 }
             );
@@ -136,7 +136,7 @@ test.describe('live updates', () => {
 
         // And the restore propagates too (leaves the session as found).
         await page.waitForFunction(
-            (original) => (window as any).JellyfinEnhanced.pluginConfig.ToastDuration === original,
+            (original) => (window as any).JellyfinElevate.pluginConfig.ToastDuration === original,
             originalToast,
             { timeout: 30_000 }
         );

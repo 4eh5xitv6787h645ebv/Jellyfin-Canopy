@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * jank-benchmark.js — manual before/after jank benchmark for Jellyfin Enhanced.
+ * jank-benchmark.js — manual before/after jank benchmark for Jellyfin Elevate.
  *
  * NOT wired into CI. This is a measurement tool, run by hand against a live
  * server, that produces the numbers behind docs/advanced/performance-rules.md
@@ -20,7 +20,7 @@
  *     observe/disconnect are monkey-patched BEFORE any page script runs),
  *     split into JE-created vs host, body-wide vs scoped, attribute-observing
  *     body-wide (R3 violations); plus active setInterval timers (R5)
- *   - request census: /JellyfinEnhanced/* request count + bytes during boot,
+ *   - request census: /JellyfinElevate/* request count + bytes during boot,
  *     and every third-party host touched across the whole flow (R6 — asset
  *     CDNs must be ZERO; TMDB/YouTube images + api.github.com are content)
  *
@@ -76,7 +76,7 @@ function parseArgs(argv) {
 
 function initScript() {
     if (window.__jePerf) return;
-    const JE_RE = /JellyfinEnhanced|je\.bundle/i;
+    const JE_RE = /JellyfinElevate|je\.bundle/i;
     const perf = {
         phase: 'boot',
         phases: [{ name: 'boot', start: 0 }],
@@ -147,7 +147,7 @@ function initScript() {
     const JE_SEL = [
         '[data-je-key]', '[id^="je-"]',
         '#enhancedSettingsBtn', '#randomItemButton',
-        '#jellyfinEnhancedUserPrefsLink', '#jellyfinEnhancedSettingsLink',
+        '#jellyfinElevateUserPrefsLink', '#jellyfinElevateSettingsLink',
         '.genre-overlay-container', '.quality-overlay-container',
         '.language-overlay-container', '.rating-overlay-container',
         '.arr-link', '.arr-dropdown', '.arr-badge',
@@ -346,7 +346,7 @@ async function runOnce(args, runIdx, log) {
     page.on('response', (res) => {
         if (!measuring || bootDone) return;
         const url = res.url();
-        if (!url.includes('/JellyfinEnhanced')) return;
+        if (!url.includes('/JellyfinElevate')) return;
         const entry = { url, bytes: 0 };
         jeBoot.push(entry);
         res.body().then((b) => { entry.bytes = b.length; }).catch(() => {
@@ -387,7 +387,7 @@ async function runOnce(args, runIdx, log) {
         const deadline = Date.now() + 15000;
         while (!jeReadyConsole && Date.now() < deadline) await wait(250);
     } else {
-        await page.waitForFunction(() => window.JellyfinEnhanced?.initialized === true, { timeout: 60000 });
+        await page.waitForFunction(() => window.JellyfinElevate?.initialized === true, { timeout: 60000 });
     }
     const bootMs = Date.now() - bootStart;
     await wait(2000); // let boot-tail requests land before closing the census

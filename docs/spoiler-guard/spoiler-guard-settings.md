@@ -1,10 +1,10 @@
 # Spoiler Guard Settings
 
-Admin configuration for the **Spoiler Guard** section of the Jellyfin Enhanced plugin. All toggles here are server-wide policy — users opt into Spoiler Guard for individual shows / movies / collections per-user, but the admin decides what protection looks like once they do.
+Admin configuration for the **Spoiler Guard** section of the Jellyfin Elevate plugin. All toggles here are server-wide policy — users opt into Spoiler Guard for individual shows / movies / collections per-user, but the admin decides what protection looks like once they do.
 
 !!! info "Where to find it"
 
-    Jellyfin Dashboard → Plugins → **Jellyfin Enhanced** → scroll to the **Spoiler Guard** section.
+    Jellyfin Dashboard → Plugins → **Jellyfin Elevate** → scroll to the **Spoiler Guard** section.
 
 ---
 
@@ -121,7 +121,7 @@ A collapsible sub-section of per-field hide toggles. When the master switch is o
 
 ### Hide tags
 
-**Default: On.** Hides the TMDB Tags array (phrases like "Death of a main character") on cards for unwatched episodes of Spoiler Guard series. (The Jellyfin Enhanced rating overlay is governed separately by **Hide ratings (community & critic)**, below; genre/quality/language overlays are not affected by Spoiler Guard.)
+**Default: On.** Hides the TMDB Tags array (phrases like "Death of a main character") on cards for unwatched episodes of Spoiler Guard series. (The Jellyfin Elevate rating overlay is governed separately by **Hide ratings (community & critic)**, below; genre/quality/language overlays are not affected by Spoiler Guard.)
 
 ### Hide chapter names
 
@@ -135,7 +135,7 @@ For movies, this is a **progressive strip**: only chapters whose start position 
 
 ### Hide ratings (community & critic)
 
-**Default: On.** Hides **both** the community/TMDB rating and the critic rating — a 9.8/10 rating on a specific episode implies a major event ("the one where X dies"). Hidden by null so clients don't render "0/10", and the Jellyfin Enhanced card rating overlay is suppressed too on the **series, season, and unwatched-episode cards** of a guarded show (it won't fall back to the parent series' rating). Watched episodes keep their rating, and if you turn this toggle off — or a user unchecks the **Ratings** override — the overlay renders normally again.
+**Default: On.** Hides **both** the community/TMDB rating and the critic rating — a 9.8/10 rating on a specific episode implies a major event ("the one where X dies"). Hidden by null so clients don't render "0/10", and the Jellyfin Elevate card rating overlay is suppressed too on the **series, season, and unwatched-episode cards** of a guarded show (it won't fall back to the parent series' rating). Watched episodes keep their rating, and if you turn this toggle off — or a user unchecks the **Ratings** override — the overlay renders normally again.
 
 ### Hide air / premiere dates
 
@@ -168,7 +168,7 @@ Whenever **Replace episode titles with "Season X, Episode Y"** or **Hide episode
 
 ## Per-user overrides
 
-The metadata toggles above set server-wide policy, but individual users can opt back **out** of any strip category for themselves. The JE user settings panel (gear icon → **Jellyfin Enhanced** → **Spoiler Guard**) has a **"Show me this even with Spoiler Guard on"** area with one checkbox per category: Episode descriptions, Episode titles, Chapter names, Cast list, Ratings, Air date, Taglines, Tags, and Reviews.
+The metadata toggles above set server-wide policy, but individual users can opt back **out** of any strip category for themselves. The JE user settings panel (gear icon → **Jellyfin Elevate** → **Spoiler Guard**) has a **"Show me this even with Spoiler Guard on"** area with one checkbox per category: Episode descriptions, Episode titles, Chapter names, Cast list, Ratings, Air date, Taglines, Tags, and Reviews.
 
 The gating is one-directional — the admin still decides what's available:
 
@@ -184,13 +184,13 @@ The same panel section also holds a per-user **"Don't ask me to confirm when tur
 
 Each user's Spoiler Guard preferences are stored in a per-user `spoilerblur.json` file on the server. If that file gets corrupted (truncated by a power loss mid-write, mangled by a backup tool, etc.), the plugin **backs the corrupt file up to `spoilerblur.json.corrupt-{timestamp}`**, resets the on-disk state to defaults, and records the event so the affected user knows to re-enable their items.
 
-This is automatic and doesn't need configuration. The corruption events are exposed through a diagnostic JSON endpoint — `GET /JellyfinEnhanced/spoiler-blur/health` — that an admin (or a user, for their own events) can query to check whether their Spoiler Guard preferences were reset after a corrupt-file backup, without shell access. A companion `DELETE /JellyfinEnhanced/spoiler-blur/health/{userId}` endpoint acknowledges (clears) an event. The scoping is per-user: non-admins see only their own corruption events, while admins see all so they can advise affected users. There is no in-UI banner yet — the surface is the endpoint, not a management-UI notification.
+This is automatic and doesn't need configuration. The corruption events are exposed through a diagnostic JSON endpoint — `GET /JellyfinElevate/spoiler-blur/health` — that an admin (or a user, for their own events) can query to check whether their Spoiler Guard preferences were reset after a corrupt-file backup, without shell access. A companion `DELETE /JellyfinElevate/spoiler-blur/health/{userId}` endpoint acknowledges (clears) an event. The scoping is per-user: non-admins see only their own corruption events, while admins see all so they can advise affected users. There is no in-UI banner yet — the surface is the endpoint, not a management-UI notification.
 
 ---
 
 ## What gets logged
 
-For diagnostics, the plugin logs (rate-limited) to `/config/log/JellyfinEnhanced_{date}.log`:
+For diagnostics, the plugin logs (rate-limited) to `/config/log/JellyfinElevate_{date}.log`:
 
 - Spoiler Guard auto-enable events: `SpoilerAutoEnable: enabled Spoiler Guard for series '<name>' (...) on first-play of S1E1 by user <id>`
 - Seerr pre-acquisition records: `Spoiler Guard pending recorded tv:<tmdbId> for <user>`

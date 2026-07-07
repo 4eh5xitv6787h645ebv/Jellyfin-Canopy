@@ -4,13 +4,13 @@
 
 <!-- todo: make these collapsible  -->
 
-### What is Jellyfin Enhanced?
+### What is Jellyfin Elevate?
 
-Jellyfin Enhanced is a comprehensive plugin that bundles advanced features and customizations for Jellyfin. It adds keyboard shortcuts, visual enhancements, Seerr integration, custom pause screens, quality tags, and much more — all in one convenient package.
+Jellyfin Elevate is a comprehensive plugin that bundles advanced features and customizations for Jellyfin. It adds keyboard shortcuts, visual enhancements, Seerr integration, custom pause screens, quality tags, and much more — all in one convenient package.
 
 ### Can I customize the keyboard shortcuts?
 
-Yes! Open the Jellyfin Enhanced panel by clicking the menu item in the sidebar or pressing `?`, then go to the **Shortcuts** tab. Click on any key to set a custom shortcut. Changes save automatically.
+Yes! Open the Jellyfin Elevate panel by clicking the menu item in the sidebar or pressing `?`, then go to the **Shortcuts** tab. Click on any key to set a custom shortcut. Changes save automatically.
 
 ### Does this work on mobile apps?
 
@@ -40,7 +40,7 @@ The userscript has been discontinued as the plugin functionality has grown signi
 
 | Plugin | Jellyfin 12 | Jellyfin 10.11 | Notes |
 |--------|-------------|----------------|-------|
-| Jellyfin Enhanced | ✅ | ❌ | Jellyfin 10.11 users: install the final 11.x release — see [Migrating to v12](../installation/migrating-to-v12.md) |
+| Jellyfin Elevate | ✅ | ❌ | Jellyfin 10.11 users: install the final 11.x release — see [Migrating to v12](../installation/migrating-to-v12.md) |
 
 ### Plugin not appearing after installation?
 
@@ -76,7 +76,7 @@ Auto-skip requires the [Intro Skipper plugin](https://github.com/intro-skipper/i
 
 3. Run intro detection on your library
 
-4. Enable auto-skip in Jellyfin Enhanced settings
+4. Enable auto-skip in Jellyfin Elevate settings
 
 5. Intro segments must be detected for your media
 
@@ -125,7 +125,7 @@ Auto-skip requires the [Intro Skipper plugin](https://github.com/intro-skipper/i
 
 Option A (automatic, recommended):
 
-1. In Jellyfin, go to Dashboard -> Plugins -> Jellyfin Enhanced -> Seerr
+1. In Jellyfin, go to Dashboard -> Plugins -> Jellyfin Elevate -> Seerr
 
 2. Enable "Auto import Jellyfin users to Seerr"
 
@@ -226,7 +226,7 @@ Option B (manual in Seerr):
 
 - Check bookmark file exists on server
 
-- Look in `/config/plugins/configurations/Jellyfin.Plugin.JellyfinEnhanced/{userId}/bookmark.json`, where `{userId}` is your user ID with all hyphens removed and converted to lowercase (e.g. `12345678-90AB-...` becomes the folder `1234567890ab...`)
+- Look in `/config/plugins/configurations/Jellyfin.Plugin.JellyfinElevate/{userId}/bookmark.json`, where `{userId}` is your user ID with all hyphens removed and converted to lowercase (e.g. `12345678-90AB-...` becomes the folder `1234567890ab...`)
 
 - Check browser console for errors
 
@@ -347,7 +347,7 @@ See [CSS Customization Guide](../advanced/css-customization.md) for complete CSS
 
 **Steps:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 
 2. Navigate to the **Extras** tab
 
@@ -409,7 +409,7 @@ Yes, via Enhanced panel settings:
 
 2. Go to Console tab
 
-3. Filter by `🪼 Jellyfin Enhanced`
+3. Filter by `🪼 Jellyfin Elevate`
 
 4. Look for errors (red text)
 
@@ -421,7 +421,7 @@ Yes, via Enhanced panel settings:
 
 1. Press ++f12++ → `Network` tab
 
-2. Filter by `JellyfinEnhanced`
+2. Filter by `JellyfinElevate`
 
 3. Look for failed requests (red)
 
@@ -433,9 +433,9 @@ Yes, via Enhanced panel settings:
 
 1. Go to **Dashboard** → **Logs**
 
-2. Look for `JellyfinEnhanced` entries
+2. Look for `JellyfinElevate` entries
 
-3. Check log files: `JellyfinEnhanced_yyyy-mm-dd.log`
+3. Check log files: `JellyfinElevate_yyyy-mm-dd.log`
 
 4. Copy relevant errors
 
@@ -465,7 +465,7 @@ Yes, via Enhanced panel settings:
 |-------|----------|
 | `Access to the path '/jellyfin/jellyfin-web/index.html' is denied.` | Install [file-transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) or follow [Docker workaround](../installation/troubleshooting.md#docker) |
 | `Access to the path 'C:\Program Files\Jellyfin\Server\jellyfin-web\index.html' is denied.` | Grant "NETWORK SERVICE" Read/Write permissions to Jellyfin folder |
-| Plugin installed but scripts don't load | Scripts are injected at request time by the built-in middleware in the default config — see [Scripts Not Loading](../installation/troubleshooting.md#scripts-not-loading). The "Jellyfin Enhanced Startup" task only matters in the legacy on-disk index.html rewrite mode. |
+| Plugin installed but scripts don't load | Scripts are injected at request time by the built-in middleware in the default config — see [Scripts Not Loading](../installation/troubleshooting.md#scripts-not-loading). The "Jellyfin Elevate Startup" task only matters in the legacy on-disk index.html rewrite mode. |
 | Reviews/Elsewhere/Seerr icons not working | TMDB API may be blocked in your region, see [Seerr troubleshooting](https://docs.seerr.dev/troubleshooting#tmdb-failed-to-retrievefetch-xxx) |
 | Seerr search not working | Enable "Jellyfin Sign-In" in Seerr. Then either enable plugin auto import and run "Import Users Now", or import users manually in Seerr. Also verify user is not in blocked users list. |
 | Tags not appearing | Enable in settings, clear cache, verify metadata exists |

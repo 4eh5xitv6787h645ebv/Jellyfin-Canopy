@@ -1,11 +1,11 @@
 'use strict';
 
 /**
- * ESLint flat config for the Jellyfin Enhanced client scripts.
+ * ESLint flat config for the Jellyfin Elevate client scripts.
  *
  * The js/ tree is plain browser JavaScript served raw by the plugin (no
  * bundler), so every file is a classic script sharing globals — primarily
- * the window.JellyfinEnhanced namespace and the globals jellyfin-web
+ * the window.JellyfinElevate namespace and the globals jellyfin-web
  * exposes (ApiClient, Emby, ...).
  *
  * Policy: rules that catch real defects (undefined symbols, duplicate keys,
@@ -23,7 +23,7 @@ const jellyfinWebGlobals = {
     Emby: 'readonly',
     Dashboard: 'readonly',
     // This plugin's own namespace (created by js/plugin.js before any module loads)
-    JellyfinEnhanced: 'writable',
+    JellyfinElevate: 'writable',
 };
 
 module.exports = [
@@ -31,7 +31,7 @@ module.exports = [
         ignores: ['node_modules/**', 'docs/**', 'site/**', '**/bin/**', '**/obj/**'],
     },
     {
-        files: ['Jellyfin.Plugin.JellyfinEnhanced/js/**/*.js', 'Jellyfin.Plugin.JellyfinEnhanced/Configuration/*.js'],
+        files: ['Jellyfin.Plugin.JellyfinElevate/js/**/*.js', 'Jellyfin.Plugin.JellyfinElevate/Configuration/*.js'],
         languageOptions: {
             ecmaVersion: 2022,
             sourceType: 'script',
@@ -126,16 +126,16 @@ module.exports = [
             'no-inner-declarations': 'off',
         },
     },
-    // TypeScript module tree (Jellyfin.Plugin.JellyfinEnhanced/src/): typed
+    // TypeScript module tree (Jellyfin.Plugin.JellyfinElevate/src/): typed
     // linting over the tsconfig.src.json program. Strict rules from day one —
     // src/ is the post-migration world; the legacy js/ tree keeps the looser
     // classic-script config above.
     ...tseslint.configs.recommendedTypeChecked.map((config) => ({
         ...config,
-        files: ['Jellyfin.Plugin.JellyfinEnhanced/src/**/*.ts'],
+        files: ['Jellyfin.Plugin.JellyfinElevate/src/**/*.ts'],
     })),
     {
-        files: ['Jellyfin.Plugin.JellyfinEnhanced/src/**/*.ts'],
+        files: ['Jellyfin.Plugin.JellyfinElevate/src/**/*.ts'],
         languageOptions: {
             parserOptions: {
                 project: './tsconfig.src.json',
@@ -143,7 +143,7 @@ module.exports = [
             },
         },
         rules: {
-            // The frozen window.JellyfinEnhanced contract still has untyped
+            // The frozen window.JellyfinElevate contract still has untyped
             // corners (legacy feature surfaces); unused args follow the same
             // policy as the js/ tree.
             '@typescript-eslint/no-unused-vars': ['warn', { args: 'none', caughtErrors: 'none', varsIgnorePattern: '^_' }],
@@ -158,14 +158,14 @@ module.exports = [
         // legacy shapes get typed incrementally. src/core and src/types stay
         // fully strict via the block above.
         files: [
-            'Jellyfin.Plugin.JellyfinEnhanced/src/bootstrap/**/*.ts',
-            'Jellyfin.Plugin.JellyfinEnhanced/src/enhanced/**/*.ts',
-            'Jellyfin.Plugin.JellyfinEnhanced/src/jellyseerr/**/*.ts',
-            'Jellyfin.Plugin.JellyfinEnhanced/src/arr/**/*.ts',
-            'Jellyfin.Plugin.JellyfinEnhanced/src/tags/**/*.ts',
-            'Jellyfin.Plugin.JellyfinEnhanced/src/elsewhere/**/*.ts',
-            'Jellyfin.Plugin.JellyfinEnhanced/src/extras/**/*.ts',
-            'Jellyfin.Plugin.JellyfinEnhanced/src/others/**/*.ts',
+            'Jellyfin.Plugin.JellyfinElevate/src/bootstrap/**/*.ts',
+            'Jellyfin.Plugin.JellyfinElevate/src/enhanced/**/*.ts',
+            'Jellyfin.Plugin.JellyfinElevate/src/jellyseerr/**/*.ts',
+            'Jellyfin.Plugin.JellyfinElevate/src/arr/**/*.ts',
+            'Jellyfin.Plugin.JellyfinElevate/src/tags/**/*.ts',
+            'Jellyfin.Plugin.JellyfinElevate/src/elsewhere/**/*.ts',
+            'Jellyfin.Plugin.JellyfinElevate/src/extras/**/*.ts',
+            'Jellyfin.Plugin.JellyfinElevate/src/others/**/*.ts',
         ],
         rules: {
             '@typescript-eslint/no-unsafe-assignment': 'warn',

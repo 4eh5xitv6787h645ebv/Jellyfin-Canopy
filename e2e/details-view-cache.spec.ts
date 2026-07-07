@@ -51,7 +51,7 @@ test.describe('details view-cache (chips land in the visible page)', () => {
     test('details→details→details keeps chips on the current page, never a cached one', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
         const enabled = await page.evaluate(() => {
-            const config = (window as any).JellyfinEnhanced?.pluginConfig;
+            const config = (window as any).JellyfinElevate?.pluginConfig;
             return config?.ShowFileSizes === true;
         });
         test.skip(!enabled, 'file-size chips disabled on this server');
@@ -83,7 +83,7 @@ test.describe('details view-cache (chips land in the visible page)', () => {
     test('chips survive late item-data (host innerHTML wipe after the fill)', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
         const enabled = await page.evaluate(() => {
-            const config = (window as any).JellyfinEnhanced?.pluginConfig;
+            const config = (window as any).JellyfinElevate?.pluginConfig;
             return config?.ShowFileSizes === true;
         });
         test.skip(!enabled, 'file-size chips disabled on this server');
@@ -109,7 +109,7 @@ test.describe('details view-cache (chips land in the visible page)', () => {
     test('a wiped misc-info row is re-populated (observer gate is alive with cached duplicates)', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
         const enabled = await page.evaluate(() => {
-            const config = (window as any).JellyfinEnhanced?.pluginConfig;
+            const config = (window as any).JellyfinElevate?.pluginConfig;
             return config?.ShowFileSizes === true;
         });
         test.skip(!enabled, 'file-size chips disabled on this server');

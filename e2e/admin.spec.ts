@@ -10,7 +10,7 @@ import { apiRaw, authenticate } from './fixtures/api';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-const ADMIN_ENDPOINT = '/JellyfinEnhanced/admin/hidden-content-users';
+const ADMIN_ENDPOINT = '/JellyfinElevate/admin/hidden-content-users';
 
 test.describe('admin authorization', () => {
     test('authz matrix: 200 admin / 403 empty non-admin / 401 anonymous', async ({ baseURL }) => {
@@ -46,7 +46,7 @@ test.describe('admin authorization', () => {
 
         const hide = await apiRaw(
             baseURL!,
-            `/JellyfinEnhanced/admin/hidden-content/${user.userId}/hide`,
+            `/JellyfinElevate/admin/hidden-content/${user.userId}/hide`,
             admin.token,
             {
                 method: 'POST',
@@ -67,7 +67,7 @@ test.describe('admin authorization', () => {
             // Enter via the page module's own public surface (the same call the
             // drawer link performs) — direct hash writes race the native router.
             await page.evaluate(() => {
-                void (window as any).JellyfinEnhanced.hiddenContentPage.showPage();
+                void (window as any).JellyfinElevate.hiddenContentPage.showPage();
             });
             await page.waitForSelector('#je-hidden-content-container', { state: 'visible', timeout: 30_000 });
             await page.waitForSelector('.je-hidden-content-page-grid, .je-hidden-content-page-empty', { timeout: 30_000 });
@@ -84,7 +84,7 @@ test.describe('admin authorization', () => {
             // Leave the user's hidden-content store as found.
             await apiRaw(
                 baseURL!,
-                `/JellyfinEnhanced/admin/hidden-content/${user.userId}/unhide`,
+                `/JellyfinElevate/admin/hidden-content/${user.userId}/unhide`,
                 admin.token,
                 { method: 'POST', body: JSON.stringify([movie!.Id]) }
             );
@@ -95,7 +95,7 @@ test.describe('admin authorization', () => {
         await loginAs(page, 'user', consoleErrors);
 
         await page.evaluate(() => {
-            void (window as any).JellyfinEnhanced.hiddenContentPage.showPage();
+            void (window as any).JellyfinElevate.hiddenContentPage.showPage();
         });
         await page.waitForSelector('#je-hidden-content-container', { state: 'visible', timeout: 30_000 });
         await page.waitForSelector('.je-hidden-content-page-grid, .je-hidden-content-page-empty', { timeout: 30_000 });

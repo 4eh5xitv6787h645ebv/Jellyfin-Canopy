@@ -56,7 +56,7 @@ test.describe('late-load resilience (R9)', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         const enabled = await page.evaluate(() => {
-            const config = (window as any).JellyfinEnhanced?.pluginConfig;
+            const config = (window as any).JellyfinElevate?.pluginConfig;
             return config?.ShowFileSizes === true && config?.ShowWatchProgress === true;
         });
         test.skip(!enabled, 'file-size / watch-progress chips disabled on this server');
@@ -66,14 +66,14 @@ test.describe('late-load resilience (R9)', () => {
         // second retry succeeds), not just a single lucky reattempt.
         let fileSizeFailures = 0;
         let progressFailures = 0;
-        await page.route('**/JellyfinEnhanced/file-size/**', (route) => {
+        await page.route('**/JellyfinElevate/file-size/**', (route) => {
             if (fileSizeFailures < 2) {
                 fileSizeFailures++;
                 return route.abort('failed');
             }
             return route.continue();
         });
-        await page.route('**/JellyfinEnhanced/watch-progress/**', (route) => {
+        await page.route('**/JellyfinElevate/watch-progress/**', (route) => {
             if (progressFailures < 2) {
                 progressFailures++;
                 return route.abort('failed');
@@ -86,7 +86,7 @@ test.describe('late-load resilience (R9)', () => {
         // unwatched answer, so the recovery proof for watch-progress is a
         // SUCCESSFUL response arriving after the two induced failures.
         const progressRecovered = page.waitForResponse(
-            (response) => response.url().includes('/JellyfinEnhanced/watch-progress/') && response.ok(),
+            (response) => response.url().includes('/JellyfinElevate/watch-progress/') && response.ok(),
             { timeout: 30_000 }
         );
         await showRoute(page, `/details?id=${movieId}`);
@@ -116,7 +116,7 @@ test.describe('late-load resilience (R9)', () => {
         // reload (the viewshow listener was never registered).
         let blockStatus = true;
         let blockedCount = 0;
-        await page.route('**/JellyfinEnhanced/jellyseerr/status', (route) => {
+        await page.route('**/JellyfinElevate/jellyseerr/status', (route) => {
             if (blockStatus) {
                 blockedCount++;
                 return route.abort('failed');
@@ -127,7 +127,7 @@ test.describe('late-load resilience (R9)', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         const enabled = await page.evaluate(() => {
-            const config = (window as any).JellyfinEnhanced?.pluginConfig;
+            const config = (window as any).JellyfinElevate?.pluginConfig;
             return config?.JellyseerrEnabled === true && config?.JellyseerrShowReportButton === true;
         });
         test.skip(!enabled, 'Seerr report button disabled on this server');

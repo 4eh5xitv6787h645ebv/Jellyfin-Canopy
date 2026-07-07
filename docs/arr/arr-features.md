@@ -32,7 +32,7 @@ The ARR integration provides convenient links to your Sonarr, Radarr, and Bazarr
 
 ### Setup
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the ***arr** tab
 3. Check **"Enable *arr Links on Detail Pages"**
 4. Add one or more Sonarr and/or Radarr instances (see [Multi-Instance Support](#multi-instance-support) below)
@@ -134,7 +134,7 @@ Neither service is mandatory — tags sync from whichever you set up. A movie-on
 
 **Configuration:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the ***arr** tab
 3. Check **"Enable Tags Sync"**
 4. Ensure the Sonarr/Radarr instances you configured above have valid API keys — tag sync uses those instance keys (there is no separate key field in the Tags Sync section)
@@ -239,7 +239,7 @@ View upcoming releases from Sonarr and Radarr in a calendar interface.
 
 ### Setup
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Pages** tab
 3. Check **"Enable Calendar Page"**
 4. Choose integration method:
@@ -330,7 +330,7 @@ Monitor active downloads from Sonarr and Radarr in a dedicated page.
 
 ### Setup
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Pages** tab
 3. Check **"Enable Requests Page"** (under the "Requests Page" section)
 4. Choose integration method (Native Home Tab, Plugin Pages, or Custom Tabs) — the Native Home Tab adds Requests as its own tab on the Home page and needs no external plugin (recommended on Jellyfin 12's experimental layout)

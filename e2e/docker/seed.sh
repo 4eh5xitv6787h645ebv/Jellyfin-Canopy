@@ -24,7 +24,7 @@
 #   JELLYSEERR_RESPECT_PARENTAL  true|false (default true) — parental gating
 #
 # Usage:
-#   dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release
+#   dotnet build Jellyfin.Plugin.JellyfinElevate/JellyfinElevate.csproj -c Release
 #   bash e2e/docker/seed.sh                # default port 8100 (bare)
 #   TMDB_API_KEY=... JELLYSEERR_URL=... JELLYSEERR_API_KEY=... bash e2e/docker/seed.sh
 #   JF_BASE_URL=http://localhost:8100 npm run e2e
@@ -46,8 +46,8 @@ ADMIN_USER="${JF_ADMIN_USER:-je_arradmin}"
 ADMIN_PASS="${JF_ADMIN_PASS:-Test669Pw!x}"
 USER_NAME="${JF_USER_NAME:-je_arruser}"
 USER_PASS="${JF_USER_PASS:-Test669Pw!x}"
-PLUGIN_DLL="${PLUGIN_DLL:-${REPO_ROOT}/Jellyfin.Plugin.JellyfinEnhanced/bin/Release/net10.0/Jellyfin.Plugin.JellyfinEnhanced.dll}"
-PLUGIN_ID="f69e946a-4b3c-4e9a-8f0a-8d7c1b2c4d9b"
+PLUGIN_DLL="${PLUGIN_DLL:-${REPO_ROOT}/Jellyfin.Plugin.JellyfinElevate/bin/Release/net10.0/Jellyfin.Plugin.JellyfinElevate.dll}"
+PLUGIN_ID="9ffa12bc-f4b5-406c-ab1d-d575acbeea7b"
 CLIENT_AUTH='MediaBrowser Client="JE-E2E-Seed", Device="seed", DeviceId="je-e2e-seed", Version="1.0.0"'
 
 log() { echo "[seed] $*"; }
@@ -61,9 +61,9 @@ command -v curl >/dev/null || fail "curl is required"
 log "resetting e2e/docker state (config/cache/media)"
 ${COMPOSE} down -v --remove-orphans >/dev/null 2>&1 || true
 rm -rf "${HERE}/config" "${HERE}/cache" "${HERE}/media"
-mkdir -p "${HERE}/config/plugins/JellyfinEnhanced_e2e" "${HERE}/cache" "${HERE}/media"
-cp "${PLUGIN_DLL}" "${HERE}/config/plugins/JellyfinEnhanced_e2e/"
-log "installed plugin DLL into config/plugins/JellyfinEnhanced_e2e"
+mkdir -p "${HERE}/config/plugins/JellyfinElevate_e2e" "${HERE}/cache" "${HERE}/media"
+cp "${PLUGIN_DLL}" "${HERE}/config/plugins/JellyfinElevate_e2e/"
+log "installed plugin DLL into config/plugins/JellyfinElevate_e2e"
 
 # ── 2. tiny valid media (h264/aac so the Playwright Chromium can play them) ──
 if command -v ffmpeg >/dev/null; then
@@ -160,7 +160,7 @@ api() { # <method> <path> [json-body]
 log "verifying the plugin loaded"
 api GET /Plugins | jq -e --arg id "${PLUGIN_ID}" \
     'map(select((.Id // "" | ascii_downcase | gsub("-"; "")) == ($id | ascii_downcase | gsub("-"; "")))) | length > 0' >/dev/null \
-    || fail "Jellyfin Enhanced plugin did not load (check config/log/)"
+    || fail "Jellyfin Elevate plugin did not load (check config/log/)"
 
 log "creating the Movies library"
 api POST "/Library/VirtualFolders?name=Movies&collectionType=movies&paths=%2Fmedia%2FMovies&refreshLibrary=true" \

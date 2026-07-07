@@ -4,7 +4,7 @@ Other projects by n00bcodr for Jellyfin customization and enhancement.
 
 ## Jellyfin Plugins
 
-### Jellyfin Enhanced
+### Jellyfin Elevate
 **Type:** Plugin
 **Repository:** [github.com/n00bcodr/Jellyfin-Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced)
 
@@ -28,14 +28,14 @@ The essential enhancement suite for Jellyfin, bundling advanced features and cus
 **Type:** Plugin
 **Repository:** [github.com/n00bcodr/JellyfinTweaks](https://github.com/n00bcodr/JellyfinTweaks)
 
-Additional tweaks and enhancements for Jellyfin that complement Jellyfin Enhanced.
+Additional tweaks and enhancements for Jellyfin that complement Jellyfin Elevate.
 
 **Features:**
 
 - Additional UI tweaks
 - Performance optimizations
 - Extra customization options
-- Complementary to Jellyfin Enhanced
+- Complementary to Jellyfin Elevate
 
 **Status:** ✅ Active Development
 
@@ -82,14 +82,14 @@ Standalone version of the Elsewhere feature for streaming provider lookup.
 
 **Use Cases:**
 
-- Use without full Jellyfin Enhanced plugin
+- Use without full Jellyfin Elevate plugin
 - Lighter alternative
 - Custom implementations
 - Testing and development
 
 **Status:** ❌ Inactive
 
-**Note:** Functionality is now a part of Jellyfin Enhanced plugin.
+**Note:** Functionality is now a part of Jellyfin Elevate plugin.
 
 ---
 
@@ -127,7 +127,7 @@ A beautiful, modern theme for Jellyfin with multiple color variants.
 
 **Status:** ✅ Active Development
 
-**Compatibility:** Works great with Jellyfin Enhanced!
+**Compatibility:** Works great with Jellyfin Elevate!
 
 ---
 
@@ -165,13 +165,13 @@ https://raw.githubusercontent.com/n00bcodr/jellyfin-plugins/main/10.11/manifest.
 
 | Plugin | Jellyfin 12 | Jellyfin 10.11 | Jellyfin 10.10 | Notes |
 |--------|-------------|----------------|----------------|-------|
-| Jellyfin Enhanced | ✅ (v12+ releases) | ✅ (final 11.x release only) | ❌ | See [Migrating to v12](../installation/migrating-to-v12.md) |
+| Jellyfin Elevate | ✅ (v12+ releases) | ✅ (final 11.x release only) | ❌ | See [Migrating to v12](../installation/migrating-to-v12.md) |
 | Jellyfin Tweaks | ❓ | ✅ | ✅ | Check the project page for Jellyfin 12 support |
 | JS Injector | ❓ | ✅ | ✅ | Check the project page for Jellyfin 12 support |
 
 ### Theme Compatibility
 
-| Theme | Jellyfin Enhanced | Notes |
+| Theme | Jellyfin Elevate | Notes |
 |-------|-------------------|-------|
 | Jellyfish | ✅ Recommended | Designed to work together |
 | Other Themes | ✅ Compatible | May need adjustments |
@@ -182,7 +182,7 @@ https://raw.githubusercontent.com/n00bcodr/jellyfin-plugins/main/10.11/manifest.
 
 ### Getting Help
 
-**For Jellyfin Enhanced:**
+**For Jellyfin Elevate:**
 
 - [GitHub Issues](https://github.com/n00bcodr/Jellyfin-Enhanced/issues)
 - [Discord Community](https://discord.gg/EYNFf7y4CG)

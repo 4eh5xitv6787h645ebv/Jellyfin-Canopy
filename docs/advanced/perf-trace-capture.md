@@ -13,7 +13,7 @@ timeline, flame chart, network waterfall and screenshots for a real user flow.
 It is **not** wired into CI. Like [`jank-benchmark.js`](performance-rules.md#measured-impact)
 it is a measurement tool you run by hand against a live server. Where the jank
 benchmark reduces a run to aggregate jank numbers, this harness keeps the whole
-trace so you can inspect exactly *when* each `/JellyfinEnhanced/*` request fired
+trace so you can inspect exactly *when* each `/JellyfinElevate/*` request fired
 and how injections raced late server responses.
 
 The highest-value scenario is **`details-to-details`**: hopping from one item
@@ -28,7 +28,7 @@ exist.
   server from `e2e/docker/` is ideal:
 
     ```bash
-    dotnet build Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj -c Release
+    dotnet build Jellyfin.Plugin.JellyfinElevate/JellyfinElevate.csproj -c Release
     bash e2e/docker/seed.sh            # → http://localhost:8100 (admin je_arradmin)
     # …run captures…
     docker compose -f e2e/docker/compose.yml down -v
@@ -100,7 +100,7 @@ Matches `e2e/fixtures/auth.ts` and `e2e/docker/seed.sh`:
 
 Each scenario logs in through the web client's own `ApiClient` (with the same
 session-clobber retry the e2e suite uses), waits for
-`window.JellyfinEnhanced.initialized === true`, then drives a real flow. Real
+`window.JellyfinElevate.initialized === true`, then drives a real flow. Real
 card/button clicks are used where feasible, falling back to router navigation
 only when a click target genuinely can't be resolved (e.g. a bare seed with no
 TMDB has empty "More Like This" rows). Missing content **skips** the scenario
@@ -135,7 +135,7 @@ authenticated.
 — login and setup run at full speed, then throttling is enabled via a CDP
 session right before tracing starts. This is deliberate: the late-response bug
 class only appears while the *user is navigating* under slow conditions. In a
-real run `--latency 300 --cpu 4` pushes `/JellyfinEnhanced/*` request durations
+real run `--latency 300 --cpu 4` pushes `/JellyfinElevate/*` request durations
 from ~70 ms to ~300–430 ms and inflates long-task time several-fold, surfacing
 races that a fast local server hides.
 
@@ -144,7 +144,7 @@ races that a fast local server hides.
 **In DevTools:** open Chrome → DevTools → **Performance** → the **Load profile**
 button (up-arrow icon) → pick the `.json.gz` (DevTools loads gzipped traces
 directly). You get the full timeline: main-thread flame chart, the
-**Network** track (find `/JellyfinEnhanced/*` requests and see what they were
+**Network** track (find `/JellyfinElevate/*` requests and see what they were
 waiting behind), **layout shifts**, **long tasks**, and the **screenshots**
 filmstrip captured during the flow.
 
@@ -153,14 +153,14 @@ filmstrip captured during the flow.
 ```
 --- details-to-details summary ---
   trace: e2e/perf/traces/details-to-details-….json.gz (830.0 KiB gz, 21132 events, ~6385ms window)
-  requests: 24 total, 2 to /JellyfinEnhanced/*
-     +1128ms     79ms  200       /JellyfinEnhanced/tag-cache/…?since=…
-     +3793ms     68ms  200       /JellyfinEnhanced/tag-cache/…?since=…
+  requests: 24 total, 2 to /JellyfinElevate/*
+     +1128ms     79ms  200       /JellyfinElevate/tag-cache/…?since=…
+     +3793ms     68ms  200       /JellyfinElevate/tag-cache/…?since=…
   long tasks >50ms: 2 (1130.5ms total); top 1065ms@+40, 65ms@+1322
   console errors: 0 (none)
 ```
 
-- **request lines** — every `/JellyfinEnhanced/*` request, sorted by start
+- **request lines** — every `/JellyfinElevate/*` request, sorted by start
   offset: `+<offset from trace start>  <duration>  <HTTP status>  <path>`.
   Reconstructed from the trace's `ResourceSendRequest` / `ResourceReceiveResponse`
   / `ResourceFinish` events keyed by `requestId`. A `FAIL` marker flags a

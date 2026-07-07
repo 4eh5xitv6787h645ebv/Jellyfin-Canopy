@@ -206,21 +206,21 @@
 }
 
 /* Discord - blurple */
-.md-social__link[title="Jellyfin Community Discord - Jellyfin Enhanced Channel"] {
+.md-social__link[title="Jellyfin Community Discord - Jellyfin Elevate Channel"] {
   border-color: rgba(88, 101, 242, 0.4);
   border-radius: 999px;
 }
 
-.md-social__link[title="Jellyfin Community Discord - Jellyfin Enhanced Channel"]:hover {
+.md-social__link[title="Jellyfin Community Discord - Jellyfin Elevate Channel"]:hover {
   background: rgba(88, 101, 242, 0.25);
   border-color: rgba(88, 101, 242, 0.8);
   box-shadow: 0 0 12px rgba(88, 101, 242, 0.4);
 }
 
-.md-social__link[title="Jellyfin Community Discord - Jellyfin Enhanced Channel"] svg {
+.md-social__link[title="Jellyfin Community Discord - Jellyfin Elevate Channel"] svg {
   fill: #5865f2;
 }
 
-.md-social__link[title="Jellyfin Community Discord - Jellyfin Enhanced Channel"]:hover svg {
+.md-social__link[title="Jellyfin Community Discord - Jellyfin Elevate Channel"]:hover svg {
   fill: #7983f5;
 }

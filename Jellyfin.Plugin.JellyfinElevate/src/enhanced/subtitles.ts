@@ -1,0 +1,320 @@
+// src/enhanced/subtitles.ts
+//
+// Manages subtitle customization, including presets and style application.
+// (Converted from js/enhanced/subtitles.js — bodies semantically identical.)
+
+import { JE } from '../globals';
+import { onBodyMutation } from '../core/dom-observer';
+import { cssColorOr } from '../core/css-safe';
+import type { BodySubscriberHandle } from '../types/je';
+
+interface SubtitleStyle {
+    textColor?: string;
+    bgColor?: string;
+    fontSize?: number;
+    fontFamily?: string;
+    textShadow?: string;
+}
+
+let subtitleObserver: BodySubscriberHandle | null = null;
+let currentSubtitleStyle: SubtitleStyle = {};
+
+/**
+ * Preset styles for subtitles.
+ */
+JE.subtitlePresets = [
+    { name: "Clean White", textColor: "#FFFFFFFF", bgColor: "transparent", textShadow: "0 0 4px #000, 0 0 8px #000, 1px 1px 2px #000", previewText: "Aa" },
+    { name: "Classic Black Box", textColor: "#FFFFFFFF", bgColor: "#000000FF", previewText: "Aa" },
+    { name: "Netflix Style", textColor: "#FFFFFFFF", bgColor: "#000000B2", previewText: "Aa" },
+    { name: "Cinema Yellow", textColor: "#FFFF00FF", bgColor: "#000000B2", previewText: "Aa" },
+    { name: "Soft Gray", textColor: "#FFFFFFFF", bgColor: "#444444B2", previewText: "Aa" },
+    { name: "High Contrast", textColor: "#000000FF", bgColor: "#FFFFFFFF", previewText: "Aa" }
+];
+
+/**
+ * Preset font sizes for subtitles.
+ */
+JE.fontSizePresets = [
+    { name: "Tiny", size: 0.8, previewText: "Aa" },
+    { name: "Small", size: 1, previewText: "Aa" },
+    { name: "Normal", size: 1.2, previewText: "Aa" },
+    { name: "Large", size: 1.8, previewText: "Aa" },
+    { name: "Extra Large", size: 2, previewText: "Aa" },
+    { name: "Gigantic", size: 3, previewText: "Aa" }
+];
+
+/**
+ * Preset font families for subtitles.
+ */
+JE.fontFamilyPresets = [
+    { name: "Default", family: "inherit", previewText: "AaBb" },
+    { name: "Noto Sans", family: "Noto Sans,sans-serif", previewText: "AaBb" },
+    { name: "Sans Serif", family: "Arial,Helvetica,sans-serif", previewText: "AaBb" },
+    { name: "Typewriter", family: "Courier New,Courier,monospace", previewText: "AaBb" },
+    { name: "Roboto", family: "Roboto Mono,monospace", previewText: "AaBb" }
+];
+
+/**
+ * Applies subtitle position to the .videoSubtitles container element.
+ * xPct and yPct are percentages (0-100) representing the center anchor point
+ * of the subtitle text within the video area.
+ * Using top+transform(translate -50%,-50%) means the anchor is always the
+ * center of the text, so font size changes don't shift the visual position.
+ * When disableCustomSubtitleStyles is true, removes JE position overrides entirely.
+ */
+function applySubtitlePosition(): void {
+    const containers = document.querySelectorAll<HTMLElement>('.videoSubtitles');
+    if (!containers.length) return;
+
+    const disabled = JE.currentSettings?.disableCustomSubtitleStyles;
+
+    containers.forEach(container => {
+        if (disabled) {
+            // Remove JE overrides — let vanilla Jellyfin control position
+            container.style.removeProperty('position');
+            container.style.removeProperty('left');
+            container.style.removeProperty('top');
+            container.style.removeProperty('bottom');
+            container.style.removeProperty('transform');
+            container.style.removeProperty('width');
+            container.style.removeProperty('text-align');
+        } else {
+            const xPct = (JE.currentSettings?.subtitleHorizontalPosition as number | undefined) ?? 50;
+            const yPct = (JE.currentSettings?.subtitleVerticalPosition as number | undefined) ?? 85;
+            // Position the container so its center sits at (xPct, yPct) of the video
+            container.style.setProperty('position', 'absolute', 'important');
+            container.style.setProperty('left', `${xPct}%`, 'important');
+            container.style.setProperty('top', `${yPct}%`, 'important');
+            container.style.setProperty('bottom', 'auto', 'important');
+            container.style.setProperty('transform', 'translate(-50%, -50%)', 'important');
+            container.style.setProperty('text-align', 'center', 'important');
+        }
+    });
+}
+
+/**
+ * Removes all JE-injected subtitle styles from existing elements.
+ * Called when the user disables custom subtitle styles.
+ */
+function removeInjectedStyles(): void {
+    // Clear the native-cue override too (Chrome/native rendering path).
+    const cueOverride = document.getElementById('je-html-videoplayer-cuestyle') as HTMLStyleElement | null;
+    if (cueOverride?.sheet) {
+        while (cueOverride.sheet.cssRules.length > 0) cueOverride.sheet.deleteRule(0);
+    }
+    document.querySelectorAll<HTMLElement>('.videoSubtitlesInner').forEach(el => {
+        el.style.removeProperty('background-color');
+        el.style.removeProperty('color');
+        el.style.removeProperty('font-size');
+        el.style.removeProperty('font-family');
+        el.style.removeProperty('text-shadow');
+        el.style.removeProperty('border-radius');
+        el.style.removeProperty('padding');
+        el.style.removeProperty('font-weight');
+        el.style.removeProperty('font-style');
+        el.style.removeProperty('font-variant');
+    });
+    document.querySelectorAll<HTMLElement>('.videoSubtitles').forEach(container => {
+        container.style.removeProperty('position');
+        container.style.removeProperty('left');
+        container.style.removeProperty('top');
+        container.style.removeProperty('bottom');
+        container.style.removeProperty('transform');
+        container.style.removeProperty('width');
+        container.style.removeProperty('max-width');
+        container.style.removeProperty('text-align');
+    });
+    // Stop the observer — no point watching when styles are disabled
+    if (subtitleObserver) {
+        subtitleObserver.unsubscribe();
+        subtitleObserver = null;
+    }
+}
+
+// Expose so the position observer (started in startSubtitleObserver) can reapply on new containers
+JE.applySubtitlePosition = applySubtitlePosition;
+
+/**
+ * Directly modifies the inline style of a subtitle element to ensure overrides.
+ * Jellyfin renders subtitles into .videoSubtitlesInner DOM elements; inline
+ * !important styles win over the client's own stylesheet.
+ */
+function forceApplyInlineStyles(element: HTMLElement | null): void {
+    if (!element || JE.currentSettings?.disableCustomSubtitleStyles) return;
+
+    // Apply all custom styles directly to videoSubtitlesInner
+    element.style.setProperty('background-color', currentSubtitleStyle.bgColor!, 'important');
+    element.style.setProperty('color', currentSubtitleStyle.textColor!, 'important');
+    element.style.setProperty('font-size', `${currentSubtitleStyle.fontSize!}vw`, 'important');
+    element.style.setProperty('font-family', currentSubtitleStyle.fontFamily!, 'important');
+    element.style.setProperty('text-shadow', currentSubtitleStyle.textShadow || 'none', 'important');
+
+    // Border radius, not configurable in the UI ***
+    element.style.setProperty('border-radius', '5px', 'important');
+
+    // Some padding when a background is visible to prevent text touching the edges
+    if (currentSubtitleStyle.bgColor && currentSubtitleStyle.bgColor !== 'transparent') {
+        element.style.setProperty('padding', '0.2em 0.4em', 'important');
+    } else {
+        element.style.setProperty('padding', '0', 'important');
+    }
+
+    // Explicitly reset vanilla Jellyfin properties that could conflict with our styling
+    element.style.setProperty('font-weight', 'normal', 'important');
+    element.style.setProperty('font-style', 'normal', 'important');
+    element.style.setProperty('font-variant', 'normal', 'important');
+}
+
+/**
+ * Watches for subtitle elements and applies styles to them as they appear.
+ */
+function startSubtitleObserver(): void {
+    if (subtitleObserver) subtitleObserver.unsubscribe();
+    subtitleObserver = onBodyMutation('subtitles', (mutations) => {
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                if (node.nodeType === 1) {
+                    const el = node as HTMLElement;
+                    if (el.classList.contains('videoSubtitlesInner')) {
+                        forceApplyInlineStyles(el);
+                    } else if (el.querySelector) {
+                        const inner = el.querySelector<HTMLElement>('.videoSubtitlesInner');
+                        if (inner) forceApplyInlineStyles(inner);
+                    }
+                    // Also reapply position whenever a subtitle container appears
+                    if (el.classList.contains('videoSubtitles') || el.querySelector?.('.videoSubtitles')) {
+                        applySubtitlePosition();
+                    }
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Main function to apply styles. It sets the desired style and starts the process.
+ */
+JE.applySubtitleStyles = (textColor: string, bgColor: string, fontSize: number, fontFamily: string, textShadow: string) => {
+    // THEME-6: the video-page driver re-invokes this on every ~100ms tick with
+    // the same resolved style. Skip the observer teardown/re-subscribe and the
+    // ::cue rewrite when nothing changed and the pipeline is already live; only
+    // do the heavy work when the resolved style actually changed.
+    const unchanged = currentSubtitleStyle.textColor === textColor
+        && currentSubtitleStyle.bgColor === bgColor
+        && currentSubtitleStyle.fontSize === fontSize
+        && currentSubtitleStyle.fontFamily === fontFamily
+        && currentSubtitleStyle.textShadow === textShadow;
+    const cueSheetLive = !!(document.getElementById('je-html-videoplayer-cuestyle') as HTMLStyleElement | null)?.sheet?.cssRules.length;
+    if (unchanged && subtitleObserver && cueSheetLive) {
+        // Position is cheap + idempotent — keep it; skip the rest.
+        applySubtitlePosition();
+        return;
+    }
+
+    // Store the chosen style globally for the observer to use
+    currentSubtitleStyle = { textColor, bgColor, fontSize, fontFamily, textShadow };
+
+    // Force-apply to any subtitle elements that might already exist
+    document.querySelectorAll<HTMLElement>('.videoSubtitlesInner').forEach(forceApplyInlineStyles);
+
+    // Apply position to the container
+    applySubtitlePosition();
+
+    // Start the observer to catch any new subtitle elements
+    startSubtitleObserver();
+
+    // NATIVE cue rendering path: on Jellyfin 12, .videoSubtitlesInner only
+    // exists when jellyfin-web's useCustomSubtitles() is true (Firefox/
+    // Safari/Edge/TVs). Chrome/Chromium with the default "Auto" styling
+    // renders native VTT cues instead, styled by the client's
+    // #htmlvideoplayer-cuestyle sheet — mirror our style into a ::cue
+    // override there, or every JE subtitle setting silently no-ops on the
+    // most common browser. Position settings cannot apply to native cues
+    // (::cue supports style properties only).
+    applyNativeCueStyles();
+};
+
+/**
+ * Upserts (or clears) the JE ::cue override sheet for the native-cue path.
+ * Keyed on the client's own #htmlvideoplayer-cuestyle element, which
+ * jellyfin-web creates via setCueAppearance() once a text track is selected —
+ * the video-page observer re-invokes the style pipeline after that, so this
+ * lands even when the track is picked mid-playback.
+ */
+function applyNativeCueStyles(): void {
+    const clientCueSheet = document.getElementById('htmlvideoplayer-cuestyle') as HTMLStyleElement | null;
+    if (!clientCueSheet?.sheet) return;
+
+    let styleElement = document.getElementById('je-html-videoplayer-cuestyle') as HTMLStyleElement | null;
+    if (!styleElement?.sheet) {
+        styleElement = document.createElement('style');
+        styleElement.id = 'je-html-videoplayer-cuestyle';
+        document.head.appendChild(styleElement);
+    }
+
+    try {
+        const sheet = styleElement.sheet;
+        if (!sheet) return;
+        while (sheet.cssRules.length > 0) sheet.deleteRule(0);
+        if (JE.currentSettings?.disableCustomSubtitleStyles) return;
+        const { textColor, bgColor, fontSize, fontFamily, textShadow } = currentSubtitleStyle;
+        // THEME-1: bgColor/textColor are free-text per-user settings landing in a
+        // live stylesheet rule — gate them through cssColorOr so a payload like
+        // `red;background-image:url(https://attacker/beacon)` can't inject an
+        // extra declaration; coerce the numeric font-size. fontFamily comes from
+        // the fixed fontFamilyPresets table and textShadow is a derived constant
+        // (transparent-bg ternary), so both are trusted producers left as-is.
+        const bg = cssColorOr(bgColor, '#00000000');
+        const fg = cssColorOr(textColor, '#FFFFFFFF');
+        const size = Number(fontSize) || 1.2;
+        const cueRule = `
+        video.htmlvideoplayer::cue {
+            background-color: ${bg} !important;
+            color: ${fg} !important;
+            font-size: ${size}vw !important;
+            font-family: ${fontFamily!} !important;
+            text-shadow: ${textShadow || 'none'} !important;
+        }`;
+        sheet.insertRule(cueRule, 0);
+    } catch (e) {
+        console.error('🪼 Jellyfin Elevate: Failed to apply native ::cue styles:', e);
+    }
+}
+
+/**
+ * Loads saved settings and triggers the style application.
+ * When custom styles are disabled, removes all JE-injected styles cleanly.
+ */
+JE.applySavedStylesWhenReady = () => {
+    if (!document.querySelector('video')) {
+        if (subtitleObserver) {
+            subtitleObserver.unsubscribe();
+            subtitleObserver = null;
+        }
+        return;
+    }
+
+    if (JE.currentSettings?.disableCustomSubtitleStyles) {
+        removeInjectedStyles();
+        return;
+    }
+
+    const textColor = (JE.currentSettings?.customSubtitleTextColor as string | undefined) || '#FFFFFFFF';
+    const bgColor = (JE.currentSettings?.customSubtitleBgColor as string | undefined) || '#00000000';
+    const textShadow = bgColor === 'transparent' || bgColor === '#00000000'
+        ? '0 0 4px #000, 0 0 8px #000, 1px 1px 2px #000'
+        : 'none';
+
+    const fontSizePreset = JE.fontSizePresets![(JE.currentSettings?.selectedFontSizePresetIndex as number | undefined) ?? 2];
+    const fontFamilyPreset = JE.fontFamilyPresets![(JE.currentSettings?.selectedFontFamilyPresetIndex as number | undefined) ?? 0];
+
+    if (fontSizePreset && fontFamilyPreset) {
+        JE.applySubtitleStyles!(
+            textColor,
+            bgColor,
+            fontSizePreset.size,
+            fontFamilyPreset.family,
+            textShadow
+        );
+    }
+};

@@ -3,7 +3,7 @@
 /**
  * Translation Validation and Helper Script
  *
- * This script helps manage translations for Jellyfin Enhanced by:
+ * This script helps manage translations for Jellyfin Elevate by:
  * - Validating all translation files against the base (en.json)
  * - Detecting missing keys in translations
  * - Finding unused translation keys not referenced in code
@@ -24,15 +24,15 @@
 const fs = require('fs');
 const path = require('path');
 
-const LOCALES_DIR = path.join(__dirname, '../Jellyfin.Plugin.JellyfinEnhanced/js/locales');
+const LOCALES_DIR = path.join(__dirname, '../Jellyfin.Plugin.JellyfinElevate/js/locales');
 // Translation call sites live in the TypeScript module tree (src/) plus the
 // remaining legacy loader files under js/ — scan both.
 const CODE_DIRS = [
-    path.join(__dirname, '../Jellyfin.Plugin.JellyfinEnhanced/src'),
-    path.join(__dirname, '../Jellyfin.Plugin.JellyfinEnhanced/js'),
+    path.join(__dirname, '../Jellyfin.Plugin.JellyfinElevate/src'),
+    path.join(__dirname, '../Jellyfin.Plugin.JellyfinElevate/js'),
 ];
 const BASE_LANG = 'en';
-const WEBLATE_URL = 'https://hosted.weblate.org/projects/jellyfinenhanced/';
+const WEBLATE_URL = 'https://hosted.weblate.org/projects/jellyfinelevate/';
 
 // ANSI color codes for terminal output
 const colors = {
@@ -278,7 +278,7 @@ function findUnusedKeys() {
 
                 // Call shapes across the TS tree: JE.t('k'), JE.t!('k') (non-null
                 // assertion), JE.t?.('k'), plus local aliases t('k') / tWithFallback('k', ...).
-                const tMatches = content.matchAll(/(?:(?:JE|window\.JellyfinEnhanced)\.t\s*!?\s*(?:\?\.)?|\bt(?:WithFallback)?)\s*\(\s*['"]([^'"]+)['"]/g);
+                const tMatches = content.matchAll(/(?:(?:JE|window\.JellyfinElevate)\.t\s*!?\s*(?:\?\.)?|\bt(?:WithFallback)?)\s*\(\s*['"]([^'"]+)['"]/g);
                 for (const match of tMatches) {
                     usedKeys.add(match[1]);
                 }

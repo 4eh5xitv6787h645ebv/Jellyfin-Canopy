@@ -1,4 +1,4 @@
-## Jellyfin Enhanced API
+## Jellyfin Elevate API
 
 ### Authentication
 
@@ -15,16 +15,16 @@ Authorization: MediaBrowser Token="{your-api-key}"
 
 ### Get Plugin Version
 
-Checks the installed version of the Jellyfin Enhanced plugin (no authentication required):
+Checks the installed version of the Jellyfin Elevate plugin (no authentication required):
 
 ```bash
 curl -X GET \
-  "<JELLYFIN_ADDRESS>/JellyfinEnhanced/version"
+  "<JELLYFIN_ADDRESS>/JellyfinElevate/version"
 ```
 
 ### Public Configuration
 
-The plugin serves a **public config** payload (`/JellyfinEnhanced/public-config`) that the client bootstraps from before login. Only settings whitelisted for public exposure are included — secrets (API keys, tokens) never appear.
+The plugin serves a **public config** payload (`/JellyfinElevate/public-config`) that the client bootstraps from before login. Only settings whitelisted for public exposure are included — secrets (API keys, tokens) never appear.
 
 Fields that would leak internal topology are additionally **redacted for anonymous / pre-login callers** and only returned once the request is authenticated:
 
@@ -38,7 +38,7 @@ The maintenance-mode **message** and **action** stay public because the login pa
 ### Storage Directory
 Bookmarks are stored per-user under the plugin's configurations directory. The user id is normalized (dashes stripped, lowercased) to form the folder name, and the file is named `bookmark.json` (singular):
 ```
-<plugins>/configurations/Jellyfin.Plugin.JellyfinEnhanced/{userId-no-dashes-lowercase}/bookmark.json
+<plugins>/configurations/Jellyfin.Plugin.JellyfinElevate/{userId-no-dashes-lowercase}/bookmark.json
 ```
 
 The data structure is (property names are persisted as-is, in PascalCase):
@@ -63,13 +63,13 @@ The data structure is (property names are persisted as-is, in PascalCase):
 
 ### API Access
 
-External applications can read and write bookmarks using the Jellyfin Enhanced API endpoints
+External applications can read and write bookmarks using the Jellyfin Elevate API endpoints
 
 `{userId}` is the 32-character hex (`"N"` format) Jellyfin user id.
 
 #### Get Bookmarks
 ```http
-GET /JellyfinEnhanced/user-settings/{userId}/bookmark.json
+GET /JellyfinElevate/user-settings/{userId}/bookmark.json
 Authorization: MediaBrowser Token="{your-api-key}"
 ```
 
@@ -78,7 +78,7 @@ Authorization: MediaBrowser Token="{your-api-key}"
 The request body is the `UserBookmark` object itself — a single `Bookmarks` map — not an envelope. This performs a full replace of the user's bookmarks.
 
 ```http
-POST /JellyfinEnhanced/user-settings/{userId}/bookmark.json
+POST /JellyfinElevate/user-settings/{userId}/bookmark.json
 Authorization: MediaBrowser Token="{your-api-key}"
 Content-Type: application/json
 
@@ -101,7 +101,7 @@ Checks if the plugin can connect to any of the configured Seerr URLs using the p
 ```bash
 curl -X GET \
   -H "Authorization: MediaBrowser Token=\"<API_KEY>\"" \
-  "<JELLYFIN_URL>/JellyfinEnhanced/jellyseerr/status"
+  "<JELLYFIN_URL>/JellyfinElevate/jellyseerr/status"
 ```
 
 ### Check User Status
@@ -112,7 +112,7 @@ Verifies that the currently logged-in Jellyfin user is successfully linked to a 
 curl -X GET \
   -H "Authorization: MediaBrowser Token=\"<JELLYFIN_API_KEY>\"" \
   -H "X-Jellyfin-User-Id: <JELLYFIN_USER_ID>" \
-  "<JELLYFIN_ADDRESS>/JellyfinEnhanced/jellyseerr/user-status"
+  "<JELLYFIN_ADDRESS>/JellyfinElevate/jellyseerr/user-status"
 ```
 
 ### Perform A Seerr Search
@@ -123,7 +123,7 @@ Executes a search query through the Seerr instance for the specified user.
 curl -X GET \
   -H "Authorization: MediaBrowser Token=\"<API_KEY>\"" \
   -H "X-Jellyfin-User-Id: <USER_ID>" \
-  "<JELLYFIN_URL>/JellyfinEnhanced/jellyseerr/search?query=Inception"
+  "<JELLYFIN_URL>/JellyfinElevate/jellyseerr/search?query=Inception"
 ```
 
 ### Make a Request on Seerr
@@ -139,7 +139,7 @@ curl -X POST \
   -H "X-Jellyfin-User-Id: <USER_ID>" \
   -H "Content-Type: application/json" \
   -d '{"mediaType": "movie", "mediaId": 27205}' \
-  "<JELLYFIN_URL>/JellyfinEnhanced/jellyseerr/request"
+  "<JELLYFIN_URL>/JellyfinElevate/jellyseerr/request"
 ```
 
 ## Admin Hidden Content API
@@ -153,7 +153,7 @@ Returns each user (except the caller) who has hidden at least one item, with the
 ```bash
 curl -X GET \
   -H "Authorization: MediaBrowser Token=\"<ADMIN_API_KEY>\"" \
-  "<JELLYFIN_URL>/JellyfinEnhanced/admin/hidden-content-users"
+  "<JELLYFIN_URL>/JellyfinElevate/admin/hidden-content-users"
 ```
 
 ### Get A User's Hidden Content
@@ -163,7 +163,7 @@ Returns a single user's hidden content (read-only).
 ```bash
 curl -X GET \
   -H "Authorization: MediaBrowser Token=\"<ADMIN_API_KEY>\"" \
-  "<JELLYFIN_URL>/JellyfinEnhanced/admin/hidden-content/<USER_ID>"
+  "<JELLYFIN_URL>/JellyfinElevate/admin/hidden-content/<USER_ID>"
 ```
 
 ### Unhide Items For A User
@@ -175,7 +175,7 @@ curl -X POST \
   -H "Authorization: MediaBrowser Token=\"<ADMIN_API_KEY>\"" \
   -H "Content-Type: application/json" \
   -d '["a1b2c3d4e5f6...", "tmdb-27205"]' \
-  "<JELLYFIN_URL>/JellyfinEnhanced/admin/hidden-content/<USER_ID>/unhide"
+  "<JELLYFIN_URL>/JellyfinElevate/admin/hidden-content/<USER_ID>/unhide"
 ```
 
 ### Hide Items For A User
@@ -187,5 +187,5 @@ curl -X POST \
   -H "Authorization: MediaBrowser Token=\"<ADMIN_API_KEY>\"" \
   -H "Content-Type: application/json" \
   -d '[{"TmdbId": "27205", "Name": "Inception", "Type": "Movie", "PosterPath": "/edv5CZvWj09upOsy2Y6IwDhK8bt.jpg"}]' \
-  "<JELLYFIN_URL>/JellyfinEnhanced/admin/hidden-content/<USER_ID>/hide"
+  "<JELLYFIN_URL>/JellyfinElevate/admin/hidden-content/<USER_ID>/hide"
 ```

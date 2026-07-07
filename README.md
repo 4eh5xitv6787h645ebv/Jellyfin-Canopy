@@ -1,39 +1,34 @@
-# Jellyfin Enhanced
+# Jellyfin Elevate
+
 <p align="center">
-  <img src="https://img.shields.io/github/last-commit/n00bcodr/Jellyfin-Enhanced/main?logo=semantic-release&logoColor=white&label=Last%20Updated&labelColor=black&color=AA5CC3&cacheSeconds=3600" alt="Last Updated">
-  <img src="https://img.shields.io/github/commit-activity/w/n00bcodr/Jellyfin-Enhanced?logo=git&label=Commit%20Activity&labelColor=black&color=00A4DC&cacheSeconds=600" alt="Commit Activity">
   <img src="https://img.shields.io/badge/Jellyfin%20Version-12-AA5CC3?logo=jellyfin&logoColor=00A4DC&labelColor=black" alt="Jellyfin Version">
-  <br><br>
-  <img alt="GitHub Downloads" src="https://img.shields.io/github/downloads/n00bcodr/Jellyfin-Enhanced/latest/Jellyfin.Plugin.JellyfinEnhanced_12.0.0.zip?displayAssetName=false&label=12%20Downloads%40Latest&labelColor=black&color=AA5CC3&cacheSeconds=60">
-  <br><br>
-  <a href="https://discord.gg/EYNFf7y4CG"><img alt="Discord" src="https://img.shields.io/badge/Jellyfin%20Enhanced%20-%20Jellyfin%20Community?&logo=discord&logoColor=white&style=for-the-badge&label=Jellyfin%20Community&labelColor=5865F2&color=black"></a>
+  <img src="https://img.shields.io/badge/License-GPL--3.0-00A4DC?labelColor=black" alt="License">
+  <img src="https://img.shields.io/badge/Development-100%25%20AI-AA5CC3?labelColor=black" alt="100% AI Development">
   <br><br>
   <a href='https://ko-fi.com/G2G51TIZF0' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi1.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
   <a href='https://www.buymeacoffee.com/n00bcodr' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png' border='0' alt='Buy Me a Coffee' /></a>
 </p>
 
-<br>
-
-The essential enhancement suite for Jellyfin, bundling advanced features and customizations into one convenient plugin.
-
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/c3fed9fe-63c4-4e26-b2b6-73c4817613aa"></video>
-</div>
+**Jellyfin Elevate is an independent fork and extensive modernization of [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced), providing an integrated suite of playback, discovery, customization and media-management features for Jellyfin 12.**
 
 <br>
 
-## 📚 Documentation
+## 🙏 Origins & Credit
 
-**Complete documentation is available at: [https://n00bcodr.github.io/Jellyfin-Enhanced/](https://n00bcodr.github.io/Jellyfin-Enhanced/)**
+This project **would not exist** without [n00bcodr](https://github.com/n00bcodr) and his outstanding work on [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced). Every feature here stands on that foundation — years of ideas, design, community building, and polish that made Jellyfin Enhanced the essential enhancement suite for Jellyfin.
 
-Quick links:
-- [Installation Guide](https://n00bcodr.github.io/Jellyfin-Enhanced/installation/installation/)
-- [Features Overview](https://n00bcodr.github.io/Jellyfin-Enhanced/enhanced/enhanced-features/)
-- [Seerr Integration](https://n00bcodr.github.io/Jellyfin-Enhanced/seerr/seerr-features/)
-- [ARR Integration](https://n00bcodr.github.io/Jellyfin-Enhanced/arr/arr-features/)
-- [Spoiler Guard](https://n00bcodr.github.io/Jellyfin-Enhanced/spoiler-guard/spoiler-guard-features/)
-- [FAQ & Troubleshooting](https://n00bcodr.github.io/Jellyfin-Enhanced/faq-support/faq/)
-- [CSS Customization](https://n00bcodr.github.io/Jellyfin-Enhanced/advanced/css-customization/)
+Jellyfin Elevate exists because the two projects chose different paths, not because of any shortcoming in the original:
+
+- **Jellyfin Enhanced** continues to serve Jellyfin 10.11 — stable, proven, and actively maintained by its original author.
+- **Jellyfin Elevate** is a ground-up modernization targeting **Jellyfin 12 only**: a strict-TypeScript ES-module client, policy-based server auth, push-driven live updates, a committed Playwright e2e suite, and enforced performance rules.
+
+If you appreciate this project, please support the original author — **all donation links in this repository intentionally point to n00bcodr**:
+
+- ☕ [Ko-Fi](https://ko-fi.com/n00bcodr) ⦁ ☕ [Buy Me a Coffee](https://www.buymeacoffee.com/n00bcodr) ⦁ ⭐ [Star Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced)
+
+## 🤖 100% AI Development
+
+Jellyfin Elevate is developed **entirely with AI** (agentic coding tools driving design, implementation, testing, and review), directed and curated by a human maintainer. Every change still has to pass the project's full gate suite — strict TypeScript type-checking, lint, unit tests with coverage ratchets, golden snapshot tests, a real end-to-end Playwright suite against a live Jellyfin 12 server, and multi-pass adversarial code review — before it lands.
 
 <br>
 
@@ -44,24 +39,22 @@ Quick links:
 1. In Jellyfin, go to **Dashboard** → **Plugins** → **Repositories**
 2. Click **➕** and add the repository:
    ```
-   https://raw.githubusercontent.com/n00bcodr/jellyfin-plugins/main/10.11/manifest.json
+   https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/main/manifest.json
    ```
-3. Go to **Catalog** tab, find **Jellyfin Enhanced**, and click **Install**
+3. Go to the **Catalog** tab, find **Jellyfin Elevate**, and click **Install**
 4. **Restart** your Jellyfin server
 
 > [!IMPORTANT]
-> **Jellyfin 12 Required** - From version 12 this plugin only supports Jellyfin 12. Jellyfin 10.11 users should stay on the final 11.x release line.
+> **Jellyfin 12 Required** — Jellyfin Elevate only supports Jellyfin 12. Jellyfin 10.11 users should use the original [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) plugin.
 
 > [!TIP]
 > **Highly Recommended:** Install the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) to avoid permission issues on all installation types (Docker, Windows, Linux, etc.).
 
-For detailed installation instructions and troubleshooting, see the [Installation Guide](https://n00bcodr.github.io/Jellyfin-Enhanced/installation/installation/).
-
 <br>
 
-## ✨ Features Highlights
+## ✨ Feature Highlights
 
-### 🎬 Enhanced Playback
+### 🎬 Playback
 - **Advanced Keyboard Shortcuts** - Comprehensive hotkeys for navigation and playback
 - **Smart Bookmarks** - Save and jump to timestamps with visual markers
 - **Custom Pause Screen** - Beautiful overlay with media info
@@ -103,9 +96,13 @@ For detailed installation instructions and troubleshooting, see the [Installatio
 - **Custom Branding** - Upload your own logos, banners, and favicon
 - **Theme Selector** - Choose from multiple color variants
 - **Extensive CSS Options** - Customize every visual element
-- **Multi-language Support** - Available in 15+ languages
+- **Multi-language Support** - Available in 25+ languages
 
-[View all features →](https://n00bcodr.github.io/Jellyfin-Enhanced/enhanced/enhanced-features/)
+<br>
+
+## 📚 Documentation
+
+Full documentation lives in [`docs/`](docs/) and is published at [https://4eh5xitv6787h645ebv.github.io/Jellyfin-Elevate/](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Elevate/) (available once the repository is public).
 
 <br>
 
@@ -113,14 +110,14 @@ For detailed installation instructions and troubleshooting, see the [Installatio
 
 One C# project (server) plus one TypeScript module tree (client), shipped as a single client bundle:
 
-- **`Jellyfin.Plugin.JellyfinEnhanced/src/`** — the client: strict TypeScript ES modules organized by area (`core/`, `enhanced/`, `jellyseerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/`), bundled by esbuild into `dist/je.bundle.js` on every build. `src/facade.ts` types the frozen public `window.JellyfinEnhanced` surface.
-- **`Jellyfin.Plugin.JellyfinEnhanced/js/`** — the loader (`plugin.js`), the translation files (`locales/`), and ambient type declarations (`core/globals.d.ts`); all feature code lives in `src/`.
-- **`Jellyfin.Plugin.JellyfinEnhanced/`** (C#) — `Controllers/` (one per feature area, policy-based auth), `Configuration/` (settings registry + admin page), `Services/` (integrations, live-update pushes). Targets Jellyfin 12 / net10.0 only.
-- **`Jellyfin.Plugin.JellyfinEnhanced.Tests/`** — xUnit tests incl. golden snapshots pinning the config payload and on-disk user-data formats.
+- **`Jellyfin.Plugin.JellyfinElevate/src/`** — the client: strict TypeScript ES modules organized by area (`core/`, `enhanced/`, `jellyseerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/`), bundled by esbuild into `dist/je.bundle.js` on every build. `src/facade.ts` types the frozen public `window.JellyfinElevate` surface.
+- **`Jellyfin.Plugin.JellyfinElevate/js/`** — the loader (`plugin.js`), the translation files (`locales/`), and ambient type declarations (`core/globals.d.ts`); all feature code lives in `src/`.
+- **`Jellyfin.Plugin.JellyfinElevate/`** (C#) — `Controllers/` (one per feature area, policy-based auth), `Configuration/` (settings registry + admin page), `Services/` (integrations, live-update pushes). Targets Jellyfin 12 / net10.0 only.
+- **`Jellyfin.Plugin.JellyfinElevate.Tests/`** — xUnit tests incl. golden snapshots pinning the config payload and on-disk user-data formats.
 - **`e2e/`** — committed Playwright suite + dockerized seeded Jellyfin 12.
-- **`docs/`** — this documentation site (MkDocs).
+- **`docs/`** — the documentation site (MkDocs).
 
-Full breakdown: [Project Structure](https://n00bcodr.github.io/Jellyfin-Enhanced/advanced/project-structure/) ⦁ How to add a feature: [CONTRIBUTING.md](CONTRIBUTING.md)
+How to add a feature: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 <br>
 
@@ -132,7 +129,7 @@ Full breakdown: [Project Structure](https://n00bcodr.github.io/Jellyfin-Enhanced
 | Android App | ✅ Full | Official app with embedded web UI |
 | iOS App | ✅ Full | Official app with embedded web UI |
 | Desktop Apps | ✅ Full | Jellyfin Desktop v3.0.0+ (currently unreleased) |
-| Android TV | ❌ Not Supported, but auto-season, movie requests work| Native app, no web UI |
+| Android TV | ❌ Not Supported, but auto-season, movie requests work | Native app, no web UI |
 | Third-party Apps | ❌ Not Supported, but auto-season, movie requests work | Depends on embedded web UI |
 
 <br>
@@ -170,54 +167,19 @@ Full breakdown: [Project Structure](https://n00bcodr.github.io/Jellyfin-Enhanced
 
 ## 🌍 Contributing
 
-### Translations
+- 🐛 [Report Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues)
+- 💡 [Feature Requests](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/discussions)
+- 🌍 Translations: locale JSON files live in `Jellyfin.Plugin.JellyfinElevate/js/locales/` — PRs welcome (all 26 locales must stay in sync; `npm run validate-translations` must pass)
 
-Help translate Jellyfin Enhanced into your language!
-
-<p align="center">
-  <a href="https://hosted.weblate.org/engage/jellyfinenhanced/">
-    <img src="https://hosted.weblate.org/widget/jellyfinenhanced/multi-auto.svg" alt="Translation status" />
-  </a>
-</p>
-
-Translate directly in Weblate:
-
-- https://hosted.weblate.org/projects/jellyfinenhanced/
-
-1. Open the Jellyfin Enhanced project in Weblate
-2. Pick your language (or request a new language)
-3. Translate strings in the Web UI
-4. Save and submit suggestions/changes
-
-Weblate will sync translation changes back to this repository.
-
-Manual locale PRs are still possible for maintainers, but Weblate is the preferred workflow for all translators.
-
-[Translation Guide →](https://n00bcodr.github.io/Jellyfin-Enhanced/faq-support/contributing-translations/)
-
-### Bug Reports & Feature Requests
-
-- [Report Issues](https://github.com/n00bcodr/Jellyfin-Enhanced/issues)
-- [Feature Requests](https://github.com/n00bcodr/Jellyfin-Enhanced/discussions)
-- [Discord Community](https://discord.gg/EYNFf7y4CG)
-
-<br>
-
-## 💡 Support
-
-Need help? Check these resources:
-
-- [FAQ](https://n00bcodr.github.io/Jellyfin-Enhanced/faq-support/faq/)
-- [Troubleshooting Guide](https://n00bcodr.github.io/Jellyfin-Enhanced/installation/troubleshooting/)
-- [GitHub Discussions](https://github.com/n00bcodr/Jellyfin-Enhanced/discussions)
-- [Discord Community](https://discord.gg/EYNFf7y4CG)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, gates, and the paved road for new features.
 
 <br>
 
 ## 🎯 Related Projects
 
-Other projects by n00bcodr:
+By [n00bcodr](https://github.com/n00bcodr), the original author of Jellyfin Enhanced:
 
+- [Jellyfin-Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) - The original project this fork is built on (Jellyfin 10.11)
 - [Jellyfin-Tweaks](https://github.com/n00bcodr/JellyfinTweaks) - Additional tweaks plugin
 - [Jellyfin-JavaScript-Injector](https://github.com/n00bcodr/Jellyfin-JavaScript-Injector) - Custom script injection
 - [Jellyfish](https://github.com/n00bcodr/Jellyfish/) - Custom Jellyfin theme
@@ -231,21 +193,9 @@ Recommended plugins:
 
 <br>
 
-## ⭐ Star History
-
-<a href="https://star-history.com/#n00bcodr/Jellyfin-Enhanced&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=n00bcodr/Jellyfin-Enhanced&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=n00bcodr/Jellyfin-Enhanced&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=n00bcodr/Jellyfin-Enhanced&type=Date" />
- </picture>
-</a>
-
-<br>
-
 ## 📄 License
 
-This project is licensed under the [GNU General Public License v3.0](LICENSE).
+This project is licensed under the [GNU General Public License v3.0](LICENSE), the same license as Jellyfin Enhanced.
 
 <br>
 
@@ -253,10 +203,11 @@ This project is licensed under the [GNU General Public License v3.0](LICENSE).
 
 <div align="center">
 
-### Enjoying Jellyfin Enhanced?
+### Enjoying Jellyfin Elevate?
 
-If this plugin has enhanced your Jellyfin experience, consider:
-⭐ Starring the repository ⦁ 🐛 Reporting bugs or suggesting features ⦁ 🌍 Contributing translations ⦁ 💬 Joining <a href="https://discord.gg/EYNFf7y4CG">Discord community</a> ⦁ ☕ Supporting me on <a href="https://ko-fi.com/n00bcodr">Ko-Fi</a>
+⭐ Star the repository ⦁ 🐛 Report bugs or suggest features ⦁ 🌍 Contribute translations
+<br>
+☕ And above all, support <a href="https://ko-fi.com/n00bcodr">n00bcodr</a>, the original author of Jellyfin Enhanced, without whom none of this would exist.
 
 Made with 💜 for Jellyfin and the community
 

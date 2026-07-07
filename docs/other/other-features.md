@@ -36,7 +36,7 @@ Upload your own logos, banners, and favicon to personalize your Jellyfin instanc
 
 **Configuration:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Extras** tab
 3. Find the **Custom Image Assets** section
 4. Upload your custom images:
@@ -59,7 +59,7 @@ Upload your own logos, banners, and favicon to personalize your Jellyfin instanc
 
 Files stored in:
 ```text
-/plugins/configurations/Jellyfin.Plugin.JellyfinEnhanced/custom_branding/
+/plugins/configurations/Jellyfin.Plugin.JellyfinElevate/custom_branding/
 ```
 
 This location survives Jellyfin server and web updates.
@@ -76,7 +76,7 @@ Enable or disable icons in toasts, settings panel, and other UI elements.
 
 **Enable:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Display** tab
 3. Check **"Use Icons in UI"**
 4. Click **Save**
@@ -123,7 +123,7 @@ Replace default activity icons with Material Design icons with custom colors.
 
 **Enable:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Extras** tab
 3. Check **"Colored Dashboard Icons"**
 4. Click **Save**
@@ -240,7 +240,7 @@ Choose from multiple Jellyfin theme color variants.
 
 #### Admin Configuration
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Extras** tab
 3. Enable **"Active Streams Header Widget"**
 4. Optional: Enable **"Show widget to non-admins"**
@@ -278,7 +278,7 @@ Display item-detail metadata fields as icons instead of text.
 
 **Enable:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Extras** tab
 3. Check **"Enable Metadata Icons (Druidblack)"**
 4. Click **Save**
@@ -298,7 +298,7 @@ Control how long the shortcuts (help) panel stays open before automatically clos
 
 **Configure:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Playback** tab
 3. Find the timeout settings
 4. Set **Shortcuts Panel Autoclose Delay (ms)**
@@ -339,7 +339,7 @@ Add Letterboxd external links to movie and person (cast/crew) detail pages.
 
 ### Setup
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Extras** tab
 3. Check **"Enable Letterboxd Links"**
 4. Optional: Check **"Show link as text"** for text instead of icon
@@ -388,7 +388,7 @@ Hide specific items from your Jellyfin library without deleting them.
 
 ### Setup
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Pages** tab
 3. Find **Hidden Content** section
 4. Check **"Enable Hidden Content"**
@@ -432,7 +432,7 @@ Custom splash screen that appears while Jellyfin is loading.
 
 ### Setup
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Extras** tab
 3. Check **"Enable Splash Screen Override"**
 4. Enter **Splash Screen Image URL**
@@ -466,8 +466,8 @@ Multi-language support with community translations.
 ### Supported Languages
 
 <p align="left">
-  <a href="https://hosted.weblate.org/engage/jellyfinenhanced/">
-    <img src="https://hosted.weblate.org/widget/jellyfinenhanced/multi-auto.svg" alt="Translation status" />
+  <a href="https://hosted.weblate.org/engage/jellyfinelevate/">
+    <img src="https://hosted.weblate.org/widget/jellyfinelevate/multi-auto.svg" alt="Translation status" />
   </a>
 </p>
 
@@ -484,7 +484,7 @@ Set a default language for all users.
 
 **Configuration:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Find **Default UI Language** setting
 3. Select language from dropdown
 4. Leave empty for system default
@@ -521,7 +521,7 @@ timestamp so that every client clears its localStorage and tag caches on next lo
 
 **How:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Display** tab
 3. Find the **Clear All Client Caches** button
 4. Click to set the timestamp

@@ -25,7 +25,7 @@
  *
  * Warnings (exit 0, printed for review):
  *   - zip filename doesn't follow the modern convention
- *     Jellyfin.Plugin.JellyfinEnhanced_<targetAbi minus 4th part>.zip
+ *     Jellyfin.Plugin.JellyfinElevate_<targetAbi minus 4th part>.zip
  *     (checked only for entries with version >= 10.0.0.0 — before that the
  *     asset was named after the plugin version, or not suffixed at all)
  *   - timestamps not in non-increasing order top-to-bottom
@@ -70,7 +70,7 @@ function compareVersions(a, b) {
 /** Derives the expected zip filename for a targetAbi (drop the 4th part). */
 function expectedZipName(targetAbi) {
     const threePart = targetAbi.split('.').slice(0, 3).join('.');
-    return `Jellyfin.Plugin.JellyfinEnhanced_${threePart}.zip`;
+    return `Jellyfin.Plugin.JellyfinElevate_${threePart}.zip`;
 }
 
 /**

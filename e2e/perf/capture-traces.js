@@ -2,7 +2,7 @@
 
 /**
  * capture-traces.js — real-browser Chrome DevTools performance-trace capture
- * harness for Jellyfin Enhanced.
+ * harness for Jellyfin Elevate.
  *
  * NOT wired into CI. Like e2e/perf/jank-benchmark.js this is a hand-run
  * measurement tool. Where jank-benchmark reduces a run to a handful of
@@ -21,7 +21,7 @@
  * only appears when responses land late.
  *
  * After each scenario the captured trace is parsed IN-PROCESS and a summary is
- * printed: every /JellyfinEnhanced/* network request (start offset, duration,
+ * printed: every /JellyfinElevate/* network request (start offset, duration,
  * status), request/failure counts, console errors, and long tasks >50ms. The
  * `.json.gz` is always written BEFORE analysis, so an analysis error never
  * costs you the trace.
@@ -174,7 +174,7 @@ async function attemptLogin(page, args, traceReload) {
 
     await page.reload({ waitUntil: 'domcontentloaded' });
     const initialized = await page
-        .waitForFunction(() => window.JellyfinEnhanced?.initialized === true, undefined, { timeout: 60000 })
+        .waitForFunction(() => window.JellyfinElevate?.initialized === true, undefined, { timeout: 60000 })
         .then(() => true, () => false);
     if (!initialized || !(await hasStoredSession(page))) return false;
     const authed = await page
@@ -199,7 +199,7 @@ async function login(page, args, { traceReload = false } = {}) {
 
 async function waitJEReady(page) {
     await page.waitForFunction(
-        () => window.JellyfinEnhanced?.initialized === true,
+        () => window.JellyfinElevate?.initialized === true,
         undefined,
         { timeout: 60000 }
     );
@@ -590,7 +590,7 @@ function parseTrace(buffer) {
 }
 
 /**
- * Reduce a trace-event array to a per-scenario summary: /JellyfinEnhanced/*
+ * Reduce a trace-event array to a per-scenario summary: /JellyfinElevate/*
  * requests (offset/duration/status), request + failure counts, and long tasks.
  * ts/dur in a Chrome trace are microseconds.
  */
@@ -634,7 +634,7 @@ function summarizeTrace(events) {
 
     const requests = [...byReqId.values()].filter((r) => r.url);
     const je = requests
-        .filter((r) => /\/JellyfinEnhanced\//i.test(r.url))
+        .filter((r) => /\/JellyfinElevate\//i.test(r.url))
         .map((r) => {
             const endTs = r.finishTs ?? r.respTs;
             return {
@@ -665,7 +665,7 @@ function summarizeTrace(events) {
 function printSummary(log, scenario, file, sizeBytes, summary, consoleErrors, note) {
     log(`--- ${scenario} summary ---`);
     log(`  trace: ${path.relative(process.cwd(), file)} (${(sizeBytes / 1024).toFixed(1)} KiB gz, ${summary.eventCount} events, ~${summary.traceDurationMs}ms window)`);
-    log(`  requests: ${summary.totalRequests} total, ${summary.jeCount} to /JellyfinEnhanced/*` +
+    log(`  requests: ${summary.totalRequests} total, ${summary.jeCount} to /JellyfinElevate/*` +
         `${summary.jeFailed.length ? `, ${summary.jeFailed.length} FAILED` : ''}`);
     for (const r of summary.je) {
         log(`    ${(r.offsetMs === null ? '   ?   ' : `+${Math.round(r.offsetMs)}ms`).padStart(8)}  ` +

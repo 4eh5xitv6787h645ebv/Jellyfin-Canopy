@@ -27,7 +27,7 @@ test.describe('search-page tag hiding', () => {
         // The families enabled for this user; those are the ones that must be
         // hidden on search. Nothing to hide → nothing to guard.
         const enabled: string[] = await page.evaluate((families) => {
-            const settings = (window as any).JellyfinEnhanced?.currentSettings || {};
+            const settings = (window as any).JellyfinElevate?.currentSettings || {};
             return families.filter((f) => settings[f.setting] === true).map((f) => f.attr);
         }, FAMILIES.map((f) => ({ setting: f.setting, attr: f.attr })));
         test.skip(enabled.length === 0, 'no tag renderer enabled for this user');
@@ -58,8 +58,8 @@ test.describe('search-page tag hiding', () => {
             await page.reload({ waitUntil: 'domcontentloaded' });
             consoleErrors.reset();
             await page.waitForFunction(
-                () => (window as any).JellyfinEnhanced?.initialized === true
-                    && (window as any).JellyfinEnhanced?.pluginConfig?.DisableTagsOnSearchPage === true,
+                () => (window as any).JellyfinElevate?.initialized === true
+                    && (window as any).JellyfinElevate?.pluginConfig?.DisableTagsOnSearchPage === true,
                 undefined,
                 { timeout: 60_000 }
             );

@@ -42,7 +42,7 @@ Display user reviews from TMDB on item detail pages.
 
 **Setup:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to **Elsewhere** tab
 3. Enable **"Show TMDB Reviews"**
 4. Click **Save Settings**

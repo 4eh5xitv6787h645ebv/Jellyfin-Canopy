@@ -8,7 +8,7 @@ Search, request, and discover media directly from Jellyfin using your Seerr inst
 
     **This plugin is NOT affiliated with Seerr.** Seerr is an independent project. This plugin simply integrates with it to enhance the Jellyfin experience.
 
-    **Please report any issues with this plugin to the Jellyfin Enhanced repository, not to the Seerr team.**
+    **Please report any issues with this plugin to the Jellyfin Elevate repository, not to the Seerr team.**
 
 ## Features
 
@@ -190,7 +190,7 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 
 ### Setup
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Pages** tab
 3. Check **"Enable Requests Page"**
 4. Optionally check **"Show Downloads in Requests Page"** to display active *arr downloads (enabled by default)

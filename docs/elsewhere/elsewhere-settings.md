@@ -6,7 +6,7 @@
 
     - **TMDB API Key**
         - [Free from TMDB](https://www.themoviedb.org/settings/api)
-    - **Jellyfin Enhanced** plugin installed
+    - **Jellyfin Elevate** plugin installed
 
 
 ## Prerequisites
@@ -21,7 +21,7 @@
 
 ## Setup
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to **Elsewhere** tab
 3. Check "Enable Elsewhere"
 4. Enter your **TMDB API Key**
@@ -169,7 +169,7 @@ Elsewhere can be displayed on Seerr discovery pages.
 
 **Enable:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to **Seerr** tab
 3. Check "Show Streaming Providers on Posters"
 4. Click **Save**

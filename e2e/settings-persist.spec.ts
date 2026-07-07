@@ -9,13 +9,13 @@ import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-const CONFIG_HASH = '#/configurationpage?name=Jellyfin%20Enhanced';
+const CONFIG_HASH = '#/configurationpage?name=Jellyfin%20Elevate';
 
 /** Wait for the plugin to re-boot after a reload with settings loaded. */
 async function waitReady(page: any): Promise<void> {
     await page.waitForFunction(
-        () => (window as any).JellyfinEnhanced?.initialized === true
-            && !!(window as any).JellyfinEnhanced?.currentSettings,
+        () => (window as any).JellyfinElevate?.initialized === true
+            && !!(window as any).JellyfinElevate?.currentSettings,
         undefined,
         { timeout: 60_000 }
     );
@@ -24,14 +24,14 @@ async function waitReady(page: any): Promise<void> {
 /** Read the pause-screen delay off the booted per-user settings. */
 async function readDelay(page: any): Promise<number> {
     return page.evaluate(() =>
-        Number((window as any).JellyfinEnhanced?.currentSettings?.pauseScreenDelaySeconds ?? 5)
+        Number((window as any).JellyfinElevate?.currentSettings?.pauseScreenDelaySeconds ?? 5)
     );
 }
 
 /** A POST to the current user's settings.json (the real persist endpoint). */
 function settingsSaved(page: any): Promise<unknown> {
     return page.waitForResponse(
-        (r: any) => /\/JellyfinEnhanced\/user-settings\/.+\/settings\.json/.test(r.url())
+        (r: any) => /\/JellyfinElevate\/user-settings\/.+\/settings\.json/.test(r.url())
             && r.request().method() === 'POST',
         { timeout: 30_000 }
     );
@@ -50,7 +50,7 @@ test.describe('per-user settings persistence', () => {
             await Promise.all([
                 settingsSaved(page),
                 page.evaluate(async (value: number) => {
-                    const JE = (window as any).JellyfinEnhanced;
+                    const JE = (window as any).JellyfinElevate;
                     await JE.saveUserSettings('settings.json', { ...JE.currentSettings, pauseScreenDelaySeconds: value });
                 }, target),
             ]);
@@ -63,7 +63,7 @@ test.describe('per-user settings persistence', () => {
             await Promise.all([
                 settingsSaved(page).catch(() => { /* restore is best effort */ }),
                 page.evaluate(async (value: number) => {
-                    const JE = (window as any).JellyfinEnhanced;
+                    const JE = (window as any).JellyfinElevate;
                     await JE.saveUserSettings('settings.json', { ...JE.currentSettings, pauseScreenDelaySeconds: value });
                 }, original),
             ]);
@@ -77,8 +77,8 @@ test.describe('per-user settings persistence', () => {
         const target = original === 12 ? 17 : 12;
 
         const openDelayInput = async (): Promise<void> => {
-            await page.evaluate(() => { (window as any).JellyfinEnhanced.showEnhancedPanel(); });
-            const panel = page.locator('#jellyfin-enhanced-panel');
+            await page.evaluate(() => { (window as any).JellyfinElevate.showEnhancedPanel(); });
+            const panel = page.locator('#jellyfin-elevate-panel');
             await expect(panel).toBeVisible({ timeout: 15_000 });
             await panel.locator('.tab-button[data-tab="settings"]').click();
             // The pause-delay input lives inside a collapsed <details>
@@ -122,7 +122,7 @@ test.describe('per-user settings persistence', () => {
             await Promise.all([
                 settingsSaved(page).catch(() => { /* best effort */ }),
                 page.evaluate(async (value: number) => {
-                    const JE = (window as any).JellyfinEnhanced;
+                    const JE = (window as any).JellyfinElevate;
                     await JE.saveUserSettings('settings.json', { ...JE.currentSettings, pauseScreenDelaySeconds: value });
                 }, original),
             ]);
@@ -157,7 +157,7 @@ test.describe('per-user settings persistence', () => {
                 type: el.getAttribute('type'),
                 min: el.getAttribute('min'),
                 max: el.getAttribute('max'),
-                inForm: !!el.closest('form, .configPage, #jellyfinEnhancedConfigPage, .content-primary'),
+                inForm: !!el.closest('form, .configPage, #jellyfinElevateConfigPage, .content-primary'),
             };
         });
 
@@ -176,13 +176,13 @@ test.describe('per-user settings persistence', () => {
         //     jellyfin-web's own dashboard bundle (JE's only scroll feature uses
         //     `_scrollHandler` and runs only on Seerr discovery pages).
         //   - /Users/{id}/Images/Primary 404: the seeded admin has no avatar.
-        //   - /JellyfinEnhanced/BrandingImage 404: branding previews for assets
+        //   - /JellyfinElevate/BrandingImage 404: branding previews for assets
         //     that are not uploaded on the bare seed; config-page.js handles the
         //     404 by showing a placeholder (refreshBrandingPreview).
         // Filter exactly those, then assert the PLUGIN itself produced no console
         // errors or 4xx on the config page — a real, non-hollow check.
         const DASHBOARD_CHROME =
-            /scrollHandler is not a function|\/Users\/[^/]+\/Images\/Primary|\/JellyfinEnhanced\/BrandingImage/i;
+            /scrollHandler is not a function|\/Users\/[^/]+\/Images\/Primary|\/JellyfinElevate\/BrandingImage/i;
         const pluginErrors = consoleErrors.real().filter((t) => !DASHBOARD_CHROME.test(t));
         const plugin4xx = consoleErrors.unexpected4xx().filter((r) => !DASHBOARD_CHROME.test(r.url));
         expect(pluginErrors, 'no plugin console errors on the admin config page').toEqual([]);

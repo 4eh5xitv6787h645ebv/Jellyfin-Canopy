@@ -1,11 +1,11 @@
 # Performance Rules
 
-Jellyfin Enhanced injects UI into pages the user is already looking at. Done carelessly, that means layout shift, observer storms and CDN stalls — *jank*. Every rule below was earned by finding and fixing a real regression in this codebase; together they are the plugin's jank doctrine, and they are **enforceable in review**: a PR that violates one needs a written justification in the PR description, not a shrug.
+Jellyfin Elevate injects UI into pages the user is already looking at. Done carelessly, that means layout shift, observer storms and CDN stalls — *jank*. Every rule below was earned by finding and fixing a real regression in this codebase; together they are the plugin's jank doctrine, and they are **enforceable in review**: a PR that violates one needs a written justification in the PR description, not a shrug.
 
 The implementation sites are marked in the source with `// PERF(Rn):` comments — grep for a rule id to see every place it is applied:
 
 ```bash
-grep -rn "PERF(R3" Jellyfin.Plugin.JellyfinEnhanced/src/
+grep -rn "PERF(R3" Jellyfin.Plugin.JellyfinElevate/src/
 ```
 
 | # | Rule | One line |
@@ -15,7 +15,7 @@ grep -rn "PERF(R3" Jellyfin.Plugin.JellyfinEnhanced/src/
 | R3 | Observer budget | No feature owns a body-wide MutationObserver; use the multiplexed `JE.core.dom.onBodyMutation`. Never observe attributes body-wide. |
 | R4 | One layout read per navigation | Cache layout-dependent lookups per nav; no layout reads inside observer ticks. |
 | R5 | No polling | No `setInterval` for DOM detection; data polls are page-scoped, visibility-gated and push-nudged. |
-| R6 | No remote assets, ever | Third-party assets go through the local asset cache (`/JellyfinEnhanced/assets/`). A CDN URL in a PR fails review. |
+| R6 | No remote assets, ever | Third-party assets go through the local asset cache (`/JellyfinElevate/assets/`). A CDN URL in a PR fails review. |
 | R7 | Single insert | Build off-DOM, insert once with content ready; late async data fades in (compositor-only), never swaps layout. |
 | R8 | Sync work budget | Pre-paint hooks stay under ~2 ms per mutation batch (`performance.now()` guard); overflow goes async. |
 | R9 | Fail open — late beats never | The jank rules bound *when and how* content appears, never *whether*. A readiness wait or fetch that misses its window degrades to a late, shift-free entrance — it never silently skips the content, and a transient error is never cached as an answer. |
@@ -126,7 +126,7 @@ function getContainer(): HTMLElement | null {
 
 ## R6 — No remote assets, ever
 
-**Rule.** The client never loads a static asset (font, CSS, icon, flag, theme, placeholder image) from a third-party host. Every such asset is mirrored server-side by the `AssetCacheManifest` / `AssetCacheService` pair (refreshed on a ~24 h schedule) and served from `/JellyfinEnhanced/assets/<key>`; client code resolves URLs exclusively through `assetUrl()` / `flagSvgUrl()` / `flagPngUrl()` / `themeCssUrl()` in `src/core/asset-urls.ts`. **A PR that adds a CDN URL anywhere else fails review.** Adding an asset means adding it to both the server manifest and the client table — the two are kept in sync deliberately.
+**Rule.** The client never loads a static asset (font, CSS, icon, flag, theme, placeholder image) from a third-party host. Every such asset is mirrored server-side by the `AssetCacheManifest` / `AssetCacheService` pair (refreshed on a ~24 h schedule) and served from `/JellyfinElevate/assets/<key>`; client code resolves URLs exclusively through `assetUrl()` / `flagSvgUrl()` / `flagPngUrl()` / `themeCssUrl()` in `src/core/asset-urls.ts`. **A PR that adds a CDN URL anywhere else fails review.** Adding an asset means adding it to both the server manifest and the client table — the two are kept in sync deliberately.
 
 *Exempt:* content images (TMDB posters/backdrops, YouTube thumbnails) — they are data, not assets — and hyperlinks the user explicitly clicks.
 
@@ -256,7 +256,7 @@ Use a short debounce with a hard max-wait cap so a continuous scan still flushes
 **Enforced.** `LibraryScanEventGuardTests` fails the build when a new file subscribes to these events without being reviewed onto its allowlist. It also checks the **synchronous body of *every* reviewed subscriber** — not just `TagCacheMonitor` — against a broadened denylist of DB queries and I/O sinks (`GetItem(s)` / `GetPeople` / `QueryItems` / `GetMediaSources` / `GetImageInfo` / `GetChildren`, plus `File.*`, `SaveChanges`, `ToListAsync` and LINQ materialization like `.First(...)`). Legitimately deferred work — the code inside a `Task.Run(...)` lambda or a named off-thread worker — is stripped before matching, so only work that would actually run on the scan thread trips the guard. A subscriber that regains inline heavy work in its synchronous prefix fails with the file and offending call named. Grep the record-and-defer sites:
 
 ```bash
-grep -rn "PERF(S1)" Jellyfin.Plugin.JellyfinEnhanced/
+grep -rn "PERF(S1)" Jellyfin.Plugin.JellyfinElevate/
 ```
 
 **In the tree:** `Services/TagCacheMonitor.cs` (record-and-defer handler), `Services/TagCachePendingChanges.cs` (coalescing set), `Services/TagCacheService.cs` (debounced off-thread flush + `Dispose` drain), `Services/SeerrScanTriggerService.cs` (counter + debounce timer), `EventHandlers/ContinueWatchingPlaybackEvents.cs` (a bulk library removal coalesces to one hidden-content prune per user for the whole batch, not one per removed item).

@@ -23,7 +23,7 @@
  *   - the tag must be v-prefixed or bare dotted numbers (v11.13.0, 11.13.0.0)
  *   - the new version must be strictly greater than every version already in
  *     the manifest (monotonic — prevents accidentally re-tagging lower)
- *   - each zip must exist and be named Jellyfin.Plugin.JellyfinEnhanced_<abi
+ *   - each zip must exist and be named Jellyfin.Plugin.JellyfinElevate_<abi
  *     minus its 4th part>.zip (the convention the plugin catalog relies on)
  *   - the updated manifest is re-validated with validate-manifest.js before
  *     being written; nothing is written if validation fails
@@ -32,9 +32,9 @@
  *   node scripts/release/update-manifest.js \
  *     --manifest manifest.json \
  *     --tag 12.0.0.0 \
- *     --repo n00bcodr/Jellyfin-Enhanced \
+ *     --repo 4eh5xitv6787h645ebv/Jellyfin-Elevate \
  *     --changelog-file /tmp/changelog.txt \
- *     --asset 12.0.0.0=dist/Jellyfin.Plugin.JellyfinEnhanced_12.0.0.zip
+ *     --asset 12.0.0.0=dist/Jellyfin.Plugin.JellyfinElevate_12.0.0.zip
  *
  * New releases carry only the Jellyfin 12 asset (targetAbi 12.0.0.0); the
  * manifest's existing 10.11.0.0 entries are frozen history and stay as-is.

@@ -3,13 +3,13 @@
 **Check Installation Status:**
 
 1. Go to `Dashboard` → `Plugins`
-2. Verify `Jellyfin Enhanced` is listed under `Installed`
+2. Verify `Jellyfin Elevate` is listed under `Installed`
 3. Check that it's enabled (not disabled)
 
 **Run Startup Task:**
 
 1. Go to `Dashboard` → `Scheduled Tasks`
-2. Under `Jellyfin Enhanced`, find the task: `Jellyfin Enhanced Startup`
+2. Under `Jellyfin Elevate`, find the task: `Jellyfin Elevate Startup`
 3. Execute the task manually *(click the button: `▶︎`)*
 4. Refresh your browser ++ctrl+f5++
 
@@ -37,22 +37,22 @@
 
 !!! note "How the script is delivered on Jellyfin 12"
 
-    By default the client script is injected at request time by the built-in injection middleware, which runs on every `/web/` index request independently of any scheduled task. Re-adding the `On application startup` trigger to the `Jellyfin Enhanced Startup` task will **not** fix scripts failing to load in the default configuration — the task only performs background initialisation and cleanup and no longer governs script delivery.
+    By default the client script is injected at request time by the built-in injection middleware, which runs on every `/web/` index request independently of any scheduled task. Re-adding the `On application startup` trigger to the `Jellyfin Elevate Startup` task will **not** fix scripts failing to load in the default configuration — the task only performs background initialisation and cleanup and no longer governs script delivery.
 
 **Check Browser Console:**
 
 1. Press ++f12++ to open developer tools
 2. Go to `Console` tab
-3. Look for errors mentioning "Jellyfin Enhanced"
+3. Look for errors mentioning "Jellyfin Elevate"
 4. Report errors on GitHub if found
 
 **Legacy on-disk fallback:**
 
-The `Jellyfin Enhanced Startup` scheduled task and its `On application startup` trigger only matter when an admin has switched to the legacy on-disk `index.html` rewrite (see [Permission Issues](#permission-issues)). In that mode the task performs the on-disk `index.html` rewrite at startup, so it should have the `On application startup` trigger:
+The `Jellyfin Elevate Startup` scheduled task and its `On application startup` trigger only matter when an admin has switched to the legacy on-disk `index.html` rewrite (see [Permission Issues](#permission-issues)). In that mode the task performs the on-disk `index.html` rewrite at startup, so it should have the `On application startup` trigger:
 
 1. Jellyfin: `Dashboard` → `Scheduled Tasks`
-2. Look for the tasks under `Jellyfin Enhanced` — mainly `Jellyfin Enhanced Startup`
-3. `Jellyfin Enhanced Startup` should have the trigger: `On application startup`
+2. Look for the tasks under `Jellyfin Elevate` — mainly `Jellyfin Elevate Startup`
+3. `Jellyfin Elevate Startup` should have the trigger: `On application startup`
 4. If missing, add the trigger manually
 
 
@@ -61,7 +61,7 @@ The `Jellyfin Enhanced Startup` scheduled task and its `On application startup` 
 **Clean Update Process:**
 
 1. Go to **Dashboard** → **Plugins** → **My Plugins**
-2. Find Jellyfin Enhanced
+2. Find Jellyfin Elevate
 3. Click **Uninstall**
 4. Restart server
 5. Reinstall from Catalog

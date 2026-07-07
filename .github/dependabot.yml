@@ -10,7 +10,7 @@ updates:
       timezone: "UTC"
     open-pull-requests-limit: 10
     reviewers:
-      - "n00bcodr"
+      - "4eh5xitv6787h645ebv"
     labels:
       - "dependencies"
       - "nuget"
@@ -43,7 +43,7 @@ updates:
       timezone: "UTC"
     open-pull-requests-limit: 5
     reviewers:
-      - "n00bcodr"
+      - "4eh5xitv6787h645ebv"
     labels:
       - "dependencies"
       - "github-actions"
@@ -59,6 +59,6 @@ updates:
           - "patch"
 
   - package-ecosystem: nuget
-    directory: /Jellyfin.Plugin.JellyfinEnhanced
+    directory: /Jellyfin.Plugin.JellyfinElevate
     schedule:
       interval: daily

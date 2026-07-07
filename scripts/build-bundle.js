@@ -20,7 +20,7 @@
  *
  * Deliberately NOT part of this bundle (they load out-of-band in js/plugin.js
  * and must stay individually fetchable):
- *   - the loader itself (js/plugin.js, served at /JellyfinEnhanced/script)
+ *   - the loader itself (js/plugin.js, served at /JellyfinElevate/script)
  *   - splashscreen  (loaded early, before initialize())
  *   - login-image   (loaded pre-login, config-gated)
  *   - translations  (loaded before the component stage)
@@ -34,7 +34,7 @@ const fs = require('fs');
 const path = require('path');
 
 const REPO_ROOT = path.join(__dirname, '..');
-const PROJECT_DIR = path.join(REPO_ROOT, 'Jellyfin.Plugin.JellyfinEnhanced');
+const PROJECT_DIR = path.join(REPO_ROOT, 'Jellyfin.Plugin.JellyfinElevate');
 const SRC_ROOT = path.join(PROJECT_DIR, 'src');
 const BOOTSTRAP_ROOT = path.join(SRC_ROOT, 'bootstrap');
 const OUT_DIR = path.join(PROJECT_DIR, 'dist');
@@ -103,14 +103,14 @@ function buildOptions() {
         // DevTools resolves stack traces to real src/ files. The map is embedded
         // alongside the bundle and served from the same dist/ route.
         sourcemap: 'linked',
-        sourceRoot: '/JellyfinEnhanced/js/',
+        sourceRoot: '/JellyfinElevate/js/',
         outfile: OUT_FILE,
         metafile: true,
         logLevel: 'warning',
         banner: {
             js: devMode
-                ? '/* Jellyfin Enhanced — generated DEV bundle (scripts/build-bundle.js --dev). Do not edit; sources live in src/. */'
-                : '/* Jellyfin Enhanced — generated production bundle (scripts/build-bundle.js). Do not edit; sources live in src/. */',
+                ? '/* Jellyfin Elevate — generated DEV bundle (scripts/build-bundle.js --dev). Do not edit; sources live in src/. */'
+                : '/* Jellyfin Elevate — generated production bundle (scripts/build-bundle.js). Do not edit; sources live in src/. */',
         },
     };
 }
@@ -123,14 +123,14 @@ function bootstrapOptions() {
         format: 'iife',
         minify: !devMode,
         sourcemap: 'linked',
-        sourceRoot: '/JellyfinEnhanced/js/',
+        sourceRoot: '/JellyfinElevate/js/',
         outdir: OUT_DIR,
         metafile: true,
         logLevel: 'warning',
         banner: {
             js: devMode
-                ? '/* Jellyfin Enhanced — generated DEV bootstrap loader (scripts/build-bundle.js --dev). Do not edit; source lives in src/bootstrap/. */'
-                : '/* Jellyfin Enhanced — generated production bootstrap loader (scripts/build-bundle.js). Do not edit; source lives in src/bootstrap/. */',
+                ? '/* Jellyfin Elevate — generated DEV bootstrap loader (scripts/build-bundle.js --dev). Do not edit; source lives in src/bootstrap/. */'
+                : '/* Jellyfin Elevate — generated production bootstrap loader (scripts/build-bundle.js). Do not edit; source lives in src/bootstrap/. */',
         },
     };
 }

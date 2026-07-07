@@ -1,8 +1,0 @@
-<Solution>
-  <Folder Name="/Jellyfin.Plugin.JellyfinEnhanced.Tests/">
-    <Project Path="Jellyfin.Plugin.JellyfinEnhanced.Tests/JellyfinEnhanced.Tests.csproj" />
-  </Folder>
-  <Folder Name="/Jellyfin.Plugin.JellyfinEnhanced/">
-    <Project Path="Jellyfin.Plugin.JellyfinEnhanced/JellyfinEnhanced.csproj" />
-  </Folder>
-</Solution>

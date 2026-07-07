@@ -4,10 +4,10 @@
  * Line-coverage ratchet for the plugin assembly.
  *
  * Reads the cobertura report(s) produced by
- *   dotnet test Jellyfin.Plugin.JellyfinEnhanced.Tests/JellyfinEnhanced.Tests.csproj \
+ *   dotnet test Jellyfin.Plugin.JellyfinElevate.Tests/JellyfinElevate.Tests.csproj \
  *     -c Release --collect:"XPlat Code Coverage"
  * (coverlet.collector), computes line coverage for the
- * Jellyfin.Plugin.JellyfinEnhanced package and fails below the threshold.
+ * Jellyfin.Plugin.JellyfinElevate package and fails below the threshold.
  *
  * The threshold is a RATCHET: it was set just below the measured coverage at
  * introduction (17.72% on 2026-07-04). When you add tests and the number
@@ -19,9 +19,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const PACKAGE_NAME = 'Jellyfin.Plugin.JellyfinEnhanced';
+const PACKAGE_NAME = 'Jellyfin.Plugin.JellyfinElevate';
 const DEFAULT_THRESHOLD = 16;
-const RESULTS_ROOT = path.join(__dirname, '..', 'Jellyfin.Plugin.JellyfinEnhanced.Tests', 'TestResults');
+const RESULTS_ROOT = path.join(__dirname, '..', 'Jellyfin.Plugin.JellyfinElevate.Tests', 'TestResults');
 
 function parseThreshold(argv) {
     const flagIndex = argv.indexOf('--threshold');
@@ -90,7 +90,7 @@ function main() {
     const reports = findReports(RESULTS_ROOT);
     if (reports.length === 0) {
         console.error(`check-dotnet-coverage: no coverage.cobertura.xml under ${RESULTS_ROOT}`);
-        console.error('Run: dotnet test Jellyfin.Plugin.JellyfinEnhanced.Tests/JellyfinEnhanced.Tests.csproj -c Release --collect:"XPlat Code Coverage"');
+        console.error('Run: dotnet test Jellyfin.Plugin.JellyfinElevate.Tests/JellyfinElevate.Tests.csproj -c Release --collect:"XPlat Code Coverage"');
         process.exit(2);
     }
 

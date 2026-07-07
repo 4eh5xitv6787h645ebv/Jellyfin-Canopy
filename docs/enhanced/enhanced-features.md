@@ -1,6 +1,6 @@
 # Features Guide
 
-Jellyfin Enhanced bundles dozens of features into one convenient plugin. This guide covers all available features and how to use them.
+Jellyfin Elevate bundles dozens of features into one convenient plugin. This guide covers all available features and how to use them.
 
 ---
 
@@ -136,7 +136,7 @@ Administrators can review (and optionally manage) what other users have hidden, 
 
 **Configuration:**
 
-In **Dashboard** → **Plugins** → **Jellyfin Enhanced** → **Pages** → **Hidden Content** → **Admin Controls**, the **Let admins view and manage other users' hidden content** toggle enables the whole feature (the user-filter dropdown and the Edit toggle). On by default; turn it off to keep hidden lists private.
+In **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Pages** → **Hidden Content** → **Admin Controls**, the **Let admins view and manage other users' hidden content** toggle enables the whole feature (the user-filter dropdown and the Edit toggle). On by default; turn it off to keep hidden lists private.
 
 ---
 
@@ -196,7 +196,7 @@ A **Play Random** button in the Jellyfin header that opens a random item from yo
 
 **Configuration:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Display** tab
 3. Find the **Random Button** section
 4. Enable **"Enable Random Button"**
@@ -446,7 +446,7 @@ Jellyfin users can write their own reviews for movies, series, seasons, and epis
 
 **Setup (admin):**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Elsewhere** tab
 3. Enable **"Enable User Written Reviews"**
 4. Optionally enable **"Show average user rating on poster cards"** to display the average rating as a poster tag
@@ -475,7 +475,7 @@ Display user reviews from TMDB on item pages.
 - Expandable/collapsible reviews
 
 **Setup:**
-Enable **"Show TMDB Reviews"** in **Dashboard** → **Plugins** → **Jellyfin Enhanced** → **Elsewhere** tab.
+Enable **"Show TMDB Reviews"** in **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Elsewhere** tab.
 
 See [Elsewhere Features](../elsewhere/elsewhere-features.md#tmdb-reviews) for full details.
 
@@ -620,7 +620,7 @@ Admins see a megaphone icon (📣) in the panel header. Click it to open the bro
 
 **Setup:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Extras** tab
 3. Enable **"Active Streams Header Widget"**
 4. Optional: Enable **"Show widget to non-admins"** to make the widget visible to non-admin users
@@ -743,7 +743,7 @@ Upload your own logos, banners, and favicon.
 
 **Setup:**
 
-1. Go to **Dashboard** → **Plugins** → **Jellyfin Enhanced**
+1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to the **Extras** tab
 3. Find **Custom Image Assets** section
 4. Upload your custom images:
@@ -758,7 +758,7 @@ Upload your own logos, banners, and favicon.
 
 - Requires [file-transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation)
 - Recommended image formats: PNG, SVG
-- Files stored in: `/plugins/configurations/Jellyfin.Plugin.JellyfinEnhanced/custom_branding/`
+- Files stored in: `/plugins/configurations/Jellyfin.Plugin.JellyfinElevate/custom_branding/`
 
 ### 🌍 Internationalization
 
@@ -767,8 +767,8 @@ Multi-language support with community translations and automatic caching.
 **Supported Languages:**
 
 <p align="left">
-  <a href="https://hosted.weblate.org/engage/jellyfinenhanced/">
-    <img src="https://hosted.weblate.org/widget/jellyfinenhanced/multi-auto.svg" alt="Translation status" />
+  <a href="https://hosted.weblate.org/engage/jellyfinelevate/">
+    <img src="https://hosted.weblate.org/widget/jellyfinelevate/multi-auto.svg" alt="Translation status" />
   </a>
 </p>
 

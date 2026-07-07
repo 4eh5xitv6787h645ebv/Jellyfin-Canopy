@@ -9,11 +9,11 @@ We release patches for security vulnerabilities in the following versions:
 | Latest  | :white_check_mark: |
 | < Latest| :x:                |
 
-We recommend always using the latest version of Jellyfin Enhanced to ensure you have the most recent security updates.
+We recommend always using the latest version of Jellyfin Elevate to ensure you have the most recent security updates.
 
 ## Reporting a Vulnerability
 
-We take the security of Jellyfin Enhanced seriously. If you believe you have found a security vulnerability, please report it to us responsibly.
+We take the security of Jellyfin Elevate seriously. If you believe you have found a security vulnerability, please report it to us responsibly.
 
 ### Please DO NOT:
 - Open a public GitHub issue for security vulnerabilities
@@ -48,7 +48,7 @@ We take the security of Jellyfin Enhanced seriously. If you believe you have fou
 1. **API Keys**: Store API keys securely and never commit them to version control
 2. **Access Control**: Use Jellyfin's built-in user permissions appropriately
 3. **HTTPS**: Always access Jellyfin over HTTPS in production
-4. **Updates**: Keep Jellyfin Enhanced and Jellyfin server up to date
+4. **Updates**: Keep Jellyfin Elevate and Jellyfin server up to date
 
 ### External Integrations:
 1. **Seerr**: Ensure your Seerr instance is properly secured
@@ -83,4 +83,4 @@ For security concerns that don't constitute a vulnerability, you can:
 - Start a discussion in GitHub Discussions
 - Contact the maintainers directly
 
-Thank you for helping keep Jellyfin Enhanced secure!
+Thank you for helping keep Jellyfin Elevate secure!

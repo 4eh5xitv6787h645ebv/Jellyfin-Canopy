@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document provides security guidelines for contributors to Jellyfin Enhanced. Following these practices helps maintain the security and integrity of the plugin.
+This document provides security guidelines for contributors to Jellyfin Elevate. Following these practices helps maintain the security and integrity of the plugin.
 
 ## Code Security Best Practices
 

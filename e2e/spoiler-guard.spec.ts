@@ -56,7 +56,7 @@ function norm(id: string): string {
 }
 
 // Opening a SERIES detail page fires the Seerr issue-indicator feature
-// (jellyseerr/api.ts fetchIssuesForMedia → GET /JellyfinEnhanced/jellyseerr/issue).
+// (jellyseerr/api.ts fetchIssuesForMedia → GET /JellyfinElevate/jellyseerr/issue).
 // On the shared dev server (:8099) Seerr is configured but that endpoint returns
 // 403 for the non-admin token, so JE logs a caught "Failed to fetch issues" error
 // and the response is a 403 — both entirely unrelated to Spoiler Guard, and both
@@ -64,7 +64,7 @@ function norm(id: string): string {
 // that pair out here (like settings-persist.spec's DASHBOARD_CHROME) so the check
 // still catches any REAL Spoiler Guard console error or plugin 4xx.
 const SEERR_ISSUE_NOISE_TEXT = /Seerr API: Failed to fetch issues/i;
-const SEERR_ISSUE_NOISE_URL = /\/JellyfinEnhanced\/jellyseerr\/issue/i;
+const SEERR_ISSUE_NOISE_URL = /\/JellyfinElevate\/jellyseerr\/issue/i;
 
 function assertNoSpoilerRuntimeErrors(consoleErrors: {
     real(): string[];
@@ -79,7 +79,7 @@ function assertNoSpoilerRuntimeErrors(consoleErrors: {
 /** Fetch the admin-exposed public config once (unauthenticated is fine). */
 async function spoilerBlurEnabled(): Promise<boolean> {
     try {
-        const res = await fetch(`${BASE}/JellyfinEnhanced/public-config`);
+        const res = await fetch(`${BASE}/JellyfinElevate/public-config`);
         if (!res.ok) return false;
         const cfg = (await res.json()) as { SpoilerBlurEnabled?: boolean };
         return cfg.SpoilerBlurEnabled === true;
@@ -136,7 +136,7 @@ async function pickTarget(user: Session): Promise<Target | null> {
 async function setSeriesGuard(user: Session, seriesId: string, on: boolean): Promise<void> {
     await apiRaw(
         BASE,
-        `/JellyfinEnhanced/spoiler-blur/series/${norm(seriesId)}`,
+        `/JellyfinElevate/spoiler-blur/series/${norm(seriesId)}`,
         user.token,
         { method: on ? 'POST' : 'DELETE' }
     );
@@ -144,7 +144,7 @@ async function setSeriesGuard(user: Session, seriesId: string, on: boolean): Pro
 
 /** The set of guarded series ids (normalized) for a user. */
 async function guardedSeriesIds(user: Session): Promise<Set<string>> {
-    const state = (await api(BASE, '/JellyfinEnhanced/spoiler-blur/series', user.token)) as
+    const state = (await api(BASE, '/JellyfinElevate/spoiler-blur/series', user.token)) as
         | { Series?: Record<string, unknown> }
         | null;
     return new Set(Object.keys(state?.Series ?? {}).map((k) => norm(k)));
@@ -152,7 +152,7 @@ async function guardedSeriesIds(user: Session): Promise<Set<string>> {
 
 /** Read a single user's override prefs. */
 async function getUserPrefs(user: Session): Promise<Record<string, unknown>> {
-    return ((await api(BASE, '/JellyfinEnhanced/spoiler-blur/user-prefs', user.token)) ?? {}) as Record<
+    return ((await api(BASE, '/JellyfinElevate/spoiler-blur/user-prefs', user.token)) ?? {}) as Record<
         string,
         unknown
     >;
@@ -185,7 +185,7 @@ async function armToastWatcher(page: Page): Promise<void> {
         const obs = new MutationObserver((muts) => {
             for (const m of muts) {
                 for (const n of Array.from(m.addedNodes)) {
-                    if (n instanceof HTMLElement && n.classList.contains('jellyfin-enhanced-toast')) {
+                    if (n instanceof HTMLElement && n.classList.contains('jellyfin-elevate-toast')) {
                         (window as any).__jeToastSeen = true;
                     }
                 }
@@ -360,9 +360,9 @@ test.describe('Spoiler Guard', () => {
 
             // Open the panel → settings tab → the Spoiler Guard override <details>.
             await page.evaluate(() => {
-                (window as any).JellyfinEnhanced.showEnhancedPanel();
+                (window as any).JellyfinElevate.showEnhancedPanel();
             });
-            const panel = page.locator('#jellyfin-enhanced-panel');
+            const panel = page.locator('#jellyfin-elevate-panel');
             await expect(panel).toBeVisible({ timeout: 15_000 });
             await panel.locator('.tab-button[data-tab="settings"]').click();
 
@@ -386,7 +386,7 @@ test.describe('Spoiler Guard', () => {
             const [prefsResponse] = await Promise.all([
                 page.waitForResponse(
                     (r) =>
-                        /\/JellyfinEnhanced\/spoiler-blur\/user-prefs$/.test(r.url()) &&
+                        /\/JellyfinElevate\/spoiler-blur\/user-prefs$/.test(r.url()) &&
                         r.request().method() === 'POST',
                     { timeout: 30_000 }
                 ),
@@ -404,7 +404,7 @@ test.describe('Spoiler Guard', () => {
             assertNoRuntimeErrors(consoleErrors);
         } finally {
             // Restore the exact prior prefs (POST replaces the whole prefs object).
-            await api(BASE, '/JellyfinEnhanced/spoiler-blur/user-prefs', user.token, {
+            await api(BASE, '/JellyfinElevate/spoiler-blur/user-prefs', user.token, {
                 method: 'POST',
                 body: JSON.stringify(original),
             });
