@@ -255,6 +255,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
             DownloadsPageShowIssues = false;
             ShowDownloadsInRequests = true;
             DownloadsFilterByUserRequests = true;
+            RequestApprovalsEnabled = true;
 
             // Calendar Page Settings (Sonarr/Radarr Releases)
             CalendarPageEnabled = false;
@@ -659,6 +660,17 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         public bool DownloadsPageShowIssues { get; set; }
         public bool ShowDownloadsInRequests { get; set; }
         public bool DownloadsFilterByUserRequests { get; set; }
+
+        /// <summary>
+        /// Enables the in-app Approve/Decline affordances on pending Seerr
+        /// requests in the Requests page. When disabled, the approval buttons are
+        /// never rendered (server-authoritative, folded into canApproveRequests)
+        /// and the approve/decline endpoint refuses the action. Defaults to true
+        /// so existing installs keep the affordance. Permission to actually
+        /// approve is still governed by Seerr (Jellyfin admin, or a Seerr user
+        /// with ADMIN/MANAGE_REQUESTS) — this toggle only gates the feature.
+        /// </summary>
+        public bool RequestApprovalsEnabled { get; set; }
 
         // Calendar Page Settings (Sonarr/Radarr Releases)
         public bool CalendarPageEnabled { get; set; }

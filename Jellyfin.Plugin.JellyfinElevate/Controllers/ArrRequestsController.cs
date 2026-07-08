@@ -733,10 +733,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
                 var totalResults = isComingSoonFilter ? comingSoonTotal : Math.Max(0, ((int?)pageInfo?["results"] ?? 0) - removedByScope);
                 var totalPages = (int)Math.Ceiling((double)totalResults / take);
 
-                var canApproveRequests = IsAdminUser() || JellyseerrPermissionHelper.HasAnyPermission(
-                    jellyseerrUser.Permissions,
-                    JellyseerrPermission.ADMIN | JellyseerrPermission.MANAGE_REQUESTS
-                );
+                // Fold the admin feature toggle into the capability the client
+                // renders on: when In-App Request Approvals is disabled, the
+                // server never advertises the capability, so the buttons never
+                // render even if a stale client config flag says otherwise.
+                var canApproveRequests = config.RequestApprovalsEnabled
+                    && (IsAdminUser() || JellyseerrPermissionHelper.HasAnyPermission(
+                        jellyseerrUser.Permissions,
+                        JellyseerrPermission.ADMIN | JellyseerrPermission.MANAGE_REQUESTS
+                    ));
 
                 return Ok(new
                 {
@@ -897,6 +902,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrWhiteSpace(config.JellyseerrUrls) || string.IsNullOrWhiteSpace(config.JellyseerrApiKey))
                 return StatusCode(503, new { error = true, message = "Seerr not configured." });
+
+            // The admin feature toggle gates the action server-side too — the
+            // client hides the buttons when it's off, but the server still
+            // enforces so a crafted request can't bypass a disabled feature.
+            if (!config.RequestApprovalsEnabled)
+                return StatusCode(403, new { error = true, message = "In-app request approvals are disabled." });
 
             var jellyfinUserId = UserHelper.GetCurrentUserId(User)?.ToString();
             if (string.IsNullOrEmpty(jellyfinUserId))

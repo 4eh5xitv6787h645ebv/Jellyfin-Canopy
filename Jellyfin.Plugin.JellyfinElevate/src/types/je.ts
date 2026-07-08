@@ -28,6 +28,8 @@ export interface PluginConfig {
     ClearLocalStorageTimestamp?: number;
     /** Serve third-party assets from the local plugin cache (default true); see core/asset-urls.ts. */
     AssetCacheEnabled?: boolean;
+    /** Gate the in-app Approve/Decline affordance on pending Seerr requests (default true). */
+    RequestApprovalsEnabled?: boolean;
     [key: string]: unknown;
 }
 

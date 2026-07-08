@@ -125,6 +125,7 @@
   "RatingTagsEnabled": false,
   "RatingTagsPosition": "bottom-right",
   "RemoveContinueWatchingEnabled": false,
+  "RequestApprovalsEnabled": true,
   "ResolutionTagOrder": 1,
   "ReviewsExpandedByDefault": false,
   "Shortcuts": [

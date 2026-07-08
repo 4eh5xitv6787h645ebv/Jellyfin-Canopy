@@ -326,6 +326,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                 Public("DownloadsPagePollingEnabled", c => c.DownloadsPagePollingEnabled),
                 Public("DownloadsPollIntervalSeconds", c => c.DownloadsPollIntervalSeconds),
                 Public("DownloadsFilterByUserRequests", c => c.DownloadsFilterByUserRequests),
+                Public("RequestApprovalsEnabled", c => c.RequestApprovalsEnabled),
 
                 // Calendar Page Settings
                 Public("CalendarPageEnabled", c => c.CalendarPageEnabled),
