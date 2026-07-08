@@ -305,7 +305,7 @@ if (mediaType === 'movie') {
     const downloads4k = mediaInfo.downloadStatus4k || [];
     const jellyfinMediaId = mediaInfo.jellyfinMediaId || null;
     const jellyfinMediaId4k = mediaInfo.jellyfinMediaId4k || null;
-    const show4k = !!JE.pluginConfig.JellyseerrEnable4KRequests;
+    const show4k = JE.jellyseerrAPI!.canRequest4k('movie');
 
     // Show both chips if both statuses exist
     const hasNormalStatus = JE.seerrStatus!.hasStatus(status);
@@ -361,7 +361,7 @@ if (mediaType === 'movie') {
     const downloads4k = mediaInfo.downloadStatus4k || [];
     const jellyfinMediaId = mediaInfo.jellyfinMediaId || null;
     const jellyfinMediaId4k = mediaInfo.jellyfinMediaId4k || null;
-    const show4kTv = !!JE.pluginConfig.JellyseerrEnable4KTvRequests;
+    const show4kTv = JE.jellyseerrAPI!.canRequest4k('tv');
 
     // Show both chips if both statuses exist
     const hasNormalStatus = JE.seerrStatus!.hasStatus(status);

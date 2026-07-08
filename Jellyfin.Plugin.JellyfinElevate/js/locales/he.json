@@ -378,6 +378,7 @@
   "hidden_content_confirm_cancel": "Cancel",
   "jellyseerr_modal_budget": "Budget",
   "jellyseerr_err_no_request_permission": "No permission to make requests",
+  "jellyseerr_err_no_4k_request_permission": "אין הרשאה לבקש 4K",
   "jellyseerr_report_unavailable_toast": "Reporting is unavailable for this item (no TMDB match)",
   "jellyseerr_report_issue_type_other": "Other",
   "jellyseerr_seasons_available_count": "{count}/{total} available",

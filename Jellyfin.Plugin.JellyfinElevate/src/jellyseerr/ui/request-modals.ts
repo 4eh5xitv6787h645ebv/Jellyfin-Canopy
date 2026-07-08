@@ -83,6 +83,45 @@ ui.showMovieRequestModal = async function (tmdbId: any, title: any, searchResult
 };
 
 /**
+ * Resolves a collection movie row's badge + selectability from a Seerr media
+ * status. Shared between the initial (standard-quality) render and the 4K-mode
+ * re-evaluation so the two never drift. Already-available, already-requested and
+ * blocklisted movies are non-selectable.
+ */
+function describeCollectionRowStatus(status: number, hasActiveDownloads: boolean): { statusClass: string; statusText: string; isDisabled: boolean } {
+    let statusClass = 'not-requested';
+    let statusText = JE.t!('jellyseerr_season_status_not_requested') || 'Not Requested';
+
+    if (status === MediaStatus.AVAILABLE) {
+        statusClass = 'available';
+        statusText = JE.t!('jellyseerr_btn_available') || 'Available';
+    } else if (status === MediaStatus.PARTIALLY_AVAILABLE) {
+        statusClass = 'partially-available';
+        statusText = JE.t!('jellyseerr_btn_partially_available') || 'Partially Available';
+    } else if (status === MediaStatus.PROCESSING) {
+        if (hasActiveDownloads) {
+            statusClass = 'processing';
+            statusText = JE.t!('jellyseerr_btn_processing') || 'Processing';
+        } else {
+            statusClass = 'pending';
+            statusText = JE.t!('jellyseerr_btn_requested') || 'Requested';
+        }
+    } else if (status === MediaStatus.PENDING) {
+        statusClass = 'pending';
+        statusText = JE.t!('jellyseerr_btn_pending') || 'Pending';
+    } else if (status === MediaStatus.BLOCKED) {
+        statusClass = 'blocklisted';
+        statusText = JE.t!('jellyseerr_btn_blocklisted') || 'Blocklisted';
+    }
+
+    const isDisabled = status === MediaStatus.AVAILABLE
+        || status === MediaStatus.PENDING
+        || status === MediaStatus.PROCESSING
+        || status === MediaStatus.BLOCKED;
+    return { statusClass, statusText, isDisabled };
+}
+
+/**
  * Shows a modal for requesting a collection (all movies in a TMDB collection).
  * @param {number} collectionId - The TMDB collection IDisplayStatus.
  * @param {string} collectionName - The name of the collection.
@@ -107,53 +146,47 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
     }
 
     const showAdvanced = JE.pluginConfig.JellyseerrShowAdvanced;
+    // Offer a "request the whole collection in 4K" toggle only when 4K requests
+    // are actually available to this user (admin toggle AND Seerr 4K capability
+    // AND the user's 4K permission). Collections are movies, so gate on 'movie'.
+    const show4k = JE.jellyseerrAPI!.canRequest4k('movie');
 
-    // Create checkbox list of movies in the collection with posters and status badges
+    // Create checkbox list of movies in the collection with posters and status badges.
+    // Each row carries BOTH the standard and 4K status so the 4K toggle can
+    // re-evaluate which movies are already available/requested without re-fetching.
     const movieListHtml = collectionDetails.parts.map((movie: any) => {
-        const status = movie.mediaInfo?.status || MediaStatus.UNKNOWN;
-        const downloads = movie.mediaInfo?.downloadStatus || [];
-        const hasActiveDownloads = downloads && downloads.length > 0;
-        const isAvailable = status === MediaStatus.AVAILABLE;
-        const isRequested = status === MediaStatus.PENDING || status === MediaStatus.PROCESSING;
-        const isDisabled = isAvailable || isRequested;
+        const m = movie as {
+            id?: number | string;
+            title?: string;
+            releaseDate?: string;
+            posterPath?: string;
+            mediaInfo?: { status?: number; status4k?: number; downloadStatus?: unknown[]; downloadStatus4k?: unknown[] };
+        };
+        const status = m.mediaInfo?.status || MediaStatus.UNKNOWN;
+        const status4k = m.mediaInfo?.status4k || MediaStatus.UNKNOWN;
+        const hasActiveDownloads = (m.mediaInfo?.downloadStatus?.length ?? 0) > 0;
+        const hasActiveDownloads4k = (m.mediaInfo?.downloadStatus4k?.length ?? 0) > 0;
+        const { statusClass, statusText, isDisabled } = describeCollectionRowStatus(status, hasActiveDownloads);
 
-        let statusClass = 'not-requested';
-        let statusText = JE.t!('jellyseerr_season_status_not_requested') || 'Not Requested';
-
-        if (status === MediaStatus.AVAILABLE) {
-            statusClass = 'available';
-            statusText = JE.t!('jellyseerr_btn_available') || 'Available';
-        } else if (status === MediaStatus.PARTIALLY_AVAILABLE) {
-            statusClass = 'partially-available';
-            statusText = JE.t!('jellyseerr_btn_partially_available') || 'Partially Available';
-        } else if (status === MediaStatus.PROCESSING) {
-            if (hasActiveDownloads) {
-                statusClass = 'processing';
-                statusText = JE.t!('jellyseerr_btn_processing') || 'Processing';
-            } else {
-                statusClass = 'pending';
-                statusText = JE.t!('jellyseerr_btn_requested') || 'Requested';
-            }
-        } else if (status === MediaStatus.PENDING) {
-            statusClass = 'pending';
-            statusText = JE.t!('jellyseerr_btn_pending') || 'Pending';
-        }
-
-        const year = movie.releaseDate ? new Date(movie.releaseDate).getFullYear() : '';
-        const poster = movie.posterPath
-            ? `https://image.tmdb.org/t/p/w92${movie.posterPath}`
+        const year = m.releaseDate ? new Date(m.releaseDate).getFullYear() : '';
+        const poster = m.posterPath
+            ? `https://image.tmdb.org/t/p/w92${m.posterPath}`
             : assetUrl('jellyseerr/poster-fallback.svg');
 
         return `
-            <div class="jellyseerr-collection-movie-row">
+            <div class="jellyseerr-collection-movie-row"
+                 data-status="${Number(status) || 1}"
+                 data-status4k="${Number(status4k) || 1}"
+                 data-has-downloads="${hasActiveDownloads ? '1' : '0'}"
+                 data-has-downloads4k="${hasActiveDownloads4k ? '1' : '0'}">
                 <input type="checkbox"
                        class="jellyseerr-collection-checkbox"
-                       id="movie-${escapeHtml(movie.id)}"
-                       data-tmdb-id="${escapeHtml(movie.id)}"
+                       id="movie-${escapeHtml(m.id)}"
+                       data-tmdb-id="${escapeHtml(m.id)}"
                        ${isDisabled ? 'disabled' : 'checked'}>
-                <img src="${escapeHtml(poster)}" alt="${escapeHtml(movie.title)}" class="jellyseerr-collection-movie-poster">
+                <img src="${escapeHtml(poster)}" alt="${escapeHtml(m.title)}" class="jellyseerr-collection-movie-poster">
                 <div class="jellyseerr-collection-movie-details">
-                    <div class="title">${escapeHtml(movie.title)}</div>
+                    <div class="title">${escapeHtml(m.title)}</div>
                     <div class="year">${escapeHtml(year)}</div>
                 </div>
                 <div class="jellyseerr-season-status jellyseerr-season-status-${escapeHtml(statusClass)}">${escapeHtml(statusText)}</div>
@@ -161,7 +194,16 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
         `;
     }).join('');
 
+    const request4kLabel = JE.t!('jellyseerr_btn_request_4k') || 'Request in 4K';
+    const the4kToggleHtml = show4k
+        ? `<label class="jellyseerr-collection-4k-toggle">
+               <input type="checkbox" id="jellyseerr-collection-4k">
+               <span>${escapeHtml(request4kLabel)}</span>
+           </label>`
+        : '';
+
     const bodyHtml = `
+        ${the4kToggleHtml}
         <div class="jellyseerr-collection-list" style="max-height: 600px; overflow-y: auto;">
             <div class="jellyseerr-collection-header-row">
                 <input type="checkbox" class="jellyseerr-collection-checkbox" id="jellyseerr-select-all-movies">
@@ -183,6 +225,8 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
         onSave: async (modalEl: any, requestBtn: any, closeFn: any) => {
             requestBtn.disabled = true;
             requestBtn.innerHTML = `${JE.t!('jellyseerr_modal_requesting') || 'Requesting'}<span class="jellyseerr-button-spinner"></span>`;
+
+            const is4k = !!(modalEl.querySelector('#jellyseerr-collection-4k') as HTMLInputElement | null)?.checked;
 
             let settings = {};
             if (showAdvanced) {
@@ -214,7 +258,7 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
                 let quotaHitError: any = null;
                 for (const tmdbId of selectedMovies) {
                     try {
-                        await requestMedia(tmdbId, 'movie', settings, false, searchResultItem);
+                        await requestMedia(tmdbId, 'movie', settings, is4k, searchResultItem);
                         successCount++;
                     } catch (error: any) {
                         // Once quota is hit every remaining request will also fail — break.
@@ -294,6 +338,28 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
                 updateSelectAllState();
             }
         });
+
+        // 4K toggle: re-evaluate every row against the standard vs 4K status so
+        // the "already available/requested" disabling and badges track the mode.
+        const fourKToggle = modalInstance.modalElement.querySelector<HTMLInputElement>('#jellyseerr-collection-4k');
+        if (fourKToggle) {
+            fourKToggle.addEventListener('change', () => {
+                const is4k = fourKToggle.checked;
+                movieList.querySelectorAll<HTMLElement>('.jellyseerr-collection-movie-row').forEach((row) => {
+                    const checkbox = row.querySelector<HTMLInputElement>('.jellyseerr-collection-checkbox');
+                    const badge = row.querySelector<HTMLElement>('.jellyseerr-season-status');
+                    if (!checkbox || !badge) return;
+                    const status = Number(is4k ? row.dataset.status4k : row.dataset.status) || MediaStatus.UNKNOWN;
+                    const hasDownloads = (is4k ? row.dataset.hasDownloads4k : row.dataset.hasDownloads) === '1';
+                    const { statusClass, statusText, isDisabled } = describeCollectionRowStatus(status, hasDownloads);
+                    checkbox.disabled = isDisabled;
+                    checkbox.checked = !isDisabled;
+                    badge.className = `jellyseerr-season-status jellyseerr-season-status-${statusClass}`;
+                    badge.textContent = statusText;
+                });
+                updateSelectAllState();
+            });
+        }
 
         updateSelectAllState();
     }

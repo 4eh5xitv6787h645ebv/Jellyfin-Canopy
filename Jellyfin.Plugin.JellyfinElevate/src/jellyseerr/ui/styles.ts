@@ -335,6 +335,8 @@ ui.addSeasonModalStyles = function () {
         .jellyseerr-inline-progress-bar { height: .5rem; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; margin-bottom: .5rem; }
         .jellyseerr-inline-progress-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #8b5cf6); transition: width 0.3s ease; border-radius: 3px; }
         .jellyseerr-inline-progress-text { font-size: 0.75rem; color: #94a3b8; font-weight: 500; }
+        .jellyseerr-collection-4k-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; margin-bottom: 12px; background: rgba(51, 65, 85, 0.3); border: 1px solid rgba(71, 85, 105, 0.4); border-radius: 12px; font-weight: 600; color: #e2e8f0; cursor: pointer; }
+        .jellyseerr-collection-4k-toggle input { width: 20px; height: 20px; accent-color: #4f46e5; border-radius: 4px; cursor: pointer; }
         .jellyseerr-collection-list { display: grid; gap: 4px; }
         .jellyseerr-collection-header-row { display: grid; grid-template-columns: 40px 1fr auto auto; align-items: center; gap: 16px; padding: 12px 20px; background: rgba(51, 65, 85, 0.3); border: 1px solid rgba(71, 85, 105, 0.4); border-radius: 12px; margin-bottom: 8px; font-weight: 600; color: #e2e8f0; }
         .jellyseerr-collection-header-row .jellyseerr-collection-checkbox { cursor: pointer; }

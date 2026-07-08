@@ -148,6 +148,7 @@
   "jellyseerr_btn_error": "خطأ",
   "jellyseerr_btn_user_not_found": "المستخدم غير موجود",
   "jellyseerr_err_no_request_permission": "لا توجد صلاحية لتقديم الطلبات",
+  "jellyseerr_err_no_4k_request_permission": "لا تملك صلاحية طلب جودة 4K",
   "jellyseerr_err_no_issue_permission": "لا توجد صلاحية للإبلاغ عن المشكلات",
   "jellyseerr_err_no_issue_view_permission": "لا توجد صلاحية لعرض المشكلات",
   "jellyseerr_err_load_server_options": "فشل تحميل خيارات الخادم",

@@ -38,6 +38,14 @@ export interface JellyseerrApi {
     fetchCollectionDetails: (collectionId: any) => Promise<any>;
     fetchGenreSlider: (mediaType: any) => Promise<any[]>;
     resolveJellyseerrBaseUrl: () => string;
+    /**
+     * Whether the 4K request affordance should be offered for a media type.
+     * Combines the JE admin toggle (master switch) with the Seerr-reported
+     * capability + this user's Seerr 4K permission from the cached user-status.
+     * Synchronous (reads the memoized status); degrades to hidden until status
+     * resolves. The single source of truth for every 4K UI gate.
+     */
+    canRequest4k: (mediaType: any) => boolean;
 }
 
 declare module '../types/je' {
@@ -50,6 +58,8 @@ declare module '../types/je' {
     interface PluginConfig {
         JellyseerrEnabled?: boolean;
         JellyseerrShowSearchResults?: boolean;
+        JellyseerrEnable4KRequests?: boolean;
+        JellyseerrEnable4KTvRequests?: boolean;
         JellyseerrShowAdvanced?: boolean;
         JellyseerrShowQuotaInfo?: boolean;
         JellyseerrShowGenreDiscovery?: boolean;
@@ -285,6 +295,38 @@ api.surfaceUserStatusBanner = function(status) {
 api.clearUserStatusCache = function() {
     cachedUserStatus = null;
     cachedUserStatusAt = 0;
+};
+
+/**
+ * Whether to offer the 4K request affordance for a media type. Master switch is
+ * the JE admin toggle; on top of that the Seerr server must actually have 4K
+ * enabled AND this user must hold the 4K permission — both carried on the cached
+ * user-status (server-resolved). Degrades to hidden until status resolves, and
+ * the server enforces the same rule regardless (defense in depth).
+ */
+api.canRequest4k = function(mediaType) {
+    const isTv = String(mediaType || '').toLowerCase() === 'tv';
+    // Admin master switch first — an admin who disabled 4K keeps it hidden even
+    // if Seerr and permissions would allow it.
+    const adminEnabled = isTv
+        ? !!JE.pluginConfig.JellyseerrEnable4KTvRequests
+        : !!JE.pluginConfig.JellyseerrEnable4KRequests;
+    if (!adminEnabled) return false;
+
+    const status = cachedUserStatus as {
+        active?: boolean;
+        userFound?: boolean;
+        canRequest4kMovie?: boolean;
+        canRequest4kTv?: boolean;
+    } | null;
+    if (!status || !status.active || !status.userFound) {
+        // Capability not resolved yet. PERF(R9) late-beats-never: kick off the
+        // memoized status fetch (fire-and-forget) so the next render self-heals,
+        // and hide for now rather than showing an option the server may reject.
+        if (cachedUserStatus === null) { void api.checkUserStatus(); }
+        return false;
+    }
+    return isTv ? !!status.canRequest4kTv : !!status.canRequest4kMovie;
 };
 
 /**
