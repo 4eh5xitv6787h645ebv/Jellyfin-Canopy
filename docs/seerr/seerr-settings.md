@@ -49,15 +49,35 @@ This step is optional if you enable plugin-side auto import.
 2. Navigate to the **Seerr** tab
 3. Check **"Enable Seerr integration"** (master toggle — nothing Seerr-related works until this is enabled)
 4. Check **"Show Seerr Results in Search"**
-5. Enter your **Seerr URL(s)** (one per line)
-   - Use internal URL for best performance
+5. Enter your **Seerr URL(s)** (one per line) — the **internal** address the Jellyfin *server* uses
+   - Use the internal/LAN URL for best performance
    - Can provide multiple URLs (first successful connection used)
-6. Enter your **Seerr API Key**
+6. Optionally enter a **Seerr External URL** — the **public** address a user's *browser* opens for "Open in Seerr" links (see [Internal vs External URL](#internal-vs-external-url) below). Leave blank to reuse the internal URL.
+7. Enter your **Seerr API Key**
 
    - Found in Seerr: **Settings** → **General** → **API Key**
-7. Click the **"Test"** button next to the API Key field to verify the connection
-8. Enable optional features (see below)
-9. Click **Save**
+8. Click the **"Test"** button next to the API Key field to verify the connection
+9. Enable optional features (see below)
+10. Click **Save**
+
+### Internal vs External URL
+
+Seerr is reached from two very different places:
+
+- The **Jellyfin server** talks to Seerr for search, requests, issues and user import. It should use the **internal** URL (LAN or docker-network address) — configured in **Seerr URL(s)**. This URL may be unreachable from a user's browser.
+- A **user's browser** opens Seerr when they click an "Open in Seerr" link. It needs a **public** URL — configured in **Seerr External URL**.
+
+| Field | Used by | Example |
+|---|---|---|
+| **Seerr URL(s)** | Jellyfin server (all API calls) | `http://jellyseerr:5055` |
+| **Seerr External URL** | User browsers (deep links only) | `https://requests.example.com` |
+
+!!! tip
+    Leave **Seerr External URL** blank if the internal URL is already reachable from browsers — links then reuse the internal URL exactly as before (no behaviour change). Set it when Seerr sits behind a reverse proxy / auth gateway that the server bypasses on the LAN but users reach over the internet. When set, the internal Seerr address is no longer exposed to non-admin clients.
+
+For advanced setups where users reach Jellyfin through several different URLs, **URL Mappings** (under *Advanced URL Mappings*) can map each Jellyfin access URL to a specific Seerr URL; a matching mapping takes priority over the External URL. The External URL is the simpler option and covers most deployments.
+
+A malformed value (missing `http://`/`https://`) is rejected with a clear warning on save and never used.
 
 ### Step 4: Configure User Import (Optional)
 
