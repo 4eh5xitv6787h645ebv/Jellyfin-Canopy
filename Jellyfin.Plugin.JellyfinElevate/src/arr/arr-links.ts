@@ -5,14 +5,10 @@
 
 import { assetUrl } from '../core/asset-urls';
 import { createObserver } from '../core/dom-observer';
+import { resolveArrLinkBase } from './url-resolve';
 import { JE } from './arr-globals';
 import type { ExternalLinkOptions } from './arr-globals';
 import type { ApiApi, ObserverProxy } from '../types/je';
-
-interface UrlMapping {
-    jellyfinUrl: string;
-    arrUrl: string;
-}
 
 interface ResolvedInstance {
     name: string;
@@ -50,6 +46,7 @@ interface ArrLookupResponse {
     matches?: {
         instanceName?: string;
         instanceUrl?: string;
+        instanceExternalUrl?: string;
         urlMappings?: string;
         titleSlug?: string;
         episodeFileCount?: number;
@@ -168,56 +165,6 @@ JE.initializeArrLinksScript = async function () {
         return a;
     });
 
-    // Parse URL mappings from config
-    function parseUrlMappings(mappingsString: string | undefined): UrlMapping[] {
-        const mappings: UrlMapping[] = [];
-        if (!mappingsString) return mappings;
-
-        mappingsString.split('\n').forEach(line => {
-            const trimmed = line.trim();
-            if (!trimmed) return;
-
-            const parts = trimmed.split('|').map(p => p.trim());
-            if (parts.length === 2 && parts[0] && parts[1]) {
-                mappings.push({
-                    jellyfinUrl: parts[0],
-                    arrUrl: parts[1]
-                });
-            }
-        });
-
-        return mappings;
-    }
-
-    // Get the appropriate *arr URL based on how Jellyfin is being accessed
-    function getMappedUrl(urlMappings: UrlMapping[], defaultUrl: string | null | undefined): string | null {
-        if (!defaultUrl) {
-            return null;
-        }
-
-        if (!urlMappings || urlMappings.length === 0) {
-            return defaultUrl;
-        }
-
-        const serverAddress = (typeof ApiClient !== 'undefined' && ApiClient.serverAddress)
-            ? (ApiClient.serverAddress as () => string)()
-            : window.location.origin;
-
-        const currentUrl = serverAddress.replace(/\/+$/, '').toLowerCase();
-
-        // Check if current Jellyfin URL matches any mapping
-        for (const mapping of urlMappings) {
-            const normalizedJellyfinUrl = mapping.jellyfinUrl.replace(/\/+$/, '').toLowerCase();
-
-            if (currentUrl === normalizedJellyfinUrl) {
-                return mapping.arrUrl.replace(/\/$/, '');
-            }
-        }
-
-        // No mapping matched, return default URL
-        return defaultUrl;
-    }
-
     try {
         // PERF(R6): no remote assets — arr icons served from the local asset cache.
         const SONARR_ICON_URL = assetUrl('icons/sonarr.svg');
@@ -229,11 +176,13 @@ JE.initializeArrLinksScript = async function () {
         // off. Backend fan-out already skips disabled instances, so no match would appear
         // for them anyway — but this keeps the dropdown tidy when only disabled instances
         // would otherwise show for a given item. Falls back to legacy single fields below.
+        // Resolve the browser-facing base URL for each instance: external URL preferred over the
+        // internal URL, with a matching URL mapping winning over both (see url-resolve.ts).
         const sonarrInstances: ResolvedInstance[] = (JE.pluginConfig.SonarrInstances || [])
             .filter(i => i && i.Enabled !== false)
             .map(i => ({
                 name: i.Name || 'Sonarr',
-                url: getMappedUrl(parseUrlMappings(i.UrlMappings || ''), i.Url),
+                url: resolveArrLinkBase(i.Url, i.ExternalUrl, i.UrlMappings),
                 rawUrl: i.Url,
                 urlMappings: i.UrlMappings || ''
             })).filter(i => i.url);
@@ -242,29 +191,26 @@ JE.initializeArrLinksScript = async function () {
             .filter(i => i && i.Enabled !== false)
             .map(i => ({
                 name: i.Name || 'Radarr',
-                url: getMappedUrl(parseUrlMappings(i.UrlMappings || ''), i.Url),
+                url: resolveArrLinkBase(i.Url, i.ExternalUrl, i.UrlMappings),
                 rawUrl: i.Url,
                 urlMappings: i.UrlMappings || ''
             })).filter(i => i.url);
 
         // Fall back to legacy single-instance config if no instances available
         if (sonarrInstances.length === 0 && JE.pluginConfig.SonarrUrl) {
-            const legacyMappings = parseUrlMappings(JE.pluginConfig.SonarrUrlMappings || '');
-            const legacyUrl = getMappedUrl(legacyMappings, JE.pluginConfig.SonarrUrl);
+            const legacyUrl = resolveArrLinkBase(JE.pluginConfig.SonarrUrl, JE.pluginConfig.SonarrExternalUrl, JE.pluginConfig.SonarrUrlMappings);
             if (legacyUrl) {
                 sonarrInstances.push({ name: 'Sonarr', url: legacyUrl, rawUrl: JE.pluginConfig.SonarrUrl, urlMappings: '' });
             }
         }
         if (radarrInstances.length === 0 && JE.pluginConfig.RadarrUrl) {
-            const legacyMappings = parseUrlMappings(JE.pluginConfig.RadarrUrlMappings || '');
-            const legacyUrl = getMappedUrl(legacyMappings, JE.pluginConfig.RadarrUrl);
+            const legacyUrl = resolveArrLinkBase(JE.pluginConfig.RadarrUrl, JE.pluginConfig.RadarrExternalUrl, JE.pluginConfig.RadarrUrlMappings);
             if (legacyUrl) {
                 radarrInstances.push({ name: 'Radarr', url: legacyUrl, rawUrl: JE.pluginConfig.RadarrUrl, urlMappings: '' });
             }
         }
 
-        const bazarrMappings = parseUrlMappings(JE.pluginConfig.BazarrUrlMappings || '');
-        const bazarrUrl = getMappedUrl(bazarrMappings, JE.pluginConfig.BazarrUrl);
+        const bazarrUrl = resolveArrLinkBase(JE.pluginConfig.BazarrUrl, JE.pluginConfig.BazarrExternalUrl, JE.pluginConfig.BazarrUrlMappings);
 
         const styleId = 'arr-links-styles';
         if (!document.getElementById(styleId)) {
@@ -485,7 +431,7 @@ JE.initializeArrLinksScript = async function () {
                 const matches = Array.isArray(data.matches) ? data.matches : [];
                 const results = matches.map((m): SeriesSlugMatch => ({
                     instanceName: m.instanceName,
-                    instanceUrl: getMappedUrl(parseUrlMappings(m.urlMappings || ''), m.instanceUrl),
+                    instanceUrl: resolveArrLinkBase(m.instanceUrl, m.instanceExternalUrl, m.urlMappings),
                     titleSlug: m.titleSlug,
                     episodeFileCount: m.episodeFileCount || 0,
                     episodeCount: m.episodeCount || 0,
@@ -525,7 +471,7 @@ JE.initializeArrLinksScript = async function () {
                 const matches = Array.isArray(data.matches) ? data.matches : [];
                 const results = matches.map((m): MovieInstanceMatch => ({
                     name: m.instanceName,
-                    url: getMappedUrl(parseUrlMappings(m.urlMappings || ''), m.instanceUrl),
+                    url: resolveArrLinkBase(m.instanceUrl, m.instanceExternalUrl, m.urlMappings),
                     hasFile: m.hasFile || false,
                     sizeOnDisk: m.sizeOnDisk || 0,
                     rootFolderPath: m.rootFolderPath || ''
