@@ -93,7 +93,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Controllers
             {
                 SonarrInstances = """
                     [
-                      {"Name":"Sonarr Main","Url":"http://sonarr:8989","ApiKey":"sonarr-secret","UrlMappings":"internal=external","Enabled":true},
+                      {"Name":"Sonarr Main","Url":"http://sonarr:8989","ExternalUrl":"https://sonarr.example.com","ApiKey":"sonarr-secret","UrlMappings":"internal=external","Enabled":true},
                       {"Name":"Sonarr 4K","Url":"http://sonarr-4k:8989","ApiKey":"sonarr-4k-secret","UrlMappings":"","Enabled":false}
                     ]
                     """,

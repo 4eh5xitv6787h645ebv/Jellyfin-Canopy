@@ -247,9 +247,13 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                 Public("DiscoveryRowWatchlist", c => c.DiscoveryRowWatchlist),
                 Public("DiscoveryGenreRows", c => c.DiscoveryGenreRows),
                 Public("JellyseerrDisableCache", c => c.JellyseerrDisableCache),
-                // Only authenticated callers see internal Seerr URLs — they're used by
-                // client-side deep links and would otherwise leak network topology to
-                // unauthenticated visitors hitting the login page.
+                // The browser-facing Seerr link base. Prefers the explicit external/public URL
+                // when the admin has set one (well-formed http(s)); otherwise falls back to the
+                // first INTERNAL URL, exactly as before (zero behaviour change for single-URL
+                // setups). Only authenticated callers receive it — an unauthenticated login-page
+                // visitor gets nothing, so network topology never leaks pre-login. When an
+                // external URL IS configured, the internal URL is no longer emitted here, which
+                // also stops leaking the internal Seerr address to non-admin users.
                 PublicContextual("JellyseerrBaseUrl", ctx =>
                 {
                     if (!ctx.IsAuthenticated)
@@ -257,19 +261,21 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                         return string.Empty;
                     }
 
-                    var jellyseerrBaseUrl = string.Empty;
+                    var firstInternalUrl = string.Empty;
                     try
                     {
                         if (!string.IsNullOrWhiteSpace(ctx.Config.JellyseerrUrls))
                         {
-                            jellyseerrBaseUrl = ctx.Config.JellyseerrUrls
+                            firstInternalUrl = ctx.Config.JellyseerrUrls
                                 .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                                 .Select(u => u.Trim())
                                 .FirstOrDefault() ?? string.Empty;
                         }
                     }
                     catch { /* ignore */ }
-                    return jellyseerrBaseUrl;
+
+                    return Helpers.ServiceUrlResolver.ResolvePublicUrl(firstInternalUrl, ctx.Config.JellyseerrExternalUrl)
+                        ?? string.Empty;
                 }),
                 PublicContextual("JellyseerrUrlMappings", ctx =>
                     ctx.IsAuthenticated ? (ctx.Config.JellyseerrUrlMappings ?? string.Empty) : string.Empty),
@@ -388,11 +394,20 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                 Private("RadarrUrlMappings", c => c.RadarrUrlMappings),
                 Private("BazarrUrlMappings", c => c.BazarrUrlMappings),
 
+                // Optional external/public URLs for browser-facing arr links (admin-only, like the
+                // internal URLs above). The client prefers these over the internal URL when
+                // building "Open in Sonarr/Radarr/Bazarr" links; empty = fall back to the internal
+                // URL. Never used for server-side fetches. Not secrets — public link targets.
+                Private("SonarrExternalUrl", c => c.SonarrExternalUrl),
+                Private("RadarrExternalUrl", c => c.RadarrExternalUrl),
+                Private("BazarrExternalUrl", c => c.BazarrExternalUrl),
+
                 // Multi-instance Sonarr/Radarr (no API keys exposed). Enabled flag is exposed so
                 // the config page can render a per-instance toggle and arr-links can filter
-                // disabled instances from the dropdown without a round-trip.
-                Private("SonarrInstances", c => c.GetSonarrInstances().Select(i => new { i.Name, i.Url, i.UrlMappings, i.Enabled })),
-                Private("RadarrInstances", c => c.GetRadarrInstances().Select(i => new { i.Name, i.Url, i.UrlMappings, i.Enabled })),
+                // disabled instances from the dropdown without a round-trip. ExternalUrl is the
+                // per-instance browser-facing link base (empty = fall back to Url).
+                Private("SonarrInstances", c => c.GetSonarrInstances().Select(i => new { i.Name, i.Url, i.ExternalUrl, i.UrlMappings, i.Enabled })),
+                Private("RadarrInstances", c => c.GetRadarrInstances().Select(i => new { i.Name, i.Url, i.ExternalUrl, i.UrlMappings, i.Enabled })),
 
                 // Corruption flags so the frontend can surface a toast without waiting for an
                 // action endpoint to round-trip a corruption error envelope.

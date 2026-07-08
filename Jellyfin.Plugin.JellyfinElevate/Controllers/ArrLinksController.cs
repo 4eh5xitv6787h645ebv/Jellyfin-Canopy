@@ -346,6 +346,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
                     {
                         instanceName = instance.Name,
                         instanceUrl = instance.Url,
+                        instanceExternalUrl = instance.ExternalUrl,
                         titleSlug,
                         urlMappings = instance.UrlMappings,
                         episodeFileCount = (int?)statistics?["episodeFileCount"] ?? 0,
@@ -413,6 +414,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
                     {
                         instanceName = instance.Name,
                         instanceUrl = instance.Url,
+                        instanceExternalUrl = instance.ExternalUrl,
                         urlMappings = instance.UrlMappings,
                         hasFile = (bool?)item["hasFile"] ?? false,
                         sizeOnDisk = (long?)item["sizeOnDisk"] ?? 0,

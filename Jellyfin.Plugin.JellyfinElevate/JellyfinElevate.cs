@@ -43,6 +43,45 @@ namespace Jellyfin.Plugin.JellyfinElevate
             BackfillMissingDefaultShortcuts();
         }
 
+        /// <summary>
+        /// Server-side save hook. Jellyfin core routes admin config saves through
+        /// <c>POST /Plugins/{id}/Configuration</c> → this method. We sanitise the optional
+        /// external/public service URLs here so an obviously-malformed value (missing scheme,
+        /// non-http(s), stray whitespace) is blanked before it is persisted and can never reach
+        /// browser link building. This mirrors the config-page's client-side scheme check as
+        /// defence-in-depth; every other field passes through untouched, so a bad external URL
+        /// degrades to "use the internal URL" instead of rejecting the whole save.
+        /// </summary>
+        public override void UpdateConfiguration(BasePluginConfiguration configuration)
+        {
+            if (configuration is PluginConfiguration config)
+            {
+                SanitizeExternalUrlFields(config);
+            }
+
+            base.UpdateConfiguration(configuration);
+        }
+
+        private void SanitizeExternalUrlFields(PluginConfiguration config)
+        {
+            static void Sanitize(string? value, Action<string> assign, string field, ILogger<JellyfinElevate> logger)
+            {
+                var cleaned = Helpers.ServiceUrlResolver.SanitizeExternalUrl(value);
+                if (!string.Equals(cleaned, value ?? string.Empty, StringComparison.Ordinal)
+                    && !string.IsNullOrWhiteSpace(value))
+                {
+                    logger.LogWarning($"Dropped malformed external URL for {field} on save (must be an absolute http:// or https:// URL): {value}");
+                }
+
+                assign(cleaned);
+            }
+
+            Sanitize(config.JellyseerrExternalUrl, v => config.JellyseerrExternalUrl = v, nameof(config.JellyseerrExternalUrl), _logger);
+            Sanitize(config.SonarrExternalUrl, v => config.SonarrExternalUrl = v, nameof(config.SonarrExternalUrl), _logger);
+            Sanitize(config.RadarrExternalUrl, v => config.RadarrExternalUrl = v, nameof(config.RadarrExternalUrl), _logger);
+            Sanitize(config.BazarrExternalUrl, v => config.BazarrExternalUrl = v, nameof(config.BazarrExternalUrl), _logger);
+        }
+
         // Dedupes Shortcuts (XmlSerializer appends to constructor-initialized lists, doubling on each restart)
         // and backfills missing defaults. Reverse iteration so persisted XML rows win over constructor defaults.
         private void BackfillMissingDefaultShortcuts()

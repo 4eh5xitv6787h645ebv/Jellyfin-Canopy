@@ -11,9 +11,19 @@ namespace Jellyfin.Plugin.JellyfinElevate.Model.Arr
         public string Name { get; set; } = string.Empty;
 
         /// <summary>
-        /// Base URL of the instance (e.g., "http://192.168.1.100:8989").
+        /// Internal base URL of the instance (e.g., "http://192.168.1.100:8989"). This is the URL
+        /// the Jellyfin server uses for all server-side fetches; it may be unreachable from a
+        /// user's browser (LAN/docker address).
         /// </summary>
         public string Url { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Optional external/public base URL used only for user-clickable "Open in Sonarr/Radarr"
+        /// links in the browser (e.g., "https://sonarr.example.com"). Empty = fall back to
+        /// <see cref="Url"/>, so existing single-URL setups are unchanged. Never used for
+        /// server-side fetches.
+        /// </summary>
+        public string ExternalUrl { get; set; } = string.Empty;
 
         /// <summary>
         /// API key for authenticating with the instance.

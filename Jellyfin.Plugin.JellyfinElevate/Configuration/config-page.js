@@ -1472,11 +1472,19 @@
             var removeBtn = createEl('button', { className: 'arr-instance-remove', type: 'button', title: 'Remove instance', textContent: 'Remove' });
             var header = createEl('div', { className: 'arr-instance-header' }, [nameInput, removeBtn]);
 
-            var urlLabel = createEl('label', { className: 'inputLabel inputLabelUnfocused', textContent: 'URL' });
+            var urlLabel = createEl('label', { className: 'inputLabel inputLabelUnfocused', textContent: 'URL (internal)' });
             var urlInput = createEl('input', { className: 'arr-instance-url emby-input', type: 'text', placeholder: urlPlaceholder, value: instance.Url || '' });
             var defaultPort = type === 'sonarr' ? '8989' : '7878';
-            var urlDesc = createEl('div', { className: 'fieldDescription', textContent: 'The Jellyfin server uses this URL to talk to ' + (type === 'sonarr' ? 'Sonarr' : 'Radarr') + ' directly. If your public URL sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here (e.g. http://' + type + ':' + defaultPort + ' or http://192.168.x.y:' + defaultPort + ') and use the URL Mappings below to redirect user-facing links to the public URL.' });
+            var urlDesc = createEl('div', { className: 'fieldDescription', textContent: 'The Jellyfin server uses this URL to talk to ' + (type === 'sonarr' ? 'Sonarr' : 'Radarr') + ' directly. If your public URL sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here (e.g. http://' + type + ':' + defaultPort + ' or http://192.168.x.y:' + defaultPort + ') and set the External URL below for user-facing links.' });
             var urlContainer = createEl('div', { className: 'inputContainer', style: 'margin-top: 0.5em;' }, [urlLabel, urlInput, urlDesc]);
+
+            // Optional external/public URL used only for user-clickable links in the browser.
+            // Empty = reuse the internal URL above (unchanged behaviour). Never used for
+            // server-side fetches.
+            var externalLabel = createEl('label', { className: 'inputLabel inputLabelUnfocused', textContent: 'External URL (optional)' });
+            var externalInput = createEl('input', { className: 'arr-instance-externalurl emby-input', type: 'text', placeholder: 'e.g., https://' + type + '.example.com', value: instance.ExternalUrl || '' });
+            var externalDesc = createEl('div', { className: 'fieldDescription', textContent: 'Public URL a user\'s browser opens for links to this instance. Leave blank to reuse the internal URL above. URL Mappings below still take priority when a mapping matches.' });
+            var externalContainer = createEl('div', { className: 'inputContainer', style: 'margin-top: 0.5em;' }, [externalLabel, externalInput, externalDesc]);
 
             var apiLabel = createEl('label', { className: 'inputLabel inputLabelUnfocused', textContent: 'API Key' });
             var apiInput = createEl('input', { className: 'arr-instance-apikey emby-input', type: 'text', autocomplete: 'off', placeholder: 'API key (find in Settings > General > Security)', value: instance.ApiKey || '' });
@@ -1496,7 +1504,7 @@
             var mappingsDesc = createEl('div', { className: 'fieldDescription', textContent: 'Map Jellyfin access URLs to this instance\'s URL. Format: jellyfin_url|arr_url (one per line). Useful for reverse-proxy setups.' });
             var mappingsContainer = createEl('div', { className: 'inputContainer', style: 'margin-top: 0.5em;' }, [mappingsLabel, mappingsTextarea, mappingsDesc]);
 
-            var body = createEl('div', { className: 'arr-instance-card-body' }, [header, urlContainer, apiContainer, mappingsContainer]);
+            var body = createEl('div', { className: 'arr-instance-card-body' }, [header, urlContainer, externalContainer, apiContainer, mappingsContainer]);
 
             // The card is a <details> element
             var card = document.createElement('details');
@@ -1637,6 +1645,7 @@
                 sonarrInstances.push({
                     Name: 'Sonarr',
                     Url: config.SonarrUrl,
+                    ExternalUrl: config.SonarrExternalUrl || '',
                     ApiKey: config.SonarrApiKey,
                     UrlMappings: config.SonarrUrlMappings || ''
                 });
@@ -1645,6 +1654,7 @@
                 radarrInstances.push({
                     Name: 'Radarr',
                     Url: config.RadarrUrl,
+                    ExternalUrl: config.RadarrExternalUrl || '',
                     ApiKey: config.RadarrApiKey,
                     UrlMappings: config.RadarrUrlMappings || ''
                 });
@@ -1700,10 +1710,24 @@
             line.style.display = '';
         }
 
+        // Shared scheme check for optional external/public URL fields: an external URL is only
+        // kept when it is an absolute http(s) URL, matching the Seerr internal-URL validation.
+        // Anything else is dropped so a malformed value never reaches browser link building.
+        function jeIsHttpUrl(value) {
+            if (!value) return false;
+            try {
+                var u = new URL(value.trim());
+                return u.protocol === 'http:' || u.protocol === 'https:';
+            } catch (_) {
+                return false;
+            }
+        }
+
         function collectInstancesFromDom(selector, defaultName) {
             var out = [];
             var incomplete = [];
             var renamed = [];
+            var droppedExternal = [];
             // The instance Name is the ONLY per-service key the runtime targets by (arr links,
             // calendar, tag sync and the action-sheet Search/grab/monitor/add all resolve an
             // instance by Name). Two enabled instances with the same Name make those actions
@@ -1715,6 +1739,16 @@
                 if (url && apiKey) {
                     var enabledCb = card.querySelector('.arr-instance-enabled');
                     var rawName = card.querySelector('.arr-instance-name').value.trim() || defaultName;
+                    var externalEl = card.querySelector('.arr-instance-externalurl');
+                    var externalRaw = externalEl ? externalEl.value.trim() : '';
+                    var externalUrl = '';
+                    if (externalRaw) {
+                        if (jeIsHttpUrl(externalRaw)) {
+                            externalUrl = externalRaw;
+                        } else {
+                            droppedExternal.push((rawName || defaultName) + ': ' + externalRaw);
+                        }
+                    }
                     var name = rawName;
                     var key = name.toLowerCase();
                     if (seen[key]) {
@@ -1729,6 +1763,7 @@
                     out.push({
                         Name: name,
                         Url: url,
+                        ExternalUrl: externalUrl,
                         ApiKey: apiKey,
                         UrlMappings: card.querySelector('.arr-instance-urlmappings').value || '',
                         // Default to true when the checkbox is missing (shouldn't happen, but
@@ -1741,7 +1776,7 @@
                     incomplete.push(card.querySelector('.arr-instance-name').value.trim() || defaultName);
                 }
             });
-            return { instances: out, incomplete: incomplete, renamed: renamed };
+            return { instances: out, incomplete: incomplete, renamed: renamed, droppedExternal: droppedExternal };
         }
 
         function saveArrInstances(config) {
@@ -1758,13 +1793,18 @@
                 sonarrResult.renamed.forEach(function(r) {
                     incompleteWarnings.push('Renamed duplicate Sonarr instance “' + r + '” so actions target the right instance.');
                 });
+                (sonarrResult.droppedExternal || []).forEach(function(d) {
+                    incompleteWarnings.push('Dropped invalid Sonarr External URL (must start with http:// or https://) — ' + d);
+                });
                 config.SonarrInstances = JSON.stringify(sonarrInstances);
                 if (sonarrInstances.length > 0) {
                     config.SonarrUrl = sonarrInstances[0].Url;
+                    config.SonarrExternalUrl = sonarrInstances[0].ExternalUrl || '';
                     config.SonarrApiKey = sonarrInstances[0].ApiKey;
                     config.SonarrUrlMappings = sonarrInstances[0].UrlMappings;
                 } else {
                     config.SonarrUrl = '';
+                    config.SonarrExternalUrl = '';
                     config.SonarrApiKey = '';
                     config.SonarrUrlMappings = '';
                 }
@@ -1779,13 +1819,18 @@
                 radarrResult.renamed.forEach(function(r) {
                     incompleteWarnings.push('Renamed duplicate Radarr instance “' + r + '” so actions target the right instance.');
                 });
+                (radarrResult.droppedExternal || []).forEach(function(d) {
+                    incompleteWarnings.push('Dropped invalid Radarr External URL (must start with http:// or https://) — ' + d);
+                });
                 config.RadarrInstances = JSON.stringify(radarrInstances);
                 if (radarrInstances.length > 0) {
                     config.RadarrUrl = radarrInstances[0].Url;
+                    config.RadarrExternalUrl = radarrInstances[0].ExternalUrl || '';
                     config.RadarrApiKey = radarrInstances[0].ApiKey;
                     config.RadarrUrlMappings = radarrInstances[0].UrlMappings;
                 } else {
                     config.RadarrUrl = '';
+                    config.RadarrExternalUrl = '';
                     config.RadarrApiKey = '';
                     config.RadarrUrlMappings = '';
                 }
@@ -1797,13 +1842,13 @@
         // Bind add-instance buttons
         document.querySelector('#addSonarrInstance').addEventListener('click', function() {
             document.querySelector('#sonarrInstancesList').appendChild(
-                createInstanceCard('sonarr', { Name: '', Url: '', ApiKey: '', UrlMappings: '' }, true)
+                createInstanceCard('sonarr', { Name: '', Url: '', ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true)
             );
             updateAllDependencies();
         });
         document.querySelector('#addRadarrInstance').addEventListener('click', function() {
             document.querySelector('#radarrInstancesList').appendChild(
-                createInstanceCard('radarr', { Name: '', Url: '', ApiKey: '', UrlMappings: '' }, true)
+                createInstanceCard('radarr', { Name: '', Url: '', ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true)
             );
             updateAllDependencies();
         });
@@ -2057,6 +2102,7 @@
 
                 // Not bound: these fields are validated/normalized by hand on save.
                 document.querySelector('#jellyseerrUrls').value = config.JellyseerrUrls;
+                document.querySelector('#jellyseerrExternalUrl').value = config.JellyseerrExternalUrl || '';
                 document.querySelector('#JellyseerrApiKey').value = config.JellyseerrApiKey;
                 document.querySelector('#jellyseerrUrlMappings').value = config.JellyseerrUrlMappings || '';
 
@@ -2193,8 +2239,43 @@
                 }
                 config.JellyseerrUrls = valid.join('\n');
             })();
+            // Optional Seerr External URL: kept only when a well-formed http(s) URL; blanked with a
+            // clear warning otherwise so it never reaches browser link building. Empty = the client
+            // falls back to the first internal URL above (unchanged behaviour).
+            (function () {
+                var raw = (document.querySelector('#jellyseerrExternalUrl').value || '').trim();
+                if (raw && !jeIsHttpUrl(raw)) {
+                    console.warn('Jellyfin Elevate: dropping invalid Seerr External URL on save (must start with http:// or https://):', raw);
+                    if (typeof Dashboard !== 'undefined' && Dashboard.alert) {
+                        Dashboard.alert({
+                            title: 'Invalid Seerr External URL',
+                            message: 'The Seerr External URL was dropped because it does not start with http:// or https://:\n\n' + raw
+                        });
+                    }
+                    config.JellyseerrExternalUrl = '';
+                } else {
+                    config.JellyseerrExternalUrl = raw;
+                }
+            })();
             config.JellyseerrApiKey = (document.querySelector('#JellyseerrApiKey').value || '').replace(/\s/g, '');
             config.JellyseerrUrlMappings = (document.querySelector('#jellyseerrUrlMappings').value || '').split('\n').map(u => u.trim()).filter(Boolean).join('\n');
+            // Bazarr External URL rides the generic data-config-key binder, so validate it here after
+            // the bound fields are read: blank a malformed value with a clear warning.
+            (function () {
+                var raw = (config.BazarrExternalUrl || '').trim();
+                if (raw && !jeIsHttpUrl(raw)) {
+                    console.warn('Jellyfin Elevate: dropping invalid Bazarr External URL on save (must start with http:// or https://):', raw);
+                    if (typeof Dashboard !== 'undefined' && Dashboard.alert) {
+                        Dashboard.alert({
+                            title: 'Invalid Bazarr External URL',
+                            message: 'The Bazarr External URL was dropped because it does not start with http:// or https://:\n\n' + raw
+                        });
+                    }
+                    config.BazarrExternalUrl = '';
+                } else {
+                    config.BazarrExternalUrl = raw;
+                }
+            })();
             // Two synced inputs, one config value; the Jellyseerr-tab field wins (as before).
             config.TMDB_API_KEY = document.querySelector('#jellyseerr_TMDB_API_KEY').value;
 

@@ -1,10 +1,13 @@
 {
+  "BazarrExternalUrl": "cfg-BazarrExternalUrl",
   "BazarrUrl": "cfg-BazarrUrl",
   "BazarrUrlMappings": "cfg-BazarrUrlMappings",
+  "RadarrExternalUrl": "cfg-RadarrExternalUrl",
   "RadarrInstances": [],
   "RadarrInstancesCorrupt": true,
   "RadarrUrl": "cfg-RadarrUrl",
   "RadarrUrlMappings": "cfg-RadarrUrlMappings",
+  "SonarrExternalUrl": "cfg-SonarrExternalUrl",
   "SonarrInstances": [],
   "SonarrInstancesCorrupt": true,
   "SonarrUrl": "cfg-SonarrUrl",

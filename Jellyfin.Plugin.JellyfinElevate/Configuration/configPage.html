@@ -1210,7 +1210,14 @@
                                 <textarea class="emby-textarea emby-input je-textarea-medium" id="jellyseerrUrls" name="jellyseerrUrls" placeholder="http://192.168.1.10:5055&#10;https://jellyseerr.example.com"></textarea>
                             </div>
                                 <div class="je-setting-description" data-desc-for="jellyseerrUrls">
-                                    <div class="fieldDescription">Enter your Seerr instance URLs, one per line. The script will use the first one that connects successfully.</div>
+                                    <div class="fieldDescription">Internal URL(s) the Jellyfin server uses to reach Seerr, one per line. The script uses the first one that connects successfully. If Seerr sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here and set the External URL below for user-facing links.</div>
+                                </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="jellyseerrExternalUrl">Seerr External URL <span style="font-size:0.8em; opacity:0.6;">(optional)</span></label>
+                                <input id="jellyseerrExternalUrl" is="emby-input" name="jellyseerrExternalUrl" type="text" placeholder="e.g., https://requests.example.com"/>
+                            </div>
+                                <div class="je-setting-description" data-desc-for="jellyseerrExternalUrl">
+                                    <div class="fieldDescription">Public URL a user's browser opens for "Open in Seerr" links. Leave blank to reuse the internal URL above (unchanged behaviour). Use this when the server reaches Seerr on a LAN/docker address that browsers can't. Advanced per-access-URL routing is still available via URL Mappings below (mappings take priority).</div>
                                 </div>
                             <div class="inputContainer">
                                 <label class="inputLabel" for="JellyseerrApiKey">Seerr API Key</label>
@@ -1739,7 +1746,15 @@
                                 <input id="bazarrUrl" data-config-key="BazarrUrl" is="emby-input" name="bazarrUrl" type="text" placeholder="e.g., http://192.168.100.100:6767"/>
                             </div>
                             <div class="je-setting-description" data-desc-for="bazarrUrl">
-                                <div class="fieldDescription">Note: this links to the main movies/series page — Bazarr does not support direct item-deep-links.<br/>If Bazarr sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here (e.g. <code>http://bazarr:6767</code>) and use the URL Mappings below to redirect user-facing links to the public URL.</div>
+                                <div class="fieldDescription">Note: this links to the main movies/series page — Bazarr does not support direct item-deep-links.<br/>If Bazarr sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here (e.g. <code>http://bazarr:6767</code>) and set the External URL below (or URL Mappings) for user-facing links.</div>
+                            </div>
+
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="bazarrExternalUrl">Bazarr External URL <span style="font-size:0.8em; opacity:0.6;">(optional)</span></label>
+                                <input id="bazarrExternalUrl" data-config-key="BazarrExternalUrl" data-config-fallback="" is="emby-input" name="bazarrExternalUrl" type="text" placeholder="e.g., https://bazarr.example.com"/>
+                            </div>
+                            <div class="je-setting-description" data-desc-for="bazarrExternalUrl">
+                                <div class="fieldDescription">Public URL a user's browser opens for Bazarr links. Leave blank to reuse the internal URL above. URL Mappings below still take priority when a mapping matches.</div>
                             </div>
 
                             <div class="inputContainer">
