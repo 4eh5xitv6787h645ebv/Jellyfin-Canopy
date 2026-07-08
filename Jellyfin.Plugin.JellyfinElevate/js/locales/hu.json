@@ -148,6 +148,8 @@
   "jellyseerr_btn_error": "Hiba",
   "jellyseerr_btn_user_not_found": "Felhasználó nem található",
   "jellyseerr_err_no_request_permission": "Nincs jogosultság kérések benyújtásához",
+  "jellyseerr_err_no_4k_request_permission": "Nincs jogosultság 4K kéréséhez",
+  "jellyseerr_err_4k_requests_disabled": "A 4K kérések le vannak tiltva",
   "jellyseerr_err_no_issue_permission": "Nincs jogosultság problémák jelentéséhez",
   "jellyseerr_err_no_issue_view_permission": "Nincs jogosultság problémák megtekintéséhez",
   "jellyseerr_err_load_server_options": "A szerver beállítások betöltése sikertelen",

@@ -107,6 +107,18 @@ When enabled, new Jellyfin users are automatically imported into Seerr the first
     - Seerr instance with **4K configuration**
     - Permissions for users to request 4K quality
 
+This is a **master switch**. Even with it on, the 4K movie option is only shown
+when **both** of the following hold, and is hidden otherwise:
+
+- Seerr actually reports 4K movies as enabled (a default 4K Radarr is configured
+  — Seerr's `movie4kEnabled`), and
+- the signed-in user holds the Seerr **REQUEST_4K** (or **REQUEST_4K_MOVIE**)
+  permission.
+
+So a user without 4K permission, or a Seerr server with no 4K Radarr, simply
+never sees the 4K affordance. The server enforces the same rule on the request
+itself, so the option can never be used without permission.
+
 ### Enable 4K TV Requests
 
 !!! note "Requirements"
@@ -115,7 +127,11 @@ When enabled, new Jellyfin users are automatically imported into Seerr the first
     - Seerr instance with **4K Sonarr configured**
     - Permissions for users to request **4K Sonarr** quality
 
-  When enabled:
+Also a **master switch**, gated the same way: the 4K TV option is shown only when
+Seerr reports 4K series enabled (`series4kEnabled`, a default 4K Sonarr) **and**
+the user holds **REQUEST_4K** (or **REQUEST_4K_TV**).
+
+  When enabled and available:
 
   - TV request buttons include a 4K dropdown action.
   - Choosing **Request in 4K** opens the season modal in 4K mode.
@@ -129,6 +145,13 @@ When enabled, new Jellyfin users are automatically imported into Seerr the first
 ### Show Collections in Seerr Results
 - Display TMDB collections (e.g., Harry Potter, Marvel Cinematic Universe) in Seerr search results
 - Includes an option to request the entire collection at once
+- The collection request modal lists every movie with its current status; movies
+  that are already available, already requested or blocklisted are pre-disabled,
+  and only the selected, still-requestable movies are submitted (one request per
+  movie, matching Seerr's own behaviour)
+- When 4K movie requests are available to you (see **Enable 4K Requests**), the
+  collection modal shows a **Request in 4K** toggle that submits the selected
+  movies in 4K and re-evaluates each movie against its 4K status
 - Enabled by default
 
 ### Auto Import Jellyfin Users to Seerr

@@ -90,7 +90,8 @@ function configureTvShowButton(button: any, overallStatus: any, seasonAnalysis: 
         default: setButton(JE.t!('jellyseerr_btn_request'), icons.request, 'jellyseerr-button-request', false, seasonAnalysis?.total > 1 ? JE.t!('jellyseerr_seasons_available', {count: Number(seasonAnalysis.total) || 0}) : null); break;
     }
 
-    const show4KOption = !!JE.pluginConfig.JellyseerrEnable4KTvRequests;
+    // Gate on admin toggle AND Seerr 4K capability AND this user's 4K permission.
+    const show4KOption = JE.jellyseerrAPI!.canRequest4k('tv');
     const status4k = item.mediaInfo ? item.mediaInfo.status4k : 1;
 
     if (show4KOption && !button.closest('.jellyseerr-button-group')) {
@@ -146,8 +147,9 @@ function configureMovieButton(button: any, item: any) {
     const status = item.mediaInfo ? item.mediaInfo.status : 1;
     const status4k = item.mediaInfo ? item.mediaInfo.status4k : 1;
 
-    // Show split button when the 4K feature is enabled
-    const show4KOption = !!JE.pluginConfig.JellyseerrEnable4KRequests;
+    // Show split button when 4K is offered: admin toggle AND Seerr 4K capability
+    // AND this user's 4K permission.
+    const show4KOption = JE.jellyseerrAPI!.canRequest4k('movie');
 
     const setButton = (text: any, icon: any, className: any, disabled: any = false) => {
         button.innerHTML = `${icon || ''}<span>${text}</span>`;

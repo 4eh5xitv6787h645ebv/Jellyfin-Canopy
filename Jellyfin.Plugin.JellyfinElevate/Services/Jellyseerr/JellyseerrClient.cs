@@ -132,6 +132,123 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
             return active;
         }
 
+        // ── 4K capability ────────────────────────────────────────────────────
+
+        public async Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(string jellyfinUserId, bool isAdmin = false)
+        {
+            var (movie4k, series4k) = await GetPublic4kSettingsAsync();
+
+            // No server-side 4K at all → nothing to request; skip the user lookup.
+            if (!movie4k && !series4k)
+            {
+                return new Seerr4kCapability(false, false, false, false);
+            }
+
+            if (isAdmin)
+            {
+                // A Jellyfin admin bypasses the Seerr per-user 4K permission gate in
+                // the proxy (caller.IsAdmin), so projecting only the linked Seerr
+                // user's bits would show canRequest4k*=false while the server would
+                // actually accept the request. Mirror the gate: their capability is
+                // server-4K-enabled, still AND'd with the JE admin master switch
+                // (which applies to admins too — consistent with the gate order).
+                var adminConfig = _configProvider.ConfigurationOrNull;
+                bool masterMovie = adminConfig?.JellyseerrEnable4KRequests ?? false;
+                bool masterTv = adminConfig?.JellyseerrEnable4KTvRequests ?? false;
+                return new Seerr4kCapability(movie4k, series4k, movie4k && masterMovie, series4k && masterTv);
+            }
+
+            var user = await GetJellyseerrUser(jellyfinUserId);
+            var perms = user?.Permissions ?? JellyseerrPermission.NONE;
+            bool canMovie = movie4k && JellyseerrPermissionHelper.CanRequest4k(perms, isTv: false);
+            bool canTv = series4k && JellyseerrPermissionHelper.CanRequest4k(perms, isTv: true);
+            return new Seerr4kCapability(movie4k, series4k, canMovie, canTv);
+        }
+
+        /// <summary>
+        /// Fetches Seerr's user-neutral <c>/api/v1/settings/public</c> 4K flags,
+        /// cached. Sends NO per-user header so the cached value is safe to share
+        /// across users. Returns (false, false) when Seerr is unconfigured or
+        /// every configured URL fails.
+        /// </summary>
+        private async Task<(bool Movie4k, bool Series4k)> GetPublic4kSettingsAsync()
+        {
+            var config = _configProvider.ConfigurationOrNull;
+            if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
+            {
+                return (false, false);
+            }
+
+            if (!config.JellyseerrDisableCache)
+            {
+                lock (_seerrCache.Public4kSettingsCacheLock)
+                {
+                    if (_seerrCache.Public4kSettingsCache.HasValue
+                        && DateTime.UtcNow - _seerrCache.Public4kSettingsCache.Value.CachedAt < _seerrCache.Public4kSettingsCacheTtl)
+                    {
+                        var c = _seerrCache.Public4kSettingsCache.Value;
+                        return (c.Movie4kEnabled, c.Series4kEnabled);
+                    }
+                }
+            }
+
+            var urls = GetConfiguredUrls(config.JellyseerrUrls);
+            var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
+            httpClient.Timeout = TimeSpan.FromSeconds(15);
+
+            foreach (var url in urls)
+            {
+                var requestUri = $"{url}/api/v1/settings/public";
+                try
+                {
+                    // User-neutral: no X-Api-User — the response is identical for
+                    // all users, so it is share-cached (see cache user-neutrality
+                    // invariant in docs/v12-platform.md).
+                    using var request = SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, config.JellyseerrApiKey);
+                    using var response = await httpClient.SendAsync(request);
+                    var (json, error) = await SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+                    if (error != null || string.IsNullOrEmpty(json))
+                    {
+                        if (error != null)
+                        {
+                            _logger.LogWarning($"Failed to fetch Seerr public settings at {url}: code={error.Code} status={error.HttpStatus} — {error.Message}");
+                        }
+
+                        continue;
+                    }
+
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+                    bool movie4k = root.TryGetProperty("movie4kEnabled", out var m) && m.ValueKind == JsonValueKind.True;
+                    bool series4k = root.TryGetProperty("series4kEnabled", out var s) && s.ValueKind == JsonValueKind.True;
+
+                    if (!config.JellyseerrDisableCache)
+                    {
+                        lock (_seerrCache.Public4kSettingsCacheLock)
+                        {
+                            _seerrCache.Public4kSettingsCache = (movie4k, series4k, DateTime.UtcNow);
+                        }
+                    }
+
+                    return (movie4k, series4k);
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(ex, "Malformed Seerr public-settings response at {Url}", url);
+                }
+                catch (HttpRequestException ex)
+                {
+                    _logger.LogWarning(ex, "Transport error fetching Seerr public settings at {Url}", url);
+                }
+                catch (TaskCanceledException)
+                {
+                    // timeout — try next URL
+                }
+            }
+
+            return (false, false);
+        }
+
         // ── User resolution ──────────────────────────────────────────────────
 
         public bool IsImportBlocked(string jellyfinUserId, PluginConfiguration config)
@@ -497,6 +614,49 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
                 : new ContentResult { Content = result.Body, ContentType = "application/json" };
         }
 
+        /// <summary>
+        /// True when a Seerr request POST body carries a truthy <c>is4k</c>. Treats
+        /// JSON <c>true</c>, a nonzero number, and the strings "true"/"1"
+        /// (case-insensitive) all as 4K — so a crafted <c>{"is4k":1}</c> or
+        /// <c>{"is4k":"true"}</c> can't dodge the 4K master switch / permission
+        /// gates by slipping past a strict <c>== true</c> check and falling through
+        /// to Seerr.
+        /// </summary>
+        private static bool TryGetIs4k(string content)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(content);
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("is4k", out var is4k))
+                {
+                    return false;
+                }
+
+                switch (is4k.ValueKind)
+                {
+                    case JsonValueKind.True:
+                        return true;
+                    case JsonValueKind.False:
+                    case JsonValueKind.Null:
+                        return false;
+                    case JsonValueKind.Number:
+                        return is4k.TryGetDouble(out var n) && n != 0;
+                    case JsonValueKind.String:
+                        var s = is4k.GetString();
+                        return string.Equals(s, "true", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(s, "1", StringComparison.OrdinalIgnoreCase);
+                    default:
+                        return false;
+                }
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
         /// <summary>Reads mediaType + tmdbId (the <c>mediaId</c> field) from a Seerr request POST body.</summary>
         private static bool TryGetRequestMedia(string content, out string mediaType, out int tmdbId)
         {
@@ -610,6 +770,23 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
                 });
             }
 
+            // JE 4K master switch (applies to EVERY caller, admins included): when
+            // the admin has disabled 4K requests for this media type, no 4K request
+            // may be submitted through JE. The client hides the option; this enforces
+            // it server-side so a crafted POST with is4k can't bypass the toggle the
+            // docs describe as a master switch.
+            if (method == HttpMethod.Post
+                && apiPath.StartsWith("/api/v1/request", StringComparison.OrdinalIgnoreCase)
+                && content != null
+                && TryGetIs4k(content))
+            {
+                bool isTv4k = TryGetRequestMedia(content, out var mtSwitch, out _)
+                    && string.Equals(mtSwitch, "tv", StringComparison.OrdinalIgnoreCase);
+                bool adminEnabled = isTv4k ? config.JellyseerrEnable4KTvRequests : config.JellyseerrEnable4KRequests;
+                if (!adminEnabled)
+                    return new ObjectResult(new { code = "4k_requests_disabled", message = "4K requests are disabled." }) { StatusCode = 403 };
+            }
+
             // Enforce Seerr permissions for write operations and sensitive reads.
             // Jellyfin admins bypass all permission checks (they can do anything in Seerr).
             // For non-admins, validate before proxying so we return a clear 403 rather than
@@ -628,9 +805,25 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
                         // POST /api/v1/request — make a request
                         if (method == HttpMethod.Post && apiPath.StartsWith("/api/v1/request", StringComparison.OrdinalIgnoreCase))
                         {
-                            if (!JellyseerrPermissionHelper.HasAnyPermission(perms,
+                            // Seerr fully decouples the 4K permission bits from the
+                            // base request bits (server/entity/MediaRequest.ts:80-112):
+                            // a user holding only REQUEST_4K / REQUEST_4K_MOVIE /
+                            // REQUEST_4K_TV may submit a 4K request without ANY base
+                            // REQUEST / REQUEST_MOVIE / REQUEST_TV bit. So for a 4K
+                            // request we SKIP the base precondition and gate solely on
+                            // the 4K helper; only the non-4K path requires a base bit.
+                            if (content != null && TryGetIs4k(content))
+                            {
+                                bool isTv = TryGetRequestMedia(content, out var mt4k, out _)
+                                    && string.Equals(mt4k, "tv", StringComparison.OrdinalIgnoreCase);
+                                if (!JellyseerrPermissionHelper.CanRequest4k(perms, isTv))
+                                    return new ObjectResult(new { code = "no_4k_request_permission", message = "You do not have permission to request 4K in Seerr." }) { StatusCode = 403 };
+                            }
+                            else if (!JellyseerrPermissionHelper.HasAnyPermission(perms,
                                 JellyseerrPermission.REQUEST | JellyseerrPermission.REQUEST_MOVIE | JellyseerrPermission.REQUEST_TV))
+                            {
                                 return new ObjectResult(new { code = "no_request_permission", message = "You do not have permission to make requests in Seerr." }) { StatusCode = 403 };
+                            }
                         }
 
                         // POST /api/v1/issue — report an issue

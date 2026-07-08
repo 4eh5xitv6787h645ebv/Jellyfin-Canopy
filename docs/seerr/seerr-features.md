@@ -39,12 +39,21 @@ Search, request, and discover media directly from Jellyfin using your Seerr inst
 3. Seerr results show request status
 4. Click to request or view details
 
-#### 4K TV Requesting:
+#### 4K Requesting:
 
-1. Enable **4K TV Requests** in plugin settings.
-2. For TV results, use the request split-button dropdown and choose **Request in 4K**.
-3. The season selection modal opens in 4K mode.
-4. The modal header shows **Request Series - 4K** and the primary button shows **Request in 4K**.
+1. Enable **4K Requests** / **4K TV Requests** in plugin settings (master switch).
+2. For movie/TV results, use the request split-button dropdown and choose **Request in 4K**.
+3. For TV, the season selection modal opens in 4K mode — the header shows **Request Series - 4K** and the primary button shows **Request in 4K**.
+
+!!! note "When the 4K option appears"
+
+    Beyond the admin master switch, the 4K option is only offered when the Seerr
+    server actually has 4K enabled for that media type (a default 4K Radarr /
+    Sonarr — Seerr's `movie4kEnabled` / `series4kEnabled`) **and** the signed-in
+    user holds the Seerr **REQUEST_4K** (or the media-specific
+    **REQUEST_4K_MOVIE** / **REQUEST_4K_TV**) permission. Otherwise the 4K
+    affordance is hidden. The server enforces the same rule on the request
+    itself, so a 4K request can never be made without permission.
 
 !!! tip
 

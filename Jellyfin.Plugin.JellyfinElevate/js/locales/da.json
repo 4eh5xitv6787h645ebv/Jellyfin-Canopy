@@ -148,6 +148,8 @@
   "jellyseerr_btn_error": "Fejl",
   "jellyseerr_btn_user_not_found": "Bruger ikke fundet",
   "jellyseerr_err_no_request_permission": "Ingen tilladelse til at lave anmodninger",
+  "jellyseerr_err_no_4k_request_permission": "Ingen tilladelse til at anmode om 4K",
+  "jellyseerr_err_4k_requests_disabled": "4K-anmodninger er deaktiveret",
   "jellyseerr_err_no_issue_permission": "Ingen tilladelse til at rapportere problemer",
   "jellyseerr_err_no_issue_view_permission": "Ingen tilladelse til at se problemer",
   "jellyseerr_err_load_server_options": "Kunne ikke indlæse serverindstillinger",

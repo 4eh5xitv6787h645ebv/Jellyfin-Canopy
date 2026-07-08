@@ -71,6 +71,19 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
 
         TimeSpan SeerrStatusCacheTtl { get; }
 
+        /// <summary>
+        /// Caches Seerr's <c>/api/v1/settings/public</c> 4K flags
+        /// (<c>movie4kEnabled</c> / <c>series4kEnabled</c>). User-neutral by
+        /// construction — the fetch sends no per-user header — so it is safe to
+        /// share across users. Short TTL so an admin toggling 4K in Seerr is
+        /// reflected promptly.
+        /// </summary>
+        (bool Movie4kEnabled, bool Series4kEnabled, DateTime CachedAt)? Public4kSettingsCache { get; set; }
+
+        object Public4kSettingsCacheLock { get; }
+
+        TimeSpan Public4kSettingsCacheTtl { get; }
+
         /// <summary>Cache for request-page TMDB enrichments (movie/tv detail lookups via Jellyseerr).</summary>
         Dictionary<string, (TmdbEnrichmentResult Data, DateTime CachedAt)> TmdbEnrichmentCache { get; }
 

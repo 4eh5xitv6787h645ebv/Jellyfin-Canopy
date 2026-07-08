@@ -104,7 +104,22 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
             var jellyseerrUserId = await _jellyseerr.GetJellyseerrUserId(jellyfinUserId);
             if (!string.IsNullOrEmpty(jellyseerrUserId))
             {
-                return Ok(new { active = true, userFound = true, jellyseerrUserId = jellyseerrUserId, reason = "linked" });
+                // Surface the 4K capability so the client can gate its 4K request
+                // UI on Seerr actually having 4K enabled AND this user holding the
+                // 4K permission (degrade-by-hiding), rather than on the admin
+                // toggle alone.
+                var cap = await _jellyseerr.GetSeerr4kCapabilityAsync(jellyfinUserId, IsAdminUser());
+                return Ok(new
+                {
+                    active = true,
+                    userFound = true,
+                    jellyseerrUserId = jellyseerrUserId,
+                    reason = "linked",
+                    movie4kEnabled = cap.Movie4kEnabled,
+                    series4kEnabled = cap.Series4kEnabled,
+                    canRequest4kMovie = cap.CanRequest4kMovie,
+                    canRequest4kTv = cap.CanRequest4kTv
+                });
             }
 
             // User not found — could be server unreachable, HTML challenge from

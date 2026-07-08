@@ -148,6 +148,8 @@
   "jellyseerr_btn_error": "Грешка",
   "jellyseerr_btn_user_not_found": "Потребителят не е намерен",
   "jellyseerr_err_no_request_permission": "Нямате разрешение за създаване на заявки",
+  "jellyseerr_err_no_4k_request_permission": "Няма разрешение за заявка за 4K",
+  "jellyseerr_err_4k_requests_disabled": "Заявките за 4K са изключени",
   "jellyseerr_err_no_issue_permission": "Нямате разрешение за докладване на проблеми",
   "jellyseerr_err_no_issue_view_permission": "Нямате разрешение за преглед на проблеми",
   "jellyseerr_err_load_server_options": "Грешка при зареждане на опциите на сървъра",
