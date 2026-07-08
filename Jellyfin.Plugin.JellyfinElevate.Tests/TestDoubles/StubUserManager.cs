@@ -1,3 +1,4 @@
+using System;
 using Jellyfin.Data.Events;
 using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Controller.Library;
@@ -38,7 +39,8 @@ public sealed class StubUserManager : IUserManager
 
     public User? GetFirstUser() => throw new NotImplementedException();
 
-    public User? GetUserByName(string name) => throw new NotImplementedException();
+    public User? GetUserByName(string name) =>
+        _users.FirstOrDefault(u => string.Equals(u.Username, name, StringComparison.OrdinalIgnoreCase));
 
     public Task RenameUser(Guid userId, string oldName, string newName) => throw new NotImplementedException();
 

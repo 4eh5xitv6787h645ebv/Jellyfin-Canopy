@@ -117,7 +117,7 @@
   "RatingTagsEnabled": true,
   "RatingTagsPosition": "cfg-RatingTagsPosition",
   "RemoveContinueWatchingEnabled": true,
-  "ResolutionTagOrder": 1176,
+  "ResolutionTagOrder": 1183,
   "ReviewsExpandedByDefault": true,
   "Shortcuts": [
     {
@@ -255,8 +255,8 @@
   "ShowUserReviews": true,
   "ShowVideoCodecTag": false,
   "ShowWatchProgress": true,
-  "SourceTagOrder": 1204,
-  "SpecialFormatTagOrder": 1205,
+  "SourceTagOrder": 1211,
+  "SpecialFormatTagOrder": 1212,
   "SplashScreenImageUrl": "cfg-SplashScreenImageUrl",
   "SpoilerBlurEnabled": true,
   "SpoilerBlurStrictRefresh": true,
@@ -271,11 +271,11 @@
   "SpoilerStripTags": false,
   "SyncJellyseerrWatchlist": true,
   "TagCacheServerMode": false,
-  "TagsCacheTtlDays": 1231,
+  "TagsCacheTtlDays": 1238,
   "TagsHideOnHover": true,
   "ThemeSelectorEnabled": true,
   "TmdbEnabled": true,
-  "ToastDuration": 1234,
+  "ToastDuration": 1241,
   "UseIcons": false,
-  "VideoCodecTagOrder": 1237
+  "VideoCodecTagOrder": 1244
 }

@@ -151,6 +151,9 @@ namespace Jellyfin.Plugin.JellyfinElevate
             // available to any future feature that needs per-user behavior on
             // anonymous requests.
             serviceCollection.AddSingleton<RequestIdentityService>();
+            // Issues the HMAC-signed identity cookie on authenticated responses
+            // (issue 13); no-ops unless IdentitySignedCookieEnabled.
+            serviceCollection.AddSingleton<IdentityCookieIssuerFilter>();
             serviceCollection.AddSingleton<SpoilerIdentityTagFilter>();
             serviceCollection.AddSingleton<SpoilerUserResolver>();
             serviceCollection.AddSingleton<SpoilerBlurImageFilter>();
@@ -177,6 +180,10 @@ namespace Jellyfin.Plugin.JellyfinElevate
                 o.Filters.AddService<SpoilerIdentityTagFilter>();
                 o.Filters.AddService<SpoilerFieldStripFilter>();
                 o.Filters.AddService<SpoilerBlurImageFilter>();
+                // Signed identity-cookie issuer (issue 13). Order-independent of
+                // the spoiler filters — it only appends a Set-Cookie header on
+                // authenticated responses.
+                o.Filters.AddService<IdentityCookieIssuerFilter>();
             });
         }
     }

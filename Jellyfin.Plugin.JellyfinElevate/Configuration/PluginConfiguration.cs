@@ -324,6 +324,17 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
             SpoilerKeepMoviePosters = true;
             SpoilerIdentityTags = true;
             SpoilerOverviewPlaceholder = "Spoiler Guard activated";
+
+            // Request-identity ladder hardening (all default OFF / empty — opt-in,
+            // fail closed to the existing marker/session-by-IP ladder).
+            IdentityTrustedProxies = string.Empty;
+            IdentityForwardAuthHeaders =
+                "Remote-User, X-Forwarded-User, X-Authentik-Username, Remote-Email, X-Forwarded-Email, Cf-Access-Authenticated-User-Email, Tailscale-User-Login";
+            IdentityForwardAuthEnabled = false;
+            IdentityXffLearnedMapEnabled = false;
+            IdentityForwardedIpHeader = "X-Forwarded-For";
+            IdentityCookieSecret = string.Empty;
+            IdentitySignedCookieEnabled = false;
         }
 
         // Maintenance Mode
@@ -780,6 +791,59 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         // Placeholder for stripped Overview so the client doesn't render a
         // "Description" header over blank. Configurable for localisation.
         public string SpoilerOverviewPlaceholder { get; set; } = "Spoiler Guard activated";
+
+        // ── Request-identity ladder (shared, Services/Identity) ──────────────
+        // These harden per-user attribution of ANONYMOUS requests (image/CSS
+        // fetches that carry no token) beyond the shipped marker + session-by-IP
+        // tiers. All server-side only — the dashboard config page reads/writes
+        // the whole config object, so none need a SettingDescriptors entry.
+
+        // Trusted reverse-proxy addresses (IPs or CIDRs, comma/newline/space
+        // separated) whose forwarded headers the plugin will believe. Used by
+        // the forward-auth SSO tier (issue 16) and the X-Forwarded-For learned
+        // map (issue 7): a proxy header is only honored when the TRANSPORT peer
+        // (Connection.RemoteIpAddress — the hop that actually connected) is in
+        // this set, so a client connecting directly to Kestrel cannot forge it.
+        // Empty ⇒ both proxy-header tiers are OFF (fail closed to the existing
+        // marker/cookie/session-by-IP ladder).
+        public string IdentityTrustedProxies { get; set; } = string.Empty;
+
+        // Forward-auth / SSO principal headers, in priority order (comma/newline
+        // separated). A trusted proxy fronting Authelia / Authentik / Cloudflare
+        // Access / Tailscale Serve injects the authenticated username or email on
+        // EVERY proxied request, including anonymous image GETs. Defaults cover
+        // the common ones; admins can add their own. Matched against Jellyfin
+        // usernames first, then (for the *-Email headers) users whose configured
+        // username equals the local-part or full email. Only consulted when
+        // IdentityForwardAuthEnabled and the transport peer is a trusted proxy.
+        public string IdentityForwardAuthHeaders { get; set; } =
+            "Remote-User, X-Forwarded-User, X-Authentik-Username, Remote-Email, X-Forwarded-Email, Cf-Access-Authenticated-User-Email, Tailscale-User-Login";
+        public bool IdentityForwardAuthEnabled { get; set; }
+
+        // Enables the plugin-level X-Forwarded-For learned real-IP→user map
+        // (issue 7): rebuilds the session-by-IP candidate tier on the TRUE
+        // client IP for deployments where Jellyfin's KnownProxies is unset so
+        // core records the proxy IP. Only active with trusted proxies set.
+        public bool IdentityXffLearnedMapEnabled { get; set; }
+
+        // The SINGLE forwarding header the trusted proxy sets the real client IP
+        // in. Only this header is read (default "X-Forwarded-For"; use
+        // "X-Real-IP" for nginx or "Forwarded" for RFC 7239). Reading exactly
+        // one named header — rather than trying several — closes a cross-header
+        // injection: a proxy that sets only X-Forwarded-For may not strip an
+        // inbound "Forwarded"/"X-Real-IP" the client forged, so trusting all of
+        // them would let a client behind the proxy spoof its own real IP.
+        public string IdentityForwardedIpHeader { get; set; } = "X-Forwarded-For";
+
+        // HMAC secret for the signed identity cookie (issue 13). Auto-generated
+        // on first use if blank (see IdentityCookieSigner) and persisted so the
+        // signature stays valid across restarts. Never exposed to clients.
+        public string IdentityCookieSecret { get; set; } = string.Empty;
+        // Master switch for issuing/trusting the signed cookie. When on, an
+        // authenticated response mints je-uid=<signed>, and an anonymous request
+        // carrying a valid signature is attributed WITHOUT the session-on-IP
+        // check the legacy raw je-spoiler-uid cookie still requires.
+        public bool IdentitySignedCookieEnabled { get; set; }
 
         /// <summary>
         /// Returns configured Sonarr instances, falling back to legacy single-instance fields for migration.

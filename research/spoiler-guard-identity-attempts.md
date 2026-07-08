@@ -321,3 +321,40 @@ Everything else probed (SyncPlay, Chromecast receiver, offline sync, HTTP/3,
 Alt-Svc, request smuggling, plugin-to-plugin sharing, server push) is a
 variant of an already-evaluated idea or already covered by the shipped
 marker. **The loop's research charter is complete: out of ideas.**
+
+### 2026-07-08 — milestone 3 implementation outcomes
+Milestone 3 ("Request identity service — shared user-identifier ladder")
+built the three high-value complements from the sweep and made a
+research-backed call on the two low-value ones:
+
+- **SHIPPED — issue 16 (forward-auth / SSO header tier).** New authoritative
+  tier 1.5: reads a proxy-injected principal header (`Remote-User`,
+  `Cf-Access-Authenticated-User-Email`, `Tailscale-User-Login`, …), gated on
+  the transport peer being an admin-configured trusted proxy, maps the
+  username/email to a Jellyfin user. `Services/Identity/ForwardAuthResolver.cs`
+  + `TrustedProxyEvaluator.cs`.
+- **SHIPPED — issue 13 (HMAC signed cookie).** New tier 2.75: `je-uid` cookie
+  carrying HMAC(secret, {userId, issuedAt}); trusted without the session-on-IP
+  check the raw `je-spoiler-uid` cookie needs. Issued on authenticated
+  responses by `IdentityCookieIssuerFilter`; secret auto-generated + persisted.
+  `Services/Identity/IdentityCookieSigner.cs`.
+- **SHIPPED — issue 7 (X-Forwarded-For learned map).** New tier 3.5: observes
+  `realClientIp → user` on authenticated trusted-proxy requests and resolves
+  anonymous requests from the same real IP as a fail-closed candidate set,
+  rebuilding session-by-IP on the true client IP. `Services/Identity/
+  XffLearnedMap.cs` + `ForwardedHeaderParser.cs` (rightmost-hop only).
+- **NOT SHIPPED — issue 12 (echo channels).** Two of its three carriers (the
+  `{tag}` path segment and the `If-None-Match` ETag echo) were already shipped
+  with the marker tier. The headline mediaSourceId stamping is **rejected** —
+  that id is a functional server lookup key, not a cosmetic tag, so stamping it
+  risks breaking playback (the sweep evaluator's own conclusion). The
+  PlaySessionId→user registry is **dominated**: its coverage (anonymous
+  subtitle/trickplay during active playback) is a strict subset of the marker's,
+  it needs an event-subscription + TTL map, and the spoiler-critical surface
+  (idle poster browsing) is exactly when PlaySessionId is absent. Closed partial.
+- **NOT SHIPPED — issue 14 (device-pin 'this device is me').** The only safe
+  form degenerates to session-by-IP (trust the pin only while a live session
+  from that IP already names the user), and every stronger form leaks under
+  DHCP reassignment / a shared multi-profile TV / a shared proxy IP — the
+  forbidden clean-bytes-to-guarding-user failure. No net capability over the
+  shipped marker + XFF tiers. Closed not-planned.
