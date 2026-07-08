@@ -82,7 +82,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services.Jellyseerr
             return new SeerrParentalFilter(
                 new RecordingHttpClientFactory(handler),
                 NullLogger<SeerrParentalFilter>.Instance,
-                new StubUserManager(new Dictionary<Guid, (User, UserPolicy)>
+                new StubPolicyUserManager(new Dictionary<Guid, (User, UserPolicy)>
                 {
                     [Guid.Parse(CallerGuid)] = (user, policy),
                 }),
@@ -126,7 +126,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services.Jellyseerr
             return new SeerrParentalFilter(
                 new RecordingHttpClientFactory(handler),
                 NullLogger<SeerrParentalFilter>.Instance,
-                new StubUserManager(registry),
+                new StubPolicyUserManager(registry),
                 new FakeLocalization(),
                 new SeerrCache(provider),
                 provider);
@@ -588,110 +588,5 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services.Jellyseerr
 
         // ── Minimal fakes ────────────────────────────────────────────────────
 
-        private sealed class FakeLocalization : ILocalizationManager
-        {
-            private static readonly Dictionary<string, ParentalRatingScore> Scores = new(StringComparer.OrdinalIgnoreCase)
-            {
-                ["G"] = new ParentalRatingScore(0, 0),
-                ["PG"] = new ParentalRatingScore(10, 0),
-                ["TV-PG"] = new ParentalRatingScore(10, 0),
-                ["PG-13"] = new ParentalRatingScore(13, 0),
-                ["TV-14"] = new ParentalRatingScore(14, 0),
-                ["R"] = new ParentalRatingScore(17, 0),
-                ["TV-MA"] = new ParentalRatingScore(17, 1),
-                ["NC-17"] = new ParentalRatingScore(17, 1),
-            };
-
-            public ParentalRatingScore? GetRatingScore(string rating, string? countryCode = null)
-                => Scores.TryGetValue(rating, out var score) ? score : null;
-
-            public IEnumerable<CultureDto> GetCultures() => throw new NotImplementedException();
-
-            public IReadOnlyList<CountryInfo> GetCountries() => throw new NotImplementedException();
-
-            public IReadOnlyList<ParentalRating> GetParentalRatings() => throw new NotImplementedException();
-
-            public string GetLocalizedString(string phrase, string culture) => throw new NotImplementedException();
-
-            public string GetLocalizedString(string phrase) => throw new NotImplementedException();
-
-            public string GetServerLocalizedString(string phrase) => throw new NotImplementedException();
-
-            public IEnumerable<LocalizationOption> GetLocalizationOptions() => throw new NotImplementedException();
-
-            public CultureDto? FindLanguageInfo(string language) => throw new NotImplementedException();
-
-            public bool TryGetISO6392TFromB(string isoB, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? isoT) => throw new NotImplementedException();
-        }
-
-        private sealed class StubUserManager : IUserManager
-        {
-            private readonly IReadOnlyDictionary<Guid, (User User, UserPolicy Policy)> _users;
-
-            public StubUserManager(IReadOnlyDictionary<Guid, (User User, UserPolicy Policy)> users)
-            {
-                _users = users;
-            }
-
-            public event EventHandler<GenericEventArgs<User>> OnUserUpdated { add { } remove { } }
-
-            // Resolve the ACTUAL user for this id — not a fixed one. A caller→user mixup
-            // (hardcoded id, admin's policy, dropped mapping) now surfaces as null here,
-            // which fails the gate loudly instead of silently applying the wrong limits.
-            public User? GetUserById(Guid id) => _users.TryGetValue(id, out var entry) ? entry.User : null;
-
-            // Policy is keyed to the SAME user object GetUserById returned (reference match),
-            // so each caller's own BlockUnratedItems is applied — never a shared one.
-            public UserDto GetUserDto(User user, string? remoteEndPoint = null)
-            {
-                foreach (var entry in _users.Values)
-                {
-                    if (ReferenceEquals(entry.User, user))
-                    {
-                        return new UserDto { Policy = entry.Policy };
-                    }
-                }
-
-                throw new InvalidOperationException($"GetUserDto called for an unregistered user '{user.Username}'.");
-            }
-
-            public IEnumerable<User> GetUsers() => throw new NotImplementedException();
-
-            public IEnumerable<Guid> GetUsersIds() => throw new NotImplementedException();
-
-            public Task InitializeAsync() => throw new NotImplementedException();
-
-            public User? GetFirstUser() => throw new NotImplementedException();
-
-            public User? GetUserByName(string name) => throw new NotImplementedException();
-
-            public Task RenameUser(Guid userId, string oldName, string newName) => throw new NotImplementedException();
-
-            public Task UpdateUserAsync(User user) => throw new NotImplementedException();
-
-            public Task<User> CreateUserAsync(string name) => throw new NotImplementedException();
-
-            public Task DeleteUserAsync(Guid userId) => throw new NotImplementedException();
-
-            public Task ResetPassword(Guid userId) => throw new NotImplementedException();
-
-            public Task ChangePassword(Guid userId, string newPassword) => throw new NotImplementedException();
-
-            public Task<User?> AuthenticateUser(string username, string password, string remoteEndPoint, bool isUserSession) => throw new NotImplementedException();
-
-            public Task<ForgotPasswordResult> StartForgotPasswordProcess(string enteredUsername, bool isInNetwork) => throw new NotImplementedException();
-
-            public Task<PinRedeemResult> RedeemPasswordResetPin(string pin) => throw new NotImplementedException();
-
-            public NameIdPair[] GetAuthenticationProviders() => throw new NotImplementedException();
-
-            public NameIdPair[] GetPasswordResetProviders() => throw new NotImplementedException();
-
-            public Task UpdateConfigurationAsync(Guid userId, UserConfiguration config) => throw new NotImplementedException();
-
-            public Task UpdatePolicyAsync(Guid userId, UserPolicy policy) => throw new NotImplementedException();
-
-            public Task ClearProfileImageAsync(User user) => throw new NotImplementedException();
-        }
     }
 }
