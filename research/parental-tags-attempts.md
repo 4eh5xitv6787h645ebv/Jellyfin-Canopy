@@ -159,3 +159,24 @@ unenforceable) — that documentation gets retired by this work.
 - Docs: seerr-features.md rewritten (limitation retired, new honest
   limitation: TMDB keyword coverage is community-sourced — genre blocks give
   broader coverage; fail-closed on unfetchable signatures).
+
+### 2026-07-08 14:10 — review loop clean; allow-list parity split
+- Codex GPT-5.5 xhigh: 2 findings, both fixed — a light cert-only refresh
+  could resurrect EXPIRED tags under a fresh timestamp (stale tags extend a
+  TTL → upstream keyword changes bypassed), and the tag-preservation merge
+  raced concurrent fetches; both closed with one freshness-bounded atomic
+  AddOrUpdate + a regression test pinning the resurrect scenario.
+- 5-dimension adversarial-verified workflow (Opus xhigh): 4 confirmed, all
+  fixed — the big one: genres satisfying the ALLOW-list under-blocked vs
+  native (genres never become item Tags; a genre match let a restricted user
+  see titles the library would hide). Keywords and genres now flow separately
+  end-to-end; blocked matches keywords ∪ genres, allowed matches keywords
+  ONLY (native parity), docs state the asymmetry and why. Also: the flagship
+  cache-upgrade test was non-discriminating (passed even with the guard
+  deleted) — now blocks an absent tag and asserts re-resolution; season +
+  sub-detail surfaces gained tag coverage. 4 findings refuted with verified
+  reasons. (A mid-fix scare — the "werewolf" test still blocking — was a
+  silent no-op in my own edit script, not a code bug; assert-guarded edits
+  from now on.)
+- Final: 628 unit + client gates green, full e2e 39/39 on the deployed
+  build, mkdocs strict green.
