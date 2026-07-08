@@ -19,8 +19,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         /// <summary>Authenticated token on the request (ClaimsPrincipal). Authoritative.</summary>
         Authenticated,
 
+        /// <summary>Forward-auth/SSO principal header (Remote-User, Cf-Access-Authenticated-User-Email, …) injected by a configured trusted proxy. Authoritative when trusted-proxy-gated; uniquely names a cold-cache native client behind an IP-hiding proxy.</summary>
+        ForwardAuthHeader,
+
         /// <summary>Per-user image-tag marker echoed in ?tag= (see SpoilerIdentityService). Strong; proxy-proof; works for native clients.</summary>
         Marker,
+
+        /// <summary>HMAC-signed identity cookie (je-uid). Unforgeable; trusted without a session-on-IP check because the signature proves it was minted inside the user's real session. Web only.</summary>
+        SignedCookie,
 
         /// <summary>Per-browser je-spoiler-uid cookie, validated against a session on the request IP. Strong for web.</summary>
         Cookie,
@@ -47,19 +53,33 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
     // instead of reinventing per-feature identity. Order of tiers:
     //
     //   1. ClaimsPrincipal        — authenticated requests. Authoritative.
+    //   1.5 Forward-auth header   — an SSO principal header (Remote-User,
+    //      Cf-Access-Authenticated-User-Email, Tailscale-User-Login, …)
+    //      injected by an admin-configured TRUSTED PROXY. Authoritative when
+    //      the transport peer is that proxy; uniquely names a cold-cache
+    //      native client behind an IP-hiding proxy before any stamped DTO.
     //   2. ?tag= identity marker  — the per-user "-jeu{12hex}" suffix stamped
     //      into image tags by SpoilerIdentityTagFilter and echoed verbatim by
     //      every client (web AND native TV/mobile). No IP involvement, which
     //      is what keeps per-user behavior precise behind reverse proxies
     //      that hide the real client IP.
+    //   2.75 Signed cookie        — HMAC-signed je-uid cookie; unforgeable, so
+    //      trusted without the session-on-IP check the raw cookie needs.
     //   2.5 Single-user server   — with exactly one account, ambiguity is
     //      structurally impossible; skip all IP work.
     //   3. je-spoiler-uid cookie  — web browsers attach it to anonymous
     //      same-origin image fetches; trusted only to disambiguate among
     //      users that actually have a session on the request IP.
+    //   3.5 XFF learned map       — behind a trusted proxy, the real client IP
+    //      parsed from the forwarding headers, resolved against users learned
+    //      at that real IP from earlier authenticated requests (fail-closed
+    //      candidate set on the TRUE client IP).
     //   4. Session-by-IP          — every user with a session from the
     //      request IP; ambiguous (multiple candidates) behind shared IPs.
     //   5. None.
+    //
+    // Tiers 1.5, 2.75 and 3.5 are opt-in (default off) and all fail CLOSED to
+    // the tiers below — an unconfigured deployment behaves exactly as before.
     //
     // Trust model (documented in research/spoiler-guard-identity-attempts.md):
     // markers and cookies are DISAMBIGUATION signals, not authentication —
@@ -133,18 +153,43 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         private readonly ISessionManager _sessionManager;
         private readonly MediaBrowser.Controller.Library.IUserManager _userManager;
         private readonly SpoilerIdentityService _markers;
+        private readonly IPluginConfigProvider _config;
         private readonly ILogger<RequestIdentityService> _logger;
+
+        // Cached trusted-proxy evaluator, rebuilt only when the config string
+        // changes (parsing a CIDR list per request would be wasteful on the
+        // hot image path). One volatile reference swap is atomic.
+        private volatile TrustedProxyEvaluator _proxyEval = new(string.Empty);
+
+        // Learned real-IP → user candidate map for the XFF tier (issue 7).
+        private readonly XffLearnedMap _xffMap = new();
 
         public RequestIdentityService(
             ISessionManager sessionManager,
             MediaBrowser.Controller.Library.IUserManager userManager,
             SpoilerIdentityService markers,
+            IPluginConfigProvider config,
             ILogger<RequestIdentityService> logger)
         {
             _sessionManager = sessionManager;
             _userManager = userManager;
             _markers = markers;
+            _config = config;
             _logger = logger;
+        }
+
+        // Returns the current trusted-proxy evaluator, rebuilding it when the
+        // admin changed the configured proxy list. Cheap identity check on the
+        // source string avoids re-parsing every request.
+        private TrustedProxyEvaluator GetProxyEvaluator(string configuredProxies)
+        {
+            var current = _proxyEval;
+            if (!string.Equals(current.Source, configuredProxies ?? string.Empty, StringComparison.Ordinal))
+            {
+                current = new TrustedProxyEvaluator(configuredProxies);
+                _proxyEval = current;
+            }
+            return current;
         }
 
         /// <summary>
@@ -209,11 +254,47 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         /// </summary>
         public RequestIdentity Resolve(Microsoft.AspNetCore.Http.HttpContext httpContext)
         {
+            var config = _config.ConfigurationOrNull;
+
+            // Trusted-proxy gate shared by the forward-auth and XFF tiers. Built
+            // once per request; both tiers no-op when no proxy is configured.
+            var trustedProxies = config?.IdentityTrustedProxies ?? string.Empty;
+            var proxyEval = GetProxyEvaluator(trustedProxies);
+            var transportIsTrustedProxy = proxyEval.HasAny
+                && proxyEval.IsTrusted(httpContext.Connection.RemoteIpAddress);
+
             // Tier 1: authenticated request — authoritative.
             var primary = Helpers.UserHelper.GetCurrentUserId(httpContext.User);
             if (primary != null && primary.Value != Guid.Empty)
             {
+                // OBSERVE for the XFF learned map (issue 7): an authenticated
+                // request behind a trusted proxy teaches us realClientIp → user,
+                // so later ANONYMOUS requests from that real IP resolve to a
+                // candidate set even though core recorded only the proxy IP.
+                if (transportIsTrustedProxy && (config?.IdentityXffLearnedMapEnabled ?? false))
+                {
+                    ObserveXff(httpContext, primary.Value);
+                }
                 return new RequestIdentity(new[] { primary.Value }, IdentityConfidence.Authenticated);
+            }
+
+            // Tier 1.5: forward-auth / SSO principal header (issue 16). Only when
+            // enabled AND the transport peer is a trusted proxy — otherwise the
+            // header is client-forgeable. Authoritative: the proxy already
+            // authenticated the user, and this is the only tier that names a
+            // cold-cache native client behind an IP-hiding proxy before it has
+            // fetched any stamped DTO.
+            if (transportIsTrustedProxy && (config?.IdentityForwardAuthEnabled ?? false))
+            {
+                var headerNames = ForwardAuthResolver.ParseHeaderNames(config?.IdentityForwardAuthHeaders);
+                var ssoUser = ForwardAuthResolver.Resolve(
+                    headerNames,
+                    name => httpContext.Request.Headers.TryGetValue(name, out var v) ? v.ToString() : null,
+                    ResolveUsernameToId);
+                if (ssoUser != Guid.Empty)
+                {
+                    return new RequestIdentity(new[] { ssoUser }, IdentityConfidence.ForwardAuthHeader);
+                }
             }
 
             // Tier 2: per-user identity marker embedded in the `?tag=` value
@@ -240,6 +321,23 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 return new RequestIdentity(new[] { markerUid }, IdentityConfidence.Marker);
             }
 
+            // Tier 2.75: HMAC-signed identity cookie (issue 13). Unforgeable, so
+            // — unlike the legacy raw je-spoiler-uid cookie below — it needs NO
+            // session-on-IP cross-check: the signature proves the value was
+            // minted inside that user's real authenticated session. Covers web
+            // fetches that carry no marker (CSS backgrounds) and requests where
+            // no session is currently active on the IP.
+            if ((config?.IdentitySignedCookieEnabled ?? false)
+                && !string.IsNullOrEmpty(config?.IdentityCookieSecret)
+                && httpContext.Request.Cookies.TryGetValue(IdentityCookieSigner.CookieName, out var signedRaw))
+            {
+                var signedUid = IdentityCookieSigner.Verify(signedRaw, config!.IdentityCookieSecret, DateTime.UtcNow);
+                if (signedUid != null && signedUid.Value != Guid.Empty && UserExists(signedUid.Value))
+                {
+                    return new RequestIdentity(new[] { signedUid.Value }, IdentityConfidence.SignedCookie);
+                }
+            }
+
             // Tier 2.5: single-user server shortcut. With exactly one user
             // account, ambiguity is structurally impossible — any request
             // that reaches user-scoped behavior can only be that user. This
@@ -256,6 +354,34 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             // Anonymous request (browser <img>/CSS-background, or a native
             // TV/mobile image fetch) — resolve by session-on-IP (cached briefly).
             var ipUsers = ScanActiveSessionUsersCached(httpContext);
+
+            // Tier 3.5: XFF learned-map candidates (issue 7). When the transport
+            // peer is a trusted proxy, resolve the real client IP from the
+            // forwarding headers and add every user we learned at that real IP
+            // from earlier authenticated requests. This rebuilds session-by-IP
+            // on the TRUE client IP for deployments where core saw only the
+            // proxy IP. Fail-closed union: extra candidates only over-protect.
+            if (transportIsTrustedProxy && (config?.IdentityXffLearnedMapEnabled ?? false))
+            {
+                var realIpKey = TryGetXffRealIpKey(httpContext);
+                if (realIpKey != null)
+                {
+                    var learned = _xffMap.Resolve(realIpKey);
+                    if (learned.Count > 0)
+                    {
+                        if (ipUsers.Count == 0)
+                        {
+                            ipUsers = learned;
+                        }
+                        else
+                        {
+                            var union = new HashSet<Guid>(ipUsers);
+                            union.UnionWith(learned);
+                            ipUsers = union;
+                        }
+                    }
+                }
+            }
 
             // Tier 3: per-browser cookie disambiguation. The je-spoiler-uid
             // cookie pins THIS request to its browser's user — trusted ONLY
@@ -362,6 +488,61 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             }
 
             return null;
+        }
+
+        // Maps an SSO principal (username or email) to a Jellyfin user id via
+        // IUserManager, or Guid.Empty. Never throws.
+        private Guid ResolveUsernameToId(string username)
+        {
+            if (string.IsNullOrWhiteSpace(username)) return Guid.Empty;
+            try
+            {
+                var user = _userManager.GetUserByName(username);
+                return user?.Id ?? Guid.Empty;
+            }
+            catch (Exception ex)
+            {
+                WarnRateLimited(
+                    "sso-user-lookup:" + ex.GetType().FullName,
+                    $"JE request identity: forward-auth username lookup threw: {ex.Message}");
+                return Guid.Empty;
+            }
+        }
+
+        // True when a user id still names an existing account (guards the signed
+        // cookie against naming a since-deleted user). Never throws.
+        private bool UserExists(Guid userId)
+        {
+            if (userId == Guid.Empty) return false;
+            try
+            {
+                return _userManager.GetUserById(userId) != null;
+            }
+            catch (Exception ex)
+            {
+                WarnRateLimited(
+                    "user-exists:" + ex.GetType().FullName,
+                    $"JE request identity: user existence check threw: {ex.Message}");
+                return false;
+            }
+        }
+
+        // Records realClientIp → userId for the XFF learned map from an
+        // authenticated trusted-proxy request.
+        private void ObserveXff(Microsoft.AspNetCore.Http.HttpContext httpContext, Guid userId)
+        {
+            var realIpKey = TryGetXffRealIpKey(httpContext);
+            if (realIpKey != null) _xffMap.Observe(realIpKey, userId);
+        }
+
+        // Extracts the real client IP from the forwarding headers and returns
+        // its normalized string key (or null). Caller must have already
+        // confirmed the transport peer is a trusted proxy.
+        private static string? TryGetXffRealIpKey(Microsoft.AspNetCore.Http.HttpContext httpContext)
+        {
+            var realIp = ForwardedHeaderParser.ExtractRealClientIp(
+                name => httpContext.Request.Headers.TryGetValue(name, out var v) ? v.ToString() : null);
+            return realIp == null ? null : NormalizeIp(realIp).ToString();
         }
 
         // Cached wrapper over the session scan. Keyed by normalized request
