@@ -54,12 +54,14 @@ Choose the icon set used throughout the plugin UI.
 
 *Extras tab*
 
-Adds a live stream counter icon to the Jellyfin header.
+Adds a live stream counter icon to the Jellyfin header. For admins the panel is
+a full session-control surface: it live-updates while open and offers per-session
+**Stop** and **Message** (with quick presets) actions on each stream.
 
 | Setting | Default | Description |
 |---|---|---|
 | **Active Streams Header Widget** | Off | Enables the stream counter in the header |
-| **Show widget to non-admins** | Off | When on, non-admin users see a read-only view (no broadcast, no IP addresses) |
+| **Show widget to non-admins** | Off | When on, non-admin users see a read-only view (no session controls, no broadcast, no IP addresses) |
 
 See [Other Features — Active Streams Widget](other-features.md#active-streams-widget) for full details.
 
