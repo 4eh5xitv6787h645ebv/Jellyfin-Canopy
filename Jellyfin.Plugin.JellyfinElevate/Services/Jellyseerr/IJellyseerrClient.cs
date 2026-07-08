@@ -88,9 +88,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
         /// Seerr's user-neutral <c>/api/v1/settings/public</c> (cached) for the
         /// server 4K capability and combines it with the user's Seerr 4K
         /// permissions. Degrades to all-false when Seerr is unconfigured/unreachable
-        /// or the user is unlinked.
+        /// or the user is unlinked. When <paramref name="isAdmin"/> is true the
+        /// caller is a Jellyfin admin who bypasses the Seerr per-user 4K permission
+        /// gate in the proxy, so capability is projected as server-4K-enabled AND the
+        /// JE admin master switch (not the linked Seerr user's own 4K bits).
         /// </summary>
-        Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(string jellyfinUserId);
+        Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(string jellyfinUserId, bool isAdmin = false);
 
         /// <summary>
         /// The proxy core: authenticated fan-out of <paramref name="apiPath"/> to the

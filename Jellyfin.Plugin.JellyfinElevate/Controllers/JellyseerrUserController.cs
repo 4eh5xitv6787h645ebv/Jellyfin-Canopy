@@ -108,7 +108,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
                 // UI on Seerr actually having 4K enabled AND this user holding the
                 // 4K permission (degrade-by-hiding), rather than on the admin
                 // toggle alone.
-                var cap = await _jellyseerr.GetSeerr4kCapabilityAsync(jellyfinUserId);
+                var cap = await _jellyseerr.GetSeerr4kCapabilityAsync(jellyfinUserId, IsAdminUser());
                 return Ok(new
                 {
                     active = true,

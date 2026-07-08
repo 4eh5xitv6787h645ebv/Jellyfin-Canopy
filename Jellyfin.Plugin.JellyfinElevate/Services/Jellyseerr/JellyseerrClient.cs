@@ -134,7 +134,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
 
         // ── 4K capability ────────────────────────────────────────────────────
 
-        public async Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(string jellyfinUserId)
+        public async Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(string jellyfinUserId, bool isAdmin = false)
         {
             var (movie4k, series4k) = await GetPublic4kSettingsAsync();
 
@@ -142,6 +142,20 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
             if (!movie4k && !series4k)
             {
                 return new Seerr4kCapability(false, false, false, false);
+            }
+
+            if (isAdmin)
+            {
+                // A Jellyfin admin bypasses the Seerr per-user 4K permission gate in
+                // the proxy (caller.IsAdmin), so projecting only the linked Seerr
+                // user's bits would show canRequest4k*=false while the server would
+                // actually accept the request. Mirror the gate: their capability is
+                // server-4K-enabled, still AND'd with the JE admin master switch
+                // (which applies to admins too — consistent with the gate order).
+                var adminConfig = _configProvider.ConfigurationOrNull;
+                bool masterMovie = adminConfig?.JellyseerrEnable4KRequests ?? false;
+                bool masterTv = adminConfig?.JellyseerrEnable4KTvRequests ?? false;
+                return new Seerr4kCapability(movie4k, series4k, movie4k && masterMovie, series4k && masterTv);
             }
 
             var user = await GetJellyseerrUser(jellyfinUserId);

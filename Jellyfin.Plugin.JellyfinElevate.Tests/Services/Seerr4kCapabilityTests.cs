@@ -27,9 +27,12 @@ public class Seerr4kCapabilityTests
     };
 
     private static (JellyseerrClient client, RecordingHttpMessageHandler handler) NewClient()
+        => NewClient(Config());
+
+    private static (JellyseerrClient client, RecordingHttpMessageHandler handler) NewClient(PluginConfiguration config)
     {
         var handler = new RecordingHttpMessageHandler();
-        var provider = new FakePluginConfigProvider(Config());
+        var provider = new FakePluginConfigProvider(config);
         var client = new JellyseerrClient(
             new RecordingHttpClientFactory(handler),
             NullLogger<JellyseerrClient>.Instance,
@@ -97,6 +100,42 @@ public class Seerr4kCapabilityTests
         handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":262144}}]}}");
 
         var cap = await client.GetSeerr4kCapabilityAsync(UserId);
+
+        Assert.True(cap.Movie4kEnabled);
+        Assert.True(cap.Series4kEnabled);
+        Assert.False(cap.CanRequest4kMovie);
+        Assert.False(cap.CanRequest4kTv);
+    }
+
+    [Fact]
+    public async Task AdminCaller_ProjectsServer4kAndMasterSwitch_IgnoringUserPermission()
+    {
+        // A Jellyfin admin bypasses the Seerr per-user 4K gate in the proxy, so the
+        // capability projection must report server-4K-enabled (AND the JE master
+        // switch) even though the linked Seerr user holds no 4K bits.
+        var config = Config();
+        config.JellyseerrEnable4KRequests = true;
+        config.JellyseerrEnable4KTvRequests = true;
+        var (client, handler) = NewClient(config);
+        handler.AddResponse("/api/v1/settings/public", "{\"movie4kEnabled\":true,\"series4kEnabled\":true}");
+        // 262144 == REQUEST_MOVIE (base only, no 4K bits) — irrelevant for an admin.
+        handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":262144}}]}}");
+
+        var cap = await client.GetSeerr4kCapabilityAsync(UserId, isAdmin: true);
+
+        Assert.True(cap.CanRequest4kMovie);
+        Assert.True(cap.CanRequest4kTv);
+    }
+
+    [Fact]
+    public async Task AdminCaller_MasterSwitchOff_HidesEvenThoughServerEnabled()
+    {
+        // The JE 4K master switch applies to admins too (consistent with the gate
+        // order): with it off, an admin gets no 4K capability despite server 4K.
+        var (client, handler) = NewClient(Config()); // master switches default false
+        handler.AddResponse("/api/v1/settings/public", "{\"movie4kEnabled\":true,\"series4kEnabled\":true}");
+
+        var cap = await client.GetSeerr4kCapabilityAsync(UserId, isAdmin: true);
 
         Assert.True(cap.Movie4kEnabled);
         Assert.True(cap.Series4kEnabled);
