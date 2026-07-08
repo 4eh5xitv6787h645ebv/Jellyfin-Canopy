@@ -765,20 +765,24 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
                         // POST /api/v1/request — make a request
                         if (method == HttpMethod.Post && apiPath.StartsWith("/api/v1/request", StringComparison.OrdinalIgnoreCase))
                         {
-                            if (!JellyseerrPermissionHelper.HasAnyPermission(perms,
-                                JellyseerrPermission.REQUEST | JellyseerrPermission.REQUEST_MOVIE | JellyseerrPermission.REQUEST_TV))
-                                return new ObjectResult(new { code = "no_request_permission", message = "You do not have permission to make requests in Seerr." }) { StatusCode = 403 };
-
-                            // A 4K request needs the 4K bit. Mirror Seerr's own
-                            // server enforcement so a non-admin without REQUEST_4K
-                            // gets a clear, typed 403 up front instead of a generic
-                            // Seerr rejection after the round trip.
+                            // Seerr fully decouples the 4K permission bits from the
+                            // base request bits (server/entity/MediaRequest.ts:80-112):
+                            // a user holding only REQUEST_4K / REQUEST_4K_MOVIE /
+                            // REQUEST_4K_TV may submit a 4K request without ANY base
+                            // REQUEST / REQUEST_MOVIE / REQUEST_TV bit. So for a 4K
+                            // request we SKIP the base precondition and gate solely on
+                            // the 4K helper; only the non-4K path requires a base bit.
                             if (content != null && TryGetIs4k(content))
                             {
                                 bool isTv = TryGetRequestMedia(content, out var mt4k, out _)
                                     && string.Equals(mt4k, "tv", StringComparison.OrdinalIgnoreCase);
                                 if (!JellyseerrPermissionHelper.CanRequest4k(perms, isTv))
                                     return new ObjectResult(new { code = "no_4k_request_permission", message = "You do not have permission to request 4K in Seerr." }) { StatusCode = 403 };
+                            }
+                            else if (!JellyseerrPermissionHelper.HasAnyPermission(perms,
+                                JellyseerrPermission.REQUEST | JellyseerrPermission.REQUEST_MOVIE | JellyseerrPermission.REQUEST_TV))
+                            {
+                                return new ObjectResult(new { code = "no_request_permission", message = "You do not have permission to make requests in Seerr." }) { StatusCode = 403 };
                             }
                         }
 
