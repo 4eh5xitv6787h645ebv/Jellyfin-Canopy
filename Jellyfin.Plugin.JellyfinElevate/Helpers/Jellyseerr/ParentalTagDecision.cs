@@ -22,27 +22,35 @@ namespace Jellyfin.Plugin.JellyfinElevate.Helpers.Jellyseerr
     ///     <c>String.GetCleanValue()</c> (lowercase, diacritics stripped,
     ///     punctuation → spaces, whitespace collapsed) — "Sci-Fi" == "sci fi".
     ///
-    /// Adaptation for external titles (documented in docs/seerr): the item's
-    /// "tags" are its TMDB <b>keywords ∪ genres</b>. Keywords are the parity
-    /// signal — Jellyfin's TMDB metadata provider imports TMDB keywords as the
-    /// item Tags that native tag-blocking matches — and genre names are a
-    /// deliberate intent extension (an admin blocking "horror" means the genre
-    /// too; over-blocking is the safe direction for a parental control).
+    /// Adaptation for external titles (documented in docs/seerr) — the two
+    /// directions deliberately use DIFFERENT match surfaces because their
+    /// safe-failure directions are opposite:
+    ///   • <b>BlockedTags</b> match the title's keywords ∪ genre names.
+    ///     Keywords are the parity signal (Jellyfin's TMDB provider imports
+    ///     TMDB keywords as the item Tags native blocking matches); genre
+    ///     names are an intent extension (blocking "horror" means the genre
+    ///     too) — over-blocking is safe here.
+    ///   • <b>AllowedTags</b> match <b>keywords ONLY</b> — native parity.
+    ///     Genres never become item Tags, so letting a genre satisfy the
+    ///     allow-list would show a restricted user titles the library itself
+    ///     would hide (under-blocking, the unsafe direction).
     /// </summary>
     public static class ParentalTagDecision
     {
         /// <summary>
-        /// Decides whether a title with the given normalized tag set is
-        /// visible under the user's normalized blocked/allowed tag lists.
-        /// All inputs must already be cleaned via <see cref="CleanTags"/> /
-        /// <c>GetCleanValue()</c> — this method does set overlap only, exactly
-        /// like core's <c>IsVisibleViaTags</c>.
+        /// Decides whether a title with the given normalized keyword/genre
+        /// sets is visible under the user's normalized blocked/allowed tag
+        /// lists. All inputs must already be cleaned via
+        /// <see cref="CleanTags"/> / <c>GetCleanValue()</c> — this method does
+        /// set overlap only, mirroring core's <c>IsVisibleViaTags</c>.
         /// </summary>
-        /// <param name="titleTags">The title's cleaned keyword∪genre set.</param>
+        /// <param name="titleKeywords">The title's cleaned TMDB keyword names.</param>
+        /// <param name="titleGenres">The title's cleaned TMDB genre names.</param>
         /// <param name="blockedTags">The user's cleaned BlockedTags.</param>
         /// <param name="allowedTags">The user's cleaned AllowedTags.</param>
         public static bool IsAllowed(
-            IReadOnlyCollection<string> titleTags,
+            IReadOnlyCollection<string> titleKeywords,
+            IReadOnlyCollection<string> titleGenres,
             IReadOnlyCollection<string> blockedTags,
             IReadOnlyCollection<string> allowedTags)
         {
@@ -51,12 +59,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Helpers.Jellyseerr
                 return true;
             }
 
-            if (blockedTags.Count > 0 && titleTags.Any(blockedTags.Contains))
+            if (blockedTags.Count > 0
+                && (titleKeywords.Any(blockedTags.Contains) || titleGenres.Any(blockedTags.Contains)))
             {
                 return false; // blocked wins, even over an allowed match
             }
 
-            if (allowedTags.Count > 0 && !titleTags.Any(allowedTags.Contains))
+            // Allow-list: keywords ONLY — genre matches must not satisfy it
+            // (native parity; see the class doc).
+            if (allowedTags.Count > 0 && !titleKeywords.Any(allowedTags.Contains))
             {
                 return false; // allow-list active and nothing matched
             }

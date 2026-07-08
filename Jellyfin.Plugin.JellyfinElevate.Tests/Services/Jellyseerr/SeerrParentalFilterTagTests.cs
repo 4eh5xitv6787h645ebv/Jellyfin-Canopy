@@ -127,17 +127,44 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services.Jellyseerr
         }
 
         [Fact]
-        public async Task AllowList_KeepsOnlyMatchingTitles()
+        public async Task AllowList_KeepsOnlyKeywordMatchingTitles()
         {
-            var filter = BuildTagFilter(blockedTags: Array.Empty<string>(), allowedTags: new[] { "family" });
+            var filter = BuildTagFilter(blockedTags: Array.Empty<string>(), allowedTags: new[] { "friendship" });
             Assert.Equal(new List<int> { 500 }, await FilterListIds(filter, 400, 500));
+        }
+
+        [Fact]
+        public async Task AllowList_IsNotSatisfiedByGenres_NativeParity()
+        {
+            // 500's GENRES include Family but its keywords do not — natively
+            // this title would be hidden under allow-list "family" (genres
+            // never become item Tags), so it must be hidden here too.
+            var filter = BuildTagFilter(blockedTags: Array.Empty<string>(), allowedTags: new[] { "family" });
+            Assert.Equal(new List<int>(), await FilterListIds(filter, 400, 500));
         }
 
         [Fact]
         public async Task BlockedWins_OverAllowedMatch()
         {
-            var filter = BuildTagFilter(blockedTags: new[] { "comedy" }, allowedTags: new[] { "comedy" });
+            // "zombie" is a keyword on 400 — blocked and allowed both match;
+            // blocked must win, exactly like core.
+            var filter = BuildTagFilter(blockedTags: new[] { "zombie" }, allowedTags: new[] { "zombie" });
             Assert.Equal(new List<int>(), await FilterListIds(filter, 400));
+        }
+
+        [Fact]
+        public async Task SeasonAndSubDetailSurfaces_AreTagGated()
+        {
+            var filter = BuildTagFilter(blockedTags: new[] { "time travel" }, allowedTags: Array.Empty<string>());
+            var caller = new JellyseerrCaller(CallerGuid, false);
+
+            // Season routes gate on the parent tv title's signature.
+            var season = await filter.ApplyAsync(@"{ ""episodes"": [] }", "/api/v1/tv/400/season/1", caller);
+            Assert.True(season.Block, "season of a tag-blocked series must be blocked");
+
+            // Sub-detail routes gate on the parent title too.
+            var sub = await filter.ApplyAsync(@"{ }", "/api/v1/tv/400/ratings", caller);
+            Assert.True(sub.Block, "sub-detail of a tag-blocked series must be blocked");
         }
 
         [Fact]
@@ -193,7 +220,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services.Jellyseerr
             });
             var cache = new SeerrCache(provider);
             // Seed the EXPIRED entry with the outdated tag set.
-            cache.CertScoreCache["movie:400:US"] = (13, 0, new[] { "family" }, DateTime.UtcNow.AddDays(-2));
+            cache.CertScoreCache["movie:400:US"] = (13, 0, new[] { "family" }, Array.Empty<string>(), DateTime.UtcNow.AddDays(-2));
 
             var ratingUserGuid = Guid.Parse("44444444-4444-4444-4444-444444444444");
             var registry = new Dictionary<Guid, (User, UserPolicy)>
@@ -218,7 +245,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services.Jellyseerr
             // Rating-only refresh through the light endpoint (entry was expired).
             Assert.False(await filter.IsBlockedAsync("movie", 400, new JellyseerrCaller(ratingUserGuid.ToString(), false)));
             // The refreshed entry must NOT carry the resurrected stale tags…
-            Assert.Null(cache.CertScoreCache["movie:400:US"].Tags);
+            Assert.Null(cache.CertScoreCache["movie:400:US"].Keywords);
             // …so the tag-restricted user re-resolves the full detail and blocks.
             Assert.True(await filter.IsBlockedAsync("movie", 400, new JellyseerrCaller(CallerGuid, false)));
         }
@@ -254,24 +281,36 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services.Jellyseerr
                 [Guid.Parse(CallerGuid)] = (tagUser, new UserPolicy
                 {
                     BlockUnratedItems = Array.Empty<UnratedItem>(),
-                    BlockedTags = new[] { "zombie" },
+                    BlockedTags = new[] { "werewolf" }, // deliberately ABSENT from movie 400
                 }),
             };
 
             handler.AddResponse("/movie/400", ZombieMovieDetail());
+            var certCache = new SeerrCache(provider);
             var filter = new SeerrParentalFilter(
                 new RecordingHttpClientFactory(handler),
                 NullLogger<SeerrParentalFilter>.Instance,
                 new StubPolicyUserManager(registry),
                 new FakeLocalization(),
-                new SeerrCache(provider),
+                certCache,
                 provider);
 
             // Rating-only pass caches the light (tag-less) result: PG-13 <= 13 -> allowed.
             Assert.False(await filter.IsBlockedAsync("movie", 400, new JellyseerrCaller(ratingUserGuid.ToString(), false)));
 
-            // Tag-rule pass must re-resolve through the tag-bearing Seerr detail and block.
-            Assert.True(await filter.IsBlockedAsync("movie", 400, new JellyseerrCaller(CallerGuid, false)));
+            // DISCRIMINATING assertion (review finding): the tag user blocks a
+            // tag ABSENT from movie 400 ("werewolf"). Correct behavior:
+            // re-resolve through the tag-bearing Seerr detail -> no werewolf
+            // keyword/genre -> ALLOWED. A regression that reuses the tag-less
+            // cache entry would fail closed -> blocked -> this asserts False,
+            // so deleting the Tags-null cache-miss guard fails this test.
+            var blocked = await filter.IsBlockedAsync("movie", 400, new JellyseerrCaller(CallerGuid, false));
+            // The re-resolution really happened via the Seerr full detail…
+            Assert.Contains(handler.Requests, r => r.RequestUri!.AbsolutePath.EndsWith("/api/v1/movie/400", StringComparison.Ordinal));
+            // The upgraded cache entry now carries the tag sets.
+            Assert.NotNull(certCache.CertScoreCache["movie:400:US"].Keywords);
+            // …and no werewolf keyword/genre exists on the title -> allowed.
+            Assert.False(blocked);
         }
     }
 }

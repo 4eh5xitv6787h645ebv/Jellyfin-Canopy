@@ -102,13 +102,16 @@ Tag-based parental controls are enforced too: a user whose Jellyfin policy
 **blocks items with tags** (for example `zombie` or `horror`) won't be sent
 matching titles in Seerr search/discovery, gets a 403 on their detail pages,
 and can't request them; **Allow only items with tags** works as the same
-strict allow-list it is in the library. Titles are matched by their **TMDB
-keywords and genres** — keywords are the very strings Jellyfin's TMDB metadata
-provider imports as library Tags, so a blocked tag hides the same content
-Jellyfin itself would hide once the title is imported, and genre names are
-included so blocking "horror" also covers the genre. Matching uses Jellyfin's
-own normalization ("Sci-Fi" = "sci fi"), and a blocked tag always wins over an
-allowed one, exactly like the native rules.
+strict allow-list it is in the library. The two directions deliberately match
+different metadata: **blocked** tags match a title's TMDB **keywords and
+genre names** (keywords are the very strings Jellyfin's TMDB provider imports
+as library Tags, and genre names are included so blocking "horror" also
+covers the genre — over-hiding is the safe direction), while **allowed** tags
+match **keywords only**, exactly mirroring the library (genres never become
+item Tags, so a genre match must not satisfy an allow-list the library itself
+would enforce more strictly). Matching uses Jellyfin's own normalization
+("Sci-Fi" = "sci fi"), and a blocked tag always wins over an allowed one,
+exactly like the native rules.
 
 #### Configure
 

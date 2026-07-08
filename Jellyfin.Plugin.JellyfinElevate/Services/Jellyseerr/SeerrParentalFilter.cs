@@ -69,11 +69,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
         }
 
         // A title's resolved parental signals: certification score (null =
-        // unrated/unknown) plus the cleaned keyword∪genre tag set for the tag
-        // branch (null = tag data not fetched — only possible on entries
-        // resolved through the light cert-only TMDB endpoints; passes with tag
-        // rules active always resolve through the tag-bearing Seerr detail).
-        private readonly record struct TitleSignature(int? Score, int? SubScore, string[]? Tags);
+        // unrated/unknown) plus the cleaned keyword and genre name sets for
+        // the tag branch, kept separate because blocked tags match keywords ∪
+        // genres while allowed tags match keywords only (native parity — see
+        // ParentalTagDecision). Null sets = tag data not fetched (only
+        // possible on entries resolved through the light cert-only TMDB
+        // endpoints; tag-rule passes always resolve the tag-bearing Seerr
+        // detail).
+        private readonly record struct TitleSignature(int? Score, int? SubScore, string[]? Keywords, string[]? Genres);
 
         private enum Category
         {
@@ -392,13 +395,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
             // Tag branch. A missing tag set under active tag rules means the
             // title could not be verified -> fail closed, mirroring the
             // cert path's posture.
-            var tags = signature?.Tags;
-            if (tags is null)
+            if (signature?.Keywords is not { } keywords || signature?.Genres is not { } genres)
             {
                 return false;
             }
 
-            return ParentalTagDecision.IsAllowed(tags, policy.BlockedTags, policy.AllowedTags);
+            return ParentalTagDecision.IsAllowed(keywords, genres, policy.BlockedTags, policy.AllowedTags);
         }
 
         // ── List filtering ────────────────────────────────────────────────────
@@ -705,21 +707,23 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
         // ── Signature resolution (cache -> in-flight -> fetch) ─────────────────
         private TitleSignature? SignatureFromDetail(JsonElement detail, string mediaType, string region, bool includeTags)
         {
-            string[]? tags = null;
+            string[]? keywords = null;
+            string[]? genres = null;
             if (includeTags)
             {
                 var extracted = SeerrTagSignatureExtractor.Extract(detail);
-                tags = extracted.Count == 0 ? Array.Empty<string>() : extracted.ToArray();
+                keywords = extracted.Keywords.Count == 0 ? Array.Empty<string>() : extracted.Keywords.ToArray();
+                genres = extracted.Genres.Count == 0 ? Array.Empty<string>() : extracted.Genres.ToArray();
             }
 
             var cert = SeerrCertificationExtractor.Extract(detail, mediaType, region);
             if (string.IsNullOrWhiteSpace(cert.Certification))
             {
-                return new TitleSignature(null, null, tags); // known-unrated
+                return new TitleSignature(null, null, keywords, genres); // known-unrated
             }
 
             var score = _localization.GetRatingScore(cert.Certification!, cert.Iso ?? region);
-            return score is null ? new TitleSignature(null, null, tags) : new TitleSignature(score.Score, score.SubScore, tags);
+            return score is null ? new TitleSignature(null, null, keywords, genres) : new TitleSignature(score.Score, score.SubScore, keywords, genres);
         }
 
         private async Task<TitleSignature?> GetSignatureAsync(
@@ -736,9 +740,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
             // the light cert endpoints carry Tags == null).
             if (_seerrCache.CertScoreCache.TryGetValue(cacheKey, out var cached)
                 && DateTime.UtcNow - cached.CachedAt < _seerrCache.GetParentalRatingCacheTtl()
-                && (!needTags || cached.Tags != null))
+                && (!needTags || cached.Keywords != null))
             {
-                return new TitleSignature(cached.Score, cached.SubScore, cached.Tags);
+                return new TitleSignature(cached.Score, cached.SubScore, cached.Keywords, cached.Genres);
             }
 
             // Coalesce concurrent fetches for the same title. The shared task carries
@@ -793,7 +797,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
             // Seerr-detail cert fetches too), so later tag-rule passes hit the
             // cache instead of re-fetching.
             var resolved = SignatureFromDetail(detail.Value, mediaType, region, includeTags: hasTagData)
-                ?? new TitleSignature(null, null, hasTagData ? Array.Empty<string>() : null);
+                ?? new TitleSignature(null, null, hasTagData ? Array.Empty<string>() : null, hasTagData ? Array.Empty<string>() : null);
 
             // Atomic write with a narrow tag-preservation rule. A light
             // cert-only result must not erase tags a CONCURRENT full fetch
@@ -809,15 +813,17 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
             var ttl = _seerrCache.GetParentalRatingCacheTtl();
             _seerrCache.CertScoreCache.AddOrUpdate(
                 cacheKey,
-                _ => (resolved.Score, resolved.SubScore, resolved.Tags, now),
+                _ => (resolved.Score, resolved.SubScore, resolved.Keywords, resolved.Genres, now),
                 (_, current) =>
                 {
-                    var tags = resolved.Tags;
-                    if (tags is null && current.Tags != null && (now - current.CachedAt) < ttl)
+                    var keywords = resolved.Keywords;
+                    var genres = resolved.Genres;
+                    if (keywords is null && current.Keywords != null && (now - current.CachedAt) < ttl)
                     {
-                        tags = current.Tags;
+                        keywords = current.Keywords;
+                        genres = current.Genres;
                     }
-                    return (resolved.Score, resolved.SubScore, tags, now);
+                    return (resolved.Score, resolved.SubScore, keywords, genres, now);
                 });
             return resolved;
         }

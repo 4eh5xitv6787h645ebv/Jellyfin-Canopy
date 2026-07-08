@@ -25,27 +25,28 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Helpers.Jellyseerr
                 ""genres"": [ { ""id"": 27, ""name"": ""Horror"" }, { ""id"": 35, ""name"": ""Comedy"" } ]
             }");
 
-            var tags = SeerrTagSignatureExtractor.Extract(detail);
+            var (keywords, genres) = SeerrTagSignatureExtractor.Extract(detail);
 
-            Assert.Contains("zombie", tags);
-            Assert.Contains("graphic violence", tags); // cleaned like core
-            Assert.Contains("horror", tags);
-            Assert.Contains("comedy", tags);
-            Assert.Equal(4, tags.Count);
+            Assert.Contains("zombie", keywords);
+            Assert.Contains("graphic violence", keywords); // cleaned like core
+            Assert.Contains("horror", genres);
+            Assert.Contains("comedy", genres);
+            Assert.Equal(2, keywords.Count);
+            Assert.Equal(2, genres.Count);
         }
 
         [Fact]
         public void RawTmdbMovieWrapper_IsUnwrapped()
         {
             var detail = Parse(@"{ ""keywords"": { ""keywords"": [ { ""id"": 1, ""name"": ""heist"" } ] } }");
-            Assert.Contains("heist", SeerrTagSignatureExtractor.Extract(detail));
+            Assert.Contains("heist", SeerrTagSignatureExtractor.Extract(detail).Keywords);
         }
 
         [Fact]
         public void RawTmdbTvWrapper_IsUnwrapped()
         {
             var detail = Parse(@"{ ""keywords"": { ""results"": [ { ""id"": 2, ""name"": ""time travel"" } ] } }");
-            Assert.Contains("time travel", SeerrTagSignatureExtractor.Extract(detail));
+            Assert.Contains("time travel", SeerrTagSignatureExtractor.Extract(detail).Keywords);
         }
 
         [Theory]
@@ -54,9 +55,11 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Helpers.Jellyseerr
         [InlineData(@"{ ""keywords"": ""oops"", ""genres"": 42 }")]
         [InlineData(@"{ ""keywords"": [ { ""id"": 1 } ], ""genres"": [ ""bare-string"" ] }")]
         [InlineData(@"[1,2,3]")]
-        public void MissingOrMalformedContainers_YieldEmptySet_NoThrow(string json)
+        public void MissingOrMalformedContainers_YieldEmptySets_NoThrow(string json)
         {
-            Assert.Empty(SeerrTagSignatureExtractor.Extract(Parse(json)));
+            var (keywords, genres) = SeerrTagSignatureExtractor.Extract(Parse(json));
+            Assert.Empty(keywords);
+            Assert.Empty(genres);
         }
     }
 }

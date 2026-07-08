@@ -4,9 +4,10 @@ using System.Text.Json;
 namespace Jellyfin.Plugin.JellyfinElevate.Helpers.Jellyseerr
 {
     /// <summary>
-    /// Extracts a title's tag signature — the cleaned set of TMDB keyword and
-    /// genre NAMES — from a movie/tv detail body, for the tag branch of the
-    /// Seerr parental filter (see <see cref="ParentalTagDecision"/>).
+    /// Extracts a title's tag signature — the cleaned sets of TMDB keyword
+    /// and genre NAMES, kept SEPARATE because the two directions of the tag
+    /// branch match different surfaces (see <see cref="ParentalTagDecision"/>:
+    /// blocked = keywords ∪ genres, allowed = keywords only).
     /// Companion to <see cref="SeerrCertificationExtractor"/>; accepts the
     /// same body shapes the cert path can produce:
     ///   • Seerr detail (<c>/api/v1/movie|tv/{id}</c>): flat
@@ -20,24 +21,25 @@ namespace Jellyfin.Plugin.JellyfinElevate.Helpers.Jellyseerr
     /// </summary>
     public static class SeerrTagSignatureExtractor
     {
-        /// <summary>Extracts the cleaned keyword∪genre name set from a detail body.</summary>
-        public static HashSet<string> Extract(JsonElement detail)
+        /// <summary>Extracts the cleaned keyword and genre name sets from a detail body.</summary>
+        public static (HashSet<string> Keywords, HashSet<string> Genres) Extract(JsonElement detail)
         {
-            var names = new List<string?>();
+            var keywordNames = new List<string?>();
+            var genreNames = new List<string?>();
             if (detail.ValueKind == JsonValueKind.Object)
             {
                 if (detail.TryGetProperty("keywords", out var keywords))
                 {
-                    CollectNames(keywords, names);
+                    CollectNames(keywords, keywordNames);
                 }
 
                 if (detail.TryGetProperty("genres", out var genres))
                 {
-                    CollectNames(genres, names);
+                    CollectNames(genres, genreNames);
                 }
             }
 
-            return ParentalTagDecision.CleanTags(names);
+            return (ParentalTagDecision.CleanTags(keywordNames), ParentalTagDecision.CleanTags(genreNames));
         }
 
         // Accepts a flat array of {name}, or the raw-TMDB wrappers
