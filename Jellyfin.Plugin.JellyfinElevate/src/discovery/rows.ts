@@ -49,6 +49,11 @@ export const DEFAULT_ROW_IDS: readonly string[] = [
     'trending', 'popular', 'upcoming', 'topRated',
 ];
 
+// Every built-in row id in natural order (the customize modal offers these + genre rows).
+export const BUILTIN_ORDER: readonly string[] = [
+    'trending', 'popular', 'upcoming', 'topRated', 'nowPlaying', 'watchlist',
+];
+
 // Built-in (non-parameterised) rows, in their natural order, with i18n title keys.
 const BUILTIN_ROWS: Record<string, DiscoveryRowSpec> = {
     trending: { id: 'trending', kind: 'trending', titleKey: 'discovery_row_trending' },

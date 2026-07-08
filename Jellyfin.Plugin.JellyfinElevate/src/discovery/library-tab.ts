@@ -15,6 +15,9 @@ import { getHeaderRightContainer } from '../enhanced/helpers';
 import { injectCss } from '../core/ui-kit';
 import type { DiscoveryMediaType } from './rows';
 import { renderFeed, type DiscoveryFeedHandle } from './feed';
+import { fetchGenres } from './data';
+import { getUserRowIds } from './prefs';
+import { openCustomize } from './customize';
 
 interface LibraryPageDef {
     id: string;
@@ -31,6 +34,7 @@ interface PaneState {
     active: boolean;
     feed: DiscoveryFeedHandle | null;
     pane: HTMLElement | null;
+    feedHost: HTMLElement | null;
 }
 
 const state = new Map<string, PaneState>();
@@ -38,7 +42,7 @@ let injectPending = false;
 
 function stateFor(id: string): PaneState {
     let s = state.get(id);
-    if (!s) { s = { active: false, feed: null, pane: null }; state.set(id, s); }
+    if (!s) { s = { active: false, feed: null, pane: null, feedHost: null }; state.set(id, s); }
     return s;
 }
 
@@ -60,6 +64,14 @@ function ensureCss(): void {
             overflow-y: auto; overscroll-behavior: contain;
         }
         .je-discovery-toggle.is-active { color: var(--theme-primary-color, #00a4dc); }
+        .je-discovery-toolbar { display: flex; justify-content: flex-end; padding: 0.4em 1.2em 0; }
+        .je-discovery-customize-btn {
+            display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+            background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+            color: rgba(255,255,255,0.85); border-radius: 6px; padding: 5px 12px; font-size: 13px;
+        }
+        .je-discovery-customize-btn:hover { background: rgba(255,255,255,0.14); }
+        .je-discovery-customize-btn .material-icons { font-size: 16px; }
     `);
 }
 
@@ -78,9 +90,44 @@ function closePane(def: LibraryPageDef): void {
     s.feed = null;
     s.pane?.remove();
     s.pane = null;
+    s.feedHost = null;
     s.active = false;
     document.querySelector(def.pageSelector)?.classList.remove('je-discovery-active');
     document.getElementById('je-discovery-toggle-' + def.id)?.classList.remove('is-active');
+}
+
+/** (Re)renders the feed into the pane's feed host using the caller's current saved row prefs. */
+async function renderFeedHost(def: LibraryPageDef): Promise<void> {
+    const s = stateFor(def.id);
+    if (!s.feedHost) return;
+    s.feed?.destroy();
+    s.feedHost.textContent = '';
+    const handle = await renderFeed(s.feedHost, def.mediaType, getUserRowIds(def.mediaType));
+    if (!s.active) { handle.destroy(); return; }
+    s.feed = handle;
+}
+
+/** Builds the pane toolbar with the per-user "Customize" button. */
+function buildToolbar(def: LibraryPageDef): HTMLElement {
+    const toolbar = document.createElement('div');
+    toolbar.className = 'je-discovery-toolbar';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'je-discovery-customize-btn';
+    const icon = document.createElement('span');
+    icon.className = 'material-icons';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = 'tune';
+    const lbl = document.createElement('span');
+    lbl.textContent = JE.t!('discovery_customize_button');
+    btn.append(icon, lbl);
+    btn.addEventListener('click', () => {
+        void fetchGenres(def.mediaType).then((genres) => {
+            openCustomize(def.mediaType, genres, () => { void renderFeedHost(def); });
+        });
+    });
+    toolbar.appendChild(btn);
+    return toolbar;
 }
 
 async function openPane(def: LibraryPageDef): Promise<void> {
@@ -91,14 +138,17 @@ async function openPane(def: LibraryPageDef): Promise<void> {
     const pane = document.createElement('div');
     pane.className = 'je-discovery-pane';
     pane.setAttribute('data-discovery-pane', def.id);
+    const feedHost = document.createElement('div');
+    pane.append(buildToolbar(def), feedHost);
     pageEl.appendChild(pane);
     pageEl.classList.add('je-discovery-active');
     s.pane = pane;
+    s.feedHost = feedHost;
     s.active = true;
     document.getElementById('je-discovery-toggle-' + def.id)?.classList.add('is-active');
-    s.feed = await renderFeed(pane, def.mediaType);
-    // If we were torn down mid-render (nav away), discard the now-orphaned feed.
-    if (!s.active) { s.feed.destroy(); s.feed = null; pane.remove(); s.pane = null; }
+    await renderFeedHost(def);
+    // If we were torn down mid-render (nav away), discard the now-orphaned pane.
+    if (!s.active) { s.feed?.destroy(); s.feed = null; pane.remove(); s.pane = null; s.feedHost = null; }
 }
 
 function toggle(def: LibraryPageDef): void {
