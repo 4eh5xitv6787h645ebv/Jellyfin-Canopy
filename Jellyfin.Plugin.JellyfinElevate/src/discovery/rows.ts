@@ -1,0 +1,97 @@
+// src/discovery/rows.ts
+//
+// The Discovery/Trending row catalog: the set of shelves a discovery feed shows, and how an
+// admin default + per-user override resolves into an ordered list of concrete rows for a given
+// media type (the Movies page shows movie rows, the TV page shows tv rows). Rows are DATA only —
+// data.ts turns a row into a fetch, feed.ts renders it. Keeping the catalog declarative lets the
+// customization UI (per-user add/remove/reorder) operate on plain ids without touching rendering.
+
+import { JE } from '../globals';
+
+declare module '../types/je' {
+    interface PluginConfig {
+        /** Master switch for the Discovery/Trending feature (admin default; default on). */
+        DiscoveryEnabled?: boolean;
+        /** Whether the Discovery option appears in the Movies/TV library menu (admin default). */
+        DiscoveryLibraryTab?: boolean;
+        /** Admin default row order, a comma-separated list of row ids. */
+        DiscoveryDefaultRows?: string;
+    }
+}
+
+export type DiscoveryMediaType = 'movie' | 'tv';
+
+// A row "kind" maps to a data source + fetch shape in data.ts. `genre`/`streaming` carry a param.
+export type DiscoveryRowKind =
+    | 'trending' | 'popular' | 'upcoming' | 'topRated' | 'nowPlaying' | 'watchlist'
+    | 'genre' | 'streaming';
+
+export interface DiscoveryRowSpec {
+    // Stable id, unique within a feed. Built-ins use the kind (`trending`); parameterised rows
+    // append the param (`genre:28`, `streaming:8`) so the customization UI can address them.
+    id: string;
+    kind: DiscoveryRowKind;
+    titleKey?: string;      // i18n key for a built-in title
+    title?: string;         // explicit title (a genre/provider name) — overrides titleKey
+    param?: number;         // genreId / watch-provider id for parameterised kinds
+}
+
+// The out-of-the-box defaults — great without any configuration. Genre rows are appended
+// dynamically (resolveRows) from the server genre list so they always reflect real genres.
+export const DEFAULT_ROW_IDS: readonly string[] = [
+    'trending', 'popular', 'upcoming', 'topRated',
+];
+
+// Built-in (non-parameterised) rows, in their natural order, with i18n title keys.
+const BUILTIN_ROWS: Record<string, DiscoveryRowSpec> = {
+    trending: { id: 'trending', kind: 'trending', titleKey: 'discovery_row_trending' },
+    popular: { id: 'popular', kind: 'popular', titleKey: 'discovery_row_popular' },
+    upcoming: { id: 'upcoming', kind: 'upcoming', titleKey: 'discovery_row_upcoming' },
+    topRated: { id: 'topRated', kind: 'topRated', titleKey: 'discovery_row_top_rated' },
+    nowPlaying: { id: 'nowPlaying', kind: 'nowPlaying', titleKey: 'discovery_row_now_playing' },
+    watchlist: { id: 'watchlist', kind: 'watchlist', titleKey: 'discovery_row_watchlist' },
+};
+
+/** Parses a stored row id back into a spec (built-in or `genre:<id>` / `streaming:<id>`). */
+export function specFromId(id: string, genreNames?: Map<number, string>): DiscoveryRowSpec | null {
+    if (BUILTIN_ROWS[id]) return BUILTIN_ROWS[id];
+    const [kind, rawParam] = id.split(':');
+    const param = Number(rawParam);
+    if ((kind === 'genre' || kind === 'streaming') && Number.isFinite(param)) {
+        return {
+            id, kind,
+            param,
+            title: genreNames?.get(param),
+            titleKey: kind === 'genre' ? undefined : 'discovery_row_streaming',
+        };
+    }
+    return null;
+}
+
+/**
+ * The admin default order for a media type: the plugin config's DiscoveryDefaultRows (comma-list of
+ * ids) if set, else DEFAULT_ROW_IDS. Server-side-only shaping is deliberately avoided — the client
+ * resolves user → admin → hardcoded, matching the plugin's settings doctrine.
+ */
+export function adminDefaultRowIds(): string[] {
+    const raw = JE.pluginConfig?.DiscoveryDefaultRows || '';
+    const ids = raw.split(',').map(s => s.trim()).filter(Boolean);
+    return ids.length > 0 ? ids : [...DEFAULT_ROW_IDS];
+}
+
+/**
+ * Resolves the ordered rows to render for a media type: the per-user override (if the user
+ * customised) else the admin default, mapped to concrete specs. `genreNames` names any genre rows.
+ * Unknown ids are dropped (a genre removed upstream, a renamed built-in) so the feed never breaks.
+ */
+export function resolveRows(userRowIds: string[] | null, genreNames?: Map<number, string>): DiscoveryRowSpec[] {
+    const ids = (userRowIds && userRowIds.length > 0) ? userRowIds : adminDefaultRowIds();
+    const out: DiscoveryRowSpec[] = [];
+    const seen = new Set<string>();
+    for (const id of ids) {
+        if (seen.has(id)) continue;
+        const spec = specFromId(id, genreNames);
+        if (spec) { out.push(spec); seen.add(id); }
+    }
+    return out;
+}
