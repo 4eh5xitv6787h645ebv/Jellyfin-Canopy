@@ -69,3 +69,31 @@ read as a bug; fail-closed posture applies to EXPOSURE not to blocking).
 Fresh clone at merged main (PR 15 head). Research fan-out: existing parental
 filter architecture, Jellyfin BlockedTags/AllowedTags semantics in JF12 core,
 Seerr/TMDB metadata surfaces. Milestone 4 created for approach tracking.
+
+### 2026-07-08 12:52 — JF12 tag-block semantics (source-verified)
+- Policy: `UserPolicy.BlockedTags`/`AllowedTags` (string[]); stored as user
+  Preferences (`user.GetPreference(PreferenceKind.BlockedTags/AllowedTags)`);
+  rating limit is separate first-class `user.MaxParentalRatingScore` (int
+  score in JF12, compared via `ILocalizationManager.GetRatingScore`).
+- Enforcement (`BaseItem.IsVisibleViaTags` + the SQL twin): matches the
+  item's **Tags only — genres are NOT matched** — including INHERITED tags
+  (item + series + parents + library folder). Both sides normalized with
+  `GetCleanValue()` (lowercase, strip diacritics, punctuation→spaces,
+  collapse whitespace) then whole-token HashSet overlap — so "Sci-Fi" ==
+  "sci fi". BlockedTags always wins; AllowedTags (when non-empty) is a
+  strict allow-list requiring ≥1 match; both empty → no gating.
+- Native scope: applied to library queries, search, suggestions, latest,
+  channels — i.e. everywhere a user-scoped query runs. A Seerr-side gate
+  mirroring "Tags only + inherited + GetCleanValue + blocked-wins" is the
+  parity target.
+- **Key mapping insight:** Jellyfin's TMDB metadata provider imports TMDB
+  *keywords* as item Tags — so for TMDB-sourced libraries, the strings the
+  native gate matches ARE TMDB keyword names. T2 (keyword matching) is
+  therefore the high-parity mapping; T1 (genre matching) is an extension
+  beyond native semantics (worth having for intent — an admin blocking
+  "horror" means the genre too — but should be a deliberate, documented
+  choice, likely an admin toggle).
+- AllowedTags on LIST surfaces is the hard case: lists carry no keywords, so
+  strict parity can't verify an allowed tag → fail-closed would hide all of
+  discover for allow-list users. Decision deferred until the filter
+  architecture is mapped.
