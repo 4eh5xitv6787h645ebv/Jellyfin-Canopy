@@ -834,6 +834,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
                 return new EndpointPlan { Category = Category.List, Container = Container.Results, IdField = "tmdbId" };
             }
 
+            // Trending: results[] mixing movie/tv (and, for mediaType=all, person/collection).
+            // No MediaTypeHint — ResolveMediaType reads each row's own `mediaType`, so movie/tv
+            // rows are rating-gated and person/collection rows are kept (never ratable). `id` is
+            // the tmdbId (default IdField). Must precede /discover/movies|tv (distinct prefix).
+            if (apiPath.StartsWith("/api/v1/discover/trending", StringComparison.OrdinalIgnoreCase))
+            {
+                return new EndpointPlan { Category = Category.List, Container = Container.Results };
+            }
+
             // Discover movies/tv (genre/keyword/network/studio variants share the prefix).
             if (apiPath.StartsWith("/api/v1/discover/movies", StringComparison.OrdinalIgnoreCase))
             {

@@ -587,6 +587,56 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
             return ProxyJellyseerrRequest(AppendDiscoverFilters($"/api/v1/discover/movies?page={page}&studio={studioId}"), HttpMethod.Get);
         }
 
+        // ── Discover feed rows (Discovery/Trending feature) ──────────────────
+        // Base browse shapes not previously proxied: trending, popular (sorted
+        // discover), upcoming and the caller's watchlist. All ride ProxyRequestAsync,
+        // so they inherit auth, per-user X-Api-User scoping, response caching and the
+        // server-side parental-rating filter (paths classified in SeerrParentalFilter).
+
+        [HttpGet("jellyseerr/discover/trending")]
+        [Authorize]
+        public Task<IActionResult> DiscoverTrending([FromQuery] int page = 1, [FromQuery] string mediaType = "all", [FromQuery] string timeWindow = "week")
+        {
+            var mt = mediaType is "movie" or "tv" or "all" ? mediaType : "all";
+            var tw = timeWindow == "day" ? "day" : "week";
+            return ProxyJellyseerrRequest($"/api/v1/discover/trending?page={page}&mediaType={mt}&timeWindow={tw}", HttpMethod.Get);
+        }
+
+        [HttpGet("jellyseerr/discover/movies")]
+        [Authorize]
+        public Task<IActionResult> DiscoverMovies([FromQuery] int page = 1)
+        {
+            return ProxyJellyseerrRequest(AppendDiscoverFilters($"/api/v1/discover/movies?page={page}"), HttpMethod.Get);
+        }
+
+        [HttpGet("jellyseerr/discover/tv")]
+        [Authorize]
+        public Task<IActionResult> DiscoverTv([FromQuery] int page = 1)
+        {
+            return ProxyJellyseerrRequest(AppendDiscoverFilters($"/api/v1/discover/tv?page={page}"), HttpMethod.Get);
+        }
+
+        [HttpGet("jellyseerr/discover/movies/upcoming")]
+        [Authorize]
+        public Task<IActionResult> DiscoverMoviesUpcoming([FromQuery] int page = 1)
+        {
+            return ProxyJellyseerrRequest($"/api/v1/discover/movies/upcoming?page={page}", HttpMethod.Get);
+        }
+
+        [HttpGet("jellyseerr/discover/tv/upcoming")]
+        [Authorize]
+        public Task<IActionResult> DiscoverTvUpcoming([FromQuery] int page = 1)
+        {
+            return ProxyJellyseerrRequest($"/api/v1/discover/tv/upcoming?page={page}", HttpMethod.Get);
+        }
+
+        [HttpGet("jellyseerr/discover/watchlist")]
+        [Authorize]
+        public Task<IActionResult> DiscoverWatchlist([FromQuery] int page = 1)
+        {
+            return ProxyJellyseerrRequest($"/api/v1/discover/watchlist?page={page}", HttpMethod.Get);
+        }
+
         [HttpGet("jellyseerr/person/{personId}")]
         [Authorize]
         public Task<IActionResult> GetJellyseerrPerson(int personId)

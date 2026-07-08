@@ -216,6 +216,24 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services.Jellyseerr
         }
 
         [Fact]
+        public async Task Trending_GatesEachRowByOwnMediaType_KeepsPersonAndCollection()
+        {
+            const string body = @"{ ""results"": [
+                { ""id"": 100, ""mediaType"": ""movie"" },
+                { ""id"": 200, ""mediaType"": ""movie"" },
+                { ""id"": 200, ""mediaType"": ""tv"" },
+                { ""id"": 5, ""mediaType"": ""person"" },
+                { ""id"": 999, ""mediaType"": ""collection"" } ] }";
+
+            var result = await RunAsync(body, "/api/v1/discover/trending?mediaType=all&timeWindow=week", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
+
+            // movie 100 = PG-13 kept; movie 200 = R dropped; tv 200 = TV-MA dropped; person +
+            // collection are never rating-gated (kept). Proves the mixed trending list is filtered
+            // per each row's own mediaType (no MediaTypeHint) — not passed through unfiltered.
+            Assert.Equal(new[] { 100, 5, 999 }, Ids(result, "results"));
+        }
+
+        [Fact]
         public async Task Collection_FiltersPartsAsMovies()
         {
             const string body = @"{ ""parts"": [ { ""id"": 100 }, { ""id"": 200 } ] }";
