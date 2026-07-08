@@ -27,21 +27,33 @@ async function enableActiveStreams(baseURL: string): Promise<void> {
     });
 }
 
-/** Report a movie as playing for je_arruser, returning the item name. */
+// A DISTINCT device for the streamed session — critical, because a Jellyfin
+// device holds one session per client; if the arruser and the admin both
+// authenticated on the fixture's shared device id, the admin's login would
+// supersede (close) the arruser's playing session before we could observe it.
+const STREAM_CLIENT = 'MediaBrowser Client="JE-E2E", Device="je-e2e-sc", DeviceId="je-e2e-sc-stream", Version="1.0.0"';
+
+/** Report a movie as playing for je_arruser on its own device; return its name. */
 async function startUserPlayback(baseURL: string): Promise<string> {
-    const user = await authenticate(baseURL, USERS.user.username, USERS.user.password);
-    const items = await api<{ Items?: Array<{ Id: string; Name: string }> }>(
-        baseURL,
-        `/Users/${user.userId}/Items?IncludeItemTypes=Movie&Recursive=true&Limit=1`,
-        user.token,
-    );
+    const authRes = await fetch(`${baseURL}/Users/AuthenticateByName`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: STREAM_CLIENT },
+        body: JSON.stringify({ Username: USERS.user.username, Pw: USERS.user.password }),
+    });
+    if (!authRes.ok) throw new Error(`stream auth -> ${authRes.status}`);
+    const auth = (await authRes.json()) as { AccessToken: string; User: { Id: string } };
+    const streamAuth = `${STREAM_CLIENT}, Token="${auth.AccessToken}"`;
+    const call = (path: string, init: RequestInit = {}): Promise<Response> =>
+        fetch(`${baseURL}${path}`, { ...init, headers: { Authorization: streamAuth, 'Content-Type': 'application/json', ...(init.headers || {}) } });
+
+    const items = (await (await call(`/Users/${auth.User.Id}/Items?IncludeItemTypes=Movie&Recursive=true&Limit=1`)).json()) as { Items?: Array<{ Id: string; Name: string }> };
     const item = items?.Items?.[0];
     if (!item) throw new Error('no movie available to play');
-    await api(baseURL, '/Sessions/Capabilities/Full', user.token, {
+    await call('/Sessions/Capabilities/Full', {
         method: 'POST',
         body: JSON.stringify({ PlayableMediaTypes: ['Video'], SupportedCommands: ['DisplayMessage', 'PlayState'], SupportsMediaControl: true }),
     });
-    await api(baseURL, '/Sessions/Playing', user.token, {
+    await call('/Sessions/Playing', {
         method: 'POST',
         body: JSON.stringify({ ItemId: item.Id, PlayMethod: 'DirectPlay', CanSeek: true, PositionTicks: 0 }),
     });
