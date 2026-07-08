@@ -11,6 +11,7 @@ Admin settings live on the **Discovery** tab of the Jellyfin Elevate config page
 | --- | --- | --- |
 | **Enable Discovery & Trending** | On | Master switch for the whole feature. |
 | **Show in the Movies & TV library menu** | On | Adds the Discovery button to the Movies and TV Shows library pages. |
+| **Add a Discovery tab to the Home screen** | Off | Adds a Home-page Discovery tab with a Movies/TV toggle. Opt-in so it doesn't add Home nav for everyone. |
 
 ## Default rows
 

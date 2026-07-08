@@ -464,6 +464,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         // Per-user customization overrides the row set client-side; these are the defaults.
         public bool DiscoveryEnabled { get; set; } = true;
         public bool DiscoveryLibraryTab { get; set; } = true;
+        public bool DiscoveryHomeTab { get; set; } = false;
         public bool DiscoveryRowTrending { get; set; } = true;
         public bool DiscoveryRowPopular { get; set; } = true;
         public bool DiscoveryRowUpcoming { get; set; } = true;

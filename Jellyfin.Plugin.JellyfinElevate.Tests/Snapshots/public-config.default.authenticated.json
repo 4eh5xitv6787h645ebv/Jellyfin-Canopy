@@ -48,6 +48,7 @@
   "DisableTagsOnSearchPage": false,
   "DiscoveryEnabled": true,
   "DiscoveryGenreRows": true,
+  "DiscoveryHomeTab": false,
   "DiscoveryLibraryTab": true,
   "DiscoveryRowPopular": true,
   "DiscoveryRowTopRated": true,

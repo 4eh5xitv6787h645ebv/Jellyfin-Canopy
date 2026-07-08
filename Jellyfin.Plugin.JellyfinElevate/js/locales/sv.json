@@ -677,5 +677,7 @@
   "discovery_customize_move_down": "Flytta ned",
   "discovery_customize_reset": "Återställ standard",
   "discovery_customize_cancel": "Avbryt",
-  "discovery_customize_save": "Spara"
+  "discovery_customize_save": "Spara",
+  "discovery_toggle_movies": "Filmer",
+  "discovery_toggle_tv": "TV-serier"
 }

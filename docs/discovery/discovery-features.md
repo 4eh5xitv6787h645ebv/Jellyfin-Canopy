@@ -7,9 +7,10 @@ Each card behaves exactly like the rest of Jellyfin Elevate's Seerr surfaces: re
 ## Where it shows up
 
 - **Movies & TV Shows library pages** — a **Discovery** button appears in the library toolbar. Tapping it swaps the library grid for your Discovery feed; tapping it again returns to the grid. Movie pages show movie rows, TV pages show TV rows.
+- **Home screen** (admin opt-in) — a **Discovery** tab on the Home page with a Movies/TV toggle, so you can browse without leaving Home. Enable it on the [Discovery settings page](discovery-settings.md).
 
 !!! tip "More placements are on the way"
-    A Home-screen tab, a dedicated Discovery page, and trending suggestions on the search screen are planned follow-ups.
+    A dedicated Discovery page and trending suggestions on the search screen are planned follow-ups.
 
 ## The rows
 

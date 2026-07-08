@@ -677,5 +677,7 @@
   "discovery_customize_move_down": "Flyt ned",
   "discovery_customize_reset": "Nulstil til standard",
   "discovery_customize_cancel": "Annuller",
-  "discovery_customize_save": "Gem"
+  "discovery_customize_save": "Gem",
+  "discovery_toggle_movies": "Film",
+  "discovery_toggle_tv": "Serier"
 }

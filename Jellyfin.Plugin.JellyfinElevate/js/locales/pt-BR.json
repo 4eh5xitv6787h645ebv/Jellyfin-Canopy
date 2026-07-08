@@ -677,5 +677,7 @@
   "discovery_customize_move_down": "Mover para baixo",
   "discovery_customize_reset": "Restaurar padrões",
   "discovery_customize_cancel": "Cancelar",
-  "discovery_customize_save": "Salvar"
+  "discovery_customize_save": "Salvar",
+  "discovery_toggle_movies": "Filmes",
+  "discovery_toggle_tv": "Séries"
 }
