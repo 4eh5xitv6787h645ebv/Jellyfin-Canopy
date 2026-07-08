@@ -24,6 +24,31 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Helpers
         public void IsWellFormedHttpUrl_ClassifiesCorrectly(string? url, bool expected)
             => Assert.Equal(expected, ServiceUrlResolver.IsWellFormedHttpUrl(url));
 
+        // Shared drift-guard matrix — the SAME accept/reject rows that
+        // src/test/url-safe-cases.ts (LINK_BASE_CASES) runs against the two
+        // client copies (isSafeLinkBase and config-page.js's jeIsHttpUrl). All
+        // three validators must agree; if this server copy drifts, these rows
+        // fail. Keep in lockstep with url-safe-cases.ts.
+        [Theory]
+        [InlineData("http://sonarr:8989", true)]            // plain http host:port
+        [InlineData("https://sonarr.example.com", true)]    // plain https host
+        [InlineData("https://example.com/sonarr", true)]    // subpath base
+        [InlineData("http://[2001:db8::1]:5055", true)]     // IPv6 bracket literal
+        [InlineData("HTTP://example.com", true)]            // uppercase scheme (normalized)
+        [InlineData("https://example.com/", true)]          // trailing slash
+        [InlineData("seerr.local:5055", false)]             // scheme-less host:port
+        [InlineData("//example.com", false)]                // protocol-relative //host
+        [InlineData("javascript:alert(1)", false)]          // javascript: scheme
+        [InlineData("data:text/html,hi", false)]            // data: scheme
+        [InlineData("file:///etc/passwd", false)]           // file: scheme
+        [InlineData("ftp://example.com", false)]            // ftp: scheme
+        [InlineData("https://user:pass@example.com", false)] // embedded credentials
+        [InlineData("https://example.com/x?y=1", false)]    // query string
+        [InlineData("https://example.com/x#frag", false)]   // fragment
+        [InlineData("   ", false)]                          // whitespace-only
+        public void IsWellFormedHttpUrl_SharedDriftMatrix(string? url, bool expected)
+            => Assert.Equal(expected, ServiceUrlResolver.IsWellFormedHttpUrl(url));
+
         [Fact]
         public void ResolvePublicUrl_UsesExternalWhenWellFormed()
             => Assert.Equal("https://seerr.example.com",

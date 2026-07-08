@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { isSafeLinkBase } from './url-safe';
+import { LINK_BASE_CASES } from '../test/url-safe-cases';
 
 describe('isSafeLinkBase', () => {
     it.each([
@@ -22,5 +23,17 @@ describe('isSafeLinkBase', () => {
         ['https://example.com/x#frag', false],           // fragment breaks concatenation
     ] as [string | null | undefined, boolean][])('%s -> %s', (input, expected) => {
         expect(isSafeLinkBase(input)).toBe(expected);
+    });
+
+    // Shared drift-guard matrix: the same accept/reject rows run against all
+    // three validator copies (this one, jeIsHttpUrl, and the C#
+    // IsWellFormedHttpUrl). Any divergence between the copies fails a suite.
+    describe('shared drift-guard matrix', () => {
+        it.each(LINK_BASE_CASES.map((c) => [c.input, c.accept, c.note] as const))(
+            '%s -> %s (%s)',
+            (input, accept) => {
+                expect(isSafeLinkBase(input)).toBe(accept);
+            },
+        );
     });
 });

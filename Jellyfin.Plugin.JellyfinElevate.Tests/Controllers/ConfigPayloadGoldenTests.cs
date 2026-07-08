@@ -67,6 +67,45 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Controllers
             AssertMatchesSnapshot("public-config.distinctive.anonymous", payload);
         }
 
+        /// <summary>
+        /// Pins the external-wins projection end-to-end through the REAL
+        /// <c>JellyseerrBaseUrl</c> descriptor: a VALID external URL is emitted verbatim to
+        /// authenticated callers (and the different internal URL is NOT). The distinctive golden
+        /// only covers the fallback branch — its external URL is an invalid "cfg-…" sentinel — so
+        /// this is the only assertion that the valid-external path actually reaches the payload.
+        /// </summary>
+        [Fact]
+        public void PublicConfig_ValidExternalUrl_ProjectsExternalAsJellyseerrBaseUrl()
+        {
+            var config = new PluginConfiguration
+            {
+                JellyseerrUrls = "http://seerr.internal:5055",
+                JellyseerrExternalUrl = "https://requests.example.com/seerr",
+            };
+
+            var payload = ConfigController.BuildPublicConfigPayload(config, isAuthed: true);
+
+            Assert.Equal("https://requests.example.com/seerr", GetStringField(payload, "JellyseerrBaseUrl"));
+        }
+
+        /// <summary>
+        /// The fallback branch: with no external URL, the authenticated
+        /// <c>JellyseerrBaseUrl</c> is the first internal URL unchanged.
+        /// </summary>
+        [Fact]
+        public void PublicConfig_EmptyExternalUrl_FallsBackToInternalJellyseerrBaseUrl()
+        {
+            var config = new PluginConfiguration
+            {
+                JellyseerrUrls = "http://seerr.internal:5055",
+                JellyseerrExternalUrl = string.Empty,
+            };
+
+            var payload = ConfigController.BuildPublicConfigPayload(config, isAuthed: true);
+
+            Assert.Equal("http://seerr.internal:5055", GetStringField(payload, "JellyseerrBaseUrl"));
+        }
+
         [Fact]
         public void PrivateConfig_DefaultConfig_MatchesGolden()
         {
@@ -155,6 +194,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Controllers
             }
 
             return config;
+        }
+
+        /// <summary>Reads a single top-level string field from a built payload via the same
+        /// serializer the golden snapshots use, so the assertion sees exactly the emitted value.</summary>
+        private static string? GetStringField(object payload, string field)
+        {
+            var node = JsonSerializer.SerializeToNode(payload, SerializerOptions);
+            return node?[field]?.GetValue<string>();
         }
 
         private static void AssertMatchesSnapshot(string name, object payload)
