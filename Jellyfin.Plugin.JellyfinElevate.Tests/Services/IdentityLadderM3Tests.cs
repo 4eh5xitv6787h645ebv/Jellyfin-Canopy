@@ -178,7 +178,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         [InlineData("X-Real-IP", "203.0.113.9", "203.0.113.9")]
         public void ForwardedParser_ExtractsRealIp(string header, string value, string expected)
         {
-            var ip = ForwardedHeaderParser.ExtractRealClientIp(n => n == header ? value : null);
+            var ip = ForwardedHeaderParser.ExtractRealClientIp(n => n == header ? value : null, header);
             Assert.Equal(IPAddress.Parse(expected), ip);
         }
 
@@ -186,14 +186,31 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         public void ForwardedParser_RfcForwarded_TakesRightmostFor()
         {
             var ip = ForwardedHeaderParser.ExtractRealClientIp(
-                n => n == "Forwarded" ? "for=203.0.113.1, for=198.51.100.2" : null);
+                n => n == "Forwarded" ? "for=203.0.113.1, for=198.51.100.2" : null, "Forwarded");
             Assert.Equal(IPAddress.Parse("198.51.100.2"), ip);
         }
 
         [Fact]
         public void ForwardedParser_NoHeaders_Null()
         {
-            Assert.Null(ForwardedHeaderParser.ExtractRealClientIp(_ => null));
+            Assert.Null(ForwardedHeaderParser.ExtractRealClientIp(_ => null, "X-Forwarded-For"));
+        }
+
+        [Fact]
+        public void ForwardedParser_OnlyReadsConfiguredHeader_IgnoresOthers()
+        {
+            // A client injects Forwarded/X-Real-IP the proxy didn't strip; only
+            // the configured X-Forwarded-For is read, so the injection is ignored.
+            var ip = ForwardedHeaderParser.ExtractRealClientIp(
+                n => n switch
+                {
+                    "X-Forwarded-For" => "203.0.113.5",
+                    "Forwarded" => "for=6.6.6.6",
+                    "X-Real-IP" => "6.6.6.6",
+                    _ => null,
+                },
+                "X-Forwarded-For");
+            Assert.Equal(IPAddress.Parse("203.0.113.5"), ip);
         }
 
         // ─── XffLearnedMap ───────────────────────────────────────────────────
@@ -367,6 +384,92 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             var res = identity.Resolve(anon);
             Assert.Equal(IdentityConfidence.SharedIpCandidates, res.Confidence);
             Assert.Contains(user.Id, res.Candidates);
+        }
+
+        [Fact]
+        public void XffTier_LearnedCandidateSurvivesStaleRawCookieRescan()
+        {
+            // Regression for the fail-open leak: a stale/forged je-spoiler-uid
+            // cookie must NOT discard an XFF-learned guarding candidate via the
+            // cookie tier's fresh session rescan.
+            var guarding = new User("xff-guarding", "Prov", "PwProv");
+            var absent = new User("absent-cookie-user", "Prov", "PwProv");
+            var users = new StubUserManager(guarding, absent);
+            var config = new PluginConfiguration
+            {
+                IdentityXffLearnedMapEnabled = true,
+                IdentityTrustedProxies = "10.0.0.0/8",
+            };
+            var identity = NewResolver(config, users, out _);
+
+            // Learn the guarding user at real IP 203.0.113.77 via an authed request.
+            var principal = new ClaimsPrincipal(new ClaimsIdentity(
+                new[] { new Claim("Jellyfin-UserId", guarding.Id.ToString()) }, "TestAuth"));
+            var authed = new DefaultHttpContext { User = principal };
+            authed.Connection.RemoteIpAddress = IPAddress.Parse("10.0.0.9");
+            authed.Request.Headers["X-Forwarded-For"] = "203.0.113.77";
+            identity.Resolve(authed);
+
+            // Anonymous request from the same real IP, carrying a stale cookie
+            // naming an ABSENT user (triggers the fresh session rescan path).
+            var anon = new DefaultHttpContext();
+            anon.Connection.RemoteIpAddress = IPAddress.Parse("10.0.0.9");
+            anon.Request.Headers["X-Forwarded-For"] = "203.0.113.77";
+            anon.Request.Headers["Cookie"] = RequestIdentityService.SpoilerUidCookie + "=" + absent.Id.ToString();
+            var res = identity.Resolve(anon);
+
+            // The learned guarding candidate must survive — not be clobbered to None.
+            Assert.Contains(guarding.Id, res.Candidates);
+        }
+
+        [Fact]
+        public void XffMap_ExactlyAtTtl_IsExpired()
+        {
+            var now = DateTime.UtcNow;
+            var clock = now;
+            var map = new XffLearnedMap(() => clock);
+            map.Observe("10.0.0.1", Guid.NewGuid());
+            clock = now.AddMinutes(30); // exactly at TTL → excluded (< TTL is live)
+            Assert.Empty(map.Resolve("10.0.0.1"));
+        }
+
+        [Fact]
+        public void XffMap_IPv6Key_Works()
+        {
+            var map = new XffLearnedMap();
+            var uid = Guid.NewGuid();
+            map.Observe("2001:db8::1", uid);
+            Assert.Contains(uid, map.Resolve("2001:db8::1"));
+        }
+
+        [Fact]
+        public void TrustedProxy_SlashZero_Rejected()
+        {
+            // A /0 would match every peer incl. direct clients — must be dropped.
+            Assert.False(new TrustedProxyEvaluator("0.0.0.0/0").HasAny);
+            Assert.False(new TrustedProxyEvaluator("::/0").IsTrusted(IPAddress.Parse("8.8.8.8")));
+        }
+
+        [Fact]
+        public void ForwardAuth_CommaValue_Rejected()
+        {
+            // A proxy that appended to a client-forged header yields a comma list.
+            var got = ForwardAuthResolver.Resolve(
+                new[] { "Remote-User" },
+                _ => "victim, real",
+                u => u == "victim" ? Guid.NewGuid() : Guid.Empty);
+            Assert.Equal(Guid.Empty, got);
+        }
+
+        [Fact]
+        public void ForwardAuth_FirstHeaderUnknownUser_FallsThroughToNext()
+        {
+            var uid = Guid.NewGuid();
+            var got = ForwardAuthResolver.Resolve(
+                new[] { "Remote-User", "X-Forwarded-User" },
+                n => n == "Remote-User" ? "ghost" : "real",
+                u => u == "real" ? uid : Guid.Empty);
+            Assert.Equal(uid, got);
         }
 
         [Fact]

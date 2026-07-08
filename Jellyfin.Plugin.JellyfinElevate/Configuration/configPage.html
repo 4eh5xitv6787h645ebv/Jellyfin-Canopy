@@ -900,6 +900,12 @@
                                         <div class="fieldDescription">When Jellyfin's Known Proxies is unset it records the proxy's IP, not the client's. This learns each user's real client IP from their logged-in requests and reuses it for their anonymous image requests. Requires the trusted-proxy list. Fail-safe: only ever adds candidates (can over-blur, never leaks).</div>
                                     </div>
 
+                                    <label class="inputLabel inputLabelUnfocused" for="identityForwardedIpHeader">Real-client-IP header</label>
+                                    <input id="identityForwardedIpHeader" data-config-key="IdentityForwardedIpHeader" is="emby-input" type="text" label="Real-client-IP header"/>
+                                    <div class="je-setting-description" data-desc-for="identityForwardedIpHeader">
+                                        <div class="fieldDescription">The single header your proxy puts the real client IP in — <code>X-Forwarded-For</code> (default, Caddy/Traefik), <code>X-Real-IP</code> (nginx), or <code>Forwarded</code> (RFC 7239). Only this one header is read, so a client can't spoof its IP through a different header your proxy forgot to strip. Make sure your proxy overwrites (not appends) it.</div>
+                                    </div>
+
                                     <div class="checkboxContainer"><label><input id="identitySignedCookieEnabled" data-config-key="IdentitySignedCookieEnabled" is="emby-checkbox" type="checkbox"/><span>Signed identity cookie (web)</span></label></div>
                                     <div class="je-setting-description" data-desc-for="identitySignedCookieEnabled">
                                         <div class="fieldDescription">Issues a tamper-proof signed cookie to web browsers so anonymous same-origin image and CSS-background fetches are attributed to the right user even when no session is currently active on that IP. A signing secret is generated and stored automatically. Web browsers only.</div>

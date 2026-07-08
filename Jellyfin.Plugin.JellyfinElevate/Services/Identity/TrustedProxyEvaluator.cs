@@ -80,7 +80,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
 
                 var normalized = Normalize(baseAddr);
                 var maxBits = normalized.AddressFamily == AddressFamily.InterNetworkV6 ? 128 : 32;
-                if (prefix < 0 || prefix > maxBits) continue;
+                // Reject a non-positive prefix: a /0 ("0.0.0.0/0" or "::/0")
+                // would match EVERY peer — including a client connecting directly
+                // to Kestrel — arming the forwarded-header tiers for everyone.
+                // That is never a valid trusted-proxy entry, so drop it (an admin
+                // foot-gun, not a supported configuration).
+                if (prefix <= 0 || prefix > maxBits) continue;
                 ranges.Add(new CidrRange(normalized, prefix));
             }
             return ranges;

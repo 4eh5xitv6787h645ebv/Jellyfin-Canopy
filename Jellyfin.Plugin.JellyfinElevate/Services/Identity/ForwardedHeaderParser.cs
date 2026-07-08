@@ -5,43 +5,35 @@ using System.Net.Sockets;
 namespace Jellyfin.Plugin.JellyfinElevate.Services
 {
     /// <summary>
-    /// Extracts the real client IP from proxy forwarding headers (issue 7),
-    /// used only after the transport peer is confirmed a trusted proxy. Reads,
-    /// in order: RFC 7239 <c>Forwarded: for=</c>, <c>X-Forwarded-For</c>,
-    /// <c>X-Real-IP</c>. For the list-valued headers the RIGHTMOST entry is the
-    /// hop the trusted proxy itself appended (the real client as that proxy saw
-    /// it); taking the rightmost — not the leftmost, which is client-controlled
-    /// and forgeable — is what makes this safe.
+    /// Extracts the real client IP from the SINGLE proxy forwarding header the
+    /// admin declared (issue 7), used only after the transport peer is confirmed
+    /// a trusted proxy. Reading exactly one named header — not several — closes a
+    /// cross-header injection: a proxy that sets only <c>X-Forwarded-For</c> may
+    /// not strip an inbound <c>Forwarded</c>/<c>X-Real-IP</c> the client forged,
+    /// so trusting all of them would let a client behind the proxy spoof its own
+    /// real IP. For the list-valued <c>X-Forwarded-For</c>/<c>Forwarded</c> the
+    /// RIGHTMOST entry — the hop the trusted proxy itself appended — is used;
+    /// never the leftmost, which is client-controlled.
     ///
-    /// Pure/static; returns null when no header yields a parseable address.
+    /// Pure/static; returns null when the header is absent or unparseable.
     /// </summary>
     public static class ForwardedHeaderParser
     {
         public static IPAddress? ExtractRealClientIp(
-            Func<string, string?> getHeader)
+            Func<string, string?> getHeader,
+            string headerName)
         {
-            // RFC 7239 Forwarded: for=1.2.3.4; may be a comma list of hops.
-            var forwarded = getHeader("Forwarded");
-            if (!string.IsNullOrWhiteSpace(forwarded))
-            {
-                var ip = ParseForwarded(forwarded);
-                if (ip != null) return ip;
-            }
+            if (string.IsNullOrWhiteSpace(headerName)) headerName = "X-Forwarded-For";
+            var value = getHeader(headerName.Trim());
+            if (string.IsNullOrWhiteSpace(value)) return null;
 
-            var xff = getHeader("X-Forwarded-For");
-            if (!string.IsNullOrWhiteSpace(xff))
+            // RFC 7239 Forwarded uses "for=" element syntax; everything else is
+            // a bare address or a comma list of addresses.
+            if (string.Equals(headerName.Trim(), "Forwarded", StringComparison.OrdinalIgnoreCase))
             {
-                var ip = RightmostAddress(xff);
-                if (ip != null) return ip;
+                return ParseForwarded(value);
             }
-
-            var realIp = getHeader("X-Real-IP");
-            if (!string.IsNullOrWhiteSpace(realIp))
-            {
-                if (TryParseHostMaybePort(realIp.Trim(), out var ip)) return ip;
-            }
-
-            return null;
+            return RightmostAddress(value);
         }
 
         // Rightmost comma-separated entry (the hop appended by the trusted

@@ -98,11 +98,15 @@ The IPs or CIDR ranges of *your* reverse proxy (comma- or space-separated), for 
 
 For deployments fronted by **Authelia, Authentik, Cloudflare Access, oauth2-proxy, Pomerium, or Tailscale Serve**, which inject the signed-in username or email on every proxied request (including anonymous image GETs). The plugin reads the configured header, maps it to a Jellyfin user, and attributes the request directly. This is the **only** method that can identify a native client behind an IP-hiding proxy on a **cold cache** — before it has fetched any stamped image. Requires the trusted-proxy list, and the configurable **header names** list (defaults cover `Remote-User`, `Cf-Access-Authenticated-User-Email`, `Tailscale-User-Login`, and other common ones; email headers also match the Jellyfin username before the `@`).
 
+> Email matching assumes a **single identity namespace**: an email header falls back to the local-part, so `alice@a.com` and `alice@b.com` both map to a Jellyfin user named `alice`. If your SSO federates multiple email domains onto distinct people, prefer a username header over an email header. Header values containing a comma are ignored (they indicate a proxy appended to a client-forged value rather than replacing it).
+
 > Note: many self-hosters exclude Jellyfin from forward-auth because native apps can't perform the browser OAuth handshake — this option helps most on Tailscale / Cloudflare-Access setups where the header is present on every request.
 
 ### Resolve users by real client IP (X-Forwarded-For)
 
 When Jellyfin's **Known Proxies** setting is empty, Jellyfin records the *proxy's* IP rather than the client's, so per-IP matching can't tell users apart. With this on, the plugin learns each user's real client IP from their logged-in requests and reuses it to attribute their later anonymous image requests. Requires the trusted-proxy list. **Fail-safe:** it only ever *adds* candidate users (which can over-blur), and never removes protection — it cannot cause a leak.
+
+Set the **real-client-IP header** to the single header your proxy uses for the client address: `X-Forwarded-For` (default), `X-Real-IP` (nginx), or `Forwarded` (RFC 7239). Only that one header is read, so a client can't spoof its address through a header your proxy didn't strip — and your proxy must **overwrite** (not append to) it.
 
 ### Signed identity cookie (web)
 

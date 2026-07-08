@@ -116,6 +116,7 @@
   "IconStyle",
   "IdentityForwardAuthEnabled",
   "IdentityForwardAuthHeaders",
+  "IdentityForwardedIpHeader",
   "IdentitySignedCookieEnabled",
   "IdentityTrustedProxies",
   "IdentityXffLearnedMapEnabled",

@@ -43,6 +43,13 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 if (string.IsNullOrWhiteSpace(raw)) continue;
 
                 var value = raw.Trim();
+                // A single SSO principal never contains a comma. A comma means
+                // the header carried multiple values — the hallmark of a proxy
+                // that APPENDED to a client-forged inbound copy rather than
+                // replacing it. Reject rather than risk resolving the forged
+                // leading value.
+                if (value.IndexOf(',') >= 0) continue;
+
                 foreach (var candidate in UsernameCandidates(value))
                 {
                     var userId = resolveUsername(candidate);

@@ -332,6 +332,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                 "Remote-User, X-Forwarded-User, X-Authentik-Username, Remote-Email, X-Forwarded-Email, Cf-Access-Authenticated-User-Email, Tailscale-User-Login";
             IdentityForwardAuthEnabled = false;
             IdentityXffLearnedMapEnabled = false;
+            IdentityForwardedIpHeader = "X-Forwarded-For";
             IdentityCookieSecret = string.Empty;
             IdentitySignedCookieEnabled = false;
         }
@@ -824,6 +825,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         // client IP for deployments where Jellyfin's KnownProxies is unset so
         // core records the proxy IP. Only active with trusted proxies set.
         public bool IdentityXffLearnedMapEnabled { get; set; }
+
+        // The SINGLE forwarding header the trusted proxy sets the real client IP
+        // in. Only this header is read (default "X-Forwarded-For"; use
+        // "X-Real-IP" for nginx or "Forwarded" for RFC 7239). Reading exactly
+        // one named header — rather than trying several — closes a cross-header
+        // injection: a proxy that sets only X-Forwarded-For may not strip an
+        // inbound "Forwarded"/"X-Real-IP" the client forged, so trusting all of
+        // them would let a client behind the proxy spoof its own real IP.
+        public string IdentityForwardedIpHeader { get; set; } = "X-Forwarded-For";
 
         // HMAC secret for the signed identity cookie (issue 13). Auto-generated
         // on first use if blank (see IdentityCookieSigner) and persisted so the

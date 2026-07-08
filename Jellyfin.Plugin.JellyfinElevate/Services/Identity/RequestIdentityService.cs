@@ -273,7 +273,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 // candidate set even though core recorded only the proxy IP.
                 if (transportIsTrustedProxy && (config?.IdentityXffLearnedMapEnabled ?? false))
                 {
-                    ObserveXff(httpContext, primary.Value);
+                    ObserveXff(httpContext, primary.Value, config?.IdentityForwardedIpHeader);
                 }
                 return new RequestIdentity(new[] { primary.Value }, IdentityConfidence.Authenticated);
             }
@@ -357,36 +357,29 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
 
             // Tier 3.5: XFF learned-map candidates (issue 7). When the transport
             // peer is a trusted proxy, resolve the real client IP from the
-            // forwarding headers and add every user we learned at that real IP
+            // forwarding headers and note every user we learned at that real IP
             // from earlier authenticated requests. This rebuilds session-by-IP
             // on the TRUE client IP for deployments where core saw only the
-            // proxy IP. Fail-closed union: extra candidates only over-protect.
+            // proxy IP. Held SEPARATELY so the cookie tier's fresh session
+            // rescan below can never discard it — a fail-closed candidate must
+            // survive every code path (a leak if it were dropped). Unioned into
+            // ipUsers here and re-unioned after any rescan.
+            IReadOnlyCollection<Guid> learnedXff = Array.Empty<Guid>();
             if (transportIsTrustedProxy && (config?.IdentityXffLearnedMapEnabled ?? false))
             {
-                var realIpKey = TryGetXffRealIpKey(httpContext);
+                var realIpKey = TryGetXffRealIpKey(httpContext, config?.IdentityForwardedIpHeader);
                 if (realIpKey != null)
                 {
-                    var learned = _xffMap.Resolve(realIpKey);
-                    if (learned.Count > 0)
-                    {
-                        if (ipUsers.Count == 0)
-                        {
-                            ipUsers = learned;
-                        }
-                        else
-                        {
-                            var union = new HashSet<Guid>(ipUsers);
-                            union.UnionWith(learned);
-                            ipUsers = union;
-                        }
-                    }
+                    learnedXff = _xffMap.Resolve(realIpKey);
+                    ipUsers = UnionUsers(ipUsers, learnedXff);
                 }
             }
 
             // Tier 3: per-browser cookie disambiguation. The je-spoiler-uid
             // cookie pins THIS request to its browser's user — trusted ONLY
-            // when that user genuinely has a session from this IP, so a
-            // stale/forged value can't select a user who isn't present.
+            // when that user genuinely has a session from this IP (or was
+            // learned at this real IP via XFF), so a stale/forged value can't
+            // select a user who isn't present.
             if (httpContext.Request.Cookies.TryGetValue(SpoilerUidCookie, out var raw)
                 && Guid.TryParse(raw, out var cookieUid)
                 && cookieUid != Guid.Empty)
@@ -412,7 +405,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                         && (now - missAt) < CookieMissNegativeCacheTtl;
                     if (!recentMiss)
                     {
-                        ipUsers = ScanActiveSessionUsersFresh(httpContext);
+                        // Re-union the learned XFF set so the fresh session scan
+                        // (which sees only the proxy IP and is usually empty)
+                        // cannot drop an XFF-learned guarding candidate.
+                        ipUsers = UnionUsers(ScanActiveSessionUsersFresh(httpContext), learnedXff);
                         if (missKey != null && !ipUsers.Contains(cookieUid))
                         {
                             _cookieMissCache[missKey] = now;
@@ -490,6 +486,18 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             return null;
         }
 
+        // Fail-closed union of two candidate sets. Returns a new set only when
+        // the addition actually adds members, so the common "nothing learned"
+        // path allocates nothing.
+        private static IReadOnlyCollection<Guid> UnionUsers(IReadOnlyCollection<Guid> baseSet, IReadOnlyCollection<Guid> add)
+        {
+            if (add.Count == 0) return baseSet;
+            if (baseSet.Count == 0) return add;
+            var union = new HashSet<Guid>(baseSet);
+            union.UnionWith(add);
+            return union;
+        }
+
         // Maps an SSO principal (username or email) to a Jellyfin user id via
         // IUserManager, or Guid.Empty. Never throws.
         private Guid ResolveUsernameToId(string username)
@@ -529,19 +537,20 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
 
         // Records realClientIp → userId for the XFF learned map from an
         // authenticated trusted-proxy request.
-        private void ObserveXff(Microsoft.AspNetCore.Http.HttpContext httpContext, Guid userId)
+        private void ObserveXff(Microsoft.AspNetCore.Http.HttpContext httpContext, Guid userId, string? forwardedHeader)
         {
-            var realIpKey = TryGetXffRealIpKey(httpContext);
+            var realIpKey = TryGetXffRealIpKey(httpContext, forwardedHeader);
             if (realIpKey != null) _xffMap.Observe(realIpKey, userId);
         }
 
-        // Extracts the real client IP from the forwarding headers and returns
-        // its normalized string key (or null). Caller must have already
-        // confirmed the transport peer is a trusted proxy.
-        private static string? TryGetXffRealIpKey(Microsoft.AspNetCore.Http.HttpContext httpContext)
+        // Extracts the real client IP from the single configured forwarding
+        // header and returns its normalized string key (or null). Caller must
+        // have already confirmed the transport peer is a trusted proxy.
+        private static string? TryGetXffRealIpKey(Microsoft.AspNetCore.Http.HttpContext httpContext, string? forwardedHeader)
         {
             var realIp = ForwardedHeaderParser.ExtractRealClientIp(
-                name => httpContext.Request.Headers.TryGetValue(name, out var v) ? v.ToString() : null);
+                name => httpContext.Request.Headers.TryGetValue(name, out var v) ? v.ToString() : null,
+                string.IsNullOrWhiteSpace(forwardedHeader) ? "X-Forwarded-For" : forwardedHeader);
             return realIp == null ? null : NormalizeIp(realIp).ToString();
         }
 
