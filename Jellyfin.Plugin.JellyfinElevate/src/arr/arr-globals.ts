@@ -16,6 +16,8 @@ import type { JEGlobal, ObserverProxy, PluginConfig, UserSettings } from '../typ
 export interface ArrInstanceConfig {
     Name?: string;
     Url?: string;
+    /** Optional external/public URL for browser links; empty = fall back to Url. */
+    ExternalUrl?: string;
     UrlMappings?: string;
     Enabled?: boolean;
 }
@@ -36,10 +38,13 @@ export interface ArrPluginConfig extends PluginConfig {
     ArrSearchEnabled?: boolean;
     ArrSearchManageEnabled?: boolean;
     SonarrUrl?: string;
+    SonarrExternalUrl?: string;
     SonarrUrlMappings?: string;
     RadarrUrl?: string;
+    RadarrExternalUrl?: string;
     RadarrUrlMappings?: string;
     BazarrUrl?: string;
+    BazarrExternalUrl?: string;
     BazarrUrlMappings?: string;
     JellyseerrEnabled?: boolean;
     ShowDownloadsInRequests?: boolean;

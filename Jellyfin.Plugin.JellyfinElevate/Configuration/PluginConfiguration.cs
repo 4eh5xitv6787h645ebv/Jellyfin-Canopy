@@ -149,6 +149,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
             ShowElsewhereOnJellyseerr = false;
             JellyseerrUseMoreInfoModal = false;
             JellyseerrUrls = "";
+            JellyseerrExternalUrl = "";
             JellyseerrApiKey = "";
             JellyseerrUrlMappings = "";
             ShowCollectionsInSearch = true;
@@ -166,6 +167,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
             SonarrUrl = "";
             RadarrUrl = "";
             BazarrUrl = "";
+            SonarrExternalUrl = "";
+            RadarrExternalUrl = "";
+            BazarrExternalUrl = "";
             ShowArrLinksAsText = false;
             ArrLinksShowStatusSingle = false;
             SonarrUrlMappings = "";
@@ -472,6 +476,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         public bool DiscoveryRowWatchlist { get; set; } = false;
         public bool DiscoveryGenreRows { get; set; } = true;
         public string JellyseerrUrls { get; set; }
+
+        /// <summary>
+        /// Optional external/public Seerr URL used only for user-clickable "Open in Seerr" deep
+        /// links in the browser. Server-side fetches always use <see cref="JellyseerrUrls"/>
+        /// (the internal URL[s]). Empty = browser links fall back to the first internal URL, so
+        /// existing setups are unchanged. When set, the internal Seerr URL is no longer projected
+        /// to non-admin clients (the public link base becomes the external URL instead).
+        /// </summary>
+        public string JellyseerrExternalUrl { get; set; }
         public string JellyseerrApiKey { get; set; }
         public string JellyseerrUrlMappings { get; set; }
 
@@ -522,6 +535,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         public string SonarrUrlMappings { get; set; }
         public string RadarrUrlMappings { get; set; }
         public string BazarrUrlMappings { get; set; }
+
+        // Optional external/public URLs used ONLY for user-clickable "Open in Sonarr/Radarr/Bazarr"
+        // links in the browser. Server-side fetches always use the internal Sonarr/Radarr/Bazarr
+        // URL (or per-instance Url). Empty = browser links fall back to the internal URL, so
+        // existing setups are unchanged. These legacy single fields mirror the first configured
+        // instance's ExternalUrl the same way SonarrUrl mirrors its Url.
+        public string SonarrExternalUrl { get; set; }
+        public string RadarrExternalUrl { get; set; }
+        public string BazarrExternalUrl { get; set; }
 
         // Multi-Instance Sonarr/Radarr Support (JSON arrays of ArrInstance)
         public string SonarrInstances { get; set; } = "[]";
@@ -835,6 +857,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                     {
                         Name = "Sonarr",
                         Url = SonarrUrl,
+                        ExternalUrl = SonarrExternalUrl ?? "",
                         ApiKey = SonarrApiKey,
                         UrlMappings = SonarrUrlMappings ?? ""
                     }
@@ -864,6 +887,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                     {
                         Name = "Radarr",
                         Url = RadarrUrl,
+                        ExternalUrl = RadarrExternalUrl ?? "",
                         ApiKey = RadarrApiKey,
                         UrlMappings = RadarrUrlMappings ?? ""
                     }

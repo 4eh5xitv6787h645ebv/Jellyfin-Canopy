@@ -1,9 +1,12 @@
 {
+  "BazarrExternalUrl": "",
   "BazarrUrl": "",
   "BazarrUrlMappings": "",
+  "RadarrExternalUrl": "",
   "RadarrInstances": [
     {
       "Enabled": true,
+      "ExternalUrl": "",
       "Name": "Radarr Main",
       "Url": "http://radarr:7878",
       "UrlMappings": ""
@@ -12,15 +15,18 @@
   "RadarrInstancesCorrupt": false,
   "RadarrUrl": "",
   "RadarrUrlMappings": "",
+  "SonarrExternalUrl": "",
   "SonarrInstances": [
     {
       "Enabled": true,
+      "ExternalUrl": "https://sonarr.example.com",
       "Name": "Sonarr Main",
       "Url": "http://sonarr:8989",
       "UrlMappings": "internal=external"
     },
     {
       "Enabled": false,
+      "ExternalUrl": "",
       "Name": "Sonarr 4K",
       "Url": "http://sonarr-4k:8989",
       "UrlMappings": ""

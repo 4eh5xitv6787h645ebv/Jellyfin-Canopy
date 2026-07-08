@@ -24,18 +24,28 @@ Each Sonarr or Radarr instance has the following fields:
 | Field | Required | Description |
 |---|---|---|
 | **Name** | Yes | Display name shown in dropdowns (e.g., `TV Shows`, `Anime`, `4K Movies`) |
-| **URL** | Yes | Base URL of the instance (e.g., `http://192.168.1.100:8989`) |
+| **URL (internal)** | Yes | Internal base URL the Jellyfin *server* uses to talk to the instance (e.g., `http://192.168.1.100:8989`) |
+| **External URL** | No | Public base URL a user's *browser* opens for links to this instance (e.g., `https://sonarr.example.com`). Empty = reuse the internal URL. See [Internal vs External URL](#internal-vs-external-url). |
 | **API Key** | Yes | API key from the instance's Settings → General page |
-| **URL Mappings** | No | Per-instance URL remapping for reverse-proxy setups |
+| **URL Mappings** | No | Per-instance URL remapping for reverse-proxy setups (takes priority over External URL) |
 | **Enabled** | — | Toggle to disable without deleting; defaults to on |
 
 ### Adding an Instance
 
 1. Open plugin settings → ***arr** tab
 2. Click **"+ Add Sonarr instance"** or **"+ Add Radarr instance"**
-3. Fill in Name, URL, and API Key
-4. Optionally add URL Mappings
+3. Fill in Name, URL (internal), and API Key
+4. Optionally add an External URL and/or URL Mappings
 5. Click **Save**
+
+### Internal vs External URL
+
+Each instance is reached from two places, and they may need different addresses:
+
+- The **Jellyfin server** fetches from Sonarr/Radarr (and Bazarr) for link status, calendar, queue and tag sync — it always uses the **URL (internal)**, which can be a LAN/docker address browsers can't reach.
+- A **user's browser** opens the service when they click an "Open in Sonarr/Radarr/Bazarr" link — it uses the **External URL** when set, otherwise it falls back to the internal URL.
+
+The browser link base is resolved with this precedence: **matching URL Mapping → External URL → internal URL**. So leaving External URL blank reproduces the previous behaviour exactly. Bazarr (single instance, in the Setup section) has the same **Bazarr External URL** field. A malformed external URL (missing `http://`/`https://`, embedded credentials, or a query string/fragment) is rejected with a clear warning on save, and unsafe values are additionally skipped at link-building time.
 
 ### Disabling an Instance
 
