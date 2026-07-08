@@ -352,8 +352,17 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
                     const status = Number(is4k ? row.dataset.status4k : row.dataset.status) || MediaStatus.UNKNOWN;
                     const hasDownloads = (is4k ? row.dataset.hasDownloads4k : row.dataset.hasDownloads) === '1';
                     const { statusClass, statusText, isDisabled } = describeCollectionRowStatus(status, hasDownloads);
+                    const wasDisabled = checkbox.disabled;
                     checkbox.disabled = isDisabled;
-                    checkbox.checked = !isDisabled;
+                    // Preserve the user's manual selections across a mode toggle: only
+                    // force-uncheck rows that just became disabled. Rows that stay
+                    // selectable keep their current checked state; rows that flip from
+                    // disabled→enabled default to checked.
+                    if (isDisabled) {
+                        checkbox.checked = false;
+                    } else if (wasDisabled) {
+                        checkbox.checked = true;
+                    }
                     badge.className = `jellyseerr-season-status jellyseerr-season-status-${statusClass}`;
                     badge.textContent = statusText;
                 });
