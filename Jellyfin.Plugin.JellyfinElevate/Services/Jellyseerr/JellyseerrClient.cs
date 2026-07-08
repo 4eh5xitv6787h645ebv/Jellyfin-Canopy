@@ -614,16 +614,42 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
                 : new ContentResult { Content = result.Body, ContentType = "application/json" };
         }
 
-        /// <summary>True when a Seerr request POST body sets <c>is4k: true</c>.</summary>
+        /// <summary>
+        /// True when a Seerr request POST body carries a truthy <c>is4k</c>. Treats
+        /// JSON <c>true</c>, a nonzero number, and the strings "true"/"1"
+        /// (case-insensitive) all as 4K — so a crafted <c>{"is4k":1}</c> or
+        /// <c>{"is4k":"true"}</c> can't dodge the 4K master switch / permission
+        /// gates by slipping past a strict <c>== true</c> check and falling through
+        /// to Seerr.
+        /// </summary>
         private static bool TryGetIs4k(string content)
         {
             try
             {
                 using var doc = JsonDocument.Parse(content);
                 var root = doc.RootElement;
-                return root.ValueKind == JsonValueKind.Object
-                    && root.TryGetProperty("is4k", out var is4k)
-                    && is4k.ValueKind == JsonValueKind.True;
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("is4k", out var is4k))
+                {
+                    return false;
+                }
+
+                switch (is4k.ValueKind)
+                {
+                    case JsonValueKind.True:
+                        return true;
+                    case JsonValueKind.False:
+                    case JsonValueKind.Null:
+                        return false;
+                    case JsonValueKind.Number:
+                        return is4k.TryGetDouble(out var n) && n != 0;
+                    case JsonValueKind.String:
+                        var s = is4k.GetString();
+                        return string.Equals(s, "true", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(s, "1", StringComparison.OrdinalIgnoreCase);
+                    default:
+                        return false;
+                }
             }
             catch (JsonException)
             {
