@@ -14,6 +14,8 @@ declare module '../types/je' {
         DiscoveryEnabled?: boolean;
         /** Whether the Discovery option appears in the Movies/TV library menu (admin default). */
         DiscoveryLibraryTab?: boolean;
+        /** Whether a Discovery tab is added to the Home screen (admin opt-in; default off). */
+        DiscoveryHomeTab?: boolean;
         /** Admin per-row defaults (which built-in shelves are on out of the box). */
         DiscoveryRowTrending?: boolean;
         DiscoveryRowPopular?: boolean;

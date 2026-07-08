@@ -7,11 +7,19 @@
 import { test, expect, loginAs } from './fixtures/auth';
 import type { Page } from 'playwright/test';
 
-/** True when the session's plugin config has a Discovery data source (Seerr or TMDB) configured. */
+/** True when Discovery is enabled and Seerr (its required data source) is configured. */
 async function discoveryAvailable(page: Page): Promise<boolean> {
     return page.evaluate(() => {
         const cfg = (window as unknown as { JellyfinElevate?: { pluginConfig?: Record<string, unknown> } }).JellyfinElevate?.pluginConfig || {};
-        return cfg.DiscoveryEnabled !== false && (cfg.JellyseerrEnabled === true || cfg.TmdbEnabled === true);
+        return cfg.DiscoveryEnabled !== false && cfg.JellyseerrEnabled === true;
+    });
+}
+
+/** True when the admin has opted the Home-screen Discovery tab in. */
+async function homeTabEnabled(page: Page): Promise<boolean> {
+    return page.evaluate(() => {
+        const cfg = (window as unknown as { JellyfinElevate?: { pluginConfig?: Record<string, unknown> } }).JellyfinElevate?.pluginConfig || {};
+        return cfg.DiscoveryHomeTab === true;
     });
 }
 
@@ -49,5 +57,20 @@ test.describe('Discovery / Trending — library placement', () => {
             consoleErrors.unexpected4xx().filter((r) => /\/JellyfinElevate\//.test(r.url)),
             'plugin-endpoint 4xx',
         ).toEqual([]);
+    });
+
+    test('the Home Discovery tab renders shelves with a media-type toggle', async ({ page, consoleErrors }) => {
+        test.setTimeout(90_000);
+        await loginAs(page, 'admin', consoleErrors);
+        await page.goto('/web/#/home');
+        await page.waitForTimeout(3000);
+        test.skip(!(await discoveryAvailable(page)) || !(await homeTabEnabled(page)), 'Home Discovery tab not enabled');
+
+        // On the modern layout the native tab button is hidden; the header-tray fallback link opens it.
+        await page.locator('#je-native-tab-link-discovery').click();
+        await expect(page.locator('.je-discovery-home .je-discovery-mtoggle button').first()).toBeVisible({ timeout: 10_000 });
+        const shelf = page.locator('.je-discovery-home .je-discovery-row').first();
+        await expect(shelf).toBeVisible({ timeout: 20_000 });
+        await expect(shelf.locator('.overflowPortraitCard, .card').first()).toBeVisible({ timeout: 20_000 });
     });
 });

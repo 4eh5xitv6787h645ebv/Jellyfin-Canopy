@@ -677,5 +677,7 @@
   "discovery_customize_move_down": "Flytt ned",
   "discovery_customize_reset": "Tilbakestill til standard",
   "discovery_customize_cancel": "Avbryt",
-  "discovery_customize_save": "Lagre"
+  "discovery_customize_save": "Lagre",
+  "discovery_toggle_movies": "Filmer",
+  "discovery_toggle_tv": "TV-serier"
 }

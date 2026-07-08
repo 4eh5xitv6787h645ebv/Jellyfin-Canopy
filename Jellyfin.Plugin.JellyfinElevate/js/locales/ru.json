@@ -677,5 +677,7 @@
   "discovery_customize_move_down": "Переместить вниз",
   "discovery_customize_reset": "Сбросить по умолчанию",
   "discovery_customize_cancel": "Отмена",
-  "discovery_customize_save": "Сохранить"
+  "discovery_customize_save": "Сохранить",
+  "discovery_toggle_movies": "Фильмы",
+  "discovery_toggle_tv": "Сериалы"
 }

@@ -240,6 +240,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                 // default row set (user customization overrides client-side).
                 Public("DiscoveryEnabled", c => c.DiscoveryEnabled),
                 Public("DiscoveryLibraryTab", c => c.DiscoveryLibraryTab),
+                Public("DiscoveryHomeTab", c => c.DiscoveryHomeTab),
                 Public("DiscoveryRowTrending", c => c.DiscoveryRowTrending),
                 Public("DiscoveryRowPopular", c => c.DiscoveryRowPopular),
                 Public("DiscoveryRowUpcoming", c => c.DiscoveryRowUpcoming),

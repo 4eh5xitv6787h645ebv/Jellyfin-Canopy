@@ -677,5 +677,7 @@
   "discovery_customize_move_down": "Omlaag verplaatsen",
   "discovery_customize_reset": "Standaardwaarden herstellen",
   "discovery_customize_cancel": "Annuleren",
-  "discovery_customize_save": "Opslaan"
+  "discovery_customize_save": "Opslaan",
+  "discovery_toggle_movies": "Films",
+  "discovery_toggle_tv": "Series"
 }

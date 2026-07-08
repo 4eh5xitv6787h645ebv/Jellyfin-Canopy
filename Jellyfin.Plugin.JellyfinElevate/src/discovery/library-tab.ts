@@ -5,19 +5,17 @@
 // layout: legacy is the classic emby-tabs strip; modern is a hardcoded React dropdown that crashes
 // on an unknown ?tab index (LibraryPage throws on viewsByKind[type][n] === undefined). So rather
 // than fake an 8th native tab, we add a "Discovery" toggle in the library header tray (the same
-// zero-jank muiIconButton path native-tabs uses on modern) and, when it's on, mount the feed as an
-// overlay pane over the library content on the stable #moviesPage/#tvshowsPage div. Re-injected on
-// navigation + a scoped body-observer tick so it survives React re-renders; torn down on nav away.
+// zero-jank muiIconButton path native-tabs uses on modern) and, when it's on, mount the shared
+// Discovery surface (pane.ts) as an overlay over the library content on the stable
+// #moviesPage/#tvshowsPage div. Re-injected on navigation + a scoped body-observer tick so it
+// survives React re-renders; torn down on nav away.
 
 import { JE } from '../globals';
 import { onNavigate } from '../core/navigation';
 import { getHeaderRightContainer } from '../enhanced/helpers';
 import { injectCss } from '../core/ui-kit';
 import type { DiscoveryMediaType } from './rows';
-import { renderFeed, type DiscoveryFeedHandle } from './feed';
-import { fetchGenres } from './data';
-import { getUserRowIds } from './prefs';
-import { openCustomize } from './customize';
+import { createDiscoveryPane, type DiscoveryPaneHandle } from './pane';
 
 interface LibraryPageDef {
     id: string;
@@ -32,9 +30,8 @@ const PAGES: LibraryPageDef[] = [
 
 interface PaneState {
     active: boolean;
-    feed: DiscoveryFeedHandle | null;
-    pane: HTMLElement | null;
-    feedHost: HTMLElement | null;
+    overlay: HTMLElement | null;
+    pane: DiscoveryPaneHandle | null;
 }
 
 const state = new Map<string, PaneState>();
@@ -42,7 +39,7 @@ let injectPending = false;
 
 function stateFor(id: string): PaneState {
     let s = state.get(id);
-    if (!s) { s = { active: false, feed: null, pane: null, feedHost: null }; state.set(id, s); }
+    if (!s) { s = { active: false, overlay: null, pane: null }; state.set(id, s); }
     return s;
 }
 
@@ -65,14 +62,6 @@ function ensureCss(): void {
             overflow-y: auto; overscroll-behavior: contain;
         }
         .je-discovery-toggle.is-active { color: var(--theme-primary-color, #00a4dc); }
-        .je-discovery-toolbar { display: flex; justify-content: flex-end; padding: 0.4em 1.2em 0; }
-        .je-discovery-customize-btn {
-            display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-            background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
-            color: rgba(255,255,255,0.85); border-radius: 6px; padding: 5px 12px; font-size: 13px;
-        }
-        .je-discovery-customize-btn:hover { background: rgba(255,255,255,0.14); }
-        .je-discovery-customize-btn .material-icons { font-size: 16px; }
     `);
 }
 
@@ -87,74 +76,36 @@ function currentPage(): LibraryPageDef | null {
 
 function closePane(def: LibraryPageDef): void {
     const s = stateFor(def.id);
-    s.feed?.destroy();
-    s.feed = null;
-    s.pane?.remove();
+    s.pane?.destroy();
     s.pane = null;
-    s.feedHost = null;
+    s.overlay?.remove();
+    s.overlay = null;
     s.active = false;
     document.querySelector(def.pageSelector)?.classList.remove('je-discovery-active');
     document.getElementById('je-discovery-toggle-' + def.id)?.classList.remove('is-active');
 }
 
-/** (Re)renders the feed into the pane's feed host using the caller's current saved row prefs. */
-async function renderFeedHost(def: LibraryPageDef): Promise<void> {
-    const s = stateFor(def.id);
-    if (!s.feedHost) return;
-    s.feed?.destroy();
-    s.feedHost.textContent = '';
-    const handle = await renderFeed(s.feedHost, def.mediaType, getUserRowIds(def.mediaType));
-    if (!s.active) { handle.destroy(); return; }
-    s.feed = handle;
-}
-
-/** Builds the pane toolbar with the per-user "Customize" button. */
-function buildToolbar(def: LibraryPageDef): HTMLElement {
-    const toolbar = document.createElement('div');
-    toolbar.className = 'je-discovery-toolbar';
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'je-discovery-customize-btn';
-    const icon = document.createElement('span');
-    icon.className = 'material-icons';
-    icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = 'tune';
-    const lbl = document.createElement('span');
-    lbl.textContent = JE.t!('discovery_customize_button');
-    btn.append(icon, lbl);
-    btn.addEventListener('click', () => {
-        void fetchGenres(def.mediaType).then((genres) => {
-            openCustomize(def.mediaType, genres, () => { void renderFeedHost(def); });
-        });
-    });
-    toolbar.appendChild(btn);
-    return toolbar;
-}
-
-async function openPane(def: LibraryPageDef): Promise<void> {
+function openPane(def: LibraryPageDef): void {
     const pageEl = document.querySelector<HTMLElement>(def.pageSelector);
     if (!pageEl) return;
     const s = stateFor(def.id);
-    if (s.pane) return;
-    const pane = document.createElement('div');
-    pane.className = 'je-discovery-pane';
-    pane.setAttribute('data-discovery-pane', def.id);
-    const feedHost = document.createElement('div');
-    pane.append(buildToolbar(def), feedHost);
-    pageEl.appendChild(pane);
+    if (s.overlay) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'je-discovery-pane';
+    overlay.setAttribute('data-discovery-pane', def.id);
+    const pane = createDiscoveryPane(def.mediaType, false);
+    overlay.appendChild(pane.element);
+    pageEl.appendChild(overlay);
     pageEl.classList.add('je-discovery-active');
+    s.overlay = overlay;
     s.pane = pane;
-    s.feedHost = feedHost;
     s.active = true;
     document.getElementById('je-discovery-toggle-' + def.id)?.classList.add('is-active');
-    await renderFeedHost(def);
-    // If we were torn down mid-render (nav away), discard the now-orphaned pane.
-    if (!s.active) { s.feed?.destroy(); s.feed = null; pane.remove(); s.pane = null; s.feedHost = null; }
 }
 
 function toggle(def: LibraryPageDef): void {
     const s = stateFor(def.id);
-    if (s.active) closePane(def); else void openPane(def);
+    if (s.active) closePane(def); else openPane(def);
 }
 
 /** Ensures the Discovery toggle button is in the library header tray for the given page. */
@@ -186,13 +137,13 @@ function inject(): void {
     }
     if (!def) return;
     ensureToggle(def);
-    // Survive React re-renders: re-assert the content-hiding class, and if the pane node was blown
-    // away, re-mount it.
+    // Survive React re-renders: re-assert the content-hiding class, and if the overlay node was
+    // blown away, re-mount it.
     const s = stateFor(def.id);
     if (s.active) {
         const pageEl = document.querySelector<HTMLElement>(def.pageSelector);
         pageEl?.classList.add('je-discovery-active');
-        if (!s.pane || !s.pane.isConnected) { s.pane = null; void openPane(def); }
+        if (!s.overlay || !s.overlay.isConnected) { s.pane?.destroy(); s.pane = null; s.overlay = null; openPane(def); }
     }
 }
 

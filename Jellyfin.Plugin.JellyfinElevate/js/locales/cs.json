@@ -677,5 +677,7 @@
   "discovery_customize_move_down": "Posunout dolů",
   "discovery_customize_reset": "Obnovit výchozí",
   "discovery_customize_cancel": "Zrušit",
-  "discovery_customize_save": "Uložit"
+  "discovery_customize_save": "Uložit",
+  "discovery_toggle_movies": "Filmy",
+  "discovery_toggle_tv": "Seriály"
 }

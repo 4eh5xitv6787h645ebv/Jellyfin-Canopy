@@ -4,5 +4,7 @@
 // placement-agnostic; this barrel wires the first placement — the Movies/TV library page tab.
 // Follow-up placements (home tab, standalone page, search suggestions) register alongside it.
 import { initLibraryTab } from './library-tab';
+import { initHomeTab } from './home-tab';
 
 initLibraryTab();
+initHomeTab();
