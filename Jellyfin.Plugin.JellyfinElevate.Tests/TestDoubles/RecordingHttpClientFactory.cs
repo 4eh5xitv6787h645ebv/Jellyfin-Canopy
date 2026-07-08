@@ -42,6 +42,12 @@ public sealed class RecordingHttpMessageHandler : HttpMessageHandler
     /// <summary>X-Api-Key values as they appeared on each request at send time.</summary>
     public List<string> ApiKeyHeaders { get; } = new();
 
+    /// <summary>Each request's method, path and body captured at send time (the request/content is
+    /// disposed by the caller's <c>using</c> once SendAsync returns, so the body must be read here).</summary>
+    public List<CapturedRequest> Sent { get; } = new();
+
+    public sealed record CapturedRequest(HttpMethod Method, string Path, string Body);
+
     public void AddResponse(string pathSuffix, string body, HttpStatusCode status = HttpStatusCode.OK)
         => _responses[pathSuffix] = (body, status);
 
@@ -52,6 +58,12 @@ public sealed class RecordingHttpMessageHandler : HttpMessageHandler
         {
             ApiKeyHeaders.AddRange(values);
         }
+
+        // StringContent buffers, so ReadAsStringAsync completes synchronously — safe to block here.
+        var body = request.Content != null
+            ? request.Content.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult()
+            : string.Empty;
+        Sent.Add(new CapturedRequest(request.Method, request.RequestUri!.AbsolutePath, body));
 
         var path = request.RequestUri!.AbsolutePath;
         foreach (var (suffix, response) in _responses)

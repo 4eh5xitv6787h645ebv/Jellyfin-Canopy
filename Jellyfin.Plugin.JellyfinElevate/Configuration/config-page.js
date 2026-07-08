@@ -1703,13 +1703,31 @@
         function collectInstancesFromDom(selector, defaultName) {
             var out = [];
             var incomplete = [];
+            var renamed = [];
+            // The instance Name is the ONLY per-service key the runtime targets by (arr links,
+            // calendar, tag sync and the action-sheet Search/grab/monitor/add all resolve an
+            // instance by Name). Two enabled instances with the same Name make those actions
+            // ambiguous — worst case a grab/monitor hits the wrong box — so disambiguate on save.
+            var seen = Object.create(null);
             document.querySelectorAll(selector).forEach(function(card) {
                 var url = card.querySelector('.arr-instance-url').value.trim();
                 var apiKey = card.querySelector('.arr-instance-apikey').value.trim();
                 if (url && apiKey) {
                     var enabledCb = card.querySelector('.arr-instance-enabled');
+                    var rawName = card.querySelector('.arr-instance-name').value.trim() || defaultName;
+                    var name = rawName;
+                    var key = name.toLowerCase();
+                    if (seen[key]) {
+                        var suffix = seen[key] + 1;
+                        seen[key] = suffix;
+                        name = rawName + ' (' + suffix + ')';
+                        seen[name.toLowerCase()] = 1;
+                        renamed.push(rawName + '” → “' + name);
+                    } else {
+                        seen[key] = 1;
+                    }
                     out.push({
-                        Name: card.querySelector('.arr-instance-name').value.trim() || defaultName,
+                        Name: name,
                         Url: url,
                         ApiKey: apiKey,
                         UrlMappings: card.querySelector('.arr-instance-urlmappings').value || '',
@@ -1723,7 +1741,7 @@
                     incomplete.push(card.querySelector('.arr-instance-name').value.trim() || defaultName);
                 }
             });
-            return { instances: out, incomplete: incomplete };
+            return { instances: out, incomplete: incomplete, renamed: renamed };
         }
 
         function saveArrInstances(config) {
@@ -1736,6 +1754,9 @@
                 var sonarrInstances = sonarrResult.instances;
                 sonarrResult.incomplete.forEach(function(name) {
                     incompleteWarnings.push('Sonarr instance "' + name + '" has a URL but no API key — it was not saved.');
+                });
+                sonarrResult.renamed.forEach(function(r) {
+                    incompleteWarnings.push('Renamed duplicate Sonarr instance “' + r + '” so actions target the right instance.');
                 });
                 config.SonarrInstances = JSON.stringify(sonarrInstances);
                 if (sonarrInstances.length > 0) {
@@ -1754,6 +1775,9 @@
                 var radarrInstances = radarrResult.instances;
                 radarrResult.incomplete.forEach(function(name) {
                     incompleteWarnings.push('Radarr instance "' + name + '" has a URL but no API key — it was not saved.');
+                });
+                radarrResult.renamed.forEach(function(r) {
+                    incompleteWarnings.push('Renamed duplicate Radarr instance “' + r + '” so actions target the right instance.');
                 });
                 config.RadarrInstances = JSON.stringify(radarrInstances);
                 if (radarrInstances.length > 0) {

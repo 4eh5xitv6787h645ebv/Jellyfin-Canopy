@@ -137,3 +137,15 @@ Found in the **Pages** tab under "Requests Page".
     The Requests page is a single page (Pages tab): it shows *arr downloads and, when Seerr is configured, Seerr media requests and issues. Toggle each source with "Show Downloads in Requests Page" and "Show Seerr Issues Section".
 
 Direct URL: `/web/index.html#/downloads`
+
+## Search & Interactive Search Settings
+
+Found in the **\*arr** tab under "Search & Interactive Search". See [Search & Interactive Search](arr-features.md#search-interactive-search) for what these add. **Admin only** — the endpoints are also policy-gated on the server, not just hidden in the UI.
+
+| Setting | Description |
+|---|---|
+| **Enable Search in the item menu** | Adds **Search** (automatic) and **Interactive Search** (manual release picker) to the item action menu for movies, series, seasons and episodes, driving the Sonarr/Radarr instances configured above. Default: on. |
+| **Enable management actions (Monitor / Add)** | Also adds **Monitor / Unmonitor** and **Add to Sonarr/Radarr** to the menu, so an item can be started and grabbed without opening the arr UI. Turn off to keep search-only and prevent changes to the arr library from Jellyfin. Default: on. |
+
+!!! note
+    These reuse the Sonarr/Radarr instances configured in the [Multi-Instance Configuration](#multi-instance-configuration) above — no extra connection details are needed. An item is found in the arr by its TVDB (Sonarr) or TMDB (Radarr) id.

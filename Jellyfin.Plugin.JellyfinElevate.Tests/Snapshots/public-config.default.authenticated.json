@@ -4,6 +4,8 @@
   "AddRequestedMediaToWatchlist": false,
   "ArrLinksEnabled": false,
   "ArrLinksShowStatusSingle": false,
+  "ArrSearchEnabled": true,
+  "ArrSearchManageEnabled": true,
   "ArrTagsLinksFilter": "",
   "ArrTagsLinksHideFilter": "",
   "ArrTagsPrefix": "JE Arr Tag: ",

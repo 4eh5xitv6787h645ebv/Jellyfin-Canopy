@@ -23,6 +23,8 @@ Quick access to Sonarr, Radarr, and Bazarr from Jellyfin, plus calendar and down
 The ARR integration provides convenient links to your Sonarr, Radarr, and Bazarr instances directly from Jellyfin item pages. Additionally, it can display *arr tags as clickable links and provide calendar and download monitoring pages.
 
 - **Quick Links** - Jump to Sonarr, Radarr, Bazarr pages for any item
+- **Search & Interactive Search** - Trigger an automatic search, or pick a release by hand, from the item menu — without opening the arr UI
+- **Monitor & Add** - Toggle monitoring or add a movie/series to Sonarr/Radarr from Jellyfin
 - **Tag Links** - Display *arr tags as clickable links with filtering
 - **Calendar View** - Upcoming releases from Sonarr/Radarr
 - **Requests Page** - Monitor download queue and status
@@ -340,3 +342,47 @@ Direct URL: `/web/index.html#/downloads`
 
 !!! note
     This is the same unified Requests page that also surfaces Seerr media requests and issues when a Seerr server is connected. Toggle the *arr download queue with **"Show Downloads in Requests Page"** and the Seerr issues with **"Show Seerr Issues Section"**, both under the **Requests Page** section of the **Pages** tab.
+
+## Search & Interactive Search
+
+Drive your configured Sonarr and Radarr instances straight from Jellyfin's own item menu — the three-dot menu on a card, the more button on a detail page, and long-press on touch — so you rarely need to open the arr web UI after setup. **Admin only.**
+
+The menu items appear on **movies, series, seasons and episodes** whenever the matching service (Radarr for movies, Sonarr for the TV kinds) has at least one enabled instance configured, and the item has a TVDB/TMDB id.
+
+### Search (automatic)
+
+Fires the correct arr search command for the item and hands off to the arr's own grab logic:
+
+| Item | Command |
+|------|---------|
+| Movie | Movie search |
+| Series | Whole-series search |
+| Season | Season search |
+| Episode | Episode search |
+
+If more than one configured instance tracks the item, the search runs on all of them. A toast reports how many instances started, and (when the Downloads page is enabled) points you there to watch progress.
+
+### Interactive Search (manual release picker)
+
+Opens a themed release picker listing the candidate releases the arr found — title, quality, size, age, indexer, seeders/health, custom-format score and any rejection reasons — with a **Grab** button per row. Filter by text, sort (best match / size / age / seeders / format score), hide rejected releases, and switch between instances that track the item. Grabbing sends the release to the arr's download client exactly as the arr UI would.
+
+Interactive Search is offered for **movies, seasons and episodes** (Sonarr has no whole-series manual search — open a season or episode).
+
+### Manage (Monitor & Add)
+
+The **Manage in Sonarr/Radarr…** item opens a compact panel that:
+
+- toggles **Monitor / Unmonitor** per tracking instance,
+- shows **live download progress** for the item (reusing the same queue as the [Downloads page](#downloads-page), with a jump link there — no second downloads view),
+- and, for a movie or series **not yet tracked** by an instance, offers **Add to Sonarr/Radarr** with a quality-profile + root-folder picker, a monitor toggle and an optional search-on-add.
+
+The Manage actions are gated by a separate setting so you can keep search-only if you don't want changes to the arr library made from Jellyfin.
+
+### Setup
+
+1. Configure at least one Sonarr and/or Radarr instance under **Dashboard → Plugins → Jellyfin Elevate → *arr** (URL + API key — the same instances the *arr Links use).
+2. On the same tab, under **Search & Interactive Search**, make sure **"Enable Search in the item menu"** is on (default), and optionally **"Enable management actions (Monitor / Add)"**.
+3. Open any movie/series/season/episode menu as an administrator — the **Search**, **Interactive Search** and **Manage** items appear.
+
+!!! note
+    Search finds the item in the arr by its TVDB (Sonarr) or TMDB (Radarr) id, so the item must already be tracked there. Use **Manage → Add to Sonarr/Radarr** to start tracking a movie or series that isn't yet in the arr.

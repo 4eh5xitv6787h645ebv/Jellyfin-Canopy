@@ -6,6 +6,12 @@
 // identical; the JE.internals.features pieces are now real module exports.)
 
 import { JE } from '../../globals';
+// Shared action-sheet platform helpers live in core (used by Remove, multi-select Remove and arr
+// Search) — one source, so a positioning/close bug is fixed once for every injector.
+import {
+    buildNativeActionSheetItem, setActionSheetItemIcon, getActiveActionSheetScroller,
+    fitActionSheetItem, closeOpenActionSheet,
+} from '../../core/action-sheet';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -41,80 +47,6 @@ export const REMOVE_SURFACES: Record<string, RemoveSurfaceConfig> = {
     continuewatching: { path: 'continue-watching', labelKey: 'remove_from_continue_watching', nameKey: 'remove_surface_continue_watching', successKey: 'remove_continue_watching_success' },
     nextup: { path: 'next-up', labelKey: 'remove_from_next_up', nameKey: 'remove_surface_next_up', successKey: 'remove_next_up_success' }
 };
-
-/**
- * Builds a menu item that matches the native action-sheet items in the given sheet. It
- * copies a sibling item's class list (so font size, borders and focus scaling match the
- * current sheet and device — Jellyfin adds `actionsheet-xlargeFont` on mobile, etc.) and
- * uses Jellyfin's own item structure: a class-based Material icon on an empty span plus
- * `listItemBody`/`actionSheetItemText`. It is parsed via innerHTML so the `is="emby-button"`
- * custom element upgrades (ripple) exactly like a native item.
- * @param scroller The `.actionSheetScroller` the item will live in.
- */
-export function buildNativeActionSheetItem(scroller: HTMLElement, opts: { dataId: string; icon: string; text: string }): HTMLButtonElement {
-    const ref = scroller.querySelector('.actionSheetMenuItem');
-    // Mirror a real item's classes (minus any transient selection state) so sizing is identical.
-    // SEC(X1): escaped even though it mirrors the host's own class list —
-    // the attribute position must never depend on what the DOM contained.
-    const itemClass = JE.escapeHtml((ref ? ref.getAttribute('class') : 'listItem listItem-button actionSheetMenuItem')!
-        .replace(/\bselected\b/g, '').replace(/\s+/g, ' ').trim());
-    const tmp = document.createElement('div');
-    tmp.innerHTML =
-        `<button is="emby-button" type="button" class="${itemClass}" data-id="${JE.escapeHtml(opts.dataId)}">`
-        + `<span class="actionsheetMenuItemIcon listItemIcon listItemIcon-transparent material-icons ${JE.escapeHtml(opts.icon)}" aria-hidden="true"></span>`
-        + `<div class="listItemBody actionsheetListItemBody"><div class="listItemBodyText actionSheetItemText"></div></div>`
-        + `</button>`;
-    const button = tmp.firstElementChild as HTMLButtonElement;
-    // textContent (never innerHTML) for the label — matches native escapeHtml and is injection-safe.
-    button.querySelector('.actionSheetItemText')!.textContent = opts.text;
-    return button;
-}
-
-/** Swaps a native action-sheet item's Material icon (class-based, like Jellyfin's own items). */
-export function setActionSheetItemIcon(button: HTMLElement, iconName: string): void {
-    const span = button.querySelector('.actionsheetMenuItemIcon');
-    if (span) {
-        span.className = `actionsheetMenuItemIcon listItemIcon listItemIcon-transparent material-icons ${iconName}`;
-    }
-}
-
-/**
- * Keeps the Remove item one line and on-screen. Our "Remove from …" label is wider than the
- * sheet's native items, but Jellyfin sized + positioned the sheet (a `position:fixed` dialog
- * with an inline `left`) for its content BEFORE we added our item, so the now-wider sheet can
- * spill past the right edge. We re-run Jellyfin's own overflow correction: if the sheet still
- * fits the viewport, nudge it left so the whole one-line label shows; only if the label is
- * wider than the entire screen do we wrap it. Reads offsetWidth / inline left (both unaffected
- * by the open animation's transform). Call AFTER inserting the item.
- * @param button The already-inserted item.
- * @param scroller The action-sheet scroller.
- */
-export function fitRemoveItemToMenu(button: HTMLElement, scroller: HTMLElement): void {
-    try {
-        const dlg = scroller.closest<HTMLElement>('.dialog, .actionSheet');
-        const viewportW = document.documentElement.clientWidth || window.innerWidth || 0;
-        if (!dlg || !viewportW) return;
-
-        const left = parseFloat(dlg.style.left);
-        // Only positioned (corner-anchored) sheets have an inline left; centered / full-width
-        // sheets need no help — a long label just wraps within their width.
-        if (!Number.isFinite(left)) return;
-
-        const width = dlg.offsetWidth;
-        if (width <= viewportW - 20) {
-            // Fits on screen at one line — shift it left if it currently spills past the edge.
-            if (left + width > viewportW - 10) {
-                dlg.style.left = Math.max(10, viewportW - width - 10) + 'px';
-            }
-        } else {
-            // Too wide for the screen even pinned to the edge → wrap the label to fit.
-            dlg.style.left = '10px';
-            button.style.maxWidth = (viewportW - 24) + 'px';
-            const text = button.querySelector<HTMLElement>('.actionSheetItemText');
-            if (text) text.style.whiteSpace = 'normal';
-        }
-    } catch (e) { /* leave native sizing */ }
-}
 
 // How long a captured menu context stays valid. The action-sheet observer fires within
 // ~150ms of a menu opening; this bounds how stale a context can be before we ignore it.
@@ -233,35 +165,6 @@ export async function removeFromHomeSurface(itemId: string, surface: string, car
     }
 }
 
-// Closes any open action sheet via dialog.close() / Escape; never synthetic mouse events (they reopen the sheet).
-export function closeOpenActionSheet(): boolean {
-    try {
-        const dialogs = document.querySelectorAll<HTMLDialogElement>('dialog[open]');
-        let dispatched = false;
-        for (const dlg of dialogs) {
-            if (typeof dlg.close === 'function') {
-                try { dlg.close(); dispatched = true; } catch (e) { /* not a real dialog */ }
-            }
-        }
-        if (dispatched) return true;
-
-        // Escape-keydown fallback targets the sheet directly — dispatching on `document` is
-        // intercepted by JE's global shortcuts. Jellyfin leaves dismissed sheets in the DOM,
-        // so target the VISIBLE one (newest), not the first (possibly stale/hidden) match.
-        const sheets = [...document.querySelectorAll<HTMLElement>('.actionSheet, .actionsheet, .dialogContainer .dialog, .dialog.opened')];
-        const sheet = sheets.reverse().find(s => s.offsetParent !== null) || sheets[0];
-        if (sheet) {
-            sheet.dispatchEvent(new KeyboardEvent('keydown', {
-                key: 'Escape', code: 'Escape', keyCode: 27, which: 27,
-                bubbles: true, cancelable: true
-            }));
-        }
-        return true;
-    } catch (err) {
-        console.warn('🪼 Jellyfin Elevate: action sheet close failed', err);
-        return false;
-    }
-}
 
 /** Hides Continue Watching / Next Up rows whose visible-card count is zero so the title doesn't linger. */
 export function hideEmptyHomeSections(): void {
@@ -338,18 +241,6 @@ function createRemoveButton(scroller: HTMLElement, itemId: string, surface: stri
     return button;
 }
 
-/**
- * Returns the scroller of the action sheet that is actually on screen. Jellyfin leaves
- * dismissed action-sheet DOM behind, so the first `.actionSheetScroller` in the document
- * can be a stale/hidden one — pick the newest visible scroller instead.
- */
-export function getActiveActionSheetScroller(): HTMLElement | null {
-    const scrollers = document.querySelectorAll<HTMLElement>('.actionSheetScroller');
-    for (let i = scrollers.length - 1; i >= 0; i--) {
-        if (scrollers[i].offsetParent !== null) return scrollers[i];
-    }
-    return scrollers.length ? scrollers[scrollers.length - 1] : null;
-}
 
 /**
  * Adds the Remove button to the per-item action sheet for the item whose menu was just
@@ -397,7 +288,7 @@ JE.addRemoveButton = (): void => {
 
     const removeButton = createRemoveButton(scroller, ctx.itemId, wantSurface, ctx.card as HTMLElement | undefined);
     insertionPoint.after(removeButton);
-    fitRemoveItemToMenu(removeButton, scroller);
+    fitActionSheetItem(removeButton, scroller);
     // Consume the context: one menu-open yields one button; later observer fires (or an
     // unrelated sheet opened within the TTL) must not re-inject from this same context.
     JE.state!.removeContext = null;

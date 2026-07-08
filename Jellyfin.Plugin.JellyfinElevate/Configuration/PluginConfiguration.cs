@@ -175,6 +175,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
             SonarrInstances = "[]";
             RadarrInstances = "[]";
 
+            // Arr Search Settings (admin-only action-sheet Search / Interactive Search)
+            ArrSearchEnabled = true;
+            ArrSearchManageEnabled = true;
+
             // Arr Tags Sync Settings
             ArrTagsSyncEnabled = false;
             SonarrApiKey = "";
@@ -501,6 +505,22 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         // Multi-Instance Sonarr/Radarr Support (JSON arrays of ArrInstance)
         public string SonarrInstances { get; set; } = "[]";
         public string RadarrInstances { get; set; } = "[]";
+
+        // Arr Search Settings
+
+        /// <summary>
+        /// Master switch for the admin-only action-sheet Search / Interactive Search feature
+        /// (movies/series/seasons/episodes → the configured Sonarr/Radarr instances). Public so the
+        /// client can hide the menu items when off; the endpoints are policy-gated regardless.
+        /// </summary>
+        public bool ArrSearchEnabled { get; set; }
+
+        /// <summary>
+        /// Whether the mutating management actions (Monitor / Unmonitor and Add to Sonarr/Radarr) are
+        /// offered on top of search. Lets an admin keep read-mostly search while disabling changes to
+        /// the arr library. Gated in addition to <see cref="ArrSearchEnabled"/>.
+        /// </summary>
+        public bool ArrSearchManageEnabled { get; set; }
 
         // Arr Tags Sync Settings
 
