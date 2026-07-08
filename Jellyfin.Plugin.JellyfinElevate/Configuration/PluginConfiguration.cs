@@ -458,6 +458,18 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         public bool JellyseerrExcludeBlocklistedItems { get; set; } = false;
         public bool ShowElsewhereOnJellyseerr { get; set; }
         public bool JellyseerrUseMoreInfoModal { get; set; } = false;
+
+        // Discovery & Trending: admin master switches + which built-in rows are on by default.
+        // Per-user customization overrides the row set client-side; these are the defaults.
+        public bool DiscoveryEnabled { get; set; } = true;
+        public bool DiscoveryLibraryTab { get; set; } = true;
+        public bool DiscoveryRowTrending { get; set; } = true;
+        public bool DiscoveryRowPopular { get; set; } = true;
+        public bool DiscoveryRowUpcoming { get; set; } = true;
+        public bool DiscoveryRowTopRated { get; set; } = true;
+        public bool DiscoveryRowNowPlaying { get; set; } = false;
+        public bool DiscoveryRowWatchlist { get; set; } = false;
+        public bool DiscoveryGenreRows { get; set; } = true;
         public string JellyseerrUrls { get; set; }
         public string JellyseerrApiKey { get; set; }
         public string JellyseerrUrlMappings { get; set; }

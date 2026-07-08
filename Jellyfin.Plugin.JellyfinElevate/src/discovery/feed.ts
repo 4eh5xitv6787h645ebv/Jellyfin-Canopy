@@ -11,7 +11,7 @@
 import { JE } from '../globals';
 import { injectCss } from '../core/ui-kit';
 import type { DiscoveryMediaType, DiscoveryRowSpec } from './rows';
-import { resolveRows } from './rows';
+import { resolveRows, genreRowsEnabled } from './rows';
 import { fetchRow, fetchGenres } from './data';
 
 const CSS_ID = 'je-discovery-feed-css';
@@ -94,7 +94,7 @@ export async function renderFeed(container: HTMLElement, mt: DiscoveryMediaType,
 
     const genres = await fetchGenres(mt, abort.signal);
     let specs = resolveRows(userRowIds, genres);
-    if (!userRowIds) {
+    if (!userRowIds && genreRowsEnabled()) {
         // Enrich the default feed with a few real genre rows so it's rich out of the box.
         const genreRowIds = [...genres.keys()].slice(0, 4).map((id) => `genre:${id}`);
         const genreSpecs = resolveRows(genreRowIds, genres).filter((s) => !specs.some((e) => e.id === s.id));

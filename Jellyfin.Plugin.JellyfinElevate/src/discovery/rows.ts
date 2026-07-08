@@ -14,8 +14,15 @@ declare module '../types/je' {
         DiscoveryEnabled?: boolean;
         /** Whether the Discovery option appears in the Movies/TV library menu (admin default). */
         DiscoveryLibraryTab?: boolean;
-        /** Admin default row order, a comma-separated list of row ids. */
-        DiscoveryDefaultRows?: string;
+        /** Admin per-row defaults (which built-in shelves are on out of the box). */
+        DiscoveryRowTrending?: boolean;
+        DiscoveryRowPopular?: boolean;
+        DiscoveryRowUpcoming?: boolean;
+        DiscoveryRowTopRated?: boolean;
+        DiscoveryRowNowPlaying?: boolean;
+        DiscoveryRowWatchlist?: boolean;
+        /** Auto-append a few real genre rows to the default feed. */
+        DiscoveryGenreRows?: boolean;
     }
 }
 
@@ -69,14 +76,26 @@ export function specFromId(id: string, genreNames?: Map<number, string>): Discov
 }
 
 /**
- * The admin default order for a media type: the plugin config's DiscoveryDefaultRows (comma-list of
- * ids) if set, else DEFAULT_ROW_IDS. Server-side-only shaping is deliberately avoided — the client
- * resolves user → admin → hardcoded, matching the plugin's settings doctrine.
+ * The admin default row order, built from the per-row admin toggles (PluginConfiguration). Absent
+ * config (not yet loaded / older server) falls back to the built-in defaults, so the client always
+ * resolves user → admin → hardcoded per the settings doctrine. `!== false` keeps a row on by default.
  */
 export function adminDefaultRowIds(): string[] {
-    const raw = JE.pluginConfig?.DiscoveryDefaultRows || '';
-    const ids = raw.split(',').map(s => s.trim()).filter(Boolean);
+    const cfg = JE.pluginConfig;
+    if (!cfg) return [...DEFAULT_ROW_IDS];
+    const ids: string[] = [];
+    if (cfg.DiscoveryRowTrending !== false) ids.push('trending');
+    if (cfg.DiscoveryRowPopular !== false) ids.push('popular');
+    if (cfg.DiscoveryRowUpcoming !== false) ids.push('upcoming');
+    if (cfg.DiscoveryRowTopRated !== false) ids.push('topRated');
+    if (cfg.DiscoveryRowNowPlaying === true) ids.push('nowPlaying');
+    if (cfg.DiscoveryRowWatchlist === true) ids.push('watchlist');
     return ids.length > 0 ? ids : [...DEFAULT_ROW_IDS];
+}
+
+/** Whether the admin wants a few real genre rows appended to the default feed. */
+export function genreRowsEnabled(): boolean {
+    return JE.pluginConfig?.DiscoveryGenreRows !== false;
 }
 
 /**
