@@ -180,6 +180,7 @@
   "RatingTagsEnabled",
   "RatingTagsPosition",
   "RemoveContinueWatchingEnabled",
+  "RequestApprovalsEnabled",
   "ResolutionTagOrder",
   "ReviewsExpandedByDefault",
   "SeerrScanDebounceSeconds",

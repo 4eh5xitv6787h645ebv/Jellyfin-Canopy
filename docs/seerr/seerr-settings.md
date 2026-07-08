@@ -202,6 +202,23 @@ Display Seerr issues on the Requests page.
 - Filter by issue status
 - Link to Seerr reporter modal
 
+### Enable In-App Request Approvals
+
+Show **Approve** / **Decline** buttons on pending Seerr requests in the Requests
+page, so admins can act on requests without opening Seerr.
+
+- **Enabled by default**
+- The buttons render only for callers Seerr would let approve — **Jellyfin
+  admins** and Seerr users with the **Manage Requests** (or **Admin**) permission.
+- Actions are proxied server-side to Seerr with the plugin's configured Seerr API
+  key (never exposed to the browser); the acting user is passed through so Seerr
+  records the correct approver.
+- When disabled, the buttons never render and the approve/decline endpoint refuses
+  the action.
+
+See [In-App Request Approvals](seerr-features.md#in-app-request-approvals) for the
+full behaviour.
+
 ### Auto-Refresh Settings
 
 - **Enable Auto-Refresh** - Automatically refresh download and request status

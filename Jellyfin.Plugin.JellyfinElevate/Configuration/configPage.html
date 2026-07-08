@@ -1003,6 +1003,10 @@
                             <div class="je-setting-description" data-desc-for="downloadsPageShowIssues">
                                 <div class="fieldDescription je-field-desc-xl">Shows open/resolved Seerr issues beneath Requests.</div>
                             </div>
+                            <div class="checkboxContainer"><label><input id="requestApprovalsEnabled" data-config-key="RequestApprovalsEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable In-App Request Approvals</span></label></div>
+                            <div class="je-setting-description" data-desc-for="requestApprovalsEnabled">
+                                <div class="fieldDescription je-field-desc-xl">Shows Approve / Decline buttons on pending Seerr requests in the Requests page. Only users who can approve in Seerr (Jellyfin admins, or Seerr users with the Manage Requests permission) ever see the buttons; the action is proxied to Seerr with the plugin's admin API key.</div>
+                            </div>
                             <div class="checkboxContainer"><label><input id="downloadsUseNativeTab" data-config-key="DownloadsUseNativeTab" is="emby-checkbox" type="checkbox"/><span>Add Requests as a native Home tab</span></label></div>
                             <div class="je-setting-description" data-desc-for="downloadsUseNativeTab">
                                 <div class="fieldDescription je-field-desc-xl">Adds Requests as its own tab on the Home page, no external plugin needed.<br/><strong>Recommended on Jellyfin 12's experimental layout</strong> (the default).</div>

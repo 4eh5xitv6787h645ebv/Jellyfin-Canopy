@@ -177,7 +177,7 @@ const ALLOWLIST: AllowlistEntry[] = [
     {
         file: 'arr/requests/render-cards.ts',
         expr: 'dateText.text',
-        line: 116,
+        line: 122,
         why: 'pre-built HTML from formatFutureReleaseDate\'s { isHtml, text } payload — the template that constructs it is itself scanned in render-helpers.ts',
     },
     {

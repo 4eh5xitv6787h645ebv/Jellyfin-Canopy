@@ -223,13 +223,14 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 3. Check **"Enable Requests Page"**
 4. Optionally check **"Show Downloads in Requests Page"** to display active *arr downloads (enabled by default)
 5. Optionally check **"Show Seerr Issues Section"** to display Seerr issues
-6. Choose integration method:
+6. Optionally check **"Enable In-App Request Approvals"** to show Approve / Decline buttons on pending requests (enabled by default) — see [In-App Request Approvals](#in-app-request-approvals)
+7. Choose integration method:
    - **Use Plugin Pages for Requests** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin)
    - **Use Custom Tabs for Requests** - Adds custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin)
    - **Add Requests as a native Home tab** - Shows Requests as a native tab on the Home screen (experimental layout)
-7. Configure polling settings (see below)
-8. Click **Save**
-9. Restart Jellyfin if using Plugin Pages
+8. Configure polling settings (see below)
+9. Click **Save**
+10. Restart Jellyfin if using Plugin Pages
 
 !!! note "You only need one data source"
     The Requests Page draws from two **independent** sources and is useful with either one:
@@ -269,7 +270,7 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
 - Quality and size information
 - Filter by status
 - Search functionality
-- **Approve / Decline buttons** — admins and users with Manage Requests permission see green approve and red decline icon buttons on pending requests
+- **Approve / Decline buttons** — admins and users with Manage Requests permission see green approve and red decline icon buttons on pending requests (see [In-App Request Approvals](#in-app-request-approvals))
 
 !!! note "Complete lists and per-user filtering"
 
@@ -279,6 +280,36 @@ Monitor active downloads from Sonarr/Radarr and manage Seerr requests and issues
     - The **Coming Soon** view aggregates *all* pages of pending and approved
       requests before paging locally, so it no longer stops at the first page and
       its totals reflect the full future-dated set.
+
+### In-App Request Approvals
+
+Approve or decline pending Seerr requests without leaving Jellyfin. Pending
+request cards on the Requests page show a green **Approve** and a red **Decline**
+button; clicking one proxies the action to Seerr and refreshes the row so its
+status chip updates immediately.
+
+- **Who sees the buttons** — only callers Seerr would let approve: **Jellyfin
+  admins**, and Seerr users who hold the **Manage Requests** (or **Admin**)
+  permission. Everyone else sees the request list without approval controls. The
+  server enforces this on every action, so the buttons are a convenience, not the
+  security boundary.
+- **How it works** — the action is proxied server-side to Seerr's
+  `POST /api/v1/request/{id}/approve` (or `/decline`) using the plugin's
+  configured Seerr API key; the acting user is passed through so Seerr records the
+  correct approver and applies that user's permissions. The Seerr API key is
+  never exposed to the browser.
+- **Feedback** — a toast confirms the approval or decline, and the card's status
+  chip moves from *Pending Approval* to *Requested* (or *Declined*).
+- **Enable / disable** — the **Enable In-App Request Approvals** toggle (plugin
+  settings → **Pages** tab) turns the whole affordance on or off. It is on by
+  default. When off, the buttons never render and the approve/decline endpoint
+  refuses the action.
+
+!!! note "Pending detection"
+    The buttons appear whenever the **request** itself is pending, even when the
+    media is already partially available — for example a pending request for a new
+    season of a show you already have. This is why the control keys off the
+    request status, not the media's availability.
 
 ### Issues on Downloads Page
 
