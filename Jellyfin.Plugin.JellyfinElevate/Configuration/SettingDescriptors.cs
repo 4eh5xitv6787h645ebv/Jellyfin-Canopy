@@ -236,6 +236,16 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                 Public("JellyseerrShowCollectionDiscovery", c => c.JellyseerrShowCollectionDiscovery),
                 Public("JellyseerrExcludeLibraryItems", c => c.JellyseerrExcludeLibraryItems),
                 Public("JellyseerrExcludeBlocklistedItems", c => c.JellyseerrExcludeBlocklistedItems),
+                // Discovery & Trending — the client reads these to gate the feature and resolve the
+                // default row set (user customization overrides client-side).
+                Public("DiscoveryEnabled", c => c.DiscoveryEnabled),
+                Public("DiscoveryLibraryTab", c => c.DiscoveryLibraryTab),
+                Public("DiscoveryRowTrending", c => c.DiscoveryRowTrending),
+                Public("DiscoveryRowPopular", c => c.DiscoveryRowPopular),
+                Public("DiscoveryRowUpcoming", c => c.DiscoveryRowUpcoming),
+                Public("DiscoveryRowTopRated", c => c.DiscoveryRowTopRated),
+                Public("DiscoveryRowWatchlist", c => c.DiscoveryRowWatchlist),
+                Public("DiscoveryGenreRows", c => c.DiscoveryGenreRows),
                 Public("JellyseerrDisableCache", c => c.JellyseerrDisableCache),
                 // Only authenticated callers see internal Seerr URLs — they're used by
                 // client-side deep links and would otherwise leak network topology to

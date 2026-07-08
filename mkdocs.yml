@@ -139,6 +139,17 @@ nav:
 
 
   # ——————————————
+  # Discovery
+  # ——————————————
+  - Discovery:
+    # Features overview
+    - Discovery Features: discovery/discovery-features.md
+
+    # Discovery Settings
+    - Discovery Settings: discovery/discovery-settings.md
+
+
+  # ——————————————
   # Spoiler Guard
   # ——————————————
   - Spoiler Guard:

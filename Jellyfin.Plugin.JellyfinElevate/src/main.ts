@@ -52,5 +52,6 @@ import './jellyseerr/index';
 import './arr/index';
 import './tags/index';
 import './elsewhere/index';
+import './discovery/index';
 import './extras/index';
 import './others/index';
