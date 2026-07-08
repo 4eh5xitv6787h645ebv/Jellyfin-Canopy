@@ -86,10 +86,21 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
                     .Where(s => s.NowPlayingItem != null)
                     .Select(s => new
                     {
+                        // Session id — needed to target the per-session stop /
+                        // message actions. Not sensitive on its own; the actions
+                        // themselves are admin-gated (RequiresElevation).
+                        Id = s.Id,
                         UserId = s.UserId,
                         UserName = s.UserName,
                         Client = s.Client,
                         DeviceName = s.DeviceName,
+                        // Whether the client can be remote-controlled (stop /
+                        // targeted message). The client hides the action buttons
+                        // when false so admins aren't offered a no-op.
+                        SupportsRemoteControl = s.SupportsRemoteControl,
+                        // Device id is admin-only (used for nothing client-side
+                        // today, kept admin-scoped like the IP for parity).
+                        DeviceId = isAdmin ? s.DeviceId : null,
                         // IP only for admins
                         RemoteEndPoint = isAdmin ? s.RemoteEndPoint : null,
                         LastActivityDate = s.LastActivityDate,
@@ -144,6 +155,105 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
             }
         }
 
+        // ==================== Session Control (admin-only) ====================
+
+        /// <summary>
+        /// Stop playback on a single session (the 396-vote "kill a stream"
+        /// action). Admin-gated at the policy level; sends a Stop playstate
+        /// command via the same core path the native dashboard uses.
+        /// </summary>
+        [HttpPost("active-streams/sessions/{sessionId}/stop")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        public async Task<IActionResult> StopSession([FromRoute] string sessionId)
+        {
+            if (string.IsNullOrWhiteSpace(sessionId))
+                return BadRequest("Session id is required.");
+
+            var config = _configProvider.ConfigurationOrNull;
+            if (config == null || !config.ActiveStreamsEnabled)
+                return StatusCode(503, "Active Streams is not enabled.");
+
+            var target = _sessionManager.Sessions.FirstOrDefault(s => s.Id == sessionId);
+            if (target == null)
+                return NotFound("Session not found.");
+
+            try
+            {
+                await _sessionManager.SendPlaystateCommand(
+                    GetControllingSessionId(),
+                    sessionId,
+                    new MediaBrowser.Model.Session.PlaystateRequest
+                    {
+                        Command = MediaBrowser.Model.Session.PlaystateCommand.Stop
+                    },
+                    CancellationToken.None).ConfigureAwait(false);
+                return Ok(new { stopped = true });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"Stop session {sessionId} failed: {ex.Message}");
+                return StatusCode(502, "Failed to stop the session.");
+            }
+        }
+
+        /// <summary>
+        /// Send a message to a single session (targeted, unlike the broadcast).
+        /// </summary>
+        [HttpPost("active-streams/sessions/{sessionId}/message")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        public async Task<IActionResult> MessageSession([FromRoute] string sessionId, [FromBody] BroadcastMessageRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(sessionId))
+                return BadRequest("Session id is required.");
+            if (request == null || string.IsNullOrWhiteSpace(request.Text))
+                return BadRequest("Message text is required.");
+
+            var config = _configProvider.ConfigurationOrNull;
+            if (config == null || !config.ActiveStreamsEnabled)
+                return StatusCode(503, "Active Streams is not enabled.");
+
+            var target = _sessionManager.Sessions.FirstOrDefault(s => s.Id == sessionId);
+            if (target == null)
+                return NotFound("Session not found.");
+
+            try
+            {
+                await _sessionManager.SendMessageCommand(
+                    GetControllingSessionId(),
+                    sessionId,
+                    new MediaBrowser.Model.Session.MessageCommand
+                    {
+                        Header = request.Header,
+                        Text = request.Text,
+                        TimeoutMs = request.TimeoutMs
+                    },
+                    CancellationToken.None).ConfigureAwait(false);
+                return Ok(new { sent = true });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"Message session {sessionId} failed: {ex.Message}");
+                return StatusCode(502, "Failed to message the session.");
+            }
+        }
+
+        // The admin's own session drives the control commands (matches the
+        // native dashboard's controlling-session semantics). An empty string is
+        // accepted by the core when the admin's session can't be resolved.
+        private string GetControllingSessionId()
+        {
+            try
+            {
+                var adminSession = _sessionManager.Sessions
+                    .FirstOrDefault(s => s.UserId == GetCurrentUserId());
+                return adminSession?.Id ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
         [HttpPost("active-streams/broadcast")]
         [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> BroadcastMessage([FromBody] BroadcastMessageRequest request)
@@ -160,14 +270,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
             var errors = new List<string>();
 
             // Use the current session as the controlling session (admin's own session)
-            var controllingSessionId = string.Empty;
-            try
-            {
-                var adminSession = _sessionManager.Sessions
-                    .FirstOrDefault(s => s.UserId == GetCurrentUserId());
-                controllingSessionId = adminSession?.Id ?? string.Empty;
-            }
-            catch { /* non-fatal — empty string is accepted */ }
+            var controllingSessionId = GetControllingSessionId();
 
             var command = new MediaBrowser.Model.Session.MessageCommand
             {
