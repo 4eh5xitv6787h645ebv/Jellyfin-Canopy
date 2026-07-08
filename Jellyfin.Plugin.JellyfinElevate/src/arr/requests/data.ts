@@ -580,11 +580,21 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: string
             method: 'POST',
             skipRetry: true,
         });
+        // Static, param-free localized strings (class (a)) — no interpolation
+        // reaches toast()'s innerHTML, so no escaping is required here.
+        if (typeof JE.toast === 'function') {
+            JE.toast(action === 'approve'
+                ? (JE.t?.('requests_approved_toast') || 'Request approved')
+                : (JE.t?.('requests_declined_toast') || 'Request declined'));
+        }
         await fetchRequests();
         renderPage();
     } catch (err) {
         console.error(`${logPrefix} Failed to ${action} request ${requestId}:`, err);
         btn.disabled = false;
         if (icon) icon.textContent = action === 'approve' ? 'check' : 'close';
+        if (typeof JE.toast === 'function') {
+            JE.toast(JE.t?.('requests_action_error') || 'Couldn’t update the request. Please try again.');
+        }
     }
 }

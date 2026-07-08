@@ -99,10 +99,16 @@ export function renderRequestCard(item: RequestItem): string {
     // for a new season of an already-(partially-)available show reports
     // "Partially Available"/"Available" and would otherwise hide the buttons,
     // making the request impossible to approve from the UI.
-    if (state.canApproveRequests && item.requestStatus === 1 && item.id) {
+    // The admin RequestApprovalsEnabled toggle is honoured on both sides: the
+    // server already folds it into canApproveRequests, and the client re-checks
+    // the projected pluginConfig flag so a disabled feature renders no buttons.
+    const approvalsEnabled = JE.pluginConfig?.RequestApprovalsEnabled !== false;
+    if (approvalsEnabled && state.canApproveRequests && item.requestStatus === 1 && item.id) {
+        const approveLabel = JE.t?.('requests_approve') || 'Approve';
+        const declineLabel = JE.t?.('requests_decline') || 'Decline';
         approvalButtons = `
-        <button class="je-request-approve-btn" data-request-id="${escapeHtml(String(item.id))}" title="Approve"><span class="material-icons">check</span></button>
-        <button class="je-request-decline-btn" data-request-id="${escapeHtml(String(item.id))}" title="Decline"><span class="material-icons">close</span></button>
+        <button class="je-request-approve-btn" data-request-id="${escapeHtml(String(item.id))}" title="${escapeHtml(approveLabel)}" aria-label="${escapeHtml(approveLabel)}"><span class="material-icons">check</span></button>
+        <button class="je-request-decline-btn" data-request-id="${escapeHtml(String(item.id))}" title="${escapeHtml(declineLabel)}" aria-label="${escapeHtml(declineLabel)}"><span class="material-icons">close</span></button>
       `;
     }
 
