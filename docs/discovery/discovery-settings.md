@@ -2,8 +2,8 @@
 
 Admin settings live on the **Discovery** tab of the Jellyfin Elevate config page (Dashboard → Plugins → Jellyfin Elevate). They set the **defaults**; each user can further customize their own feed from the Discovery **Customize** button.
 
-!!! info "Requires a data source"
-    Discovery needs a **TMDB API key** (configured under Seerr / Elsewhere settings) and/or a **Seerr connection**. With Seerr, cards gain availability and request buttons; with only TMDB, cards are browse-and-link.
+!!! info "Requires a Seerr connection"
+    Discovery is Seerr-backed — configure a Seerr connection on the **Seerr** tab first. Rows come from Seerr, so cards carry availability, request state and inline Request buttons, and every feed is parental-rating filtered server-side.
 
 ## Discovery & Trending
 
@@ -22,7 +22,6 @@ Which shelves appear by default. Users can add, remove and reorder rows for them
 | **Popular** | On |
 | **Upcoming** | On |
 | **Top Rated** | On |
-| **Now Playing / In Theaters** | Off |
 | **My Watchlist** | Off |
 | **Add a few genre rows automatically** | On |
 

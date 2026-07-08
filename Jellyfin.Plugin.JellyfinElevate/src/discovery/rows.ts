@@ -19,7 +19,6 @@ declare module '../types/je' {
         DiscoveryRowPopular?: boolean;
         DiscoveryRowUpcoming?: boolean;
         DiscoveryRowTopRated?: boolean;
-        DiscoveryRowNowPlaying?: boolean;
         DiscoveryRowWatchlist?: boolean;
         /** Auto-append a few real genre rows to the default feed. */
         DiscoveryGenreRows?: boolean;
@@ -28,9 +27,9 @@ declare module '../types/je' {
 
 export type DiscoveryMediaType = 'movie' | 'tv';
 
-// A row "kind" maps to a data source + fetch shape in data.ts. `genre`/`streaming` carry a param.
+// A row "kind" maps to a Seerr discover fetch in data.ts. `genre`/`streaming` carry a param.
 export type DiscoveryRowKind =
-    | 'trending' | 'popular' | 'upcoming' | 'topRated' | 'nowPlaying' | 'watchlist'
+    | 'trending' | 'popular' | 'upcoming' | 'topRated' | 'watchlist'
     | 'genre' | 'streaming';
 
 export interface DiscoveryRowSpec {
@@ -51,7 +50,7 @@ export const DEFAULT_ROW_IDS: readonly string[] = [
 
 // Every built-in row id in natural order (the customize modal offers these + genre rows).
 export const BUILTIN_ORDER: readonly string[] = [
-    'trending', 'popular', 'upcoming', 'topRated', 'nowPlaying', 'watchlist',
+    'trending', 'popular', 'upcoming', 'topRated', 'watchlist',
 ];
 
 // Built-in (non-parameterised) rows, in their natural order, with i18n title keys.
@@ -60,7 +59,6 @@ const BUILTIN_ROWS: Record<string, DiscoveryRowSpec> = {
     popular: { id: 'popular', kind: 'popular', titleKey: 'discovery_row_popular' },
     upcoming: { id: 'upcoming', kind: 'upcoming', titleKey: 'discovery_row_upcoming' },
     topRated: { id: 'topRated', kind: 'topRated', titleKey: 'discovery_row_top_rated' },
-    nowPlaying: { id: 'nowPlaying', kind: 'nowPlaying', titleKey: 'discovery_row_now_playing' },
     watchlist: { id: 'watchlist', kind: 'watchlist', titleKey: 'discovery_row_watchlist' },
 };
 
@@ -93,7 +91,6 @@ export function adminDefaultRowIds(): string[] {
     if (cfg.DiscoveryRowPopular !== false) ids.push('popular');
     if (cfg.DiscoveryRowUpcoming !== false) ids.push('upcoming');
     if (cfg.DiscoveryRowTopRated !== false) ids.push('topRated');
-    if (cfg.DiscoveryRowNowPlaying === true) ids.push('nowPlaying');
     if (cfg.DiscoveryRowWatchlist === true) ids.push('watchlist');
     return ids.length > 0 ? ids : [...DEFAULT_ROW_IDS];
 }
@@ -104,12 +101,14 @@ export function genreRowsEnabled(): boolean {
 }
 
 /**
- * Resolves the ordered rows to render for a media type: the per-user override (if the user
- * customised) else the admin default, mapped to concrete specs. `genreNames` names any genre rows.
- * Unknown ids are dropped (a genre removed upstream, a renamed built-in) so the feed never breaks.
+ * Resolves the ordered rows to render for a media type: the per-user override else the admin
+ * default, mapped to concrete specs. `userRowIds` is null when the user hasn't customised (→ admin
+ * defaults) but an EXPLICIT empty array is honoured (the user hid every row → empty feed), so the
+ * two are not conflated. `genreNames` names any genre rows. Unknown ids are dropped (a genre removed
+ * upstream, a renamed built-in) so the feed never breaks.
  */
 export function resolveRows(userRowIds: string[] | null, genreNames?: Map<number, string>): DiscoveryRowSpec[] {
-    const ids = (userRowIds && userRowIds.length > 0) ? userRowIds : adminDefaultRowIds();
+    const ids = userRowIds !== null ? userRowIds : adminDefaultRowIds();
     const out: DiscoveryRowSpec[] = [];
     const seen = new Set<string>();
     for (const id of ids) {

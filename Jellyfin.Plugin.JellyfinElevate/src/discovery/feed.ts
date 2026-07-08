@@ -59,7 +59,7 @@ function buildShelf(spec: DiscoveryRowSpec): { row: HTMLElement; itemsContainer:
 /** Fills a shelf's cards from its data; hides the shelf if it resolves empty. */
 async function fillShelf(spec: DiscoveryRowSpec, mt: DiscoveryMediaType, row: HTMLElement, itemsContainer: HTMLElement, signal: AbortSignal): Promise<void> {
     try {
-        const { results } = await fetchRow(spec, mt, signal);
+        const results = await fetchRow(spec, mt, signal);
         if (signal.aborted) return;
         const fragment = JE.discoveryFilter?.createCardsFragment?.(results, { cardClass: 'overflowPortraitCard' });
         if (!fragment || fragment.childElementCount === 0) {

@@ -49,7 +49,6 @@
   "DiscoveryEnabled": true,
   "DiscoveryGenreRows": true,
   "DiscoveryLibraryTab": true,
-  "DiscoveryRowNowPlaying": false,
   "DiscoveryRowPopular": true,
   "DiscoveryRowTopRated": true,
   "DiscoveryRowTrending": true,

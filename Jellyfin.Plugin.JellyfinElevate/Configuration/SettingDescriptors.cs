@@ -244,7 +244,6 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                 Public("DiscoveryRowPopular", c => c.DiscoveryRowPopular),
                 Public("DiscoveryRowUpcoming", c => c.DiscoveryRowUpcoming),
                 Public("DiscoveryRowTopRated", c => c.DiscoveryRowTopRated),
-                Public("DiscoveryRowNowPlaying", c => c.DiscoveryRowNowPlaying),
                 Public("DiscoveryRowWatchlist", c => c.DiscoveryRowWatchlist),
                 Public("DiscoveryGenreRows", c => c.DiscoveryGenreRows),
                 Public("JellyseerrDisableCache", c => c.JellyseerrDisableCache),

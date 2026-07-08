@@ -19,14 +19,12 @@ Each card behaves exactly like the rest of Jellyfin Elevate's Seerr surfaces: re
 | **Popular** | The most popular movies / shows |
 | **Upcoming** | Releasing soon |
 | **Top Rated** | Highest rated |
-| **Now Playing / In Theaters** | Currently in cinemas / on air (optional) |
 | **My Watchlist** | Your Seerr watchlist (optional) |
 | **Genre rows** | A few rows for real genres (Action, Comedy, …) |
 
 ## Where the data comes from
 
-- **With a Seerr connection** (recommended): rows come from Seerr, so every card knows whether the title is already **available**, **requested**, or **requestable** — and requests happen inline.
-- **With just a TMDB API key**: rows come straight from TMDB. Cards still show posters and link to items already in your library; requesting needs Seerr.
+Discovery is **Seerr-backed** and requires a Seerr connection: rows come from Seerr, so every card knows whether the title is already **available**, **requested**, or **requestable** — and requests happen inline. "Already in your library" is resolved via the plugin's own provider lookup.
 
 Discovery respects each user's **parental rating limit** — the same server-side filter used across the Seerr features — so restricted users never see blocked titles in a feed.
 

@@ -36,9 +36,10 @@ describe('discovery rows', () => {
         expect(specs.map((s) => s.id)).toEqual(['popular', 'trending']);
     });
 
-    it('resolveRows falls back to admin defaults for a null/empty user list', () => {
+    it('resolveRows uses admin defaults for null but honors an explicit empty selection', () => {
         expect(resolveRows(null).map((s) => s.id)).toEqual(['trending', 'popular', 'upcoming', 'topRated']);
-        expect(resolveRows([]).map((s) => s.id)).toEqual(['trending', 'popular', 'upcoming', 'topRated']);
+        // An explicit [] (user hid every row) is honored, not conflated with "not customized".
+        expect(resolveRows([]).map((s) => s.id)).toEqual([]);
     });
 
     it('genreRowsEnabled defaults on and honors the admin toggle', () => {

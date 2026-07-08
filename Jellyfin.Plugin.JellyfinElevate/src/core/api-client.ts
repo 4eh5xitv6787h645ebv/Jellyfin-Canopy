@@ -571,10 +571,13 @@ async function coreFetch(url: string, options: CoreFetchOptions = {}): Promise<u
         }
     };
 
-    // Concurrency limit + in-flight dedup (GET with a cache key only)
+    // Concurrency limit + in-flight dedup (GET with a cache key only). Forward the caller's signal:
+    // deduplicatedFetch skips dedup when a signal is present so an abortable caller gets its own
+    // request — otherwise one caller's abort could hand a rejected/aborted shared promise to the
+    // next same-key caller (e.g. a re-rendered feed re-requesting a row it just aborted).
     return withConcurrencyLimit(() =>
         (isGet && cacheKey)
-            ? deduplicatedFetch(cacheKey, fetchFn)
+            ? deduplicatedFetch(cacheKey, fetchFn, signal)
             : fetchFn()
     );
 }

@@ -467,7 +467,6 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         public bool DiscoveryRowPopular { get; set; } = true;
         public bool DiscoveryRowUpcoming { get; set; } = true;
         public bool DiscoveryRowTopRated { get; set; } = true;
-        public bool DiscoveryRowNowPlaying { get; set; } = false;
         public bool DiscoveryRowWatchlist { get; set; } = false;
         public bool DiscoveryGenreRows { get; set; } = true;
         public string JellyseerrUrls { get; set; }

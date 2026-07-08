@@ -49,7 +49,8 @@ function stateFor(id: string): PaneState {
 function enabled(): boolean {
     if (JE.pluginConfig?.DiscoveryEnabled === false) return false;
     if (JE.pluginConfig?.DiscoveryLibraryTab === false) return false;
-    return JE.pluginConfig?.JellyseerrEnabled === true || JE.pluginConfig?.TmdbEnabled === true;
+    // Discovery is Seerr-backed (parental-filtered + request-aware); it needs a Seerr connection.
+    return JE.pluginConfig?.JellyseerrEnabled === true;
 }
 
 function ensureCss(): void {

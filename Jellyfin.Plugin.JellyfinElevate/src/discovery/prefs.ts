@@ -12,15 +12,18 @@ function storageKey(mt: DiscoveryMediaType): string {
     return `je-discovery-rows:${uid}:${mt}`;
 }
 
-/** The user's customized row-id order for a media type, or null when they haven't customized. */
+/**
+ * The user's customized row-id order for a media type, or null when they haven't customized. An
+ * explicit empty array is preserved (the user hid every row) and NOT conflated with null, so
+ * "customized to empty" round-trips instead of silently reverting to the admin defaults.
+ */
 export function getUserRowIds(mt: DiscoveryMediaType): string[] | null {
     try {
         const raw = localStorage.getItem(storageKey(mt));
         if (!raw) return null;
         const parsed: unknown = JSON.parse(raw);
         if (!Array.isArray(parsed)) return null;
-        const ids = parsed.filter((x): x is string => typeof x === 'string');
-        return ids.length > 0 ? ids : null;
+        return parsed.filter((x): x is string => typeof x === 'string');
     } catch { return null; }
 }
 
