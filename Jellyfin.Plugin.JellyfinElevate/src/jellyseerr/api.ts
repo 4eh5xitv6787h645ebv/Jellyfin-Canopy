@@ -320,9 +320,10 @@ api.canRequest4k = function(mediaType) {
         canRequest4kTv?: boolean;
     } | null;
     if (!status || !status.active || !status.userFound) {
-        // Capability not resolved yet. PERF(R9) late-beats-never: kick off the
-        // memoized status fetch (fire-and-forget) so the next render self-heals,
-        // and hide for now rather than showing an option the server may reject.
+        // Capability not resolved yet — hide for now rather than showing an option
+        // the server may reject. Callers resolve status before rendering, so this
+        // path is belt-and-suspenders; the fire-and-forget fetch just guards against
+        // a stray early call leaving the capability permanently unresolved.
         if (cachedUserStatus === null) { void api.checkUserStatus(); }
         return false;
     }
