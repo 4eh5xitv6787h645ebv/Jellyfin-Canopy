@@ -7,11 +7,11 @@
 
 import { JE } from '../../globals';
 import { installModalA11y, type ModalA11yHandle } from '../../core/modal-a11y';
+import { showNotification, REMOVE_SURFACES, removeFromHomeSurface, hideEmptyHomeSections } from './remove-home';
 import {
-    showNotification, REMOVE_SURFACES, buildNativeActionSheetItem, setActionSheetItemIcon,
-    fitRemoveItemToMenu, removeFromHomeSurface, closeOpenActionSheet, hideEmptyHomeSections,
-    getActiveActionSheetScroller
-} from './remove-home';
+    buildNativeActionSheetItem, setActionSheetItemIcon, fitActionSheetItem,
+    closeOpenActionSheet, getActiveActionSheetScroller,
+} from '../../core/action-sheet';
 
 // ── Multi-select / long-press menu ───────────────────────────────────────────
 // Touch devices have no per-item "…" button; a long-press opens Jellyfin's multi-select
@@ -249,5 +249,5 @@ JE.addMultiSelectRemoveButton = (): void => {
     } else {
         scroller.appendChild(removeButton);
     }
-    fitRemoveItemToMenu(removeButton, scroller);
+    fitActionSheetItem(removeButton, scroller);
 };

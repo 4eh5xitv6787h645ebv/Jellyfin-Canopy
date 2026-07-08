@@ -33,6 +33,8 @@ export interface ArrPluginConfig extends PluginConfig {
     RadarrInstancesCorrupt?: boolean;
     SonarrInstances?: ArrInstanceConfig[];
     RadarrInstances?: ArrInstanceConfig[];
+    ArrSearchEnabled?: boolean;
+    ArrSearchManageEnabled?: boolean;
     SonarrUrl?: string;
     SonarrUrlMappings?: string;
     RadarrUrl?: string;
