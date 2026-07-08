@@ -730,6 +730,23 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
                 });
             }
 
+            // JE 4K master switch (applies to EVERY caller, admins included): when
+            // the admin has disabled 4K requests for this media type, no 4K request
+            // may be submitted through JE. The client hides the option; this enforces
+            // it server-side so a crafted POST with is4k can't bypass the toggle the
+            // docs describe as a master switch.
+            if (method == HttpMethod.Post
+                && apiPath.StartsWith("/api/v1/request", StringComparison.OrdinalIgnoreCase)
+                && content != null
+                && TryGetIs4k(content))
+            {
+                bool isTv4k = TryGetRequestMedia(content, out var mtSwitch, out _)
+                    && string.Equals(mtSwitch, "tv", StringComparison.OrdinalIgnoreCase);
+                bool adminEnabled = isTv4k ? config.JellyseerrEnable4KTvRequests : config.JellyseerrEnable4KRequests;
+                if (!adminEnabled)
+                    return new ObjectResult(new { code = "4k_requests_disabled", message = "4K requests are disabled." }) { StatusCode = 403 };
+            }
+
             // Enforce Seerr permissions for write operations and sensitive reads.
             // Jellyfin admins bypass all permission checks (they can do anything in Seerr).
             // For non-admins, validate before proxying so we return a clear 403 rather than

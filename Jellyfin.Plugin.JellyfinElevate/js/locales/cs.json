@@ -149,6 +149,7 @@
   "jellyseerr_btn_user_not_found": "Uživatel nenalezen",
   "jellyseerr_err_no_request_permission": "Nemáte oprávnění k podávání žádostí",
   "jellyseerr_err_no_4k_request_permission": "Nemáte oprávnění požadovat 4K",
+  "jellyseerr_err_4k_requests_disabled": "Požadavky na 4K jsou vypnuté",
   "jellyseerr_err_no_issue_permission": "Nemáte oprávnění hlásit problémy",
   "jellyseerr_err_no_issue_view_permission": "Nemáte oprávnění zobrazovat problémy",
   "jellyseerr_err_load_server_options": "Nepodařilo se načíst možnosti serveru",

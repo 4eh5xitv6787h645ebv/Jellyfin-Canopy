@@ -149,6 +149,7 @@
   "jellyseerr_btn_user_not_found": "Utilisateur non trouvé",
   "jellyseerr_err_no_request_permission": "Pas de permission pour faire des demandes",
   "jellyseerr_err_no_4k_request_permission": "Pas d'autorisation pour demander en 4K",
+  "jellyseerr_err_4k_requests_disabled": "Les demandes 4K sont désactivées",
   "jellyseerr_err_no_issue_permission": "Pas de permission pour signaler des problèmes",
   "jellyseerr_err_no_issue_view_permission": "Pas de permission pour voir les problèmes",
   "jellyseerr_err_load_server_options": "Échec du chargement des options du serveur",

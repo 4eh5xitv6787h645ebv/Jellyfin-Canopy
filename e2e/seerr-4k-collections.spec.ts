@@ -1,0 +1,92 @@
+// Feature guard: Seerr 4K requests are gated on the Seerr server's real 4K
+// capability AND the signed-in user's 4K permission — not on the JE admin toggle
+// alone. This spec drives the booted plugin's own gate (canRequest4k) and the
+// user-status endpoint against the LIVE server for both an admin and a non-admin
+// session, and proves that with the admin toggle forced ON the 4K option still
+// stays hidden unless the server actually reports the capability for that user.
+//
+// It also asserts the collection request surface (showCollectionRequestModal)
+// is present, and that the whole flow produces no runtime errors.
+import { test, expect, loginAs, assertNoRuntimeErrors, type Role } from './fixtures/auth';
+import { seerrReady } from './fixtures/seerr';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+const SEERR_OFF = 'Seerr not configured — set JELLYSEERR_* at seed time to run';
+
+interface UserStatus {
+    active?: boolean;
+    userFound?: boolean;
+    reason?: string;
+    movie4kEnabled?: boolean;
+    series4kEnabled?: boolean;
+    canRequest4kMovie?: boolean;
+    canRequest4kTv?: boolean;
+}
+
+async function fetchUserStatus(page: any): Promise<UserStatus> {
+    return page.evaluate(async () => {
+        const api = (window as any).ApiClient;
+        return api.getJSON(api.getUrl('/JellyfinElevate/jellyseerr/user-status'));
+    });
+}
+
+/** Resolve user-status, force the admin master switch, then read the gate. */
+async function gateWithAdminToggle(page: any, mediaType: 'movie' | 'tv', adminToggle: boolean): Promise<boolean> {
+    return page.evaluate(async (args: { mediaType: string; adminToggle: boolean }) => {
+        const je = (window as any).JellyfinElevate;
+        await je.jellyseerrAPI.checkUserStatus(); // ensure capability is resolved
+        je.pluginConfig.JellyseerrEnable4KRequests = args.adminToggle;
+        je.pluginConfig.JellyseerrEnable4KTvRequests = args.adminToggle;
+        return je.jellyseerrAPI.canRequest4k(args.mediaType) as boolean;
+    }, { mediaType, adminToggle });
+}
+
+for (const role of ['admin', 'user'] as Role[]) {
+    test.describe(`Seerr 4K & collection requests — ${role}`, () => {
+        test(`4K option is gated on Seerr capability + permission, not the admin toggle (${role})`, async ({ page, consoleErrors }) => {
+            await loginAs(page, role, consoleErrors);
+            test.skip(!(await seerrReady(page)), SEERR_OFF);
+
+            // The shared gate and the collection modal are present on the facade.
+            const surface = await page.evaluate(() => {
+                const je = (window as any).JellyfinElevate;
+                return {
+                    hasGate: typeof je?.jellyseerrAPI?.canRequest4k === 'function',
+                    hasCollectionModal: typeof je?.jellyseerrUI?.showCollectionRequestModal === 'function',
+                };
+            });
+            expect(surface.hasGate, 'canRequest4k gate exposed').toBe(true);
+            expect(surface.hasCollectionModal, 'showCollectionRequestModal exposed').toBe(true);
+
+            // With the admin master switch OFF, the 4K option is always hidden.
+            expect(await gateWithAdminToggle(page, 'movie', false)).toBe(false);
+            expect(await gateWithAdminToggle(page, 'tv', false)).toBe(false);
+
+            // The user-status endpoint always answers with a typed reason.
+            const status = await fetchUserStatus(page);
+            expect(status, 'user-status responds').toBeTruthy();
+
+            // With the admin master switch ON, the option follows the server-
+            // reported capability + permission — never the toggle alone.
+            const movieOn = await gateWithAdminToggle(page, 'movie', true);
+            const tvOn = await gateWithAdminToggle(page, 'tv', true);
+
+            if (status.userFound) {
+                // Linked user: the capability fields are present and are booleans,
+                // and the gate matches them exactly.
+                expect(typeof status.canRequest4kMovie).toBe('boolean');
+                expect(typeof status.canRequest4kTv).toBe('boolean');
+                expect(movieOn).toBe(!!status.canRequest4kMovie);
+                expect(tvOn).toBe(!!status.canRequest4kTv);
+            } else {
+                // Unlinked user (no resolvable Seerr permissions): 4K stays hidden
+                // EVEN with the admin toggle ON — the capability/permission gate.
+                expect(movieOn, 'no 4K for an unlinked user even with toggle on').toBe(false);
+                expect(tvOn, 'no 4K TV for an unlinked user even with toggle on').toBe(false);
+            }
+
+            assertNoRuntimeErrors(consoleErrors);
+        });
+    });
+}

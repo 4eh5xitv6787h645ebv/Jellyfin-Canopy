@@ -149,6 +149,7 @@
   "jellyseerr_btn_user_not_found": "Användare hittades inte",
   "jellyseerr_err_no_request_permission": "Ingen behörighet att göra förfrågningar",
   "jellyseerr_err_no_4k_request_permission": "Ingen behörighet att begära 4K",
+  "jellyseerr_err_4k_requests_disabled": "4K-förfrågningar är inaktiverade",
   "jellyseerr_err_no_issue_permission": "Ingen behörighet att rapportera problem",
   "jellyseerr_err_no_issue_view_permission": "Ingen behörighet att visa problem",
   "jellyseerr_err_load_server_options": "Det gick inte att läsa in serveralternativ",
