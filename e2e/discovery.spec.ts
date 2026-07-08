@@ -31,9 +31,17 @@ test.describe('Discovery / Trending — library placement', () => {
         await page.waitForTimeout(3000);
         test.skip(!(await discoveryAvailable(page)), 'no Discovery data source configured (bare seed)');
 
-        const toggle = page.locator('#je-discovery-toggle-movies');
-        await expect(toggle).toBeVisible({ timeout: 20_000 });
-        await toggle.click();
+        // Open Discovery. Modern: a native "Discovery" item in the library view dropdown; legacy: the
+        // header-tray toggle. The dropdown item is the primary "in the menu" placement.
+        const trigger = page.locator('[aria-controls="library-view-menu"]').first();
+        if (await trigger.count()) {
+            await trigger.click();
+            const item = page.locator('#library-view-menu [data-je-discovery-item]');
+            await expect(item, 'Discovery item in the library dropdown').toBeVisible({ timeout: 15_000 });
+            await item.click();
+        } else {
+            await page.locator('#je-discovery-toggle-movies').click();
+        }
 
         // The pane renders at least one real shelf with cards.
         await expect(page.locator('.je-discovery-pane')).toBeVisible({ timeout: 10_000 });
