@@ -97,3 +97,40 @@ Seerr/TMDB metadata surfaces. Milestone 4 created for approach tracking.
   strict parity can't verify an allowed tag → fail-closed would hide all of
   discover for allow-list users. Decision deferred until the filter
   architecture is mapped.
+
+### 2026-07-08 12:58 — architecture mapped; design locked
+Existing filter (`SeerrParentalFilter`, singleton): per-pass PolicySnapshot
+from `TryGetPolicy` (already reads `GetUserDto(...).Policy` — BlockedTags/
+AllowedTags ride the same object, zero new lookups); per-title cert
+resolution with user-neutral cache (`{mediaType}:{tmdbId}:{region}`, 24h,
+in-flight coalescing, 20-concurrent/12s budget) feeding rating decisions on
+list rows, detail 403s, request POSTs, and the TMDB passthrough. Tag branch
+of core's IsParentalAllowed was EXPLICITLY unimplemented (documented as
+unenforceable) — that documentation gets retired by this work.
+
+**Decision — composite adopted design:**
+- T2+T1 (keywords ∪ genres, cleaned) = the match surface. Keywords are the
+  native-parity signal (Jellyfin imports TMDB keywords as Tags); genres are
+  a deliberate, documented intent extension (blocking "horror" should block
+  the genre; over-blocking is the safe direction).
+- T3 reframed: per-title fetches for lists are NOT new cost — the cert
+  pipeline already fetches per title. When tag rules are active, switch the
+  per-title fetch from the light TMDB cert endpoints to the Seerr FULL
+  detail (one body carries certs + keywords + genres), extract both, cache
+  both (new user-neutral tag-set cache alongside CertScoreCache). Fallback
+  TMDB detail with append_to_response=keywords for Seerr-less setups.
+- T6 via core's own `String.GetCleanValue()` (Jellyfin.Extensions, already
+  referenced transitively) — normalization parity by construction.
+- AllowedTags: fully enforceable everywhere (the per-title fetch supplies
+  keywords for list rows too); missing signature with tag rules active →
+  fail closed, consistent with the cert path. Blocked-wins precedence.
+- T4 (library-presence lookup) rejected: marginal precision for items
+  already in the library, per-row lookup cost, and inherited-tags semantics
+  can't be replicated for external content anyway.
+- T5 (discover excludeKeywords injection — live-verified working on
+  seerr-dev: keywords=12377 ∩ excludeKeywords=12377 = 0 rows) rejected as
+  the primary (discover-only; search/similar/trending uncovered; needs
+  name→id resolution) — filed as a follow-up optimization to keep discover
+  pages full-length instead of post-filter shrunk.
+- New server-side toggle `JellyseerrRespectBlockedTags` (default on),
+  subordinate to the existing parental master flag.
