@@ -2,13 +2,24 @@
 //
 // The action sheet is opened from a home-page CARD — the primary surface, with DOM identical on
 // the modern and legacy layouts, and no detail-page chrome (so this feature's test stays decoupled
-// from unrelated detail-page features). The items appear for any movie/series (admin + an enabled
-// instance of the matching service configured), independent of whether the item is tracked yet, so
-// no seeded arr state is required. The spec never triggers an automatic or interactive search —
-// those hit live indexers (slow + quota) — it asserts the items, the admin/non-admin gate, and
-// that Manage opens its modal (a server context call, no indexer).
+// from unrelated detail-page features). The items appear for an admin when an enabled instance of
+// the matching service is configured (Radarr for movies, Sonarr for series), independent of whether
+// the item is tracked yet. The dockerized CI seed is deliberately BARE (no Sonarr/Radarr), so the
+// admin test SKIPS there — exactly like the Seerr specs skip without a Seerr connection — and runs
+// against a configured server (jellyfin-12). The spec never triggers an automatic or interactive
+// search — those hit live indexers (slow + quota).
 import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
 import type { Page } from 'playwright/test';
+
+/** True when the (admin) session's plugin config has an enabled Sonarr or Radarr instance. */
+async function arrConfigured(page: Page): Promise<boolean> {
+    return page.evaluate(() => {
+        const cfg = (window as unknown as { JellyfinElevate?: { pluginConfig?: Record<string, unknown> } }).JellyfinElevate?.pluginConfig || {};
+        const has = (list: unknown): boolean => Array.isArray(list)
+            && list.some((i) => i && (i as { Enabled?: boolean }).Enabled !== false && !!(i as { Url?: string }).Url);
+        return has(cfg.SonarrInstances) || has(cfg.RadarrInstances);
+    });
+}
 
 async function openMovieCardMenu(page: Page): Promise<void> {
     await page.waitForSelector('#indexPage .card', { timeout: 60_000 });
@@ -25,6 +36,7 @@ async function openMovieCardMenu(page: Page): Promise<void> {
 test.describe('arr Search — action-sheet items', () => {
     test('admin sees Search / Interactive / Manage, and Manage opens its modal', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
+        test.skip(!(await arrConfigured(page)), 'no Sonarr/Radarr instance configured (bare seed) — the arr Search items require one');
         await openMovieCardMenu(page);
 
         const sheet = page.locator('.actionSheetScroller').last();
