@@ -8,7 +8,7 @@
 
 import { JE } from '../../globals';
 import {
-    buildNativeActionSheetItem, getActiveActionSheetScroller, fitRemoveItemToMenu, closeOpenActionSheet,
+    buildNativeActionSheetItem, getActiveActionSheetScroller, fitRemoveItemToMenu,
 } from '../../enhanced/features/remove-home';
 import { getAdmin, getCaptured, setCaptured, searchEnabled, manageEnabled, serviceForType, serviceConfigured, supportsInteractive } from './state';
 import { autoSearch, errorMessage, toastError } from './actions';
@@ -46,6 +46,52 @@ function removeExisting(scroller: HTMLElement): void {
 
 function serviceLabel(service: ArrService): string {
     return service === 'radarr' ? 'Radarr' : 'Sonarr';
+}
+
+/**
+ * Closes the currently-open native action sheet reliably on every device. On v12 the sheet is a
+ * dialogHelper `<div>` inside a `.dialogContainer` (z-index 999999 — NOT a `<dialog>`, NOT the top
+ * layer), so `dialog.close()` and Escape (TV-only) are no-ops here. We replay the outside-tap that
+ * dialogHelper already handles — mousedown+click on the container — which runs its real `close()`
+ * (exit animation, backdrop + element removal, focus-scope pop, and the pushed history entry). The
+ * container is torn down by close(), so this can't reopen the sheet (that only happens when events
+ * hit the card/trigger). Fallback: pop the sheet's own history entry.
+ */
+function closeActionSheet(): void {
+    const scroller = getActiveActionSheetScroller();
+    const container = scroller?.closest<HTMLElement>('.dialogContainer')
+        || document.querySelector<HTMLElement>('.dialogContainer');
+    if (container) {
+        container.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        container.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        return;
+    }
+    // Guarded so we never navigate the app when no sheet is actually open.
+    if (document.querySelector('.dialog.opened, .actionSheet.opened')) history.back();
+}
+
+/**
+ * Vertical analogue of fitRemoveItemToMenu. The sheet's inline `top` is computed ONCE from its
+ * pre-append height and never recomputed, so appending items pushes the bottom off-screen (the CSS
+ * max-height caps total height, not bottom position, so on a short menu the scroller has nothing to
+ * scroll and the last rows are clipped by the screen edge). Re-run the overflow correction on `top`.
+ * PERF(R4): a single post-insert layout read. Only for positioned (corner-anchored) sheets — a
+ * centered / TV-fullscreen sheet has no finite inline `top` and needs no nudge.
+ */
+function fitSheetVertically(scroller: HTMLElement): void {
+    try {
+        const dlg = scroller.closest<HTMLElement>('.dialog, .actionSheet');
+        const viewportH = document.documentElement.clientHeight || window.innerHeight || 0;
+        if (!dlg || !viewportH) return;
+        const top = parseFloat(dlg.style.top);
+        if (!Number.isFinite(top)) return;
+        const height = dlg.offsetHeight;
+        if (top + height > viewportH - 10) {
+            // Lift it so the whole (now taller) sheet fits; if it's taller than the viewport even
+            // pinned near the top, the CSS max-height + .actionSheetScroller.scrollY scroll the rest.
+            dlg.style.top = Math.max(10, viewportH - height - 10) + 'px';
+        }
+    } catch { /* leave native positioning */ }
 }
 
 /** Reconciles the Search items on the currently-open action sheet. Idempotent; safe to over-call. */
@@ -88,20 +134,20 @@ export function injectSearchItems(): void {
 
     const items: HTMLButtonElement[] = [];
     items.push(makeItem(scroller, ctx.itemId, SEARCH_ID, 'search', JE.t!('arr_search_action_search', { service: serviceLabel(service) }), () => {
-        closeOpenActionSheet();
+        closeActionSheet();
         void runAutoSearch(ctx.itemId);
     }));
 
     if (supportsInteractive(ctx.type)) {
         items.push(makeItem(scroller, ctx.itemId, INTERACTIVE_ID, 'travel_explore', JE.t!('arr_search_action_interactive'), () => {
-            closeOpenActionSheet();
+            closeActionSheet();
             void openInteractiveSearch(ctx.itemId);
         }));
     }
 
     if (manageEnabled()) {
         items.push(makeItem(scroller, ctx.itemId, MANAGE_ID, 'dns', JE.t!('arr_search_action_manage', { service: serviceLabel(service) }), () => {
-            closeOpenActionSheet();
+            closeActionSheet();
             void openManage(ctx.itemId);
         }));
     }
@@ -115,7 +161,10 @@ export function injectSearchItems(): void {
         if (anchor) anchor.after(item); else scroller.appendChild(item);
         anchor = item;
     }
-    if (items.length > 0) fitRemoveItemToMenu(items[items.length - 1], scroller);
+    if (items.length > 0) {
+        fitRemoveItemToMenu(items[items.length - 1], scroller);
+        fitSheetVertically(scroller);
+    }
 
     // Consume the context so an unrelated sheet opened within the TTL can't reuse it.
     setCaptured(null);

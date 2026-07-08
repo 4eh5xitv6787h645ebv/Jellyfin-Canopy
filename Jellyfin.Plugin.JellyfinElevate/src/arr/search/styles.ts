@@ -8,7 +8,9 @@ import { JE } from '../../globals';
 
 const CSS = `
 .je-arr-modal-overlay {
-    position: fixed; inset: 0; z-index: 100001;
+    /* Above the dialogHelper action sheet (.dialogContainer z-index 999999) so the modal never
+       renders behind a still-closing sheet. */
+    position: fixed; inset: 0; z-index: 1000001;
     background: rgba(0,0,0,0.7); backdrop-filter: blur(6px);
     display: flex; align-items: center; justify-content: center;
     padding: 2vh 2vw;
@@ -45,7 +47,9 @@ const CSS = `
     transition: background 0.15s ease;
 }
 .je-arr-modal-close:hover { background: rgba(255,255,255,0.18); }
-.je-arr-modal-body { padding: 14px 20px; overflow-y: auto; flex: 1 1 auto; }
+/* min-height:0 lets this flex child actually scroll inside the capped modal instead of growing and
+   pushing the whole page to scroll; overscroll-behavior stops touch scroll chaining to the page. */
+.je-arr-modal-body { padding: 14px 20px; overflow-y: auto; flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 .je-arr-modal-footer {
     display: flex; justify-content: flex-end; gap: 10px;
     padding: 12px 20px; border-top: 1px solid rgba(255,255,255,0.08);
@@ -93,6 +97,10 @@ const CSS = `
     color: #d8ccff; border-radius: 4px; padding: 1px 6px; font-size: 11px; font-weight: 600;
 }
 .je-arr-badge-ok { background: rgba(76,175,80,0.28); border-color: rgba(76,175,80,0.5); color: #b8f0ba; }
+.je-arr-cf {
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+    color: rgba(255,255,255,0.75); border-radius: 4px; padding: 1px 6px; font-size: 11px; white-space: nowrap;
+}
 .je-arr-release-rejections {
     display: flex; align-items: flex-start; gap: 4px; margin-top: 4px;
     font-size: 11px; color: #f0b37e;

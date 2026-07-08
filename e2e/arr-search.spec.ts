@@ -35,6 +35,10 @@ test.describe('arr Search — action-sheet items', () => {
         // Manage opens the modal, driven by a live server context call (no indexer hit).
         await sheet.locator('[data-id="je-arr-manage"]').click();
         await expect(page.locator('.je-arr-modal')).toBeVisible({ timeout: 20_000 });
+        // ...and the native action sheet must fully close (dialogHelper <div>, backdrop and all) —
+        // otherwise the modal sits behind a stale sheet (regression guard for the mobile close bug).
+        await expect(page.locator('.actionSheet')).toHaveCount(0);
+        await expect(page.locator('.dialogBackdrop')).toHaveCount(0);
         // It resolves past the loading spinner into real content (a section or a message).
         await expect(page.locator('.je-arr-modal .je-arr-spinner')).toHaveCount(0, { timeout: 30_000 });
         await expect(page.locator('.je-arr-modal .je-arr-section, .je-arr-modal .je-arr-message').first()).toBeVisible();

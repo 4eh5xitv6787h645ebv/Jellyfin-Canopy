@@ -195,7 +195,9 @@ class ReleaseView {
             meta.appendChild(el('span', 'je-arr-dim', release.protocol));
         }
         if (release.releaseGroup) meta.appendChild(el('span', 'je-arr-dim', release.releaseGroup));
-        if (release.customFormatScore) meta.appendChild(el('span', 'je-arr-dim', `CF ${release.customFormatScore}`));
+        // Custom-format score — always shown (it drives the "Format score" sort, and 0 is a real,
+        // informative value: "no custom-format scoring applied").
+        meta.appendChild(el('span', 'je-arr-cf', `CF ${Number(release.customFormatScore) || 0}`));
         main.appendChild(meta);
 
         if (release.rejections.length > 0) {
