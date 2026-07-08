@@ -167,6 +167,63 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services.Jellyseerr
         }
 
         [Fact]
+        public async Task ExpiredTags_AreNotResurrectedByLightRefresh()
+        {
+            // Codex-review scenario: an EXPIRED cache entry still carries old
+            // tags ("family"); a rating-only user refreshes the title through
+            // the light TMDB cert endpoint. The refresh must NOT re-stamp the
+            // stale tags as fresh — a tag-restricted user checking afterwards
+            // must re-resolve through the full detail (which now says
+            // "horror") and block.
+            var handler = new RecordingHttpMessageHandler();
+            handler.AddResponse(
+                "/movie/400/release_dates",
+                @"{ ""results"": [ { ""iso_3166_1"": ""US"", ""release_dates"": [ { ""type"": 3, ""certification"": ""PG-13"" } ] } ] }");
+            handler.AddResponse("/movie/400", ZombieMovieDetail()); // genres now include Horror
+
+            var provider = new FakePluginConfigProvider(new PluginConfiguration
+            {
+                JellyseerrEnabled = true,
+                JellyseerrRespectParentalRatings = true,
+                JellyseerrRespectBlockedTags = true,
+                JellyseerrUrls = "http://seerr:5055",
+                JellyseerrApiKey = "key",
+                TMDB_API_KEY = "tmdb-key",
+                DEFAULT_REGION = "US",
+            });
+            var cache = new SeerrCache(provider);
+            // Seed the EXPIRED entry with the outdated tag set.
+            cache.CertScoreCache["movie:400:US"] = (13, 0, new[] { "family" }, DateTime.UtcNow.AddDays(-2));
+
+            var ratingUserGuid = Guid.Parse("44444444-4444-4444-4444-444444444444");
+            var registry = new Dictionary<Guid, (User, UserPolicy)>
+            {
+                [ratingUserGuid] = (new User("ratekid", "Prov", "PwProv") { MaxParentalRatingScore = 13 },
+                    new UserPolicy { BlockUnratedItems = Array.Empty<UnratedItem>() }),
+                [Guid.Parse(CallerGuid)] = (new User("tagkid", "Prov", "PwProv"), new UserPolicy
+                {
+                    BlockUnratedItems = Array.Empty<UnratedItem>(),
+                    BlockedTags = new[] { "horror" },
+                }),
+            };
+
+            var filter = new SeerrParentalFilter(
+                new RecordingHttpClientFactory(handler),
+                NullLogger<SeerrParentalFilter>.Instance,
+                new StubPolicyUserManager(registry),
+                new FakeLocalization(),
+                cache,
+                provider);
+
+            // Rating-only refresh through the light endpoint (entry was expired).
+            Assert.False(await filter.IsBlockedAsync("movie", 400, new JellyseerrCaller(ratingUserGuid.ToString(), false)));
+            // The refreshed entry must NOT carry the resurrected stale tags…
+            Assert.Null(cache.CertScoreCache["movie:400:US"].Tags);
+            // …so the tag-restricted user re-resolves the full detail and blocks.
+            Assert.True(await filter.IsBlockedAsync("movie", 400, new JellyseerrCaller(CallerGuid, false)));
+        }
+
+        [Fact]
         public async Task CertOnlyCacheEntry_DoesNotSatisfyTagPass()
         {
             // One shared cache: a rating-only user resolves movie 400 through the

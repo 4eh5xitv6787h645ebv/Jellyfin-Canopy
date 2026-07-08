@@ -795,18 +795,31 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
             var resolved = SignatureFromDetail(detail.Value, mediaType, region, includeTags: hasTagData)
                 ?? new TitleSignature(null, null, hasTagData ? Array.Empty<string>() : null);
 
-            // Never let a light cert-only result erase tag data a fuller fetch
-            // already cached for this title.
-            var tagsToCache = resolved.Tags;
-            if (tagsToCache is null
-                && _seerrCache.CertScoreCache.TryGetValue(cacheKey, out var existing)
-                && existing.Tags != null)
-            {
-                tagsToCache = existing.Tags;
-            }
-
-            _seerrCache.CertScoreCache[cacheKey] = (resolved.Score, resolved.SubScore, tagsToCache, DateTime.UtcNow);
-            return resolved with { Tags = tagsToCache };
+            // Atomic write with a narrow tag-preservation rule. A light
+            // cert-only result must not erase tags a CONCURRENT full fetch
+            // just cached (the split in-flight keys allow both to run at
+            // once) — but it must equally not resurrect EXPIRED tags: light
+            // fetches only run when the entry is stale/missing, and stamping
+            // old tags with a fresh timestamp would extend them another TTL,
+            // letting upstream keyword changes (e.g. a title gaining
+            // "horror") bypass a tag-restricted user until the next expiry.
+            // So tags are preserved only while the existing entry is itself
+            // still within TTL — in practice, the seconds-wide race window.
+            var now = DateTime.UtcNow;
+            var ttl = _seerrCache.GetParentalRatingCacheTtl();
+            _seerrCache.CertScoreCache.AddOrUpdate(
+                cacheKey,
+                _ => (resolved.Score, resolved.SubScore, resolved.Tags, now),
+                (_, current) =>
+                {
+                    var tags = resolved.Tags;
+                    if (tags is null && current.Tags != null && (now - current.CachedAt) < ttl)
+                    {
+                        tags = current.Tags;
+                    }
+                    return (resolved.Score, resolved.SubScore, tags, now);
+                });
+            return resolved;
         }
 
         // Resolves the signal source for a title. For rating-only passes it
