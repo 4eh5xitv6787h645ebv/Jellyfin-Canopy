@@ -872,6 +872,42 @@
                             </details>
 
                             <details class="je-details-section" data-gated-by="spoilerBlurEnabled">
+                                <summary>Advanced identity resolution (optional)</summary>
+                                <div class="je-details-body">
+                                    <div class="je-setting-description">
+                                        <div class="fieldDescription">These options harden how anonymous image/CSS requests (which carry no login token) are attributed to the right user, on top of the per-user image tags above. All are OFF by default and fail safe: when unset or unmatched, resolution falls back to the existing tag + IP ladder. Only needed for reverse-proxy or SSO deployments where several users share one apparent IP.</div>
+                                    </div>
+
+                                    <label class="inputLabel inputLabelUnfocused" for="identityTrustedProxies">Trusted reverse-proxy addresses</label>
+                                    <input id="identityTrustedProxies" data-config-key="IdentityTrustedProxies" is="emby-input" type="text" label="Trusted reverse-proxy addresses"/>
+                                    <div class="je-setting-description" data-desc-for="identityTrustedProxies">
+                                        <div class="fieldDescription">IPs or CIDR ranges of your reverse proxy (comma or space separated), e.g. <code>10.0.0.0/8, 172.18.0.0/16</code>. A forwarded header (below) is only believed when the request's actual network peer is one of these, so a client connecting directly can't forge it. Leave blank to disable the forward-auth and X-Forwarded-For options entirely.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="identityForwardAuthEnabled" data-config-key="IdentityForwardAuthEnabled" is="emby-checkbox" type="checkbox"/><span>Trust forward-auth / SSO user headers</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="identityForwardAuthEnabled">
+                                        <div class="fieldDescription">For deployments fronted by Authelia, Authentik, Cloudflare Access, Tailscale Serve, etc., which inject the signed-in username or email on every request. Requires the trusted-proxy list above. This is the only method that can identify a native client behind an IP-hiding proxy before it has loaded any images.</div>
+                                    </div>
+
+                                    <label class="inputLabel inputLabelUnfocused" for="identityForwardAuthHeaders">Forward-auth header names</label>
+                                    <input id="identityForwardAuthHeaders" data-config-key="IdentityForwardAuthHeaders" is="emby-input" type="text" label="Forward-auth header names"/>
+                                    <div class="je-setting-description" data-desc-for="identityForwardAuthHeaders">
+                                        <div class="fieldDescription">Comma-separated header names to read, in priority order. Defaults cover the common ones (<code>Remote-User</code>, <code>Cf-Access-Authenticated-User-Email</code>, <code>Tailscale-User-Login</code>, …). Values are matched against Jellyfin usernames (email headers also match the name before the @).</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="identityXffLearnedMapEnabled" data-config-key="IdentityXffLearnedMapEnabled" is="emby-checkbox" type="checkbox"/><span>Resolve users by real client IP (X-Forwarded-For)</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="identityXffLearnedMapEnabled">
+                                        <div class="fieldDescription">When Jellyfin's Known Proxies is unset it records the proxy's IP, not the client's. This learns each user's real client IP from their logged-in requests and reuses it for their anonymous image requests. Requires the trusted-proxy list. Fail-safe: only ever adds candidates (can over-blur, never leaks).</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="identitySignedCookieEnabled" data-config-key="IdentitySignedCookieEnabled" is="emby-checkbox" type="checkbox"/><span>Signed identity cookie (web)</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="identitySignedCookieEnabled">
+                                        <div class="fieldDescription">Issues a tamper-proof signed cookie to web browsers so anonymous same-origin image and CSS-background fetches are attributed to the right user even when no session is currently active on that IP. A signing secret is generated and stored automatically. Web browsers only.</div>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <details class="je-details-section" data-gated-by="spoilerBlurEnabled">
                                 <summary>Metadata stripping</summary>
                                 <div class="je-details-body">
                                     <div class="je-info-banner-inline-center" style="margin-bottom: 15px;">

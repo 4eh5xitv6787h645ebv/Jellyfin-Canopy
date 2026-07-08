@@ -63,6 +63,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Controllers
                 sessions,
                 userManager,
                 new SpoilerIdentityService(userManager, NullLogger<SpoilerIdentityService>.Instance),
+                new FakePluginConfigProvider(new PluginConfiguration()),
                 NullLogger<RequestIdentityService>.Instance);
             var resolver = new SpoilerUserResolver(mgr, lib, NullLogger<SpoilerUserResolver>.Instance, requestIdentity);
             var userData = new StubUserDataManager();

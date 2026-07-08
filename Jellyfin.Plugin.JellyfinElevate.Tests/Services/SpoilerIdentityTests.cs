@@ -206,7 +206,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             // single-user-server shortcut must stay inert in these tests so
             // they exercise the marker/cookie/IP tiers.
             var identity = new RequestIdentityService(
-                new CountingSessionManager(), new StubUserManager(), markers, NullLogger<RequestIdentityService>.Instance);
+                new CountingSessionManager(), new StubUserManager(), markers, new FakePluginConfigProvider(new PluginConfiguration()), NullLogger<RequestIdentityService>.Instance);
             return new SpoilerUserResolver(mgr, new CountingLibraryManager(), NullLogger<SpoilerUserResolver>.Instance, identity);
         }
 
@@ -244,7 +244,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
                 RemoteEndPoint = "10.9.8.7:41234",
             });
             var identity = new RequestIdentityService(
-                sessions, manager, markers, NullLogger<RequestIdentityService>.Instance);
+                sessions, manager, markers, new FakePluginConfigProvider(new PluginConfiguration()), NullLogger<RequestIdentityService>.Instance);
 
             var ctx = new DefaultHttpContext();
             ctx.Connection.RemoteIpAddress = System.Net.IPAddress.Parse("10.9.8.7");
@@ -261,7 +261,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             var user = new User("conf-user", "Prov", "PwProv");
             var markers = NewService(user);
             var identity = new RequestIdentityService(
-                new CountingSessionManager(), new StubUserManager(), markers, NullLogger<RequestIdentityService>.Instance);
+                new CountingSessionManager(), new StubUserManager(), markers, new FakePluginConfigProvider(new PluginConfiguration()), NullLogger<RequestIdentityService>.Instance);
 
             // Marker tier.
             var ctx = new DefaultHttpContext();
@@ -289,7 +289,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             var user = new User("carrier-user", "Prov", "PwProv");
             var markers = NewService(user);
             var identity = new RequestIdentityService(
-                new CountingSessionManager(), new StubUserManager(), markers, NullLogger<RequestIdentityService>.Instance);
+                new CountingSessionManager(), new StubUserManager(), markers, new FakePluginConfigProvider(new PluginConfiguration()), NullLogger<RequestIdentityService>.Instance);
             var marker = markers.MintMarker(user.Id);
 
             // {tag} PATH segment of the alternate image route.
@@ -313,7 +313,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             var only = new User("only-user", "Prov", "PwProv");
             var markers = NewService();
             var identity = new RequestIdentityService(
-                new CountingSessionManager(), new StubUserManager(only), markers, NullLogger<RequestIdentityService>.Instance);
+                new CountingSessionManager(), new StubUserManager(only), markers, new FakePluginConfigProvider(new PluginConfiguration()), NullLogger<RequestIdentityService>.Instance);
 
             var res = identity.Resolve(new DefaultHttpContext());
             Assert.Equal(IdentityConfidence.SingleUserServer, res.Confidence);
@@ -327,7 +327,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             var manager = new StubUserManager(userA);
             var markers = new SpoilerIdentityService(manager, NullLogger<SpoilerIdentityService>.Instance);
             var identity = new RequestIdentityService(
-                new CountingSessionManager(), manager, markers, NullLogger<RequestIdentityService>.Instance);
+                new CountingSessionManager(), manager, markers, new FakePluginConfigProvider(new PluginConfiguration()), NullLogger<RequestIdentityService>.Instance);
 
             // Warm both caches: single-user shortcut fires; A's marker resolves.
             Assert.Equal(IdentityConfidence.SingleUserServer, identity.Resolve(new DefaultHttpContext()).Confidence);
