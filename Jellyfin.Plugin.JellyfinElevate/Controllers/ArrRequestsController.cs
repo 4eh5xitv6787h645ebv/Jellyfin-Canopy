@@ -937,7 +937,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
             using var httpRequest = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
                 HttpMethod.Post, requestUri, config.JellyseerrApiKey, jellyseerrUser.Id.ToString());
             using var response = await client.SendAsync(httpRequest);
-            var (_, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+            var (content, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
 
             if (error != null)
             {
@@ -946,7 +946,41 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
                     IsAdminUser() ? error.ToAdminResponseShape() : error.ToResponseShape());
             }
 
+            // The requests LIST the page reads is fetched fresh (uncached), so it
+            // reflects the new status immediately. The shared movie/tv DETAIL cache,
+            // however, embeds mediaInfo.requests[].status — evict the affected
+            // media's detail entries so other surfaces (more-info modal, item
+            // details) don't serve a stale request status until the cache TTL.
+            EvictDetailCacheFromRequestResponse(content);
+
             return Ok(new { success = true });
+        }
+
+        /// <summary>
+        /// Best-effort eviction of the shared movie/tv detail cache for the media a
+        /// just-approved/declined request points at. Seerr's approve/decline
+        /// response is the MediaRequest object, carrying <c>type</c> ("movie"/"tv")
+        /// and a <c>media</c> object with the TMDB id — enough to target the exact
+        /// cached detail entries whose embedded request status just changed.
+        /// </summary>
+        private void EvictDetailCacheFromRequestResponse(string? content)
+        {
+            if (string.IsNullOrEmpty(content)) return;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(content);
+                var root = doc.RootElement;
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return;
+                if (!root.TryGetProperty("type", out var typeEl)) return;
+                var mediaType = typeEl.GetString();
+                if (mediaType != "movie" && mediaType != "tv") return;
+                if (!root.TryGetProperty("media", out var mediaEl)
+                    || mediaEl.ValueKind != System.Text.Json.JsonValueKind.Object) return;
+                if (!mediaEl.TryGetProperty("tmdbId", out var tmdbEl)
+                    || !tmdbEl.TryGetInt32(out var tmdbId)) return;
+                _jellyseerr.EvictMediaDetailCache(tmdbId, mediaType);
+            }
+            catch { /* best-effort — a parse failure just leaves the cache to TTL */ }
         }
 
         private async Task<(string? Title, int? Year, string? PosterUrl, string? DigitalReleaseDate, string? TheatricalReleaseDate, string? InitialAirDate, string? NextAirDate)> EnrichWithTmdbData(HttpClient client, int tmdbId, string type, string jellyseerrUrl, string apiKey)

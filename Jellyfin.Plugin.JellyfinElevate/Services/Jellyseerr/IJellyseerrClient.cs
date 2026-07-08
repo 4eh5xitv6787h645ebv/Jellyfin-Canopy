@@ -96,6 +96,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
         Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(string jellyfinUserId, bool isAdmin = false);
 
         /// <summary>
+        /// Evicts the shared response-cache entries for a movie/tv detail (and its
+        /// sub-paths) so a mutation that changed <c>mediaInfo.requests</c> — e.g. an
+        /// approve/decline — is reflected the next time the detail is read, instead
+        /// of serving a stale request status until the cache TTL. Best-effort;
+        /// <paramref name="mediaType"/> must be "movie" or "tv".
+        /// </summary>
+        void EvictMediaDetailCache(int tmdbId, string mediaType);
+
+        /// <summary>
         /// The proxy core: authenticated fan-out of <paramref name="apiPath"/> to the
         /// configured Seerr URLs on behalf of <paramref name="caller"/>, with response
         /// caching, permission pre-checks and the typed error envelope contract.

@@ -579,26 +579,30 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
                 using var doc = JsonDocument.Parse(body);
                 if (!doc.RootElement.TryGetProperty("mediaId", out var mediaIdEl)) return;
                 if (!doc.RootElement.TryGetProperty("mediaType", out var mediaTypeEl)) return;
-                var mediaId = mediaIdEl.GetInt32();
-                var mediaType = mediaTypeEl.GetString();
-                if (mediaType != "movie" && mediaType != "tv") return;
-                // The cache key shape is `{userId}:{apiPath}`. We want to match
-                // EITHER the bare detail (apiPath ends with `/api/v1/movie/12`)
-                // OR a sub-path (apiPath starts with `/api/v1/movie/12/` —
-                // for `/similar`, `/recommendations`, `/season/1`, etc).
-                var bareSuffix = $":/api/v1/{mediaType}/{mediaId}";
-                var subPathInfix = $":/api/v1/{mediaType}/{mediaId}/";
-                lock (_seerrCache.ResponseCacheLock)
-                {
-                    var keys = _seerrCache.ResponseCache.Keys
-                        .Where(k =>
-                            k.EndsWith(bareSuffix, StringComparison.Ordinal)
-                            || k.Contains(subPathInfix, StringComparison.Ordinal))
-                        .ToList();
-                    foreach (var k in keys) _seerrCache.ResponseCache.Remove(k);
-                }
+                EvictMediaDetailCache(mediaIdEl.GetInt32(), mediaTypeEl.GetString() ?? string.Empty);
             }
             catch { /* best-effort eviction */ }
+        }
+
+        /// <inheritdoc />
+        public void EvictMediaDetailCache(int tmdbId, string mediaType)
+        {
+            if (mediaType != "movie" && mediaType != "tv") return;
+            // The cache key shape is `{userId}:{apiPath}`. We want to match
+            // EITHER the bare detail (apiPath ends with `/api/v1/movie/12`)
+            // OR a sub-path (apiPath starts with `/api/v1/movie/12/` —
+            // for `/similar`, `/recommendations`, `/season/1`, etc).
+            var bareSuffix = $":/api/v1/{mediaType}/{tmdbId}";
+            var subPathInfix = $":/api/v1/{mediaType}/{tmdbId}/";
+            lock (_seerrCache.ResponseCacheLock)
+            {
+                var keys = _seerrCache.ResponseCache.Keys
+                    .Where(k =>
+                        k.EndsWith(bareSuffix, StringComparison.Ordinal)
+                        || k.Contains(subPathInfix, StringComparison.Ordinal))
+                    .ToList();
+                foreach (var k in keys) _seerrCache.ResponseCache.Remove(k);
+            }
         }
 
         /// <summary>

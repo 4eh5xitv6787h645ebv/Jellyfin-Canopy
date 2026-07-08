@@ -566,11 +566,18 @@ export async function loadAllData(): Promise<void> {
     renderPage();
 }
 
-export async function handleRequestAction(btn: HTMLButtonElement, action: string): Promise<void> {
+export async function handleRequestAction(btn: HTMLButtonElement, action: 'approve' | 'decline'): Promise<void> {
     const requestId = btn.getAttribute('data-request-id');
     if (!requestId) return;
 
-    btn.disabled = true;
+    // Disable BOTH action buttons on this card, not just the clicked one, so the
+    // request can't be approved and declined concurrently (two POSTs) before the
+    // refresh re-renders the row.
+    const card = btn.closest('.je-request-card');
+    const siblingButtons = card
+        ? Array.from(card.querySelectorAll<HTMLButtonElement>('.je-request-approve-btn, .je-request-decline-btn'))
+        : [btn];
+    siblingButtons.forEach((b) => { b.disabled = true; });
     const icon = btn.querySelector('.material-icons');
     if (icon) icon.textContent = 'hourglass_empty';
 
@@ -591,7 +598,7 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: string
         renderPage();
     } catch (err) {
         console.error(`${logPrefix} Failed to ${action} request ${requestId}:`, err);
-        btn.disabled = false;
+        siblingButtons.forEach((b) => { b.disabled = false; });
         if (icon) icon.textContent = action === 'approve' ? 'check' : 'close';
         if (typeof JE.toast === 'function') {
             JE.toast(JE.t?.('requests_action_error') || 'Couldn’t update the request. Please try again.');
