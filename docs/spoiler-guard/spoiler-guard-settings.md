@@ -84,6 +84,34 @@ Requests without a marker (for example, a native client replaying an image URL c
 
 ---
 
+## Advanced identity resolution (optional)
+
+These options harden how **anonymous** image and CSS-background requests — which carry no login token — are attributed to the right user, on top of the per-user image tags above. **All are off by default and fail safe:** when unset or unmatched, resolution falls back to the existing tag + IP ladder, so leaving them off changes nothing. They matter only for reverse-proxy or SSO deployments where several users share one apparent IP and some clients haven't yet received a stamped image tag (a cold cache).
+
+They build on one shared setting:
+
+### Trusted reverse-proxy addresses
+
+The IPs or CIDR ranges of *your* reverse proxy (comma- or space-separated), for example `10.0.0.0/8, 172.18.0.0/16`. A forwarded header is believed **only** when the request's actual network peer is one of these addresses, so a client connecting directly to Jellyfin can never forge one. Leave blank to disable the forward-auth and X-Forwarded-For options entirely.
+
+### Trust forward-auth / SSO user headers
+
+For deployments fronted by **Authelia, Authentik, Cloudflare Access, oauth2-proxy, Pomerium, or Tailscale Serve**, which inject the signed-in username or email on every proxied request (including anonymous image GETs). The plugin reads the configured header, maps it to a Jellyfin user, and attributes the request directly. This is the **only** method that can identify a native client behind an IP-hiding proxy on a **cold cache** — before it has fetched any stamped image. Requires the trusted-proxy list, and the configurable **header names** list (defaults cover `Remote-User`, `Cf-Access-Authenticated-User-Email`, `Tailscale-User-Login`, and other common ones; email headers also match the Jellyfin username before the `@`).
+
+> Note: many self-hosters exclude Jellyfin from forward-auth because native apps can't perform the browser OAuth handshake — this option helps most on Tailscale / Cloudflare-Access setups where the header is present on every request.
+
+### Resolve users by real client IP (X-Forwarded-For)
+
+When Jellyfin's **Known Proxies** setting is empty, Jellyfin records the *proxy's* IP rather than the client's, so per-IP matching can't tell users apart. With this on, the plugin learns each user's real client IP from their logged-in requests and reuses it to attribute their later anonymous image requests. Requires the trusted-proxy list. **Fail-safe:** it only ever *adds* candidate users (which can over-blur), and never removes protection — it cannot cause a leak.
+
+### Signed identity cookie (web)
+
+Issues a tamper-proof (HMAC-signed) cookie to web browsers so anonymous same-origin image and CSS-background fetches are attributed to the right user **even when no session is currently active on that IP** — for example, a browser tab left scrolling long after last activity. A signing secret is generated and stored automatically on first use; the cookie is unforgeable without it. Web browsers only (native clients keep no shared cookie jar).
+
+> **Trust model.** None of these grant access — they only decide *which user's own* spoiler policy to apply to content that is already anonymously reachable. A forged or stale value can at worst opt a viewer into another user's stricter or looser view; it can never bypass authentication or reveal protected content that IP couldn't already fetch.
+
+---
+
 ## Auto-enable on first play of a series' S1E1
 
 **Default: Off.** When on, the first time a user plays S1E1 of a series they've never watched before, the plugin automatically adds that series to their Spoiler Guard list. They don't have to remember to toggle it before starting.
