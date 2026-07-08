@@ -214,3 +214,4 @@ jobs:
       # No dependencies needed; the validator is a self-contained Node script.
       - name: Validate manifest.json
         run: node scripts/release/validate-manifest.js manifest.json
+# Registered for Jellyfin Elevate CI (no functional change).

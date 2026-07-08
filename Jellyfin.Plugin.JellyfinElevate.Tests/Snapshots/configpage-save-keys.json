@@ -209,6 +209,7 @@
   "SpoilerBlurIntensity",
   "SpoilerBlurMode",
   "SpoilerBlurStrictRefresh",
+  "SpoilerIdentityTags",
   "SpoilerKeepMoviePosters",
   "SpoilerOverviewPlaceholder",
   "SpoilerReplaceTitle",

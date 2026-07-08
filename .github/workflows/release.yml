@@ -155,7 +155,12 @@ jobs:
               range="$GITHUB_REF_NAME"
               echo "No previous tag found; changelog from all commits"
             fi
+            # Neutralize @-mention-shaped tokens (e.g. a commit subject citing
+            # "@font-face") by wrapping them in backticks: on the GitHub release
+            # page a bare @word renders as a user mention AND credits that user
+            # in the release's Contributors section.
             git log --no-merges --pretty='%s' "$range" \
+              | sed -E 's/(^|[^`[:alnum:]])@([[:alnum:]][[:alnum:]-]*)/\1`@\2`/g' \
               | awk 'NR==1 { print "- " $0; next } { print " - " $0 }' > changelog.txt
           fi
           if [ ! -s changelog.txt ]; then
@@ -235,3 +240,4 @@ jobs:
           else
             echo "PR for $branch already open; branch updated"
           fi
+# Registered for Jellyfin Elevate CI (no functional change).

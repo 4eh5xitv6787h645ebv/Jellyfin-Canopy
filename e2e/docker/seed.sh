@@ -71,11 +71,15 @@ if command -v ffmpeg >/dev/null; then
 else
     log "no host ffmpeg — using jellyfin-ffmpeg from ${IMAGE}"
     docker pull -q "${IMAGE}" >/dev/null
+    # Current jellyfin images ship ffmpeg at /usr/lib/jellyfin-ffmpeg/ffmpeg —
+    # try that first; the old /usr/lib/jellyfin/ffmpeg path is the fallback.
+    # The first attempt's stderr is silenced so a wrong-path miss doesn't spam
+    # a docker error per clip; the fallback stays loud for real failures.
     run_ffmpeg() {
         docker run --rm -u "${JF_UID}:${JF_GID}" -v "${HERE}/media:/media" -w /media \
-            --entrypoint /usr/lib/jellyfin/ffmpeg "${IMAGE}" -hide_banner -loglevel error "$@" \
+            --entrypoint /usr/lib/jellyfin-ffmpeg/ffmpeg "${IMAGE}" -hide_banner -loglevel error "$@" 2>/dev/null \
         || docker run --rm -u "${JF_UID}:${JF_GID}" -v "${HERE}/media:/media" -w /media \
-            --entrypoint /usr/lib/jellyfin-ffmpeg/ffmpeg "${IMAGE}" -hide_banner -loglevel error "$@"
+            --entrypoint /usr/lib/jellyfin/ffmpeg "${IMAGE}" -hide_banner -loglevel error "$@"
     }
 fi
 
@@ -126,12 +130,19 @@ done
 curl -fsS -m 3 "${BASE}/System/Info/Public" >/dev/null || fail "server never came up on ${BASE}"
 
 wizard() { # <method> <path> [json-body]
-    if [ $# -ge 3 ]; then
-        curl -fsS -X "$1" "${BASE}$2" -H "Authorization: ${CLIENT_AUTH}" \
-            -H 'Content-Type: application/json' -d "$3"
-    else
-        curl -fsS -X "$1" "${BASE}$2" -H "Authorization: ${CLIENT_AUTH}"
-    fi
+    # /System/Info/Public answers 200 slightly before the Startup API is ready,
+    # so the first wizard call can catch a transient 503 — retry briefly.
+    local attempt
+    for attempt in $(seq 1 10); do
+        if [ $# -ge 3 ]; then
+            curl -fsS -X "$1" "${BASE}$2" -H "Authorization: ${CLIENT_AUTH}" \
+                -H 'Content-Type: application/json' -d "$3" && return 0
+        else
+            curl -fsS -X "$1" "${BASE}$2" -H "Authorization: ${CLIENT_AUTH}" && return 0
+        fi
+        [ "${attempt}" -lt 10 ] && sleep 3
+    done
+    return 1
 }
 
 log "completing the startup wizard"

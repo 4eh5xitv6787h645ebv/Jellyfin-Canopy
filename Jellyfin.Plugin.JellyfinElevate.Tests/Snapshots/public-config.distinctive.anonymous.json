@@ -271,11 +271,11 @@
   "SpoilerStripTags": false,
   "SyncJellyseerrWatchlist": true,
   "TagCacheServerMode": false,
-  "TagsCacheTtlDays": 1230,
+  "TagsCacheTtlDays": 1231,
   "TagsHideOnHover": true,
   "ThemeSelectorEnabled": true,
   "TmdbEnabled": true,
-  "ToastDuration": 1233,
+  "ToastDuration": 1234,
   "UseIcons": false,
-  "VideoCodecTagOrder": 1236
+  "VideoCodecTagOrder": 1237
 }

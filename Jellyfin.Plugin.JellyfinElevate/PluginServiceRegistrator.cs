@@ -145,6 +145,13 @@ namespace Jellyfin.Plugin.JellyfinElevate
             // both AFTER HiddenContentResponseFilter, so hidden items are dropped
             // first, then surviving DTOs are stripped, then image bytes rewritten.
             serviceCollection.AddSingleton<ImageBlurService>();
+            serviceCollection.AddSingleton<SpoilerIdentityService>();
+            // The plugin-wide "who is making this request?" ladder
+            // (Services/Identity) — consumed by SpoilerUserResolver today and
+            // available to any future feature that needs per-user behavior on
+            // anonymous requests.
+            serviceCollection.AddSingleton<RequestIdentityService>();
+            serviceCollection.AddSingleton<SpoilerIdentityTagFilter>();
             serviceCollection.AddSingleton<SpoilerUserResolver>();
             serviceCollection.AddSingleton<SpoilerBlurImageFilter>();
             serviceCollection.AddSingleton<SpoilerFieldStripFilter>();
@@ -155,8 +162,19 @@ namespace Jellyfin.Plugin.JellyfinElevate
             serviceCollection.AddSingleton<SpoilerPendingService>();
             serviceCollection.AddHostedService<SpoilerSeerrPendingPromoter>();
             serviceCollection.AddScoped<IEventConsumer<PlaybackStartEventArgs>, SpoilerAutoEnableOnFirstPlayConsumer>();
+            // Identity-cache invalidation on user create/delete — the
+            // single-user shortcut and marker map must never serve a stale
+            // view of WHO EXISTS (see EventHandlers/UserTopologyEvents).
+            serviceCollection.AddScoped<IEventConsumer<Jellyfin.Data.Events.Users.UserCreatedEventArgs>, UserCreatedIdentityInvalidator>();
+            serviceCollection.AddScoped<IEventConsumer<Jellyfin.Data.Events.Users.UserDeletedEventArgs>, UserDeletedIdentityInvalidator>();
             serviceCollection.Configure<MvcOptions>(o =>
             {
+                // Identity-tag stamping is registered FIRST so its
+                // post-processing runs LAST (filters unwind inner-to-outer):
+                // it must see the strip filter's final "sb-…-" cache-bust
+                // prefix to append the user marker onto the FINAL tag string
+                // and re-key ImageBlurHashes to exactly what clients hold.
+                o.Filters.AddService<SpoilerIdentityTagFilter>();
                 o.Filters.AddService<SpoilerFieldStripFilter>();
                 o.Filters.AddService<SpoilerBlurImageFilter>();
             });

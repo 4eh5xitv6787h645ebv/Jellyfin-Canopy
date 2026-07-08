@@ -74,6 +74,16 @@ Series and Episodes are unaffected by this toggle — they have their own per-as
 
 ---
 
+## Per-user image identity tags (reverse-proxy safe)
+
+**Default: On.** Image fetches are anonymous in Jellyfin, so with this setting on, the plugin appends a small per-user **identity marker** to the image `tag` values inside each user's API responses. Every client (web, Android TV, iOS, Roku, …) echoes the tag back when it fetches the image, letting Spoiler Guard apply exactly that user's blur state — independent of the request's IP address, so per-user protection stays precise behind reverse proxies, VPNs, and shared/NAT networks with **zero proxy configuration**.
+
+Leave this on. Turning it off reverts non-web clients to session-by-IP matching, which fails closed (over-blurs) whenever several users' requests arrive from one IP — the classic misconfigured-reverse-proxy symptom. The marker is not a credential: at worst a hand-crafted request can opt itself *into* another user's blur policy, never bypass authentication.
+
+Requests without a marker (for example, a native client replaying an image URL cached before this feature) automatically fall back to the previous IP-based matching.
+
+---
+
 ## Auto-enable on first play of a series' S1E1
 
 **Default: Off.** When on, the first time a user plays S1E1 of a series they've never watched before, the plugin automatically adds that series to their Spoiler Guard list. They don't have to remember to toggle it before starting.
@@ -212,6 +222,7 @@ Most logs are at INFO; corruption + unexpected shapes log at WARNING.
 | Blur intensity | 40 |
 | Also protect backdrops / art images | Off |
 | Keep movie posters unblurred | On |
+| Per-user image identity tags | On |
 | Auto-enable on first play | Off |
 | Auto-enable on Seerr request | Off |
 | Full page reload on toggle (strict refresh) | Off |

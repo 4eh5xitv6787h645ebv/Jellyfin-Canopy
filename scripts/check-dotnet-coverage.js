@@ -99,9 +99,12 @@ function main() {
         .map((file) => ({ file, mtime: fs.statSync(file).mtimeMs }))
         .sort((a, b) => b.mtime - a.mtime)[0].file;
 
-    const measured = measurePackage(fs.readFileSync(newest, 'utf8'));
+    const xml = fs.readFileSync(newest, 'utf8');
+    const measured = measurePackage(xml);
     if (!measured || measured.valid === 0) {
         console.error(`check-dotnet-coverage: package "${PACKAGE_NAME}" not found in ${newest}`);
+        const found = [...xml.matchAll(/<package[^>]*name="([^"]*)"/g)].map((m) => m[1]);
+        console.error(`check-dotnet-coverage: packages present in the report: ${found.length ? found.join(', ') : '(none — empty coverage run)'}`);
         process.exit(2);
     }
 
