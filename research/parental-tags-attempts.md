@@ -134,3 +134,28 @@ unenforceable) — that documentation gets retired by this work.
   pages full-length instead of post-filter shrunk.
 - New server-side toggle `JellyseerrRespectBlockedTags` (default on),
   subordinate to the existing parental master flag.
+
+### 2026-07-08 13:20 — implemented, tested, live-verified
+- `ParentalTagDecision` (pure port of core's IsVisibleViaTags, GetCleanValue
+  normalization via Jellyfin.Extensions) + `SeerrTagSignatureExtractor`
+  (Seerr flat + raw-TMDB wrapped keyword/genre shapes) + filter integration:
+  PolicySnapshot gains cleaned BlockedTags/AllowedTags, per-title resolution
+  returns TitleSignature (cert score + tag set), tag-rule passes fetch the
+  Seerr full detail, cache entries carry tags (tag-bearing and cert-only
+  fetches coalesce separately; light results never erase cached tags).
+  New sub-toggle `JellyseerrRespectBlockedTags` (default on).
+- 624 unit tests green (28 new: decision precedence/normalization vectors,
+  extractor shapes, orchestration incl. the cert-only-cache upgrade case);
+  client gates green; goldens/save-keys regenerated (expected deltas).
+  Shared test doubles extracted (StubPolicyUserManager, FakeLocalization)
+  from nested duplicates per the fix-at-source rule.
+- **Live on jellyfin-12 + seerr-dev:** BlockedTags ["zombie"] on je_arruser →
+  the 1968 Night of the Living Dead (zombie keyword) vanishes from search,
+  detail 403, request POST 403; sparse-keyword remakes correctly survive
+  (keyword precision — the earlier "not working" scare was a remake whose
+  only TMDB keyword is "remake"). BlockedTags ["horror"] (genre) → 10 rows →
+  2. Admin unaffected. e2e spec added (search/detail/request + genre
+  narrowing + admin bypass, policy restored in finally).
+- Docs: seerr-features.md rewritten (limitation retired, new honest
+  limitation: TMDB keyword coverage is community-sourced — genre blocks give
+  broader coverage; fail-closed on unfetchable signatures).
