@@ -39,6 +39,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         // sweeps that bucket's EXPIRED users (never live ones) to keep it tidy.
         private const int UsersPerIpSweepTrigger = 64;
 
+        // Hard ceiling on tracked real-client IPs. At capacity we stop learning
+        // NEW IPs (existing buckets keep refreshing) rather than evicting any —
+        // eviction would risk dropping a live user (a leak), whereas refusing to
+        // learn a new IP is fail-safe: that IP simply falls back to the existing
+        // session-by-IP / marker ladder, exactly as if this feature were off.
+        // Generous for a proxy-fronted deployment; each empty bucket is tiny.
+        private const int MaxIps = 8192;
+
         // realIpKey → (userId → lastSeenUtc). DateTime value (not a mutable
         // box) so value-matched removal is race-free.
         private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, DateTime>> _map
@@ -60,7 +68,16 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             if (string.IsNullOrEmpty(realIpKey) || userId == Guid.Empty) return;
 
             var now = _now();
-            var users = _map.GetOrAdd(realIpKey, static _ => new ConcurrentDictionary<Guid, DateTime>());
+
+            // At capacity, keep refreshing IPs we already track but stop taking
+            // on NEW ones (fail-safe: an unlearned IP degrades to the lower
+            // ladder, never a leak). The benign check-then-add race can nudge a
+            // few past the cap under concurrency — harmless, still bounded.
+            if (!_map.TryGetValue(realIpKey, out var users))
+            {
+                if (_map.Count >= MaxIps) return;
+                users = _map.GetOrAdd(realIpKey, static _ => new ConcurrentDictionary<Guid, DateTime>());
+            }
             users.AddOrUpdate(userId, now, (_, prev) => now > prev ? now : prev);
 
             // Expired-only tidy of an unusually large bucket. Never drops a live
