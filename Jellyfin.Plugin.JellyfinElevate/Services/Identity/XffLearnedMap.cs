@@ -15,16 +15,17 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
     ///
     /// It is a strictly fail-closed CANDIDATE SET, identical in posture to
     /// session-by-IP. Two invariants make that true:
-    ///   • a LIVE (within-TTL) entry is NEVER evicted — dropping a live user
-    ///     would remove a candidate and could leak that user's guarded art, so
-    ///     eviction only ever removes EXPIRED entries. Memory is bounded by the
-    ///     real live-client population (each IP capped at a generous user count),
-    ///     which self-limits; the IP cap only triggers an expired-sweep, never a
-    ///     live eviction.
+    ///   • a LIVE (within-TTL) user is NEVER removed — dropping one would remove
+    ///     a candidate and could leak that user's guarded art. Only EXPIRED user
+    ///     entries are pruned, and the empty IP buckets they leave behind are
+    ///     deliberately NOT evicted (removing a bucket a concurrent Observe just
+    ///     repopulated would drop a live user). A bucket is tiny and is reused by
+    ///     the next Observe for that IP, so memory is bounded by the real client
+    ///     population — appropriate for this opt-in, proxy-fronted feature.
     ///   • the per-user value is an immutable timestamp, and expiry-removal is
     ///     value-matched (remove only if the timestamp still equals the stale
     ///     one we read), so a concurrent Observe that just refreshed the entry
-    ///     is never clobbered by a Resolve that read the pre-refresh value.
+    ///     is never clobbered by a Resolve/sweep that read the pre-refresh value.
     /// </summary>
     public sealed class XffLearnedMap
     {
@@ -34,15 +35,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         // would leak (forbidden), so we err long.
         private static readonly TimeSpan EntryTtl = TimeSpan.FromMinutes(30);
 
-        // Soft advisory caps: exceeding them triggers an expired-only sweep, not
-        // a live eviction. Generous so a genuine shared/CGNAT real IP keeps all
-        // its live users as candidates.
-        private const int SoftIpCap = 4096;
-        private const int SoftUsersPerIpCap = 64;
-
-        // Throttle the O(map) expired sweep so a busy instance doesn't scan the
-        // whole map on every observation once it is above the soft cap.
-        private static readonly TimeSpan MinSweepInterval = TimeSpan.FromSeconds(30);
+        // Above this many users on one real IP, an authed observation also
+        // sweeps that bucket's EXPIRED users (never live ones) to keep it tidy.
+        private const int UsersPerIpSweepTrigger = 64;
 
         // realIpKey → (userId → lastSeenUtc). DateTime value (not a mutable
         // box) so value-matched removal is race-free.
@@ -50,7 +45,6 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             = new(StringComparer.Ordinal);
 
         private readonly Func<DateTime> _now;
-        private DateTime _lastSweep = DateTime.MinValue;
 
         public XffLearnedMap() : this(() => DateTime.UtcNow) { }
 
@@ -69,13 +63,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             var users = _map.GetOrAdd(realIpKey, static _ => new ConcurrentDictionary<Guid, DateTime>());
             users.AddOrUpdate(userId, now, (_, prev) => now > prev ? now : prev);
 
-            // Expired-only maintenance, throttled. Never drops a live user.
-            if (users.Count > SoftUsersPerIpCap) SweepExpiredUsers(users, now);
-            if (_map.Count > SoftIpCap && (now - _lastSweep) >= MinSweepInterval)
-            {
-                _lastSweep = now;
-                SweepExpiredIps(now);
-            }
+            // Expired-only tidy of an unusually large bucket. Never drops a live
+            // user (value-matched), never removes the bucket itself.
+            if (users.Count > UsersPerIpSweepTrigger) SweepExpiredUsers(users, now);
         }
 
         /// <summary>
@@ -102,11 +92,11 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 {
                     // Remove only if the timestamp is still the stale one we
                     // read — a concurrent Observe that refreshed it writes a
-                    // newer value, so this no-ops and keeps the live entry.
+                    // newer value, so this no-ops and keeps the live entry. The
+                    // now-possibly-empty bucket is intentionally left in place.
                     ((ICollection<KeyValuePair<Guid, DateTime>>)users).Remove(kvp);
                 }
             }
-            if (users.IsEmpty) TryRemoveEmptyBucket(realIpKey, users);
             return live;
         }
 
@@ -118,28 +108,6 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 {
                     ((ICollection<KeyValuePair<Guid, DateTime>>)users).Remove(kvp);
                 }
-            }
-        }
-
-        private void SweepExpiredIps(DateTime now)
-        {
-            foreach (var kvp in _map)
-            {
-                var users = kvp.Value;
-                SweepExpiredUsers(users, now);
-                if (users.IsEmpty) TryRemoveEmptyBucket(kvp.Key, users);
-            }
-        }
-
-        // Remove an emptied bucket only if it is still the same (now-empty)
-        // instance — a concurrent Observe may have GetOrAdd'd this bucket and
-        // added a user, in which case we must not drop it.
-        private void TryRemoveEmptyBucket(string key, ConcurrentDictionary<Guid, DateTime> emptied)
-        {
-            if (emptied.IsEmpty)
-            {
-                ((ICollection<KeyValuePair<string, ConcurrentDictionary<Guid, DateTime>>>)_map)
-                    .Remove(new KeyValuePair<string, ConcurrentDictionary<Guid, DateTime>>(key, emptied));
             }
         }
     }

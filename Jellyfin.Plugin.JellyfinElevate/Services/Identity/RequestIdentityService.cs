@@ -356,14 +356,16 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             var ipUsers = ScanActiveSessionUsersCached(httpContext);
 
             // Tier 3.5: XFF learned-map candidates (issue 7). When the transport
-            // peer is a trusted proxy, resolve the real client IP from the
-            // forwarding headers and note every user we learned at that real IP
-            // from earlier authenticated requests. This rebuilds session-by-IP
-            // on the TRUE client IP for deployments where core saw only the
-            // proxy IP. Held SEPARATELY so the cookie tier's fresh session
-            // rescan below can never discard it — a fail-closed candidate must
-            // survive every code path (a leak if it were dropped). Unioned into
-            // ipUsers here and re-unioned after any rescan.
+            // peer is a trusted proxy, note every user we learned at the real
+            // client IP from earlier authenticated requests. Held SEPARATELY and
+            // deliberately NOT mixed into the cookie's validation set below: the
+            // je-spoiler-uid cookie collapses the result to a SINGLE user when it
+            // matches, so validating it against these (up-to-30-min-old) learned
+            // users would let a stale cookie both age wider AND drop the OTHER
+            // learned candidates. Instead these are unioned only into the tier-4
+            // candidate set (purely additive, fail-closed), so a cookie can never
+            // discard a learned guarding candidate — it just doesn't get the
+            // single-user precision; that user remains a candidate via tier 4.
             IReadOnlyCollection<Guid> learnedXff = Array.Empty<Guid>();
             if (transportIsTrustedProxy && (config?.IdentityXffLearnedMapEnabled ?? false))
             {
@@ -371,15 +373,13 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 if (realIpKey != null)
                 {
                     learnedXff = _xffMap.Resolve(realIpKey);
-                    ipUsers = UnionUsers(ipUsers, learnedXff);
                 }
             }
 
             // Tier 3: per-browser cookie disambiguation. The je-spoiler-uid
             // cookie pins THIS request to its browser's user — trusted ONLY
-            // when that user genuinely has a session from this IP (or was
-            // learned at this real IP via XFF), so a stale/forged value can't
-            // select a user who isn't present.
+            // when that user genuinely has a session from this IP, so a
+            // stale/forged value can't select a user who isn't present.
             if (httpContext.Request.Cookies.TryGetValue(SpoilerUidCookie, out var raw)
                 && Guid.TryParse(raw, out var cookieUid)
                 && cookieUid != Guid.Empty)
@@ -405,10 +405,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                         && (now - missAt) < CookieMissNegativeCacheTtl;
                     if (!recentMiss)
                     {
-                        // Re-union the learned XFF set so the fresh session scan
-                        // (which sees only the proxy IP and is usually empty)
-                        // cannot drop an XFF-learned guarding candidate.
-                        ipUsers = UnionUsers(ScanActiveSessionUsersFresh(httpContext), learnedXff);
+                        ipUsers = ScanActiveSessionUsersFresh(httpContext);
                         if (missKey != null && !ipUsers.Contains(cookieUid))
                         {
                             _cookieMissCache[missKey] = now;
@@ -429,13 +426,18 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 }
             }
 
+            // Fold the XFF-learned candidates in now — after the cookie tier, so
+            // they can only ADD to the fail-closed candidate set, never be
+            // dropped by a single-user cookie match above.
+            ipUsers = UnionUsers(ipUsers, learnedXff);
+
             // Tier 4: no usable marker/cookie (native TV/mobile client, or a
             // forged/stale value naming an absent user). Return every user
-            // with a session on this IP so fail-closed consumers can protect
-            // the item if ANY of them matches. (Using the full IP-session set
-            // — not a recent-activity window — is deliberate; passive image
-            // viewing doesn't refresh a session, so an opted-in user must not
-            // age out of protection.)
+            // with a session on this IP (plus any XFF-learned real-IP users) so
+            // fail-closed consumers can protect the item if ANY of them matches.
+            // (Using the full IP-session set — not a recent-activity window — is
+            // deliberate; passive image viewing doesn't refresh a session, so an
+            // opted-in user must not age out of protection.)
             if (ipUsers.Count > 1)
             {
                 WarnRateLimited(
