@@ -24,6 +24,47 @@ const JE = JEBase as typeof JEBase & {
     };
 };
 
+// ── Session shape (the /active-streams/sessions projection) ────────────────
+interface SessionMediaStream { Type?: string; Codec?: string; BitRate?: number }
+interface SessionNowPlaying {
+    Id?: string;
+    Type?: string;
+    Name?: string;
+    SeriesName?: string;
+    RunTimeTicks?: number;
+    ProductionYear?: number;
+    ParentIndexNumber?: number;
+    IndexNumber?: number;
+    ImageTags?: Record<string, string> | null;
+    SeriesId?: string;
+    SeriesPrimaryImageTag?: string;
+    MediaStreams?: SessionMediaStream[] | null;
+}
+interface SessionPlayState { IsPaused?: boolean; PositionTicks?: number; PlayMethod?: string }
+interface SessionTranscoding {
+    IsVideoDirect?: boolean;
+    VideoCodec?: string;
+    AudioCodec?: string;
+    Bitrate?: number;
+    TranscodeReasons?: string[];
+    CompletionPercentage?: number;
+    Width?: number;
+    Height?: number;
+    Framerate?: number;
+}
+interface SessionView {
+    Id?: string;
+    UserId?: string;
+    UserName?: string;
+    Client?: string;
+    DeviceName?: string;
+    SupportsRemoteControl?: boolean;
+    RemoteEndPoint?: string | null;
+    NowPlayingItem?: SessionNowPlaying | null;
+    PlayState?: SessionPlayState | null;
+    TranscodingInfo?: SessionTranscoding | null;
+}
+
 const isAdmin = (): boolean => JE?.currentUser?.Policy?.IsAdministrator === true;
 
 // Fire a transient toast if the host exposes one (no-op under jsdom tests).
@@ -65,6 +106,8 @@ let _liveTimer: ReturnType<typeof setInterval> | null = null;
 let _liveUnsub: (() => void) | null = null;
 let _visListener: (() => void) | null = null;
 let _nudgeTimer: ReturnType<typeof setTimeout> | null = null;
+// Monotonic refresh counter — see updateCounter's request-ordering guard.
+let _refreshSeq = 0;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 const ticksToTime = (ticks: number): string => {
@@ -608,21 +651,21 @@ const isVisible = (): boolean => {
 };
 
 // ── API — uses plugin proxy so non-admins don't need Sessions permission ─
-const fetchSessions = async (): Promise<any[] | null> => {
+const fetchSessions = async (): Promise<SessionView[] | null> => {
     try {
         // Core throws on non-OK responses — caught below, returning null
         // exactly like the old !resp.ok branch.
-        return await JE.core.api.plugin('/active-streams/sessions') as any[];
+        return await JE.core.api.plugin('/active-streams/sessions') as SessionView[];
     } catch (_) {
         return null;
     }
 };
 
 // ── Badge builder ────────────────────────────────────────────────────────
-const buildBadgeElements = (session: any): HTMLElement[] => {
+const buildBadgeElements = (session: SessionView): HTMLElement[] => {
     const badges: Array<{ label: string; cls: string }> = [];
     const ts = session.TranscodingInfo;
-    const ps = session.PlayState || {};
+    const ps: SessionPlayState = session.PlayState || {};
 
     if (ts && ts.IsVideoDirect === false) {
         badges.push({ label: 'Transcoding', cls: 'je-as-badge-transcode' });
@@ -640,7 +683,7 @@ const buildBadgeElements = (session: any): HTMLElement[] => {
         }
     } else {
         badges.push({ label: 'Direct Play', cls: 'je-as-badge-direct' });
-        const stream = session.NowPlayingItem?.MediaStreams?.find((s: any) => s.Type === 'Video');
+        const stream = session.NowPlayingItem?.MediaStreams?.find((s) => s.Type === 'Video');
         if (stream?.Codec) badges.push({ label: stream.Codec.toUpperCase(), cls: 'je-as-badge-neutral' });
         if (stream?.BitRate) {
             const kbps = Math.round(stream.BitRate / 1000);
@@ -649,20 +692,20 @@ const buildBadgeElements = (session: any): HTMLElement[] => {
     }
 
     if (ps.PlayMethod === 'Transcode' && ts?.TranscodeReasons?.length) {
-        const streams = session.NowPlayingItem?.MediaStreams || [];
+        const streams: SessionMediaStream[] = session.NowPlayingItem?.MediaStreams || [];
         for (const rawReason of ts.TranscodeReasons) {
             const reason = rawReason.replace(/([A-Z])/g, ' $1').trim();
             badges.push({ label: reason, cls: 'je-as-badge-reason' });
 
             // Append codec conversion arrow for codec-related reasons
             if (rawReason === 'AudioCodecNotSupported') {
-                const srcCodec = streams.find((s: any) => s.Type === 'Audio')?.Codec;
+                const srcCodec = streams.find((s) => s.Type === 'Audio')?.Codec;
                 const dstCodec = ts.AudioCodec;
                 if (srcCodec && dstCodec && srcCodec.toLowerCase() !== dstCodec.toLowerCase()) {
                     badges.push({ label: `${srcCodec.toUpperCase()} → ${dstCodec.toUpperCase()}`, cls: 'je-as-badge-reason' });
                 }
             } else if (rawReason === 'VideoCodecNotSupported') {
-                const srcCodec = streams.find((s: any) => s.Type === 'Video')?.Codec;
+                const srcCodec = streams.find((s) => s.Type === 'Video')?.Codec;
                 const dstCodec = ts.VideoCodec;
                 if (srcCodec && dstCodec && srcCodec.toLowerCase() !== dstCodec.toLowerCase()) {
                     badges.push({ label: `${srcCodec.toUpperCase()} → ${dstCodec.toUpperCase()}`, cls: 'je-as-badge-reason' });
@@ -680,9 +723,10 @@ const buildBadgeElements = (session: any): HTMLElement[] => {
 };
 
 // ── Session card builder ─────────────────────────────────────────────────
-const buildSessionCard = (session: any): HTMLElement => {
-    const item = session.NowPlayingItem;
-    const ps = session.PlayState || {};
+const buildSessionCard = (session: SessionView): HTMLElement => {
+    // Caller (renderPanel) only passes sessions with a NowPlayingItem.
+    const item = session.NowPlayingItem as SessionNowPlaying;
+    const ps: SessionPlayState = session.PlayState || {};
     const isPaused = ps.IsPaused;
 
     const title = item.SeriesName || item.Name || 'Unknown';
@@ -696,8 +740,10 @@ const buildSessionCard = (session: any): HTMLElement => {
 
     const card = document.createElement('div');
     card.className = 'je-as-card je-as-card-with-poster';
-    // Stable key for in-place live updates (progress/state) — see applyLiveUpdate.
-    if (session.Id) card.setAttribute('data-session-id', String(session.Id));
+    // Stable key + structural signature for in-place live updates — see
+    // applyLiveUpdate / panelMatchesSessions.
+    card.setAttribute('data-session-id', sessionCardKey(session));
+    card.setAttribute('data-live-sig', sessionSig(session));
 
     // ── Poster thumbnail ─────────────────────────────────────────────────
     // For episodes, prefer the series poster over the episode thumbnail.
@@ -941,7 +987,7 @@ const sendSessionMessage = async (
 };
 
 /** The stop + message action row (with an inline per-session message form). */
-const buildSessionActions = (session: any): HTMLElement => {
+const buildSessionActions = (session: SessionView): HTMLElement => {
     const sessionId = String(session.Id);
     const wrap = document.createElement('div');
 
@@ -1059,11 +1105,27 @@ const buildSessionActions = (session: any): HTMLElement => {
 };
 
 // ── Live-update helpers ────────────────────────────────────────────────────
-const sessionKey = (s: any): string => String(s?.Id || '');
-const activeSessions = (sessions: any[] | null): any[] => (sessions || []).filter(s => s.NowPlayingItem);
+// Stable per-card key. Admins get the real session Id (also the action target);
+// non-admins get a non-sensitive composite (fields already shown on the card).
+const sessionCardKey = (s: SessionView): string =>
+    String(s.Id || `${s.UserName || ''}|${s.Client || ''}|${s.DeviceName || ''}`);
+
+// Structural signature: an in-place tick is only safe when the card's identity
+// AND its non-progress structure are unchanged. If the session switches item or
+// flips direct-play↔transcode, the signature changes → a full rebuild (so the
+// title/poster/badges never go stale under a moving progress bar).
+const sessionSig = (s: SessionView): string => {
+    const item: SessionNowPlaying = s.NowPlayingItem || {};
+    const ps: SessionPlayState = s.PlayState || {};
+    const ts = s.TranscodingInfo;
+    const mode = ts ? (ts.IsVideoDirect === false ? 'tc' : 'dp') : 'none';
+    return `${item.Id || ''}|${ps.PlayMethod || ''}|${mode}`;
+};
+
+const activeSessions = (sessions: SessionView[] | null): SessionView[] => (sessions || []).filter(s => s.NowPlayingItem);
 
 /** Update the panel title to reflect the current active-stream count. */
-const updatePanelTitle = (active: any[]): void => {
+const updatePanelTitle = (active: SessionView[]): void => {
     const titleEl = document.querySelector('#je-active-streams-panel .je-as-panel-title');
     if (!titleEl) return;
     if (active.length) {
@@ -1096,18 +1158,20 @@ const updateFooter = (): void => {
  * card (which would reload posters and flicker). A structural change (a stream
  * started/stopped) returns false → a full renderPanel.
  */
-const panelMatchesSessions = (sessions: any[]): boolean => {
+const panelMatchesSessions = (sessions: SessionView[]): boolean => {
     const body = document.querySelector('#je-active-streams-panel .je-as-panel-body');
     if (!body) return false;
     const cards = Array.from(body.querySelectorAll('.je-as-card[data-session-id]'));
     const active = activeSessions(sessions);
     if (cards.length !== active.length || active.length === 0) return false;
-    const rendered = new Set(cards.map(c => c.getAttribute('data-session-id')));
-    return active.every(s => rendered.has(sessionKey(s)));
+    // Match on identity AND structural signature: a card whose session switched
+    // item or flipped direct-play↔transcode must be rebuilt, not tick-updated.
+    const renderedSig = new Map(cards.map(c => [c.getAttribute('data-session-id'), c.getAttribute('data-live-sig')]));
+    return active.every(s => renderedSig.get(sessionCardKey(s)) === sessionSig(s));
 };
 
 /** Update progress bars / play-state in place, leaving card structure intact. */
-const applyLiveUpdate = (sessions: any[]): void => {
+const applyLiveUpdate = (sessions: SessionView[]): void => {
     const body = document.querySelector('#je-active-streams-panel .je-as-panel-body');
     if (!body) return;
     const byId = new Map<string | null, Element>();
@@ -1115,10 +1179,10 @@ const applyLiveUpdate = (sessions: any[]): void => {
 
     const active = activeSessions(sessions);
     for (const s of active) {
-        const card = byId.get(sessionKey(s));
+        const card = byId.get(sessionCardKey(s));
         if (!card) continue;
-        const ps = s.PlayState || {};
-        const item = s.NowPlayingItem || {};
+        const ps: SessionPlayState = s.PlayState || {};
+        const item: SessionNowPlaying = s.NowPlayingItem || {};
         const pos = ps.PositionTicks || 0;
         const dur = item.RunTimeTicks || 0;
 
@@ -1148,7 +1212,7 @@ const applyLiveUpdate = (sessions: any[]): void => {
 };
 
 // ── Panel renderer ───────────────────────────────────────────────────────
-const renderPanel = (sessions: any[] | null): void => {
+const renderPanel = (sessions: SessionView[] | null): void => {
     const panel = document.getElementById('je-active-streams-panel');
     if (!panel) return;
 
@@ -1191,7 +1255,7 @@ const renderPanel = (sessions: any[] | null): void => {
 };
 
 // ── Counter updater ──────────────────────────────────────────────────────
-const updateHeaderButton = (sessions: any[] | null): void => {
+const updateHeaderButton = (sessions: SessionView[] | null): void => {
     const btn = document.getElementById('je-active-streams');
     if (!btn) return;
 
@@ -1241,7 +1305,12 @@ const updateHeaderButton = (sessions: any[] | null): void => {
 // A `live` refresh updates progress/state in place when the session set is
 // unchanged (R2/R7); a structural change rebuilds the card list.
 const updateCounter = async (opts?: { live?: boolean }): Promise<void> => {
+    // Request-ordering guard: ws nudges, the fallback interval, manual refresh
+    // and post-action refreshes can overlap. Drop a response that a newer
+    // request has already superseded so a slow reply can't roll back the panel.
+    const seq = ++_refreshSeq;
     const sessions = await fetchSessions();
+    if (seq !== _refreshSeq) return;
     _lastUpdated = new Date();
     updateHeaderButton(sessions);
     if (!_panelOpen) return;
@@ -1280,9 +1349,11 @@ const startLive = (): void => {
             _liveUnsub = null;
         }
     }
-    // Fallback cadence: page-scoped (panel open) + visibility-gated (R5). This
-    // is the effective driver when no websocket push arrives.
-    if (!_liveTimer) {
+    // Fallback cadence — ONLY when the websocket push is unavailable (R5:
+    // push-nudged is the mechanism, the interval is the fallback). Page-scoped
+    // (panel open) + visibility-gated. When the socket is subscribed we rely on
+    // its pushes plus the on-focus refresh below.
+    if (!_liveUnsub && !_liveTimer) {
         _liveTimer = setInterval(() => {
             if (document.visibilityState === 'hidden') return;
             void updateCounter({ live: true });

@@ -87,9 +87,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
                     .Select(s => new
                     {
                         // Session id — needed to target the per-session stop /
-                        // message actions. Not sensitive on its own; the actions
-                        // themselves are admin-gated (RequiresElevation).
-                        Id = s.Id,
+                        // message actions, which are admin-only. Non-admins get
+                        // null (defence in depth: they have no controls, so no
+                        // reason to hand them a session-targeting handle). The
+                        // client falls back to a non-sensitive composite key for
+                        // live-update matching.
+                        Id = isAdmin ? s.Id : null,
                         UserId = s.UserId,
                         UserName = s.UserName,
                         Client = s.Client,

@@ -251,7 +251,7 @@ Choose from multiple Jellyfin theme color variants.
 | Setting | Default | Description |
 |---|---|---|
 | **Active Streams Header Widget** | Off | Adds the stream counter icon to the Jellyfin header |
-| **Show widget to non-admins** | Off | When enabled, non-admin users also see the widget (read-only, no broadcast, no IP addresses) |
+| **Show widget to non-admins** | Off | When enabled, non-admin users also see the widget (read-only — no session controls, no broadcast, no IP addresses) |
 
 #### Live updates
 
