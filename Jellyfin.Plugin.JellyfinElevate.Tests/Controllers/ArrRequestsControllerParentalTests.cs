@@ -225,6 +225,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Controllers
 
             public Task<bool> GetStatusActiveAsync() => throw new NotImplementedException();
 
+            public Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(string jellyfinUserId)
+                => throw new NotImplementedException();
+
             public Task<IActionResult> ProxyRequestAsync(string apiPath, HttpMethod method, string? content, JellyseerrCaller caller)
                 => throw new NotImplementedException();
 

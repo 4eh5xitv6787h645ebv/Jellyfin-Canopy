@@ -57,6 +57,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
 
         public TimeSpan SeerrStatusCacheTtl { get; } = TimeSpan.FromSeconds(30);
 
+        // Cache of Seerr's /api/v1/settings/public 4K flags. User-neutral (the
+        // fetch sends no per-user header). Short TTL so a Seerr-side 4K toggle
+        // surfaces promptly without a per-request round trip.
+        public (bool Movie4kEnabled, bool Series4kEnabled, DateTime CachedAt)? Public4kSettingsCache { get; set; }
+
+        public object Public4kSettingsCacheLock { get; } = new();
+
+        public TimeSpan Public4kSettingsCacheTtl { get; } = TimeSpan.FromMinutes(5);
+
         // Cache for request-page TMDB enrichments (movie/tv detail lookups via Jellyseerr)
         public Dictionary<string, (TmdbEnrichmentResult Data, DateTime CachedAt)> TmdbEnrichmentCache { get; } = new();
 
@@ -128,6 +137,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
             // also flush the cached status probe so admins see fresh
             // reachability immediately after fixing config.
             lock (SeerrStatusCacheLock) { SeerrStatusCache = null; }
+            // Flush the cached 4K capability so a changed Seerr URL / key
+            // re-resolves movie4kEnabled/series4kEnabled immediately.
+            lock (Public4kSettingsCacheLock) { Public4kSettingsCache = null; }
         }
     }
 }

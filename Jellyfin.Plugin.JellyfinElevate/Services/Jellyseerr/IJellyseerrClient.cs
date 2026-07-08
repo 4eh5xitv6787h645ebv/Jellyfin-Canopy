@@ -36,6 +36,22 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
     }
 
     /// <summary>
+    /// Whether the Seerr server has 4K enabled (a default 4K Radarr/Sonarr is
+    /// configured) and whether the acting user may request it. The two
+    /// <c>CanRequest4k*</c> flags already fold in the server-capability check, so a
+    /// client can gate its 4K UI on the single relevant flag.
+    /// </summary>
+    /// <param name="Movie4kEnabled">Seerr's <c>movie4kEnabled</c> (a default 4K Radarr exists).</param>
+    /// <param name="Series4kEnabled">Seerr's <c>series4kEnabled</c> (a default 4K Sonarr exists).</param>
+    /// <param name="CanRequest4kMovie"><see cref="Movie4kEnabled"/> AND the user has the 4K movie permission.</param>
+    /// <param name="CanRequest4kTv"><see cref="Series4kEnabled"/> AND the user has the 4K TV permission.</param>
+    public sealed record Seerr4kCapability(
+        bool Movie4kEnabled,
+        bool Series4kEnabled,
+        bool CanRequest4kMovie,
+        bool CanRequest4kTv);
+
+    /// <summary>
     /// All Seerr (Jellyseerr) plumbing that used to live on
     /// <c>JellyfinElevateControllerBase</c>: configured-URL fan-out, user
     /// resolution with TTL cache + optional just-in-time import, the proxy core
@@ -66,6 +82,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
 
         /// <summary>Live /api/v1/status probe across the configured URLs (uncached).</summary>
         Task<bool> GetStatusActiveAsync();
+
+        /// <summary>
+        /// Resolves whether 4K requests are available for a Jellyfin user: reads
+        /// Seerr's user-neutral <c>/api/v1/settings/public</c> (cached) for the
+        /// server 4K capability and combines it with the user's Seerr 4K
+        /// permissions. Degrades to all-false when Seerr is unconfigured/unreachable
+        /// or the user is unlinked.
+        /// </summary>
+        Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(string jellyfinUserId);
 
         /// <summary>
         /// The proxy core: authenticated fan-out of <paramref name="apiPath"/> to the
