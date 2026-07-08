@@ -1356,7 +1356,12 @@
                                     </div>
                                     <div class="checkboxContainer"><label><input id="jellyseerrRespectParentalRatings" data-config-key="JellyseerrRespectParentalRatings" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Respect parental ratings</span></label></div>
                                     <div class="je-setting-description" data-desc-for="jellyseerrRespectParentalRatings">
-                                        <div class="fieldDescription je-field-desc-xl">Hide Seerr search &amp; discovery results a user could not watch once requested, using that user's own Jellyfin content-rating limit (Maximum Parental Rating) and blocked-unrated settings. Only affects accounts that already have a rating restriction set in Jellyfin; administrators and users with no limit see everything. Tag-based restrictions can't apply to Seerr results (those titles aren't in your library yet). Default: on.</div>
+                                        <div class="fieldDescription je-field-desc-xl">Hide Seerr search &amp; discovery results a user could not watch once requested, using that user's own Jellyfin content-rating limit (Maximum Parental Rating) and blocked-unrated settings. Only affects accounts that already have a rating restriction set in Jellyfin; administrators and users with no limit see everything. Default: on.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="jellyseerrRespectBlockedTags" data-config-key="JellyseerrRespectBlockedTags" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Respect blocked / allowed tags</span></label></div>
+                                    <div class="je-setting-description" data-desc-for="jellyseerrRespectBlockedTags">
+                                        <div class="fieldDescription je-field-desc-xl">Also enforce each user's Jellyfin tag-based parental controls (Block items with tags / Allow only items with tags) on Seerr results, details and requests. Titles are matched by their TMDB keywords and genres — keywords are the same strings Jellyfin imports as library Tags, so a tag like "horror" blocks the same content Jellyfin itself would hide once imported (plus the matching genre). Requires "Respect parental ratings" to be on. Default: on.</div>
                                     </div>
                                 </div>
                             </details>

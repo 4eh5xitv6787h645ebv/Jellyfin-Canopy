@@ -98,22 +98,41 @@ inspecting network traffic — a client-side hide would only conceal the cards.
   see everything** — matching how Jellyfin treats parental controls for the
   library. `adult` titles are always hidden from restricted users.
 
+Tag-based parental controls are enforced too: a user whose Jellyfin policy
+**blocks items with tags** (for example `zombie` or `horror`) won't be sent
+matching titles in Seerr search/discovery, gets a 403 on their detail pages,
+and can't request them; **Allow only items with tags** works as the same
+strict allow-list it is in the library. The two directions deliberately match
+different metadata: **blocked** tags match a title's TMDB **keywords and
+genre names** (keywords are the very strings Jellyfin's TMDB provider imports
+as library Tags, and genre names are included so blocking "horror" also
+covers the genre — over-hiding is the safe direction), while **allowed** tags
+match **keywords only**, exactly mirroring the library (genres never become
+item Tags, so a genre match must not satisfy an allow-list the library itself
+would enforce more strictly). Matching uses Jellyfin's own normalization
+("Sci-Fi" = "sci fi"), and a blocked tag always wins over an allowed one,
+exactly like the native rules.
+
 #### Configure
 
-1. Enable **"Respect parental ratings"** in Seerr search settings (on by default).
-2. Set each restricted user's **Maximum Parental Rating** (and, optionally,
-   **Block unrated items**) in their Jellyfin account. Users with no limit are
+1. Enable **"Respect parental ratings"** in Seerr search settings (on by
+   default); **"Respect blocked / allowed tags"** (also on by default) controls
+   the tag rules specifically.
+2. Set each restricted user's **Maximum Parental Rating**, **Block items with
+   tags** / **Allow only items with tags**, and optionally **Block unrated
+   items** in their Jellyfin account. Users with no limit and no tag rules are
    unaffected.
 
 !!! note "Limitations"
 
-    - **Tag-based restrictions don't apply.** Jellyfin's blocked/allowed *tag*
-      rules can't be evaluated against Seerr results because those titles aren't
-      in your library yet and carry no Jellyfin tags. Only the rating limit and
-      block-unrated settings are enforced.
+    - **Tag matching relies on TMDB metadata.** Keywords are community-sourced
+      and uneven — an obscure title may simply lack the keyword you blocked
+      (blocking the *genre* name gives broader coverage). Titles whose
+      keywords/genres can't be fetched are hidden for tag-restricted users
+      (fail closed), like unverifiable certifications.
     - **Unrated titles** (no certification on TMDB) follow the user's
       **Block unrated items** setting, exactly as in the library.
-    - Certifications are fetched per title and cached (see
+    - Certifications and tag signatures are fetched per title and cached (see
       [Advanced Configuration](#advanced-configuration)); the first search that
       surfaces a new title for a restricted user is slightly slower.
 

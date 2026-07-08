@@ -132,6 +132,7 @@
   "JellyseerrExcludeLibraryItems",
   "JellyseerrImportBlockedUsers",
   "JellyseerrParentalRatingCacheTtlMinutes",
+  "JellyseerrRespectBlockedTags",
   "JellyseerrRespectParentalRatings",
   "JellyseerrResponseCacheTtlMinutes",
   "JellyseerrShowAdvanced",

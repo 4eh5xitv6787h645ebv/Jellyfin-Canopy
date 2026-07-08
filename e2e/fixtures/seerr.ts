@@ -74,3 +74,29 @@ export async function setMaxParentalRating(page: Page, userId: string, score: nu
         });
     }, { userId, score });
 }
+
+/**
+ * Set (list) or clear (empty array) a user's tag-based parental controls via
+ * the Jellyfin policy API from an ADMIN session. The plugin's tag branch reads
+ * BlockedTags/AllowedTags per caller server-side.
+ */
+export async function setParentalTags(
+    page: Page,
+    userId: string,
+    blockedTags: string[],
+    allowedTags: string[] = []
+): Promise<void> {
+    await page.evaluate(async (args: { userId: string; blockedTags: string[]; allowedTags: string[] }) => {
+        const api = (window as any).ApiClient;
+        const user = await api.getJSON(api.getUrl(`/Users/${args.userId}`));
+        const policy = user.Policy;
+        policy.BlockedTags = args.blockedTags;
+        policy.AllowedTags = args.allowedTags;
+        await api.ajax({
+            type: 'POST',
+            url: api.getUrl(`/Users/${args.userId}/Policy`),
+            data: JSON.stringify(policy),
+            contentType: 'application/json',
+        });
+    }, { userId, blockedTags, allowedTags });
+}

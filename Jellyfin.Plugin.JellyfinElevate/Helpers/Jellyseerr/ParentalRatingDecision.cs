@@ -16,11 +16,11 @@ namespace Jellyfin.Plugin.JellyfinElevate.Helpers.Jellyseerr
     ///  - (E)   otherwise the item's (score, subScore) must be &lt;= the user's
     ///          (maxScore, maxSubScore), compared lexicographically.
     ///
-    /// The tag gate (branch A of the core method) is deliberately NOT implemented:
-    /// Seerr results are external TMDB titles that are not in the Jellyfin library
-    /// yet, so they carry no Jellyfin tags. Tag-based blocked/allowed restrictions
-    /// therefore cannot be evaluated against them and are documented as
-    /// unenforceable for Seerr results.
+    /// The tag gate (branch A of the core method) lives in the companion
+    /// <see cref="ParentalTagDecision"/>: external TMDB titles carry no
+    /// Jellyfin tags, so it matches the user's blocked/allowed tags against
+    /// the title's TMDB keyword∪genre names instead (keywords being the
+    /// strings Jellyfin's TMDB provider imports as item Tags).
     /// </summary>
     public static class ParentalRatingDecision
     {

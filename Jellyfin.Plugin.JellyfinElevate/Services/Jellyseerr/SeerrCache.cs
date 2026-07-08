@@ -64,9 +64,13 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
 
         public ConcurrentDictionary<string, Task<TmdbEnrichmentResult>> TmdbEnrichmentInFlight { get; } = new();
 
-        // User-independent cache of a title's resolved parental score
-        // ("{mediaType}:{tmdbId}:{region}" -> score). Null Score = unrated/unknown.
-        public ConcurrentDictionary<string, (int? Score, int? SubScore, DateTime CachedAt)> CertScoreCache { get; } = new();
+        // User-independent cache of a title's resolved parental signals
+        // ("{mediaType}:{tmdbId}:{region}" -> cert score + cleaned keyword and
+        // genre name sets, separate because the two tag directions match
+        // different surfaces). Null Score = unrated/unknown; null Keywords =
+        // tag data not fetched (light cert-only endpoint) — a tag-rule pass
+        // treats that as a miss and re-resolves through the full detail.
+        public ConcurrentDictionary<string, (int? Score, int? SubScore, string[]? Keywords, string[]? Genres, DateTime CachedAt)> CertScoreCache { get; } = new();
 
         public TimeSpan GetResponseCacheTtl()
         {
