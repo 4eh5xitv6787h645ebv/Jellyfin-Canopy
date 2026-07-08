@@ -1710,14 +1710,18 @@
             line.style.display = '';
         }
 
-        // Shared scheme check for optional external/public URL fields: an external URL is only
-        // kept when it is an absolute http(s) URL, matching the Seerr internal-URL validation.
-        // Anything else is dropped so a malformed value never reaches browser link building.
+        // Shared check for optional external/public URL fields: an external URL is only kept
+        // when it is an absolute http(s) URL WITHOUT embedded credentials (user:pass@ would be
+        // served to every authenticated client) and WITHOUT a query string or fragment (item
+        // paths are appended by concatenation, so ?x=1 would corrupt every link). Anything else
+        // is dropped so a malformed value never reaches browser link building.
         function jeIsHttpUrl(value) {
             if (!value) return false;
             try {
                 var u = new URL(value.trim());
-                return u.protocol === 'http:' || u.protocol === 'https:';
+                return (u.protocol === 'http:' || u.protocol === 'https:')
+                    && !u.username && !u.password
+                    && !u.search && !u.hash;
             } catch (_) {
                 return false;
             }
@@ -1794,7 +1798,7 @@
                     incompleteWarnings.push('Renamed duplicate Sonarr instance “' + r + '” so actions target the right instance.');
                 });
                 (sonarrResult.droppedExternal || []).forEach(function(d) {
-                    incompleteWarnings.push('Dropped invalid Sonarr External URL (must start with http:// or https://) — ' + d);
+                    incompleteWarnings.push('Dropped invalid Sonarr External URL (must be an http(s) URL without credentials or query/fragment) — ' + d);
                 });
                 config.SonarrInstances = JSON.stringify(sonarrInstances);
                 if (sonarrInstances.length > 0) {
@@ -1820,7 +1824,7 @@
                     incompleteWarnings.push('Renamed duplicate Radarr instance “' + r + '” so actions target the right instance.');
                 });
                 (radarrResult.droppedExternal || []).forEach(function(d) {
-                    incompleteWarnings.push('Dropped invalid Radarr External URL (must start with http:// or https://) — ' + d);
+                    incompleteWarnings.push('Dropped invalid Radarr External URL (must be an http(s) URL without credentials or query/fragment) — ' + d);
                 });
                 config.RadarrInstances = JSON.stringify(radarrInstances);
                 if (radarrInstances.length > 0) {
@@ -2245,11 +2249,11 @@
             (function () {
                 var raw = (document.querySelector('#jellyseerrExternalUrl').value || '').trim();
                 if (raw && !jeIsHttpUrl(raw)) {
-                    console.warn('Jellyfin Elevate: dropping invalid Seerr External URL on save (must start with http:// or https://):', raw);
+                    console.warn('Jellyfin Elevate: dropping invalid Seerr External URL on save (must be an http(s) URL without credentials or query/fragment):', raw);
                     if (typeof Dashboard !== 'undefined' && Dashboard.alert) {
                         Dashboard.alert({
                             title: 'Invalid Seerr External URL',
-                            message: 'The Seerr External URL was dropped because it does not start with http:// or https://:\n\n' + raw
+                            message: 'The Seerr External URL was dropped: it must be an http:// or https:// URL without embedded credentials, query string or fragment.\n\n' + raw
                         });
                     }
                     config.JellyseerrExternalUrl = '';
@@ -2264,11 +2268,11 @@
             (function () {
                 var raw = (config.BazarrExternalUrl || '').trim();
                 if (raw && !jeIsHttpUrl(raw)) {
-                    console.warn('Jellyfin Elevate: dropping invalid Bazarr External URL on save (must start with http:// or https://):', raw);
+                    console.warn('Jellyfin Elevate: dropping invalid Bazarr External URL on save (must be an http(s) URL without credentials or query/fragment):', raw);
                     if (typeof Dashboard !== 'undefined' && Dashboard.alert) {
                         Dashboard.alert({
                             title: 'Invalid Bazarr External URL',
-                            message: 'The Bazarr External URL was dropped because it does not start with http:// or https://:\n\n' + raw
+                            message: 'The Bazarr External URL was dropped: it must be an http:// or https:// URL without embedded credentials, query string or fragment.\n\n' + raw
                         });
                     }
                     config.BazarrExternalUrl = '';

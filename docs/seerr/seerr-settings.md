@@ -73,11 +73,14 @@ Seerr is reached from two very different places:
 | **Seerr External URL** | User browsers (deep links only) | `https://requests.example.com` |
 
 !!! tip
-    Leave **Seerr External URL** blank if the internal URL is already reachable from browsers — links then reuse the internal URL exactly as before (no behaviour change). Set it when Seerr sits behind a reverse proxy / auth gateway that the server bypasses on the LAN but users reach over the internet. When set, the internal Seerr address is no longer exposed to non-admin clients.
+    Leave **Seerr External URL** blank if the internal URL is already reachable from browsers — links then reuse the internal URL exactly as before (no behaviour change). Set it when Seerr sits behind a reverse proxy / auth gateway that the server bypasses on the LAN but users reach over the internet. When set, the internal Seerr URL itself is no longer sent to non-admin clients as the link base.
 
 For advanced setups where users reach Jellyfin through several different URLs, **URL Mappings** (under *Advanced URL Mappings*) can map each Jellyfin access URL to a specific Seerr URL; a matching mapping takes priority over the External URL. The External URL is the simpler option and covers most deployments.
 
-A malformed value (missing `http://`/`https://`) is rejected with a clear warning on save and never used.
+!!! note
+    URL Mappings are delivered to every signed-in client so their browser can pick the right link — both sides of each mapping are user-visible by design. Only put URLs in mappings that users are meant to see and open.
+
+A malformed value (missing `http://`/`https://`, embedded credentials, or a query string/fragment) is rejected with a clear warning on save and never used.
 
 ### Step 4: Configure User Import (Optional)
 

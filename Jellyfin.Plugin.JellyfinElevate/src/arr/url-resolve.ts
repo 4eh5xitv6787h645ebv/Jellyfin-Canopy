@@ -12,6 +12,8 @@
 // An empty external URL therefore reproduces the previous behaviour exactly
 // (mapping-or-internal), so existing single-URL setups are unchanged.
 
+import { isSafeLinkBase } from '../core/url-safe';
+
 export interface UrlMapping {
     jellyfinUrl: string;
     arrUrl: string;
@@ -48,19 +50,22 @@ export function resolveMappedBase(
     mappings: UrlMapping[],
     currentServerUrl: string
 ): string | null {
-    // 1. A matching URL mapping wins — it is the per-access-URL override.
+    // 1. A matching URL mapping wins — it is the per-access-URL override. The target must
+    //    be a safe link base (http/https, no credentials, no query/fragment); an unsafe
+    //    target is skipped rather than handed to the browser.
     if (mappings.length > 0) {
         const currentUrl = (currentServerUrl || '').replace(/\/+$/, '').toLowerCase();
         for (const mapping of mappings) {
             const normalizedJellyfinUrl = mapping.jellyfinUrl.replace(/\/+$/, '').toLowerCase();
-            if (currentUrl && currentUrl === normalizedJellyfinUrl) {
-                return mapping.arrUrl.replace(/\/+$/, '');
+            if (currentUrl && currentUrl === normalizedJellyfinUrl && isSafeLinkBase(mapping.arrUrl)) {
+                return mapping.arrUrl.trim().replace(/\/+$/, '');
             }
         }
     }
 
-    // 2. The explicit external/public URL, when set. 3. Otherwise the internal URL.
-    const external = externalUrl ? externalUrl.trim() : '';
+    // 2. The explicit external/public URL, when set AND safe. 3. Otherwise the internal URL
+    //    (used raw — unchanged pre-existing behaviour).
+    const external = isSafeLinkBase(externalUrl) ? (externalUrl as string).trim() : '';
     const base = external || (internalUrl ? internalUrl.trim() : '');
     return base ? base.replace(/\/+$/, '') : null;
 }

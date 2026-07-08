@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Text.Json;
 
 namespace Jellyfin.Plugin.JellyfinElevate.Helpers
 {
@@ -19,9 +21,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Helpers
     public static class ServiceUrlResolver
     {
         /// <summary>
-        /// True when <paramref name="url"/> is a well-formed absolute http(s) URL. Anything else
-        /// (empty, whitespace, a scheme-less "host:port", a <c>file:</c>/<c>javascript:</c> scheme)
-        /// is rejected so a malformed value can never be handed to a browser as a link target.
+        /// True when <paramref name="url"/> is a well-formed absolute http(s) BASE URL suitable to
+        /// hand to a browser as a link target. Rejects: empty/whitespace, scheme-less "host:port",
+        /// non-http(s) schemes (<c>file:</c>/<c>javascript:</c>), embedded credentials
+        /// (user:pass@ — a stored external URL is projected to every authenticated client, so
+        /// credentials would leak), and query strings / fragments (item paths are string-appended
+        /// to the base, so <c>?x=1</c> would produce <c>…?x=1/series/…</c>).
         /// </summary>
         public static bool IsWellFormedHttpUrl(string? url)
         {
@@ -35,7 +40,24 @@ namespace Jellyfin.Plugin.JellyfinElevate.Helpers
                 return false;
             }
 
-            return uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps;
+            if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            {
+                return false;
+            }
+
+            // No credentials: the value is served to every authenticated client.
+            if (!string.IsNullOrEmpty(uri.UserInfo))
+            {
+                return false;
+            }
+
+            // No query/fragment: callers append "/movie/{id}"-style paths by concatenation.
+            if (!string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+            {
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -57,5 +79,59 @@ namespace Jellyfin.Plugin.JellyfinElevate.Helpers
         /// </summary>
         public static string SanitizeExternalUrl(string? url)
             => IsWellFormedHttpUrl(url) ? url!.Trim() : string.Empty;
+
+        /// <summary>
+        /// Sanitises the per-instance <c>ExternalUrl</c> fields inside a stored
+        /// SonarrInstances/RadarrInstances JSON array (the config-page validator can be bypassed
+        /// by a direct config POST or hand edit, so the save hook is the authoritative gate).
+        /// Only rewrites when the JSON parses cleanly — corrupt JSON is returned untouched, since
+        /// the corruption-recovery flow (<c>IsSonarrInstancesCorrupt</c> etc.) owns that case.
+        /// </summary>
+        /// <param name="json">The stored instance-array JSON.</param>
+        /// <param name="onDropped">Invoked with (instanceName, droppedValue) for each malformed external URL.</param>
+        /// <returns>The (possibly rewritten) JSON.</returns>
+        public static string SanitizeInstanceExternalUrlsJson(string json, Action<string, string>? onDropped = null)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return json;
+            }
+
+            try
+            {
+                var instances = JsonSerializer.Deserialize<List<Model.Arr.ArrInstance>>(json);
+                if (instances == null)
+                {
+                    return json;
+                }
+
+                bool changed = false;
+                foreach (var instance in instances)
+                {
+                    if (instance == null)
+                    {
+                        continue;
+                    }
+
+                    var cleaned = SanitizeExternalUrl(instance.ExternalUrl);
+                    if (!string.Equals(cleaned, instance.ExternalUrl ?? string.Empty, StringComparison.Ordinal))
+                    {
+                        if (!string.IsNullOrWhiteSpace(instance.ExternalUrl))
+                        {
+                            onDropped?.Invoke(instance.Name, instance.ExternalUrl);
+                        }
+
+                        instance.ExternalUrl = cleaned;
+                        changed = true;
+                    }
+                }
+
+                return changed ? JsonSerializer.Serialize(instances) : json;
+            }
+            catch (JsonException)
+            {
+                return json;
+            }
+        }
     }
 }

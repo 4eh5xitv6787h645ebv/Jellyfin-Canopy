@@ -57,4 +57,20 @@ describe('resolveMappedBase precedence', () => {
     it('ignores a whitespace-only external URL and falls back to internal', () => {
         expect(resolveMappedBase('http://sonarr:8989', '   ', [], server)).toBe('http://sonarr:8989');
     });
+
+    it('rejects an unsafe external URL at use time and falls back to internal', () => {
+        // Defence-in-depth: a direct config POST can bypass save validation.
+        expect(resolveMappedBase('http://sonarr:8989', 'javascript:alert(1)', [], server)).toBe('http://sonarr:8989');
+        expect(resolveMappedBase('http://sonarr:8989', 'https://u:p@evil.example.com', [], server)).toBe('http://sonarr:8989');
+        expect(resolveMappedBase('http://sonarr:8989', 'https://host/sonarr?x=1', [], server)).toBe('http://sonarr:8989');
+        expect(resolveMappedBase('http://sonarr:8989', 'https://host/sonarr#f', [], server)).toBe('http://sonarr:8989');
+    });
+
+    it('skips an unsafe mapping target instead of handing it to the browser', () => {
+        const mappings = parseUrlMappings('https://jf.example.com|javascript:alert(1)');
+        expect(resolveMappedBase('http://sonarr:8989', 'https://external.example.com', mappings, server))
+            .toBe('https://external.example.com');
+        const credMapping = parseUrlMappings('https://jf.example.com|https://u:p@mapped.example.com');
+        expect(resolveMappedBase('http://sonarr:8989', '', credMapping, server)).toBe('http://sonarr:8989');
+    });
 });

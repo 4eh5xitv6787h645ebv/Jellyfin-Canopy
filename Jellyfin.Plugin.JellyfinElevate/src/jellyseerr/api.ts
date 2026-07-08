@@ -1,6 +1,7 @@
 // src/jellyseerr/api.ts
 import { JE } from '../globals';
 import { describeFetchError } from '../core/fetch-error';
+import { isSafeLinkBase } from '../core/url-safe';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -1015,7 +1016,11 @@ api.resolveJellyseerrBaseUrl = function() {
 
             const normalizedJellyfinUrl = jellyfinUrl.replace(/\/+$/, '').toLowerCase();
 
-            if (currentUrl === normalizedJellyfinUrl) {
+            // Use-time guard (same contract as arr link bases): a mapping target must be a
+            // safe browser link base — http(s), no credentials, no query/fragment. An unsafe
+            // target is skipped so it can never become an href; resolution falls through to
+            // the server-projected base URL below.
+            if (currentUrl === normalizedJellyfinUrl && isSafeLinkBase(jellyseerrUrl)) {
                 baseUrl = jellyseerrUrl.replace(/\/$/, '');
                 break;
             }

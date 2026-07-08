@@ -80,6 +80,17 @@ namespace Jellyfin.Plugin.JellyfinElevate
             Sanitize(config.SonarrExternalUrl, v => config.SonarrExternalUrl = v, nameof(config.SonarrExternalUrl), _logger);
             Sanitize(config.RadarrExternalUrl, v => config.RadarrExternalUrl = v, nameof(config.RadarrExternalUrl), _logger);
             Sanitize(config.BazarrExternalUrl, v => config.BazarrExternalUrl = v, nameof(config.BazarrExternalUrl), _logger);
+
+            // Per-instance ExternalUrl inside the SonarrInstances/RadarrInstances JSON: the
+            // config-page validator can be bypassed by a direct config POST or hand edit, so the
+            // save hook is the authoritative gate. Corrupt JSON is deliberately left untouched
+            // (the corruption-recovery flow owns it) — see ServiceUrlResolver for the rules.
+            config.SonarrInstances = Helpers.ServiceUrlResolver.SanitizeInstanceExternalUrlsJson(
+                config.SonarrInstances,
+                (name, value) => _logger.LogWarning($"Dropped malformed external URL for SonarrInstances instance \"{name}\" on save (must be an absolute http:// or https:// URL without credentials/query/fragment): {value}"));
+            config.RadarrInstances = Helpers.ServiceUrlResolver.SanitizeInstanceExternalUrlsJson(
+                config.RadarrInstances,
+                (name, value) => _logger.LogWarning($"Dropped malformed external URL for RadarrInstances instance \"{name}\" on save (must be an absolute http:// or https:// URL without credentials/query/fragment): {value}"));
         }
 
         // Dedupes Shortcuts (XmlSerializer appends to constructor-initialized lists, doubling on each restart)

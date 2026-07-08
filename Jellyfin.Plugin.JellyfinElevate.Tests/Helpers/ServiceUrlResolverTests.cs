@@ -11,7 +11,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Helpers
         [InlineData("https://example.com/sonarr", true)]        // base-url/subpath
         [InlineData("  https://example.com/seerr  ", true)]     // trimmed
         [InlineData("http://[2001:db8::1]:5055", true)]         // IPv6 literal
-        [InlineData("https://user:pass@example.com", true)]     // credentials-in-url
+        [InlineData("https://user:pass@example.com", false)]    // credentials would leak to every client
+        [InlineData("https://user@example.com", false)]         // bare username userinfo too
+        [InlineData("https://example.com/seerr?x=1", false)]    // query breaks path concatenation
+        [InlineData("https://example.com/seerr#frag", false)]   // fragment breaks path concatenation
         [InlineData("", false)]
         [InlineData("   ", false)]
         [InlineData("sonarr.example.com", false)]               // no scheme
@@ -50,9 +53,48 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Helpers
         [InlineData("  https://seerr.example.com  ", "https://seerr.example.com")]
         [InlineData("garbage", "")]
         [InlineData("seerr.local:5055", "")]
+        [InlineData("https://u:p@seerr.example.com", "")]
+        [InlineData("https://seerr.example.com?x=1", "")]
         [InlineData("", "")]
         [InlineData(null, "")]
         public void SanitizeExternalUrl_KeepsWellFormedBlanksTheRest(string? input, string expected)
             => Assert.Equal(expected, ServiceUrlResolver.SanitizeExternalUrl(input));
+
+        [Fact]
+        public void SanitizeInstanceExternalUrlsJson_BlanksMalformedPerInstanceExternalUrls()
+        {
+            var json = """
+                [
+                  {"Name":"ok","Url":"http://sonarr:8989","ExternalUrl":"https://sonarr.example.com","ApiKey":"k","UrlMappings":"","Enabled":true},
+                  {"Name":"bad","Url":"http://sonarr2:8989","ExternalUrl":"javascript:alert(1)","ApiKey":"k2","UrlMappings":"","Enabled":true}
+                ]
+                """;
+
+            var dropped = new List<(string Name, string Value)>();
+            var result = ServiceUrlResolver.SanitizeInstanceExternalUrlsJson(json, (n, v) => dropped.Add((n, v)));
+
+            var instances = System.Text.Json.JsonSerializer
+                .Deserialize<List<Jellyfin.Plugin.JellyfinElevate.Model.Arr.ArrInstance>>(result)!;
+            Assert.Equal("https://sonarr.example.com", instances[0].ExternalUrl);
+            Assert.Equal(string.Empty, instances[1].ExternalUrl);
+            // Api keys and every other field survive the rewrite.
+            Assert.Equal("k2", instances[1].ApiKey);
+            Assert.True(instances[1].Enabled);
+            Assert.Equal(new[] { ("bad", "javascript:alert(1)") }, dropped.ToArray());
+        }
+
+        [Fact]
+        public void SanitizeInstanceExternalUrlsJson_LeavesCleanJsonByteIdentical()
+        {
+            var json = """[{"Name":"ok","Url":"http://sonarr:8989","ExternalUrl":"","ApiKey":"k","UrlMappings":"","Enabled":true}]""";
+            Assert.Same(json, ServiceUrlResolver.SanitizeInstanceExternalUrlsJson(json));
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData("   ")]
+        [InlineData("[]junk-not-json")]
+        public void SanitizeInstanceExternalUrlsJson_LeavesEmptyOrCorruptJsonUntouched(string json)
+            => Assert.Equal(json, ServiceUrlResolver.SanitizeInstanceExternalUrlsJson(json));
     }
 }

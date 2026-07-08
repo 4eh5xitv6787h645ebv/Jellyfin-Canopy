@@ -45,7 +45,7 @@ Each instance is reached from two places, and they may need different addresses:
 - The **Jellyfin server** fetches from Sonarr/Radarr (and Bazarr) for link status, calendar, queue and tag sync — it always uses the **URL (internal)**, which can be a LAN/docker address browsers can't reach.
 - A **user's browser** opens the service when they click an "Open in Sonarr/Radarr/Bazarr" link — it uses the **External URL** when set, otherwise it falls back to the internal URL.
 
-The browser link base is resolved with this precedence: **matching URL Mapping → External URL → internal URL**. So leaving External URL blank reproduces the previous behaviour exactly. Bazarr (single instance, in the Setup section) has the same **Bazarr External URL** field. A malformed external URL (missing `http://`/`https://`) is rejected with a clear warning on save.
+The browser link base is resolved with this precedence: **matching URL Mapping → External URL → internal URL**. So leaving External URL blank reproduces the previous behaviour exactly. Bazarr (single instance, in the Setup section) has the same **Bazarr External URL** field. A malformed external URL (missing `http://`/`https://`, embedded credentials, or a query string/fragment) is rejected with a clear warning on save, and unsafe values are additionally skipped at link-building time.
 
 ### Disabling an Instance
 
