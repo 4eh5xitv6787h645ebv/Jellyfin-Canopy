@@ -87,7 +87,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr
         /// value depends only on the title (not the caller), it is safe to share
         /// across users.
         /// </summary>
-        ConcurrentDictionary<string, (int? Score, int? SubScore, DateTime CachedAt)> CertScoreCache { get; }
+        /// <remarks>
+        /// Tags is the title's cleaned keyword∪genre name set for the tag
+        /// branch of the parental filter, or null when the entry was resolved
+        /// through the light cert-only endpoints (tag data not fetched) — the
+        /// filter treats null as a cache miss when tag rules are active.
+        /// Like the score, it depends only on the title, never the caller.
+        /// </remarks>
+        ConcurrentDictionary<string, (int? Score, int? SubScore, string[]? Tags, DateTime CachedAt)> CertScoreCache { get; }
 
         TimeSpan GetResponseCacheTtl();
 

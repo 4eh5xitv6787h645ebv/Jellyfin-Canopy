@@ -156,6 +156,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
             JellyseerrResponseCacheTtlMinutes = 10;
             JellyseerrUserIdCacheTtlMinutes = 30;
             JellyseerrRespectParentalRatings = true;
+            JellyseerrRespectBlockedTags = true;
             JellyseerrParentalRatingCacheTtlMinutes = 1440;
             TriggerSeerrScanOnItemAdded = false;
             SeerrScanDebounceSeconds = 60;
@@ -473,6 +474,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         // administrators are never filtered. Default true — it only ever hides
         // content from accounts that already have a Jellyfin rating restriction.
         public bool JellyseerrRespectParentalRatings { get; set; }
+
+        // Sub-toggle of JellyseerrRespectParentalRatings: when both are true,
+        // each user's Jellyfin tag-based parental controls (BlockedTags /
+        // AllowedTags) are ALSO enforced on Seerr surfaces, matched against
+        // TMDB keyword+genre names (keywords are the strings Jellyfin's own
+        // TMDB provider imports as item Tags; genre names are a deliberate
+        // intent extension). Default true; off reverts to rating-only gating.
+        public bool JellyseerrRespectBlockedTags { get; set; }
 
         // How long a resolved TMDB certification -> parental score is cached
         // (user-independent). Certifications are effectively immutable metadata,
