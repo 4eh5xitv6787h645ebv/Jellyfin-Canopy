@@ -52,7 +52,10 @@ function tryMount(): void {
     if (!isOnHomePage()) { if (pane) teardown(); return; }
     const marker = findActiveMarker();
     if (!marker) {
-        if (mountedInto && !document.contains(mountedInto)) teardown();
+        // The mounted panel is gone or hidden (navigated away) — tear down so the feed's
+        // IntersectionObserver + AbortController don't linger. The offsetParent check covers
+        // path-routed navigations the empty-hash home check can miss.
+        if (mountedInto && (!document.contains(mountedInto) || mountedInto.offsetParent === null)) teardown();
         return;
     }
     const shouldMount = marker !== mountedInto || !marker.hasChildNodes()
@@ -70,7 +73,7 @@ function tryMount(): void {
 export function initHomeTab(): void {
     if (!enabled()) return;
     injectCss('je-discovery-home-css', `.${MARKER} { padding: 12px 3vw; }`);
-    JE.nativeTabs?.register('discovery', 'Discovery', (panel) => {
+    JE.nativeTabs?.register('discovery', JE.t!('discovery_tab_title'), (panel) => {
         const marker = document.createElement('div');
         marker.className = MARKER;
         panel.appendChild(marker);

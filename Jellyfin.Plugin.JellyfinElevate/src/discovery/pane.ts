@@ -90,7 +90,10 @@ export function createDiscoveryPane(initialMt: DiscoveryMediaType, showMediaType
     lbl.textContent = JE.t!('discovery_customize_button');
     customizeBtn.append(icon, lbl);
     customizeBtn.addEventListener('click', () => {
-        void fetchGenres(mt).then((genres) => openCustomize(mt, genres, () => { void render(); }));
+        void fetchGenres(mt).then((genres) => {
+            if (destroyed) return; // the pane was torn down while genres loaded — don't open a modal on a dead surface
+            openCustomize(mt, genres, () => { void render(); });
+        });
     });
     toolbar.appendChild(customizeBtn);
 
@@ -100,13 +103,16 @@ export function createDiscoveryPane(initialMt: DiscoveryMediaType, showMediaType
     }
 
     async function render(): Promise<void> {
+        if (destroyed) return;
         const seq = ++renderSeq;
         feed?.destroy();
         feed = null;
         feedHost.textContent = '';
         const handle = await renderFeed(feedHost, mt, getUserRowIds(mt));
-        // A newer render (toggle/customize) started while we awaited, or we were destroyed — discard.
-        if (destroyed || seq !== renderSeq) { handle.destroy(); return; }
+        // A newer render (toggle/customize) started while we awaited, or we were destroyed. renderFeed
+        // has already appended its feed DOM, so removing the element (not just aborting the handle)
+        // is required — otherwise a fast Movies→TV toggle leaves both feeds in the host.
+        if (destroyed || seq !== renderSeq) { handle.destroy(); handle.element.remove(); return; }
         feed = handle;
     }
 
