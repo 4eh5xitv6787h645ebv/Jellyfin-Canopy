@@ -723,7 +723,7 @@ const buildBadgeElements = (session: SessionView): HTMLElement[] => {
 };
 
 // ── Session card builder ─────────────────────────────────────────────────
-const buildSessionCard = (session: SessionView): HTMLElement => {
+const buildSessionCard = (session: SessionView, index?: number): HTMLElement => {
     // Caller (renderPanel) only passes sessions with a NowPlayingItem.
     const item = session.NowPlayingItem as SessionNowPlaying;
     const ps: SessionPlayState = session.PlayState || {};
@@ -742,7 +742,7 @@ const buildSessionCard = (session: SessionView): HTMLElement => {
     card.className = 'je-as-card je-as-card-with-poster';
     // Stable key + structural signature for in-place live updates — see
     // applyLiveUpdate / panelMatchesSessions.
-    card.setAttribute('data-session-id', sessionCardKey(session));
+    card.setAttribute('data-session-id', sessionCardKey(session, index));
     card.setAttribute('data-live-sig', sessionSig(session));
 
     // ── Poster thumbnail ─────────────────────────────────────────────────
@@ -1107,8 +1107,18 @@ const buildSessionActions = (session: SessionView): HTMLElement => {
 // ── Live-update helpers ────────────────────────────────────────────────────
 // Stable per-card key. Admins get the real session Id (also the action target);
 // non-admins get a non-sensitive composite (fields already shown on the card).
-const sessionCardKey = (s: SessionView): string =>
-    String(s.Id || `${s.UserName || ''}|${s.Client || ''}|${s.DeviceName || ''}`);
+// The composite folds in the now-playing item id and a per-refresh occurrence
+// index so two non-admin sessions that share user/client/device (identical
+// composites) still resolve to DISTINCT cards — otherwise they collide and one
+// card stops receiving live updates. `index` is the position within the
+// fetched active-session list, which renderPanel / applyLiveUpdate /
+// panelMatchesSessions all iterate in the same order, so the key is consistent
+// across a refresh. Exported for unit testing.
+export const sessionCardKey = (s: SessionView, index?: number): string => {
+    if (s.Id) return String(s.Id);
+    const composite = `${s.UserName || ''}|${s.Client || ''}|${s.DeviceName || ''}|${s.NowPlayingItem?.Id || ''}`;
+    return index == null ? composite : `${composite}#${index}`;
+};
 
 // Structural signature: an in-place tick is only safe when the card's identity
 // AND its non-progress structure are unchanged. If the session switches item,
@@ -1166,7 +1176,7 @@ const updateFooter = (): void => {
  * card (which would reload posters and flicker). A structural change (a stream
  * started/stopped) returns false → a full renderPanel.
  */
-const panelMatchesSessions = (sessions: SessionView[]): boolean => {
+export const panelMatchesSessions = (sessions: SessionView[]): boolean => {
     const body = document.querySelector('#je-active-streams-panel .je-as-panel-body');
     if (!body) return false;
     const cards = Array.from(body.querySelectorAll('.je-as-card[data-session-id]'));
@@ -1176,7 +1186,7 @@ const panelMatchesSessions = (sessions: SessionView[]): boolean => {
     // item, flipped direct-play↔transcode, or changed a badge-driving quality
     // field must be rebuilt, not tick-updated.
     const renderedSig = new Map(cards.map(c => [c.getAttribute('data-session-id'), c.getAttribute('data-live-sig')]));
-    return active.every(s => renderedSig.get(sessionCardKey(s)) === sessionSig(s));
+    return active.every((s, i) => renderedSig.get(sessionCardKey(s, i)) === sessionSig(s));
 };
 
 /** Update progress bars / play-state in place, leaving card structure intact. */
@@ -1187,9 +1197,9 @@ const applyLiveUpdate = (sessions: SessionView[]): void => {
     body.querySelectorAll('.je-as-card[data-session-id]').forEach(c => byId.set(c.getAttribute('data-session-id'), c));
 
     const active = activeSessions(sessions);
-    for (const s of active) {
-        const card = byId.get(sessionCardKey(s));
-        if (!card) continue;
+    active.forEach((s, i) => {
+        const card = byId.get(sessionCardKey(s, i));
+        if (!card) return;
         const ps: SessionPlayState = s.PlayState || {};
         const item: SessionNowPlaying = s.NowPlayingItem || {};
         const pos = ps.PositionTicks || 0;
@@ -1215,7 +1225,7 @@ const applyLiveUpdate = (sessions: SessionView[]): void => {
                 ? (JE.t?.('downloads_status_paused') || 'Paused')
                 : (JE.t?.('toast_playing') || 'Playing');
         }
-    }
+    });
     updatePanelTitle(active);
     updateFooter();
 };
@@ -1257,7 +1267,7 @@ const renderPanel = (sessions: SessionView[] | null): void => {
         empty.textContent = JE.t?.('active_streams_none') || 'No active streams';
         body.appendChild(empty);
     } else {
-        active.forEach(session => body.appendChild(buildSessionCard(session)));
+        active.forEach((session, i) => body.appendChild(buildSessionCard(session, i)));
     }
 
     updateFooter();
