@@ -126,6 +126,11 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                 Public("TmdbEnabled", c => !string.IsNullOrWhiteSpace(c.TMDB_API_KEY)),
                 Public("ToastDuration", c => c.ToastDuration),
                 Public("HelpPanelAutocloseDelay", c => c.HelpPanelAutocloseDelay),
+                // Public (incl. pre-login): the boot loader reads this before the
+                // login screen paints so it can steer the client layout at the
+                // earliest possible point (see js/plugin.js applyLayoutEnforcement).
+                // It carries no secret — only the enforcement mode string.
+                Public("LayoutEnforcement", c => c.LayoutEnforcement),
                 Public("EnableCustomSplashScreen", c => c.EnableCustomSplashScreen),
                 Public("SplashScreenImageUrl", c => c.SplashScreenImageUrl),
                 // Public (incl. pre-login): the client-side asset-url map

@@ -162,6 +162,19 @@
                     <fieldset>
                         <legend class="sectionTitle">UI Preferences</legend>
                         <div class="configSection">
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="layoutEnforcement">Client Layout Enforcement</label>
+                                <select is="emby-select" id="layoutEnforcement" data-config-key="LayoutEnforcement" data-config-fallback="None" name="layoutEnforcement" class="emby-select">
+                                    <option value="None">None (let each user choose)</option>
+                                    <option value="DefaultExperimental">Default to modern layout (only where no choice made)</option>
+                                    <option value="ForceExperimental">Force modern layout (override everywhere)</option>
+                                    <option value="ForceLegacy">Force legacy layout (override everywhere)</option>
+                                </select>
+                            </div>
+                            <div class="je-setting-description" data-desc-for="layoutEnforcement">
+                                <div class="fieldDescription">Steer the Jellyfin 12 client layout for every device. The modern (experimental) vs legacy layout is normally a per-device choice each browser remembers. <strong>Default to modern</strong> nudges devices that have never picked a layout onto the modern one (no reload). <strong>Force</strong> overrides a device's stored choice on the next load (one reload on the first switch); a user can still toggle the layout in Jellyfin's display settings, but Force re-applies it on the next fresh load. <strong>None</strong> leaves the choice entirely to each user.</div>
+                            </div>
+
                             <div class="checkboxContainer"><label><input id="showWatchProgress" data-config-key="ShowWatchProgress" is="emby-checkbox" type="checkbox"/><span>Show watch progress</span></label></div>
                             <div class="je-setting-description" data-desc-for="showWatchProgress">
                                 <div class="fieldDescription">Show watch progress for items in item details page.</div>

@@ -106,6 +106,7 @@
   "JellyseerrUseMoreInfoModal": true,
   "LanguageTagsEnabled": true,
   "LanguageTagsPosition": "cfg-LanguageTagsPosition",
+  "LayoutEnforcement": "cfg-LayoutEnforcement",
   "LetterboxdEnabled": true,
   "LongPress2xEnabled": true,
   "MaintenanceModeAction": "cfg-MaintenanceModeAction",
@@ -126,7 +127,7 @@
   "RatingTagsPosition": "cfg-RatingTagsPosition",
   "RemoveContinueWatchingEnabled": true,
   "RequestApprovalsEnabled": false,
-  "ResolutionTagOrder": 1189,
+  "ResolutionTagOrder": 1190,
   "ReviewsExpandedByDefault": true,
   "Shortcuts": [
     {
@@ -264,8 +265,8 @@
   "ShowUserReviews": true,
   "ShowVideoCodecTag": false,
   "ShowWatchProgress": true,
-  "SourceTagOrder": 1218,
-  "SpecialFormatTagOrder": 1219,
+  "SourceTagOrder": 1219,
+  "SpecialFormatTagOrder": 1220,
   "SplashScreenImageUrl": "cfg-SplashScreenImageUrl",
   "SpoilerBlurEnabled": true,
   "SpoilerBlurStrictRefresh": true,
@@ -280,11 +281,11 @@
   "SpoilerStripTags": false,
   "SyncJellyseerrWatchlist": true,
   "TagCacheServerMode": false,
-  "TagsCacheTtlDays": 1245,
+  "TagsCacheTtlDays": 1246,
   "TagsHideOnHover": true,
   "ThemeSelectorEnabled": true,
   "TmdbEnabled": true,
-  "ToastDuration": 1248,
+  "ToastDuration": 1249,
   "UseIcons": false,
-  "VideoCodecTagOrder": 1251
+  "VideoCodecTagOrder": 1252
 }
