@@ -73,7 +73,7 @@
   "panel_settings_auto_skip": "Auto-Skip Settings",
   "panel_settings_auto_skip_intro": "Automatically Skip Intro",
   "panel_settings_auto_skip_outro": "Automatically Skip Outro",
-  "panel_settings_auto_skip_depends": "{{icon:info}} Depends on Intro-Skipper Plugin being available",
+  "panel_settings_auto_skip_depends": "{{icon:info}} Requires media segments for the item (e.g. from the Intro Skipper plugin)",
   "panel_settings_subtitles": "Subtitle Settings",
   "panel_settings_subtitles_style": "Style",
   "panel_settings_subtitles_size": "Size",
