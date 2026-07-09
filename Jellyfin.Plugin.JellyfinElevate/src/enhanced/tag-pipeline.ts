@@ -435,8 +435,10 @@ function resolveRenderTarget(el: HTMLElement): HTMLElement {
  * Process a single card: skip checks, render-target resolution, cache render
  * (server cache first, then localStorage/hot cache), queueing misses for the
  * batch fetch. Shared by the idle-scheduled chunk scan and the synchronous
- * pre-paint pass.
- * @param el - The cardImageContainer/listItemImage element.
+ * pre-paint pass. List rows (`.listItem`) are excluded here via shouldSkipElement
+ * (issue 34), covering the no-image `.listItemImage.cardImageContainer` variant
+ * the scan selector can still surface.
+ * @param el - The cardImageContainer element.
  * @param fadeIn - True for async (post-paint) passes: newly added overlays get
  *   the compositor-only fade so late tags appear smoothly. The pre-paint pass
  *   passes false — its tags are part of the card's first frame.
