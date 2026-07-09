@@ -156,6 +156,7 @@
   "JellyseerrUserIdCacheTtlMinutes",
   "LanguageTagsEnabled",
   "LanguageTagsPosition",
+  "LayoutEnforcement",
   "LetterboxdEnabled",
   "LongPress2xEnabled",
   "MaintenanceModeAction",

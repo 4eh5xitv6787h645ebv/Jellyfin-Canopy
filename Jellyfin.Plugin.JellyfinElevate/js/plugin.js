@@ -444,9 +444,196 @@
         });
     }
 
+    // Jellyfin 12 stores the client layout choice in the unprefixed localStorage
+    // key `layout` (appSettings.js — SETTING_KEY = 'layout'). On the shipped 12.0.0
+    // build the modern React/MUI layout is the value 'experimental' and the classic
+    // legacy layout is 'desktop' (LayoutMode = {auto, desktop, experimental, mobile,
+    // tv}); an unset key means the app falls back to appHost.getDefaultLayout()
+    // (Modern on browsers). jellyfin-web reads this once at module init to choose the
+    // route tree, so a change only takes effect on reload. See docs/v12-platform.md §1.
+    var LAYOUT_STORAGE_KEY = 'layout';
+    var LAYOUT_EXPERIMENTAL = 'experimental';
+    var LAYOUT_LEGACY = 'desktop';
+    var LAYOUT_ENFORCED_SESSION_KEY = 'je_layout_enforced';
+
+    /**
+     * Whether a stored `layout` value results in the MODERN layout being painted.
+     *
+     * Jellyfin's own browser default is modern, so an unset or 'auto' choice already
+     * paints modern. Only the known legacy modes paint the legacy app — the shipped
+     * 12.0.0 values ('desktop', 'mobile', 'tv') plus master's renamed
+     * '*-legacy' dialect. Anything ELSE (including a garbage/unknown value) counts
+     * as modern-painting: getSavedLayout() rejects unknown values and the app falls
+     * back to its modern default, so an unknown value never paints legacy.
+     *
+     * Detection tolerates BOTH Jellyfin-12 layout-value dialects (docs/v12-platform.md
+     * §1). The VALUES WRITTEN by enforcement below target the shipped 12.0.0 build
+     * ('experimental'/'desktop'); on a build using the master dialect an unknown
+     * written value is simply rejected by getSavedLayout() and the app keeps its
+     * modern default — so ForceExperimental still lands on modern there, while
+     * ForceLegacy silently degrades to modern (no diagnostic).
+     * @param {string|null|undefined} stored
+     * @returns {boolean}
+     */
+    function layoutRendersModern(stored) {
+        if (!stored) return true;
+        return stored !== LAYOUT_LEGACY
+            && stored !== 'mobile'
+            && stored !== 'tv'
+            && stored !== 'desktop-legacy'
+            && stored !== 'mobile-legacy';
+    }
+
+    /**
+     * Pure decision for the LayoutEnforcement admin setting.
+     *
+     * Returns what (if anything) the stored `layout` value should become and whether
+     * a one-shot reload is needed to make it take effect this load. A reload is only
+     * ever needed when the device is CURRENTLY painting the other layout — a device
+     * that already paints the target (including a fresh device on Jellyfin's modern
+     * default) is never reloaded; at most its stored value is made explicit.
+     *
+     * TV exception: a stored 'tv' layout is NEVER steered by either Force mode. A
+     * device deliberately in 10-foot TV mode must not be pulled onto the mouse/touch
+     * UI — jellyfin-web itself scopes the modern default to non-TV browsers.
+     *
+     * Kept pure and side-effect free so it can be unit-tested
+     * (see plugin-loader.test.ts).
+     *
+     * @param {string|undefined|null} mode  The LayoutEnforcement config value.
+     * @param {string|null} stored          The current localStorage['layout'] value.
+     * @returns {{ changed: boolean, value?: string, reload?: boolean }}
+     */
+    function resolveLayoutEnforcement(mode, stored) {
+        // TV mode is exempt from Force steering in both directions.
+        if (stored === 'tv' && (mode === 'ForceExperimental' || mode === 'ForceLegacy')) {
+            return { changed: false };
+        }
+
+        switch (mode) {
+            case 'ForceExperimental':
+                // A device on a (non-TV) legacy mode must reload into the modern app.
+                // A device already painting modern (unset/'auto'/'experimental'/
+                // unknown) is left as-is, but we persist 'experimental' so the choice
+                // is explicit — no reload.
+                if (!layoutRendersModern(stored)) {
+                    return { changed: true, value: LAYOUT_EXPERIMENTAL, reload: true };
+                }
+                return stored === LAYOUT_EXPERIMENTAL
+                    ? { changed: false }
+                    : { changed: true, value: LAYOUT_EXPERIMENTAL, reload: false };
+            case 'ForceLegacy':
+                // Only flip a device that would paint the modern layout — onto the
+                // DESKTOP legacy layout specifically (not form-factor aware). A device
+                // already on a legacy mode keeps its chosen legacy sub-layout.
+                return layoutRendersModern(stored)
+                    ? { changed: true, value: LAYOUT_LEGACY, reload: true }
+                    : { changed: false };
+            case 'DefaultExperimental':
+                // Apply ONLY when the device has never made an explicit choice — any
+                // stored value (even an unknown one) counts as an explicit choice and
+                // is left alone. An unset device already paints the modern layout by
+                // default, so this just persists that choice — no reload needed.
+                return stored
+                    ? { changed: false }
+                    : { changed: true, value: LAYOUT_EXPERIMENTAL, reload: false };
+            default:
+                // 'None' or any unknown value: never touch the user's layout.
+                return { changed: false };
+        }
+    }
+
+    /**
+     * Apply the LayoutEnforcement setting as early as possible during boot.
+     *
+     * Runs from the early public-config fetch below (pre-auth capable — the login
+     * screen is subject to enforcement too). Because jellyfin-web has already picked
+     * its layout by the time any plugin code runs (its bundles are deferred in
+     * <head>; our loader is deferred at end of <body>), a Force override cannot be
+     * applied in-place and instead does one guarded reload.
+     *
+     * Loop guard (Force must still win after a later manual switch): before a reload
+     * we record the target we are reloading toward in sessionStorage. On the next
+     * load, if the stored layout has CONVERGED to the target we clear the marker, so
+     * a fresh divergence (e.g. the user manually switches back via Jellyfin's Display
+     * UI) is allowed exactly one more reload. Only when we would reload toward a
+     * target we ALREADY reloaded toward and the value still has not stuck do we bail
+     * — that is the genuine loop signature (a write that never persists), and only
+     * that case is suppressed.
+     *
+     * @param {object|null} config The public-config payload.
+     * @returns {boolean} true if a reload was triggered (caller should stop).
+     */
+    function applyLayoutEnforcement(config) {
+        try {
+            const mode = config && config.LayoutEnforcement;
+            if (!mode || mode === 'None') return false;
+
+            let stored = null;
+            try {
+                stored = localStorage.getItem(LAYOUT_STORAGE_KEY);
+            } catch (e) {
+                return false; // storage unavailable — nothing we can safely do
+            }
+
+            const decision = resolveLayoutEnforcement(mode, stored);
+            if (!decision.changed) {
+                // Converged (or nothing to do): clear the loop marker so a future
+                // divergence can be re-enforced with one reload.
+                try {
+                    sessionStorage.removeItem(LAYOUT_ENFORCED_SESSION_KEY);
+                } catch (e) { /* ignore */ }
+                return false;
+            }
+
+            try {
+                localStorage.setItem(LAYOUT_STORAGE_KEY, decision.value);
+                // Read-back guard: some environments accept setItem but do not
+                // actually persist (ephemeral/in-memory/quota-broken storage). If
+                // the write did not stick, reloading would land right back here —
+                // an infinite reload loop in the storage's own failing domain
+                // (sessionStorage would fail identically, so the session guard
+                // below could not catch it). Bail without reloading instead.
+                if (localStorage.getItem(LAYOUT_STORAGE_KEY) !== decision.value) {
+                    return false;
+                }
+            } catch (e) {
+                return false; // cannot persist — do not reload into an unchanged state
+            }
+
+            if (!decision.reload) {
+                // Persisted the target without a reload (device already paints it):
+                // we are at the target, so clear any stale loop marker.
+                try {
+                    sessionStorage.removeItem(LAYOUT_ENFORCED_SESSION_KEY);
+                } catch (e) { /* ignore */ }
+                return false;
+            }
+
+            // Loop guard: bail only if we ALREADY reloaded toward this exact target
+            // this session and the value still has not stuck (a write that never
+            // persists) — otherwise a genuine new divergence gets its one reload.
+            try {
+                if (sessionStorage.getItem(LAYOUT_ENFORCED_SESSION_KEY) === decision.value) {
+                    return false;
+                }
+                sessionStorage.setItem(LAYOUT_ENFORCED_SESSION_KEY, decision.value);
+            } catch (e) {
+                return false; // no sessionStorage → skip reload rather than risk a loop
+            }
+
+            window.location.reload();
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
     /**
      * Loads the login image script early (checks config first).
-     * Also injects a maintenance banner when maintenance mode is active.
+     * Also injects a maintenance banner when maintenance mode is active, and applies
+     * the LayoutEnforcement setting (this is the earliest config-driven boot hook and
+     * runs pre-auth, so it is where layout steering belongs).
      */
     function loadLoginImageEarly() {
         if (typeof ApiClient === 'undefined') {
@@ -460,6 +647,11 @@
             url: ApiClient.getUrl('/JellyfinElevate/public-config'),
             dataType: 'json'
         }).then((config) => {
+            // Steer the client layout first: if this triggers a reload, skip the rest.
+            if (applyLayoutEnforcement(config)) {
+                return;
+            }
+
             // Show maintenance banner for all users (admins can dismiss it mentally)
             if (config?.MaintenanceModeEnabled === true) {
                 injectMaintenanceBanner(config.MaintenanceModeMessage);

@@ -106,6 +106,7 @@
   "JellyseerrUseMoreInfoModal": false,
   "LanguageTagsEnabled": false,
   "LanguageTagsPosition": "bottom-left",
+  "LayoutEnforcement": "None",
   "LetterboxdEnabled": false,
   "LongPress2xEnabled": false,
   "MaintenanceModeAction": "disable_accounts",
