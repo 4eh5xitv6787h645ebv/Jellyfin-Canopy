@@ -12,11 +12,18 @@
 // real library toggled to List view):
 //   - positive control: in the default GRID view the same items DO get tagged,
 //     so the pipeline is provably alive and fast this session;
-//   - the assertion: after switching the same library to List view, no `.listItem`
-//     row carries a `.je-tag-host`, any `*-overlay-container`, or a
-//     `data-je-*-tagged` marker (a zero-overlay result is strictly stronger than
-//     any "overlay narrower than X% of the thumbnail" heuristic).
-// It restores the library's original view-mode setting on the way out.
+//   - the assertion (real regression guard): after switching the same library to
+//     List view, no `.listItem` row carries any `*-overlay-container`. THIS is what
+//     the bug produced (card-sized overlays rendered into the tiny row thumbnail)
+//     and what the fix removes.
+//
+// The spec also checks that no row carries a `.je-tag-host` or a `data-je-*-tagged`
+// marker, but those are INVARIANT SANITY CHECKS, not proof of the fix: even with
+// the bug present neither artifact ever landed on a list row — `.je-tag-host` is
+// only ever created inside a `.cardScalable` (resolveRenderTarget) and the
+// `data-je-*-tagged` markers stamp onto `.card`, neither of which exists on a
+// `.listItem`. They guard against a future renderer regressing that invariant.
+// It restores the library's original view-mode setting on the way out (try/finally).
 import { test, expect, loginAs, showRoute, waitForHash } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -89,44 +96,53 @@ test.describe('list-view tags', () => {
         expect(gridTagged, 'grid CARD view must still get tags (regression guard)').toBeGreaterThan(0);
 
         // ── Switch the same library to LIST view and remount it ─────────────
-        await page.evaluate(({ k, v }) => localStorage.setItem(k, JSON.stringify(v)),
-            { k: viewKey, v: LIST_VIEW_SETTINGS });
-        // Navigate away and back so LibraryPage remounts and re-reads the setting.
-        await showRoute(page, '/home');
-        await waitForHash(page, '/home');
-        await showRoute(page, `/movies?topParentId=${libraryId}`);
-        await waitForHash(page, libraryId!);
-        await page.waitForSelector('.listItem[data-id]', { state: 'attached', timeout: 60_000 });
+        // From here we've mutated the library's view-mode setting, so the restore
+        // must run even if an assertion throws — otherwise a failure leaves the
+        // library pinned to list view for the next run.
+        try {
+            await page.evaluate(({ k, v }) => localStorage.setItem(k, JSON.stringify(v)),
+                { k: viewKey, v: LIST_VIEW_SETTINGS });
+            // Navigate away and back so LibraryPage remounts and re-reads the setting.
+            await showRoute(page, '/home');
+            await waitForHash(page, '/home');
+            await showRoute(page, `/movies?topParentId=${libraryId}`);
+            await waitForHash(page, libraryId!);
+            await page.waitForSelector('.listItem[data-id]', { state: 'attached', timeout: 60_000 });
 
-        // Let the pipeline settle: the sync pass runs inside the mutation batch
-        // and the idle scan within ~100ms, so any tagging it were going to do has
-        // happened well before this. (The grid control above proved it is active.)
-        await page.waitForLoadState('networkidle');
-        await page.waitForTimeout(1500);
+            // Let the pipeline settle: the sync pass runs inside the mutation batch
+            // and the idle scan within ~100ms, so any tagging it were going to do has
+            // happened well before this. (The grid control above proved it is active.)
+            await page.waitForLoadState('networkidle');
+            await page.waitForTimeout(1500);
 
-        const listState = await page.evaluate((attrs) => {
-            const rows = [...document.querySelectorAll('.listItem[data-id]')];
-            let overlays = 0, hosts = 0, marked = 0;
-            for (const row of rows) {
-                overlays += row.querySelectorAll('[class*="-overlay-container"]').length;
-                hosts += row.querySelectorAll('.je-tag-host').length;
-                for (const a of attrs) {
-                    if (row.matches(`[${a}]`) || row.querySelector(`[${a}]`)) { marked++; break; }
+            const listState = await page.evaluate((attrs) => {
+                const rows = [...document.querySelectorAll('.listItem[data-id]')];
+                let overlays = 0, hosts = 0, marked = 0;
+                for (const row of rows) {
+                    overlays += row.querySelectorAll('[class*="-overlay-container"]').length;
+                    hosts += row.querySelectorAll('.je-tag-host').length;
+                    for (const a of attrs) {
+                        if (row.matches(`[${a}]`) || row.querySelector(`[${a}]`)) { marked++; break; }
+                    }
                 }
-            }
-            return { rows: rows.length, overlays, hosts, marked };
-        }, enabled);
+                return { rows: rows.length, overlays, hosts, marked };
+            }, enabled);
 
-        expect(listState.rows, 'library should be showing list rows').toBeGreaterThan(0);
-        expect(listState.overlays, 'list rows must carry NO JE tag overlay containers').toBe(0);
-        expect(listState.hosts, 'list rows must carry NO je-tag-host').toBe(0);
-        expect(listState.marked, 'no list row may be stamped as tag-rendered').toBe(0);
-
-        // ── Restore the library's original view mode ────────────────────────
-        await page.evaluate(({ k, original }) => {
-            if (original === null) localStorage.removeItem(k);
-            else localStorage.setItem(k, original);
-        }, { k: viewKey, original: originalSetting });
+            expect(listState.rows, 'library should be showing list rows').toBeGreaterThan(0);
+            // The real regression guard: the bug rendered card-sized overlay
+            // containers into the tiny row thumbnail. The fix produces zero.
+            expect(listState.overlays, 'list rows must carry NO JE tag overlay containers').toBe(0);
+            // Invariant sanity checks (never landed on a list row even with the bug —
+            // see header): guard against a future renderer breaking that invariant.
+            expect(listState.hosts, 'list rows must carry NO je-tag-host (invariant)').toBe(0);
+            expect(listState.marked, 'no list row may be stamped as tag-rendered (invariant)').toBe(0);
+        } finally {
+            // ── Restore the library's original view mode ────────────────────
+            await page.evaluate(({ k, original }) => {
+                if (original === null) localStorage.removeItem(k);
+                else localStorage.setItem(k, original);
+            }, { k: viewKey, original: originalSetting });
+        }
 
         expect(consoleErrors.real()).toEqual([]);
     });
