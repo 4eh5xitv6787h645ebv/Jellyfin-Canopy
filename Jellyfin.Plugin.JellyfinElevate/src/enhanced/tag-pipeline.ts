@@ -450,8 +450,6 @@ function processCard(el: HTMLElement, fadeIn: boolean): void {
 
     const card = el.closest('.card');
     if (card && card.classList.contains('je-hidden')) return;
-    const listItem = el.closest('.listItem');
-    if (listItem && listItem.classList.contains('je-hidden')) return;
 
     // Skip contexts that should never have tags
     if (shouldSkipElement(el)) {
