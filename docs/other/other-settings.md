@@ -117,6 +117,29 @@ Override the language used by the plugin for all users.
 
 ---
 
+## Client Layout Enforcement
+
+*Display tab → UI Preferences*
+
+Steer the Jellyfin 12 client layout for every device from one server-side setting.
+
+Jellyfin 12 ships two layouts — the **modern** React/MUI layout and the classic **legacy** layout — and the choice is stored *per device* in each browser (Jellyfin's own **Display** settings). A device that once selected the legacy layout stays on it, even after the modern layout becomes the default, until someone changes it on that device. Because the choice lives in the browser, an admin has no native way to move everyone (for example, every phone) onto the modern layout. This setting is that lever.
+
+| Option | Behavior |
+|---|---|
+| **None** (default) | No change. Each user's device choice (or Jellyfin's own default) stands. |
+| **Default to modern layout** | Applies the modern layout only on devices that have **never** made an explicit choice. Never overrides a user's stored pick, and needs no reload. |
+| **Force modern layout** | Overrides every device onto the modern layout, including devices stored on legacy. The first switch on a device costs a single automatic reload. |
+| **Force legacy layout** | Symmetric hard override onto the classic layout. |
+
+!!! info "How Force interacts with a manual switch"
+    Force is applied at boot, so **Force wins**: a user can still flip the layout in Jellyfin's own Display settings, but on the next fresh load the plugin steers it back. The override never loops — it reloads at most once per browsing session, and only when the stored value actually needs to change.
+
+!!! note "Why this is admin-only (no per-user default)"
+    The layout is a property of the *device/browser*, not of the Jellyfin user account, so a per-user override would have no device to attach to (the same account on a phone and a TV can want different layouts). It is therefore a single server-wide admin setting.
+
+---
+
 ## Cache Management
 
 *Display tab*
