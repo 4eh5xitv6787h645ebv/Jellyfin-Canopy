@@ -505,6 +505,13 @@ const CSS_STYLES = `
       .je-hidden-admin-edit-toggle,
       .je-hidden-admin-add-btn {
         flex: 1 1 auto;
+        /* min-width:0 lets a control shrink below its content width, and
+           max-width:100% caps it to the row — together with the container's
+           flex-wrap this keeps a long localized label or admin username from
+           forcing horizontal overflow (it wraps to its own row instead). The
+           admin user-filter <select> also drops its desktop 240px cap. */
+        min-width: 0;
+        max-width: 100%;
         padding: 8px 12px;
         font-size: 12px;
       }
