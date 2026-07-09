@@ -486,13 +486,27 @@ const CSS_STYLES = `
         font-size: 1.3em;
       }
 
+      /* Compact touch toolbar instead of a column of full-width slabs: the
+         search field takes the first row, and the filter / unhide-all / admin
+         controls share the next row and wrap as needed. */
       .je-hidden-content-toolbar {
-        flex-direction: column;
-        align-items: stretch;
+        flex-wrap: wrap;
+        gap: 8px;
       }
 
       .je-hidden-content-page-search {
+        flex: 1 1 100%;
         max-width: none;
+      }
+
+      .je-hidden-scoped-filter,
+      .je-hidden-content-page-unhide-all,
+      .je-hidden-admin-user-filter,
+      .je-hidden-admin-edit-toggle,
+      .je-hidden-admin-add-btn {
+        flex: 1 1 auto;
+        padding: 8px 12px;
+        font-size: 12px;
       }
 
       .je-hidden-content-page-grid {

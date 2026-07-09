@@ -375,7 +375,7 @@ export function createPageContainer(): HTMLElement {
         page.innerHTML = `
         <div data-role="content">
           <div class="content-primary je-calendar-page">
-            <div id="je-calendar-container" style="padding-top: 5em; padding-left: 0.5em; padding-right: 0.5em;"></div>
+            <div id="je-calendar-container" class="je-interior-page-top" style="padding-left: 0.5em; padding-right: 0.5em;"></div>
           </div>
         </div>
       `;

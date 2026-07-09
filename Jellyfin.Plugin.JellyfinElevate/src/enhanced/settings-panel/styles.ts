@@ -22,6 +22,16 @@ JE.injectGlobalStyles = (): void => {
             @keyframes dice { 0%, 100% { transform: rotate(0deg) scale(1); } 10%, 30%, 50% { transform: rotate(-10deg) scale(1.1); } 20%, 40% { transform: rotate(10deg) scale(1.1); } 60% { transform: rotate(360deg) scale(1); } }
             button#randomItemButton:not(.loading):hover .material-icons { animation: dice 1.5s; }
             .layout-desktop #enhancedSettingsBtn { display: none !important; }
+            /* Shared top offset for JE standalone interior pages (Hidden Content,
+               Calendar, Requests) — the single source every one of those page
+               containers inherits, replacing a per-page hardcoded padding-top:5em.
+               Both the modern and legacy layouts already position .mainAnimatedPages
+               below the fixed header, so this padding is breathing room, not header
+               clearance; the old fixed 5em wasted roughly a third of a phone screen
+               (the page heading sat far down the viewport). Keyed on the viewport so
+               phones get a compact offset while desktop keeps its generous spacing. */
+            .je-interior-page-top { padding-top: 5em; }
+            @media (max-width: 768px) { .je-interior-page-top { padding-top: 1.25em; } }
             /* Remove menu items render like native action-sheet items; only dim them while the removal is in flight. */
             .actionSheetMenuItem[data-id="remove-continue-watching"]:disabled,
             .actionSheetMenuItem[data-id="je-multiselect-remove"]:disabled { opacity: 0.6; cursor: default; }
