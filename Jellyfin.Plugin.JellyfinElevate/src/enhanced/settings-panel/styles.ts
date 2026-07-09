@@ -25,6 +25,14 @@ JE.injectGlobalStyles = (): void => {
             /* Remove menu items render like native action-sheet items; only dim them while the removal is in flight. */
             .actionSheetMenuItem[data-id="remove-continue-watching"]:disabled,
             .actionSheetMenuItem[data-id="je-multiselect-remove"]:disabled { opacity: 0.6; cursor: default; }
+            /* Phone layout for the settings/help panel. Keyed on the VIEWPORT
+               (@media), not the legacy .layout-mobile html class: on the Jellyfin 12
+               modern (MUI) layout the html carries layout-desktop at every viewport
+               (docs/v12-platform.md §1 — "html classes cannot discriminate layouts"),
+               so a .layout-mobile-gated rule never applied on a real phone and the
+               panel kept its desktop widths (50vw settings tab, two 400px shortcut
+               columns) → horizontal clipping. The .layout-mobile selectors are kept
+               as a belt-and-braces for the legacy mobile layout. */
             .layout-mobile #jellyfin-elevate-panel { width: 95vw; max-width: 95vw; }
             .layout-mobile #jellyfin-elevate-panel .shortcuts-container { flex-direction: column; }
             .layout-mobile #jellyfin-elevate-panel #settings-content { width: auto !important; }
@@ -33,6 +41,22 @@ JE.injectGlobalStyles = (): void => {
             .layout-mobile #jellyfin-elevate-panel .close-helptext { display: none; }
             .layout-mobile #jellyfin-elevate-panel .footer-buttons { flex-direction: column; align-items: flex-end !important; width: 100%; gap: 10px; }
             .layout-mobile #jellyfin-elevate-panel .footer-buttons > * { justify-content: center; }
+            @media (max-width: 768px) {
+                /* Fill the viewport width; drop the desktop min-width (350px would
+                   overflow a 320px phone) and the 90vw inline max-width. */
+                #jellyfin-elevate-panel { width: 95vw !important; max-width: 95vw !important; min-width: 0 !important; }
+                /* Shortcuts: stack the two columns and release the 400px min-width
+                   inline on each so they fit the narrow panel instead of clipping. */
+                #jellyfin-elevate-panel .shortcuts-container { flex-direction: column; gap: 14px; }
+                #jellyfin-elevate-panel .shortcuts-container > div { min-width: 0 !important; flex: 1 1 auto !important; }
+                /* Settings tab: fill the panel instead of the fixed 50vw. */
+                #jellyfin-elevate-panel #settings-content { width: auto !important; }
+                #jellyfin-elevate-panel .panel-main-content { padding: 0 15px; }
+                #jellyfin-elevate-panel .panel-footer { flex-direction: row; gap: 16px; }
+                #jellyfin-elevate-panel .close-helptext { display: none; }
+                #jellyfin-elevate-panel .footer-buttons { flex-direction: column; align-items: flex-end !important; width: 100%; gap: 10px; }
+                #jellyfin-elevate-panel .footer-buttons > * { justify-content: center; }
+            }
             @keyframes longPressGlow { from { box-shadow: 0 0 5px 2px var(--primary-accent-color, #fff); } to { box-shadow: 0 0 8px 15px transparent; } }
             .headerUserButton.long-press-active { animation: longPressGlow 750ms ease-out; }
             #jellyfin-elevate-panel kbd {
