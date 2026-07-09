@@ -444,9 +444,112 @@
         });
     }
 
+    // Jellyfin 12 stores the client layout choice in the unprefixed localStorage
+    // key `layout` (appSettings.js — SETTING_KEY = 'layout'). On the shipped 12.0.0
+    // build the modern React/MUI layout is the value 'experimental' and the classic
+    // legacy layout is 'desktop' (LayoutMode = {auto, desktop, experimental, mobile,
+    // tv}); an unset key means the app falls back to appHost.getDefaultLayout()
+    // (Modern on browsers). jellyfin-web reads this once at module init to choose the
+    // route tree, so a change only takes effect on reload. See docs/v12-platform.md §1.
+    var LAYOUT_STORAGE_KEY = 'layout';
+    var LAYOUT_EXPERIMENTAL = 'experimental';
+    var LAYOUT_LEGACY = 'desktop';
+    var LAYOUT_ENFORCED_SESSION_KEY = 'je_layout_enforced';
+
+    /**
+     * Pure decision for the LayoutEnforcement admin setting.
+     *
+     * Returns what (if anything) the stored `layout` value should become and whether
+     * a one-shot reload is needed to make it take effect this load. Kept pure and
+     * side-effect free so it can be unit-tested directly (see plugin-loader.test.ts).
+     *
+     * @param {string|undefined|null} mode  The LayoutEnforcement config value.
+     * @param {string|null} stored          The current localStorage['layout'] value.
+     * @returns {{ changed: boolean, value?: string, reload?: boolean }}
+     */
+    function resolveLayoutEnforcement(mode, stored) {
+        switch (mode) {
+            case 'ForceExperimental':
+                return stored === LAYOUT_EXPERIMENTAL
+                    ? { changed: false }
+                    : { changed: true, value: LAYOUT_EXPERIMENTAL, reload: true };
+            case 'ForceLegacy':
+                return stored === LAYOUT_LEGACY
+                    ? { changed: false }
+                    : { changed: true, value: LAYOUT_LEGACY, reload: true };
+            case 'DefaultExperimental':
+                // Apply ONLY when the device has never made an explicit choice. The app
+                // already defaults to the modern layout on browsers when unset, so this
+                // just persists that choice — no reload needed. On a client whose native
+                // default is legacy it takes effect on the next load (soft default).
+                return stored
+                    ? { changed: false }
+                    : { changed: true, value: LAYOUT_EXPERIMENTAL, reload: false };
+            default:
+                // 'None' or any unknown value: never touch the user's layout.
+                return { changed: false };
+        }
+    }
+
+    /**
+     * Apply the LayoutEnforcement setting as early as possible during boot.
+     *
+     * Runs from the early public-config fetch below (pre-auth capable — the login
+     * screen is subject to enforcement too). Because jellyfin-web has already picked
+     * its layout by the time any plugin code runs (its bundles are deferred in
+     * <head>; our loader is deferred at end of <body>), a Force override cannot be
+     * applied in-place and instead does ONE guarded reload. The guard is twofold:
+     * we only reload when the stored value actually changes, and a sessionStorage
+     * flag caps enforcement to a single reload per browsing session so a reverted or
+     * non-persisting write can never cause a reload loop.
+     *
+     * @param {object|null} config The public-config payload.
+     * @returns {boolean} true if a reload was triggered (caller should stop).
+     */
+    function applyLayoutEnforcement(config) {
+        try {
+            const mode = config && config.LayoutEnforcement;
+            if (!mode || mode === 'None') return false;
+
+            let stored = null;
+            try {
+                stored = localStorage.getItem(LAYOUT_STORAGE_KEY);
+            } catch (e) {
+                return false; // storage unavailable — nothing we can safely do
+            }
+
+            const decision = resolveLayoutEnforcement(mode, stored);
+            if (!decision.changed) return false;
+
+            try {
+                localStorage.setItem(LAYOUT_STORAGE_KEY, decision.value);
+            } catch (e) {
+                return false; // cannot persist — do not reload into an unchanged state
+            }
+
+            if (!decision.reload) return false;
+
+            // One reload per session, max — prevents a loop if the write is later
+            // reverted (e.g. a manual layout switch) or fails to stick.
+            try {
+                if (sessionStorage.getItem(LAYOUT_ENFORCED_SESSION_KEY) === '1') return false;
+                sessionStorage.setItem(LAYOUT_ENFORCED_SESSION_KEY, '1');
+            } catch (e) {
+                return false; // no sessionStorage → skip reload rather than risk a loop
+            }
+
+            window.location.reload();
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
     /**
      * Loads the login image script early (checks config first).
-     * Also injects a maintenance banner when maintenance mode is active.
+     * Also injects a maintenance banner when maintenance mode is active, and applies
+     * the LayoutEnforcement setting (this is the earliest config-driven boot hook and
+     * runs pre-auth, so it is where layout steering belongs).
      */
     function loadLoginImageEarly() {
         if (typeof ApiClient === 'undefined') {
@@ -460,6 +563,11 @@
             url: ApiClient.getUrl('/JellyfinElevate/public-config'),
             dataType: 'json'
         }).then((config) => {
+            // Steer the client layout first: if this triggers a reload, skip the rest.
+            if (applyLayoutEnforcement(config)) {
+                return;
+            }
+
             // Show maintenance banner for all users (admins can dismiss it mentally)
             if (config?.MaintenanceModeEnabled === true) {
                 injectMaintenanceBanner(config.MaintenanceModeMessage);

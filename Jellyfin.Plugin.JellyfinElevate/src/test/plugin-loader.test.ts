@@ -125,4 +125,42 @@ describe('plugin.js loader guards', () => {
         expect(adminOn({})).toBe(true);
         expect(adminOff({})).toBe(false);
     });
+
+    // LAYOUT-1 — the LayoutEnforcement decision matrix. resolveLayoutEnforcement is
+    // the single pure core of layout steering; applyLayoutEnforcement only wraps it
+    // with storage + the reload guard, so pinning the decision here covers the logic.
+    it('resolveLayoutEnforcement returns the correct decision per mode + stored value (LAYOUT-1)', () => {
+        const fnSrc = extractFunctionSource('resolveLayoutEnforcement');
+        expect(fnSrc, 'resolveLayoutEnforcement not found').toBeTruthy();
+        // The function reads module-level layout-value constants; inject them.
+        type Decision = { changed: boolean; value?: string; reload?: boolean };
+        type ResolveLayout = (mode: string | null | undefined, stored: string | null) => Decision;
+        const resolve = eval(
+            '(function(){'
+            + "const LAYOUT_EXPERIMENTAL='experimental';"
+            + "const LAYOUT_LEGACY='desktop';"
+            + fnSrc
+            + ' return resolveLayoutEnforcement; })()',
+        ) as ResolveLayout;
+
+        // None / unknown / empty: never touch the layout.
+        expect(resolve('None', 'desktop')).toEqual({ changed: false });
+        expect(resolve(undefined, 'desktop')).toEqual({ changed: false });
+        expect(resolve('Bogus', null)).toEqual({ changed: false });
+
+        // ForceExperimental: flip a legacy/unset device, with a reload; no-op if already there.
+        expect(resolve('ForceExperimental', 'desktop')).toEqual({ changed: true, value: 'experimental', reload: true });
+        expect(resolve('ForceExperimental', null)).toEqual({ changed: true, value: 'experimental', reload: true });
+        expect(resolve('ForceExperimental', 'experimental')).toEqual({ changed: false });
+
+        // ForceLegacy: symmetric hard override.
+        expect(resolve('ForceLegacy', 'experimental')).toEqual({ changed: true, value: 'desktop', reload: true });
+        expect(resolve('ForceLegacy', 'desktop')).toEqual({ changed: false });
+
+        // DefaultExperimental: only when unset, and without a reload; never overrides a pick.
+        expect(resolve('DefaultExperimental', null)).toEqual({ changed: true, value: 'experimental', reload: false });
+        expect(resolve('DefaultExperimental', '')).toEqual({ changed: true, value: 'experimental', reload: false });
+        expect(resolve('DefaultExperimental', 'desktop')).toEqual({ changed: false });
+        expect(resolve('DefaultExperimental', 'experimental')).toEqual({ changed: false });
+    });
 });
