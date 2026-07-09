@@ -128,7 +128,7 @@ const PIPELINE_SKIP_SELECTORS = [
  *     card scan selector, so without the gate the legacy list would get tagged;
  *   - virtualized/recycled rows (re-scanned on reuse → always re-skipped).
  */
-function isListViewRow(el: HTMLElement): boolean {
+export function isListViewRow(el: HTMLElement): boolean {
     return el.closest('.listItem') !== null;
 }
 
