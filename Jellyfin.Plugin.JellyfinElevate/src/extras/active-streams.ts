@@ -725,7 +725,7 @@ const buildBadgeElements = (session: SessionView): HTMLElement[] => {
 };
 
 // ── Session card builder ─────────────────────────────────────────────────
-const buildSessionCard = (session: SessionView, index?: number): HTMLElement => {
+const buildSessionCard = (session: SessionView, index?: number, restore?: CardUiState): HTMLElement => {
     // Caller (renderPanel) only passes sessions with a NowPlayingItem.
     const item = session.NowPlayingItem as SessionNowPlaying;
     const ps: SessionPlayState = session.PlayState || {};
@@ -903,7 +903,7 @@ const buildSessionCard = (session: SessionView, index?: number): HTMLElement => 
     // Admin session-control actions (stop / targeted message). Only offered to
     // admins on sessions the client can actually remote-control.
     if (isAdmin() && session.SupportsRemoteControl && session.Id) {
-        main.appendChild(buildSessionActions(session));
+        main.appendChild(buildSessionActions(session, restore));
     }
 
     // RemoteEndPoint — null for non-admins (stripped server-side)
@@ -989,7 +989,7 @@ const sendSessionMessage = async (
 };
 
 /** The stop + message action row (with an inline per-session message form). */
-const buildSessionActions = (session: SessionView): HTMLElement => {
+const buildSessionActions = (session: SessionView, restore?: CardUiState): HTMLElement => {
     const sessionId = String(session.Id);
     const wrap = document.createElement('div');
 
@@ -1014,13 +1014,20 @@ const buildSessionActions = (session: SessionView): HTMLElement => {
         stopLabel.textContent = JE.t?.('session_control_stop') || 'Stop';
         if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null; }
     };
+    // Arm the two-click confirm state (also used to restore it across a rebuild),
+    // always (re)starting the 4s auto-reset timer so a restored confirm can't
+    // stay armed forever.
+    const armConfirm = (): void => {
+        stopBtn.classList.add('je-as-confirming');
+        stopLabel.textContent = JE.t?.('session_control_stop_confirm') || 'Confirm stop?';
+        if (confirmTimer) clearTimeout(confirmTimer);
+        confirmTimer = setTimeout(resetStop, 4000);
+    };
     // eslint-disable-next-line @typescript-eslint/no-misused-promises -- async click handler
     stopBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         if (!stopBtn.classList.contains('je-as-confirming')) {
-            stopBtn.classList.add('je-as-confirming');
-            stopLabel.textContent = JE.t?.('session_control_stop_confirm') || 'Confirm stop?';
-            confirmTimer = setTimeout(resetStop, 4000);
+            armConfirm();
             return;
         }
         resetStop();
@@ -1102,6 +1109,17 @@ const buildSessionActions = (session: SessionView): HTMLElement => {
         await sendSessionMessage(sessionId, text, 10000, resultEl);
         sendBtn.disabled = false;
     });
+
+    // Restore transient interaction state carried over from a structural
+    // rebuild (see captureCardUiState): a re-armed stop-confirm keeps its 4s
+    // auto-reset; a re-opened compose form keeps its typed text (no auto-focus,
+    // to avoid yanking focus on an unrelated background rebuild).
+    if (restore?.confirmArmed) armConfirm();
+    if (restore?.composeOpen) {
+        form.classList.add('je-as-msg-form-open');
+        msgBtn.classList.add('je-as-action-active');
+        textArea.value = restore.composeText;
+    }
 
     return wrap;
 };
@@ -1232,6 +1250,27 @@ const applyLiveUpdate = (sessions: SessionView[]): void => {
     updateFooter();
 };
 
+// ── Card UI-state preservation across structural rebuilds ──────────────────
+// A structural rebuild (renderPanel) discards every card DOM node. If an admin
+// had a per-session compose form open (with typed text) or a stop-confirm
+// armed, that transient interaction state would be lost mid-action. Capture it
+// keyed by card id before the rebuild and restore it (in buildSessionActions)
+// for cards still present afterwards.
+interface CardUiState { composeOpen: boolean; composeText: string; confirmArmed: boolean }
+
+const captureCardUiState = (body: Element): Map<string, CardUiState> => {
+    const state = new Map<string, CardUiState>();
+    body.querySelectorAll('.je-as-card[data-session-id]').forEach(card => {
+        const key = card.getAttribute('data-session-id');
+        if (!key) return;
+        const composeOpen = card.querySelector('.je-as-msg-form')?.classList.contains('je-as-msg-form-open') === true;
+        const composeText = card.querySelector<HTMLTextAreaElement>('.je-as-msg-form .je-as-broadcast-textarea')?.value || '';
+        const confirmArmed = card.querySelector('.je-as-action-btn-stop')?.classList.contains('je-as-confirming') === true;
+        if (composeOpen || confirmArmed) state.set(key, { composeOpen, composeText, confirmArmed });
+    });
+    return state;
+};
+
 // ── Panel renderer ───────────────────────────────────────────────────────
 const renderPanel = (sessions: SessionView[] | null): void => {
     const panel = document.getElementById('je-active-streams-panel');
@@ -1261,6 +1300,9 @@ const renderPanel = (sessions: SessionView[] | null): void => {
     const body = panel.querySelector('.je-as-panel-body');
     if (!body) return;
 
+    // Preserve open compose forms / armed stop-confirms across the rebuild.
+    const prevState = captureCardUiState(body);
+
     while (body.firstChild) body.removeChild(body.firstChild);
 
     if (!active.length) {
@@ -1269,7 +1311,7 @@ const renderPanel = (sessions: SessionView[] | null): void => {
         empty.textContent = JE.t?.('active_streams_none') || 'No active streams';
         body.appendChild(empty);
     } else {
-        active.forEach((session, i) => body.appendChild(buildSessionCard(session, i)));
+        active.forEach((session, i) => body.appendChild(buildSessionCard(session, i, prevState.get(sessionCardKey(session, i)))));
     }
 
     updateFooter();
