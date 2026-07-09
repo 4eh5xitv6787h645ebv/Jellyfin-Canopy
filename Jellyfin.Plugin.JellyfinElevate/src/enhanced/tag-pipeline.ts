@@ -117,11 +117,15 @@ const PIPELINE_SKIP_SELECTORS = [
  * played/favorite state (`listview.js` `getPrimaryMediaInfoHtml` + `listViewUserDataButtons`).
  * So the tag pipeline is a poster-CARD decorator only: every list row is excluded
  * here, at the single shared gate — once, before any renderer runs — rather than
- * by per-renderer patches. `closest('.listItem')` is robust across every shape a
- * list row takes:
- *   - `div.listItemImage` rows (library List view, season/episode lists);
- *   - the no-image variant native renders as `.listItemImage.cardImageContainer`
- *     (`listview.js:294`), which the card scan selector would otherwise catch;
+ * by per-renderer patches.
+ *
+ * In the modern React app this gate is belt-and-suspenders: the scan selectors are
+ * `.cardImageContainer` ONLY (never `.listItemImage`), so no list-row thumbnail is
+ * ever handed to the pipeline in the first place. The gate earns its keep on two
+ * remaining fronts, and `closest('.listItem')` covers both robustly:
+ *   - legacy web layouts, where the no-image row native-renders as
+ *     `.listItemImage.cardImageContainer` (`listview.js:294`) — that DOES match the
+ *     card scan selector, so without the gate the legacy list would get tagged;
  *   - virtualized/recycled rows (re-scanned on reuse → always re-skipped).
  */
 function isListViewRow(el: HTMLElement): boolean {
@@ -436,8 +440,8 @@ function resolveRenderTarget(el: HTMLElement): HTMLElement {
  * (server cache first, then localStorage/hot cache), queueing misses for the
  * batch fetch. Shared by the idle-scheduled chunk scan and the synchronous
  * pre-paint pass. List rows (`.listItem`) are excluded here via shouldSkipElement
- * (issue 34), covering the no-image `.listItemImage.cardImageContainer` variant
- * the scan selector can still surface.
+ * (issue 34) as legacy-layout belt-and-suspenders plus recycling safety — see
+ * isListViewRow for why the modern React scan can't surface a list row anyway.
  * @param el - The cardImageContainer element.
  * @param fadeIn - True for async (post-paint) passes: newly added overlays get
  *   the compositor-only fade so late tags appear smoothly. The pre-paint pass
