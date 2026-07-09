@@ -1111,15 +1111,23 @@ const sessionCardKey = (s: SessionView): string =>
     String(s.Id || `${s.UserName || ''}|${s.Client || ''}|${s.DeviceName || ''}`);
 
 // Structural signature: an in-place tick is only safe when the card's identity
-// AND its non-progress structure are unchanged. If the session switches item or
-// flips direct-play↔transcode, the signature changes → a full rebuild (so the
-// title/poster/badges never go stale under a moving progress bar).
-const sessionSig = (s: SessionView): string => {
+// AND its non-progress structure are unchanged. If the session switches item,
+// flips direct-play↔transcode, or its badge-driving quality fields shift, the
+// signature changes → a full rebuild (so the title/poster/badges never go stale
+// under a moving progress bar). The tick path (applyLiveUpdate) only refreshes
+// progress/state, so the live-varying badge fields (transcode bitrate /
+// resolution / framerate / reasons) must be folded in here — otherwise the
+// badges would freeze until an unrelated structural change forced a rebuild.
+// Exported for unit testing.
+export const sessionSig = (s: SessionView): string => {
     const item: SessionNowPlaying = s.NowPlayingItem || {};
     const ps: SessionPlayState = s.PlayState || {};
     const ts = s.TranscodingInfo;
     const mode = ts ? (ts.IsVideoDirect === false ? 'tc' : 'dp') : 'none';
-    return `${item.Id || ''}|${ps.PlayMethod || ''}|${mode}`;
+    const badgeSig = ts
+        ? `${ts.Bitrate || ''}/${ts.Width || ''}x${ts.Height || ''}/${ts.Framerate || ''}/${(ts.TranscodeReasons || []).join(',')}`
+        : '';
+    return `${item.Id || ''}|${ps.PlayMethod || ''}|${mode}|${badgeSig}`;
 };
 
 const activeSessions = (sessions: SessionView[] | null): SessionView[] => (sessions || []).filter(s => s.NowPlayingItem);
@@ -1165,7 +1173,8 @@ const panelMatchesSessions = (sessions: SessionView[]): boolean => {
     const active = activeSessions(sessions);
     if (cards.length !== active.length || active.length === 0) return false;
     // Match on identity AND structural signature: a card whose session switched
-    // item or flipped direct-play↔transcode must be rebuilt, not tick-updated.
+    // item, flipped direct-play↔transcode, or changed a badge-driving quality
+    // field must be rebuilt, not tick-updated.
     const renderedSig = new Map(cards.map(c => [c.getAttribute('data-session-id'), c.getAttribute('data-live-sig')]));
     return active.every(s => renderedSig.get(sessionCardKey(s)) === sessionSig(s));
 };
