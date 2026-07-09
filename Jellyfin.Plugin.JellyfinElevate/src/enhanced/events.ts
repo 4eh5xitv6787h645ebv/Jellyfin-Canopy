@@ -7,6 +7,7 @@ import { JE } from '../globals';
 import { createObserver } from '../core/dom-observer';
 import { isAnyModalOpen } from '../core/modal-a11y';
 import { toast } from '../core/ui-kit';
+import { stampLayoutClass } from '../core/layout';
 import { throttle } from './helpers';
 
 /**
@@ -343,6 +344,10 @@ JE.initializeElevateScript = function() {
 
     // Initial UI setup
     (JE as any).injectGlobalStyles();
+    // Stamp the modern/legacy layout class on <html> now that the app has
+    // booted (the header is normally rendered by this point). The stamp is
+    // idempotent and self-retries on navigation until the layout resolves.
+    stampLayoutClass();
     (JE as any).addPluginMenuButton();
     (JE as any).applySavedStylesWhenReady();
 

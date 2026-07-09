@@ -93,7 +93,11 @@ export function createPageContainer(): HTMLElement {
 
         const container = document.createElement("div");
         container.id = "je-hidden-content-container";
-        container.style.cssText = "padding-top: 5em; padding-left: 0.5em; padding-right: 0.5em;";
+        // Shared header-clearance offset (see JE.injectGlobalStyles
+        // .je-interior-page-top): full ~5em everywhere by default, compacted on
+        // phones only on the modern layout — replaces a hardcoded padding-top:5em.
+        container.className = "je-interior-page-top";
+        container.style.cssText = "padding-left: 0.5em; padding-right: 0.5em;";
 
         contentPrimary.appendChild(container);
         contentWrapper.appendChild(contentPrimary);

@@ -80,7 +80,13 @@ async function isBoxSetPage(itemId: string, signal?: AbortSignal): Promise<any> 
  * @returns {DocumentFragment} Fragment containing rendered card elements
  */
 function createCardsFragment(results: any[]): DocumentFragment {
-    return JE.discoveryFilter!.createCardsFragment(results, { cardClass: 'overflowPortraitCard' });
+    // Native library-grid sizing: portraitCard is percentage-width and matches
+    // the native poster rows on the same page at every breakpoint (33% on a
+    // phone → 3 across). overflowPortraitCard is vw-based (40vw on a phone → 2
+    // giant cards) — it is only meant for horizontal scrollers, but this
+    // section is a wrapping grid (vertical-wrap), so it produced cards ~2× the
+    // size of the native cards in the row above.
+    return JE.discoveryFilter!.createCardsFragment(results, { cardClass: 'portraitCard' });
 }
 
 /**
@@ -102,7 +108,10 @@ function createSectionContainer(title: string): HTMLElement {
 
     const itemsContainer = document.createElement('div');
     itemsContainer.setAttribute('is', 'emby-itemscontainer');
-    itemsContainer.className = 'itemsContainer padded-right vertical-wrap';
+    // Match the native library grid exactly: padded-left AND padded-right (3.3%
+    // each) so three 33.33% portraitCards fill the row without horizontal
+    // overflow. padded-right alone left the row 3.3% too wide on narrow phones.
+    itemsContainer.className = 'itemsContainer padded-left padded-right vertical-wrap';
     section.appendChild(itemsContainer);
 
     return section;

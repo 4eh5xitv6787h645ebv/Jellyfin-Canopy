@@ -440,7 +440,7 @@ export function createPageContainer(): HTMLElement {
         page.innerHTML = `
         <div data-role="content">
           <div class="content-primary je-downloads-page">
-            <div id="je-downloads-container" style="padding-top: 5em;"></div>
+            <div id="je-downloads-container" class="je-interior-page-top"></div>
           </div>
         </div>
       `;

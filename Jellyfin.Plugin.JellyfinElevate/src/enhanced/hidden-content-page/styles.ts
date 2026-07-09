@@ -486,13 +486,34 @@ const CSS_STYLES = `
         font-size: 1.3em;
       }
 
+      /* Compact touch toolbar instead of a column of full-width slabs: the
+         search field takes the first row, and the filter / unhide-all / admin
+         controls share the next row and wrap as needed. */
       .je-hidden-content-toolbar {
-        flex-direction: column;
-        align-items: stretch;
+        flex-wrap: wrap;
+        gap: 8px;
       }
 
       .je-hidden-content-page-search {
+        flex: 1 1 100%;
         max-width: none;
+      }
+
+      .je-hidden-scoped-filter,
+      .je-hidden-content-page-unhide-all,
+      .je-hidden-admin-user-filter,
+      .je-hidden-admin-edit-toggle,
+      .je-hidden-admin-add-btn {
+        flex: 1 1 auto;
+        /* min-width:0 lets a control shrink below its content width, and
+           max-width:100% caps it to the row — together with the container's
+           flex-wrap this keeps a long localized label or admin username from
+           forcing horizontal overflow (it wraps to its own row instead). The
+           admin user-filter <select> also drops its desktop 240px cap. */
+        min-width: 0;
+        max-width: 100%;
+        padding: 8px 12px;
+        font-size: 12px;
       }
 
       .je-hidden-content-page-grid {
