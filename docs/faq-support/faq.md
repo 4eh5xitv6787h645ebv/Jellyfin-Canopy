@@ -84,7 +84,7 @@ Auto-skip reads Jellyfin 12's native Media Segments and seeks to the segment's e
 
 - Skipping honors the segment's exact end (StartTicks/EndTicks), so a provider offset is respected.
 
-- Seeking back into a segment after an auto-skip will not immediately re-skip it (once per item).
+- Seeking back into a segment after an auto-skip will not immediately re-skip it; rewinding to before the segment and playing forward through it again skips again (matching Jellyfin's native Skip action).
 
 - Recap/Preview/Commercial segments are handled by Jellyfin's native per-type segment actions, not by these toggles.
 

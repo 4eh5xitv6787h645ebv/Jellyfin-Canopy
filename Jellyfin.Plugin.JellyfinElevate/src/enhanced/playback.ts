@@ -5,7 +5,7 @@
 
 import { JE } from '../globals';
 import { toast } from '../core/ui-kit';
-import { createAutoSkipEngine } from './auto-skip';
+import { createAutoSkipEngine, parseTranscodeOffsetTicksFromSrc } from './auto-skip';
 import type { AutoSkipEngine, MediaSegment, VideoLike } from './auto-skip';
 
 /**
@@ -540,6 +540,15 @@ function resolvePlayingItemId(video: VideoLike): string | null {
     return getCurrentVideoItemId();
 }
 
+/**
+ * Absolute-position offset for the engine: parsed from the element's own source
+ * URL (see parseTranscodeOffsetTicksFromSrc — the plugin-observable equivalent
+ * of native transcodingOffsetTicks; JF12 exposes no playbackManager to plugins).
+ */
+function getTranscodePositionOffsetTicks(video: VideoLike): number {
+    return parseTranscodeOffsetTicksFromSrc(video.currentSrc || '');
+}
+
 /** Fetch the item's provider-filtered media segments via the native REST API. */
 async function fetchMediaSegments(itemId: string): Promise<MediaSegment[]> {
     const api = JE.core?.api;
@@ -556,7 +565,8 @@ function autoSkipEngine(): AutoSkipEngine {
             shouldSkipType: segmentTypeEnabled,
             fetchSegments: fetchMediaSegments,
             resolveItemId: resolvePlayingItemId,
-            onSkipped: autoSkipToast
+            onSkipped: autoSkipToast,
+            getPositionOffsetTicks: getTranscodePositionOffsetTicks
         });
     }
     return _autoSkipEngine;

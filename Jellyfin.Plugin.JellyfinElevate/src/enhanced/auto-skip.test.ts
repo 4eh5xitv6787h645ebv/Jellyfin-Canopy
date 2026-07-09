@@ -1,13 +1,17 @@
 // Unit tests for the Auto-Skip v2 engine (src/enhanced/auto-skip.ts).
 //
 // The engine reads native Media Segments and seeks to the exact EndTicks on
-// `timeupdate`, mirroring the native MediaSegmentManager's guards. These tests
-// drive it with a light fake media element (jsdom does not implement playback)
-// and assert the boundary math, once-guard, seek-back guard, item-change reset
-// and type gating.
+// `timeupdate`, mirroring the native MediaSegmentManager's state machine
+// (backward-entry guard + last-ignored latch — NO permanent per-item once-set,
+// so a legitimate replay skips again exactly like native). These tests drive it
+// with a light fake media element (jsdom does not implement playback) and pin
+// the boundary math (including transcode position offsets), the guard state
+// machine, item-change reset, type gating, stale-fetch invalidation and the
+// fetch-failure fail-open path.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     createAutoSkipEngine,
+    parseTranscodeOffsetTicksFromSrc,
     TICKS_PER_SECOND,
     type AutoSkipDeps,
     type MediaSegment,
@@ -50,12 +54,18 @@ interface Harness {
 
 function makeHarness(
     segments: MediaSegment[],
-    opts: { intro?: boolean; outro?: boolean; segmentsByItem?: Record<string, MediaSegment[]> } = {}
+    opts: {
+        intro?: boolean;
+        outro?: boolean;
+        segmentsByItem?: Record<string, MediaSegment[]>;
+        fetchImpl?: (itemId: string) => Promise<MediaSegment[]>;
+    } = {}
 ): Harness {
     const intro = opts.intro ?? true;
     const outro = opts.outro ?? true;
     const onSkipped = vi.fn();
     const fetchSegments = vi.fn((itemId: string): Promise<MediaSegment[]> => {
+        if (opts.fetchImpl) return opts.fetchImpl(itemId);
         if (opts.segmentsByItem) return Promise.resolve(opts.segmentsByItem[itemId] ?? []);
         return Promise.resolve(segments);
     });
@@ -63,10 +73,12 @@ function makeHarness(
         shouldSkipType: (type) => (type === 'Intro' ? intro : type === 'Outro' ? outro : false),
         fetchSegments,
         resolveItemId: (v) => {
-            const m = v.currentSrc.match(/\/Videos\/([0-9a-fA-F-]{32,36})\b/);
+            const m = v.currentSrc.match(/\/[Vv]ideos\/([0-9a-fA-F-]{32,36})\b/);
             return m ? m[1].replace(/-/g, '').toLowerCase() : null;
         },
         onSkipped,
+        // Same derivation the real DOM glue uses.
+        getPositionOffsetTicks: (v) => parseTranscodeOffsetTicksFromSrc(v.currentSrc || ''),
     };
     const engine = createAutoSkipEngine(deps);
     return { engine, video: new FakeVideo(), onSkipped, fetchSegments };
@@ -104,6 +116,8 @@ describe('auto-skip engine', () => {
 
         h.video.seekTo(10); // user rewinds into the intro
         expect(h.video.currentTime).toBe(10); // stays — no insta-re-skip
+        h.video.seekTo(12); // keeps watching inside the segment
+        expect(h.video.currentTime).toBe(12); // ignored latch holds
         expect(h.onSkipped).toHaveBeenCalledTimes(1);
     });
 
@@ -120,6 +134,22 @@ describe('auto-skip engine', () => {
         h.video.seekTo(10); // seek back into the intro
         expect(h.video.currentTime).toBe(10); // lastTime>StartTicks guard → no skip
         expect(h.onSkipped).not.toHaveBeenCalled();
+    });
+
+    it('NATIVE PARITY: a legitimate replay (seek before start, play forward) skips again', async () => {
+        const h = makeHarness([intro5to30]);
+        h.engine.attach(h.video);
+        await flush();
+
+        h.video.seekTo(6);
+        expect(h.video.currentTime).toBe(30); // first skip
+        h.video.seekTo(35); // keep watching
+
+        h.video.seekTo(1); // rewind to BEFORE the segment start
+        expect(h.video.currentTime).toBe(1); // outside — nothing happens
+        h.video.seekTo(6); // play forward into the segment again
+        expect(h.video.currentTime).toBe(30); // skips again, exactly like native Skip
+        expect(h.onSkipped).toHaveBeenCalledTimes(2);
     });
 
     it('handles a segment starting at 0 ticks', async () => {
@@ -224,7 +254,7 @@ describe('auto-skip engine', () => {
 
         h.video.seekTo(6);
         expect(h.video.currentTime).toBe(30);
-        expect(h.engine._internal.actedCount).toBe(1);
+        expect(h.engine._internal.lastKey).toBe('a-intro');
 
         // Next episode: same element, new source.
         h.video.currentSrc = `/Videos/${itemB}/stream.mp4?MediaSourceId=y`;
@@ -232,7 +262,7 @@ describe('auto-skip engine', () => {
         h.video.tick();
         await flush();
         expect(h.engine._internal.itemId).toBe(itemB);
-        expect(h.engine._internal.actedCount).toBe(0); // guards cleared
+        expect(h.engine._internal.lastKey).toBeNull(); // guards cleared
 
         h.video.seekTo(9);
         expect(h.video.currentTime).toBe(40); // item B's own boundary
@@ -260,5 +290,55 @@ describe('auto-skip engine', () => {
         h.engine.attach(h.video);
         await flush();
         expect(h.video.listenerCount()).toBe(1);
+    });
+
+    // ── Transcode position offset (native transcodingOffsetTicks parity) ──
+
+    it('OFFSET: resume-from-middle of a progressive transcode does NOT mis-fire a spurious skip', async () => {
+        // Intro 5–30s ABSOLUTE. User resumed at 120s → non-copytimestamps
+        // progressive transcode whose element clock restarts at 0 and whose URL
+        // carries StartTimeTicks=120s.
+        const h = makeHarness([intro5to30]);
+        h.video.currentSrc =
+            `/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stream.mkv?MediaSourceId=x&StartTimeTicks=${sec(120)}&VideoCodec=h264`;
+        h.engine.attach(h.video);
+        await flush();
+
+        // Raw element time 6s = ABSOLUTE 126s — outside the intro. The old raw
+        // comparison would have read 6s and spuriously skipped.
+        h.video.seekTo(6);
+        expect(h.video.currentTime).toBe(6);
+        expect(h.onSkipped).not.toHaveBeenCalled();
+    });
+
+    it('OFFSET: correct boundary math for a segment crossed after a mid-transcode seek-restart', async () => {
+        // Segment 130–160s ABSOLUTE; transcode restarted at 120s → element
+        // clock is (absolute − 120s). Crossing element 10s = absolute 130s must
+        // skip to element (160−120)=40s, i.e. the exact absolute EndTicks.
+        const h = makeHarness([{ Id: 'mid', Type: 'Intro', StartTicks: sec(130), EndTicks: sec(160) }]);
+        h.video.currentSrc =
+            `/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stream.mkv?MediaSourceId=x&StartTimeTicks=${sec(120)}`;
+        h.engine.attach(h.video);
+        await flush();
+
+        h.video.seekTo(9); // absolute 129 — just before the segment
+        expect(h.video.currentTime).toBe(9);
+        h.video.seekTo(11); // absolute 131 — inside
+        expect(h.video.currentTime).toBe(40); // element-clock target for absolute 160s
+        expect(h.onSkipped).toHaveBeenCalledTimes(1);
+    });
+
+    it('OFFSET: CopyTimestamps=true / Static=true / hls blob sources keep an absolute clock', () => {
+        expect(parseTranscodeOffsetTicksFromSrc(
+            `/Videos/a/stream.mkv?StartTimeTicks=${sec(120)}&CopyTimestamps=true`
+        )).toBe(0);
+        expect(parseTranscodeOffsetTicksFromSrc(
+            '/Videos/a/stream.mkv?Static=true&MediaSourceId=x'
+        )).toBe(0);
+        expect(parseTranscodeOffsetTicksFromSrc(
+            `/videos/a/stream.mkv?starttimeticks=${sec(90)}` // case-insensitive params
+        )).toBe(sec(90));
+        expect(parseTranscodeOffsetTicksFromSrc('blob:http://host/uuid')).toBe(0); // hls.js
+        expect(parseTranscodeOffsetTicksFromSrc('')).toBe(0);
     });
 });

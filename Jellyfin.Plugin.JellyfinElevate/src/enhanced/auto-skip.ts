@@ -64,11 +64,60 @@ export interface AutoSkipDeps {
     resolveItemId(video: VideoLike): string | null;
     /** Called after a successful auto-skip (localized toast). */
     onSkipped(segment: MediaSegment): void;
+    /**
+     * Ticks to ADD to the media element's clock to get the absolute item
+     * position — native `streamInfo.transcodingOffsetTicks` (playbackmanager.js
+     * getCurrentTicks). Non-zero only for non-HLS progressive transcodes
+     * without CopyTimestamps, whose element clock restarts at the transcode's
+     * StartTimeTicks. 0 for direct play/stream and HLS (absolute clocks).
+     */
+    getPositionOffsetTicks(video: VideoLike): number;
 }
 
-/** Stable identity for a segment (used by the once-per-item guard). */
+/** Stable identity for a segment (used by the acted/ignored state machine). */
 function segmentKey(seg: MediaSegment): string {
     return seg.Id || `${seg.Type ?? 'Unknown'}:${seg.StartTicks ?? ''}:${seg.EndTicks ?? ''}`;
+}
+
+/**
+ * Derive the transcode position offset (ticks) from a media element source URL
+ * — the plugin-observable equivalent of native `streamInfo.transcodingOffsetTicks`
+ * (jellyfin-web playbackmanager.js getCurrentTicks/createStreamInfo, verified
+ * against the v12 source; JF12 does not expose playbackManager to plugins):
+ *   - non-HLS progressive transcode WITHOUT CopyTimestamps → the stream starts
+ *     at the transcode's start position and the element clock restarts at 0; the
+ *     server-built TranscodingUrl carries that position as `StartTimeTicks=`
+ *     (MediaBrowser.Model/Dlna/StreamInfo.ToUrl) → return it;
+ *   - CopyTimestamps=true progressive transcode → absolute clock → 0;
+ *   - Static=true direct play/stream → absolute clock → 0 (no StartTimeTicks);
+ *   - HLS via hls.js → `blob:` src with no query → 0, correct because the HLS
+ *     playlist spans the full item (native sets transcodingOffsetTicks=0 for hls).
+ * A mid-transcode seek restarts the stream with a NEW TranscodingUrl (new
+ * StartTimeTicks) and currentSrc reflects it, so the offset stays in sync.
+ */
+export function parseTranscodeOffsetTicksFromSrc(src: string): number {
+    try {
+        const q = src.indexOf('?');
+        if (q === -1) return 0;
+        // Param casing varies across producers (server ToUrl vs client-built
+        // urls) — compare case-insensitively like the native client does for
+        // copytimestamps.
+        let startTimeTicks = 0;
+        for (const [name, value] of new URLSearchParams(src.substring(q + 1))) {
+            const lower = name.toLowerCase();
+            if ((lower === 'static' || lower === 'copytimestamps') && value.toLowerCase() === 'true') {
+                return 0; // absolute element clock
+            }
+            if (lower === 'starttimeticks') {
+                const n = parseInt(value, 10);
+                if (Number.isFinite(n) && n > 0) startTimeTicks = n;
+            }
+        }
+        return startTimeTicks;
+    } catch (err) {
+        console.warn('🪼 Jellyfin Elevate: auto-skip offset parse failed', err);
+        return 0;
+    }
 }
 
 /**
@@ -83,12 +132,20 @@ export function createAutoSkipEngine(deps: AutoSkipDeps) {
     let itemId: string | null = null;
     let segments: MediaSegment[] = [];
     let fetchToken = 0;
-    // Previous evaluated position, in ticks. Native's `lastTime`: the seek-back
-    // guard compares the PREVIOUS position against a segment's start.
+    // Previous evaluated ABSOLUTE position, in ticks. Native's `lastTime`: the
+    // backward-entry guard compares the PREVIOUS position against a segment's
+    // start to tell "played forward into the segment" from "seeked back into it".
     let lastTimeTicks = -1;
-    // Segments already auto-skipped (or deliberately ignored) for the current
-    // item. Cleared on item change — the per-segment once-guard.
-    const acted = new Set<string>();
+    // Native-parity state machine (mirrors MediaSegmentManager's
+    // lastSegmentIndex + isLastSegmentIgnored, keyed by segment identity):
+    //  - a segment IGNORED (backward entry / sub-second) stays inert while it
+    //    remains the last-touched segment, so seeking back INTO a segment never
+    //    insta-re-skips;
+    //  - a LEGITIMATE REPLAY (seek to before StartTicks, then play forward
+    //    through) skips again, exactly like the native Skip action — there is
+    //    deliberately NO permanent per-item once-set.
+    let lastKey: string | null = null;
+    let lastIgnored = false;
 
     async function loadSegments(id: string): Promise<void> {
         const token = ++fetchToken;
@@ -114,9 +171,10 @@ export function createAutoSkipEngine(deps: AutoSkipDeps) {
         if (!id || id === itemId) return;
         // New item (next episode / new playback). Reset every per-item guard.
         itemId = id;
-        acted.clear();
         segments = [];
         lastTimeTicks = -1;
+        lastKey = null;
+        lastIgnored = false;
         void loadSegments(id);
     }
 
@@ -124,7 +182,12 @@ export function createAutoSkipEngine(deps: AutoSkipDeps) {
         if (!video) return;
         const t = video.currentTime;
         if (!Number.isFinite(t)) return;
-        const timeTicks = t * TICKS_PER_SECOND;
+        // Absolute item position = element clock + transcode offset (native
+        // getCurrentTicks parity). On a non-copytimestamps progressive
+        // transcode the element clock restarts at the transcode start position,
+        // so raw currentTime would desync every boundary comparison.
+        const offsetTicks = deps.getPositionOffsetTicks(video);
+        const timeTicks = t * TICKS_PER_SECOND + offsetTicks;
 
         if (segments.length) {
             for (const seg of segments) {
@@ -135,24 +198,30 @@ export function createAutoSkipEngine(deps: AutoSkipDeps) {
                 if (!deps.shouldSkipType(seg.Type)) continue;
 
                 const key = segmentKey(seg);
-                if (acted.has(key)) continue; // once-per-item guard (covers our own re-skips)
+                // Native parity: an ignored segment stays inert while it is the
+                // last-touched one; anything else (first touch, replay after a
+                // successful skip, a different segment) is evaluated afresh.
+                if (lastIgnored && lastKey === key) break;
+                lastKey = key;
 
-                // Seek-back guard (native parity): if the PREVIOUS position was
-                // already past the segment start, the user seeked back into it
-                // (or the native Skip action already jumped it) — do not re-skip.
+                // Backward-entry guard (native parity): the PREVIOUS position
+                // being past the segment start means the user seeked back INTO
+                // it (or the native Skip/IntroSkipper already jumped it) —
+                // ignore, never insta-re-skip.
                 if (lastTimeTicks > seg.StartTicks) {
-                    acted.add(key);
-                    continue;
+                    lastIgnored = true;
+                    break;
                 }
 
                 // Ignore sub-second segments (native parity — avoids churn).
                 if (seg.EndTicks - seg.StartTicks < MIN_SEGMENT_TICKS) {
-                    acted.add(key);
-                    continue;
+                    lastIgnored = true;
+                    break;
                 }
 
-                acted.add(key);
-                const endSeconds = seg.EndTicks / TICKS_PER_SECOND;
+                lastIgnored = false;
+                // Element-clock seek target for the ABSOLUTE EndTicks boundary.
+                const endSeconds = (seg.EndTicks - offsetTicks) / TICKS_PER_SECOND;
                 // duration can read 0/NaN before metadata loads — treat that as
                 // unknown (Infinity) so we still seek to the exact end; only a
                 // genuine finite duration clamps a segment that runs to the item
@@ -197,8 +266,9 @@ export function createAutoSkipEngine(deps: AutoSkipDeps) {
             listener = null;
             itemId = null;
             segments = [];
-            acted.clear();
             lastTimeTicks = -1;
+            lastKey = null;
+            lastIgnored = false;
             fetchToken++; // invalidate any in-flight fetch
         },
         /** Test/inspection hooks — not part of the public facade. */
@@ -211,8 +281,11 @@ export function createAutoSkipEngine(deps: AutoSkipDeps) {
             get itemId(): string | null {
                 return itemId;
             },
-            get actedCount(): number {
-                return acted.size;
+            get lastKey(): string | null {
+                return lastKey;
+            },
+            get lastIgnored(): boolean {
+                return lastIgnored;
             },
         },
     };
