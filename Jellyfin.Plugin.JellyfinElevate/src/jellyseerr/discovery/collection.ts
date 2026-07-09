@@ -80,7 +80,13 @@ async function isBoxSetPage(itemId: string, signal?: AbortSignal): Promise<any> 
  * @returns {DocumentFragment} Fragment containing rendered card elements
  */
 function createCardsFragment(results: any[]): DocumentFragment {
-    return JE.discoveryFilter!.createCardsFragment(results, { cardClass: 'overflowPortraitCard' });
+    // Native library-grid sizing: portraitCard is percentage-width and matches
+    // the native poster rows on the same page at every breakpoint (33% on a
+    // phone → 3 across). overflowPortraitCard is vw-based (40vw on a phone → 2
+    // giant cards) — it is only meant for horizontal scrollers, but this
+    // section is a wrapping grid (vertical-wrap), so it produced cards ~2× the
+    // size of the native cards in the row above.
+    return JE.discoveryFilter!.createCardsFragment(results, { cardClass: 'portraitCard' });
 }
 
 /**

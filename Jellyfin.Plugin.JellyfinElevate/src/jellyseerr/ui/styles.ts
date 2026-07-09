@@ -79,6 +79,23 @@ ui.addMainStyles = function () {
         .jellyseerr-request-button svg { width: 1.2em; height: 1.2em; flex-shrink: 0; vertical-align: middle; }
         .layout-mobile .jellyseerr-request-button svg { width: 1em; height: 1em; }
         .layout-mobile .jellyseerr-request-button span { font-size: 0.8em !important; }
+        /* Phone sizing for Seerr card overlays — keyed on the VIEWPORT, not the
+           inert .layout-mobile html class. On the Jellyfin 12 modern layout the
+           html carries layout-desktop at every viewport (docs/v12-platform.md
+           §1), so the .layout-mobile rules above never fired on a real phone:
+           the MOVIE/SERIES badge, provider-logo strip, request button and hide
+           overlay all stayed desktop-sized on top of the cards — most visible in
+           the collection "Missing from …" grid once the cards match native width. */
+        @media (max-width: 768px) {
+            .jellyseerr-media-badge { font-size: 0.75em; padding: 2px 7px; letter-spacing: 1px; }
+            .jellyseerr-request-button svg { width: 1em; height: 1em; }
+            .jellyseerr-request-button span { font-size: 0.8em !important; }
+            .jellyseerr-elsewhere-icons { gap: 0.4em; padding: 0.35em 0 0.15em 0; }
+            .jellyseerr-elsewhere-icons img { width: 1.4em; }
+            .jellyseerr-card .je-hide-btn,
+            .jellyseerr-card .je-hide-btn.je-already-hidden { width: 24px; height: 24px; font-size: 14px; }
+            .jellyseerr-card .je-hide-btn .material-icons { font-size: 14px; }
+        }
         .jellyseerr-request-button.jellyseerr-button-offline, .jellyseerr-request-button.jellyseerr-button-no-user { opacity: .6; cursor: not-allowed; }
         .jellyseerr-request-button.jellyseerr-button-request { background-color: #5a3fb8 !important; color: #fff !important; }
         .jellyseerr-request-button.jellyseerr-button-request:hover:not(:disabled) { background-color: #6b4bb5 !important; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(90, 63, 184, 0.4); }

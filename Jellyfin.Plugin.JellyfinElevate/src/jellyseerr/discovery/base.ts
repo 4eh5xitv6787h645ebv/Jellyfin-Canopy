@@ -125,7 +125,12 @@ function createDiscovery(spec: any): DiscoveryController {
     const sectionSelector = `.jellyseerr-${key}-discovery-section`;
     const isDualFeed = spec.mode === 'dual-feed';
     const isClientPaged = spec.mode === 'client-paged';
-    const cardClass = isDualFeed ? 'portraitCard' : 'overflowPortraitCard';
+    // All discovery sections render into wrapping grids (vertical-wrap), so every
+    // mode uses the native percentage-width portraitCard — matching the native
+    // library poster rows at every breakpoint. overflowPortraitCard (vw-based,
+    // for horizontal scrollers) previously made the detail-page sections
+    // (person "More from …") ~2× the native card size on phones.
+    const cardClass = 'portraitCard';
     const PAGE_SIZE = spec.pageSize || 40;
 
     // ---- Chassis state (all modes) -------------------------------------
