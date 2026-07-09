@@ -321,7 +321,9 @@ function createDiscovery(spec: any): DiscoveryController {
         itemsContainer.setAttribute('is', 'emby-itemscontainer');
         itemsContainer.className = isDualFeed
             ? 'vertical-wrap itemsContainer centered'
-            : 'itemsContainer padded-right vertical-wrap';
+            // Native library grid uses padded-left AND padded-right so 33.33%
+            // portraitCards fill the row without overflow on narrow phones.
+            : 'itemsContainer padded-left padded-right vertical-wrap';
         section.appendChild(itemsContainer);
 
         return section;

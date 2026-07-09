@@ -108,7 +108,10 @@ function createSectionContainer(title: string): HTMLElement {
 
     const itemsContainer = document.createElement('div');
     itemsContainer.setAttribute('is', 'emby-itemscontainer');
-    itemsContainer.className = 'itemsContainer padded-right vertical-wrap';
+    // Match the native library grid exactly: padded-left AND padded-right (3.3%
+    // each) so three 33.33% portraitCards fill the row without horizontal
+    // overflow. padded-right alone left the row 3.3% too wide on narrow phones.
+    itemsContainer.className = 'itemsContainer padded-left padded-right vertical-wrap';
     section.appendChild(itemsContainer);
 
     return section;
