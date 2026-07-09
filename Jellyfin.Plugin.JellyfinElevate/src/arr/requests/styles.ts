@@ -525,6 +525,14 @@ const CSS_STYLES = `
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
+        /* Phone layout: the desktop page reserves 2em padding + 85vw max-width
+           and lays cards out in a 340px-min grid — on a 360px phone that single
+           column is wider than the content box and scrolls horizontally. Fill
+           the width and drop to a single full-width card column. */
+        @media (max-width: 768px) {
+          .je-downloads-page { padding: 0.75em; max-width: 100%; }
+          .je-downloads-grid { grid-template-columns: 1fr; }
+        }
     `;
 
 /**
