@@ -90,11 +90,19 @@ test.describe('session control', () => {
         await expect(card).toContainText(itemName);
 
         // Session-control endpoints act on that session (admin-gated).
+        //
+        // NOTE: this asserts ENDPOINT-LEVEL success only. The streamed session is
+        // a REST-reported fixture with no live client attached (it reports
+        // SupportsRemoteControl=false), so the message is accepted and dispatched
+        // by the core but has no client to render it — we deliberately do NOT
+        // claim on-screen delivery here. Real client rendering of the core
+        // message dialog is out of scope for this fixture; the per-card compose /
+        // send UI is covered by the unit tests.
         const msg = await apiRaw(baseURL!, `/JellyfinElevate/active-streams/sessions/${target.Id}/message`, admin.token, {
             method: 'POST',
             body: JSON.stringify({ text: 'Please pause your stream', timeoutMs: 5000 }),
         });
-        expect(msg.status, 'admin message → 200').toBe(200);
+        expect(msg.status, 'admin message endpoint accepts the request → 200').toBe(200);
 
         const stop = await apiRaw(baseURL!, `/JellyfinElevate/active-streams/sessions/${target.Id}/stop`, admin.token, {
             method: 'POST',
