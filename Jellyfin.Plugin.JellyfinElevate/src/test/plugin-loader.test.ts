@@ -159,6 +159,9 @@ describe('plugin.js loader guards', () => {
         expect(resolve('ForceExperimental', null)).toEqual({ changed: true, value: 'experimental', reload: false });
         expect(resolve('ForceExperimental', 'auto')).toEqual({ changed: true, value: 'experimental', reload: false });
         expect(resolve('ForceExperimental', 'experimental')).toEqual({ changed: false });
+        // Master-dialect 'modern' is recognized as modern-painting (no reload).
+        expect(resolve('ForceExperimental', 'modern')).toEqual({ changed: true, value: 'experimental', reload: false });
+        expect(resolve('ForceLegacy', 'modern')).toEqual({ changed: true, value: 'desktop', reload: true });
 
         // ForceLegacy: only a modern-painting device flips (with a reload); an
         // already-legacy sub-layout (desktop/mobile/tv) is left alone.

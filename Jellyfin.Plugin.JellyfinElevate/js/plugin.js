@@ -457,15 +457,22 @@
     var LAYOUT_ENFORCED_SESSION_KEY = 'je_layout_enforced';
 
     /**
-     * Whether a stored `layout` value results in the MODERN (experimental) layout
-     * being painted. Jellyfin's own browser default is the modern layout, so an
-     * unset or 'auto' choice already paints modern; only the explicit legacy modes
-     * ('desktop', 'mobile', 'tv') paint the legacy app.
+     * Whether a stored `layout` value results in the MODERN layout being painted.
+     * Jellyfin's own browser default is modern, so an unset or 'auto' choice already
+     * paints modern; the explicit legacy modes ('desktop', 'mobile', 'tv', and the
+     * master-dialect '*-legacy') paint the legacy app.
+     *
+     * Detection tolerates BOTH Jellyfin-12 layout-value dialects (docs/v12-platform.md
+     * §1): the shipped 12.0.0 build's 'experimental' and master's renamed 'modern'.
+     * The VALUES WRITTEN by enforcement below target the shipped 12.0.0 build
+     * ('experimental'/'desktop'); on a build using the master dialect an unknown
+     * written value is simply rejected by getSavedLayout() and the app keeps its
+     * modern default — so ForceExperimental still lands on modern there.
      * @param {string|null|undefined} stored
      * @returns {boolean}
      */
     function layoutRendersModern(stored) {
-        return !stored || stored === 'auto' || stored === LAYOUT_EXPERIMENTAL;
+        return !stored || stored === 'auto' || stored === LAYOUT_EXPERIMENTAL || stored === 'modern';
     }
 
     /**
@@ -521,10 +528,16 @@
      * screen is subject to enforcement too). Because jellyfin-web has already picked
      * its layout by the time any plugin code runs (its bundles are deferred in
      * <head>; our loader is deferred at end of <body>), a Force override cannot be
-     * applied in-place and instead does ONE guarded reload. The guard is twofold:
-     * we only reload when the stored value actually changes, and a sessionStorage
-     * flag caps enforcement to a single reload per browsing session so a reverted or
-     * non-persisting write can never cause a reload loop.
+     * applied in-place and instead does one guarded reload.
+     *
+     * Loop guard (Force must still win after a later manual switch): before a reload
+     * we record the target we are reloading toward in sessionStorage. On the next
+     * load, if the stored layout has CONVERGED to the target we clear the marker, so
+     * a fresh divergence (e.g. the user manually switches back via Jellyfin's Display
+     * UI) is allowed exactly one more reload. Only when we would reload toward a
+     * target we ALREADY reloaded toward and the value still has not stuck do we bail
+     * — that is the genuine loop signature (a write that never persists), and only
+     * that case is suppressed.
      *
      * @param {object|null} config The public-config payload.
      * @returns {boolean} true if a reload was triggered (caller should stop).
@@ -542,7 +555,14 @@
             }
 
             const decision = resolveLayoutEnforcement(mode, stored);
-            if (!decision.changed) return false;
+            if (!decision.changed) {
+                // Converged (or nothing to do): clear the loop marker so a future
+                // divergence can be re-enforced with one reload.
+                try {
+                    sessionStorage.removeItem(LAYOUT_ENFORCED_SESSION_KEY);
+                } catch (e) { /* ignore */ }
+                return false;
+            }
 
             try {
                 localStorage.setItem(LAYOUT_STORAGE_KEY, decision.value);
@@ -550,13 +570,23 @@
                 return false; // cannot persist — do not reload into an unchanged state
             }
 
-            if (!decision.reload) return false;
+            if (!decision.reload) {
+                // Persisted the target without a reload (device already paints it):
+                // we are at the target, so clear any stale loop marker.
+                try {
+                    sessionStorage.removeItem(LAYOUT_ENFORCED_SESSION_KEY);
+                } catch (e) { /* ignore */ }
+                return false;
+            }
 
-            // One reload per session, max — prevents a loop if the write is later
-            // reverted (e.g. a manual layout switch) or fails to stick.
+            // Loop guard: bail only if we ALREADY reloaded toward this exact target
+            // this session and the value still has not stuck (a write that never
+            // persists) — otherwise a genuine new divergence gets its one reload.
             try {
-                if (sessionStorage.getItem(LAYOUT_ENFORCED_SESSION_KEY) === '1') return false;
-                sessionStorage.setItem(LAYOUT_ENFORCED_SESSION_KEY, '1');
+                if (sessionStorage.getItem(LAYOUT_ENFORCED_SESSION_KEY) === decision.value) {
+                    return false;
+                }
+                sessionStorage.setItem(LAYOUT_ENFORCED_SESSION_KEY, decision.value);
             } catch (e) {
                 return false; // no sessionStorage → skip reload rather than risk a loop
             }

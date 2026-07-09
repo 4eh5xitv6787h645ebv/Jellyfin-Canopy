@@ -25,26 +25,32 @@ const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 
 // Counts REAL document loads (full navigations/reloads), not SPA route changes,
 // via an init script that runs before page scripts on every navigation.
-const LOAD_COUNTER = () => {
-    const n = parseInt(sessionStorage.getItem('je_e2e_loads') || '0', 10) + 1;
-    sessionStorage.setItem('je_e2e_loads', String(n));
-};
-
 async function readLoads(page: any): Promise<number> {
     return page.evaluate(() => parseInt(sessionStorage.getItem('je_e2e_loads') || '0', 10));
 }
 
-/** Seed a starting layout on the login-screen origin and arm the load counter. */
-async function seedLayout(page: any, layout: string): Promise<void> {
+/**
+ * Seed a starting layout and arm the document-load counter via an init script
+ * that runs BEFORE any app/plugin script on every load — so the seed is in place
+ * before the app (and the loader's enforcement) first reads it, and the counter
+ * catches the initial load plus any enforcement reload. Seeding is one-shot
+ * (guarded by a sentinel) so it does not fight the enforcement reload.
+ */
+async function armPage(page: any, seedLayout: string | null): Promise<void> {
+    await page.addInitScript((seed: string | null) => {
+        try {
+            if (!sessionStorage.getItem('je_e2e_armed')) {
+                sessionStorage.setItem('je_e2e_armed', '1');
+                sessionStorage.setItem('je_e2e_loads', '0');
+                sessionStorage.removeItem('je_layout_enforced');
+                if (seed === null) localStorage.removeItem('layout');
+                else localStorage.setItem('layout', seed);
+            }
+            const n = parseInt(sessionStorage.getItem('je_e2e_loads') || '0', 10) + 1;
+            sessionStorage.setItem('je_e2e_loads', String(n));
+        } catch (e) { /* storage unavailable in this env — test will surface it */ }
+    }, seedLayout);
     await page.goto('/web/', { waitUntil: 'domcontentloaded' });
-    await page.evaluate((seed: string) => {
-        localStorage.setItem('layout', seed);
-        sessionStorage.removeItem('je_layout_enforced');
-        sessionStorage.setItem('je_e2e_loads', '0');
-    }, layout);
-    // Registered after the initial goto so it counts only subsequent (our reload
-    // + any plugin-triggered) document loads.
-    await page.addInitScript(LOAD_COUNTER);
 }
 
 test.describe('layout enforcement', () => {
@@ -76,8 +82,8 @@ test.describe('layout enforcement', () => {
     test('ForceExperimental flips a legacy-set client to experimental exactly once (no loop)', async ({ page, consoleErrors, baseURL }) => {
         await setMode(baseURL!, 'ForceExperimental');
 
-        await seedLayout(page, 'desktop');
-        await page.reload({ waitUntil: 'domcontentloaded' });
+        // Seed 'desktop' before the first app read; the enforcement reload flips it.
+        await armPage(page, 'desktop');
 
         // The flip completes via the enforcement reload: layout becomes
         // 'experimental' AND a second document load has occurred.
@@ -87,14 +93,15 @@ test.describe('layout enforcement', () => {
             undefined,
             { timeout: 60_000 }
         );
-        expect(await page.evaluate(() => sessionStorage.getItem('je_layout_enforced'))).toBe('1');
 
         consoleErrors.reset();
         // Loop probe: after settling, the document-load count must be exactly 2
-        // (our reload + one enforcement reload) and must not keep growing.
+        // (initial load + one enforcement reload) and must not keep growing. The
+        // loop marker is cleared once the layout converges, so it must be null.
         await page.waitForTimeout(5_000);
         expect(await readLoads(page), 'exactly one enforcement reload — no loop').toBe(2);
         expect(await page.evaluate(() => localStorage.getItem('layout'))).toBe('experimental');
+        expect(await page.evaluate(() => sessionStorage.getItem('je_layout_enforced')), 'loop marker cleared after convergence').toBeNull();
 
         assertNoRuntimeErrors(consoleErrors);
     });
@@ -102,16 +109,14 @@ test.describe('layout enforcement', () => {
     test('None leaves a legacy-set client untouched (no reload)', async ({ page, baseURL }) => {
         await setMode(baseURL!, 'None');
 
-        await seedLayout(page, 'desktop');
-
-        // Reload and wait for the loader's public-config fetch to resolve — that
-        // is when the (no-op) enforcement decision is made.
+        // Seed 'desktop' before the first app read; wait for the loader's
+        // public-config fetch (when the no-op decision is made) to resolve.
         await Promise.all([
             page.waitForResponse(
                 (r: any) => /\/JellyfinElevate\/public-config/.test(r.url()),
                 { timeout: 60_000 }
             ),
-            page.reload({ waitUntil: 'domcontentloaded' }),
+            armPage(page, 'desktop'),
         ]);
 
         // Give any (erroneous) reload a chance to manifest, then assert none did.
