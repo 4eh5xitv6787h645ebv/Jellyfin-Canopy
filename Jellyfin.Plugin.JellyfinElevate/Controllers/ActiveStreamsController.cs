@@ -101,9 +101,6 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
                         // targeted message). The client hides the action buttons
                         // when false so admins aren't offered a no-op.
                         SupportsRemoteControl = s.SupportsRemoteControl,
-                        // Device id is admin-only (used for nothing client-side
-                        // today, kept admin-scoped like the IP for parity).
-                        DeviceId = isAdmin ? s.DeviceId : null,
                         // IP only for admins
                         RemoteEndPoint = isAdmin ? s.RemoteEndPoint : null,
                         LastActivityDate = s.LastActivityDate,

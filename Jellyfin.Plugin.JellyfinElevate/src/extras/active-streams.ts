@@ -53,7 +53,9 @@ interface SessionTranscoding {
     Framerate?: number;
 }
 interface SessionView {
-    Id?: string;
+    // Null (not just absent) for non-admin viewers: the server redacts the
+    // session id server-side, mirroring the RemoteEndPoint redaction below.
+    Id?: string | null;
     UserId?: string;
     UserName?: string;
     Client?: string;
