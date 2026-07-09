@@ -341,4 +341,56 @@ describe('auto-skip engine', () => {
         expect(parseTranscodeOffsetTicksFromSrc('blob:http://host/uuid')).toBe(0); // hls.js
         expect(parseTranscodeOffsetTicksFromSrc('')).toBe(0);
     });
+
+    // ── Fetch robustness ──
+
+    it('STALE FETCH: an older fetch resolving after a newer one must not apply', async () => {
+        const itemA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+        const itemB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+        let resolveA!: (v: MediaSegment[]) => void;
+        const h = makeHarness([], {
+            fetchImpl: (id) => {
+                if (id === itemA) return new Promise<MediaSegment[]>((r) => { resolveA = r; });
+                return Promise.resolve([{ Id: 'b-intro', Type: 'Intro', StartTicks: sec(8), EndTicks: sec(40) }]);
+            },
+        });
+        h.engine.attach(h.video); // item A fetch left pending
+        h.video.currentSrc = `/Videos/${itemB}/stream.mp4?MediaSourceId=y`;
+        h.video.tick(); // item change → item B fetch resolves immediately
+        await flush();
+        expect(h.engine._internal.itemId).toBe(itemB);
+        expect(h.engine._internal.segments.map((s) => s.Id)).toEqual(['b-intro']);
+
+        // Item A's STALE fetch finally lands — it must be dropped.
+        resolveA([{ Id: 'a-intro', Type: 'Intro', StartTicks: sec(5), EndTicks: sec(30) }]);
+        await flush();
+        expect(h.engine._internal.segments.map((s) => s.Id)).toEqual(['b-intro']);
+
+        h.video.seekTo(6); // inside A's segment only — must NOT skip
+        expect(h.video.currentTime).toBe(6);
+        h.video.seekTo(9); // inside B's segment — skips to B's boundary
+        expect(h.video.currentTime).toBe(40);
+        expect(h.onSkipped).toHaveBeenCalledTimes(1);
+    });
+
+    it('FETCH FAILURE: fails open with a single warn — no throw, no skips, no spam', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const h = makeHarness([], {
+            fetchImpl: () => Promise.reject(new Error('segments endpoint down')),
+        });
+        expect(() => h.engine.attach(h.video)).not.toThrow();
+        await flush();
+
+        const segmentWarns = () => warn.mock.calls.filter(
+            (c) => typeof c[0] === 'string' && c[0].includes('media-segments fetch failed')
+        );
+        expect(segmentWarns()).toHaveLength(1);
+
+        // Playback continues untouched; ticks neither skip nor warn again.
+        h.video.seekTo(6);
+        h.video.seekTo(20);
+        expect(h.video.currentTime).toBe(20);
+        expect(h.onSkipped).not.toHaveBeenCalled();
+        expect(segmentWarns()).toHaveLength(1); // still exactly one warn
+    });
 });
