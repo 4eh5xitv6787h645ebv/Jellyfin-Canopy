@@ -8,14 +8,16 @@
 // does ONE guarded reload. These specs prove:
 //   1. ForceExperimental flips a legacy-set client to experimental with EXACTLY
 //      one enforcement reload and no reload loop.
-//   2. None leaves a legacy-set client untouched (no reload, value preserved).
+//   2. ForceExperimental leaves an already-experimental client alone — the
+//      converged branch that protects every modern device from a reload per visit.
+//   3. None leaves a legacy-set client untouched (no reload, value preserved).
 //
 // Enforcement runs from the pre-auth early public-config fetch, so these specs
 // exercise it on the login screen without signing in.
 //
-// State hygiene: the admin token + original config are captured once; the
-// enforcement value the user wants (ForceExperimental) is re-asserted after the
-// suite so the server is left in the desired live state.
+// State hygiene: the admin token + original config are captured once and the
+// CAPTURED LayoutEnforcement value is restored after the suite (convention:
+// every spec restores the shared config exactly as found).
 import { test, expect, assertNoRuntimeErrors, USERS } from './fixtures/auth';
 import { api, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
 
@@ -75,8 +77,9 @@ test.describe('layout enforcement', () => {
     });
 
     test.afterAll(async ({ baseURL }) => {
-        // Leave the server on the value the user wants: ForceExperimental.
-        await setMode(baseURL!, 'ForceExperimental');
+        // Restore the CAPTURED original enforcement value (suite convention:
+        // every spec restores the shared config exactly as found).
+        await setMode(baseURL!, (original.LayoutEnforcement as string) ?? 'None');
     });
 
     test('ForceExperimental flips a legacy-set client to experimental exactly once (no loop)', async ({ page, consoleErrors, baseURL }) => {
@@ -104,6 +107,26 @@ test.describe('layout enforcement', () => {
         expect(await page.evaluate(() => sessionStorage.getItem('je_layout_enforced')), 'loop marker cleared after convergence').toBeNull();
 
         assertNoRuntimeErrors(consoleErrors);
+    });
+
+    test('ForceExperimental leaves an already-experimental client alone (no reload)', async ({ page, baseURL }) => {
+        await setMode(baseURL!, 'ForceExperimental');
+
+        // Seed 'experimental' — the converged branch. This is the path that
+        // protects every already-modern device from a reload on every visit.
+        await Promise.all([
+            page.waitForResponse(
+                (r: any) => /\/JellyfinElevate\/public-config/.test(r.url()),
+                { timeout: 60_000 }
+            ),
+            armPage(page, 'experimental'),
+        ]);
+
+        // Give any (erroneous) reload a chance to manifest, then assert none did.
+        await page.waitForTimeout(4_000);
+        expect(await readLoads(page), 'converged device must not reload').toBe(1);
+        expect(await page.evaluate(() => localStorage.getItem('layout'))).toBe('experimental');
+        expect(await page.evaluate(() => sessionStorage.getItem('je_layout_enforced')), 'no loop marker on the converged path').toBeNull();
     });
 
     test('None leaves a legacy-set client untouched (no reload)', async ({ page, baseURL }) => {
