@@ -13,6 +13,7 @@ import type { ApiApi, LifecycleApi, LifecycleHandle, NavigationApi, PluginConfig
 const JE = JEBase as typeof JEBase & {
     activeStreams?: { initialize(): void; destroy(): void };
     t?: (key: string, params?: Record<string, unknown>) => string;
+    toast?: (html: string, duration?: number) => void;
     currentUser?: { Policy?: { IsAdministrator?: boolean } };
     pluginConfig: PluginConfig & { ActiveStreamsEnabled?: boolean; ActiveStreamsAllUsers?: boolean };
     core: { api: ApiApi; navigation: NavigationApi; lifecycle: LifecycleApi; ui?: UiApi };
@@ -22,6 +23,67 @@ const JE = JEBase as typeof JEBase & {
         onBodyMutation?: (id: string, cb: () => void) => { unsubscribe(): void };
     };
 };
+
+// ── Session shape (the /active-streams/sessions projection) ────────────────
+interface SessionMediaStream { Type?: string; Codec?: string; BitRate?: number }
+interface SessionNowPlaying {
+    Id?: string;
+    Type?: string;
+    Name?: string;
+    SeriesName?: string;
+    RunTimeTicks?: number;
+    ProductionYear?: number;
+    ParentIndexNumber?: number;
+    IndexNumber?: number;
+    ImageTags?: Record<string, string> | null;
+    SeriesId?: string;
+    SeriesPrimaryImageTag?: string;
+    MediaStreams?: SessionMediaStream[] | null;
+}
+interface SessionPlayState { IsPaused?: boolean; PositionTicks?: number; PlayMethod?: string }
+interface SessionTranscoding {
+    IsVideoDirect?: boolean;
+    VideoCodec?: string;
+    AudioCodec?: string;
+    Bitrate?: number;
+    TranscodeReasons?: string[];
+    CompletionPercentage?: number;
+    Width?: number;
+    Height?: number;
+    Framerate?: number;
+}
+interface SessionView {
+    // Null (not just absent) for non-admin viewers: the server redacts the
+    // session id server-side, mirroring the RemoteEndPoint redaction below.
+    Id?: string | null;
+    UserId?: string;
+    UserName?: string;
+    Client?: string;
+    DeviceName?: string;
+    SupportsRemoteControl?: boolean;
+    RemoteEndPoint?: string | null;
+    NowPlayingItem?: SessionNowPlaying | null;
+    PlayState?: SessionPlayState | null;
+    TranscodingInfo?: SessionTranscoding | null;
+}
+
+const isAdmin = (): boolean => JE?.currentUser?.Policy?.IsAdministrator === true;
+
+// Fire a transient toast if the host exposes one (no-op under jsdom tests).
+// Callers only ever pass trusted localized strings (no session-derived data),
+// so no escaping is needed at these sites (X1).
+const notify = (message: string): void => {
+    try { (JE.toast || JE.core?.ui?.toast)?.(message); } catch (_) { /* non-fatal */ }
+};
+
+// ── Live-update cadence ────────────────────────────────────────────────────
+// The panel is a live surface. While it is OPEN we drive updates from the core
+// `Sessions` websocket message (the same push the native dashboard uses) and
+// fall back to a page-scoped, visibility-gated interval when the socket bridge
+// is unavailable (PERF R5: page-scoped + visibility-gated + push-nudged — never
+// a standing DOM poll). Everything is torn down when the panel closes.
+const LIVE_FALLBACK_MS = 5000;   // fallback cadence when no websocket push
+const LIVE_NUDGE_DEBOUNCE_MS = 800; // coalesce websocket bursts (~1.5s cadence)
 
 const LOG = '🪼 Jellyfin Elevate:';
 
@@ -41,6 +103,13 @@ let _headerInjectedOnce = false;
 // pending retry — otherwise a disable racing the retry window re-injects the
 // full button + panel + poll after teardown (zombie UI).
 let _headerRetryTimer: ReturnType<typeof setTimeout> | null = null;
+// ── Live-update resources (only alive while the panel is open) ──────────────
+let _liveTimer: ReturnType<typeof setInterval> | null = null;
+let _liveUnsub: (() => void) | null = null;
+let _visListener: (() => void) | null = null;
+let _nudgeTimer: ReturnType<typeof setTimeout> | null = null;
+// Monotonic refresh counter — see updateCounter's request-ordering guard.
+let _refreshSeq = 0;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 const ticksToTime = (ticks: number): string => {
@@ -502,7 +571,76 @@ const injectStyles = (): void => {
   color: rgba(255,193,7,0.8);
   line-height: 1.4;
   padding: 3px 0 1px;
-}`;
+}
+
+/* ── Per-session admin actions (stop / message) ────────────────────────── */
+.je-as-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.je-as-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 6px;
+  color: rgba(255,255,255,0.75);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 9px;
+  font-family: inherit;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.je-as-action-btn:hover { background: rgba(255,255,255,0.14); color: #fff; }
+.je-as-action-btn .material-icons { font-size: 15px; }
+.je-as-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.je-as-action-btn-stop { color: #fca5a5; border-color: rgba(239,68,68,0.35); }
+.je-as-action-btn-stop:hover { background: rgba(239,68,68,0.18); color: #fecaca; }
+.je-as-action-btn-stop.je-as-confirming {
+  background: rgba(239,68,68,0.22);
+  color: #fee2e2;
+  border-color: rgba(239,68,68,0.6);
+}
+.je-as-action-btn.je-as-action-active {
+  background: var(--je-as-accent, #00a4dc);
+  border-color: var(--je-as-accent, #00a4dc);
+  color: #fff;
+}
+
+/* Per-session message form (reuses the broadcast field styling) */
+.je-as-msg-form {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  animation: je-as-fadein 150ms ease forwards;
+}
+.je-as-msg-form.je-as-msg-form-open { display: flex; }
+
+/* Quick-preset chips (shared by broadcast + per-session forms) */
+.je-as-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.je-as-preset {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+  color: rgba(255,255,255,0.65);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 3px 9px;
+  font-family: inherit;
+  transition: background 0.2s, color 0.2s;
+}
+.je-as-preset:hover { background: rgba(255,255,255,0.14); color: #fff; }`;
     document.head.appendChild(style);
 };
 
@@ -515,21 +653,21 @@ const isVisible = (): boolean => {
 };
 
 // ── API — uses plugin proxy so non-admins don't need Sessions permission ─
-const fetchSessions = async (): Promise<any[] | null> => {
+const fetchSessions = async (): Promise<SessionView[] | null> => {
     try {
         // Core throws on non-OK responses — caught below, returning null
         // exactly like the old !resp.ok branch.
-        return await JE.core.api.plugin('/active-streams/sessions') as any[];
+        return await JE.core.api.plugin('/active-streams/sessions') as SessionView[];
     } catch (_) {
         return null;
     }
 };
 
 // ── Badge builder ────────────────────────────────────────────────────────
-const buildBadgeElements = (session: any): HTMLElement[] => {
+const buildBadgeElements = (session: SessionView): HTMLElement[] => {
     const badges: Array<{ label: string; cls: string }> = [];
     const ts = session.TranscodingInfo;
-    const ps = session.PlayState || {};
+    const ps: SessionPlayState = session.PlayState || {};
 
     if (ts && ts.IsVideoDirect === false) {
         badges.push({ label: 'Transcoding', cls: 'je-as-badge-transcode' });
@@ -547,7 +685,7 @@ const buildBadgeElements = (session: any): HTMLElement[] => {
         }
     } else {
         badges.push({ label: 'Direct Play', cls: 'je-as-badge-direct' });
-        const stream = session.NowPlayingItem?.MediaStreams?.find((s: any) => s.Type === 'Video');
+        const stream = session.NowPlayingItem?.MediaStreams?.find((s) => s.Type === 'Video');
         if (stream?.Codec) badges.push({ label: stream.Codec.toUpperCase(), cls: 'je-as-badge-neutral' });
         if (stream?.BitRate) {
             const kbps = Math.round(stream.BitRate / 1000);
@@ -556,20 +694,20 @@ const buildBadgeElements = (session: any): HTMLElement[] => {
     }
 
     if (ps.PlayMethod === 'Transcode' && ts?.TranscodeReasons?.length) {
-        const streams = session.NowPlayingItem?.MediaStreams || [];
+        const streams: SessionMediaStream[] = session.NowPlayingItem?.MediaStreams || [];
         for (const rawReason of ts.TranscodeReasons) {
             const reason = rawReason.replace(/([A-Z])/g, ' $1').trim();
             badges.push({ label: reason, cls: 'je-as-badge-reason' });
 
             // Append codec conversion arrow for codec-related reasons
             if (rawReason === 'AudioCodecNotSupported') {
-                const srcCodec = streams.find((s: any) => s.Type === 'Audio')?.Codec;
+                const srcCodec = streams.find((s) => s.Type === 'Audio')?.Codec;
                 const dstCodec = ts.AudioCodec;
                 if (srcCodec && dstCodec && srcCodec.toLowerCase() !== dstCodec.toLowerCase()) {
                     badges.push({ label: `${srcCodec.toUpperCase()} → ${dstCodec.toUpperCase()}`, cls: 'je-as-badge-reason' });
                 }
             } else if (rawReason === 'VideoCodecNotSupported') {
-                const srcCodec = streams.find((s: any) => s.Type === 'Video')?.Codec;
+                const srcCodec = streams.find((s) => s.Type === 'Video')?.Codec;
                 const dstCodec = ts.VideoCodec;
                 if (srcCodec && dstCodec && srcCodec.toLowerCase() !== dstCodec.toLowerCase()) {
                     badges.push({ label: `${srcCodec.toUpperCase()} → ${dstCodec.toUpperCase()}`, cls: 'je-as-badge-reason' });
@@ -587,9 +725,10 @@ const buildBadgeElements = (session: any): HTMLElement[] => {
 };
 
 // ── Session card builder ─────────────────────────────────────────────────
-const buildSessionCard = (session: any): HTMLElement => {
-    const item = session.NowPlayingItem;
-    const ps = session.PlayState || {};
+const buildSessionCard = (session: SessionView, index?: number, restore?: CardUiState): HTMLElement => {
+    // Caller (renderPanel) only passes sessions with a NowPlayingItem.
+    const item = session.NowPlayingItem as SessionNowPlaying;
+    const ps: SessionPlayState = session.PlayState || {};
     const isPaused = ps.IsPaused;
 
     const title = item.SeriesName || item.Name || 'Unknown';
@@ -603,6 +742,10 @@ const buildSessionCard = (session: any): HTMLElement => {
 
     const card = document.createElement('div');
     card.className = 'je-as-card je-as-card-with-poster';
+    // Stable key + structural signature for in-place live updates — see
+    // applyLiveUpdate / panelMatchesSessions.
+    card.setAttribute('data-session-id', sessionCardKey(session, index));
+    card.setAttribute('data-live-sig', sessionSig(session));
 
     // ── Poster thumbnail ─────────────────────────────────────────────────
     // For episodes, prefer the series poster over the episode thumbnail.
@@ -757,6 +900,12 @@ const buildSessionCard = (session: any): HTMLElement => {
 
     main.appendChild(userRow);
 
+    // Admin session-control actions (stop / targeted message). Only offered to
+    // admins on sessions the client can actually remote-control.
+    if (isAdmin() && session.SupportsRemoteControl && session.Id) {
+        main.appendChild(buildSessionActions(session, restore));
+    }
+
     // RemoteEndPoint — null for non-admins (stripped server-side)
     if (session.RemoteEndPoint) {
         const ipRow = document.createElement('div');
@@ -775,8 +924,355 @@ const buildSessionCard = (session: any): HTMLElement => {
     return card;
 };
 
+// ── Quick-preset messages (localized; static, so safe as textContent) ──────
+const messagePresets = (): string[] => [
+    JE.t?.('session_control_preset_stopping') || 'Your stream is being stopped by an administrator.',
+    JE.t?.('session_control_preset_restart') || 'The server will restart shortly — please stop your stream.',
+    JE.t?.('session_control_preset_bandwidth') || 'Please lower your playback quality — the server is under heavy load.',
+    JE.t?.('session_control_preset_takedown') || 'This title is being removed; playback will stop shortly.',
+];
+
+/** A row of preset chips; clicking one fills the target textarea. */
+const buildPresetRow = (target: HTMLTextAreaElement): HTMLElement => {
+    const row = document.createElement('div');
+    row.className = 'je-as-presets';
+    for (const preset of messagePresets()) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'je-as-preset';
+        chip.textContent = preset;
+        chip.addEventListener('click', (e) => {
+            e.stopPropagation();
+            target.value = preset;
+            target.focus();
+        });
+        row.appendChild(chip);
+    }
+    return row;
+};
+
+// ── Per-session admin actions ──────────────────────────────────────────────
+const sendSessionStop = async (sessionId: string): Promise<void> => {
+    try {
+        // skipRetry: stopping is not idempotent-safe to auto-repeat.
+        await JE.core.api.plugin(`/active-streams/sessions/${encodeURIComponent(sessionId)}/stop`, {
+            method: 'POST',
+            skipRetry: true,
+        });
+        notify(JE.t?.('session_control_stopped') || 'Stream stopped');
+        void updateCounter({ live: true });
+    } catch (err) {
+        notify(JE.t?.('session_control_stop_failed') || 'Failed to stop the stream');
+        console.warn(`${LOG} stop session failed:`, err);
+    }
+};
+
+const sendSessionMessage = async (
+    sessionId: string,
+    text: string,
+    timeoutMs: number,
+    resultEl: HTMLElement,
+): Promise<void> => {
+    try {
+        await JE.core.api.plugin(`/active-streams/sessions/${encodeURIComponent(sessionId)}/message`, {
+            method: 'POST',
+            body: { text, timeoutMs },
+            skipRetry: true,
+        });
+        resultEl.className = 'je-as-broadcast-result je-as-broadcast-ok';
+        resultEl.textContent = JE.t?.('session_control_message_sent') || 'Message sent';
+    } catch (err) {
+        resultEl.className = 'je-as-broadcast-result je-as-broadcast-err';
+        resultEl.textContent = JE.t?.('session_control_message_failed') || 'Failed to send message';
+        console.warn(`${LOG} message session failed:`, err);
+    }
+};
+
+/** The stop + message action row (with an inline per-session message form). */
+const buildSessionActions = (session: SessionView, restore?: CardUiState): HTMLElement => {
+    const sessionId = String(session.Id);
+    const wrap = document.createElement('div');
+
+    const row = document.createElement('div');
+    row.className = 'je-as-actions';
+
+    // ── Stop (two-click confirm — no blocking dialog) ─────────────────────
+    const stopBtn = document.createElement('button');
+    stopBtn.type = 'button';
+    stopBtn.className = 'je-as-action-btn je-as-action-btn-stop';
+    const stopIcon = document.createElement('span');
+    stopIcon.className = 'material-icons';
+    stopIcon.textContent = 'stop_circle';
+    const stopLabel = document.createElement('span');
+    stopLabel.textContent = JE.t?.('session_control_stop') || 'Stop';
+    stopBtn.appendChild(stopIcon);
+    stopBtn.appendChild(stopLabel);
+
+    let confirmTimer: ReturnType<typeof setTimeout> | null = null;
+    const resetStop = (): void => {
+        stopBtn.classList.remove('je-as-confirming');
+        stopLabel.textContent = JE.t?.('session_control_stop') || 'Stop';
+        if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null; }
+    };
+    // Arm the two-click confirm state (also used to restore it across a rebuild),
+    // always (re)starting the 4s auto-reset timer so a restored confirm can't
+    // stay armed forever.
+    const armConfirm = (): void => {
+        stopBtn.classList.add('je-as-confirming');
+        stopLabel.textContent = JE.t?.('session_control_stop_confirm') || 'Confirm stop?';
+        if (confirmTimer) clearTimeout(confirmTimer);
+        confirmTimer = setTimeout(resetStop, 4000);
+    };
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- async click handler
+    stopBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!stopBtn.classList.contains('je-as-confirming')) {
+            armConfirm();
+            return;
+        }
+        resetStop();
+        stopBtn.disabled = true;
+        await sendSessionStop(sessionId);
+        stopBtn.disabled = false;
+    });
+
+    // ── Message (toggles an inline compose form) ──────────────────────────
+    const msgBtn = document.createElement('button');
+    msgBtn.type = 'button';
+    msgBtn.className = 'je-as-action-btn';
+    const msgIcon = document.createElement('span');
+    msgIcon.className = 'material-icons';
+    msgIcon.textContent = 'message';
+    const msgLabel = document.createElement('span');
+    msgLabel.textContent = JE.t?.('session_control_message') || 'Message';
+    msgBtn.appendChild(msgIcon);
+    msgBtn.appendChild(msgLabel);
+
+    row.appendChild(stopBtn);
+    row.appendChild(msgBtn);
+    wrap.appendChild(row);
+
+    // ── Compose form ──────────────────────────────────────────────────────
+    const form = document.createElement('div');
+    form.className = 'je-as-msg-form';
+
+    const textArea = document.createElement('textarea');
+    textArea.className = 'je-as-broadcast-textarea';
+    textArea.placeholder = JE.t?.('session_control_message_placeholder') || 'Message to this session…';
+    textArea.maxLength = 1000;
+
+    const presets = buildPresetRow(textArea);
+
+    const resultEl = document.createElement('div');
+    resultEl.className = 'je-as-broadcast-result';
+
+    const actions = document.createElement('div');
+    actions.className = 'je-as-broadcast-actions';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'je-as-broadcast-cancel';
+    cancelBtn.textContent = JE.t?.('session_control_cancel') || 'Cancel';
+    const sendBtn = document.createElement('button');
+    sendBtn.type = 'button';
+    sendBtn.className = 'je-as-broadcast-send';
+    sendBtn.textContent = JE.t?.('session_control_send') || 'Send';
+    actions.appendChild(cancelBtn);
+    actions.appendChild(sendBtn);
+
+    form.appendChild(presets);
+    form.appendChild(textArea);
+    form.appendChild(resultEl);
+    form.appendChild(actions);
+    wrap.appendChild(form);
+
+    const closeForm = (): void => {
+        msgBtn.classList.remove('je-as-action-active');
+        form.classList.remove('je-as-msg-form-open');
+        resultEl.className = 'je-as-broadcast-result';
+        resultEl.textContent = '';
+    };
+    msgBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = form.classList.toggle('je-as-msg-form-open');
+        msgBtn.classList.toggle('je-as-action-active', open);
+        if (open) { resultEl.textContent = ''; resultEl.className = 'je-as-broadcast-result'; textArea.focus(); }
+    });
+    cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); closeForm(); });
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- async click handler
+    sendBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const text = textArea.value.trim();
+        if (!text) { textArea.focus(); return; }
+        sendBtn.disabled = true;
+        resultEl.className = 'je-as-broadcast-result';
+        resultEl.textContent = '';
+        await sendSessionMessage(sessionId, text, 10000, resultEl);
+        sendBtn.disabled = false;
+    });
+
+    // Restore transient interaction state carried over from a structural
+    // rebuild (see captureCardUiState): a re-armed stop-confirm keeps its 4s
+    // auto-reset; a re-opened compose form keeps its typed text (no auto-focus,
+    // to avoid yanking focus on an unrelated background rebuild).
+    if (restore?.confirmArmed) armConfirm();
+    if (restore?.composeOpen) {
+        form.classList.add('je-as-msg-form-open');
+        msgBtn.classList.add('je-as-action-active');
+        textArea.value = restore.composeText;
+    }
+
+    return wrap;
+};
+
+// ── Live-update helpers ────────────────────────────────────────────────────
+// Stable per-card key. Admins get the real session Id (also the action target);
+// non-admins get a non-sensitive composite (fields already shown on the card).
+// The composite folds in the now-playing item id and a per-refresh occurrence
+// index so two non-admin sessions that share user/client/device (identical
+// composites) still resolve to DISTINCT cards — otherwise they collide and one
+// card stops receiving live updates. `index` is the position within the
+// fetched active-session list, which renderPanel / applyLiveUpdate /
+// panelMatchesSessions all iterate in the same order, so the key is consistent
+// across a refresh. Exported for unit testing.
+export const sessionCardKey = (s: SessionView, index?: number): string => {
+    if (s.Id) return String(s.Id);
+    const composite = `${s.UserName || ''}|${s.Client || ''}|${s.DeviceName || ''}|${s.NowPlayingItem?.Id || ''}`;
+    return index == null ? composite : `${composite}#${index}`;
+};
+
+// Structural signature: an in-place tick is only safe when the card's identity
+// AND its non-progress structure are unchanged. If the session switches item,
+// flips direct-play↔transcode, or its badge-driving quality fields shift, the
+// signature changes → a full rebuild (so the title/poster/badges never go stale
+// under a moving progress bar). The tick path (applyLiveUpdate) only refreshes
+// progress/state, so the live-varying badge fields (transcode bitrate /
+// resolution / framerate / reasons) must be folded in here — otherwise the
+// badges would freeze until an unrelated structural change forced a rebuild.
+// Exported for unit testing.
+export const sessionSig = (s: SessionView): string => {
+    const item: SessionNowPlaying = s.NowPlayingItem || {};
+    const ps: SessionPlayState = s.PlayState || {};
+    const ts = s.TranscodingInfo;
+    const mode = ts ? (ts.IsVideoDirect === false ? 'tc' : 'dp') : 'none';
+    const badgeSig = ts
+        ? `${ts.Bitrate || ''}/${ts.Width || ''}x${ts.Height || ''}/${ts.Framerate || ''}/${(ts.TranscodeReasons || []).join(',')}`
+        : '';
+    return `${item.Id || ''}|${ps.PlayMethod || ''}|${mode}|${badgeSig}`;
+};
+
+const activeSessions = (sessions: SessionView[] | null): SessionView[] => (sessions || []).filter(s => s.NowPlayingItem);
+
+/** Update the panel title to reflect the current active-stream count. */
+const updatePanelTitle = (active: SessionView[]): void => {
+    const titleEl = document.querySelector('#je-active-streams-panel .je-as-panel-title');
+    if (!titleEl) return;
+    if (active.length) {
+        const tpl = JE.t?.('active_streams_count') || '{count} Active Stream|{count} Active Streams';
+        const parts = tpl.split('|');
+        const singular = parts[0] || '{count} Active Stream';
+        const plural = parts[1] || parts[0] || '{count} Active Streams';
+        titleEl.textContent = (active.length === 1 ? singular : plural).replace('{count}', String(active.length));
+    } else {
+        titleEl.textContent = JE.t?.('active_streams_none') || 'No Active Streams';
+    }
+};
+
+/** Update (creating if needed) the "last updated" footer. */
+const updateFooter = (): void => {
+    const panel = document.getElementById('je-active-streams-panel');
+    if (!panel) return;
+    let footer = panel.querySelector('.je-as-panel-footer');
+    if (!footer) {
+        footer = document.createElement('div');
+        footer.className = 'je-as-panel-footer';
+        panel.appendChild(footer);
+    }
+    if (_lastUpdated) footer.textContent = `Updated ${_lastUpdated.toLocaleTimeString()}`;
+};
+
+/**
+ * Does the open panel already show exactly this set of sessions? When true a
+ * live tick updates progress/state IN PLACE (R2/R7) instead of rebuilding every
+ * card (which would reload posters and flicker). A structural change (a stream
+ * started/stopped) returns false → a full renderPanel.
+ */
+export const panelMatchesSessions = (sessions: SessionView[]): boolean => {
+    const body = document.querySelector('#je-active-streams-panel .je-as-panel-body');
+    if (!body) return false;
+    const cards = Array.from(body.querySelectorAll('.je-as-card[data-session-id]'));
+    const active = activeSessions(sessions);
+    if (cards.length !== active.length || active.length === 0) return false;
+    // Match on identity AND structural signature: a card whose session switched
+    // item, flipped direct-play↔transcode, or changed a badge-driving quality
+    // field must be rebuilt, not tick-updated.
+    const renderedSig = new Map(cards.map(c => [c.getAttribute('data-session-id'), c.getAttribute('data-live-sig')]));
+    return active.every((s, i) => renderedSig.get(sessionCardKey(s, i)) === sessionSig(s));
+};
+
+/** Update progress bars / play-state in place, leaving card structure intact. */
+const applyLiveUpdate = (sessions: SessionView[]): void => {
+    const body = document.querySelector('#je-active-streams-panel .je-as-panel-body');
+    if (!body) return;
+    const byId = new Map<string | null, Element>();
+    body.querySelectorAll('.je-as-card[data-session-id]').forEach(c => byId.set(c.getAttribute('data-session-id'), c));
+
+    const active = activeSessions(sessions);
+    active.forEach((s, i) => {
+        const card = byId.get(sessionCardKey(s, i));
+        if (!card) return;
+        const ps: SessionPlayState = s.PlayState || {};
+        const item: SessionNowPlaying = s.NowPlayingItem || {};
+        const pos = ps.PositionTicks || 0;
+        const dur = item.RunTimeTicks || 0;
+
+        const fill = card.querySelector<HTMLElement>('.je-as-progress-fill');
+        if (fill && dur) fill.style.width = `${Math.min(100, (pos / dur) * 100).toFixed(1)}%`;
+
+        const ts = s.TranscodingInfo;
+        const tfill = card.querySelector<HTMLElement>('.je-as-transcode-fill');
+        if (tfill && ts && ts.CompletionPercentage != null) {
+            tfill.style.width = `${Math.min(100, ts.CompletionPercentage).toFixed(1)}%`;
+        }
+
+        const timeEl = card.querySelector<HTMLElement>('.je-as-progress-time');
+        if (timeEl && dur) timeEl.textContent = `${ticksToTime(pos)} / ${ticksToTime(dur)}`;
+
+        const stateEl = card.querySelector<HTMLElement>('.je-as-state');
+        if (stateEl) {
+            const isPaused = ps.IsPaused;
+            stateEl.className = `je-as-state ${isPaused ? 'je-as-state-paused' : 'je-as-state-playing'}`;
+            stateEl.textContent = isPaused
+                ? (JE.t?.('downloads_status_paused') || 'Paused')
+                : (JE.t?.('toast_playing') || 'Playing');
+        }
+    });
+    updatePanelTitle(active);
+    updateFooter();
+};
+
+// ── Card UI-state preservation across structural rebuilds ──────────────────
+// A structural rebuild (renderPanel) discards every card DOM node. If an admin
+// had a per-session compose form open (with typed text) or a stop-confirm
+// armed, that transient interaction state would be lost mid-action. Capture it
+// keyed by card id before the rebuild and restore it (in buildSessionActions)
+// for cards still present afterwards.
+interface CardUiState { composeOpen: boolean; composeText: string; confirmArmed: boolean }
+
+const captureCardUiState = (body: Element): Map<string, CardUiState> => {
+    const state = new Map<string, CardUiState>();
+    body.querySelectorAll('.je-as-card[data-session-id]').forEach(card => {
+        const key = card.getAttribute('data-session-id');
+        if (!key) return;
+        const composeOpen = card.querySelector('.je-as-msg-form')?.classList.contains('je-as-msg-form-open') === true;
+        const composeText = card.querySelector<HTMLTextAreaElement>('.je-as-msg-form .je-as-broadcast-textarea')?.value || '';
+        const confirmArmed = card.querySelector('.je-as-action-btn-stop')?.classList.contains('je-as-confirming') === true;
+        if (composeOpen || confirmArmed) state.set(key, { composeOpen, composeText, confirmArmed });
+    });
+    return state;
+};
+
 // ── Panel renderer ───────────────────────────────────────────────────────
-const renderPanel = (sessions: any[] | null): void => {
+const renderPanel = (sessions: SessionView[] | null): void => {
     const panel = document.getElementById('je-active-streams-panel');
     if (!panel) return;
 
@@ -798,23 +1294,14 @@ const renderPanel = (sessions: any[] | null): void => {
         return;
     }
 
-    const active = (sessions || []).filter(s => s.NowPlayingItem);
-
-    const titleEl = panel.querySelector('.je-as-panel-title');
-    if (titleEl) {
-        if (active.length) {
-            const tpl = JE.t?.('active_streams_count') || '{count} Active Stream|{count} Active Streams';
-            const parts = tpl.split('|');
-            const singular = parts[0] || '{count} Active Stream';
-            const plural = parts[1] || parts[0] || '{count} Active Streams';
-            titleEl.textContent = (active.length === 1 ? singular : plural).replace('{count}', String(active.length));
-        } else {
-            titleEl.textContent = JE.t?.('active_streams_none') || 'No Active Streams';
-        }
-    }
+    const active = activeSessions(sessions);
+    updatePanelTitle(active);
 
     const body = panel.querySelector('.je-as-panel-body');
     if (!body) return;
+
+    // Preserve open compose forms / armed stop-confirms across the rebuild.
+    const prevState = captureCardUiState(body);
 
     while (body.firstChild) body.removeChild(body.firstChild);
 
@@ -824,25 +1311,14 @@ const renderPanel = (sessions: any[] | null): void => {
         empty.textContent = JE.t?.('active_streams_none') || 'No active streams';
         body.appendChild(empty);
     } else {
-        active.forEach(session => body.appendChild(buildSessionCard(session)));
+        active.forEach((session, i) => body.appendChild(buildSessionCard(session, i, prevState.get(sessionCardKey(session, i)))));
     }
 
-    // Last-updated footer
-    let footer = panel.querySelector('.je-as-panel-footer');
-    if (!footer) {
-        footer = document.createElement('div');
-        footer.className = 'je-as-panel-footer';
-        panel.appendChild(footer);
-    }
-    if (_lastUpdated) {
-        footer.textContent = `Updated ${_lastUpdated.toLocaleTimeString()}`;
-    }
+    updateFooter();
 };
 
 // ── Counter updater ──────────────────────────────────────────────────────
-const updateCounter = async (): Promise<void> => {
-    const sessions = await fetchSessions();
-    _lastUpdated = new Date();
+const updateHeaderButton = (sessions: SessionView[] | null): void => {
     const btn = document.getElementById('je-active-streams');
     if (!btn) return;
 
@@ -886,8 +1362,23 @@ const updateCounter = async (): Promise<void> => {
             btn.title = `${playing.length} playing${pausedNote}`;
         }
     }
+};
 
-    if (_panelOpen) renderPanel(sessions);
+// Fetch sessions once, then update the header badge and (if open) the panel.
+// A `live` refresh updates progress/state in place when the session set is
+// unchanged (R2/R7); a structural change rebuilds the card list.
+const updateCounter = async (opts?: { live?: boolean }): Promise<void> => {
+    // Request-ordering guard: ws nudges, the fallback interval, manual refresh
+    // and post-action refreshes can overlap. Drop a response that a newer
+    // request has already superseded so a slow reply can't roll back the panel.
+    const seq = ++_refreshSeq;
+    const sessions = await fetchSessions();
+    if (seq !== _refreshSeq) return;
+    _lastUpdated = new Date();
+    updateHeaderButton(sessions);
+    if (!_panelOpen) return;
+    if (opts?.live && sessions && panelMatchesSessions(sessions)) applyLiveUpdate(sessions);
+    else renderPanel(sessions);
 };
 
 // ── Fetch on demand (no background polling) ──────────────────────────────
@@ -897,6 +1388,62 @@ const startPolling = (): void => {
 
 const stopPolling = (): void => {
     if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+};
+
+// ── Live updates (active only while the panel is open) ─────────────────────
+// Debounced nudge: coalesce a burst of core `Sessions` websocket pushes into a
+// single live refresh. Not self-rescheduling — the timer fires once and clears.
+const nudgeLive = (): void => {
+    if (!_panelOpen || _nudgeTimer) return;
+    _nudgeTimer = setTimeout(() => {
+        _nudgeTimer = null;
+        if (_panelOpen) void updateCounter({ live: true });
+    }, LIVE_NUDGE_DEBOUNCE_MS);
+};
+
+const startLive = (): void => {
+    // Push channel: the core `Sessions` websocket message (same one the native
+    // dashboard's live-sessions view subscribes to). Best-effort — fails soft
+    // when the SDK socket bridge is unavailable (older hosts / jsdom).
+    if (!_liveUnsub && typeof ApiClient !== 'undefined' && typeof ApiClient.subscribe === 'function') {
+        try {
+            _liveUnsub = ApiClient.subscribe(['Sessions'], () => nudgeLive());
+        } catch (_) {
+            _liveUnsub = null;
+        }
+    }
+    // Fallback cadence — ONLY when the websocket push is unavailable (R5:
+    // push-nudged is the mechanism, the interval is the fallback). Page-scoped
+    // (panel open) + visibility-gated. When the socket is subscribed we rely on
+    // its pushes plus the on-focus refresh below.
+    if (!_liveUnsub && !_liveTimer) {
+        _liveTimer = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
+            void updateCounter({ live: true });
+        }, LIVE_FALLBACK_MS);
+    }
+    // Refresh immediately when the tab regains focus (the interval skipped
+    // hidden ticks, so the panel could be stale on return).
+    if (!_visListener) {
+        _visListener = (): void => {
+            if (_panelOpen && document.visibilityState === 'visible') void updateCounter({ live: true });
+        };
+        document.addEventListener('visibilitychange', _visListener);
+    }
+};
+
+const stopLive = (): void => {
+    if (_liveUnsub) { try { _liveUnsub(); } catch (_) { /* non-fatal */ } _liveUnsub = null; }
+    if (_liveTimer) { clearInterval(_liveTimer); _liveTimer = null; }
+    if (_nudgeTimer) { clearTimeout(_nudgeTimer); _nudgeTimer = null; }
+    if (_visListener) { document.removeEventListener('visibilitychange', _visListener); _visListener = null; }
+};
+
+// Close the panel and tear down its live-update resources.
+const closePanel = (panel: HTMLElement): void => {
+    _panelOpen = false;
+    panel.classList.remove('je-as-panel-open');
+    stopLive();
 };
 
 // ── Broadcast ────────────────────────────────────────────────────────────
@@ -976,6 +1523,7 @@ const injectBroadcastButton = (panel: HTMLElement): void => {
     form.appendChild(headerInput);
     form.appendChild(messageLabel);
     form.appendChild(textArea);
+    form.appendChild(buildPresetRow(textArea));
     form.appendChild(headerNote);
     form.appendChild(timeoutRow);
     form.appendChild(resultEl);
@@ -1093,7 +1641,8 @@ const togglePanel = (): void => {
     if (!panel) return;
     _panelOpen = !_panelOpen;
     panel.classList.toggle('je-as-panel-open', _panelOpen);
-    if (_panelOpen) void updateCounter();
+    if (_panelOpen) { void updateCounter(); startLive(); }
+    else stopLive();
 };
 
 const injectPanel = (): void => {
@@ -1119,8 +1668,7 @@ const injectPanel = (): void => {
     closeBtn.appendChild(closeIcon);
     closeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        _panelOpen = false;
-        panel.classList.remove('je-as-panel-open');
+        closePanel(panel);
     });
 
     header.appendChild(titleEl);
@@ -1172,8 +1720,7 @@ const injectPanel = (): void => {
     _outsideClickListener = (e) => {
         const btn = document.getElementById('je-active-streams');
         if (_panelOpen && !panel.contains(e.target as Node) && btn && !btn.contains(e.target as Node)) {
-            _panelOpen = false;
-            panel.classList.remove('je-as-panel-open');
+            closePanel(panel);
         }
     };
     document.addEventListener('click', _outsideClickListener);
@@ -1271,6 +1818,7 @@ JE.activeStreams = {
     destroy() {
         console.log(`${LOG} Active Streams: destroying.`);
         stopPolling();
+        stopLive();
         stopObserver();
         if (_lifecycle) { _lifecycle.teardown(); _lifecycle = null; }
         if (_outsideClickListener) { document.removeEventListener('click', _outsideClickListener); _outsideClickListener = null; }

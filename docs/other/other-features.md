@@ -251,7 +251,30 @@ Choose from multiple Jellyfin theme color variants.
 | Setting | Default | Description |
 |---|---|---|
 | **Active Streams Header Widget** | Off | Adds the stream counter icon to the Jellyfin header |
-| **Show widget to non-admins** | Off | When enabled, non-admin users also see the widget (read-only, no broadcast, no IP addresses) |
+| **Show widget to non-admins** | Off | When enabled, non-admin users also see the widget (read-only — no session controls, no broadcast, no IP addresses) |
+
+#### Live updates
+
+While the panel is open it updates itself — no manual refresh needed. It
+listens to the server's `Sessions` websocket push (the same feed the native
+dashboard uses) and falls back to a short, page-scoped refresh interval that
+only ticks while the tab is visible. Progress bars and play/pause state update
+in place; a card is only rebuilt when a stream actually starts or stops. The
+manual refresh button remains for an on-demand poll.
+
+#### Session Control (admins)
+
+Each session card gives admins one-click control over that specific stream
+(shown only for clients that support remote control):
+
+| Action | Description |
+|---|---|
+| **Stop** | Stops playback on that session (the "kill a stream" action). A two-click confirm guards against accidental stops — no blocking dialog. |
+| **Message** | Sends a message to that one session. Opens an inline compose box with quick-preset buttons and free text. |
+
+Quick presets (e.g. "The server will restart shortly…") are one-click fillers
+for the message box and are available on both the per-session message form and
+the broadcast form. All actions are enforced server-side as admin-only.
 
 #### Broadcast Form Fields
 

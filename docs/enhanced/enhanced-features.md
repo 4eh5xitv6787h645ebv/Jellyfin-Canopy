@@ -582,8 +582,9 @@ A live stream counter in the Jellyfin header that shows who is currently playing
 - Playback progress bar with current position and total duration
 - Playing / Paused state badge per session
 - Clickable title links to the item detail page
+- Admin session control per card: **Stop** a stream and send a **targeted message** (with quick presets)
 - Admin-only broadcast button to message all active sessions
-- Fetches on demand — the counter loads once on page load, and the panel refreshes when opened or via the manual refresh button (no background polling)
+- Live updates while the panel is open (server `Sessions` websocket push, with a page-scoped, visibility-gated fallback refresh); progress/state update in place. The manual refresh button remains for an on-demand poll.
 
 **Header icon states:**
 
@@ -607,6 +608,14 @@ Each card in the panel shows:
 - Transcode reason (e.g., "Video Codec Not Supported") when applicable
 - User avatar, username, client name, and device name
 - IP address (admins only)
+- **Stop** and **Message** actions (admins only, on clients that support remote control)
+
+**Session control (admin only):**
+
+Each session card offers per-stream actions for clients that support remote control:
+
+- **Stop** — ends playback on that session (two-click confirm; no blocking dialog)
+- **Message** — sends a message to that one session, with quick-preset buttons plus free text
 
 **Broadcast (admin only):**
 
@@ -626,7 +635,7 @@ Admins see a megaphone icon (📣) in the panel header. Click it to open the bro
 4. Optional: Enable **"Show widget to non-admins"** to make the widget visible to non-admin users
 
 !!! note
-    By default the widget is admin-only. Non-admin users see a read-only view (no broadcast button, no IP addresses) when "Show widget to non-admins" is enabled.
+    By default the widget is admin-only. Non-admin users see a read-only view (no session controls, no broadcast button, no IP addresses) when "Show widget to non-admins" is enabled.
 
 ### 🎨 Colored Activity Icons
 
