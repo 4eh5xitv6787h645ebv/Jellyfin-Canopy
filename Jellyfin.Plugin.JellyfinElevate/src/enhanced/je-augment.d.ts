@@ -33,7 +33,6 @@ declare module '../types/je' {
     interface EnhancedState {
         activeShortcuts: Record<string, string>;
         removeContext: EnhancedRemoveContext | null;
-        skipToastShown: boolean;
         pauseScreenClickTimer: number | null;
         [key: string]: unknown;
     }
