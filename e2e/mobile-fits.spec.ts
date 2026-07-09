@@ -34,6 +34,122 @@ async function goHome(page: any): Promise<void> {
     await page.waitForTimeout(500);
 }
 
+/** Outcome of {@link ensureRenderableBoxSet}. */
+interface BoxSetFixture {
+    /** Id of the BoxSet to open (null only when the library has < 2 movies). */
+    boxsetId: string | null;
+    /** Id to delete in teardown; null when we reused an existing BoxSet. */
+    createdId: string | null;
+    /** True when the BoxSet is anchored to a TMDB collection with missing parts. */
+    anchored: boolean;
+}
+
+/**
+ * Guarantee a BoxSet exists to open, and — whenever the environment allows —
+ * one whose "Missing from …" section will actually render, so the flagship
+ * card assertions run instead of silently skipping.
+ *
+ * Strategy (all admin-API, in the browser's authenticated ApiClient context):
+ *  1. Reuse an existing BoxSet whose TMDB collection still has missing parts.
+ *  2. Otherwise discover a TMDB collection with missing parts from the library's
+ *     movies (via the plugin's Seerr proxy), CREATE a BoxSet from two library
+ *     movies, and anchor it to that collection (ProviderIds.Tmdb) so the
+ *     section renders. Tracked for teardown.
+ *  3. If Seerr yields no incomplete collection, still create a plain BoxSet so
+ *     the "no BoxSet in the library" skip can never fire; the section-render
+ *     skip then covers only the genuinely-cannot-render case.
+ */
+async function ensureRenderableBoxSet(page: any): Promise<BoxSetFixture> {
+    return page.evaluate(async () => {
+        const api = (window as any).ApiClient;
+        const uid = api.getCurrentUserId();
+
+        /** A TMDB collection has "missing" parts when any part isn't available (status 5). */
+        const collectionHasMissing = async (collectionId: string | number): Promise<boolean> => {
+            try {
+                const c = await api.getJSON(api.getUrl('JellyfinElevate/jellyseerr/collection/' + collectionId));
+                const parts = (c && c.parts) || [];
+                return parts.length > 0 && parts.some((p: any) => ((p.mediaInfo && p.mediaInfo.status) || 1) !== 5);
+            } catch {
+                return false;
+            }
+        };
+
+        // 1) Reuse an existing renderable BoxSet.
+        const existing = await api.getItems(uid, {
+            IncludeItemTypes: 'BoxSet', Recursive: true, Fields: 'ProviderIds', Limit: 50,
+        });
+        for (const bs of (existing.Items || [])) {
+            const tmdb = bs.ProviderIds && bs.ProviderIds.Tmdb;
+            if (tmdb && await collectionHasMissing(tmdb)) {
+                return { boxsetId: bs.Id, createdId: null, anchored: true };
+            }
+        }
+
+        // Library movies (for both discovery and seeding the created BoxSet).
+        const movies = await api.getItems(uid, {
+            IncludeItemTypes: 'Movie', Recursive: true, Fields: 'ProviderIds', Limit: 200,
+        });
+        const movieItems = movies.Items || [];
+
+        // 2) Discover a TMDB collection with missing parts from a library movie.
+        let collectionId: string | null = null;
+        for (const m of movieItems) {
+            const tmdb = m.ProviderIds && m.ProviderIds.Tmdb;
+            if (!tmdb) continue;
+            let detail: any;
+            try {
+                detail = await api.getJSON(api.getUrl('JellyfinElevate/jellyseerr/movie/' + tmdb));
+            } catch {
+                continue;
+            }
+            const cid = detail && detail.collection && detail.collection.id;
+            if (cid && await collectionHasMissing(cid)) {
+                collectionId = String(cid);
+                break;
+            }
+        }
+
+        // Need two library movies to seed a BoxSet.
+        const seedIds = movieItems.slice(0, 2).map((m: any) => m.Id);
+        if (seedIds.length < 2) return { boxsetId: null, createdId: null, anchored: false };
+
+        const created = await api.ajax({
+            type: 'POST',
+            url: api.getUrl('Collections', { Name: 'JE E2E Fixture Collection', Ids: seedIds.join(',') }),
+            dataType: 'json',
+        });
+        const createdId = created && created.Id;
+        if (!createdId) return { boxsetId: null, createdId: null, anchored: false };
+
+        // 3) Anchor to the discovered collection so the section can render.
+        if (collectionId) {
+            const dto = await api.getJSON(api.getUrl('Users/' + uid + '/Items/' + createdId, { Fields: 'ProviderIds,Path' }));
+            dto.ProviderIds = dto.ProviderIds || {};
+            dto.ProviderIds.Tmdb = collectionId;
+            await api.ajax({
+                type: 'POST',
+                url: api.getUrl('Items/' + createdId),
+                data: JSON.stringify(dto),
+                contentType: 'application/json',
+            });
+        }
+
+        return { boxsetId: createdId, createdId, anchored: !!collectionId };
+    });
+}
+
+/** Best-effort teardown of a BoxSet created by the fixture. */
+async function deleteBoxSet(page: any, id: string): Promise<void> {
+    await page.evaluate(async (bid: string) => {
+        try {
+            await (window as any).ApiClient.ajax({ type: 'DELETE', url: (window as any).ApiClient.getUrl('Items/' + bid) });
+        } catch {
+            // best-effort — a leaked fixture BoxSet is harmless in the dev library.
+        }
+    }, id);
+}
+
 test.describe('mobile viewport fits', () => {
     test('settings panel + shortcuts fit the phone (no clipping)', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
@@ -121,53 +237,66 @@ test.describe('mobile viewport fits', () => {
     test('collection Missing-from cards are native-grid-sized (≈3 across)', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
 
-        // Find a BoxSet to open. Skip if the library has none.
-        const boxsetId = await page.evaluate(async () => {
-            const uid = (window as any).ApiClient.getCurrentUserId();
-            const res = await (window as any).ApiClient.getItems(uid, {
-                IncludeItemTypes: 'BoxSet', Recursive: true, Limit: 1,
+        // Guarantee a BoxSet to open (creating one when the library has none),
+        // anchored to a TMDB collection with missing parts whenever Seerr can
+        // supply one — so the assertions below actually run.
+        const fixture = await ensureRenderableBoxSet(page);
+        expect(fixture.boxsetId, 'a BoxSet must exist or be creatable (library needs >= 2 movies)').toBeTruthy();
+
+        try {
+            // Fixture setup is admin-API infrastructure, not the surface under
+            // test — drop any noise it produced so only the detail-page render
+            // counts toward the runtime-error assertion.
+            consoleErrors.reset();
+
+            await page.evaluate((id: string) => { void (window as any).Emby.Page.show('/details?id=' + id); }, fixture.boxsetId!);
+
+            // The Missing-from section only renders when Seerr is active AND the
+            // collection has movies not yet in the library.
+            const appeared = await page
+                .waitForFunction(
+                    () => !!document.querySelector('.jellyseerr-collection-discovery-section .card'),
+                    undefined,
+                    { timeout: 20_000 }
+                )
+                .then(() => true, () => false);
+
+            if (!appeared) {
+                // Loud, explicit — the ONLY remaining legitimate skip. Never the
+                // old "no BoxSet in the library" skip, which can no longer occur.
+                console.warn(
+                    `[mobile-fits] collection Missing-from section did NOT render for BoxSet ${fixture.boxsetId} ` +
+                    `(anchored=${fixture.anchored}) — Seerr inactive or collection complete; skipping card assertions.`
+                );
+                test.skip(true, 'collection Missing-from section did not render (Seerr inactive or collection complete)');
+            }
+
+            const m = await page.evaluate(() => {
+                const section = document.querySelector('.jellyseerr-collection-discovery-section')!;
+                const cards = [...section.querySelectorAll<HTMLElement>('.card')];
+                let maxRight = 0;
+                for (const c of cards) maxRight = Math.max(maxRight, c.getBoundingClientRect().right);
+                return {
+                    cardW: Math.round(cards[0].getBoundingClientRect().width),
+                    sectionMaxRight: Math.round(maxRight),
+                    innerW: window.innerWidth,
+                    usesPortraitCard: cards[0].classList.contains('portraitCard'),
+                    usesOverflowCard: cards[0].classList.contains('overflowPortraitCard'),
+                };
             });
-            return res.Items?.[0]?.Id ?? null;
-        });
-        test.skip(!boxsetId, 'no BoxSet in the library');
 
-        await page.evaluate((id) => { void (window as any).Emby.Page.show('/details?id=' + id); }, boxsetId);
+            // Native portraitCard sizing: ~33% of the row → roughly 3 across, never
+            // the old vw-based overflowPortraitCard (~40vw → 2 giant cards).
+            expect(m.usesPortraitCard).toBe(true);
+            expect(m.usesOverflowCard).toBe(false);
+            expect(m.cardW).toBeGreaterThan(Math.round(m.innerW * 0.24));
+            expect(m.cardW).toBeLessThan(Math.round(m.innerW * 0.37));
+            // The section itself never scrolls the page sideways.
+            expect(m.sectionMaxRight).toBeLessThanOrEqual(m.innerW + 1);
 
-        // The Missing-from section only renders when Seerr is active and the
-        // collection has movies not yet in the library. If it never appears
-        // (no Seerr / complete collection), there is nothing to assert here.
-        const appeared = await page
-            .waitForFunction(
-                () => !!document.querySelector('.jellyseerr-collection-discovery-section .card'),
-                undefined,
-                { timeout: 20_000 }
-            )
-            .then(() => true, () => false);
-        test.skip(!appeared, 'collection Missing-from section did not render (Seerr inactive or complete)');
-
-        const m = await page.evaluate(() => {
-            const section = document.querySelector('.jellyseerr-collection-discovery-section')!;
-            const cards = [...section.querySelectorAll<HTMLElement>('.card')];
-            let maxRight = 0;
-            for (const c of cards) maxRight = Math.max(maxRight, c.getBoundingClientRect().right);
-            return {
-                cardW: Math.round(cards[0].getBoundingClientRect().width),
-                sectionMaxRight: Math.round(maxRight),
-                innerW: window.innerWidth,
-                usesPortraitCard: cards[0].classList.contains('portraitCard'),
-                usesOverflowCard: cards[0].classList.contains('overflowPortraitCard'),
-            };
-        });
-
-        // Native portraitCard sizing: ~33% of the row → roughly 3 across, never
-        // the old vw-based overflowPortraitCard (~40vw → 2 giant cards).
-        expect(m.usesPortraitCard).toBe(true);
-        expect(m.usesOverflowCard).toBe(false);
-        expect(m.cardW).toBeGreaterThan(Math.round(m.innerW * 0.24));
-        expect(m.cardW).toBeLessThan(Math.round(m.innerW * 0.37));
-        // The section itself never scrolls the page sideways.
-        expect(m.sectionMaxRight).toBeLessThanOrEqual(m.innerW + 1);
-
-        assertNoRuntimeErrors(consoleErrors);
+            assertNoRuntimeErrors(consoleErrors);
+        } finally {
+            if (fixture.createdId) await deleteBoxSet(page, fixture.createdId);
+        }
     });
 });
