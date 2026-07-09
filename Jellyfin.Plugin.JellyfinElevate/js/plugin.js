@@ -457,11 +457,26 @@
     var LAYOUT_ENFORCED_SESSION_KEY = 'je_layout_enforced';
 
     /**
+     * Whether a stored `layout` value results in the MODERN (experimental) layout
+     * being painted. Jellyfin's own browser default is the modern layout, so an
+     * unset or 'auto' choice already paints modern; only the explicit legacy modes
+     * ('desktop', 'mobile', 'tv') paint the legacy app.
+     * @param {string|null|undefined} stored
+     * @returns {boolean}
+     */
+    function layoutRendersModern(stored) {
+        return !stored || stored === 'auto' || stored === LAYOUT_EXPERIMENTAL;
+    }
+
+    /**
      * Pure decision for the LayoutEnforcement admin setting.
      *
      * Returns what (if anything) the stored `layout` value should become and whether
-     * a one-shot reload is needed to make it take effect this load. Kept pure and
-     * side-effect free so it can be unit-tested directly (see plugin-loader.test.ts).
+     * a one-shot reload is needed to make it take effect this load. A reload is only
+     * ever needed when the device is CURRENTLY painting the other layout — a device
+     * that already paints the target (including a fresh device on Jellyfin's modern
+     * default) is never reloaded; at most its stored value is made explicit. Kept
+     * pure and side-effect free so it can be unit-tested (see plugin-loader.test.ts).
      *
      * @param {string|undefined|null} mode  The LayoutEnforcement config value.
      * @param {string|null} stored          The current localStorage['layout'] value.
@@ -470,18 +485,26 @@
     function resolveLayoutEnforcement(mode, stored) {
         switch (mode) {
             case 'ForceExperimental':
+                // A device on a legacy mode must reload into the modern app. A device
+                // already painting modern (unset/'auto'/'experimental') is left as-is,
+                // but we persist 'experimental' so the choice is explicit — no reload.
+                if (!layoutRendersModern(stored)) {
+                    return { changed: true, value: LAYOUT_EXPERIMENTAL, reload: true };
+                }
                 return stored === LAYOUT_EXPERIMENTAL
                     ? { changed: false }
-                    : { changed: true, value: LAYOUT_EXPERIMENTAL, reload: true };
+                    : { changed: true, value: LAYOUT_EXPERIMENTAL, reload: false };
             case 'ForceLegacy':
-                return stored === LAYOUT_LEGACY
-                    ? { changed: false }
-                    : { changed: true, value: LAYOUT_LEGACY, reload: true };
+                // Symmetric: only flip a device that would paint the modern layout;
+                // leave a device already on a legacy mode (desktop/mobile/tv) on its
+                // chosen legacy sub-layout.
+                return layoutRendersModern(stored)
+                    ? { changed: true, value: LAYOUT_LEGACY, reload: true }
+                    : { changed: false };
             case 'DefaultExperimental':
-                // Apply ONLY when the device has never made an explicit choice. The app
-                // already defaults to the modern layout on browsers when unset, so this
-                // just persists that choice — no reload needed. On a client whose native
-                // default is legacy it takes effect on the next load (soft default).
+                // Apply ONLY when the device has never made an explicit choice. It
+                // already paints the modern layout by default, so this just persists
+                // that choice — no reload needed.
                 return stored
                     ? { changed: false }
                     : { changed: true, value: LAYOUT_EXPERIMENTAL, reload: false };

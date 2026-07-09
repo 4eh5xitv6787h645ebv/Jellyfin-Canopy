@@ -129,11 +129,11 @@ Jellyfin 12 ships two layouts — the **modern** React/MUI layout and the classi
 |---|---|
 | **None** (default) | No change. Each user's device choice (or Jellyfin's own default) stands. |
 | **Default to modern layout** | Applies the modern layout only on devices that have **never** made an explicit choice. Never overrides a user's stored pick, and needs no reload. |
-| **Force modern layout** | Overrides every device onto the modern layout, including devices stored on legacy. The first switch on a device costs a single automatic reload. |
-| **Force legacy layout** | Symmetric hard override onto the classic layout. |
+| **Force modern layout** | Overrides devices that are on the legacy layout onto the modern one, costing a single automatic reload per device on the first switch. Devices already on the modern layout (including brand-new devices, which default to modern) are not reloaded. |
+| **Force legacy layout** | Symmetric hard override: flips devices on the modern layout onto the classic layout (one reload); devices already on a legacy layout are left as-is. |
 
 !!! info "How Force interacts with a manual switch"
-    Force is applied at boot, so **Force wins**: a user can still flip the layout in Jellyfin's own Display settings, but on the next fresh load the plugin steers it back. The override never loops — it reloads at most once per browsing session, and only when the stored value actually needs to change.
+    Force is applied at boot, so **Force wins**: a user can still flip the layout in Jellyfin's own Display settings, but on the next fresh load the plugin steers it back. The override never loops — it reloads only when the device is actually on the other layout, and at most once per browsing session.
 
 !!! note "Why this is admin-only (no per-user default)"
     The layout is a property of the *device/browser*, not of the Jellyfin user account, so a per-user override would have no device to attach to (the same account on a phone and a TV can want different layouts). It is therefore a single server-wide admin setting.

@@ -131,33 +131,44 @@ describe('plugin.js loader guards', () => {
     // with storage + the reload guard, so pinning the decision here covers the logic.
     it('resolveLayoutEnforcement returns the correct decision per mode + stored value (LAYOUT-1)', () => {
         const fnSrc = extractFunctionSource('resolveLayoutEnforcement');
+        const helperSrc = extractFunctionSource('layoutRendersModern');
         expect(fnSrc, 'resolveLayoutEnforcement not found').toBeTruthy();
-        // The function reads module-level layout-value constants; inject them.
+        expect(helperSrc, 'layoutRendersModern not found').toBeTruthy();
+        // The functions read module-level layout-value constants; inject them plus
+        // the helper the decision function depends on.
         type Decision = { changed: boolean; value?: string; reload?: boolean };
         type ResolveLayout = (mode: string | null | undefined, stored: string | null) => Decision;
         const resolve = eval(
             '(function(){'
             + "const LAYOUT_EXPERIMENTAL='experimental';"
             + "const LAYOUT_LEGACY='desktop';"
+            + helperSrc
             + fnSrc
             + ' return resolveLayoutEnforcement; })()',
         ) as ResolveLayout;
 
-        // None / unknown / empty: never touch the layout.
+        // None / unknown: never touch the layout.
         expect(resolve('None', 'desktop')).toEqual({ changed: false });
         expect(resolve(undefined, 'desktop')).toEqual({ changed: false });
         expect(resolve('Bogus', null)).toEqual({ changed: false });
 
-        // ForceExperimental: flip a legacy/unset device, with a reload; no-op if already there.
+        // ForceExperimental: an explicit legacy device flips WITH a reload...
         expect(resolve('ForceExperimental', 'desktop')).toEqual({ changed: true, value: 'experimental', reload: true });
-        expect(resolve('ForceExperimental', null)).toEqual({ changed: true, value: 'experimental', reload: true });
+        expect(resolve('ForceExperimental', 'mobile')).toEqual({ changed: true, value: 'experimental', reload: true });
+        // ...but a device already painting modern (unset/auto) is persisted WITHOUT a reload.
+        expect(resolve('ForceExperimental', null)).toEqual({ changed: true, value: 'experimental', reload: false });
+        expect(resolve('ForceExperimental', 'auto')).toEqual({ changed: true, value: 'experimental', reload: false });
         expect(resolve('ForceExperimental', 'experimental')).toEqual({ changed: false });
 
-        // ForceLegacy: symmetric hard override.
+        // ForceLegacy: only a modern-painting device flips (with a reload); an
+        // already-legacy sub-layout (desktop/mobile/tv) is left alone.
         expect(resolve('ForceLegacy', 'experimental')).toEqual({ changed: true, value: 'desktop', reload: true });
+        expect(resolve('ForceLegacy', null)).toEqual({ changed: true, value: 'desktop', reload: true });
+        expect(resolve('ForceLegacy', 'auto')).toEqual({ changed: true, value: 'desktop', reload: true });
         expect(resolve('ForceLegacy', 'desktop')).toEqual({ changed: false });
+        expect(resolve('ForceLegacy', 'mobile')).toEqual({ changed: false });
 
-        // DefaultExperimental: only when unset, and without a reload; never overrides a pick.
+        // DefaultExperimental: only when unset, without a reload; never overrides a pick.
         expect(resolve('DefaultExperimental', null)).toEqual({ changed: true, value: 'experimental', reload: false });
         expect(resolve('DefaultExperimental', '')).toEqual({ changed: true, value: 'experimental', reload: false });
         expect(resolve('DefaultExperimental', 'desktop')).toEqual({ changed: false });
