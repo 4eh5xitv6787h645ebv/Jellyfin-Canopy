@@ -143,6 +143,17 @@ describe('auto-skip engine', () => {
         expect(h.onSkipped).toHaveBeenCalledTimes(1);
     });
 
+    it('still seeks to the exact end when duration is not yet known (0/NaN)', async () => {
+        const h = makeHarness([intro5to30]);
+        h.video.duration = 0; // metadata not loaded yet
+        h.engine.attach(h.video);
+        await flush();
+
+        h.video.seekTo(6);
+        expect(h.video.currentTime).toBe(30); // treated as unknown → seeks to EndTicks
+        expect(h.onSkipped).toHaveBeenCalledTimes(1);
+    });
+
     it('ignores sub-second segments (native parity)', async () => {
         const h = makeHarness([{ Id: 'tiny', Type: 'Intro', StartTicks: sec(5), EndTicks: sec(5) + sec(0.5) }]);
         h.engine.attach(h.video);

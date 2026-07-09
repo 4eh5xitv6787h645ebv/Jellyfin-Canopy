@@ -153,11 +153,18 @@ export function createAutoSkipEngine(deps: AutoSkipDeps) {
 
                 acted.add(key);
                 const endSeconds = seg.EndTicks / TICKS_PER_SECOND;
-                const duration = Number.isFinite(video.duration) ? video.duration : Infinity;
+                // duration can read 0/NaN before metadata loads — treat that as
+                // unknown (Infinity) so we still seek to the exact end; only a
+                // genuine finite duration clamps a segment that runs to the item
+                // end.
+                const duration =
+                    Number.isFinite(video.duration) && video.duration > 0 ? video.duration : Infinity;
                 const target = Math.min(endSeconds, duration);
-                // Only ever seek forward to the exact boundary.
-                if (target > t) video.currentTime = target;
-                deps.onSkipped(seg);
+                // Only ever seek forward, and only toast when we actually jumped.
+                if (target > t) {
+                    video.currentTime = target;
+                    deps.onSkipped(seg);
+                }
                 break; // one skip per tick
             }
         }
