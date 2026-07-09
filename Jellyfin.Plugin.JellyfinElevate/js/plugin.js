@@ -458,21 +458,30 @@
 
     /**
      * Whether a stored `layout` value results in the MODERN layout being painted.
+     *
      * Jellyfin's own browser default is modern, so an unset or 'auto' choice already
-     * paints modern; the explicit legacy modes ('desktop', 'mobile', 'tv', and the
-     * master-dialect '*-legacy') paint the legacy app.
+     * paints modern. Only the known legacy modes paint the legacy app — the shipped
+     * 12.0.0 values ('desktop', 'mobile', 'tv') plus master's renamed
+     * '*-legacy' dialect. Anything ELSE (including a garbage/unknown value) counts
+     * as modern-painting: getSavedLayout() rejects unknown values and the app falls
+     * back to its modern default, so an unknown value never paints legacy.
      *
      * Detection tolerates BOTH Jellyfin-12 layout-value dialects (docs/v12-platform.md
-     * §1): the shipped 12.0.0 build's 'experimental' and master's renamed 'modern'.
-     * The VALUES WRITTEN by enforcement below target the shipped 12.0.0 build
+     * §1). The VALUES WRITTEN by enforcement below target the shipped 12.0.0 build
      * ('experimental'/'desktop'); on a build using the master dialect an unknown
      * written value is simply rejected by getSavedLayout() and the app keeps its
-     * modern default — so ForceExperimental still lands on modern there.
+     * modern default — so ForceExperimental still lands on modern there, while
+     * ForceLegacy silently degrades to modern (no diagnostic).
      * @param {string|null|undefined} stored
      * @returns {boolean}
      */
     function layoutRendersModern(stored) {
-        return !stored || stored === 'auto' || stored === LAYOUT_EXPERIMENTAL || stored === 'modern';
+        if (!stored) return true;
+        return stored !== LAYOUT_LEGACY
+            && stored !== 'mobile'
+            && stored !== 'tv'
+            && stored !== 'desktop-legacy'
+            && stored !== 'mobile-legacy';
     }
 
     /**
@@ -482,19 +491,31 @@
      * a one-shot reload is needed to make it take effect this load. A reload is only
      * ever needed when the device is CURRENTLY painting the other layout — a device
      * that already paints the target (including a fresh device on Jellyfin's modern
-     * default) is never reloaded; at most its stored value is made explicit. Kept
-     * pure and side-effect free so it can be unit-tested (see plugin-loader.test.ts).
+     * default) is never reloaded; at most its stored value is made explicit.
+     *
+     * TV exception: a stored 'tv' layout is NEVER steered by either Force mode. A
+     * device deliberately in 10-foot TV mode must not be pulled onto the mouse/touch
+     * UI — jellyfin-web itself scopes the modern default to non-TV browsers.
+     *
+     * Kept pure and side-effect free so it can be unit-tested
+     * (see plugin-loader.test.ts).
      *
      * @param {string|undefined|null} mode  The LayoutEnforcement config value.
      * @param {string|null} stored          The current localStorage['layout'] value.
      * @returns {{ changed: boolean, value?: string, reload?: boolean }}
      */
     function resolveLayoutEnforcement(mode, stored) {
+        // TV mode is exempt from Force steering in both directions.
+        if (stored === 'tv' && (mode === 'ForceExperimental' || mode === 'ForceLegacy')) {
+            return { changed: false };
+        }
+
         switch (mode) {
             case 'ForceExperimental':
-                // A device on a legacy mode must reload into the modern app. A device
-                // already painting modern (unset/'auto'/'experimental') is left as-is,
-                // but we persist 'experimental' so the choice is explicit — no reload.
+                // A device on a (non-TV) legacy mode must reload into the modern app.
+                // A device already painting modern (unset/'auto'/'experimental'/
+                // unknown) is left as-is, but we persist 'experimental' so the choice
+                // is explicit — no reload.
                 if (!layoutRendersModern(stored)) {
                     return { changed: true, value: LAYOUT_EXPERIMENTAL, reload: true };
                 }
@@ -502,16 +523,17 @@
                     ? { changed: false }
                     : { changed: true, value: LAYOUT_EXPERIMENTAL, reload: false };
             case 'ForceLegacy':
-                // Symmetric: only flip a device that would paint the modern layout;
-                // leave a device already on a legacy mode (desktop/mobile/tv) on its
-                // chosen legacy sub-layout.
+                // Only flip a device that would paint the modern layout — onto the
+                // DESKTOP legacy layout specifically (not form-factor aware). A device
+                // already on a legacy mode keeps its chosen legacy sub-layout.
                 return layoutRendersModern(stored)
                     ? { changed: true, value: LAYOUT_LEGACY, reload: true }
                     : { changed: false };
             case 'DefaultExperimental':
-                // Apply ONLY when the device has never made an explicit choice. It
-                // already paints the modern layout by default, so this just persists
-                // that choice — no reload needed.
+                // Apply ONLY when the device has never made an explicit choice — any
+                // stored value (even an unknown one) counts as an explicit choice and
+                // is left alone. An unset device already paints the modern layout by
+                // default, so this just persists that choice — no reload needed.
                 return stored
                     ? { changed: false }
                     : { changed: true, value: LAYOUT_EXPERIMENTAL, reload: false };
@@ -566,6 +588,15 @@
 
             try {
                 localStorage.setItem(LAYOUT_STORAGE_KEY, decision.value);
+                // Read-back guard: some environments accept setItem but do not
+                // actually persist (ephemeral/in-memory/quota-broken storage). If
+                // the write did not stick, reloading would land right back here —
+                // an infinite reload loop in the storage's own failing domain
+                // (sessionStorage would fail identically, so the session guard
+                // below could not catch it). Bail without reloading instead.
+                if (localStorage.getItem(LAYOUT_STORAGE_KEY) !== decision.value) {
+                    return false;
+                }
             } catch (e) {
                 return false; // cannot persist — do not reload into an unchanged state
             }

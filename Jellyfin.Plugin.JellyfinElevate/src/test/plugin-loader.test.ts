@@ -152,9 +152,12 @@ describe('plugin.js loader guards', () => {
         expect(resolve(undefined, 'desktop')).toEqual({ changed: false });
         expect(resolve('Bogus', null)).toEqual({ changed: false });
 
-        // ForceExperimental: an explicit legacy device flips WITH a reload...
+        // ForceExperimental: an explicit (non-TV) legacy device flips WITH a reload...
         expect(resolve('ForceExperimental', 'desktop')).toEqual({ changed: true, value: 'experimental', reload: true });
         expect(resolve('ForceExperimental', 'mobile')).toEqual({ changed: true, value: 'experimental', reload: true });
+        // ...master-dialect legacy values steer too...
+        expect(resolve('ForceExperimental', 'desktop-legacy')).toEqual({ changed: true, value: 'experimental', reload: true });
+        expect(resolve('ForceExperimental', 'mobile-legacy')).toEqual({ changed: true, value: 'experimental', reload: true });
         // ...but a device already painting modern (unset/auto) is persisted WITHOUT a reload.
         expect(resolve('ForceExperimental', null)).toEqual({ changed: true, value: 'experimental', reload: false });
         expect(resolve('ForceExperimental', 'auto')).toEqual({ changed: true, value: 'experimental', reload: false });
@@ -163,13 +166,31 @@ describe('plugin.js loader guards', () => {
         expect(resolve('ForceExperimental', 'modern')).toEqual({ changed: true, value: 'experimental', reload: false });
         expect(resolve('ForceLegacy', 'modern')).toEqual({ changed: true, value: 'desktop', reload: true });
 
-        // ForceLegacy: only a modern-painting device flips (with a reload); an
-        // already-legacy sub-layout (desktop/mobile/tv) is left alone.
+        // ForceLegacy: only a modern-painting device flips (with a reload) — onto the
+        // DESKTOP legacy layout; an already-legacy sub-layout is left alone.
         expect(resolve('ForceLegacy', 'experimental')).toEqual({ changed: true, value: 'desktop', reload: true });
         expect(resolve('ForceLegacy', null)).toEqual({ changed: true, value: 'desktop', reload: true });
         expect(resolve('ForceLegacy', 'auto')).toEqual({ changed: true, value: 'desktop', reload: true });
         expect(resolve('ForceLegacy', 'desktop')).toEqual({ changed: false });
         expect(resolve('ForceLegacy', 'mobile')).toEqual({ changed: false });
+        expect(resolve('ForceLegacy', 'desktop-legacy')).toEqual({ changed: false });
+        expect(resolve('ForceLegacy', 'mobile-legacy')).toEqual({ changed: false });
+
+        // TV exception: a stored 'tv' layout is NEVER steered, by ANY mode — a
+        // deliberate 10-foot device must not be pulled onto the mouse/touch UI.
+        expect(resolve('ForceExperimental', 'tv')).toEqual({ changed: false });
+        expect(resolve('ForceLegacy', 'tv')).toEqual({ changed: false });
+        expect(resolve('DefaultExperimental', 'tv')).toEqual({ changed: false });
+        expect(resolve('None', 'tv')).toEqual({ changed: false });
+
+        // Garbage/unknown stored value: getSavedLayout() rejects it, so the app
+        // paints its modern default. ForceExperimental persists the target without
+        // a reload; ForceLegacy flips (the device paints modern) with one reload;
+        // DefaultExperimental treats it as an explicit choice → unchanged.
+        expect(resolve('ForceExperimental', 'garbage-value')).toEqual({ changed: true, value: 'experimental', reload: false });
+        expect(resolve('ForceLegacy', 'garbage-value')).toEqual({ changed: true, value: 'desktop', reload: true });
+        expect(resolve('DefaultExperimental', 'garbage-value')).toEqual({ changed: false });
+        expect(resolve('None', 'garbage-value')).toEqual({ changed: false });
 
         // DefaultExperimental: only when unset, without a reload; never overrides a pick.
         expect(resolve('DefaultExperimental', null)).toEqual({ changed: true, value: 'experimental', reload: false });
