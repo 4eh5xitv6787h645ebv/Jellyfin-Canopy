@@ -108,10 +108,36 @@ const PIPELINE_SKIP_SELECTORS = [
 ];
 
 /**
+ * List-view rows (`.listItem`) show a tiny thumbnail — native `.listItemImage`
+ * is 4em (~64px, min ~44px) square (jellyfin-web `components/listview/listview.scss`).
+ * Card-sized tag overlays scaled onto that thumbnail are illegible noise that
+ * completely buries the artwork (issue 34). List view already surfaces the
+ * genuinely useful, legible info inline via the native side media-info block and
+ * user-data buttons — community rating (star), runtime, resolution, subtitles,
+ * played/favorite state (`listview.js` `getPrimaryMediaInfoHtml` + `listViewUserDataButtons`).
+ * So the tag pipeline is a poster-CARD decorator only: every list row is excluded
+ * here, at the single shared gate — once, before any renderer runs — rather than
+ * by per-renderer patches.
+ *
+ * In the modern React app this gate is belt-and-suspenders: the scan selectors are
+ * `.cardImageContainer` ONLY (never `.listItemImage`), so no list-row thumbnail is
+ * ever handed to the pipeline in the first place. The gate earns its keep on two
+ * remaining fronts, and `closest('.listItem')` covers both robustly:
+ *   - legacy web layouts, where the no-image row native-renders as
+ *     `.listItemImage.cardImageContainer` (`listview.js:294`) — that DOES match the
+ *     card scan selector, so without the gate the legacy list would get tagged;
+ *   - virtualized/recycled rows (re-scanned on reuse → always re-skipped).
+ */
+export function isListViewRow(el: HTMLElement): boolean {
+    return el.closest('.listItem') !== null;
+}
+
+/**
  * Check if an element should be skipped by the pipeline entirely.
  * @param el - The cardImageContainer element.
  */
 function shouldSkipElement(el: HTMLElement): boolean {
+    if (isListViewRow(el)) return true;
     return PIPELINE_SKIP_SELECTORS.some(sel => el.matches(sel) || el.closest(sel));
 }
 
@@ -388,7 +414,7 @@ function scheduleFetchIfQueued(): void {
  * BEFORE the overlay container so Jellyfin's hover overlay naturally covers
  * tags (DOM order). Never renders into cardImageContainer — that triggers
  * Jellyfin's lazy-load to reset opacity:0, breaking image display.
- * @param el - The cardImageContainer/listItemImage element.
+ * @param el - The cardImageContainer element.
  */
 function resolveRenderTarget(el: HTMLElement): HTMLElement {
     const scalable = el.closest<HTMLElement>('.cardScalable');
@@ -413,8 +439,10 @@ function resolveRenderTarget(el: HTMLElement): HTMLElement {
  * Process a single card: skip checks, render-target resolution, cache render
  * (server cache first, then localStorage/hot cache), queueing misses for the
  * batch fetch. Shared by the idle-scheduled chunk scan and the synchronous
- * pre-paint pass.
- * @param el - The cardImageContainer/listItemImage element.
+ * pre-paint pass. List rows (`.listItem`) are excluded here via shouldSkipElement
+ * (issue 34) as legacy-layout belt-and-suspenders plus recycling safety — see
+ * isListViewRow for why the modern React scan can't surface a list row anyway.
+ * @param el - The cardImageContainer element.
  * @param fadeIn - True for async (post-paint) passes: newly added overlays get
  *   the compositor-only fade so late tags appear smoothly. The pre-paint pass
  *   passes false — its tags are part of the card's first frame.
@@ -426,8 +454,6 @@ function processCard(el: HTMLElement, fadeIn: boolean): void {
 
     const card = el.closest('.card');
     if (card && card.classList.contains('je-hidden')) return;
-    const listItem = el.closest('.listItem');
-    if (listItem && listItem.classList.contains('je-hidden')) return;
 
     // Skip contexts that should never have tags
     if (shouldSkipElement(el)) {
@@ -501,14 +527,17 @@ function syncScanAddedCards(mutations: MutationRecord[]): void {
             const node = added[j];
             if (node.nodeType !== 1) continue;
             const elNode = node as HTMLElement;
-            if (elNode.matches('.cardImageContainer, div.listItemImage')) {
+            // Poster cards only — list rows (`.listItem`) are never tagged (issue 34,
+            // see shouldSkipElement/isListViewRow). Not scanned here so tiny list
+            // thumbnails cost zero pipeline work.
+            if (elNode.matches('.cardImageContainer')) {
                 if (performance.now() - start > SYNC_SCAN_BUDGET_MS) {
                     scheduleFetchIfQueued();
                     return;
                 }
                 processCard(elNode, false);
             }
-            const nested = elNode.querySelectorAll<HTMLElement>('.cardImageContainer, div.listItemImage');
+            const nested = elNode.querySelectorAll<HTMLElement>('.cardImageContainer');
             for (let k = 0; k < nested.length; k++) {
                 if (performance.now() - start > SYNC_SCAN_BUDGET_MS) {
                     scheduleFetchIfQueued();
@@ -531,7 +560,8 @@ function runScan(): void {
     if (!hasAnyEnabledRenderer()) return;
     if (typeof ApiClient === 'undefined') return;
 
-    const elements = document.querySelectorAll<HTMLElement>('.cardImageContainer, div.listItemImage');
+    // Poster cards only — list rows are excluded (issue 34, see isListViewRow).
+    const elements = document.querySelectorAll<HTMLElement>('.cardImageContainer');
     const unprocessed: HTMLElement[] = [];
     for (const el of elements) {
         if (!processedCards.has(el)) unprocessed.push(el);
@@ -904,23 +934,22 @@ function initialize(): void {
     // Without this, Jellyfin's overlay already covers tags (they're behind it).
     // This setting makes them completely invisible for users who want zero clutter.
     //
-    // The tag layer lives in one of three shapes depending on the card context
+    // The tag layer lives in one of two shapes depending on the card context
     // (see resolveRenderTarget): a `.je-tag-host` wrapper on cards that have a
     // `.cardOverlayContainer` (library grid, home rows, similar-items, season
     // posters), OR the bare `*-overlay-container` elements rendered straight into
     // `.cardScalable` (the primary detail-page poster — a `.card` with no hover
-    // menu) or into `.listItemImage` (list-view episode rows — a `.listItem`,
-    // NOT a `.card`). Keying only on `.card:hover .je-tag-host` matched the first
-    // group but missed the poster and the episode rows, so their tags never hid.
-    // Match the overlay containers directly under BOTH hover roots.
+    // menu). Keying only on `.card:hover .je-tag-host` matched the first group but
+    // missed the poster, so its tags never hid. Match the overlay containers
+    // directly under the hover root. (List rows never carry tags — issue 34,
+    // isListViewRow — so there is no `.listItem` hover case to cover.)
     // `[class*="-overlay-container"]` hits exactly the four JE containers — the
     // native `cardOverlayContainer` has no hyphen, so nothing else is affected.
     // PERF(R2): compositor-only opacity transition on absolutely-positioned
     // overlays — no layout/reflow on hover.
     addCSS('je-tag-hover-fade', `
         body.je-tags-hide-on-hover .card:hover .je-tag-host,
-        body.je-tags-hide-on-hover .card:hover [class*="-overlay-container"],
-        body.je-tags-hide-on-hover .listItem:hover [class*="-overlay-container"] {
+        body.je-tags-hide-on-hover .card:hover [class*="-overlay-container"] {
             opacity: 0 !important;
             transition: opacity 0.15s ease;
         }
