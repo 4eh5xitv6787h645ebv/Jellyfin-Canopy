@@ -1092,6 +1092,16 @@ const css = `
     }
 
     @media (max-width: 768px) {
+        /* Release the desktop 70vw cap on phones. The dead .layout-mobile
+           override above never fires on the Jellyfin 12 modern layout (the html
+           carries layout-desktop at every viewport — docs/v12-platform.md §1),
+           so without this the fullscreen modal's container stayed pinned to
+           ~70vw on a real phone. This is the viewport-keyed equivalent, matching
+           the settings-panel fix. */
+        .je-more-info-modal .modal-container {
+            max-width: 100vw;
+        }
+
         .je-more-info-modal .modal-backdrop {
             height: 200px;
             background-position: center;
