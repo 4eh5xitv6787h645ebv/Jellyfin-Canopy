@@ -30,6 +30,8 @@ const _jePublicApiIsFrozen: _FrozenPublicApi = true;
 void _jePublicApiIsFrozen;
 
 import './core/navigation';
+// layout imports navigation (self-wires a nav-driven retry of the layout stamp)
+import './core/layout';
 import './core/details-view';
 import './core/lifecycle';
 import './core/dom-observer';
