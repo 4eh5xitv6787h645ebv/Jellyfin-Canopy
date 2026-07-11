@@ -20,6 +20,8 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         private readonly TagCacheService _tagCacheService;
         private readonly TagCacheMonitor _tagCacheMonitor;
         private readonly SeerrScanTriggerService _seerrScanTriggerService;
+        private readonly Awards.AwardsCacheService _awardsCacheService;
+        private readonly Awards.IAwardsProvider _awardsProvider;
         private readonly IPluginConfigProvider _configProvider;
 
         public string Name => "Jellyfin Elevate Startup";
@@ -27,7 +29,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         public string Description => "Initializes Jellyfin Elevate background services and performs necessary cleanups. The client script is injected at request time by the injection middleware.";
         public string Category => "Jellyfin Elevate";
 
-        public StartupService(ILogger<StartupService> logger, IApplicationPaths applicationPaths, AutoSeasonRequestMonitor autoSeasonRequestMonitor, AutoMovieRequestMonitor autoMovieRequestMonitor, WatchlistMonitor watchlistMonitor, TagCacheService tagCacheService, TagCacheMonitor tagCacheMonitor, SeerrScanTriggerService seerrScanTriggerService, IPluginConfigProvider configProvider)
+        public StartupService(ILogger<StartupService> logger, IApplicationPaths applicationPaths, AutoSeasonRequestMonitor autoSeasonRequestMonitor, AutoMovieRequestMonitor autoMovieRequestMonitor, WatchlistMonitor watchlistMonitor, TagCacheService tagCacheService, TagCacheMonitor tagCacheMonitor, SeerrScanTriggerService seerrScanTriggerService, Awards.AwardsCacheService awardsCacheService, Awards.IAwardsProvider awardsProvider, IPluginConfigProvider configProvider)
         {
             _logger = logger;
             _applicationPaths = applicationPaths;
@@ -37,6 +39,8 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             _tagCacheService = tagCacheService;
             _tagCacheMonitor = tagCacheMonitor;
             _seerrScanTriggerService = seerrScanTriggerService;
+            _awardsCacheService = awardsCacheService;
+            _awardsProvider = awardsProvider;
             _configProvider = configProvider;
         }
 
@@ -81,8 +85,57 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                     _logger.LogError($"[TagCache] Failed to initialize tag cache (tags will use batch fallback): {ex.Message}");
                 }
 
+                // Load the awards index from disk. It is rebuilt from Wikidata only on the
+                // weekly scheduled task (or a manual run), never on every startup — a restart
+                // must not re-fetch. See BuildAwardsCacheTask.
+                try
+                {
+                    _awardsCacheService.LoadFromDisk();
+                }
+                catch (System.Exception ex)
+                {
+                    _logger.LogError($"[Awards] Failed to load awards index (awards section will be empty until the next refresh): {ex.Message}");
+                }
+
                 _logger.LogInformation("Jellyfin Elevate Startup Task completed successfully.");
             }, cancellationToken);
+
+            // First install only: if the feature is enabled but the index has never been built,
+            // populate it once now so awards appear without waiting up to a week for the scheduled
+            // task. Done after the sync init block (off the tag-cache path) and outside the disk
+            // load's try/catch. A restart with an existing on-disk index skips this entirely.
+            await BuildInitialAwardsIndexIfNeededAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task BuildInitialAwardsIndexIfNeededAsync(CancellationToken cancellationToken)
+        {
+            if (_configProvider.ConfigurationOrNull?.ShowAwards != true || !_awardsCacheService.IsEmpty)
+            {
+                return;
+            }
+
+            try
+            {
+                _logger.LogInformation("[Awards] Feature enabled and no index on disk; building the initial awards index...");
+                var rows = await _awardsProvider.FetchAllAsync(null, cancellationToken).ConfigureAwait(false);
+                if (rows.Count > 0)
+                {
+                    _awardsCacheService.ReplaceFrom(rows);
+                    _logger.LogInformation("[Awards] Initial awards index built: {0} titles.", _awardsCacheService.TitleCount);
+                }
+                else
+                {
+                    _logger.LogWarning("[Awards] Initial awards fetch returned no rows; the weekly task will retry.");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Server shutting down mid-fetch — the weekly task will build it later.
+            }
+            catch (System.Exception ex)
+            {
+                _logger.LogError($"[Awards] Initial awards index build failed (the weekly task will retry): {ex.Message}");
+            }
         }
 
         // Request-time script injection (Jellyfin 10.11 & 12).

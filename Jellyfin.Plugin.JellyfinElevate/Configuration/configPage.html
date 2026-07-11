@@ -1982,6 +1982,16 @@
                     </fieldset>
 
                     <fieldset>
+                        <legend class="sectionTitle">Awards</legend>
+                        <div class="configSection">
+                            <div class="checkboxContainer je-main-feature"><label><input id="showAwards" data-config-key="ShowAwards" is="emby-checkbox" type="checkbox"/><span>Show Awards</span></label></div>
+                            <div class="je-setting-description" data-desc-for="showAwards">
+                                <div class="fieldDescription je-field-desc-sm-font-lg">Shows an Awards section on Movie and Series detail pages listing wins and nominations from the Oscars, Golden Globes, BAFTA, Cannes, Venice, Berlin, Screen Actors Guild, Critics' Choice and the Emmys. No API key required — the data comes from Wikidata (open data). The server builds one global award index on an infrequent scheduled refresh ("Build Awards Cache" under Scheduled Tasks) and matches each item locally by its IMDb/TMDb id, so this adds no per-item network requests at view time, even on large libraries. Run "Build Awards Cache" once after enabling to populate the initial index.</div>
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
                         <legend class="sectionTitle">User Reviews</legend>
                         <div class="configSection">
                             <div class="je-info-banner-inline je-banner-managed">

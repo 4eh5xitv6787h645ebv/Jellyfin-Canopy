@@ -75,6 +75,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
             HideReviewsFromHiddenUsers = true;
             HideReviewsFromDisabledUsers = true;
             ShowReleaseDates = false;
+            ShowAwards = false;
             ShowUserRatingOnPosters = false;
             ShowUserRatingDash = true;
             PauseScreenEnabled = true;
@@ -424,6 +425,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         public bool HideReviewsFromHiddenUsers { get; set; } = true;
         public bool HideReviewsFromDisabledUsers { get; set; } = true;
         public bool ShowReleaseDates { get; set; }
+
+        /// <summary>
+        /// Show an "Awards" section (wins and nominations from Oscars, Golden Globes, BAFTA,
+        /// Cannes, Venice, Berlin, SAG, Critics' Choice and the Emmys) on movie and series
+        /// detail pages. The award data is a global index the server builds from Wikidata on
+        /// an infrequent scheduled refresh and looks up locally per item by IMDb/TMDb id, so
+        /// enabling this adds no per-item network cost at view time even on large libraries.
+        /// </summary>
+        public bool ShowAwards { get; set; }
         public bool ShowUserRatingOnPosters { get; set; } = false;
         /// <summary>
         /// When true (default), shows a "—" on poster cards for items the user hasn't rated yet.

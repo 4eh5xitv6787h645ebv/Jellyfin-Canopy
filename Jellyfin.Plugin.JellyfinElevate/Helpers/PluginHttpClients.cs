@@ -36,6 +36,13 @@ namespace Jellyfin.Plugin.JellyfinElevate.Helpers
         /// </summary>
         public const string AssetsClient = "JellyfinElevateAssets";
 
+        /// <summary>
+        /// Wikidata Query Service client (query.wikidata.org) — the awards data source. The
+        /// host is hardcoded and no credentials travel on these requests; Wikidata's policy
+        /// requires a descriptive User-Agent, which the caller attaches per request.
+        /// </summary>
+        public const string WikidataClient = "JellyfinElevateWikidata";
+
         public static HttpClient CreateArrClient(IHttpClientFactory factory)
         {
             // Same fallback pattern as SeerrHttpHelper.CreateClient: if the named
@@ -61,6 +68,20 @@ namespace Jellyfin.Plugin.JellyfinElevate.Helpers
             try { client = factory.CreateClient(AssetsClient); }
             catch { client = factory.CreateClient(); }
             client.Timeout = System.TimeSpan.FromSeconds(30);
+            return client;
+        }
+
+        /// <summary>
+        /// Wikidata Query Service client with a 120-second deadline (instance-scoped, per the
+        /// hygiene rules above): SPARQL aggregate queries over the awards graph are legitimately
+        /// slow, but must never pin a thread indefinitely on a hung endpoint.
+        /// </summary>
+        public static HttpClient CreateWikidataClient(IHttpClientFactory factory)
+        {
+            HttpClient client;
+            try { client = factory.CreateClient(WikidataClient); }
+            catch { client = factory.CreateClient(); }
+            client.Timeout = System.TimeSpan.FromSeconds(120);
             return client;
         }
 
