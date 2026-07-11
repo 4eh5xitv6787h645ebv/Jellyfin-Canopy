@@ -98,6 +98,27 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         }
 
         [Fact]
+        public void ParseInto_MalformedSuccessResponse_Throws()
+        {
+            // A 200 with an error/proxy payload lacking results.bindings must be treated as a
+            // FAILURE, not an empty success — otherwise it would falsely count as a successful
+            // ceremony query and let a partial refresh publish as "complete".
+            var sink = new List<AwardRow>();
+            Assert.Throws<FormatException>(() =>
+                WikidataAwardsProvider.ParseInto("{\"results\":{}}", "Academy Awards", won: true, sink));
+            Assert.Throws<FormatException>(() =>
+                WikidataAwardsProvider.ParseInto("{}", "Academy Awards", won: true, sink));
+        }
+
+        [Fact]
+        public void ParseInto_EmptyBindings_IsValidZeroRows()
+        {
+            var sink = new List<AwardRow>();
+            WikidataAwardsProvider.ParseInto("{\"results\":{\"bindings\":[]}}", "Academy Awards", won: true, sink);
+            Assert.Empty(sink); // a legitimately empty result is success with zero rows, not a failure
+        }
+
+        [Fact]
         public void Ceremonies_CoverRequestedSet_AndFestivalsAreWinsOnly()
         {
             var meta = WikidataAwardsProvider.CeremonyMetaForTest;

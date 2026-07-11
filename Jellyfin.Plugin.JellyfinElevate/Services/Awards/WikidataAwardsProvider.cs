@@ -175,11 +175,16 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
         internal static void ParseInto(string json, string ceremonyName, bool won, List<AwardRow> sink)
         {
             using var doc = JsonDocument.Parse(json);
+            // A structurally valid WDQS result must expose results.bindings as an array (an empty
+            // array is legitimate — a genuine zero-row answer). Anything else (a 200 with an
+            // error/proxy payload, a truncated body) is NOT a successful query: throw so the
+            // caller counts it as a failure and does not mark the refresh Complete — otherwise a
+            // bogus "success" would erase that ceremony's awards on the next publish.
             if (!doc.RootElement.TryGetProperty("results", out var results)
                 || !results.TryGetProperty("bindings", out var bindings)
                 || bindings.ValueKind != JsonValueKind.Array)
             {
-                return;
+                throw new FormatException("WDQS response did not contain a results.bindings array.");
             }
 
             foreach (var binding in bindings.EnumerateArray())

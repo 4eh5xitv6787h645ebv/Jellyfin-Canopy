@@ -234,6 +234,22 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         }
 
         [Fact]
+        public void TryReplaceFrom_StaleGeneration_IsRejected()
+        {
+            var svc = NewService();
+            var genEarly = svc.NextRefreshGeneration(); // an earlier-started refresh
+            var genLate = svc.NextRefreshGeneration();  // a later-started refresh
+
+            // The later-started refresh completes and publishes first.
+            Assert.True(svc.TryReplaceFrom(new[] { Row("Academy Awards", "Newer", true, 2024, imdb: "tt-new") }, complete: true, genLate));
+            // The earlier-started refresh finishes afterwards — its stale generation is rejected.
+            Assert.False(svc.TryReplaceFrom(new[] { Row("Academy Awards", "Older", true, 2024, imdb: "tt-old") }, complete: true, genEarly));
+
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt-new")));
+            Assert.Empty(svc.LookupForItem(Movie(imdb: "tt-old")));
+        }
+
+        [Fact]
         public void LoadFromDisk_DoesNotDowngradeNewerInMemoryIndex()
         {
             var svc = NewService();

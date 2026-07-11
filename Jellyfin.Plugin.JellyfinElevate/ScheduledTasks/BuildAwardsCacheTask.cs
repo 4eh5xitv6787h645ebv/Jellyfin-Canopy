@@ -57,6 +57,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.ScheduledTasks
             _logger.LogInformation("[Awards] Building awards cache from provider...");
             progress?.Report(0);
 
+            // Reserve the refresh generation BEFORE fetching so start-order (not completion-order)
+            // decides which of two concurrent refreshes wins on publish.
+            var generation = _cache.NextRefreshGeneration();
+
             Services.Awards.AwardsFetchResult result;
             try
             {
@@ -79,7 +83,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.ScheduledTasks
             // partial run (some ceremony queries failed) publishes only when the index is still
             // empty (first install), never over an existing complete index — so a single timed-out
             // query can't erase that ceremony's awards, and it can't race the startup build.
-            var published = _cache.TryReplaceFrom(result.Rows, result.Complete);
+            var published = _cache.TryReplaceFrom(result.Rows, result.Complete, generation);
             progress?.Report(100);
             if (published)
             {

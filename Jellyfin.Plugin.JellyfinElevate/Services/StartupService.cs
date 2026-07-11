@@ -117,13 +117,16 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             try
             {
                 _logger.LogInformation("[Awards] Feature enabled and no index on disk; building the initial awards index...");
+
+                // Reserve the generation before fetching so a concurrent manual "Build Awards
+                // Cache" run started later (higher generation) wins over this slower startup build.
+                var generation = _awardsCacheService.NextRefreshGeneration();
                 var result = await _awardsProvider.FetchAllAsync(null, cancellationToken).ConfigureAwait(false);
 
                 // TryReplaceFrom publishes atomically: on first install (empty index) even a partial
-                // result is published; but if a manual "Build Awards Cache" run completed a full
-                // index while this slower fetch was in flight, a partial result here is rejected
-                // rather than downgrading the complete index.
-                if (_awardsCacheService.TryReplaceFrom(result.Rows, result.Complete))
+                // result is published; but a partial result is rejected once a complete index exists,
+                // and a stale generation is rejected once a newer refresh has published.
+                if (_awardsCacheService.TryReplaceFrom(result.Rows, result.Complete, generation))
                 {
                     _logger.LogInformation("[Awards] Initial awards index built: {0} titles.", _awardsCacheService.TitleCount);
                 }

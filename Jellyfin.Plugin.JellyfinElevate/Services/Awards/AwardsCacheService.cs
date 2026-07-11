@@ -43,6 +43,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
         // volatile snapshot reference directly.
         private readonly object _rebuildLock = new();
 
+        // Monotonic refresh generation: a caller stamps its refresh with NextRefreshGeneration()
+        // BEFORE fetching, so a slower older-started refresh that finishes late can be rejected in
+        // favor of a newer one — publication order follows freshness, not completion order.
+        private long _generationCounter;
+        private long _lastPublishedGeneration;
+
         private volatile AwardsIndex _index = AwardsIndex.Empty;
 
         public AwardsCacheService(IApplicationPaths applicationPaths, ILogger<AwardsCacheService> logger)
@@ -74,18 +80,35 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
         /// complete index; this primitive is for callers that always want to publish.
         /// </summary>
         public void ReplaceFrom(IReadOnlyCollection<AwardRow> rows)
-            => TryReplaceFrom(rows, complete: true);
+            => TryReplaceFrom(rows, complete: true, NextRefreshGeneration());
+
+        /// <summary>
+        /// Reserve a monotonic refresh generation. A refresh caller calls this BEFORE it starts
+        /// fetching, then passes the value to <see cref="TryReplaceFrom(IReadOnlyCollection{AwardRow}, bool, long)"/>,
+        /// so an older-started refresh that finishes after a newer one is rejected rather than
+        /// republishing older data.
+        /// </summary>
+        public long NextRefreshGeneration() => Interlocked.Increment(ref _generationCounter);
+
+        /// <summary>
+        /// Convenience overload that reserves a fresh generation at call time (for callers that
+        /// publish immediately and don't span a long fetch, e.g. tests).
+        /// </summary>
+        public bool TryReplaceFrom(IReadOnlyCollection<AwardRow> rows, bool complete)
+            => TryReplaceFrom(rows, complete, NextRefreshGeneration());
 
         /// <summary>
         /// Publish a fresh index, but only when it is safe to do so. Returns true if published.
         /// A <paramref name="complete"/> run always publishes; a PARTIAL run publishes only when
         /// the index is currently empty (first install) — never over an existing populated index,
-        /// so a single failed ceremony query can't erase that ceremony's awards. The
-        /// currently-empty check and the swap happen under one lock, so a slow startup fetch and
-        /// a concurrent manual refresh can't race to downgrade a complete index to partial.
-        /// An empty row set never publishes.
+        /// so a single failed ceremony query can't erase that ceremony's awards. A publication
+        /// whose <paramref name="generation"/> is not newer than the last published one is also
+        /// rejected, so an older-started refresh can't overwrite a newer one. The generation check,
+        /// the currently-empty check, the version bump and the swap+persist all happen under one
+        /// lock, so concurrent startup/manual/scheduled refreshes can't race. An empty row set
+        /// never publishes.
         /// </summary>
-        public bool TryReplaceFrom(IReadOnlyCollection<AwardRow> rows, bool complete)
+        public bool TryReplaceFrom(IReadOnlyCollection<AwardRow> rows, bool complete, long generation)
         {
             ArgumentNullException.ThrowIfNull(rows);
 
@@ -133,6 +156,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
             AwardsIndex next;
             lock (_rebuildLock)
             {
+                if (generation <= _lastPublishedGeneration)
+                {
+                    _logger.LogWarning(
+                        "[Awards] Rejected a stale refresh (generation {Gen} <= last published {Last}); a newer refresh already won.",
+                        generation, _lastPublishedGeneration);
+                    return false;
+                }
+
                 var currentlyEmpty = _index.Version == 0 && _index.ByImdb.Count == 0 && _index.ByTmdb.Count == 0;
                 if (!complete && !currentlyEmpty)
                 {
@@ -152,6 +183,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                 };
 
                 _index = next;
+                _lastPublishedGeneration = generation;
 
                 _logger.LogInformation(
                     "[Awards] Rebuilt index v{Version} ({Completeness}): {Titles} titles by IMDb, {TmdbTitles} by TMDb.",
