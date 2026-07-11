@@ -116,6 +116,11 @@ JE.initializeAwardsScript = function () {
     }
 
     async function processAwards(): Promise<void> {
+        // Fast-path bail if the admin disabled the feature since this pass was scheduled (a pending
+        // backoff timer or a queued idle callback can still call in here). The je:config-changed
+        // handler already stripped any rendered section; this stops a new one being inserted.
+        if (!JE?.pluginConfig?.ShowAwards) return;
+
         if (inFlight) {
             rerunRequested = true;
             return;
@@ -179,9 +184,10 @@ JE.initializeAwardsScript = function () {
                 return;
             }
 
-            // The user may have navigated away while the request was in flight.
+            // The user may have navigated away — or the admin disabled the feature — while the
+            // request was in flight; don't insert a section in either case.
             const stillVisible = document.querySelector<HTMLElement>('#itemDetailPage:not(.hide)');
-            if (!stillVisible || getItemIdFromUrl() !== itemId) return;
+            if (!stillVisible || getItemIdFromUrl() !== itemId || !JE?.pluginConfig?.ShowAwards) return;
             if (stillVisible.querySelector(`.${SECTION_CLASS}`)) {
                 resolved.add(itemId);
                 retry.delete(itemId);
