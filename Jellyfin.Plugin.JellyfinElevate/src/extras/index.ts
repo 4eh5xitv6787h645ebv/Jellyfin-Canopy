@@ -8,3 +8,4 @@ import './colored-ratings';
 import './plugin-icons';
 import './theme-selector';
 import './active-streams';
+import './awards';

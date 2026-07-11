@@ -698,5 +698,8 @@
   "discovery_customize_move_down": "Posunúť nadol",
   "discovery_customize_reset": "Obnoviť predvolené",
   "discovery_customize_cancel": "Zrušiť",
-  "discovery_customize_save": "Uložiť"
+  "discovery_customize_save": "Uložiť",
+  "awards_section_title": "Ocenenia",
+  "awards_won": "Víťaz",
+  "awards_nominated": "Nominácia"
 }

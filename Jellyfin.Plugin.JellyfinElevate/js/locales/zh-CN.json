@@ -698,5 +698,8 @@
   "discovery_customize_move_down": "下移",
   "discovery_customize_reset": "恢复默认",
   "discovery_customize_cancel": "取消",
-  "discovery_customize_save": "储存"
+  "discovery_customize_save": "储存",
+  "awards_section_title": "获奖",
+  "awards_won": "获奖者",
+  "awards_nominated": "提名"
 }

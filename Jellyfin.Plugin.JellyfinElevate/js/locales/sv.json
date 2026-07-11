@@ -698,5 +698,8 @@
   "discovery_customize_move_down": "Flytta ned",
   "discovery_customize_reset": "Återställ standard",
   "discovery_customize_cancel": "Avbryt",
-  "discovery_customize_save": "Spara"
+  "discovery_customize_save": "Spara",
+  "awards_section_title": "Utmärkelser",
+  "awards_won": "Vinnare",
+  "awards_nominated": "Nominerad"
 }

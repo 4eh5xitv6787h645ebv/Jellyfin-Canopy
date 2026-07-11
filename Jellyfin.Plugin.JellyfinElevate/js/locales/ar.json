@@ -698,5 +698,8 @@
   "discovery_customize_move_down": "نقل لأسفل",
   "discovery_customize_reset": "إعادة التعيين إلى الافتراضي",
   "discovery_customize_cancel": "إلغاء",
-  "discovery_customize_save": "حفظ"
+  "discovery_customize_save": "حفظ",
+  "awards_section_title": "الجوائز",
+  "awards_won": "فائز",
+  "awards_nominated": "مُرشَّح"
 }

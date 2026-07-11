@@ -698,5 +698,8 @@
   "discovery_customize_move_down": "Mou cap avall",
   "discovery_customize_reset": "Restableix els valors predeterminats",
   "discovery_customize_cancel": "Cancel·lar",
-  "discovery_customize_save": "Desar"
+  "discovery_customize_save": "Desar",
+  "awards_section_title": "Premis",
+  "awards_won": "Guanyador",
+  "awards_nominated": "Nominat"
 }
