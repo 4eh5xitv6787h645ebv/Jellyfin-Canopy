@@ -25,7 +25,7 @@
 
 import { JE as JEBase } from '../globals';
 import { ensureMaterialSymbolsFont } from '../core/ui-kit';
-import { isDetailsPageVisible, getItemIdFromUrl } from '../core/details-view';
+import { isDetailsPageVisible, getVisibleDetailsPage } from '../core/details-view';
 import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate, onViewPage } from '../core/navigation';
 import { prettifyCategory, groupByCeremony, applyTransient, type AwardEntry, type TransientRetryState } from './awards-format';
@@ -126,11 +126,14 @@ JE.initializeAwardsScript = function () {
             return;
         }
 
-        const visiblePage = document.querySelector<HTMLElement>('#itemDetailPage:not(.hide)');
-        if (!visiblePage) return;
-
-        const itemId = getItemIdFromUrl();
-        if (!itemId) return;
+        // Single source of the (page, item) pair. getVisibleDetailsPage() returns null while the
+        // outgoing cached page is still visible during a details→details navigation, so we never
+        // resolve against — or inject into — the wrong page (the raw `#itemDetailPage:not(.hide)`
+        // selector can return the outgoing page mid-navigation).
+        const view = getVisibleDetailsPage();
+        if (!view) return;
+        const visiblePage = view.page;
+        const itemId = view.itemId;
 
         // Navigated to a different item — allow the new one to render and drop stale state, so a
         // genuinely new page view starts with a fresh (monotonic) retry budget.
@@ -185,9 +188,12 @@ JE.initializeAwardsScript = function () {
             }
 
             // The user may have navigated away — or the admin disabled the feature — while the
-            // request was in flight; don't insert a section in either case.
-            const stillVisible = document.querySelector<HTMLElement>('#itemDetailPage:not(.hide)');
-            if (!stillVisible || getItemIdFromUrl() !== itemId || !JE?.pluginConfig?.ShowAwards) return;
+            // request was in flight. Re-resolve the live (page, item) pair and require the SAME
+            // item AND the incoming live page before inserting, so a fast response for B can't land
+            // on A's outgoing page during a details→details navigation.
+            const after = getVisibleDetailsPage();
+            if (!after || after.itemId !== itemId || !JE?.pluginConfig?.ShowAwards) return;
+            const stillVisible = after.page;
             if (stillVisible.querySelector(`.${SECTION_CLASS}`)) {
                 resolved.add(itemId);
                 retry.delete(itemId);
@@ -220,7 +226,7 @@ JE.initializeAwardsScript = function () {
     // the timer aborts if the user navigated away or the item already rendered.
     function scheduleDelayedRetry(itemId: string, delayMs: number): void {
         window.setTimeout(() => {
-            if (getItemIdFromUrl() !== itemId) return; // navigated away
+            if (getVisibleDetailsPage()?.itemId !== itemId) return; // navigated away
             if (resolved.has(itemId)) return;           // already resolved
             schedule();
         }, delayMs);

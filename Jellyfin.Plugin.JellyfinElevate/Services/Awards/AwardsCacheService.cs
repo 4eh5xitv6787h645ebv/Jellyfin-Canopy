@@ -32,7 +32,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
     {
         // Bump when the on-disk shape changes so an older cache is discarded and rebuilt
         // instead of being deserialized into an incompatible structure.
-        private const int CurrentSchemaVersion = 1;
+        private const int CurrentSchemaVersion = 2;
 
         private readonly IApplicationPaths _applicationPaths;
         private readonly ILogger<AwardsCacheService> _logger;
@@ -49,6 +49,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
         // favor of a newer one — publication order follows freshness, not completion order.
         private long _generationCounter;
         private long _lastPublishedGeneration;
+
+        // Set once a refresh has published in THIS process. LoadFromDisk refuses to install a disk
+        // snapshot afterwards — an on-disk version number is meaningless across a restart (the
+        // in-memory version restarts at 0), so a fresh in-process publish must never be replaced by
+        // a stale disk read that merely has a higher persisted version.
+        private bool _publishedInProcess;
 
         private volatile AwardsIndex _index = AwardsIndex.Empty;
 
@@ -152,36 +158,51 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
             AwardsIndex next;
             lock (_rebuildLock)
             {
-                if (generation <= _lastPublishedGeneration)
-                {
-                    _logger.LogWarning(
-                        "[Awards] Rejected a stale refresh (generation {Gen} <= last published {Last}); a newer refresh already won.",
-                        generation, _lastPublishedGeneration);
-                    return false;
-                }
-
                 var currentlyEmpty = _index.Version == 0 && _index.ByImdb.Count == 0 && _index.ByTmdb.Count == 0;
                 var producesEmpty = byImdb.Count == 0 && byTmdb.Count == 0;
 
-                if (!currentlyEmpty)
+                // Guard 1: an empty result never CLEARS an existing non-empty index (a fetch that
+                // came back empty is treated as "keep what we have", never "wipe it").
+                if (producesEmpty && !currentlyEmpty)
                 {
-                    // Over an EXISTING index, only a complete AND non-empty result publishes. This
-                    // rejects a partial refresh (some queries failed) and any empty result — an
-                    // empty or partial fetch must never clear a good index.
-                    if (!complete || producesEmpty)
-                    {
-                        _logger.LogWarning(
-                            "[Awards] Rejected a {Kind} rebuild over the existing index of {Titles} titles.",
-                            !complete ? "partial" : "empty", _index.ByImdb.Count);
-                        return false;
-                    }
+                    _logger.LogWarning("[Awards] Rejected an empty rebuild over the existing index of {Titles} titles.", _index.ByImdb.Count);
+                    return false;
                 }
-                else if (producesEmpty && !complete)
+
+                // Guard 2: a partial fetch that produced nothing is not a "built" index — wait for a
+                // real result. (A COMPLETE empty result DOES publish on first install: a legitimate
+                // "built, no awards" state that clears indexEmpty.)
+                if (producesEmpty && !complete)
                 {
-                    // First install, but the fetch was partial AND produced nothing — don't mark
-                    // the index "built" yet; wait for a real result. A COMPLETE empty result DOES
-                    // publish here (a legitimate "built, no awards" state), clearing indexEmpty so
-                    // the client stops treating it as not-ready.
+                    return false;
+                }
+
+                // Precedence: does the incoming result supersede the currently published snapshot?
+                //   - a COMPLETE result supersedes a PARTIAL one regardless of generation (a
+                //     later-started partial first-build must not block a complete result — F4);
+                //   - between two results of the SAME completeness, the newer generation wins (so an
+                //     older-started refresh finishing late can't overwrite a newer one — F9);
+                //   - a PARTIAL result never supersedes a COMPLETE one.
+                bool supersedes;
+                if (complete && !_index.Complete)
+                {
+                    supersedes = true;
+                }
+                else if (complete == _index.Complete)
+                {
+                    supersedes = generation > _lastPublishedGeneration;
+                }
+                else
+                {
+                    supersedes = false;
+                }
+
+                if (!supersedes)
+                {
+                    _logger.LogWarning(
+                        "[Awards] Rejected a {Kind} rebuild (generation {Gen}); the current index is {CurKind} at generation {Last}.",
+                        complete ? "complete" : "partial", generation,
+                        _index.Complete ? "complete" : "partial", _lastPublishedGeneration);
                     return false;
                 }
 
@@ -190,12 +211,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                     Version = _index.Version + 1,
                     LastModified = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     BuiltAtUtc = DateTime.UtcNow.ToString("O"),
+                    Complete = complete,
                     ByImdb = byImdb,
                     ByTmdb = byTmdb
                 };
 
                 _index = next;
                 _lastPublishedGeneration = generation;
+                _publishedInProcess = true;
 
                 _logger.LogInformation(
                     "[Awards] Rebuilt index v{Version} ({Completeness}): {Titles} titles by IMDb, {TmdbTitles} by TMDb.",
@@ -301,6 +324,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                     Version = data.Version,
                     LastModified = data.LastModified,
                     BuiltAtUtc = data.BuiltAtUtc,
+                    Complete = data.Complete,
                     ByImdb = data.ByImdb != null
                         ? new Dictionary<string, List<AwardEntry>>(data.ByImdb, StringComparer.OrdinalIgnoreCase)
                         : new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase),
@@ -309,22 +333,26 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                         : new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase)
                 };
 
-                // Install under the rebuild lock and only if it's newer than what's in memory.
-                // If a manual refresh published a newer snapshot while this file read was in
-                // flight, the fresher in-memory index wins — a stale disk read never downgrades it.
+                // Install under the rebuild lock, but only if no refresh has already published in
+                // this process. A version comparison is NOT enough: the in-memory version restarts
+                // at 0, so a fresh in-process refresh (v1) can carry a lower number than a stale disk
+                // snapshot (v5) while holding newer data — the published-in-process flag captures
+                // "an in-flight refresh already won" independent of the numeric version. The loaded
+                // generation seeds _lastPublishedGeneration to 0 so any in-session refresh supersedes.
                 lock (_rebuildLock)
                 {
-                    if (loaded.Version > _index.Version)
+                    if (_publishedInProcess)
                     {
-                        _index = loaded;
                         _logger.LogInformation(
-                            "[Awards] Loaded {Titles} titles from disk (v{Version}).", loaded.ByImdb.Count, loaded.Version);
+                            "[Awards] A refresh already published in-process; discarding the older disk snapshot (v{OnDisk}).",
+                            loaded.Version);
                     }
                     else
                     {
+                        _index = loaded;
                         _logger.LogInformation(
-                            "[Awards] Disk cache v{OnDisk} is not newer than the in-memory index v{InMemory}; keeping memory.",
-                            loaded.Version, _index.Version);
+                            "[Awards] Loaded {Titles} titles from disk (v{Version}, {Completeness}).",
+                            loaded.ByImdb.Count, loaded.Version, loaded.Complete ? "complete" : "partial");
                     }
                 }
             }
@@ -352,6 +380,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                         Version = index.Version,
                         LastModified = index.LastModified,
                         BuiltAtUtc = index.BuiltAtUtc,
+                        Complete = index.Complete,
                         ByImdb = index.ByImdb,
                         ByTmdb = index.ByTmdb
                     };
@@ -457,6 +486,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                 Version = 0,
                 LastModified = 0,
                 BuiltAtUtc = null,
+                Complete = false,
                 ByImdb = new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase),
                 ByTmdb = new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase)
             };
@@ -466,6 +496,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
             public long LastModified { get; init; }
 
             public string? BuiltAtUtc { get; init; }
+
+            /// <summary>Whether the snapshot came from a fully successful fetch (all ceremonies).</summary>
+            public bool Complete { get; init; }
 
             public Dictionary<string, List<AwardEntry>> ByImdb { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -481,6 +514,8 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
             public long LastModified { get; set; }
 
             public string? BuiltAtUtc { get; set; }
+
+            public bool Complete { get; set; }
 
             public Dictionary<string, List<AwardEntry>>? ByImdb { get; set; }
 

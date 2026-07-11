@@ -306,29 +306,44 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         }
 
         [Fact]
-        public void LoadFromDisk_DoesNotDowngradeNewerInMemoryIndex()
+        public void LoadFromDisk_AfterInProcessPublish_KeepsFreshDataOverHigherVersionDisk()
         {
             var svc = NewService();
-            // Drive the in-memory index to v2 with a distinctive award.
-            svc.ReplaceFrom(new[] { Row("Academy Awards", "First", true, 2024, imdb: "tt-new") });
-            svc.ReplaceFrom(new[] { Row("Academy Awards", "Second", true, 2024, imdb: "tt-new") });
-            Assert.Equal(2, svc.Version);
+            // A refresh publishes fresh data in-process (in-memory version restarts at 1).
+            svc.ReplaceFrom(new[] { Row("Academy Awards", "Fresh", true, 2024, imdb: "tt-fresh") });
 
-            // Simulate an OLDER snapshot on disk (v1) with different data — as if LoadFromDisk read
-            // it before a concurrent rebuild published v2. Property names match the on-disk format.
+            // A stale snapshot with a much HIGHER persisted version sits on disk (as if written
+            // before a restart). Version comparison alone would wrongly install it.
             var path = Path.Combine(_dir, "configurations", "Jellyfin.Plugin.JellyfinElevate", "awards-cache.json");
             File.WriteAllText(
                 path,
-                "{\"SchemaVersion\":1,\"Version\":1,\"LastModified\":0,\"BuiltAtUtc\":null,"
-                + "\"ByImdb\":{\"tt-old\":[{\"ceremony\":\"Old\",\"category\":\"Old\",\"year\":2000,\"won\":true}]},"
+                "{\"SchemaVersion\":2,\"Version\":99,\"LastModified\":0,\"BuiltAtUtc\":null,\"Complete\":true,"
+                + "\"ByImdb\":{\"tt-stale\":[{\"ceremony\":\"Old\",\"category\":\"Old\",\"year\":2000,\"won\":true}]},"
                 + "\"ByTmdb\":{}}");
 
             svc.LoadFromDisk();
 
-            // The newer in-memory index wins; the stale disk read is discarded.
-            Assert.Equal(2, svc.Version);
-            Assert.Empty(svc.LookupForItem(Movie(imdb: "tt-old")));
-            Assert.Single(svc.LookupForItem(Movie(imdb: "tt-new")));
+            // The fresh in-process data is kept; the higher-version but stale disk snapshot is ignored.
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt-fresh")));
+            Assert.Empty(svc.LookupForItem(Movie(imdb: "tt-stale")));
+        }
+
+        [Fact]
+        public void TryReplaceFrom_CompleteSupersedesPartialFirstBuild_RegardlessOfGeneration()
+        {
+            var svc = NewService();
+            var genComplete = svc.NextRefreshGeneration(); // started first (older generation)
+            var genPartial = svc.NextRefreshGeneration();  // started later (newer generation)
+
+            // The later-started PARTIAL first-build finishes first and publishes.
+            Assert.True(svc.TryReplaceFrom(new[] { Row("BAFTA Awards", "Best Film", true, 2024, imdb: "tt-partial") }, complete: false, genPartial));
+
+            // The earlier-started COMPLETE build finishes afterwards — it MUST supersede the partial
+            // despite carrying an older generation (completeness outranks generation).
+            Assert.True(svc.TryReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt-complete") }, complete: true, genComplete));
+
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt-complete")));
+            Assert.Empty(svc.LookupForItem(Movie(imdb: "tt-partial")));
         }
 
         [Fact]

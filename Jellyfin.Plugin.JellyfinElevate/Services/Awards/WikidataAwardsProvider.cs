@@ -136,13 +136,17 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                 _logger.LogInformation("[Awards] {Ceremony} {Kind}: {Count} rows.", ceremony.Name, kind, sink.Count - before);
                 return true;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                // Genuine caller cancellation (server shutdown / task cancel) — propagate.
                 throw;
             }
             catch (Exception ex)
             {
-                // A single ceremony/kind failing must not abort the whole run (partial data beats none).
+                // A single ceremony/kind failing must not abort the whole run (partial data beats
+                // none). This includes an HttpClient.Timeout, which surfaces as an
+                // OperationCanceledException NOT tied to our token — the filter above lets it fall
+                // through to here so one slow query is a query failure, not a whole-run abort.
                 _logger.LogWarning("[Awards] {Ceremony} {Kind} query failed: {Message}", ceremony.Name, kind, ex.Message);
                 return false;
             }
