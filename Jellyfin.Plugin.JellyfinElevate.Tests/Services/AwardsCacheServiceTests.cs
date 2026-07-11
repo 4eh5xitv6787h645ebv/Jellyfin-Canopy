@@ -347,6 +347,21 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         }
 
         [Fact]
+        public void TryReplaceFrom_PartialOverExistingPartial_IsRejected()
+        {
+            var svc = NewService();
+            // First install publishes a PARTIAL snapshot (one ceremony query failed).
+            Assert.True(svc.TryReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt-a") }, complete: false, svc.NextRefreshGeneration()));
+
+            // A later PARTIAL refresh (different ceremony lost) must NOT replace it — that would
+            // erase tt-a's awards. A partial only ever publishes onto an empty index.
+            Assert.False(svc.TryReplaceFrom(new[] { Row("BAFTA Awards", "Best Film", true, 2024, imdb: "tt-b") }, complete: false, svc.NextRefreshGeneration()));
+
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt-a")));
+            Assert.Empty(svc.LookupForItem(Movie(imdb: "tt-b")));
+        }
+
+        [Fact]
         public void TryReplaceFrom_CompleteSupersedesPartialFirstBuild_RegardlessOfGeneration()
         {
             var svc = NewService();

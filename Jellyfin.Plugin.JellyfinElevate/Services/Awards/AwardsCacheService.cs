@@ -178,23 +178,22 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                 }
 
                 // Precedence: does the incoming result supersede the currently published snapshot?
+                //   - a PARTIAL result publishes ONLY onto an empty (never-built) index — a
+                //     first-install best-effort. Once ANY built snapshot exists it never publishes,
+                //     so two successive partials that each lose a different ceremony can't erase
+                //     each other's awards.
                 //   - a COMPLETE result supersedes a PARTIAL one regardless of generation (a
                 //     later-started partial first-build must not block a complete result — F4);
-                //   - between two results of the SAME completeness, the newer generation wins (so an
-                //     older-started refresh finishing late can't overwrite a newer one — F9);
-                //   - a PARTIAL result never supersedes a COMPLETE one.
+                //   - a COMPLETE result supersedes an older COMPLETE one only with a newer
+                //     generation (an older-started refresh finishing late can't overwrite it — F9).
                 bool supersedes;
-                if (complete && !_index.Complete)
+                if (complete)
                 {
-                    supersedes = true;
-                }
-                else if (complete == _index.Complete)
-                {
-                    supersedes = generation > _lastPublishedGeneration;
+                    supersedes = !_index.Complete || generation > _lastPublishedGeneration;
                 }
                 else
                 {
-                    supersedes = false;
+                    supersedes = currentlyEmpty;
                 }
 
                 if (!supersedes)
