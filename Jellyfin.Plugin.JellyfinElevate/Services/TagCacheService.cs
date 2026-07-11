@@ -191,12 +191,6 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
 
                 var newCache = new ConcurrentDictionary<string, TagCacheEntry>();
                 var changed = false; // an add or a genuine content change (drives the ?since= delta)
-                // Items whose media probe / dependency lookup failed this pass: we keep their
-                // last-good entry (below) and re-queue them for a prompt off-thread retry once the
-                // guard is released, so a transient failure recovers via the existing flush path
-                // instead of waiting for the next daily reconcile (which, for a rating-inheriting
-                // episode, would not otherwise re-fire once the series entry has settled).
-                var probeFailed = new List<Guid>();
                 var processed = 0;
 
                 foreach (var item in allItems)
@@ -224,16 +218,24 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                         var entry = BuildEntryForItem(item);
                         if (entry == null)
                         {
-                            // Transient build failure (e.g. a media probe threw): keep the last-good
-                            // entry rather than dropping it (dropping would look like a removal and
-                            // force a client full reload) and re-queue the item for a retry. Keeping
-                            // old preserves its OLD SourceRevision, so a revision-driven rebuild stays
-                            // a candidate; the re-queue also covers the rating-inheritance case.
+                            // Unexpected build failure (a bug, not a media-probe failure — those return
+                            // a degraded entry below): keep the last-good entry rather than dropping it
+                            // (dropping would look like a removal and force a client full reload). Its
+                            // OLD SourceRevision keeps it a rebuild candidate next cycle.
                             if (old != null) newCache[key] = old;
-                            probeFailed.Add(item.Id);
                         }
                         else
                         {
+                            // A degraded entry (media probe failed) carries SourceRevision == 0
+                            // (unconfirmed): keep its fresh probe-independent data (own + inherited
+                            // rating/genres) but retain the last-good streams, and leave it unconfirmed
+                            // so the gate rebuilds it every cycle until the probe recovers.
+                            if (entry.SourceRevision == 0 && old != null)
+                            {
+                                entry.StreamData = old.StreamData;
+                                entry.AudioLanguages = old.AudioLanguages;
+                            }
+
                             if (old != null && ContentEquals(old, entry))
                             {
                                 // Rebuilt but content-identical (e.g. a container whose first episode
@@ -292,18 +294,6 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 if (drainRemoved)
                 {
                     Interlocked.Increment(ref _version);
-                }
-
-                // Re-queue items whose build failed this pass so a debounced off-thread flush retries
-                // them after the guard is released (the post-swap drain above has already run, so
-                // these are NOT consumed synchronously here — they wait for the probe to recover).
-                if (probeFailed.Count > 0)
-                {
-                    _logger.LogInformation($"[TagCache] {probeFailed.Count} item(s) failed to build this reconcile; kept last-good and re-queued for retry.");
-                    foreach (var id in probeFailed)
-                    {
-                        EnqueueUpdate(id);
-                    }
                 }
 
                 progress?.Report(100);
@@ -579,6 +569,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             if (entry == null) return false;
 
             var key = id.ToString("N").ToLowerInvariant();
+            // A degraded entry (media probe failed) carries SourceRevision == 0: retain the last-good
+            // streams and leave it unconfirmed so the next reconcile rebuilds it. Mirrors the
+            // reconcile so an incremental event during a probe outage doesn't drop the streams.
+            if (entry.SourceRevision == 0 && _cache.TryGetValue(key, out var existing) && existing != null)
+            {
+                entry.StreamData = existing.StreamData;
+                entry.AudioLanguages = existing.AudioLanguages;
+            }
             _cache[key] = entry;
             return true;
         }
@@ -1011,6 +1009,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         /// <summary>
         /// Build a TagCacheEntry for a single library item.
         /// For Series/Season, resolves first-episode data server-side.
+        /// If the media probe fails, the probe-independent data (own + inherited rating/genres) is
+        /// still built and the entry is stamped SourceRevision == 0 (unconfirmed) so the reconcile
+        /// retains the last-good streams and rebuilds it every cycle until the probe recovers,
+        /// rather than confirming a degraded entry. Returns null only on an UNEXPECTED failure.
         /// </summary>
         private TagCacheEntry? BuildEntryForItem(BaseItem item)
         {
@@ -1018,6 +1020,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             {
                 var kind = item.GetBaseItemKind();
                 var isContainer = kind == BaseItemKind.Series || kind == BaseItemKind.Season;
+                var probeFailed = false;
 
                 // Capture parent series ID for Episodes/Seasons so the Spoiler
                 // Guard filter can strip unwatched-episode entries without a
@@ -1058,15 +1061,21 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                         }
 
                         var media = ExtractMediaData(firstEp);
-                        if (media == null) return null; // probe failed — keep last-good, don't publish a degraded entry
-                        entry.StreamData = new TagStreamData
+                        if (media == null)
                         {
-                            Streams = media.Value.Streams,
-                            Sources = media.Value.Sources,
-                            ItemName = firstEp.Name,
-                            ItemPath = string.IsNullOrEmpty(firstEp.Path) ? null : Path.GetFileName(firstEp.Path)
-                        };
-                        entry.AudioLanguages = media.Value.Languages;
+                            probeFailed = true; // leave StreamData/AudioLanguages for the caller to retain last-good
+                        }
+                        else
+                        {
+                            entry.StreamData = new TagStreamData
+                            {
+                                Streams = media.Value.Streams,
+                                Sources = media.Value.Sources,
+                                ItemName = firstEp.Name,
+                                ItemPath = string.IsNullOrEmpty(firstEp.Path) ? null : Path.GetFileName(firstEp.Path)
+                            };
+                            entry.AudioLanguages = media.Value.Languages;
+                        }
                     }
 
                     if (kind == BaseItemKind.Season && entry.CommunityRating == null)
@@ -1095,15 +1104,21 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 else
                 {
                     var media = ExtractMediaData(item);
-                    if (media == null) return null; // probe failed — keep last-good, don't publish a degraded entry
-                    entry.StreamData = new TagStreamData
+                    if (media == null)
                     {
-                        Streams = media.Value.Streams,
-                        Sources = media.Value.Sources,
-                        ItemName = item.Name,
-                        ItemPath = string.IsNullOrEmpty(item.Path) ? null : Path.GetFileName(item.Path)
-                    };
-                    entry.AudioLanguages = media.Value.Languages;
+                        probeFailed = true; // leave StreamData/AudioLanguages for the caller to retain last-good
+                    }
+                    else
+                    {
+                        entry.StreamData = new TagStreamData
+                        {
+                            Streams = media.Value.Streams,
+                            Sources = media.Value.Sources,
+                            ItemName = item.Name,
+                            ItemPath = string.IsNullOrEmpty(item.Path) ? null : Path.GetFileName(item.Path)
+                        };
+                        entry.AudioLanguages = media.Value.Languages;
+                    }
 
                     if (kind == BaseItemKind.Episode && entry.CommunityRating == null)
                     {
@@ -1126,6 +1141,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                     }
                 }
 
+                if (probeFailed)
+                {
+                    // Mark unconfirmed so the reconcile gate rebuilds this item every cycle until the
+                    // probe recovers, and retains its last-good streams in the meantime. 0 also means
+                    // "unconfirmed" for a pre-upgrade on-disk entry, so the semantics are consistent.
+                    entry.SourceRevision = 0;
+                }
+
                 return entry;
             }
             catch (Exception ex)
@@ -1135,11 +1158,11 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             }
         }
 
-        // Returns null when the media probe itself FAILED (GetMediaSources threw) so the caller can
-        // keep the last-good entry — distinct from a successful-but-empty result for an item that
-        // legitimately has no media. This matters for the revision-gated reconcile: publishing a
-        // silently-degraded (empty streams) entry AND stamping the current SourceRevision would make
-        // the gate reuse the damaged entry until the source changes again, instead of retrying.
+        // Returns null when the media probe itself FAILED (GetMediaSources threw), distinct from a
+        // successful-but-empty result for an item that legitimately has no media. This matters for
+        // the revision-gated reconcile: on a real failure BuildEntryForItem stamps SourceRevision==0
+        // (unconfirmed) instead of the current revision, so the gate keeps rebuilding the item until
+        // the probe recovers rather than confirming — and reusing — a silently-degraded entry.
         private (List<TagMediaStream> Streams, List<TagMediaSource> Sources, string[] Languages)? ExtractMediaData(BaseItem item)
         {
             var streams = new List<TagMediaStream>();

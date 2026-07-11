@@ -294,10 +294,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             finally { TryDelete(dir); }
         }
 
-        // ── Probe failure must keep last-good data, not publish a degraded (empty) entry ──────
+        // ── Probe failure: keep probe-independent data + last-good streams, retry until recovery ──
 
         [Fact]
-        public void Reconcile_ProbeFailureOnChangedItem_KeepsLastGood_AndRecoversNextReconcile()
+        public void Reconcile_ProbeFailure_KeepsFreshMetadataAndLastGoodStreams_Unconfirmed_ThenRecovers()
         {
             var dir = NewTempDir();
             try
@@ -315,6 +315,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
                 var good = svc.GetEntryForTest(Key(id));
                 Assert.NotNull(good);
                 Assert.Equal(6.0f, good!.CommunityRating);
+                var goodStreams = good.StreamData;
 
                 // The item changes AND its media probe now throws.
                 movie.DateLastSaved = T0.AddHours(1);
@@ -322,55 +323,70 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
                 movie.ThrowOnProbe = true;
                 svc.BuildFullCache(null, CT);
 
-                // Last-good retained (same instance, old content) with its OLD SourceRevision, so it
-                // stays a rebuild candidate — NOT a degraded entry stamped with the new revision.
+                // Fresh probe-independent data (the new rating) is served, the last-good streams are
+                // retained, and SourceRevision is 0 (unconfirmed) so the gate keeps rebuilding it —
+                // NOT a degraded entry confirmed at the new revision, and NOT a stale old rating.
                 var afterFail = svc.GetEntryForTest(Key(id));
-                Assert.Same(good, afterFail);
-                Assert.Equal(6.0f, afterFail!.CommunityRating);
-                Assert.Equal(T0.Ticks, afterFail.SourceRevision);
+                Assert.NotNull(afterFail);
+                Assert.Equal(9.0f, afterFail!.CommunityRating);         // fresh rating despite probe down
+                Assert.Same(goodStreams, afterFail.StreamData);         // last-good streams retained
+                Assert.Equal(0L, afterFail.SourceRevision);             // unconfirmed -> rebuilt next cycle
 
-                // Probe recovers -> the next reconcile rebuilds (revision still mismatched).
+                // Probe recovers -> the next reconcile rebuilds (unconfirmed) and confirms it.
                 movie.ThrowOnProbe = false;
                 svc.BuildFullCache(null, CT);
                 var recovered = svc.GetEntryForTest(Key(id));
                 Assert.NotNull(recovered);
                 Assert.Equal(9.0f, recovered!.CommunityRating);
-                Assert.Equal(T0.AddHours(1).Ticks, recovered.SourceRevision);
+                Assert.Equal(T0.AddHours(1).Ticks, recovered.SourceRevision); // confirmed
             }
             finally { TryDelete(dir); }
         }
 
         [Fact]
-        public void Reconcile_ProbeFailure_RequeuesForOffThreadFlushRetry()
+        public void Reconcile_SeriesRatingChange_WithEpisodeProbeDown_KeepsCorrectInheritedRating_ThenRecoversDurably()
         {
+            // The confirmation scenario: a series rating changes while an inheriting episode's probe
+            // is down. The episode's inherited rating comes from the series (probe-independent), so it
+            // must be correct even during the outage, and the unconfirmed revision must drive recovery
+            // on the next reconcile even though the series "changed" signal is not re-raised.
             var dir = NewTempDir();
             try
             {
-                var id = Guid.NewGuid();
-                var movie = new ProbeControlledMovie { Id = id, Name = "M", DateLastSaved = T0, CommunityRating = 6.0f };
+                var seriesId = Guid.NewGuid();
+                var epId = Guid.NewGuid();
+                var series = new StubSeries { Id = seriesId, Name = "S", DateLastSaved = T0, CommunityRating = 5.0f };
+                var ep = new ProbeControlledEpisode { Id = epId, Name = "E", DateLastSaved = T0, SeriesId = seriesId };
+                var scan = new List<BaseItem> { series, ep };
                 var lib = new CountingLibraryManager
                 {
-                    GetItemListHook = _ => new List<BaseItem> { movie },
-                    GetItemByIdHook = i => i == id ? movie : null,
+                    GetItemListHook = q => q.ParentId == Guid.Empty ? scan : new List<BaseItem> { ep },
+                    GetItemByIdHook = i => i == seriesId ? series : i == epId ? ep : null,
                 };
                 using var svc = NewSvc(lib, dir);
 
                 svc.BuildFullCache(null, CT);
-                var good = svc.GetEntryForTest(Key(id));
+                Assert.Equal(5.0f, svc.GetEntryForTest(Key(epId))!.CommunityRating); // inherited
 
-                movie.DateLastSaved = T0.AddHours(1);
-                movie.CommunityRating = 9.0f;
-                movie.ThrowOnProbe = true;
-                svc.BuildFullCache(null, CT);            // fails -> keeps old + re-queues id
-                Assert.Same(good, svc.GetEntryForTest(Key(id)));
+                // Series rating changes; episode's own revision does NOT change; episode probe is down.
+                series.CommunityRating = 8.0f;
+                series.DateLastSaved = T0.AddHours(1);
+                ep.ThrowOnProbe = true;
+                svc.BuildFullCache(null, CT);
 
-                // The re-queued item recovers through the existing flush path once the probe heals,
-                // without waiting for the next daily reconcile.
-                movie.ThrowOnProbe = false;
-                svc.FlushPendingForTest();
-                var recovered = svc.GetEntryForTest(Key(id));
+                var afterFail = svc.GetEntryForTest(Key(epId));
+                Assert.NotNull(afterFail);
+                Assert.Equal(8.0f, afterFail!.CommunityRating); // correct inherited rating despite probe down
+                Assert.Equal(0L, afterFail.SourceRevision);     // unconfirmed
+
+                // Probe recovers. Even though seriesRatingChanged no longer fires (series entry settled)
+                // and the episode's own revision is unchanged, the unconfirmed revision forces a rebuild.
+                ep.ThrowOnProbe = false;
+                svc.BuildFullCache(null, CT);
+                var recovered = svc.GetEntryForTest(Key(epId));
                 Assert.NotNull(recovered);
-                Assert.Equal(9.0f, recovered!.CommunityRating);
+                Assert.Equal(8.0f, recovered!.CommunityRating);
+                Assert.Equal(T0.Ticks, recovered.SourceRevision); // confirmed at the episode's own revision
             }
             finally { TryDelete(dir); }
         }
@@ -380,12 +396,26 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
         }
 
-        /// <summary>A Movie whose media probe can be made to throw, to exercise the last-good path.</summary>
+        /// <summary>A Movie whose media probe can be made to throw, to exercise the probe-failure path.</summary>
         private sealed class ProbeControlledMovie : Movie
         {
             public bool ThrowOnProbe { get; set; }
 
             public override string GetClientTypeName() => "Movie";
+
+            public override IReadOnlyList<MediaSourceInfo> GetMediaSources(bool enablePathSubstitution)
+            {
+                if (ThrowOnProbe) throw new InvalidOperationException("transient probe failure");
+                return Array.Empty<MediaSourceInfo>();
+            }
+        }
+
+        /// <summary>An Episode whose media probe can be made to throw, to exercise the probe-failure path.</summary>
+        private sealed class ProbeControlledEpisode : Episode
+        {
+            public bool ThrowOnProbe { get; set; }
+
+            public override string GetClientTypeName() => "Episode";
 
             public override IReadOnlyList<MediaSourceInfo> GetMediaSources(bool enablePathSubstitution)
             {
