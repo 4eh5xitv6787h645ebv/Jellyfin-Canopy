@@ -65,6 +65,7 @@ JE.initializeAwardsScript = function () {
     const errorAttempts = new Map<string, number>();
     const notReadyAttempts = new Map<string, number>();
     const ERROR_MAX_ATTEMPTS = 3;
+    const ERROR_BASE_DELAY_MS = 2000;
     // The awards index is only ever empty transiently, during the first-install build. Retry a
     // bounded number of times with backoff so awards appear on the page that is already open
     // once the build lands, without ever caching the not-ready state as a genuine "no awards".
@@ -126,7 +127,14 @@ JE.initializeAwardsScript = function () {
             // not-ready state, NOT "no awards" — never cache it. Retry with bounded backoff so
             // the already-open page fills in once the build completes.
             if (data?.indexEmpty) {
-                scheduleNotReadyRetry(itemId);
+                const attempts = (notReadyAttempts.get(itemId) || 0) + 1;
+                if (attempts > NOT_READY_MAX_ATTEMPTS) {
+                    // The build is taking unusually long; stop probing. A later navigation re-triggers.
+                    notReadyAttempts.delete(itemId);
+                    return;
+                }
+                notReadyAttempts.set(itemId, attempts);
+                scheduleDelayedRetry(itemId, Math.min(15000, NOT_READY_BASE_DELAY_MS * attempts));
                 return;
             }
 
@@ -150,8 +158,9 @@ JE.initializeAwardsScript = function () {
             insertSection(stillVisible, section);
             processedItemIds.add(itemId);
         } catch (err) {
-            // PERF(R9): fail open — only give up on this item after repeated failures;
-            // the shared observer / nav probes retry until then. A blip never caches "no awards".
+            // PERF(R9): fail open — a transient failure schedules its own bounded, nav-guarded
+            // retry (never relying on an unrelated DOM/nav event to re-trigger), and is only given
+            // up on after ERROR_MAX_ATTEMPTS. A blip never caches "no awards".
             console.warn(`${logPrefix} failed to load awards for ${itemId}:`, err);
             const attempts = (errorAttempts.get(itemId) || 0) + 1;
             if (attempts >= ERROR_MAX_ATTEMPTS) {
@@ -159,6 +168,7 @@ JE.initializeAwardsScript = function () {
                 errorAttempts.delete(itemId);
             } else {
                 errorAttempts.set(itemId, attempts);
+                scheduleDelayedRetry(itemId, ERROR_BASE_DELAY_MS * attempts);
             }
         } finally {
             inFlight = false;
@@ -171,24 +181,15 @@ JE.initializeAwardsScript = function () {
         }
     }
 
-    // PERF(R9)/R5: bounded, nav-guarded retry while the first-install index build is in flight.
-    // Not a standing timer — it stops as soon as the item renders, the view changes, or the cap
-    // is hit; the index only starts empty once, on first install.
-    function scheduleNotReadyRetry(itemId: string): void {
-        const attempts = (notReadyAttempts.get(itemId) || 0) + 1;
-        if (attempts > NOT_READY_MAX_ATTEMPTS) {
-            // The build is taking unusually long; stop hammering. A later navigation re-triggers.
-            notReadyAttempts.delete(itemId);
-            return;
-        }
-        notReadyAttempts.set(itemId, attempts);
-        const delay = Math.min(15000, NOT_READY_BASE_DELAY_MS * attempts);
+    // PERF(R9)/R5: bounded, nav-guarded single-shot retry used by both the transport-error and
+    // index-not-ready paths. Not a standing timer — each caller caps its own attempt count, and
+    // the timer aborts if the user navigated away or the item already rendered.
+    function scheduleDelayedRetry(itemId: string, delayMs: number): void {
         window.setTimeout(() => {
-            // Abort if the user navigated away or the item already rendered.
-            if (getItemIdFromUrl() !== itemId) return;
-            if (processedItemIds.has(itemId)) return;
+            if (getItemIdFromUrl() !== itemId) return; // navigated away
+            if (processedItemIds.has(itemId)) return;   // already resolved
             schedule();
-        }, delay);
+        }, delayMs);
     }
 
     // Coalesced, idle-scheduled pass shared by every trigger (R5 — no standing timer).

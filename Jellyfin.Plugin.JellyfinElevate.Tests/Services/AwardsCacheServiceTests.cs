@@ -234,6 +234,32 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         }
 
         [Fact]
+        public void LoadFromDisk_DoesNotDowngradeNewerInMemoryIndex()
+        {
+            var svc = NewService();
+            // Drive the in-memory index to v2 with a distinctive award.
+            svc.ReplaceFrom(new[] { Row("Academy Awards", "First", true, 2024, imdb: "tt-new") });
+            svc.ReplaceFrom(new[] { Row("Academy Awards", "Second", true, 2024, imdb: "tt-new") });
+            Assert.Equal(2, svc.Version);
+
+            // Simulate an OLDER snapshot on disk (v1) with different data — as if LoadFromDisk read
+            // it before a concurrent rebuild published v2. Property names match the on-disk format.
+            var path = Path.Combine(_dir, "configurations", "Jellyfin.Plugin.JellyfinElevate", "awards-cache.json");
+            File.WriteAllText(
+                path,
+                "{\"SchemaVersion\":1,\"Version\":1,\"LastModified\":0,\"BuiltAtUtc\":null,"
+                + "\"ByImdb\":{\"tt-old\":[{\"ceremony\":\"Old\",\"category\":\"Old\",\"year\":2000,\"won\":true}]},"
+                + "\"ByTmdb\":{}}");
+
+            svc.LoadFromDisk();
+
+            // The newer in-memory index wins; the stale disk read is discarded.
+            Assert.Equal(2, svc.Version);
+            Assert.Empty(svc.LookupForItem(Movie(imdb: "tt-old")));
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt-new")));
+        }
+
+        [Fact]
         public void MissingYear_IsPreservedAsNull_AndSortsLast()
         {
             var svc = NewService();

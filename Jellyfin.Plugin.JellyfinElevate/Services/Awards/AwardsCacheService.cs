@@ -233,7 +233,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                     return;
                 }
 
-                _index = new AwardsIndex
+                var loaded = new AwardsIndex
                 {
                     Version = data.Version,
                     LastModified = data.LastModified,
@@ -245,8 +245,25 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                         ? new Dictionary<string, List<AwardEntry>>(data.ByTmdb, StringComparer.OrdinalIgnoreCase)
                         : new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase)
                 };
-                _logger.LogInformation(
-                    "[Awards] Loaded {Titles} titles from disk (v{Version}).", _index.ByImdb.Count, _index.Version);
+
+                // Install under the rebuild lock and only if it's newer than what's in memory.
+                // If a manual refresh published a newer snapshot while this file read was in
+                // flight, the fresher in-memory index wins — a stale disk read never downgrades it.
+                lock (_rebuildLock)
+                {
+                    if (loaded.Version > _index.Version)
+                    {
+                        _index = loaded;
+                        _logger.LogInformation(
+                            "[Awards] Loaded {Titles} titles from disk (v{Version}).", loaded.ByImdb.Count, loaded.Version);
+                    }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "[Awards] Disk cache v{OnDisk} is not newer than the in-memory index v{InMemory}; keeping memory.",
+                            loaded.Version, _index.Version);
+                    }
+                }
             }
             catch (Exception ex)
             {
