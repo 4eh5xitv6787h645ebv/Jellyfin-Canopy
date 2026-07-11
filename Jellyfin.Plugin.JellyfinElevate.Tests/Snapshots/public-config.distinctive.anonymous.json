@@ -248,6 +248,7 @@
   "ShowArrLinksAsText": true,
   "ShowAudioInfoTag": false,
   "ShowAudioLanguages": false,
+  "ShowAwards": true,
   "ShowCollectionsInSearch": false,
   "ShowDownloadsInRequests": false,
   "ShowDynamicRangeTag": false,
@@ -265,8 +266,8 @@
   "ShowUserReviews": true,
   "ShowVideoCodecTag": false,
   "ShowWatchProgress": true,
-  "SourceTagOrder": 1219,
-  "SpecialFormatTagOrder": 1220,
+  "SourceTagOrder": 1220,
+  "SpecialFormatTagOrder": 1221,
   "SplashScreenImageUrl": "cfg-SplashScreenImageUrl",
   "SpoilerBlurEnabled": true,
   "SpoilerBlurStrictRefresh": true,
@@ -281,11 +282,11 @@
   "SpoilerStripTags": false,
   "SyncJellyseerrWatchlist": true,
   "TagCacheServerMode": false,
-  "TagsCacheTtlDays": 1246,
+  "TagsCacheTtlDays": 1247,
   "TagsHideOnHover": true,
   "ThemeSelectorEnabled": true,
   "TmdbEnabled": true,
-  "ToastDuration": 1249,
+  "ToastDuration": 1250,
   "UseIcons": false,
-  "VideoCodecTagOrder": 1252
+  "VideoCodecTagOrder": 1253
 }
