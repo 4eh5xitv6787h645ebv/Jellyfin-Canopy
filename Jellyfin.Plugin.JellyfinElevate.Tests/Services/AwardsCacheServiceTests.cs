@@ -126,6 +126,24 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         }
 
         [Fact]
+        public void Lookup_WinSuppressesMatchingNomination_SameCategoryAndYear()
+        {
+            var svc = NewService();
+            svc.ReplaceFrom(new[]
+            {
+                Row("Academy Awards", "Best Sound Editing", true, 1986, imdb: "tt1"),   // win
+                Row("Academy Awards", "Best Sound Editing", false, 1986, imdb: "tt1"),  // redundant nomination
+                Row("Academy Awards", "Best Original Screenplay", false, 1986, imdb: "tt1"), // distinct nomination
+            });
+
+            var awards = svc.LookupForItem(Movie(imdb: "tt1"));
+            Assert.Equal(2, awards.Count);
+            var soundEditing = Assert.Single(awards, a => a.Category == "Best Sound Editing");
+            Assert.True(soundEditing.Won); // only the win survives for that category/year
+            Assert.Contains(awards, a => a.Category == "Best Original Screenplay" && !a.Won); // untouched
+        }
+
+        [Fact]
         public void Sort_NewestYearFirst_WinsBeforeNominations()
         {
             var svc = NewService();

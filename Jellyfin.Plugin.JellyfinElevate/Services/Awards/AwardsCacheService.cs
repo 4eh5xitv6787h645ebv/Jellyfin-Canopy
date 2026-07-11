@@ -414,19 +414,36 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
             }
         }
 
+        private static string CategoryKey(AwardEntry e)
+            // Unit-separator delimited so distinct fields can't collide across boundaries.
+            => string.Join("\u001f", e.Ceremony, e.Category, e.Year?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty);
+
         private static List<AwardEntry> DedupeSorted(IEnumerable<AwardEntry> entries)
         {
+            var list = entries as ICollection<AwardEntry> ?? entries.ToList();
+
+            // Wikidata frequently records BOTH a win and a nomination for the same category/year
+            // (a win implies the nomination). Collapse those to just the win so the UI never shows
+            // e.g. "Best Sound Editing" as both won and nominated.
+            var wonKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in list)
+            {
+                if (e.Won)
+                {
+                    wonKeys.Add(CategoryKey(e));
+                }
+            }
+
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var result = new List<AwardEntry>();
-            foreach (var e in entries)
+            foreach (var e in list)
             {
-                // Unit-separator delimited so distinct fields can't collide across boundaries.
-                var key = string.Join(
-                    '\u001f',
-                    e.Ceremony,
-                    e.Category,
-                    e.Year?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                    e.Won ? "1" : "0");
+                if (!e.Won && wonKeys.Contains(CategoryKey(e)))
+                {
+                    continue; // a win for this category/year is present — drop the redundant nomination
+                }
+
+                var key = string.Join("\u001f", CategoryKey(e), e.Won ? "1" : "0");
                 if (seen.Add(key))
                 {
                     result.Add(e);
