@@ -117,10 +117,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             try
             {
                 _logger.LogInformation("[Awards] Feature enabled and no index on disk; building the initial awards index...");
-                var rows = await _awardsProvider.FetchAllAsync(null, cancellationToken).ConfigureAwait(false);
-                if (rows.Count > 0)
+                var result = await _awardsProvider.FetchAllAsync(null, cancellationToken).ConfigureAwait(false);
+                if (result.Rows.Count > 0)
                 {
-                    _awardsCacheService.ReplaceFrom(rows);
+                    // First install (index empty): publish whatever we got — a partial index beats
+                    // an empty section, and the weekly task refreshes it to completeness later.
+                    _awardsCacheService.ReplaceFrom(result.Rows);
                     _logger.LogInformation("[Awards] Initial awards index built: {0} titles.", _awardsCacheService.TitleCount);
                 }
                 else

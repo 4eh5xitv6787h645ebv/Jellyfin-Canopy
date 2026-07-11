@@ -63,14 +63,26 @@ JE.initializeAwardsScript = function () {
     // Per-item render dedup + fail-open retry bookkeeping (mirrors letterboxd-links).
     const processedItemIds = new Set<string>();
     const errorAttempts = new Map<string, number>();
+    const notReadyAttempts = new Map<string, number>();
     const ERROR_MAX_ATTEMPTS = 3;
+    // The awards index is only ever empty transiently, during the first-install build. Retry a
+    // bounded number of times with backoff so awards appear on the page that is already open
+    // once the build lands, without ever caching the not-ready state as a genuine "no awards".
+    const NOT_READY_MAX_ATTEMPTS = 8;
+    const NOT_READY_BASE_DELAY_MS = 2000;
     let lastVisibleItemId: string | null = null;
     let inFlight = false;
+    // PERF(R9)/lifecycle: if a trigger fires while a request is in flight (e.g. navigation to a
+    // new item), remember to run one more pass when it finishes so the new item isn't dropped.
+    let rerunRequested = false;
 
     injectStyles();
 
     async function processAwards(): Promise<void> {
-        if (inFlight) return;
+        if (inFlight) {
+            rerunRequested = true;
+            return;
+        }
 
         const visiblePage = document.querySelector<HTMLElement>('#itemDetailPage:not(.hide)');
         if (!visiblePage) return;
@@ -82,6 +94,7 @@ JE.initializeAwardsScript = function () {
         if (lastVisibleItemId && lastVisibleItemId !== itemId) {
             processedItemIds.clear();
             errorAttempts.clear();
+            notReadyAttempts.clear();
         }
         lastVisibleItemId = itemId;
 
@@ -97,7 +110,11 @@ JE.initializeAwardsScript = function () {
 
         inFlight = true;
         try {
-            const data = await JE.core.api.plugin(`/awards/${encodeURIComponent(itemId)}`) as ItemAwardsResponse | null;
+            // skipCache: the shared GET cache's 30-min TTL would otherwise pin a transient
+            // "index not built yet" response and hide awards for the rest of that window. This
+            // endpoint is a cheap server-side dictionary lookup, so per-view fetches are fine,
+            // and per-item dedup above already prevents repeats within a page view.
+            const data = await JE.core.api.plugin(`/awards/${encodeURIComponent(itemId)}`, { skipCache: true }) as ItemAwardsResponse | null;
 
             if (data && data.enabled === false) {
                 // Admin turned the feature off since bootstrap — stop retrying this view.
@@ -105,9 +122,18 @@ JE.initializeAwardsScript = function () {
                 return;
             }
 
+            // PERF(R9): the index hasn't been built yet (first install). This is a transient
+            // not-ready state, NOT "no awards" — never cache it. Retry with bounded backoff so
+            // the already-open page fills in once the build completes.
+            if (data?.indexEmpty) {
+                scheduleNotReadyRetry(itemId);
+                return;
+            }
+
             const awards = Array.isArray(data?.awards) ? data.awards : [];
+            notReadyAttempts.delete(itemId);
             if (awards.length === 0) {
-                // Genuine "no awards" (or index not built yet) — remember it; don't re-fetch.
+                // Genuine "no awards" (index is built) — remember it; don't re-fetch this view.
                 processedItemIds.add(itemId);
                 return;
             }
@@ -136,7 +162,33 @@ JE.initializeAwardsScript = function () {
             }
         } finally {
             inFlight = false;
+            // A trigger that fired mid-request (or a completed request for an item that is no
+            // longer the visible one) — re-evaluate once so the current item isn't left unrendered.
+            if (rerunRequested) {
+                rerunRequested = false;
+                schedule();
+            }
         }
+    }
+
+    // PERF(R9)/R5: bounded, nav-guarded retry while the first-install index build is in flight.
+    // Not a standing timer — it stops as soon as the item renders, the view changes, or the cap
+    // is hit; the index only starts empty once, on first install.
+    function scheduleNotReadyRetry(itemId: string): void {
+        const attempts = (notReadyAttempts.get(itemId) || 0) + 1;
+        if (attempts > NOT_READY_MAX_ATTEMPTS) {
+            // The build is taking unusually long; stop hammering. A later navigation re-triggers.
+            notReadyAttempts.delete(itemId);
+            return;
+        }
+        notReadyAttempts.set(itemId, attempts);
+        const delay = Math.min(15000, NOT_READY_BASE_DELAY_MS * attempts);
+        window.setTimeout(() => {
+            // Abort if the user navigated away or the item already rendered.
+            if (getItemIdFromUrl() !== itemId) return;
+            if (processedItemIds.has(itemId)) return;
+            schedule();
+        }, delay);
     }
 
     // Coalesced, idle-scheduled pass shared by every trigger (R5 — no standing timer).

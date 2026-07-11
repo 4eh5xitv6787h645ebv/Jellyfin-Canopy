@@ -66,7 +66,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
         // Politeness gap between successive queries so a full run doesn't hammer WDQS.
         private static readonly TimeSpan InterQueryDelay = TimeSpan.FromMilliseconds(750);
 
-        public async Task<IReadOnlyList<AwardRow>> FetchAllAsync(IProgress<double>? progress, CancellationToken cancellationToken)
+        public async Task<AwardsFetchResult> FetchAllAsync(IProgress<double>? progress, CancellationToken cancellationToken)
         {
             var rows = new List<AwardRow>();
 
@@ -113,14 +113,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                 succeeded, attempted, rows.Count);
 
             // Only a total wipeout (every query failed) is treated as a hard failure — the caller
-            // then keeps the previous index rather than clearing it. Any partial success returns
-            // what we have; a genuinely awards-free result set is a valid (if unlikely) answer.
+            // then keeps the previous index rather than clearing it. A partial success returns the
+            // rows collected but flags Complete=false so the caller won't publish it over a good
+            // index; a fully successful run is Complete=true.
             if (succeeded == 0 && attempted > 0)
             {
                 throw new InvalidOperationException("All Wikidata award queries failed; keeping the existing index.");
             }
 
-            return rows;
+            return new AwardsFetchResult(rows, Complete: succeeded == attempted);
         }
 
         private async Task<bool> TryRunAsync(HttpClient client, CeremonyDef ceremony, bool won, List<AwardRow> sink, CancellationToken cancellationToken)

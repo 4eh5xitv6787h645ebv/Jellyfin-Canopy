@@ -57,10 +57,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.ScheduledTasks
             _logger.LogInformation("[Awards] Building awards cache from provider...");
             progress?.Report(0);
 
-            IReadOnlyList<Model.Awards.AwardRow> rows;
+            Services.Awards.AwardsFetchResult result;
             try
             {
-                rows = await _provider.FetchAllAsync(progress, cancellationToken).ConfigureAwait(false);
+                result = await _provider.FetchAllAsync(progress, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -75,16 +75,31 @@ namespace Jellyfin.Plugin.JellyfinElevate.ScheduledTasks
                 return;
             }
 
-            if (rows.Count == 0)
+            if (result.Rows.Count == 0)
             {
                 _logger.LogWarning("[Awards] Provider returned no rows; keeping the existing index rather than clearing it.");
                 progress?.Report(100);
                 return;
             }
 
-            _cache.ReplaceFrom(rows);
+            // A partial fetch (some ceremony queries failed) must not overwrite an existing
+            // complete index — that would erase the failed ceremonies' awards until a later full
+            // run. Only publish a partial result when there is no index yet (first install),
+            // where partial data still beats an empty section.
+            if (!result.Complete && !_cache.IsEmpty)
+            {
+                _logger.LogWarning(
+                    "[Awards] Refresh was partial (some ceremony queries failed); keeping the existing complete index of {Titles} titles.",
+                    _cache.TitleCount);
+                progress?.Report(100);
+                return;
+            }
+
+            _cache.ReplaceFrom(result.Rows);
             progress?.Report(100);
-            _logger.LogInformation("[Awards] Awards cache build complete: {Titles} titles indexed.", _cache.TitleCount);
+            _logger.LogInformation(
+                "[Awards] Awards cache build complete ({Completeness}): {Titles} titles indexed.",
+                result.Complete ? "full" : "partial first build", _cache.TitleCount);
         }
     }
 }
