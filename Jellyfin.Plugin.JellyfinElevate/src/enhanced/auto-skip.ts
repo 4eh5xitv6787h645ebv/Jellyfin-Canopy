@@ -16,9 +16,11 @@
 // seeks to the segment's EXACT EndTicks itself, driven by the media element's
 // `timeupdate` event (PERF(R5): no polling; PERF(R8): bounded per-tick scan of
 // the handful of segments). It mirrors the native MediaSegmentManager's guards
-// (once-per-item + `lastTime > StartTicks` seek-back guard) so a user who seeks
-// back into a segment after an auto-skip is never insta-re-skipped — including
-// when the native client's own `Skip` action performed the original skip.
+// (backward-entry `lastTime > StartTicks` + last-ignored latch — NO permanent
+// once-per-item set, so a legitimate replay skips again exactly like native)
+// so a user who seeks back INTO a segment after an auto-skip is never
+// insta-re-skipped — including when the native client's own `Skip` action
+// performed the original skip.
 //
 // Precedence vs native: the plugin seeks to the SAME EndTicks the native client
 // would, so any overlap with the native `Skip` action is idempotent (one visible
