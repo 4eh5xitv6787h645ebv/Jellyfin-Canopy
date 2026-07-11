@@ -99,6 +99,11 @@ export function parseTranscodeOffsetTicksFromSrc(src: string): number {
     try {
         const q = src.indexOf('?');
         if (q === -1) return 0;
+        // HLS playlists (Safari-native HLS exposes the real .m3u8 URL as
+        // currentSrc; hls.js/MSE yields blob: and never reaches here) carry an
+        // ABSOLUTE timeline — their StartTimeTicks is a server seek hint, not a
+        // clock offset. Treating it as one would shift every boundary.
+        if (src.substring(0, q).toLowerCase().endsWith('.m3u8')) return 0;
         // Param casing varies across producers (server ToUrl vs client-built
         // urls) — compare case-insensitively like the native client does for
         // copytimestamps.
@@ -168,7 +173,20 @@ export function createAutoSkipEngine(deps: AutoSkipDeps) {
     function reinitIfItemChanged(): void {
         if (!video) return;
         const id = deps.resolveItemId(video);
-        if (!id || id === itemId) return;
+        if (id === itemId) return;
+        if (!id) {
+            // Source transition (empty/unparseable currentSrc, e.g. between
+            // episodes): the OLD item's segments must not act on ticks from the
+            // incoming one. Drop all per-item state until identity is known —
+            // the next resolvable tick re-fetches, even for the same item.
+            itemId = null;
+            segments = [];
+            lastTimeTicks = -1;
+            lastKey = null;
+            lastIgnored = false;
+            fetchToken++; // invalidate any in-flight fetch
+            return;
+        }
         // New item (next episode / new playback). Reset every per-item guard.
         itemId = id;
         segments = [];

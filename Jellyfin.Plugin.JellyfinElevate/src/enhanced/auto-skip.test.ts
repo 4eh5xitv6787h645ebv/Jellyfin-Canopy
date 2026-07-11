@@ -340,6 +340,42 @@ describe('auto-skip engine', () => {
         )).toBe(sec(90));
         expect(parseTranscodeOffsetTicksFromSrc('blob:http://host/uuid')).toBe(0); // hls.js
         expect(parseTranscodeOffsetTicksFromSrc('')).toBe(0);
+        // Safari-native HLS: real .m3u8 URL as currentSrc — StartTimeTicks is a
+        // seek hint on an ABSOLUTE timeline, never a clock offset.
+        expect(parseTranscodeOffsetTicksFromSrc(
+            `/videos/a/main.m3u8?StartTimeTicks=${sec(120)}&MediaSourceId=x`
+        )).toBe(0);
+        expect(parseTranscodeOffsetTicksFromSrc(
+            `/videos/a/MASTER.M3U8?starttimeticks=${sec(90)}`
+        )).toBe(0);
+    });
+
+    it('ITEM-CHANGE: an unresolvable source drops the old item state until identity is known', async () => {
+        const A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+        const B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+        const h = makeHarness([], {
+            segmentsByItem: {
+                [A]: [{ Id: 'a-intro', Type: 'Intro', StartTicks: sec(0), EndTicks: sec(30) }],
+                [B]: [{ Id: 'b-intro', Type: 'Intro', StartTicks: sec(5), EndTicks: sec(20) }],
+            },
+        });
+        h.engine.attach(h.video); // FakeVideo default src = item A
+        await flush();
+        expect(h.engine._internal.segments.length).toBe(1);
+        // Source transition: currentSrc goes empty (next-episode swap in flight).
+        h.video.currentSrc = '';
+        h.video.currentTime = 5;
+        h.video.tick(); // tick while unresolved — old intro must NOT act
+        expect(h.engine._internal.itemId).toBe(null);
+        expect(h.engine._internal.segments.length).toBe(0);
+        expect(h.video.currentTime).toBe(5); // no skip from stale segments
+        // New item resolves: fresh fetch, fresh guards, new intro skips normally.
+        h.video.currentSrc = `/Videos/${B}/stream.mp4?MediaSourceId=x`;
+        h.video.currentTime = 0.5;
+        h.video.tick();
+        await flush();
+        h.video.seekTo(6);
+        expect(h.video.currentTime).toBe(20);
     });
 
     // ── Fetch robustness ──
