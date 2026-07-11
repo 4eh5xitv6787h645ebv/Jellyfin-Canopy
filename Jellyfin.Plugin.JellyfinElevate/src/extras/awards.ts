@@ -36,6 +36,7 @@ interface ItemAwardsResponse {
     enabled: boolean;
     version: number;
     indexEmpty: boolean;
+    indexComplete: boolean;
     awards: AwardEntry[];
 }
 
@@ -181,7 +182,16 @@ JE.initializeAwardsScript = function () {
 
             const awards = Array.isArray(data?.awards) ? data.awards : [];
             if (awards.length === 0) {
-                // Genuine "no awards" (index is built) — terminal for this view.
+                // An empty list is only a GENUINE "no awards" when the index is complete. On a
+                // partial index (e.g. one ceremony query failed on first install) this item's
+                // ceremony may simply not be fetched yet, so treat it as transient and keep
+                // retrying (bounded) rather than caching "no awards" — the complete index will fill
+                // it in. `indexComplete` defaults to true for older servers without the field.
+                if (data && data.indexComplete === false) {
+                    handleTransient(itemId, NOT_READY_BASE_DELAY_MS);
+                    return;
+                }
+                // Genuine "no awards" (complete index) — terminal for this view.
                 resolved.add(itemId);
                 retry.delete(itemId);
                 return;

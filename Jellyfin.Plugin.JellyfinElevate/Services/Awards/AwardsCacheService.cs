@@ -79,6 +79,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
         /// <summary>True until the first successful build/load — i.e. the index has never been populated.</summary>
         public bool IsEmpty => _index.Version == 0 && _index.ByImdb.Count == 0 && _index.ByTmdb.Count == 0;
 
+        /// <summary>True when the current index came from a fully successful (all-ceremony) fetch.</summary>
+        public bool IsComplete => _index.Complete;
+
         /// <summary>
         /// Replace the whole index from a fresh set of provider rows, unconditionally. Groups
         /// rows by title, deduplicates awards, sorts them (newest first, wins before nominations),
@@ -247,7 +250,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
             var index = _index; // single consistent snapshot
             var isEmpty = index.Version == 0 && index.ByImdb.Count == 0 && index.ByTmdb.Count == 0;
             var awards = item == null ? Array.Empty<AwardEntry>() : LookupInIndex(index, item);
-            return new AwardsView(index.Version, isEmpty, awards);
+            return new AwardsView(index.Version, isEmpty, index.Complete, awards);
         }
 
         private static IReadOnlyList<AwardEntry> LookupInIndex(AwardsIndex index, BaseItem item)

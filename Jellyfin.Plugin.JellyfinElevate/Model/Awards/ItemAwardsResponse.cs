@@ -28,6 +28,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Model.Awards
         [JsonPropertyName("indexEmpty")]
         public bool IndexEmpty { get; set; }
 
+        /// <summary>
+        /// True when the current index came from a fully successful fetch. When false (a partial
+        /// index, e.g. one ceremony query failed on first install), an empty award list means
+        /// "not fetched yet", not "no awards" — the client keeps retrying rather than caching it.
+        /// </summary>
+        [JsonPropertyName("indexComplete")]
+        public bool IndexComplete { get; set; }
+
         /// <summary>Awards for this item, most recent first. Empty when the item has none.</summary>
         [JsonPropertyName("awards")]
         public IReadOnlyList<AwardEntry> Awards { get; set; } = System.Array.Empty<AwardEntry>();

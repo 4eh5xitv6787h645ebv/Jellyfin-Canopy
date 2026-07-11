@@ -58,7 +58,8 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
             {
                 Enabled = enabled,
                 Version = _awardsCache.Version,
-                IndexEmpty = _awardsCache.IsEmpty
+                IndexEmpty = _awardsCache.IsEmpty,
+                IndexComplete = _awardsCache.IsComplete
             };
 
             if (!enabled || itemId == Guid.Empty)
@@ -94,6 +95,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
             var view = _awardsCache.GetAwardsView(item);
             response.Version = view.Version;
             response.IndexEmpty = view.IsEmpty;
+            response.IndexComplete = view.Complete;
             response.Awards = view.Awards;
             return response;
         }

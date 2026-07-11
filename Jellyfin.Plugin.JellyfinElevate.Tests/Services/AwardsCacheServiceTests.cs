@@ -237,12 +237,30 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             Assert.Equal(0, before.Version);
             Assert.Empty(before.Awards);
 
+            Assert.False(before.Complete);
+
             svc.ReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1") });
 
             var after = svc.GetAwardsView(Movie(imdb: "tt1"));
             Assert.False(after.IsEmpty);
+            Assert.True(after.Complete); // ReplaceFrom publishes a complete snapshot
             Assert.Equal(1, after.Version);
             Assert.Single(after.Awards);
+        }
+
+        [Fact]
+        public void GetAwardsView_PartialIndex_ReportsIncomplete()
+        {
+            var svc = NewService();
+            // A partial first-install build (some ceremony failed).
+            svc.TryReplaceFrom(new[] { Row("BAFTA Awards", "Best Film", true, 2024, imdb: "tt-bafta") }, complete: false, svc.NextRefreshGeneration());
+
+            // A movie whose awards are in a not-yet-fetched ceremony reads empty but INCOMPLETE,
+            // so the client keeps trying rather than caching "no awards".
+            var view = svc.GetAwardsView(Movie(imdb: "tt-oscar-only"));
+            Assert.False(view.IsEmpty);   // index has BAFTA rows
+            Assert.False(view.Complete);  // but it is partial
+            Assert.Empty(view.Awards);
         }
 
         [Fact]
