@@ -124,6 +124,25 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Configuration
         }
 
         [Fact]
+        public void PathBlockedByDirectory_IsUnavailable_NotMissing()
+        {
+            // A directory sitting where the policy file is expected: File.Exists
+            // returns false for it (so a File.Exists pre-check would wrongly report
+            // Missing → empty fail-open policy), but reading it throws. The typed
+            // read must classify this as Unavailable, not Missing. Deterministic and
+            // root-safe (no chmod), unlike a permission-denied probe.
+            var path = FilePath();
+            Directory.CreateDirectory(path);
+
+            var r = Read();
+            Assert.Equal(UserConfigReadStatus.Unavailable, r.Status);
+            Assert.True(r.IsFault);
+            Assert.Null(r.Value);
+
+            Directory.Delete(path);
+        }
+
+        [Fact]
         public void InvalidFileName_IsUnavailable_NeverEmptyPolicy()
         {
             // A programming error resolving the path must fail CLOSED (Unavailable),

@@ -126,6 +126,19 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             _configProvider = configProvider;
         }
 
+        // Test seams (Tests has InternalsVisibleTo): exercise the FailClosed
+        // over-strip of each non-BaseItemDto response shape. On a FailClosed state
+        // the route/scope membership gate is short-circuited, so the (unused)
+        // ActionExecutingContext is never dereferenced.
+        internal void StripImageInfosForTest(IEnumerable<MediaBrowser.Model.Dto.ImageInfo> imgs, UserSpoilerBlur userState, PluginConfiguration cfg)
+            => StripImageInfos(imgs, userState, cfg, Guid.Empty, null!);
+
+        internal void StripPlaybackInfoForTest(MediaBrowser.Model.MediaInfo.PlaybackInfoResponse pbi, UserSpoilerBlur userState, PluginConfiguration cfg)
+            => StripPlaybackInfo(pbi, userState, cfg, Guid.Empty, null!);
+
+        internal void StripSearchHintsForTest(MediaBrowser.Model.Search.SearchHintResult shr, UserSpoilerBlur userState, PluginConfiguration cfg)
+            => StripSearchHints(shr, userState, cfg, Guid.Empty);
+
         public Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
         {
             // Sync fast-path bail order — three short-circuit checks before
@@ -321,7 +334,8 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             Guid userId,
             ActionExecutingContext context)
         {
-            if (!RouteParentIsSpoilerEpisode(context, userState, userId)) return;
+            // FailClosed over-strips regardless of route/scope membership.
+            if (!userState.FailClosed && !RouteParentIsSpoilerEpisode(context, userState, userId)) return;
             // Auxiliary "scrub title-bearing fields" path — only relevant when a
             // title/overview strip is actually going to run for this user. Mirror
             // the same admin-cap + user-opt-out semantics as ApplyStripping.
@@ -347,7 +361,8 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             ActionExecutingContext context)
         {
             if (pbi.MediaSources == null) return;
-            if (!RouteParentIsSpoilerEpisode(context, userState, userId)) return;
+            // FailClosed over-strips regardless of route/scope membership.
+            if (!userState.FailClosed && !RouteParentIsSpoilerEpisode(context, userState, userId)) return;
             // Same scrubbing gate as StripImageInfos — honor the user's opt-outs.
             if (!ShouldStrip(cfg.SpoilerReplaceTitle, userState.Prefs?.ReplaceEpisodeTitles)
                 && !ShouldStrip(cfg.SpoilerStripOverview, userState.Prefs?.HideEpisodeDescriptions)) return;
@@ -840,9 +855,13 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 if (isEpisodeHint)
                 {
                     if (actualItem is not MediaBrowser.Controller.Entities.TV.Episode ep) continue;
-                    if (ep.SeriesId == Guid.Empty) continue;
-                    if (!userState.Series.ContainsKey(ep.SeriesId.ToString("N"))) continue;
-                    if (ResolvePlayedServerSide(userId, hint.Id)) continue;
+                    // FailClosed over-strips every hint regardless of scope/watched state.
+                    if (!userState.FailClosed)
+                    {
+                        if (ep.SeriesId == Guid.Empty) continue;
+                        if (!userState.Series.ContainsKey(ep.SeriesId.ToString("N"))) continue;
+                        if (ResolvePlayedServerSide(userId, hint.Id)) continue;
+                    }
 
                     if (ShouldStrip(cfg.SpoilerReplaceTitle, userState.Prefs?.ReplaceEpisodeTitles) && hint.IndexNumber.HasValue && hint.ParentIndexNumber.HasValue)
                     {
@@ -861,8 +880,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                     // is still nulled below to suppress autocomplete
                     // substring leak of any non-title-bearing match).
                     if (actualItem is not MediaBrowser.Controller.Entities.Movies.Movie) continue;
-                    if (!_resolver.IsMovieInSpoilerScope(userState, hint.Id)) continue;
-                    if (ResolvePlayedServerSide(userId, hint.Id)) continue;
+                    // FailClosed over-strips every hint regardless of scope/watched state.
+                    if (!userState.FailClosed)
+                    {
+                        if (!_resolver.IsMovieInSpoilerScope(userState, hint.Id)) continue;
+                        if (ResolvePlayedServerSide(userId, hint.Id)) continue;
+                    }
                 }
 
                 // MatchedTerm echoes the substring of the ORIGINAL Name

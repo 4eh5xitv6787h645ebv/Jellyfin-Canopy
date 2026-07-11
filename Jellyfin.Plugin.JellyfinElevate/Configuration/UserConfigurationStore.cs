@@ -221,15 +221,21 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                 return new UserConfigReadResult<T>(UserConfigReadStatus.Unavailable, default, ex.Message);
             }
 
-            if (!File.Exists(configPath))
-            {
-                return new UserConfigReadResult<T>(UserConfigReadStatus.Missing, new T(), null);
-            }
-
+            // Read directly and let the exception type classify the outcome. A
+            // File.Exists pre-check must NOT own this decision: File.Exists returns
+            // false (rather than throwing) for permission/stat/invalid-path/other
+            // I/O failures and for a directory in the file's place, so it would
+            // collapse an UNAVAILABLE policy into Missing → an empty fail-open
+            // policy. Only a genuinely absent file (FileNotFound/DirectoryNotFound)
+            // maps to Missing; every other failure fails closed as Unavailable.
             string json;
             try
             {
                 json = File.ReadAllText(configPath);
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+            {
+                return new UserConfigReadResult<T>(UserConfigReadStatus.Missing, new T(), null);
             }
             catch (Exception ex)
             {
