@@ -372,7 +372,7 @@ describe('auto-skip engine', () => {
     describe('createSessionItemResolver', () => {
         const vid = (src: string): VideoLike =>
             ({ currentSrc: src, currentTime: 0, duration: 0,
-               addEventListener: () => undefined, removeEventListener: () => undefined } as unknown as VideoLike);
+               addEventListener: () => undefined, removeEventListener: () => undefined });
 
         it('direct src parse wins; no probe fired', () => {
             const probe = vi.fn().mockResolvedValue('probed');
