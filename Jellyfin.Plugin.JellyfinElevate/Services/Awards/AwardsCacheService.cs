@@ -37,6 +37,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
         private readonly ILogger<AwardsCacheService> _logger;
         private readonly object _saveLock = new();
 
+        // Serializes rebuilds so the version read-modify-write and snapshot swap are atomic
+        // across concurrent callers (e.g. the first-install startup build racing a manual
+        // dashboard run of the refresh task). Reads never take this lock — they read the
+        // volatile snapshot reference directly.
+        private readonly object _rebuildLock = new();
+
         private volatile AwardsIndex _index = AwardsIndex.Empty;
 
         public AwardsCacheService(IApplicationPaths applicationPaths, ILogger<AwardsCacheService> logger)
@@ -103,21 +109,29 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
             DedupeAndSort(byImdb);
             DedupeAndSort(byTmdb);
 
-            var next = new AwardsIndex
+            // Serialize the version bump + swap + persist so two concurrent rebuilds can't both
+            // read the same old version or interleave their writes. The grouping work above is
+            // pure on locals, so it stays outside the lock.
+            AwardsIndex next;
+            lock (_rebuildLock)
             {
-                Version = _index.Version + 1,
-                LastModified = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                BuiltAtUtc = DateTime.UtcNow.ToString("O"),
-                ByImdb = byImdb,
-                ByTmdb = byTmdb
-            };
+                next = new AwardsIndex
+                {
+                    Version = _index.Version + 1,
+                    LastModified = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    BuiltAtUtc = DateTime.UtcNow.ToString("O"),
+                    ByImdb = byImdb,
+                    ByTmdb = byTmdb
+                };
 
-            _index = next;
-            _logger.LogInformation(
-                "[Awards] Rebuilt index v{Version}: {Titles} titles by IMDb, {TmdbTitles} by TMDb.",
-                next.Version, byImdb.Count, byTmdb.Count);
+                _index = next;
 
-            SaveToDisk(next);
+                _logger.LogInformation(
+                    "[Awards] Rebuilt index v{Version}: {Titles} titles by IMDb, {TmdbTitles} by TMDb.",
+                    next.Version, byImdb.Count, byTmdb.Count);
+
+                SaveToDisk(next);
+            }
         }
 
         /// <summary>
