@@ -118,5 +118,38 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             Assert.NotEqual("The Big Reveal", hint.Name);
             Assert.Null(hint.MatchedTerm);
         }
+
+        [Fact]
+        public void FailClosed_StripsEpisodeHintName_WhenReplaceTitleOnButIndexNumbersMissing()
+        {
+            // The narrowest leak: title replacement is the ONLY enabled sensitive-
+            // field policy, and the hint has no episode numbering to build the
+            // "Season X, Episode Y" form. Fail-closed must still replace the raw
+            // Name with the placeholder rather than leave it visible.
+            var lib = new CountingLibraryManager { GetItemByIdNonGenericHook = _ => null };
+            var cfg = new PluginConfiguration
+            {
+                SpoilerBlurEnabled = true,
+                SpoilerReplaceTitle = true,
+                SpoilerStripOverview = false,
+            };
+            var filter = NewFilter(lib, cfg);
+
+            var hint = new SearchHint
+            {
+                Id = Guid.NewGuid(),
+                Type = BaseItemKind.Episode,
+                Name = "The Big Reveal",
+                MatchedTerm = "Reveal",
+                IndexNumber = null,
+                ParentIndexNumber = null,
+            };
+            var shr = new SearchHintResult(new List<SearchHint> { hint }, 1);
+
+            filter.StripSearchHintsForTest(shr, FailClosed(), cfg);
+
+            Assert.NotEqual("The Big Reveal", hint.Name);
+            Assert.Null(hint.MatchedTerm);
+        }
     }
 }

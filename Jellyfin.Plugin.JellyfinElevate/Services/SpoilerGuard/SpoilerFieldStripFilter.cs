@@ -843,21 +843,21 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 // would otherwise fall through and leak the raw Name / MatchedTerm.
                 if (userState.FailClosed)
                 {
-                    if (isEpisodeHint
-                        && ShouldStrip(cfg.SpoilerReplaceTitle, userState.Prefs?.ReplaceEpisodeTitles)
-                        && hint.IndexNumber.HasValue && hint.ParentIndexNumber.HasValue)
+                    var replaceTitle = ShouldStrip(cfg.SpoilerReplaceTitle, userState.Prefs?.ReplaceEpisodeTitles);
+                    var stripOverview = ShouldStrip(cfg.SpoilerStripOverview, userState.Prefs?.HideEpisodeDescriptions);
+                    // If ANY title/overview strip is enabled, the episode Name must be
+                    // replaced — prefer the numbered form when both index numbers are
+                    // present, otherwise fall back to the safe placeholder. Never leave
+                    // the raw Name just because the numbered form can't be built.
+                    if (isEpisodeHint && (replaceTitle || stripOverview))
                     {
-                        hint.Name = $"Season {hint.ParentIndexNumber.Value}, Episode {hint.IndexNumber.Value}";
-                    }
-                    else if (isEpisodeHint
-                        && ShouldStrip(cfg.SpoilerStripOverview, userState.Prefs?.HideEpisodeDescriptions))
-                    {
-                        hint.Name = SanitizePlaceholder(cfg.SpoilerOverviewPlaceholder);
+                        hint.Name = (replaceTitle && hint.IndexNumber.HasValue && hint.ParentIndexNumber.HasValue)
+                            ? $"Season {hint.ParentIndexNumber.Value}, Episode {hint.IndexNumber.Value}"
+                            : SanitizePlaceholder(cfg.SpoilerOverviewPlaceholder);
                     }
                     // Movie hint Name is intentionally not rewritten (mirrors the
-                    // scoped path); MatchedTerm is nulled for both shapes below.
-                    if (ShouldStrip(cfg.SpoilerReplaceTitle, userState.Prefs?.ReplaceEpisodeTitles)
-                        || ShouldStrip(cfg.SpoilerStripOverview, userState.Prefs?.HideEpisodeDescriptions))
+                    // scoped path); MatchedTerm is nulled for both shapes.
+                    if (replaceTitle || stripOverview)
                     {
                         hint.MatchedTerm = null;
                     }
