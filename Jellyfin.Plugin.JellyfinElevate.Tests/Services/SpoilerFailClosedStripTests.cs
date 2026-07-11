@@ -10,7 +10,6 @@ using MediaBrowser.Model.MediaInfo;
 using MediaBrowser.Model.Search;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
-using Episode = MediaBrowser.Controller.Entities.TV.Episode;
 
 namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
 {
@@ -93,13 +92,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         }
 
         [Fact]
-        public void FailClosed_StripsSearchHintNameAndMatchedTerm_RegardlessOfScope()
+        public void FailClosed_StripsSearchHint_EvenWhenLibraryLookupReturnsNull()
         {
+            // The removed/stale/mismatched-item case the pre-fix guard missed:
+            // GetItemById returns null, yet a cold-start fault must still strip the
+            // hint by its declared Type rather than fall through and leak the title.
             var lib = new CountingLibraryManager
             {
-                // Any hint id resolves to an Episode; FailClosed bypasses the
-                // series-membership and watched-state gates entirely.
-                GetItemByIdNonGenericHook = _ => new Episode(),
+                GetItemByIdNonGenericHook = _ => null,
             };
             var cfg = StripCfg();
             var filter = NewFilter(lib, cfg);

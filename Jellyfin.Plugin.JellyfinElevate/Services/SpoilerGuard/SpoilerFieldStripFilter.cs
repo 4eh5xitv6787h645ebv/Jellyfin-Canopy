@@ -835,6 +835,35 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 var isEpisodeHint = hint.Type == Jellyfin.Data.Enums.BaseItemKind.Episode;
                 var isMovieHint = hint.Type == Jellyfin.Data.Enums.BaseItemKind.Movie;
                 if (!isEpisodeHint && !isMovieHint) continue;
+
+                // FailClosed: the policy read faulted with no last-known-good. We
+                // cannot trust — or even need — a library lookup here, so over-strip
+                // every episode/movie hint by its declared Type alone. This closes
+                // the gap where a null / removed / mismatched GetItemById result
+                // would otherwise fall through and leak the raw Name / MatchedTerm.
+                if (userState.FailClosed)
+                {
+                    if (isEpisodeHint
+                        && ShouldStrip(cfg.SpoilerReplaceTitle, userState.Prefs?.ReplaceEpisodeTitles)
+                        && hint.IndexNumber.HasValue && hint.ParentIndexNumber.HasValue)
+                    {
+                        hint.Name = $"Season {hint.ParentIndexNumber.Value}, Episode {hint.IndexNumber.Value}";
+                    }
+                    else if (isEpisodeHint
+                        && ShouldStrip(cfg.SpoilerStripOverview, userState.Prefs?.HideEpisodeDescriptions))
+                    {
+                        hint.Name = SanitizePlaceholder(cfg.SpoilerOverviewPlaceholder);
+                    }
+                    // Movie hint Name is intentionally not rewritten (mirrors the
+                    // scoped path); MatchedTerm is nulled for both shapes below.
+                    if (ShouldStrip(cfg.SpoilerReplaceTitle, userState.Prefs?.ReplaceEpisodeTitles)
+                        || ShouldStrip(cfg.SpoilerStripOverview, userState.Prefs?.HideEpisodeDescriptions))
+                    {
+                        hint.MatchedTerm = null;
+                    }
+                    continue;
+                }
+
                 if (hint.Id == Guid.Empty) continue;
 
                 // Look up the actual item. For Episodes we need SeriesId
@@ -855,13 +884,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 if (isEpisodeHint)
                 {
                     if (actualItem is not MediaBrowser.Controller.Entities.TV.Episode ep) continue;
-                    // FailClosed over-strips every hint regardless of scope/watched state.
-                    if (!userState.FailClosed)
-                    {
-                        if (ep.SeriesId == Guid.Empty) continue;
-                        if (!userState.Series.ContainsKey(ep.SeriesId.ToString("N"))) continue;
-                        if (ResolvePlayedServerSide(userId, hint.Id)) continue;
-                    }
+                    // (FailClosed is handled at the top of the loop, before the lookup.)
+                    if (ep.SeriesId == Guid.Empty) continue;
+                    if (!userState.Series.ContainsKey(ep.SeriesId.ToString("N"))) continue;
+                    if (ResolvePlayedServerSide(userId, hint.Id)) continue;
 
                     if (ShouldStrip(cfg.SpoilerReplaceTitle, userState.Prefs?.ReplaceEpisodeTitles) && hint.IndexNumber.HasValue && hint.ParentIndexNumber.HasValue)
                     {
@@ -880,12 +906,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                     // is still nulled below to suppress autocomplete
                     // substring leak of any non-title-bearing match).
                     if (actualItem is not MediaBrowser.Controller.Entities.Movies.Movie) continue;
-                    // FailClosed over-strips every hint regardless of scope/watched state.
-                    if (!userState.FailClosed)
-                    {
-                        if (!_resolver.IsMovieInSpoilerScope(userState, hint.Id)) continue;
-                        if (ResolvePlayedServerSide(userId, hint.Id)) continue;
-                    }
+                    // (FailClosed is handled at the top of the loop, before the lookup.)
+                    if (!_resolver.IsMovieInSpoilerScope(userState, hint.Id)) continue;
+                    if (ResolvePlayedServerSide(userId, hint.Id)) continue;
                 }
 
                 // MatchedTerm echoes the substring of the ORIGINAL Name
