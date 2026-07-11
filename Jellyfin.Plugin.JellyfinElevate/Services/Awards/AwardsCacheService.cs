@@ -8,6 +8,7 @@ using Jellyfin.Plugin.JellyfinElevate.Configuration;
 using Jellyfin.Plugin.JellyfinElevate.Model.Awards;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
@@ -229,6 +230,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
 
         private static IReadOnlyList<AwardEntry> LookupInIndex(AwardsIndex index, BaseItem item)
         {
+            // Awards are only tracked for Movies and Series. Restricting the lookup to those types
+            // also prevents a TMDb id-namespace collision: a Person/Episode/Season/MusicVideo TMDb
+            // id is a different namespace from a movie's and could numerically match an award-winning
+            // movie, which would otherwise surface that movie's awards on an unrelated page.
+            if (item is not Movie && item is not Series)
+            {
+                return Array.Empty<AwardEntry>();
+            }
+
             List<AwardEntry>? merged = null;
 
             var imdb = NormalizeImdb(item.GetProviderId(MetadataProvider.Imdb));

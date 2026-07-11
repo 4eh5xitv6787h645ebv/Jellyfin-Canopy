@@ -146,6 +146,22 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         }
 
         [Fact]
+        public void Lookup_NonMovieOrSeriesItem_ReturnsEmpty_EvenOnTmdbCollision()
+        {
+            var svc = NewService();
+            svc.ReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, tmdb: "100", media: "movie") });
+
+            // An Episode whose TMDb id numerically collides with the awarded movie's must not
+            // surface that movie's awards — awards are Movie/Series only.
+            var ep = new Episode { Id = Guid.NewGuid() };
+            ep.ProviderIds["Tmdb"] = "100";
+            Assert.Empty(svc.LookupForItem(ep));
+
+            // The real movie still resolves.
+            Assert.Single(svc.LookupForItem(Movie(tmdb: "100")));
+        }
+
+        [Fact]
         public void PersonId_IsNotIndexed()
         {
             var svc = NewService();
