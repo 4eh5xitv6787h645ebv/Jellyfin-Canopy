@@ -28,7 +28,7 @@ import { ensureMaterialSymbolsFont } from '../core/ui-kit';
 import { isDetailsPageVisible, getItemIdFromUrl } from '../core/details-view';
 import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate, onViewPage } from '../core/navigation';
-import { prettifyCategory, groupByCeremony, type AwardEntry } from './awards-format';
+import { prettifyCategory, groupByCeremony, applyTransient, type AwardEntry, type TransientRetryState } from './awards-format';
 import type { ApiApi, PluginConfig } from '../types/je';
 
 /** Response shape of GET /JellyfinElevate/awards/{itemId} (ItemAwardsResponse.cs). */
@@ -60,17 +60,24 @@ JE.initializeAwardsScript = function () {
 
     console.log(`${logPrefix} initializing...`);
 
-    // Per-item render dedup + fail-open retry bookkeeping (mirrors letterboxd-links).
-    const processedItemIds = new Set<string>();
-    const errorAttempts = new Map<string, number>();
-    const notReadyAttempts = new Map<string, number>();
-    const ERROR_MAX_ATTEMPTS = 3;
+    // TERMINAL per-item state: awards rendered, a genuine "no awards" answer, or the feature
+    // turned off. Never re-fetched for this page view. Distinct from the TRANSIENT retry state
+    // below, so a transport error or a not-ready index is never cached like a real answer (R9).
+    const resolved = new Set<string>();
+
+    // TRANSIENT per-item retry budget (transport errors + index-not-ready). Page-view scoped and
+    // MONOTONIC: `windowDeadline` is set once per item and never reset by a later trigger, so a
+    // mutation storm can't restart the budget; `nextAllowedAt` rate-limits fetches. Within the
+    // window we schedule timed backoff retries; after it, external triggers may still retry but
+    // only once per cooldown — so a still-down server or a long first build can't hammer, yet the
+    // open page still recovers once the server/index is ready.
+    const retry = new Map<string, TransientRetryState>();
+    const RETRY_WINDOW_MS = 3 * 60 * 1000;   // absolute per-view budget for timed retries
+    const RETRY_COOLDOWN_MS = 30 * 1000;     // min gap between post-window trigger-driven retries
+    const MAX_BACKOFF_MS = 15 * 1000;
     const ERROR_BASE_DELAY_MS = 2000;
-    // The awards index is only ever empty transiently, during the first-install build. Retry a
-    // bounded number of times with backoff so awards appear on the page that is already open
-    // once the build lands, without ever caching the not-ready state as a genuine "no awards".
-    const NOT_READY_MAX_ATTEMPTS = 8;
     const NOT_READY_BASE_DELAY_MS = 2000;
+
     let lastVisibleItemId: string | null = null;
     let inFlight = false;
     // PERF(R9)/lifecycle: if a trigger fires while a request is in flight (e.g. navigation to a
@@ -78,6 +85,28 @@ JE.initializeAwardsScript = function () {
     let rerunRequested = false;
 
     injectStyles();
+
+    function getRetry(itemId: string): TransientRetryState {
+        let r = retry.get(itemId);
+        if (!r) {
+            r = { attempts: 0, windowDeadline: Date.now() + RETRY_WINDOW_MS, nextAllowedAt: 0 };
+            retry.set(itemId, r);
+        }
+        return r;
+    }
+
+    // Unified transient handler for both the transport-error and index-not-ready paths. Never
+    // marks the item resolved; schedules a bounded timed retry while inside the window, then falls
+    // back to cooldown-gated recovery so it stays fail-open without ever hammering. The decision
+    // is the pure applyTransient() (unit-tested); this just applies its result.
+    function handleTransient(itemId: string, baseDelayMs: number): void {
+        const { state, action } = applyTransient(
+            getRetry(itemId), Date.now(), baseDelayMs, MAX_BACKOFF_MS, RETRY_COOLDOWN_MS);
+        retry.set(itemId, state);
+        if (action.kind === 'retry') {
+            scheduleDelayedRetry(itemId, action.delayMs);
+        }
+    }
 
     async function processAwards(): Promise<void> {
         if (inFlight) {
@@ -91,11 +120,11 @@ JE.initializeAwardsScript = function () {
         const itemId = getItemIdFromUrl();
         if (!itemId) return;
 
-        // Navigated to a different item — allow the new one to render and drop stale state.
+        // Navigated to a different item — allow the new one to render and drop stale state, so a
+        // genuinely new page view starts with a fresh (monotonic) retry budget.
         if (lastVisibleItemId && lastVisibleItemId !== itemId) {
-            processedItemIds.clear();
-            errorAttempts.clear();
-            notReadyAttempts.clear();
+            resolved.clear();
+            retry.clear();
         }
         lastVisibleItemId = itemId;
 
@@ -103,46 +132,43 @@ JE.initializeAwardsScript = function () {
         // three #itemDetailPage slots around) so it can't resurface against the wrong item.
         document.querySelectorAll(`#itemDetailPage.hide .${SECTION_CLASS}`).forEach(el => el.remove());
 
-        if (processedItemIds.has(itemId)) return;
+        if (resolved.has(itemId)) return;
         if (visiblePage.querySelector(`.${SECTION_CLASS}`)) {
-            processedItemIds.add(itemId);
+            resolved.add(itemId);
             return;
         }
+
+        // Cooldown gate: after the retry window is spent, external triggers (mutation/nav) may
+        // still retry, but no more than once per cooldown — a mutation storm can't hammer.
+        const pending = retry.get(itemId);
+        if (pending && Date.now() < pending.nextAllowedAt) return;
 
         inFlight = true;
         try {
             // skipCache: the shared GET cache's 30-min TTL would otherwise pin a transient
             // "index not built yet" response and hide awards for the rest of that window. This
-            // endpoint is a cheap server-side dictionary lookup, so per-view fetches are fine,
-            // and per-item dedup above already prevents repeats within a page view.
+            // endpoint is a cheap server-side dictionary lookup, so per-view fetches are fine.
             const data = await JE.core.api.plugin(`/awards/${encodeURIComponent(itemId)}`, { skipCache: true }) as ItemAwardsResponse | null;
 
             if (data && data.enabled === false) {
-                // Admin turned the feature off since bootstrap — stop retrying this view.
-                processedItemIds.add(itemId);
+                // Admin turned the feature off since bootstrap — terminal for this view.
+                resolved.add(itemId);
+                retry.delete(itemId);
                 return;
             }
 
-            // PERF(R9): the index hasn't been built yet (first install). This is a transient
-            // not-ready state, NOT "no awards" — never cache it. Retry with bounded backoff so
-            // the already-open page fills in once the build completes.
+            // PERF(R9): the index hasn't been built yet (first install). Transient not-ready
+            // state, NOT "no awards" — never cache it; retry (bounded) so the open page fills in.
             if (data?.indexEmpty) {
-                const attempts = (notReadyAttempts.get(itemId) || 0) + 1;
-                if (attempts > NOT_READY_MAX_ATTEMPTS) {
-                    // The build is taking unusually long; stop probing. A later navigation re-triggers.
-                    notReadyAttempts.delete(itemId);
-                    return;
-                }
-                notReadyAttempts.set(itemId, attempts);
-                scheduleDelayedRetry(itemId, Math.min(15000, NOT_READY_BASE_DELAY_MS * attempts));
+                handleTransient(itemId, NOT_READY_BASE_DELAY_MS);
                 return;
             }
 
             const awards = Array.isArray(data?.awards) ? data.awards : [];
-            notReadyAttempts.delete(itemId);
             if (awards.length === 0) {
-                // Genuine "no awards" (index is built) — remember it; don't re-fetch this view.
-                processedItemIds.add(itemId);
+                // Genuine "no awards" (index is built) — terminal for this view.
+                resolved.add(itemId);
+                retry.delete(itemId);
                 return;
             }
 
@@ -150,26 +176,21 @@ JE.initializeAwardsScript = function () {
             const stillVisible = document.querySelector<HTMLElement>('#itemDetailPage:not(.hide)');
             if (!stillVisible || getItemIdFromUrl() !== itemId) return;
             if (stillVisible.querySelector(`.${SECTION_CLASS}`)) {
-                processedItemIds.add(itemId);
+                resolved.add(itemId);
+                retry.delete(itemId);
                 return;
             }
 
             const section = buildAwardsSection(awards);
             insertSection(stillVisible, section);
-            processedItemIds.add(itemId);
+            resolved.add(itemId);
+            retry.delete(itemId);
         } catch (err) {
-            // PERF(R9): fail open — a transient failure schedules its own bounded, nav-guarded
-            // retry (never relying on an unrelated DOM/nav event to re-trigger), and is only given
-            // up on after ERROR_MAX_ATTEMPTS. A blip never caches "no awards".
+            // PERF(R9): fail open — a transient failure schedules a bounded, nav-guarded retry and
+            // is NEVER marked resolved, so a recovered server is picked up on the open page (within
+            // the window via a timer, after it via a cooldown-gated trigger). Never cached as "no awards".
             console.warn(`${logPrefix} failed to load awards for ${itemId}:`, err);
-            const attempts = (errorAttempts.get(itemId) || 0) + 1;
-            if (attempts >= ERROR_MAX_ATTEMPTS) {
-                processedItemIds.add(itemId);
-                errorAttempts.delete(itemId);
-            } else {
-                errorAttempts.set(itemId, attempts);
-                scheduleDelayedRetry(itemId, ERROR_BASE_DELAY_MS * attempts);
-            }
+            handleTransient(itemId, ERROR_BASE_DELAY_MS);
         } finally {
             inFlight = false;
             // A trigger that fired mid-request (or a completed request for an item that is no
@@ -187,7 +208,7 @@ JE.initializeAwardsScript = function () {
     function scheduleDelayedRetry(itemId: string, delayMs: number): void {
         window.setTimeout(() => {
             if (getItemIdFromUrl() !== itemId) return; // navigated away
-            if (processedItemIds.has(itemId)) return;   // already resolved
+            if (resolved.has(itemId)) return;           // already resolved
             schedule();
         }, delayMs);
     }
