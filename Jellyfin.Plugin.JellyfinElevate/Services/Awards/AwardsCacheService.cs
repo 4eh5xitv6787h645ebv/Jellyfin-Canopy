@@ -201,13 +201,23 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
         /// newest-first. Empty when the item has no tracked awards or no external id.
         /// </summary>
         public IReadOnlyList<AwardEntry> LookupForItem(BaseItem item)
-        {
-            if (item == null)
-            {
-                return Array.Empty<AwardEntry>();
-            }
+            => item == null ? Array.Empty<AwardEntry>() : LookupInIndex(_index, item);
 
-            var index = _index;
+        /// <summary>
+        /// The item's awards together with the version and emptiness of the SAME index snapshot,
+        /// read once. This keeps the three values mutually consistent even if a rebuild publishes
+        /// mid-request — the response can't claim the index is empty while also carrying awards.
+        /// </summary>
+        public AwardsView GetAwardsView(BaseItem item)
+        {
+            var index = _index; // single consistent snapshot
+            var isEmpty = index.Version == 0 && index.ByImdb.Count == 0 && index.ByTmdb.Count == 0;
+            var awards = item == null ? Array.Empty<AwardEntry>() : LookupInIndex(index, item);
+            return new AwardsView(index.Version, isEmpty, awards);
+        }
+
+        private static IReadOnlyList<AwardEntry> LookupInIndex(AwardsIndex index, BaseItem item)
+        {
             List<AwardEntry>? merged = null;
 
             var imdb = NormalizeImdb(item.GetProviderId(MetadataProvider.Imdb));

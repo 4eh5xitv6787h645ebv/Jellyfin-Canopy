@@ -66,6 +66,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
                 return response;
             }
 
+            // From here we read a single consistent index snapshot (GetAwardsView) so version,
+            // emptiness and awards can't disagree if a rebuild publishes mid-request.
+
             // Resolve the item in the CALLER's scope (CSCTRL-4): the user-scoped GetItemById
             // overload only returns items in libraries the caller can access, so a non-admin
             // can't confirm the existence of — or read awards for — items outside their view.
@@ -88,7 +91,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
                 return response;
             }
 
-            response.Awards = _awardsCache.LookupForItem(item);
+            var view = _awardsCache.GetAwardsView(item);
+            response.Version = view.Version;
+            response.IndexEmpty = view.IsEmpty;
+            response.Awards = view.Awards;
             return response;
         }
     }

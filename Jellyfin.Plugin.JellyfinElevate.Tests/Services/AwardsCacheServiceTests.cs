@@ -193,6 +193,25 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         }
 
         [Fact]
+        public void GetAwardsView_ReturnsConsistentSnapshot()
+        {
+            var svc = NewService();
+
+            // Before any build: empty + version 0 + no awards, all from one snapshot.
+            var before = svc.GetAwardsView(Movie(imdb: "tt1"));
+            Assert.True(before.IsEmpty);
+            Assert.Equal(0, before.Version);
+            Assert.Empty(before.Awards);
+
+            svc.ReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1") });
+
+            var after = svc.GetAwardsView(Movie(imdb: "tt1"));
+            Assert.False(after.IsEmpty);
+            Assert.Equal(1, after.Version);
+            Assert.Single(after.Awards);
+        }
+
+        [Fact]
         public void TryReplaceFrom_Complete_Publishes()
         {
             var svc = NewService();

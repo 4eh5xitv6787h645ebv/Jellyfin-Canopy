@@ -50,13 +50,20 @@ const JE = JEBase as typeof JEBase & {
 const SECTION_CLASS = 'je-awards-section';
 const STYLE_ID = 'je-awards-styles';
 
+// Registered exactly once. Guards against double-registration when the initializer is invoked
+// both by the bootstrap loader and by the live-config re-init hook below.
+let awardsStarted = false;
+
 JE.initializeAwardsScript = function () {
     const logPrefix = '🪼 Jellyfin Elevate: Awards:';
 
+    if (awardsStarted) return;
     if (!JE?.pluginConfig?.ShowAwards) {
+        // Not started — a later admin enable (via the je:config-changed hook below) re-invokes this.
         console.log(`${logPrefix} feature disabled.`);
         return;
     }
+    awardsStarted = true;
 
     console.log(`${logPrefix} initializing...`);
 
@@ -227,12 +234,10 @@ JE.initializeAwardsScript = function () {
     }
 
     // PERF(R3): ride the shared multiplexed body observer, gated to the visible details page.
-    const subscription = onBodyMutation('je-awards', () => {
-        if (!JE?.pluginConfig?.ShowAwards) {
-            subscription.unsubscribe();
-            console.log(`${logPrefix} stopped — feature disabled.`);
-            return;
-        }
+    // The work is gated on ShowAwards at runtime (not torn down on disable) so an admin can
+    // toggle the feature off and back on live — a disabled pass is a cheap early return.
+    onBodyMutation('je-awards', () => {
+        if (!JE?.pluginConfig?.ShowAwards) return;
         if (!isDetailsPageVisible()) return;
         schedule();
     });
@@ -243,6 +248,13 @@ JE.initializeAwardsScript = function () {
     schedule();
     console.log(`${logPrefix} initialized.`);
 };
+
+// Live enable: if the admin turns Awards on while a session is open, live-config refreshes
+// JE.pluginConfig and fires je:config-changed. Register (once) then — no page reload needed.
+// A no-op when already started or still disabled.
+try {
+    window.addEventListener('je:config-changed', () => { JE.initializeAwardsScript?.(); });
+} catch { /* CustomEvent/addEventListener unavailable — bootstrap path still covers the enabled case */ }
 
 /** Builds the whole Awards section off-DOM (R7). All dynamic text via textContent (X1). */
 function buildAwardsSection(awards: AwardEntry[]): HTMLElement {
