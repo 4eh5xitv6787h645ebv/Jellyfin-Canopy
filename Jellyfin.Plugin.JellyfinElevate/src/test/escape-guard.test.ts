@@ -201,7 +201,7 @@ const ALLOWLIST: AllowlistEntry[] = [
     {
         file: 'enhanced/playback.ts',
         expr: 'next.textContent',
-        line: 490,
+        line: 491,
         why: 'label of the host client\'s own aspect-ratio OSD menu item (jellyfin-web UI string, not media metadata)',
     },
     {

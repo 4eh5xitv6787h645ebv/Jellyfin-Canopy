@@ -5,8 +5,9 @@
 
 import { JE } from '../globals';
 import { toast } from '../core/ui-kit';
-import { onBodyMutation } from '../core/dom-observer';
-import type { BodySubscriberHandle } from '../types/je';
+import { createAutoSkipEngine,
+    createSessionItemResolver, parseTranscodeOffsetTicksFromSrc } from './auto-skip';
+import type { AutoSkipEngine, MediaSegment, VideoLike } from './auto-skip';
 
 /**
  * Finds the currently active video element on the page.
@@ -497,94 +498,127 @@ JE.cycleAspect = () => {
     JE.openSettings!(performAspectCycle);
 };
 
-// The v12 client mounts the intro/outro skip button at document.body level
-// (jellyfin-web src/components/playback/skipsegment.ts:
-// `document.body.insertAdjacentHTML('beforeend', …)`), OUTSIDE
-// .videoPlayerContainer. Scoping the observer to the player container therefore
-// meant it never saw the button and auto-skip stopped firing. Detection now
-// rides the shared STRUCTURAL body multiplexer (childList only — never a
-// body-wide attribute observer, R3); activation (the hide/skip-button-hidden
-// class toggle) is watched with an attribute observer SCOPED to the button node.
-let skipButtonBodyHandle: BodySubscriberHandle | null = null;
-let skipButtonClassObserver: MutationObserver | null = null;
-let watchedSkipButton: HTMLElement | null = null;
+// --- Auto-Skip v2 (data-driven, honours native Media Segment boundaries) ---
+//
+// The old implementation auto-CLICKED the native skip button by matching its
+// English text ("Skip Intro"/"Skip Outro"). That was dead on localized clients,
+// ignored Recap/Preview/Commercial, had no seek-back guard (it re-fired whenever
+// the native client re-prompted after a seek), and never read the segment's
+// StartTicks/EndTicks — so it could not honour the actual boundary (the upstream
+// "auto-skip ignores offsets" bug).
+//
+// The engine (src/enhanced/auto-skip.ts) now reads the native Media Segments and
+// seeks to the exact EndTicks itself, driven by the media element's `timeupdate`
+// event. This is the DOM glue that supplies its real dependencies.
 
 /**
- * Evaluate the currently-visible skip button and auto-click it when the user's
- * matching auto-skip toggle is on. PERF(R8): one presence probe per call.
+ * Whether the user's settings enable auto-skip for a given segment type. Only
+ * the two types the settings model exposes (Intro/Outro) are covered — we do NOT
+ * invent settings for Recap/Preview/Commercial, which the native per-type
+ * actions own (documented precedence).
  */
-function evaluateAutoSkip(): void {
-    const skipButton = document.querySelector('button.skip-button.emby-button:not(.skip-button-hidden):not(.hide)');
-    if (skipButton && !JE.state!.skipToastShown) {
-        const buttonText = skipButton.textContent || '';
-        if (JE.currentSettings!.autoSkipIntro && buttonText.includes('Skip Intro')) {
-            (skipButton as HTMLElement).click();
-            toast(JE.t!('toast_auto_skipped_intro'));
-            JE.state!.skipToastShown = true;
-        } else if (JE.currentSettings!.autoSkipOutro && buttonText.includes('Skip Outro')) {
-            (skipButton as HTMLElement).click();
-            toast(JE.t!('toast_auto_skipped_outro'));
-            JE.state!.skipToastShown = true;
-        }
-    } else if (!skipButton) {
-        JE.state!.skipToastShown = false; // Reset when the button is gone
-    }
+function segmentTypeEnabled(type: string | undefined): boolean {
+    if (type === 'Intro') return !!JE.currentSettings!.autoSkipIntro;
+    if (type === 'Outro') return !!JE.currentSettings!.autoSkipOutro;
+    return false;
+}
+
+/** Localized toast after an auto-skip. Constant keys, no interpolation (X1 safe). */
+function autoSkipToast(seg: MediaSegment): void {
+    if (seg.Type === 'Intro') toast(JE.t!('toast_auto_skipped_intro'));
+    else if (seg.Type === 'Outro') toast(JE.t!('toast_auto_skipped_outro'));
 }
 
 /**
- * Attach (or re-point) an element-scoped attribute observer to the skip button
- * so its show/hide class toggle activates auto-skip — WITHOUT any body-wide
- * attribute observation (PERF(R3)). Called from the structural body multiplexer,
- * so it also handles the button's initial insertion at document.body level.
+ * Resolve the playing item id from the media element's source path
+ * (/Videos/{itemId}/…). currentSrc changes on next-episode auto-play, giving
+ * reliable item-change detection; falls back to the video-page URL id.
  */
-function wireSkipButtonWatcher(): void {
-    const button = document.querySelector<HTMLElement>('button.skip-button');
-    if (!button) {
-        // Button removed (playback ended / OSD teardown) — drop the stale watcher.
-        if (skipButtonClassObserver) { skipButtonClassObserver.disconnect(); skipButtonClassObserver = null; }
-        watchedSkipButton = null;
-        return;
-    }
-    if (button !== watchedSkipButton) {
-        if (skipButtonClassObserver) skipButtonClassObserver.disconnect();
-        watchedSkipButton = button;
-        // PERF(R3): attribute observation scoped to the button node, never body-wide.
-        skipButtonClassObserver = new MutationObserver(() => evaluateAutoSkip());
-        skipButtonClassObserver.observe(button, { attributes: true, attributeFilter: ['class'] });
-    }
-    // The insertion mutation itself may already present an active button.
-    evaluateAutoSkip();
+function parseItemIdFromVideosSrc(src: string): string | null {
+    const m = src.match(/\/[Vv]ideos\/([0-9a-fA-F-]{32,36})\b/);
+    return m ? m[1].replace(/-/g, '').toLowerCase() : null;
 }
 
 /**
- * Initializes the skip-button watcher. Rides the shared structural body observer
- * to detect the button (which the v12 client mounts at document.body, not inside
- * the player container), then scopes attribute observation to the button node.
- * events.ts re-invokes this each video-page tick (idempotent) and JE.stopAutoSkip
- * tears it down on leave.
+ * Now-playing probe for sources without an id in the URL (hls.js blob:).
+ * /Sessions?ControllableByUserId works for non-admins and includes the caller's
+ * own session; matched by DeviceId so casts/other tabs never mislead.
+ */
+async function probeNowPlayingItemId(): Promise<string | null> {
+    try {
+        const api = JE.core?.api;
+        const ac = window.ApiClient;
+        if (!api || typeof api.jf !== 'function' || !ac) return null;
+        const userId = typeof ac.getCurrentUserId === 'function' ? ac.getCurrentUserId() : '';
+        const deviceId = typeof ac.deviceId === 'function' ? ac.deviceId() : '';
+        if (!userId || !deviceId) return null;
+        const sessions = await api.jf(
+            `/Sessions?ControllableByUserId=${encodeURIComponent(userId)}`,
+            { skipCache: true }
+        ) as Array<{ DeviceId?: string; NowPlayingItem?: { Id?: string } }> | undefined;
+        if (!Array.isArray(sessions)) return null;
+        // Same-browser tabs share a deviceId (the server usually merges them
+        // into one session). If more than one playing session still matches,
+        // identity is ambiguous — fail OPEN (no auto-skip beats a wrong skip).
+        const matches = sessions.filter((x) => x?.DeviceId === deviceId && x?.NowPlayingItem?.Id);
+        return matches.length === 1 ? (matches[0].NowPlayingItem?.Id ?? null) : null;
+    } catch {
+        return null;
+    }
+}
+
+const resolvePlayingItemId = createSessionItemResolver({
+    parseFromSrc: parseItemIdFromVideosSrc,
+    fallbackId: getCurrentVideoItemId,
+    probeNowPlayingId: probeNowPlayingItemId
+});
+
+/**
+ * Absolute-position offset for the engine: parsed from the element's own source
+ * URL (see parseTranscodeOffsetTicksFromSrc — the plugin-observable equivalent
+ * of native transcodingOffsetTicks; JF12 exposes no playbackManager to plugins).
+ */
+function getTranscodePositionOffsetTicks(video: VideoLike): number {
+    return parseTranscodeOffsetTicksFromSrc(video.currentSrc || '');
+}
+
+/** Fetch the item's provider-filtered media segments via the native REST API. */
+async function fetchMediaSegments(itemId: string): Promise<MediaSegment[]> {
+    const api = JE.core?.api;
+    if (!api || typeof api.jf !== 'function') return [];
+    const res = await api.jf(`/MediaSegments/${encodeURIComponent(itemId)}`, { skipCache: true }) as
+        { Items?: MediaSegment[] } | undefined;
+    return Array.isArray(res?.Items) ? res.Items : [];
+}
+
+let _autoSkipEngine: AutoSkipEngine | null = null;
+function autoSkipEngine(): AutoSkipEngine {
+    if (!_autoSkipEngine) {
+        _autoSkipEngine = createAutoSkipEngine({
+            shouldSkipType: segmentTypeEnabled,
+            fetchSegments: fetchMediaSegments,
+            resolveItemId: resolvePlayingItemId,
+            onSkipped: autoSkipToast,
+            getPositionOffsetTicks: getTranscodePositionOffsetTicks
+        });
+    }
+    return _autoSkipEngine;
+}
+
+/**
+ * Starts the auto-skip engine on the current video element. events.ts re-invokes
+ * this each video-page tick (idempotent — attach no-ops on the same element and
+ * only re-checks for an item change).
  */
 JE.initializeAutoSkipObserver = () => {
-    if (skipButtonBodyHandle) {
-        return; // Watcher is already running
-    }
-    skipButtonBodyHandle = onBodyMutation('je-auto-skip', () => wireSkipButtonWatcher());
-    // The button may already be mounted when we (re-)enter the video page.
-    wireSkipButtonWatcher();
+    const video = getVideo();
+    if (!video) return; // catch it on a later tick once the element mounts
+    autoSkipEngine().attach(video);
 };
 
-/**
- * Disconnects the skip-button watcher (shared body subscriber + scoped observer).
- */
+/** Tears the auto-skip engine down (video-page leave). */
 JE.stopAutoSkip = () => {
-    if (skipButtonBodyHandle) {
-        skipButtonBodyHandle.unsubscribe();
-        skipButtonBodyHandle = null;
-    }
-    if (skipButtonClassObserver) {
-        skipButtonClassObserver.disconnect();
-        skipButtonClassObserver = null;
-    }
-    watchedSkipButton = null;
+    _autoSkipEngine?.detach();
 };
 
 // --- Long Press Speed Control ---

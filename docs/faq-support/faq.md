@@ -66,19 +66,27 @@ The userscript has been discontinued as the plugin functionality has grown signi
 
 ### Auto-skip intros not working?
 
-Auto-skip requires the [Intro Skipper plugin](https://github.com/intro-skipper/intro-skipper) to be installed and configured.
+Auto-skip reads Jellyfin 12's native Media Segments and seeks to the segment's exact end boundary. It therefore requires media segments to exist for your media, which are produced by a segment provider such as the [Intro Skipper plugin](https://github.com/intro-skipper/intro-skipper).
 
 **Requirements:**
 
-1. Install Intro Skipper plugin
+1. Install a media segment provider (e.g. the Intro Skipper plugin)
 
-2. Enable intro detection in Intro Skipper settings
+2. Enable intro/outro detection in that provider's settings
 
-3. Run intro detection on your library
+3. Run detection on your library so segments are created
 
-4. Enable auto-skip in Jellyfin Elevate settings
+4. Enable auto-skip in Jellyfin Elevate settings (Intro and/or Outro)
 
-5. Intro segments must be detected for your media
+5. Segments must be detected for your media (check `GET /MediaSegments/{itemId}`)
+
+**Notes:**
+
+- Skipping honors the segment's exact end (StartTicks/EndTicks), so a provider offset is respected.
+
+- Seeking back into a segment after an auto-skip will not immediately re-skip it; rewinding to before the segment and playing forward through it again skips again (matching Jellyfin's native Skip action).
+
+- Recap/Preview/Commercial segments are handled by Jellyfin's native per-type segment actions, not by these toggles.
 
 **Check Detection:**
 
