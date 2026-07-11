@@ -164,8 +164,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                 var currentlyEmpty = _index.Version == 0 && _index.ByImdb.Count == 0 && _index.ByTmdb.Count == 0;
                 var producesEmpty = byImdb.Count == 0 && byTmdb.Count == 0;
 
-                // Guard 1: an empty result never CLEARS an existing non-empty index (a fetch that
-                // came back empty is treated as "keep what we have", never "wipe it").
+                // Guard 1: an empty result never CLEARS an existing non-empty index — even a
+                // "complete" one. This is deliberate: an all-zero result from every ceremony query
+                // is far more likely our own ceremony QIDs/linkage having gone stale (a maintenance
+                // failure) than Wikidata genuinely dropping all film awards. Keeping the previous
+                // awards is the safer failure mode than wiping the whole index; the next refresh
+                // with corrected queries republishes real data over it.
                 if (producesEmpty && !currentlyEmpty)
                 {
                     _logger.LogWarning("[Awards] Rejected an empty rebuild over the existing index of {Titles} titles.", _index.ByImdb.Count);

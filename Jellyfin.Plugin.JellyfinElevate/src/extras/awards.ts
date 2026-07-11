@@ -159,6 +159,11 @@ JE.initializeAwardsScript = function () {
         const pending = retry.get(itemId);
         if (pending && Date.now() < pending.nextAllowedAt) return;
 
+        // PERF(R5): never fetch while the tab is hidden. A retry timer that fires in a backgrounded
+        // tab bails here (no request, no attempt consumed); the visibilitychange listener below
+        // re-runs this pass when the tab becomes visible again.
+        if (document.visibilityState === 'hidden') return;
+
         inFlight = true;
         try {
             // skipCache: the shared GET cache's 30-min TTL would otherwise pin a transient
@@ -266,6 +271,10 @@ JE.initializeAwardsScript = function () {
     // A cached-page re-show is a class flip the structural observer drops, so cover it via nav.
     onNavigate(() => { if (JE?.pluginConfig?.ShowAwards) schedule(); });
     onViewPage(() => { if (JE?.pluginConfig?.ShowAwards) schedule(); });
+    // PERF(R5): resume a retry that was skipped while the tab was hidden, once it's visible again.
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && JE?.pluginConfig?.ShowAwards) schedule();
+    });
 
     // React to a live enable/disable toggle without a page reload. On disable, strip any rendered
     // sections and forget the resolved items so a later re-enable re-renders them; on (re-)enable,
