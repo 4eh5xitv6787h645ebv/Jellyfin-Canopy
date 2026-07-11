@@ -8,6 +8,7 @@ using Jellyfin.Plugin.JellyfinElevate.Services;
 using Jellyfin.Plugin.JellyfinElevate.Tests.TestDoubles;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Model.Dto;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using Episode = MediaBrowser.Controller.Entities.TV.Episode;
@@ -131,7 +132,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             try
             {
                 var id = Guid.NewGuid();
-                var movie = new Movie { Id = id, Name = "M", DateLastSaved = T0, CommunityRating = 6.0f };
+                var movie = new StubMovie { Id = id, Name = "M", DateLastSaved = T0, CommunityRating = 6.0f };
                 var lib = new CountingLibraryManager { GetItemListHook = _ => new List<BaseItem> { movie } };
                 using var svc = NewSvc(lib, dir);
 
@@ -159,7 +160,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             try
             {
                 var id = Guid.NewGuid();
-                var movie = new Movie { Id = id, Name = "M", DateLastSaved = T0, CommunityRating = 6.0f };
+                var movie = new StubMovie { Id = id, Name = "M", DateLastSaved = T0, CommunityRating = 6.0f };
                 var lib = new CountingLibraryManager { GetItemListHook = _ => new List<BaseItem> { movie } };
                 using var svc = NewSvc(lib, dir);
 
@@ -188,7 +189,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             try
             {
                 var id = Guid.NewGuid();
-                var movie = new Movie { Id = id, Name = "M", DateLastSaved = T0, CommunityRating = 6.0f };
+                var movie = new StubMovie { Id = id, Name = "M", DateLastSaved = T0, CommunityRating = 6.0f };
                 var lib = new CountingLibraryManager { GetItemListHook = _ => new List<BaseItem> { movie } };
                 using var svc = NewSvc(lib, dir);
 
@@ -215,8 +216,8 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             var dir = NewTempDir();
             try
             {
-                var a = new Movie { Id = Guid.NewGuid(), Name = "A", DateLastSaved = T0 };
-                var b = new Movie { Id = Guid.NewGuid(), Name = "B", DateLastSaved = T0 };
+                var a = new StubMovie { Id = Guid.NewGuid(), Name = "A", DateLastSaved = T0 };
+                var b = new StubMovie { Id = Guid.NewGuid(), Name = "B", DateLastSaved = T0 };
                 var scan = new List<BaseItem> { a };
                 var lib = new CountingLibraryManager { GetItemListHook = _ => scan };
                 using var svc = NewSvc(lib, dir);
@@ -239,8 +240,8 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             var dir = NewTempDir();
             try
             {
-                var a = new Movie { Id = Guid.NewGuid(), Name = "A", DateLastSaved = T0 };
-                var b = new Movie { Id = Guid.NewGuid(), Name = "B", DateLastSaved = T0 };
+                var a = new StubMovie { Id = Guid.NewGuid(), Name = "A", DateLastSaved = T0 };
+                var b = new StubMovie { Id = Guid.NewGuid(), Name = "B", DateLastSaved = T0 };
                 var scan = new List<BaseItem> { a, b };
                 var lib = new CountingLibraryManager { GetItemListHook = _ => scan };
                 using var svc = NewSvc(lib, dir);
@@ -265,9 +266,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             {
                 var seriesId = Guid.NewGuid();
                 var epId = Guid.NewGuid();
-                var series = new Series { Id = seriesId, Name = "S", DateLastSaved = T0, CommunityRating = 5.0f };
+                var series = new StubSeries { Id = seriesId, Name = "S", DateLastSaved = T0, CommunityRating = 5.0f };
                 // Episode has NO rating of its own -> inherits the series rating.
-                var ep = new Episode { Id = epId, Name = "E", DateLastSaved = T0, SeriesId = seriesId };
+                var ep = new StubEpisode { Id = epId, Name = "E", DateLastSaved = T0, SeriesId = seriesId };
                 var scan = new List<BaseItem> { series, ep };
 
                 var lib = new CountingLibraryManager
@@ -293,9 +294,104 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             finally { TryDelete(dir); }
         }
 
+        // ── Probe failure must keep last-good data, not publish a degraded (empty) entry ──────
+
+        [Fact]
+        public void Reconcile_ProbeFailureOnChangedItem_KeepsLastGood_AndRecoversNextReconcile()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var id = Guid.NewGuid();
+                var movie = new ProbeControlledMovie { Id = id, Name = "M", DateLastSaved = T0, CommunityRating = 6.0f };
+                var lib = new CountingLibraryManager
+                {
+                    GetItemListHook = _ => new List<BaseItem> { movie },
+                    GetItemByIdHook = i => i == id ? movie : null,
+                };
+                using var svc = NewSvc(lib, dir);
+
+                svc.BuildFullCache(null, CT);                       // builds cleanly
+                var good = svc.GetEntryForTest(Key(id));
+                Assert.NotNull(good);
+                Assert.Equal(6.0f, good!.CommunityRating);
+
+                // The item changes AND its media probe now throws.
+                movie.DateLastSaved = T0.AddHours(1);
+                movie.CommunityRating = 9.0f;
+                movie.ThrowOnProbe = true;
+                svc.BuildFullCache(null, CT);
+
+                // Last-good retained (same instance, old content) with its OLD SourceRevision, so it
+                // stays a rebuild candidate — NOT a degraded entry stamped with the new revision.
+                var afterFail = svc.GetEntryForTest(Key(id));
+                Assert.Same(good, afterFail);
+                Assert.Equal(6.0f, afterFail!.CommunityRating);
+                Assert.Equal(T0.Ticks, afterFail.SourceRevision);
+
+                // Probe recovers -> the next reconcile rebuilds (revision still mismatched).
+                movie.ThrowOnProbe = false;
+                svc.BuildFullCache(null, CT);
+                var recovered = svc.GetEntryForTest(Key(id));
+                Assert.NotNull(recovered);
+                Assert.Equal(9.0f, recovered!.CommunityRating);
+                Assert.Equal(T0.AddHours(1).Ticks, recovered.SourceRevision);
+            }
+            finally { TryDelete(dir); }
+        }
+
+        [Fact]
+        public void Reconcile_ProbeFailure_RequeuesForOffThreadFlushRetry()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var id = Guid.NewGuid();
+                var movie = new ProbeControlledMovie { Id = id, Name = "M", DateLastSaved = T0, CommunityRating = 6.0f };
+                var lib = new CountingLibraryManager
+                {
+                    GetItemListHook = _ => new List<BaseItem> { movie },
+                    GetItemByIdHook = i => i == id ? movie : null,
+                };
+                using var svc = NewSvc(lib, dir);
+
+                svc.BuildFullCache(null, CT);
+                var good = svc.GetEntryForTest(Key(id));
+
+                movie.DateLastSaved = T0.AddHours(1);
+                movie.CommunityRating = 9.0f;
+                movie.ThrowOnProbe = true;
+                svc.BuildFullCache(null, CT);            // fails -> keeps old + re-queues id
+                Assert.Same(good, svc.GetEntryForTest(Key(id)));
+
+                // The re-queued item recovers through the existing flush path once the probe heals,
+                // without waiting for the next daily reconcile.
+                movie.ThrowOnProbe = false;
+                svc.FlushPendingForTest();
+                var recovered = svc.GetEntryForTest(Key(id));
+                Assert.NotNull(recovered);
+                Assert.Equal(9.0f, recovered!.CommunityRating);
+            }
+            finally { TryDelete(dir); }
+        }
+
         private static void TryDelete(string dir)
         {
             try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+
+        /// <summary>A Movie whose media probe can be made to throw, to exercise the last-good path.</summary>
+        private sealed class ProbeControlledMovie : Movie
+        {
+            public bool ThrowOnProbe { get; set; }
+
+            public override string GetClientTypeName() => "Movie";
+
+            public override IReadOnlyList<MediaSourceInfo> GetMediaSources(bool enablePathSubstitution)
+            {
+                if (ThrowOnProbe) throw new InvalidOperationException("transient probe failure");
+                return Array.Empty<MediaSourceInfo>();
+            }
         }
     }
 }

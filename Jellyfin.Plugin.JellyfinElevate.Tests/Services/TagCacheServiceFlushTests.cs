@@ -155,7 +155,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
                 var lib = new CountingLibraryManager
                 {
                     GetItemListHook = _ => System.Array.Empty<BaseItem>(),                 // full scan finds nothing
-                    GetItemByIdHook = id => id == movieId ? new Movie { Id = movieId } : null,
+                    GetItemByIdHook = id => id == movieId ? new StubMovie { Id = movieId } : null,
                 };
                 using var svc = new TagCacheService(lib, new StubAppPaths(tempDir), NullLogger<TagCacheService>.Instance);
 
@@ -196,7 +196,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
                 var lib = new CountingLibraryManager
                 {
                     GetItemListHook = _ => System.Array.Empty<BaseItem>(),                 // rebuild's full scan finds nothing
-                    GetItemByIdHook = id => id == movieId ? new Movie { Id = movieId } : null,
+                    GetItemByIdHook = id => id == movieId ? new StubMovie { Id = movieId } : null,
                 };
                 using var svc = new TagCacheService(lib, new StubAppPaths(tempDir), NullLogger<TagCacheService>.Instance);
 
