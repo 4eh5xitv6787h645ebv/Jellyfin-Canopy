@@ -116,6 +116,12 @@ Jellyfin.Plugin.JellyfinElevate/
 │   ├── SettingDescriptors.cs  # Settings-as-data registry: exposure + per-user pairing per setting
 │   ├── AtomicFile.cs          # Crash-safe write helper (temp-file + atomic rename) all config writes go through
 │   ├── UserConfiguration.cs / UserConfigurationManager.cs (+ store/migration/reviews classes)
+│   │                          # UserConfigurationStore owns three read tiers: LENIENT (GetUserConfiguration,
+│   │                          # any fault → new T(), for ordinary display settings), STRICT (RMW writes,
+│   │                          # corrupt → backup + throw), and the TYPED policy read (ReadUserConfiguration →
+│   │                          # UserConfigReadResult classifying Missing/Valid/Corrupt/Unavailable). Security
+│   │                          # enforcement (Hidden Content, Spoiler Guard) uses the typed read so a corrupt or
+│   │                          # unavailable file retains last-known-good or fails CLOSED instead of failing open
 │   ├── PersistedJson.cs       # System.Text.Json options replicating the legacy on-disk tolerances
 │   └── configPage.html + config-page.js  # Admin page; simple fields bind via data-config-key
 ├── Services/                  # Seerr cache/scan/watchlist, Seerr parental-rating result filter,

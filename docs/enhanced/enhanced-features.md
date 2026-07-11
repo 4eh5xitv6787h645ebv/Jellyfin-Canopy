@@ -91,6 +91,18 @@ Access via:
     hid from Continue Watching stays hidden on Home, while ordinary library
     browsing is left unfiltered.
 
+!!! note "Hidden Content fails closed on a storage fault"
+
+    Your hidden list is stored **server-side, per-user**. If that file becomes
+    corrupt or is briefly unreadable (a disk or permission fault), the server
+    keeps enforcing your **last known-good** list; and if the fault happens
+    before any good copy was loaded (e.g. right after a server restart) the
+    affected rows are **hidden entirely** rather than risk your hidden items
+    reappearing. The fault is logged for the operator, and normal filtering
+    resumes automatically once the file is readable again (or the moment you
+    next change your hidden list). A storage fault can never silently *reveal*
+    what you hid.
+
 ### Remove from Continue Watching / Next Up
 
 A lightweight, **non-destructive** way to tidy the home screen. It adds a **Remove** option to an item's "⋯" action-sheet menu for items in the **Continue Watching** and **Next Up** rows, hiding the item from that row without touching your playback position or watched state.

@@ -236,3 +236,7 @@ If you still see it, the affected client is fetching images from **old cached UR
 
 - Clear the client's image cache once (or force-stop and reopen the app) so it refetches fresh, marker-carrying URLs — the same one-time step described for Android TV above; or
 - configure the proxy to send `X-Forwarded-For` and add it to **Dashboard → Networking → Known proxies**, which restores real client IPs for the fallback path too (also nice for Jellyfin's own logs and security features). The **Per-user image identity tags** admin setting must remain enabled (it is by default) for marker-based identification.
+
+**Everything is suddenly blurred / metadata is stripped, even shows I never opted in.**
+
+Spoiler Guard **fails closed** when it cannot read your spoiler policy. If your `spoilerblur.json` file becomes corrupt or is temporarily unreadable (a disk or permission fault), the server keeps protecting your **last known-good** list; and if the fault happens before any good copy was ever loaded (for example right after a server restart), it protects **everything** rather than risk exposing a spoiler. The server logs the fault so an operator can see it. Protection returns to normal automatically once the file is readable again — the next successful read (or any change you make to your Spoiler Guard list) restores it. This is deliberate: a persistence fault can never silently *disable* your protection.
