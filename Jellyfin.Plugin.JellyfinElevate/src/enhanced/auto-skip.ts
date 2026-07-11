@@ -133,6 +133,47 @@ export function parseTranscodeOffsetTicksFromSrc(src: string): number {
  * Both are idempotent and safe to call repeatedly (events.ts re-invokes attach
  * on every video-page tick).
  */
+
+/**
+ * Item-identity resolver with a server-session fallback for sources whose URL
+ * carries no item id (hls.js MSE playback exposes a blob: URL, and the JF12
+ * /video route has no id param). Order: direct src parse -> page fallback ->
+ * one async now-playing probe per DISTINCT source (single-flight, cached until
+ * the source changes; R5: no polling — the probe fires only on source change,
+ * driven by the engine's existing per-tick reinit).
+ */
+export function createSessionItemResolver(opts: {
+    parseFromSrc: (src: string) => string | null;
+    fallbackId: () => string | null;
+    probeNowPlayingId: () => Promise<string | null>;
+}): (video: VideoLike) => string | null {
+    let probedSrc: string | null = null;
+    let probedId: string | null = null;
+    let inFlight = false;
+    return (video: VideoLike): string | null => {
+        const src = video.currentSrc || '';
+        const direct = src ? opts.parseFromSrc(src) : null;
+        if (direct) return direct;
+        const fromPage = opts.fallbackId();
+        if (fromPage) return fromPage;
+        if (src && src !== probedSrc && !inFlight) {
+            probedSrc = src;
+            probedId = null;
+            inFlight = true;
+            void opts
+                .probeNowPlayingId()
+                .then((id) => {
+                    if (probedSrc === src) probedId = id;
+                })
+                .catch(() => undefined)
+                .finally(() => {
+                    inFlight = false;
+                });
+        }
+        return src && src === probedSrc ? probedId : null;
+    };
+}
+
 export function createAutoSkipEngine(deps: AutoSkipDeps) {
     let video: VideoLike | null = null;
     let listener: (() => void) | null = null;
@@ -256,9 +297,12 @@ export function createAutoSkipEngine(deps: AutoSkipDeps) {
                 }
                 break; // one skip per tick
             }
+            // Native parity: `lastTime` advances only once segments exist —
+            // ticks during a pending fetch must not make the backward-entry
+            // guard misread ordinary forward playback as a seek-back when the
+            // fetch lands mid-segment.
+            lastTimeTicks = timeTicks;
         }
-
-        lastTimeTicks = timeTicks;
     }
 
     function onTick(): void {

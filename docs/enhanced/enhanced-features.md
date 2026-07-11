@@ -271,7 +271,7 @@ Intelligent playback features for better viewing experience.
 
 - **Auto-pause** - Pause when switching browser tabs
 - **Auto-resume** - Resume when returning to tab
-- **Auto-skip intros/outros** - Seamless binge-watching. Reads Jellyfin 12's native Media Segments and skips to the segment's exact end boundary. Requires media segments for the item (from the [Intro Skipper plugin](https://github.com/intro-skipper/intro-skipper) or any other segment provider). Seeking back into a segment after an auto-skip will not re-skip it, and the plugin defers to the native per-type segment actions where they apply.
+- **Auto-skip intros/outros** - Seamless binge-watching. Reads Jellyfin 12's native Media Segments and skips to the segment's exact end boundary. Requires media segments for the item (from the [Intro Skipper plugin](https://github.com/intro-skipper/intro-skipper) or any other segment provider). Seeking back into a segment after an auto-skip will not re-skip it (rewinding to before the segment and playing through again skips again, matching the native behavior), and the plugin defers to the native per-type segment actions where they apply. Note: Jellyfin stores media segments per item, not per version — items with multiple versions whose timings differ may see boundaries from the primary version.
 - **Playback speed control** - Adjust speed with keyboard shortcuts
 - **Auto Picture-in-Picture** - Enter PiP mode when switching tabs
 - **Long press/hold for 2x speed** (beta, touch devices only) - long-press anywhere on the player to temporarily play at 2x speed; release to return to normal speed. Per-user toggle in the Enhanced panel with a matching admin default on the config page.

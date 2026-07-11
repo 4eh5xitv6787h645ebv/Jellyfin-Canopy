@@ -5,7 +5,8 @@
 
 import { JE } from '../globals';
 import { toast } from '../core/ui-kit';
-import { createAutoSkipEngine, parseTranscodeOffsetTicksFromSrc } from './auto-skip';
+import { createAutoSkipEngine,
+    createSessionItemResolver, parseTranscodeOffsetTicksFromSrc } from './auto-skip';
 import type { AutoSkipEngine, MediaSegment, VideoLike } from './auto-skip';
 
 /**
@@ -533,12 +534,41 @@ function autoSkipToast(seg: MediaSegment): void {
  * (/Videos/{itemId}/…). currentSrc changes on next-episode auto-play, giving
  * reliable item-change detection; falls back to the video-page URL id.
  */
-function resolvePlayingItemId(video: VideoLike): string | null {
-    const src = video.currentSrc || '';
+function parseItemIdFromVideosSrc(src: string): string | null {
     const m = src.match(/\/[Vv]ideos\/([0-9a-fA-F-]{32,36})\b/);
-    if (m) return m[1].replace(/-/g, '').toLowerCase();
-    return getCurrentVideoItemId();
+    return m ? m[1].replace(/-/g, '').toLowerCase() : null;
 }
+
+/**
+ * Now-playing probe for sources without an id in the URL (hls.js blob:).
+ * /Sessions?ControllableByUserId works for non-admins and includes the caller's
+ * own session; matched by DeviceId so casts/other tabs never mislead.
+ */
+async function probeNowPlayingItemId(): Promise<string | null> {
+    try {
+        const api = JE.core?.api;
+        const ac = window.ApiClient;
+        if (!api || typeof api.jf !== 'function' || !ac) return null;
+        const userId = typeof ac.getCurrentUserId === 'function' ? ac.getCurrentUserId() : '';
+        const deviceId = typeof ac.deviceId === 'function' ? ac.deviceId() : '';
+        if (!userId || !deviceId) return null;
+        const sessions = await api.jf(
+            `/Sessions?ControllableByUserId=${encodeURIComponent(userId)}`,
+            { skipCache: true }
+        ) as Array<{ DeviceId?: string; NowPlayingItem?: { Id?: string } }> | undefined;
+        if (!Array.isArray(sessions)) return null;
+        const mine = sessions.find((x) => x?.DeviceId === deviceId && x?.NowPlayingItem?.Id);
+        return mine?.NowPlayingItem?.Id ?? null;
+    } catch {
+        return null;
+    }
+}
+
+const resolvePlayingItemId = createSessionItemResolver({
+    parseFromSrc: parseItemIdFromVideosSrc,
+    fallbackId: getCurrentVideoItemId,
+    probeNowPlayingId: probeNowPlayingItemId
+});
 
 /**
  * Absolute-position offset for the engine: parsed from the element's own source

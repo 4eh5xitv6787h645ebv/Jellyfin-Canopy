@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     createAutoSkipEngine,
+    createSessionItemResolver,
     parseTranscodeOffsetTicksFromSrc,
     TICKS_PER_SECOND,
     type AutoSkipDeps,
@@ -348,6 +349,82 @@ describe('auto-skip engine', () => {
         expect(parseTranscodeOffsetTicksFromSrc(
             `/videos/a/MASTER.M3U8?starttimeticks=${sec(90)}`
         )).toBe(0);
+    });
+
+
+    it('LATE FETCH: ticks during a pending fetch do not poison the backward-entry guard', async () => {
+        let resolveFetch: (v: MediaSegment[]) => void = () => undefined;
+        const h = makeHarness([], {
+            fetchImpl: () => new Promise<MediaSegment[]>((r) => (resolveFetch = r)),
+        });
+        h.engine.attach(h.video);
+        // Playback crosses the intro start while the fetch is still in flight.
+        h.video.seekTo(6);
+        h.video.seekTo(7);
+        expect(h.onSkipped).not.toHaveBeenCalled();
+        resolveFetch([intro5to30]);
+        await flush();
+        h.video.seekTo(8); // still inside — must skip (native only advances lastTime once segments exist)
+        expect(h.video.currentTime).toBe(30);
+        expect(h.onSkipped).toHaveBeenCalledTimes(1);
+    });
+
+    describe('createSessionItemResolver', () => {
+        const vid = (src: string): VideoLike =>
+            ({ currentSrc: src, currentTime: 0, duration: 0,
+               addEventListener: () => undefined, removeEventListener: () => undefined } as unknown as VideoLike);
+
+        it('direct src parse wins; no probe fired', () => {
+            const probe = vi.fn().mockResolvedValue('probed');
+            const r = createSessionItemResolver({
+                parseFromSrc: (s) => (s.includes('/Videos/') ? 'direct-id' : null),
+                fallbackId: () => null,
+                probeNowPlayingId: probe,
+            });
+            expect(r(vid('/Videos/abc/stream.mp4'))).toBe('direct-id');
+            expect(probe).not.toHaveBeenCalled();
+        });
+
+        it('blob src probes ONCE per source, resolves after the probe lands', async () => {
+            const probe = vi.fn().mockResolvedValue('session-item');
+            const r = createSessionItemResolver({
+                parseFromSrc: () => null,
+                fallbackId: () => null,
+                probeNowPlayingId: probe,
+            });
+            const v = vid('blob:http://host/uuid-1');
+            expect(r(v)).toBe(null); // probe in flight
+            await flush();
+            expect(r(v)).toBe('session-item'); // cached
+            expect(r(v)).toBe('session-item');
+            expect(probe).toHaveBeenCalledTimes(1);
+        });
+
+        it('re-probes when the source changes; empty src never probes; failure yields null', async () => {
+            let n = 0;
+            const probe = vi.fn().mockImplementation(() => Promise.resolve(`item-${++n}`));
+            const r = createSessionItemResolver({
+                parseFromSrc: () => null,
+                fallbackId: () => null,
+                probeNowPlayingId: probe,
+            });
+            expect(r(vid(''))).toBe(null);
+            expect(probe).not.toHaveBeenCalled();
+            r(vid('blob:a'));
+            await flush();
+            expect(r(vid('blob:a'))).toBe('item-1');
+            r(vid('blob:b')); // next episode: new blob
+            await flush();
+            expect(r(vid('blob:b'))).toBe('item-2');
+            const failing = createSessionItemResolver({
+                parseFromSrc: () => null,
+                fallbackId: () => null,
+                probeNowPlayingId: () => Promise.reject(new Error('down')),
+            });
+            failing(vid('blob:c'));
+            await flush();
+            expect(failing(vid('blob:c'))).toBe(null); // fail-open, no throw
+        });
     });
 
     it('ITEM-CHANGE: an unresolvable source drops the old item state until identity is known', async () => {
