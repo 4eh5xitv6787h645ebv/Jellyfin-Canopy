@@ -79,8 +79,11 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             Assert.True(award.Won);
             Assert.Equal(2024, award.Year);
 
+            // An empty row set never clears an existing index (a fetch that returns nothing is
+            // treated as "keep what we have", never "wipe it").
             svc.ReplaceFrom(Array.Empty<AwardRow>());
-            Assert.Equal(2, svc.Version); // monotonic even when cleared
+            Assert.Equal(1, svc.Version);
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt6710474")));
         }
 
         [Fact]
@@ -187,6 +190,47 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
             Assert.Equal(versionBefore, reloaded.Version);
             Assert.Single(reloaded.LookupForItem(Movie(imdb: "tt1")));
             Assert.Equal("Palme d'Or", reloaded.LookupForItem(Movie(tmdb: "77")).Single().Category);
+        }
+
+        [Fact]
+        public void TryReplaceFrom_Complete_Publishes()
+        {
+            var svc = NewService();
+            Assert.True(svc.TryReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1") }, complete: true));
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt1")));
+        }
+
+        [Fact]
+        public void TryReplaceFrom_PartialOverExistingIndex_IsRejected()
+        {
+            var svc = NewService();
+            svc.TryReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1") }, complete: true);
+            var versionBefore = svc.Version;
+
+            // Partial run with different data must NOT replace the complete index.
+            Assert.False(svc.TryReplaceFrom(new[] { Row("BAFTA Awards", "Best Film", true, 2024, imdb: "tt2") }, complete: false));
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt1"))); // old award survives
+            Assert.Empty(svc.LookupForItem(Movie(imdb: "tt2")));
+            Assert.Equal(versionBefore, svc.Version);
+        }
+
+        [Fact]
+        public void TryReplaceFrom_PartialOnFirstInstall_Publishes()
+        {
+            var svc = NewService(); // empty
+            Assert.True(svc.TryReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1") }, complete: false));
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt1")));
+        }
+
+        [Fact]
+        public void TryReplaceFrom_EmptyRows_DoesNotPublish()
+        {
+            var svc = NewService();
+            svc.TryReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1") }, complete: true);
+            var versionBefore = svc.Version;
+
+            Assert.False(svc.TryReplaceFrom(Array.Empty<AwardRow>(), complete: true));
+            Assert.Equal(versionBefore, svc.Version); // unchanged — empty never clears
         }
 
         [Fact]

@@ -75,31 +75,22 @@ namespace Jellyfin.Plugin.JellyfinElevate.ScheduledTasks
                 return;
             }
 
-            if (result.Rows.Count == 0)
-            {
-                _logger.LogWarning("[Awards] Provider returned no rows; keeping the existing index rather than clearing it.");
-                progress?.Report(100);
-                return;
-            }
-
-            // A partial fetch (some ceremony queries failed) must not overwrite an existing
-            // complete index — that would erase the failed ceremonies' awards until a later full
-            // run. Only publish a partial result when there is no index yet (first install),
-            // where partial data still beats an empty section.
-            if (!result.Complete && !_cache.IsEmpty)
-            {
-                _logger.LogWarning(
-                    "[Awards] Refresh was partial (some ceremony queries failed); keeping the existing complete index of {Titles} titles.",
-                    _cache.TitleCount);
-                progress?.Report(100);
-                return;
-            }
-
-            _cache.ReplaceFrom(result.Rows);
+            // TryReplaceFrom decides publication atomically: a complete run always publishes; a
+            // partial run (some ceremony queries failed) publishes only when the index is still
+            // empty (first install), never over an existing complete index — so a single timed-out
+            // query can't erase that ceremony's awards, and it can't race the startup build.
+            var published = _cache.TryReplaceFrom(result.Rows, result.Complete);
             progress?.Report(100);
-            _logger.LogInformation(
-                "[Awards] Awards cache build complete ({Completeness}): {Titles} titles indexed.",
-                result.Complete ? "full" : "partial first build", _cache.TitleCount);
+            if (published)
+            {
+                _logger.LogInformation(
+                    "[Awards] Awards cache build complete ({Completeness}): {Titles} titles indexed.",
+                    result.Complete ? "full" : "partial first build", _cache.TitleCount);
+            }
+            else
+            {
+                _logger.LogWarning("[Awards] Refresh not published (empty or partial over an existing index); kept the existing index.");
+            }
         }
     }
 }

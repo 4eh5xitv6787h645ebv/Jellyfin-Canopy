@@ -118,16 +118,18 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             {
                 _logger.LogInformation("[Awards] Feature enabled and no index on disk; building the initial awards index...");
                 var result = await _awardsProvider.FetchAllAsync(null, cancellationToken).ConfigureAwait(false);
-                if (result.Rows.Count > 0)
+
+                // TryReplaceFrom publishes atomically: on first install (empty index) even a partial
+                // result is published; but if a manual "Build Awards Cache" run completed a full
+                // index while this slower fetch was in flight, a partial result here is rejected
+                // rather than downgrading the complete index.
+                if (_awardsCacheService.TryReplaceFrom(result.Rows, result.Complete))
                 {
-                    // First install (index empty): publish whatever we got — a partial index beats
-                    // an empty section, and the weekly task refreshes it to completeness later.
-                    _awardsCacheService.ReplaceFrom(result.Rows);
                     _logger.LogInformation("[Awards] Initial awards index built: {0} titles.", _awardsCacheService.TitleCount);
                 }
                 else
                 {
-                    _logger.LogWarning("[Awards] Initial awards fetch returned no rows; the weekly task will retry.");
+                    _logger.LogWarning("[Awards] Initial awards index not published (no rows, or a complete index already exists); the weekly task will refresh.");
                 }
             }
             catch (OperationCanceledException)

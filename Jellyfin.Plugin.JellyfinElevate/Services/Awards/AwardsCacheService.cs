@@ -67,14 +67,32 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
         public bool IsEmpty => _index.Version == 0 && _index.ByImdb.Count == 0 && _index.ByTmdb.Count == 0;
 
         /// <summary>
-        /// Replace the whole index from a fresh set of provider rows. Groups rows by title,
-        /// deduplicates awards, sorts them (newest first, wins before nominations), bumps the
-        /// version, swaps the snapshot atomically, then persists to disk. A single title may be
-        /// reachable by both its IMDb and TMDb id.
+        /// Replace the whole index from a fresh set of provider rows, unconditionally. Groups
+        /// rows by title, deduplicates awards, sorts them (newest first, wins before nominations),
+        /// bumps the version, swaps the snapshot atomically, then persists to disk. Prefer
+        /// <see cref="TryReplaceFrom"/> from refresh callers so a partial fetch can't clobber a
+        /// complete index; this primitive is for callers that always want to publish.
         /// </summary>
         public void ReplaceFrom(IReadOnlyCollection<AwardRow> rows)
+            => TryReplaceFrom(rows, complete: true);
+
+        /// <summary>
+        /// Publish a fresh index, but only when it is safe to do so. Returns true if published.
+        /// A <paramref name="complete"/> run always publishes; a PARTIAL run publishes only when
+        /// the index is currently empty (first install) — never over an existing populated index,
+        /// so a single failed ceremony query can't erase that ceremony's awards. The
+        /// currently-empty check and the swap happen under one lock, so a slow startup fetch and
+        /// a concurrent manual refresh can't race to downgrade a complete index to partial.
+        /// An empty row set never publishes.
+        /// </summary>
+        public bool TryReplaceFrom(IReadOnlyCollection<AwardRow> rows, bool complete)
         {
             ArgumentNullException.ThrowIfNull(rows);
+
+            if (rows.Count == 0)
+            {
+                return false;
+            }
 
             var byImdb = new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase);
             var byTmdb = new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase);
@@ -109,12 +127,21 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
             DedupeAndSort(byImdb);
             DedupeAndSort(byTmdb);
 
-            // Serialize the version bump + swap + persist so two concurrent rebuilds can't both
-            // read the same old version or interleave their writes. The grouping work above is
-            // pure on locals, so it stays outside the lock.
+            // The accept decision (partial vs complete over the CURRENT state) and the version
+            // bump + swap + persist all happen under one lock, so the check is atomic with the
+            // publish. The grouping work above is pure on locals, so it stays outside the lock.
             AwardsIndex next;
             lock (_rebuildLock)
             {
+                var currentlyEmpty = _index.Version == 0 && _index.ByImdb.Count == 0 && _index.ByTmdb.Count == 0;
+                if (!complete && !currentlyEmpty)
+                {
+                    _logger.LogWarning(
+                        "[Awards] Rejected a partial rebuild over the existing index of {Titles} titles (some ceremony queries failed).",
+                        _index.ByImdb.Count);
+                    return false;
+                }
+
                 next = new AwardsIndex
                 {
                     Version = _index.Version + 1,
@@ -127,11 +154,13 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                 _index = next;
 
                 _logger.LogInformation(
-                    "[Awards] Rebuilt index v{Version}: {Titles} titles by IMDb, {TmdbTitles} by TMDb.",
-                    next.Version, byImdb.Count, byTmdb.Count);
+                    "[Awards] Rebuilt index v{Version} ({Completeness}): {Titles} titles by IMDb, {TmdbTitles} by TMDb.",
+                    next.Version, complete ? "complete" : "partial first build", byImdb.Count, byTmdb.Count);
 
                 SaveToDisk(next);
             }
+
+            return true;
         }
 
         /// <summary>
