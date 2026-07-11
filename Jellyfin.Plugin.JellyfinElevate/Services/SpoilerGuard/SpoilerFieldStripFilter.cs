@@ -174,7 +174,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             // /Items/{id}/PlaybackInfo, and /Items/{id}/Images unstripped
             // despite the Movie branches in StripItem +
             // RouteParentIsSpoilerEpisode. Mirror the image-filter checks.
-            if (userState.Series.Count == 0 && userState.Movies.Count == 0 && userState.Collections.Count == 0)
+            // FailClosed (policy read faulted with no last-known-good) must NOT
+            // short-circuit: it over-strips every item rather than leak fields.
+            if (!userState.FailClosed
+                && userState.Series.Count == 0 && userState.Movies.Count == 0 && userState.Collections.Count == 0)
             {
                 await next().ConfigureAwait(false);
                 return;
@@ -492,6 +495,16 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         private void StripItem(BaseItemDto item, UserSpoilerBlur userState, PluginConfiguration cfg, Guid userId)
         {
             if (item == null) return;
+
+            // Fail-closed: the user's policy read faulted with no last-known-good.
+            // Over-strip every item's admin-enabled sensitive fields rather than
+            // leak them, and cache-bust so native clients refetch once repaired.
+            if (userState.FailClosed)
+            {
+                MutateImageTagsForCacheBust(item, cfg, watched: false, playbackPositionTicks: 0);
+                ApplyStripping(item, userState, cfg, userId);
+                return;
+            }
 
             // Series path: when the item is the Series itself (Series detail
             // page = /Items/{seriesId}), strip cast / overview / tags / etc.
