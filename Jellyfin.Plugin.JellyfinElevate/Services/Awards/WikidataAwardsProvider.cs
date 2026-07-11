@@ -128,7 +128,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
             var kind = won ? "wins" : "nominations";
             try
             {
-                var query = BuildQuery(ceremony, won);
+                var query = BuildQuery(ceremony.ValuesBlock, ceremony.TypeRoots, won);
                 var json = await ExecuteAsync(client, query, cancellationToken).ConfigureAwait(false);
                 var before = sink.Count;
                 ParseInto(json, ceremony.Name, won, sink);
@@ -166,7 +166,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
             return await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        private static void ParseInto(string json, string ceremonyName, bool won, List<AwardRow> sink)
+        // Test seam (Tests has InternalsVisibleTo): assert breadth + wins-only festivals
+        // without hitting the network.
+        internal static IReadOnlyList<(string Name, bool Nominations)> CeremonyMetaForTest =>
+            Ceremonies.Select(c => (c.Name, c.Nominations)).ToList();
+
+        internal static void ParseInto(string json, string ceremonyName, bool won, List<AwardRow> sink)
         {
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("results", out var results)
@@ -226,19 +231,19 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
             return null;
         }
 
-        private static string BuildQuery(CeremonyDef ceremony, bool won)
+        internal static string BuildQuery(string valuesBlock, string typeRoots, bool won)
         {
             var awardProp = won ? "P166" : "P1411";
             // The awarded entity is constrained to a film/TV type, which auto-excludes person-level
             // (acting/directing) statements. Category label is taken in English.
             return
                 "SELECT DISTINCT ?imdb ?tmdb ?mediaType ?category ?year WHERE {\n" +
-                "  VALUES (?linkPred ?linkTarget) { " + ceremony.ValuesBlock + " }\n" +
+                "  VALUES (?linkPred ?linkTarget) { " + valuesBlock + " }\n" +
                 "  ?cat ?linkPred ?linkTarget .\n" +
                 "  ?work p:" + awardProp + " ?st .\n" +
                 "  ?st ps:" + awardProp + " ?cat .\n" +
                 "  ?work wdt:P31/wdt:P279* ?typeRoot .\n" +
-                "  VALUES ?typeRoot { " + ceremony.TypeRoots + " }\n" +
+                "  VALUES ?typeRoot { " + typeRoots + " }\n" +
                 "  BIND(IF(?typeRoot = wd:Q11424, \"movie\", \"tv\") AS ?mediaType)\n" +
                 "  OPTIONAL { ?work wdt:P345 ?imdb }\n" +
                 "  OPTIONAL { ?work wdt:P4947 ?tmdbMovie }\n" +

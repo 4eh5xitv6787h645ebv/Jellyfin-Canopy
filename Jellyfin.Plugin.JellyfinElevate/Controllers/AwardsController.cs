@@ -1,10 +1,12 @@
 using System;
 using System.Net.Http;
 using Jellyfin.Plugin.JellyfinElevate.Configuration;
+using Jellyfin.Plugin.JellyfinElevate.Helpers;
 using Jellyfin.Plugin.JellyfinElevate.Model.Awards;
 using Jellyfin.Plugin.JellyfinElevate.Services;
 using Jellyfin.Plugin.JellyfinElevate.Services.Awards;
 using Jellyfin.Plugin.JellyfinElevate.Services.Jellyseerr;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -64,7 +66,23 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
                 return response;
             }
 
-            var item = _libraryManager.GetItemById(itemId);
+            // Resolve the item in the CALLER's scope (CSCTRL-4): the user-scoped GetItemById
+            // overload only returns items in libraries the caller can access, so a non-admin
+            // can't confirm the existence of — or read awards for — items outside their view.
+            // Fail closed when the principal carries no resolvable user id.
+            var userId = UserHelper.GetCurrentUserId(User);
+            if (!userId.HasValue)
+            {
+                return response;
+            }
+
+            var user = _userManager.GetUserById(userId.Value);
+            if (user == null)
+            {
+                return response;
+            }
+
+            var item = _libraryManager.GetItemById<BaseItem>(itemId, user);
             if (item == null)
             {
                 return response;

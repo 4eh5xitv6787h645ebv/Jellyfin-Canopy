@@ -479,6 +479,28 @@ Enable **"Show TMDB Reviews"** in **Dashboard** → **Plugins** → **Jellyfin E
 
 See [Elsewhere Features](../elsewhere/elsewhere-features.md#tmdb-reviews) for full details.
 
+### Awards
+
+Show an **Awards** section on Movie and Series detail pages listing the wins and
+nominations a title received — from the Oscars, Golden Globes, BAFTA, Cannes,
+Venice, Berlin, Screen Actors Guild, Critics' Choice and the Emmys. Awards are
+grouped by ceremony, with a trophy chip for each win and a medal chip for each
+nomination, showing the category and year.
+
+**No API key required.** The data comes from [Wikidata](https://www.wikidata.org)
+(open data). The server builds one global award index on an infrequent scheduled
+refresh and matches each item locally by its IMDb/TMDb id — so enabling this adds
+**no per-item network requests** at view time, even on very large libraries.
+
+**Setup:**
+
+1. Enable **"Show Awards"** in **Dashboard** → **Plugins** → **Jellyfin Elevate**
+   → **Awards** tab.
+2. Run the **"Build Awards Cache"** task once under **Dashboard** → **Scheduled
+   Tasks** to populate the initial index (it then refreshes weekly on its own).
+
+See [Show Awards](enhanced-settings.md#show-awards) for details.
+
 ---
 
 ## Visual Enhancements
