@@ -28,6 +28,17 @@ namespace Jellyfin.Plugin.JellyfinElevate.Model
         // without a per-episode library lookup on every request.
         public string? SeriesId { get; set; }
 
+        // Source item revision (BaseItem.DateLastSaved ticks) captured when this
+        // entry was built. The daily reconcile (TagCacheService.BuildFullCache)
+        // uses it as a cheap candidate gate: an item whose revision is unchanged
+        // reuses this entry verbatim instead of re-probing its media. Persisted
+        // so the gate survives a restart. Not a Spoiler-Guard strip field (so it
+        // deliberately does NOT bump the on-disk schema version); an older cache
+        // simply loads it as 0, which forces a one-time rebuild on the first
+        // reconcile after upgrade. Rides the cache response too — a non-sensitive
+        // long the client ignores.
+        public long SourceRevision { get; set; }
+
         // Shallow copy required by per-user mutators (spoiler tag-strip): the
         // TagCacheService stores ONE shared instance per item across ALL users,
         // so mutating in place would leak one user's strip into every other user's
@@ -55,6 +66,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Model
             StreamData = StreamData,
             LastUpdated = LastUpdated,
             SeriesId = SeriesId,
+            SourceRevision = SourceRevision,
         };
     }
 

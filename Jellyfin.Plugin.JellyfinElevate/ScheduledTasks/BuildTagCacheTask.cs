@@ -9,10 +9,12 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.JellyfinElevate.ScheduledTasks
 {
     /// <summary>
-    /// Scheduled task that builds the server-side tag cache for all library items.
+    /// Scheduled task that reconciles the server-side tag cache against the library.
     /// Runs daily at 3 AM. Can also be run manually from the admin dashboard.
-    /// On startup, the cache is loaded from disk instead (TagCacheMonitor handles
-    /// any items added/changed while the server was off via Jellyfin's library scan events).
+    /// It only (re)builds items whose source changed, adds new items, and drops removed
+    /// ones — unchanged items keep their cached entry, so it does not re-probe the whole
+    /// library each run. On startup, the cache is loaded from disk instead (TagCacheMonitor
+    /// handles items added/changed while the server was off via Jellyfin's library scan events).
     /// </summary>
     public class BuildTagCacheTask : IScheduledTask
     {
@@ -31,7 +33,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.ScheduledTasks
 
         public string Key => "JellyfinElevateBuildTagCache";
 
-        public string Description => "Pre-computes tag data (genres, ratings, languages, quality stream info) for all library items. Clients load this cache in a single request instead of making per-page API calls. Run this manually after first install to build the initial cache.";
+        public string Description => "Pre-computes tag data (genres, ratings, languages, quality stream info) for library items. Clients load this cache in a single request instead of making per-page API calls. Updates incrementally — only items that changed since the last run are re-processed. Run this manually after first install to build the initial cache.";
 
         public string Category => "Jellyfin Elevate";
 
