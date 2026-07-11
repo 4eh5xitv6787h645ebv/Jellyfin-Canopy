@@ -557,8 +557,11 @@ async function probeNowPlayingItemId(): Promise<string | null> {
             { skipCache: true }
         ) as Array<{ DeviceId?: string; NowPlayingItem?: { Id?: string } }> | undefined;
         if (!Array.isArray(sessions)) return null;
-        const mine = sessions.find((x) => x?.DeviceId === deviceId && x?.NowPlayingItem?.Id);
-        return mine?.NowPlayingItem?.Id ?? null;
+        // Same-browser tabs share a deviceId (the server usually merges them
+        // into one session). If more than one playing session still matches,
+        // identity is ambiguous — fail OPEN (no auto-skip beats a wrong skip).
+        const matches = sessions.filter((x) => x?.DeviceId === deviceId && x?.NowPlayingItem?.Id);
+        return matches.length === 1 ? (matches[0].NowPlayingItem?.Id ?? null) : null;
     } catch {
         return null;
     }

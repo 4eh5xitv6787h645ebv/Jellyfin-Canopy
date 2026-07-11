@@ -400,6 +400,27 @@ describe('auto-skip engine', () => {
             expect(probe).toHaveBeenCalledTimes(1);
         });
 
+        it('a source change while the first probe is in flight never leaks the stale id', async () => {
+            const resolvers: Array<(v: string | null) => void> = [];
+            const probe = vi.fn().mockImplementation(
+                () => new Promise<string | null>((r) => resolvers.push(r))
+            );
+            const r = createSessionItemResolver({
+                parseFromSrc: () => null,
+                fallbackId: () => null,
+                probeNowPlayingId: probe,
+            });
+            expect(r(vid('blob:a'))).toBe(null); // probe1 launched for a
+            expect(r(vid('blob:b'))).toBe(null); // in flight — no second probe yet
+            resolvers[0]('item-a');
+            await flush();
+            // b must NEVER see a's id; next tick launches b's probe.
+            expect(r(vid('blob:b'))).toBe(null);
+            resolvers[1]('item-b');
+            await flush();
+            expect(r(vid('blob:b'))).toBe('item-b');
+        });
+
         it('re-probes when the source changes; empty src never probes; failure yields null', async () => {
             let n = 0;
             const probe = vi.fn().mockImplementation(() => Promise.resolve(`item-${++n}`));
