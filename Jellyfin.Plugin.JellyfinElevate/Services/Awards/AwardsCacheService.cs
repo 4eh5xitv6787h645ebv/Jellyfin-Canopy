@@ -112,11 +112,6 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
         {
             ArgumentNullException.ThrowIfNull(rows);
 
-            if (rows.Count == 0)
-            {
-                return false;
-            }
-
             var byImdb = new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase);
             var byTmdb = new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase);
 
@@ -165,11 +160,27 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
                 }
 
                 var currentlyEmpty = _index.Version == 0 && _index.ByImdb.Count == 0 && _index.ByTmdb.Count == 0;
-                if (!complete && !currentlyEmpty)
+                var producesEmpty = byImdb.Count == 0 && byTmdb.Count == 0;
+
+                if (!currentlyEmpty)
                 {
-                    _logger.LogWarning(
-                        "[Awards] Rejected a partial rebuild over the existing index of {Titles} titles (some ceremony queries failed).",
-                        _index.ByImdb.Count);
+                    // Over an EXISTING index, only a complete AND non-empty result publishes. This
+                    // rejects a partial refresh (some queries failed) and any empty result — an
+                    // empty or partial fetch must never clear a good index.
+                    if (!complete || producesEmpty)
+                    {
+                        _logger.LogWarning(
+                            "[Awards] Rejected a {Kind} rebuild over the existing index of {Titles} titles.",
+                            !complete ? "partial" : "empty", _index.ByImdb.Count);
+                        return false;
+                    }
+                }
+                else if (producesEmpty && !complete)
+                {
+                    // First install, but the fetch was partial AND produced nothing — don't mark
+                    // the index "built" yet; wait for a real result. A COMPLETE empty result DOES
+                    // publish here (a legitimate "built, no awards" state), clearing indexEmpty so
+                    // the client stops treating it as not-ready.
                     return false;
                 }
 

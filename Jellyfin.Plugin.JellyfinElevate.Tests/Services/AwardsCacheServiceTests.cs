@@ -242,6 +242,27 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         }
 
         [Fact]
+        public void TryReplaceFrom_CompleteEmpty_OnFirstInstall_MarksBuiltNotStuck()
+        {
+            var svc = NewService();
+            // A complete build that legitimately yields no awards must mark the index BUILT (not
+            // "never built"), so the client stops treating it as not-ready.
+            Assert.True(svc.TryReplaceFrom(Array.Empty<AwardRow>(), complete: true, svc.NextRefreshGeneration()));
+            Assert.False(svc.IsEmpty);
+            Assert.Equal(1, svc.Version);
+            Assert.False(svc.GetAwardsView(Movie(imdb: "tt1")).IsEmpty);
+        }
+
+        [Fact]
+        public void TryReplaceFrom_PartialEmpty_OnFirstInstall_DoesNotPublish()
+        {
+            var svc = NewService();
+            // A partial fetch that produced nothing is not a built index — stay empty and wait.
+            Assert.False(svc.TryReplaceFrom(Array.Empty<AwardRow>(), complete: false, svc.NextRefreshGeneration()));
+            Assert.True(svc.IsEmpty);
+        }
+
+        [Fact]
         public void TryReplaceFrom_EmptyRows_DoesNotPublish()
         {
             var svc = NewService();

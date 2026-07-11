@@ -245,16 +245,36 @@ JE.initializeAwardsScript = function () {
     onNavigate(() => { if (JE?.pluginConfig?.ShowAwards) schedule(); });
     onViewPage(() => { if (JE?.pluginConfig?.ShowAwards) schedule(); });
 
+    // React to a live enable/disable toggle without a page reload. On disable, strip any rendered
+    // sections and forget the resolved items so a later re-enable re-renders them; on (re-)enable,
+    // clear per-item state and re-run so the current item paints. Registered once (init runs once).
+    try {
+        window.addEventListener('je:config-changed', () => {
+            if (JE?.pluginConfig?.ShowAwards) {
+                resolved.clear();
+                retry.clear();
+                schedule();
+            } else {
+                document.querySelectorAll(`.${SECTION_CLASS}`).forEach(el => el.remove());
+                resolved.clear();
+                retry.clear();
+            }
+        });
+    } catch { /* addEventListener unavailable — ignore */ }
+
     schedule();
     console.log(`${logPrefix} initialized.`);
 };
 
-// Live enable: if the admin turns Awards on while a session is open, live-config refreshes
-// JE.pluginConfig and fires je:config-changed. Register (once) then — no page reload needed.
-// A no-op when already started or still disabled.
+// Live enable from a disabled bootstrap: if the admin turns Awards on while a session is open,
+// live-config refreshes JE.pluginConfig and fires je:config-changed. Start the feature then — no
+// page reload needed. A no-op when already started or still disabled (the in-init listener above
+// then owns subsequent toggles).
 try {
-    window.addEventListener('je:config-changed', () => { JE.initializeAwardsScript?.(); });
-} catch { /* CustomEvent/addEventListener unavailable — bootstrap path still covers the enabled case */ }
+    window.addEventListener('je:config-changed', () => {
+        if (JE?.pluginConfig?.ShowAwards) JE.initializeAwardsScript?.();
+    });
+} catch { /* addEventListener unavailable — bootstrap path still covers the enabled-at-load case */ }
 
 /** Builds the whole Awards section off-DOM (R7). All dynamic text via textContent (X1). */
 function buildAwardsSection(awards: AwardEntry[]): HTMLElement {
