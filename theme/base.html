@@ -13,6 +13,16 @@
   <link rel="canonical" href="{{ page.canonical_url }}">
   {%- endif %}
   <link rel="icon" href="{{ 'images/favicon.ico' | url }}">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ config.site_name }}">
+  <meta property="og:title" content="{% if page and page.title and not page.is_homepage %}{{ page.title }} · {{ config.site_name }}{% else %}{{ config.site_name }} — Documentation{% endif %}">
+  {%- if config.site_description %}
+  <meta property="og:description" content="{{ config.site_description }}">
+  {%- endif %}
+  {%- if config.site_url %}
+  <meta property="og:image" content="{{ config.site_url }}images/og-card.png">
+  <meta name="twitter:card" content="summary_large_image">
+  {%- endif %}
   <script>
     /* Set the theme before first paint to avoid a flash of the wrong mode. */
     (function () {

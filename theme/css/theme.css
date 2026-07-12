@@ -578,6 +578,26 @@ body.is-home .doc {
   max-width: 54rem;
   margin: 0 auto;
 }
+.hero-inner {
+  position: relative;
+}
+
+/* Canopy mark, floated into the hero's right margin. Explicit width/height
+   attributes on the img reserve the box, so it can never shift the text. */
+.hero-art {
+  position: absolute;
+  top: 0.25rem;
+  right: 0;
+  width: clamp(150px, 18vw, 240px);
+  height: auto;
+  pointer-events: none;
+  user-select: none;
+}
+@media (max-width: 900px) {
+  .hero-art {
+    display: none;
+  }
+}
 
 .hero-badge {
   display: inline-flex;
@@ -619,6 +639,13 @@ body.is-home .doc {
   color: var(--text-muted);
   font-size: 1.05rem;
   line-height: 1.65;
+}
+/* Keep the headline and lede clear of the hero art when it is visible. */
+@media (min-width: 901px) {
+  .hero-title,
+  .hero-lede {
+    max-width: 34rem;
+  }
 }
 
 .hero-actions {

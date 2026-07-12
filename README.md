@@ -1,4 +1,10 @@
-# Jellyfin Canopy
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme-header-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/readme-header-light.png">
+    <img src="docs/images/readme-header-dark.png" alt="Jellyfin Canopy" width="640">
+  </picture>
+</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Jellyfin%20Version-12-AA5CC3?logo=jellyfin&logoColor=00A4DC&labelColor=black" alt="Jellyfin Version">
