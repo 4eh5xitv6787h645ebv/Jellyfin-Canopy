@@ -60,6 +60,14 @@ This step is optional if you enable plugin-side auto import.
 9. Enable optional features (see below)
 10. Click **Save**
 
+!!! note "TMDB API Key (optional)"
+    The Seerr tab also has a **TMDB API Key** field. This shared TMDB key enables
+    person/keyword discovery (**"More from Actor"** and tag discovery) and the
+    streaming-provider posters shown on Seerr results. It is the **same** key used by
+    Elsewhere — enter it in either place and both features use it. See
+    [Elsewhere Settings](../elsewhere/elsewhere-settings.md#getting-a-tmdb-api-key)
+    for how to obtain one; that page is where the TMDB key is primarily documented.
+
 ### Internal vs External URL
 
 Seerr is reached from two very different places:
@@ -69,7 +77,7 @@ Seerr is reached from two very different places:
 
 | Field | Used by | Example |
 |---|---|---|
-| **Seerr URL(s)** | Jellyfin server (all API calls) | `http://jellyseerr:5055` |
+| **Seerr URL(s)** | Jellyfin server (all API calls) | `http://seerr:5055` |
 | **Seerr External URL** | User browsers (deep links only) | `https://requests.example.com` |
 
 !!! tip
@@ -122,6 +130,13 @@ When enabled, new Jellyfin users are automatically imported into Seerr the first
 - Display issue reporting button on item detail pages
 - Report video, audio, subtitle, or other problems
 
+### Show Open Issue Indicator
+
+*Default: off.* When enabled, the **Report Issue** button turns orange and shows a
+count badge whenever the item already has open issues in Seerr, so users can tell at
+a glance that a problem has already been reported. Requires **Show 'Report Issue'
+Button**.
+
 ### Enable 4K Requests
 !!! note "Requirements"
 
@@ -165,6 +180,13 @@ the user holds **REQUEST_4K** (or **REQUEST_4K_TV**).
 - Display advanced options in request modal
 - Season selection, quality options, etc.
 
+### Show Request Quota Info
+
+*Default: on.* Request modals display a chip showing the user's current request usage
+and when their next request slot frees up, read from Seerr's per-user quota. When a
+request is blocked by quota, a detailed quota-error dialog is shown instead of a
+vanishing toast.
+
 ### Show Collections in Seerr Results
 - Display TMDB collections (e.g., Harry Potter, Marvel Cinematic Universe) in Seerr search results
 - Includes an option to request the entire collection at once
@@ -176,6 +198,18 @@ the user holds **REQUEST_4K** (or **REQUEST_4K_TV**).
   collection modal shows a **Request in 4K** toggle that submits the selected
   movies in 4K and re-evaluates each movie against its 4K status
 - Enabled by default
+
+### Open Results in "More Info" Modal
+
+*Default: off.* Controls what happens when a user clicks a Seerr search result's title
+or poster. When **off**, the result opens the item in Seerr. When **on**, an in-app
+**More Info** modal opens instead, keeping the user inside Jellyfin.
+
+### Show "Request More" Button on Series
+
+*Default: on.* Adds a **Request More** button beside the Seasons heading on Series
+detail pages whenever the show has unrequested seasons in Seerr, letting users request
+additional seasons without going through the search bar.
 
 ### Auto Import Jellyfin Users to Seerr
 
@@ -207,6 +241,7 @@ Display a dedicated page showing active downloads from *arr and requests from Se
 4. Choose integration method:
    - **Use Plugin Pages for Requests** - Adds sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin)
    - **Use Custom Tabs for Requests** - Adds custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin)
+   - **Add Requests as a native Home tab** - Shows Requests as a native tab on the Home screen (experimental layout; no extra plugin required)
 5. Click **Save** and restart Jellyfin if using Plugin Pages
 
 ### Show Downloads in Requests Page

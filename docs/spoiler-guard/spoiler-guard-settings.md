@@ -80,7 +80,7 @@ Series and Episodes are unaffected by this toggle — they have their own per-as
 
 Leave this on. Turning it off reverts non-web clients to session-by-IP matching, which fails closed (over-blurs) whenever several users' requests arrive from one IP — the classic misconfigured-reverse-proxy symptom. The marker is not a credential: at worst a hand-crafted request can opt itself *into* another user's blur policy, never bypass authentication.
 
-Requests without a marker (for example, a native client replaying an image URL cached before this feature) automatically fall back to the previous IP-based matching.
+Requests without a marker (for example, a native client replaying an image URL cached before this feature) fall back first to a validated per-browser `je-spoiler-uid` cookie the web client sets — trusted only to disambiguate among users who actually have a session on the request IP — and then to the previous IP-based matching.
 
 ---
 
@@ -131,7 +131,7 @@ A collapsible sub-section of per-field hide toggles. When the master switch is o
 
 ### Hide tags
 
-**Default: On.** Hides the TMDB Tags array (phrases like "Death of a main character") on cards for unwatched episodes of Spoiler Guard series. (The Jellyfin Elevate rating overlay is governed separately by **Hide ratings (community & critic)**, below; genre/quality/language overlays are not affected by Spoiler Guard.)
+**Default: On.** Hides the TMDB Tags array (phrases like "Death of a main character") on unwatched-episode cards of Spoiler Guard series **and on the guarded series' own DTO** (its detail page). (The Jellyfin Elevate rating overlay is governed separately by **Hide ratings (community & critic)**, below; genre/quality/language overlays are not affected by Spoiler Guard.)
 
 ### Hide chapter names
 
@@ -159,7 +159,7 @@ Some clients use the title in navigation tooltips and breadcrumbs where the synt
 
 ### Hide cast
 
-**Default: On.** Strips the cast list on unwatched episodes of Spoiler Guard series. Has a sub-option:
+**Default: On.** Strips the cast list on unwatched episodes of Spoiler Guard series **and on the guarded series' own detail-page cast rail** — an unexpected guest star or recurring villain in the series-level cast is itself a spoiler. Has a sub-option:
 
 #### Cast strip mode
 
@@ -172,7 +172,9 @@ Whenever **Replace episode titles with "Season X, Episode Y"** or **Hide episode
 
 ### Hide the Reviews panel on guarded series
 
-**Default: On.** Suppresses the JE Reviews panel on series detail pages where the user has Spoiler Guard enabled. TMDB reviews routinely contain plot spoilers from arbitrary points in the show, and user-written reviews share that risk. Recommended on.
+**Default: On.** Suppresses the JE Reviews panel on series **and movie** detail pages where the user has Spoiler Guard enabled (a movie guarded directly or via an opted-in collection, until it's watched). TMDB reviews routinely contain plot spoilers from arbitrary points in the show, and user-written reviews share that risk. Recommended on.
+
+Unlike the image and metadata strips above (which run in the server APIs), the Reviews panel is a Jellyfin Web / JE feature, so this suppression is applied in the web client.
 
 ---
 

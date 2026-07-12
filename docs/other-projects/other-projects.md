@@ -1,14 +1,14 @@
 # Related Projects
 
-Other projects by n00bcodr for Jellyfin customization and enhancement.
+Jellyfin Elevate is an independent fork and extensive modernization of Jellyfin Enhanced. This page lists Jellyfin Elevate itself, alongside the related Jellyfin projects by [n00bcodr](https://github.com/n00bcodr) — the original author of Jellyfin Enhanced — that pair well with it.
 
 ## Jellyfin Plugins
 
 ### Jellyfin Elevate
 **Type:** Plugin
-**Repository:** [github.com/n00bcodr/Jellyfin-Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced)
+**Repository:** [github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate)
 
-The essential enhancement suite for Jellyfin, bundling advanced features and customizations into one convenient plugin.
+An integrated suite of playback, discovery, customization and media-management features for Jellyfin 12 — an independent fork and modernization of Jellyfin Enhanced.
 
 **Features:**
 
@@ -17,10 +17,20 @@ The essential enhancement suite for Jellyfin, bundling advanced features and cus
 - Visual tags (quality, genre, language, rating)
 - Custom pause screen
 - Bookmarks and timestamps
-- ARR integration
-- And much more...
+- *arr integration
+- Discovery feed, Spoiler Guard, and much more...
 
 **Status:** ✅ Active Development
+
+---
+
+### Jellyfin Enhanced
+**Type:** Plugin
+**Repository:** [github.com/n00bcodr/Jellyfin-Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced)
+
+The original project by n00bcodr that Jellyfin Elevate is forked from — the essential enhancement suite for Jellyfin, actively maintained for **Jellyfin 10.11**. If your server is on Jellyfin 10.11, use Jellyfin Enhanced instead of Jellyfin Elevate.
+
+**Status:** ✅ Active Development (Jellyfin 10.11)
 
 ---
 
@@ -137,9 +147,9 @@ A beautiful, modern theme for Jellyfin with multiple color variants.
 
 **From Repository:**
 
-1. Go to **Dashboard** → **Plugins** → **Catalog** → ⚙️
-2. Add repository URL
-3. Install desired plugin
+1. Go to **Dashboard** → **Plugins** → **Catalog**, then click the gear icon (⚙️ **Manage Repositories**)
+2. Add the repository URL
+3. Back in the **Catalog**, install the desired plugin
 4. Restart Jellyfin server
 
 **Repository URL:** Unified Manifest for all plugins
@@ -165,7 +175,8 @@ https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/main/mani
 
 | Plugin | Jellyfin 12 | Jellyfin 10.11 | Jellyfin 10.10 | Notes |
 |--------|-------------|----------------|----------------|-------|
-| Jellyfin Elevate | ✅ (v12+ releases) | ✅ (final 11.x release only) | ❌ | See [Migrating to v12](../installation/migrating-to-v12.md) |
+| Jellyfin Elevate | ✅ (Jellyfin 12 / 1.x release) | ❌ | ❌ | See [Migrating to v12](../installation/migrating-to-v12.md) |
+| Jellyfin Enhanced | ❌ | ✅ | ❓ | n00bcodr's original — the Jellyfin 10.11 counterpart to Jellyfin Elevate |
 | Jellyfin Tweaks | ❓ | ✅ | ✅ | Check the project page for Jellyfin 12 support |
 | JS Injector | ❓ | ✅ | ✅ | Check the project page for Jellyfin 12 support |
 

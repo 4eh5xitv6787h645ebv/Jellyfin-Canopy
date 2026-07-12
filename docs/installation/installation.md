@@ -9,15 +9,15 @@
     - Admin access to your Jellyfin server
     - Modern web browser (Chrome, Firefox, Edge, Safari)
 
-    On Jellyfin 10.11? Stay on the plugin's final 11.x release — see [Migrating to v12](migrating-to-v12.md).
+    On Jellyfin 10.11? Jellyfin Elevate does not support it — install the original [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) plugin instead. See [Migrating to v12](migrating-to-v12.md).
 
 
 ## Standard Installation
 
 ### Step 1: Add Plugin Repository
 
-1. In Jellyfin, navigate to **Dashboard** → **Plugins** → **Manage Repositories**
-2. Click **➕** (Add button) to add a new repository
+1. In Jellyfin, navigate to **Dashboard** → **Plugins** → **Catalog**
+2. Click the gear icon (⚙️ **Manage Repositories**), then click **➕** (Add button) to add a new repository
 3. Give the repository a name (e.g., "Jellyfin Elevate")
 4. Set the **Repository URL** to the manifest:
    ```
@@ -28,7 +28,7 @@
 
 ### Step 2: Install Plugin
 
-1. Go to the **All** tab
+1. Go to the **Catalog** tab
 2. Find **Jellyfin Elevate** in the plugin list
 3. Click **Install**
 4. Wait for the installation to complete
@@ -44,7 +44,7 @@
 
 To add it:
 
-1. In the **All** tab, search for "file-transformation"
+1. In the **Catalog** tab, search for "file-transformation"
 2. Install the **File Transformation** plugin
 3. Restart your Jellyfin server
 

@@ -1,15 +1,15 @@
 # Migrating to v12
 
-From version 12, Jellyfin Elevate supports **Jellyfin 12 only**. This page covers who should upgrade, what happens to your data, and what (little) changes for you.
+Jellyfin Elevate supports **Jellyfin 12 only**. This page covers who should upgrade, what happens to your data, and what (little) changes for you.
 
 ## Who should upgrade
 
 | Your Jellyfin server | What to do |
 |---|---|
-| **Jellyfin 12.x** | Upgrade to Jellyfin Elevate 12.x — this is the only supported combination going forward. |
-| **Jellyfin 10.11** | Stay on the final **11.x** release line. **No action needed**: the plugin repository manifest keeps serving the last 11.x release to Jellyfin 10.11 servers, and your server's catalog will never offer you an incompatible 12.x build (Jellyfin filters plugin versions by their target ABI). |
+| **Jellyfin 12** | Install Jellyfin Elevate — the Jellyfin 12 (1.x) release. This is the only combination Jellyfin Elevate supports. |
+| **Jellyfin 10.11** | Jellyfin Elevate does **not** support Jellyfin 10.11. Install the original **[Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced)** plugin instead — it stays actively maintained for Jellyfin 10.11. Jellyfin Elevate's manifest only publishes a Jellyfin 12 build (target ABI `12.0.0.0`), so a 10.11 server's catalog will never list it. |
 
-There is no need to change your repository URL — the same manifest serves both release lines.
+Jellyfin Elevate and Jellyfin Enhanced ship from **separate repositories** with separate manifests — use the repository URL for the plugin that matches your server. There is no single manifest that serves both.
 
 ## What carries over automatically
 
@@ -22,14 +22,14 @@ There is no need to change your repository URL — the same manifest serves both
 - **Reviews** — user reviews and ratings
 - **Admin plugin configuration** — the whole Dashboard → Plugins → Jellyfin Elevate configuration
 
-The on-disk formats of these files are **unchanged and frozen**: the plugin's test suite round-trips real 11.x-era user files and pins the exact serialized output, so a format drift fails the build before it ever ships. Downgrading back to 11.x (together with your server) would also find its data intact.
+The on-disk formats of these files are **unchanged and frozen**: the plugin's test suite round-trips real Jellyfin Enhanced-era user files and pins the exact serialized output, so a format drift fails the build before it ever ships. Reverting to Jellyfin Enhanced on Jellyfin 10.11 would also find its data intact.
 
 ## What changed for user-script authors
 
 If you inject your own snippets that build on Jellyfin Elevate, three things matter:
 
 1. **`window.JellyfinElevate` is the stable public surface — and it is now typed.**
-   The frozen contract lives in [`src/facade.ts`](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/blob/v12/main/Jellyfin.Plugin.JellyfinElevate/src/facade.ts) (`JellyfinElevatePublicApi`). Its members will not be removed or renamed:
+   The frozen contract lives in [`src/facade.ts`](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/blob/main/Jellyfin.Plugin.JellyfinElevate/src/facade.ts) (`JellyfinElevatePublicApi`). Its members will not be removed or renamed:
 
     - `JE.core.*` — the platform layer: `navigation`, `lifecycle`, `dom`, `ui`, `api`, `tagRenderer`, `live`
     - `JE.pluginConfig` / `JE.currentSettings` — admin config and resolved per-user settings

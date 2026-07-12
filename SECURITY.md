@@ -20,10 +20,13 @@ We take the security of Jellyfin Elevate seriously. If you believe you have foun
 - Disclose the vulnerability publicly before it has been addressed
 
 ### Please DO:
-1. **Report privately** via GitHub Security Advisories:
-   - Go to the [Security tab](../../security/advisories)
-   - Click "Report a vulnerability"
-   - Provide detailed information about the vulnerability
+1. **Report it privately.** Reach a maintainer through the
+   [Jellyfin Community Discord](https://discord.gg/EYNFf7y4CG) (Jellyfin Elevate
+   channel) and ask to share the details privately — this is the reliable route
+   while the repository is private. If GitHub **private vulnerability reporting**
+   is enabled on the repository and you have access, you may instead use the
+   [Security tab](../../security/advisories) → **"Report a vulnerability."** Either
+   way, do not disclose the issue publicly first.
 
 2. **Include in your report:**
 

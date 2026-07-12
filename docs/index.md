@@ -1,14 +1,12 @@
 # Jellyfin Elevate
 
 <p align="center">
-  <img src="https://img.shields.io/github/last-commit/n00bcodr/Jellyfin-Enhanced/main?logo=semantic-release&logoColor=white&label=Last%20Updated&labelColor=black&color=AA5CC3&cacheSeconds=3600" alt="Last Updated">
-  <img src="https://img.shields.io/github/commit-activity/w/n00bcodr/Jellyfin-Enhanced?logo=git&label=Commit%20Activity&labelColor=black&color=00A4DC&cacheSeconds=600" alt="Commit Activity">
   <img src="https://img.shields.io/badge/Jellyfin%20Version-12-AA5CC3?logo=jellyfin&logoColor=00A4DC&labelColor=black" alt="Jellyfin Version">
 </p>
 
 
 <p align="center">
-The essential enhancement suite for Jellyfin, bundling advanced features and customizations into one convenient plugin.<br><br>
+An integrated suite of playback, discovery, customization and media-management features for Jellyfin 12.<br><br>
   <img src="images/icon.png" alt="Jellyfin Elevate Logo" width="50%" />
 </p>
 
@@ -45,6 +43,11 @@ The essential enhancement suite for Jellyfin, bundling advanced features and cus
 - **Watchlist Sync** - Auto-sync with Jellyfin watchlist
 - **Auto Requests** - Auto next season and next movie (in collection) requests
 - **Requests Page** - Monitor downloads and Seerr requests
+
+### 🧭 [Discovery](discovery/discovery-features.md)
+- **Discovery Feed** - A customizable rows-of-cards feed (Trending, Popular, Upcoming, Top Rated, and genre rows) inside your Movies & TV Shows libraries, opened from a **Discovery** button in the library toolbar
+- **Inline Requests** - Every card carries an availability badge and a one-tap Seerr request (Seerr-backed)
+- **Per-User Customization** - Choose which rows appear and reorder them, on top of the admin defaults
 
 ### 🔗 *arr Integration
 - **Quick Links** - Jump to Sonarr, Radarr, Bazarr pages

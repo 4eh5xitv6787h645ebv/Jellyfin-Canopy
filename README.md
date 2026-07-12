@@ -36,12 +36,12 @@ Jellyfin Elevate is developed **entirely with AI** (agentic coding tools driving
 
 ### Installation
 
-1. In Jellyfin, go to **Dashboard** → **Plugins** → **Repositories**
-2. Click **➕** and add the repository:
+1. In Jellyfin, go to **Dashboard** → **Plugins** → **Catalog**
+2. Click the gear icon (⚙️ **Manage Repositories**), click **➕**, and add the repository:
    ```
    https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/main/manifest.json
    ```
-3. Go to the **Catalog** tab, find **Jellyfin Elevate**, and click **Install**
+3. Back in the **Catalog**, find **Jellyfin Elevate** and click **Install**
 4. **Restart** your Jellyfin server
 
 > [!IMPORTANT]
@@ -71,8 +71,14 @@ Jellyfin Elevate is developed **entirely with AI** (agentic coding tools driving
 - **Search & Request** - Request media directly from Jellyfin search
 - **Item Details** - Recommendations and similar items on detail pages
 - **Discovery Pages** - Browse by genre, network, person, or tag
+- **Auto Requests** - Auto-request the next season or the next movie in a collection
 - **Issue Reporting** - Report problems directly to Seerr
 - **Watchlist Sync** - Auto-sync with Jellyfin watchlist
+
+### 🧭 Discovery Feed
+- **Rows of Cards** - Customizable Trending, Popular, Upcoming, Top Rated, and genre rows inside your Movies & TV Shows libraries, opened from a **Discovery** button in the library toolbar
+- **Inline Requests** - Every card carries an availability badge and a one-tap Seerr request (Seerr-backed)
+- **Per-User Customization** - Choose which rows appear and reorder them, on top of the admin defaults
 
 ### 🔗 *arr Integration
 - **Quick Links** - Jump to Sonarr, Radarr, Bazarr pages (admin only)
@@ -96,7 +102,7 @@ Jellyfin Elevate is developed **entirely with AI** (agentic coding tools driving
 - **Custom Branding** - Upload your own logos, banners, and favicon
 - **Theme Selector** - Choose from multiple color variants
 - **Extensive CSS Options** - Customize every visual element
-- **Multi-language Support** - Available in 25+ languages
+- **Multi-language Support** - Available in 26 languages
 
 <br>
 

@@ -25,6 +25,7 @@ Access user-configured settings via the Enhanced panel:
 - People Tags
 - Pause Screen
 - Auto-skip Intros
+- Auto-skip Outros
 - Auto Picture-in-Picture
 - Show Watch Progress
 - Show File Sizes
@@ -97,6 +98,28 @@ the client keeps cached tag data before re-fetching. It applies to every tag
 family, **including People tags** — changing it now adjusts the people-tag cache
 lifetime too (previously that was fixed at 30 days regardless of this setting).
 
+### Show Rating in Video Player
+
+**Show Rating in Video Player** (`ShowRatingInPlayer`, admin default **on**)
+displays the item's TMDB and Rotten Tomatoes ratings in the video player OSD,
+shown before the "Ends at" time. It is an admin-only toggle in the **Media
+Tags** section of the plugin config page (**Display** tab).
+
+### Server-Side Tag Cache
+
+**Server-Side Tag Cache** (`TagCacheServerMode`, admin default **on**)
+pre-computes tag data on the server and serves it in a single request, so poster
+tags load instantly without per-page API calls. Disable it to fall back to the
+legacy per-page batch mode, where tags are computed client-side (not
+recommended). Set it in the **Media Tags** section of the plugin config page.
+
+### Persist Tag Fallback Cache in Browser Storage
+
+**Persist Tag Fallback Cache in Browser Storage**
+(`EnableTagsLocalStorageFallback`, admin default **off**) is available only when
+**Server-Side Tag Cache** is disabled. When on, it stores fallback tag-cache
+entries in the browser's `localStorage` for faster repeat loads.
+
 ## Pause Screen Delay
 
 Sets how many seconds a video is paused before the [Custom Pause
@@ -137,6 +160,21 @@ Box, Netflix Style), **Size**, and **Font** on the plugin config page (Playback
   unmodified. It is an admin default (config page) that each user can override
   in the Enhanced panel.
 
+## Auto-skip Intros & Outros
+
+Intro and outro skipping are **two independent toggles**, each a per-user setting
+in the Enhanced panel's **Settings** tab with a matching admin default on the
+plugin config page (**Playback**).
+
+- **Auto-skip Intros** (`AutoSkipIntro`, admin default **off**) — automatically
+  skips detected intro segments.
+- **Auto-skip Outros** (`AutoSkipOutro`, admin default **off**) — automatically
+  skips detected outro / end-credit segments.
+
+Both rely on media segments for the item (from the [Intro Skipper
+plugin](https://github.com/intro-skipper/intro-skipper) or another segment
+provider). See [Smart Playback](enhanced-features.md#smart-playback).
+
 ## Show File Sizes
 
 Enable **Show File Sizes** (per-user, in the Enhanced panel's **Settings** tab)
@@ -164,6 +202,37 @@ episodes), sourced from TMDB.
   [Elsewhere](../elsewhere/elsewhere-settings.md#default-region) to choose which
   country's release dates to prefer, falling back to US and then any region TMDB
   has for that release type.
+
+## User Reviews Moderation
+
+When **User Written Reviews** are enabled (see [User
+Reviews](enhanced-features.md#user-reviews)), two admin defaults in the **User
+Reviews** section of the plugin config page (**Elsewhere** tab) control whose
+reviews non-admins can see. Both are **on** by default, and admins always see
+every review regardless.
+
+- **Hide reviews from hidden users** (`HideReviewsFromHiddenUsers`, default
+  **on**) — hides reviews written by Jellyfin users marked *"Hide this user from
+  login screens"* from non-admin viewers.
+- **Hide reviews from disabled users** (`HideReviewsFromDisabledUsers`, default
+  **on**) — hides reviews written by Jellyfin users marked *"Disable this user"*
+  from non-admin viewers.
+
+## Custom Tabs Auto-Entry (Bookmarks & Hidden Content)
+
+When you route the **Bookmarks** or **Hidden Content** page through the [Custom
+Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin, an
+**Add the Custom Tabs entry for me** toggle lets Jellyfin Elevate create the
+matching Custom Tabs entry for you on save (turning the corresponding *Use Custom
+Tabs* option off removes it again; leave unchecked to manage the entry yourself).
+
+- **Bookmarks** — `BookmarksAutoCreateCustomTab` (default **off**), on the
+  **Bookmarks** config section.
+- **Hidden Content** — `HiddenContentAutoCreateCustomTab` (default **off**), on
+  the **Hidden Content** config section.
+
+These toggles only appear once the corresponding *Use Custom Tabs* option is
+enabled, which requires the Custom Tabs plugin to be installed.
 
 ## Home Row Filtering
 

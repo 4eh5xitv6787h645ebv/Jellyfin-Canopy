@@ -10,8 +10,11 @@ Settings for custom branding, icon styles, extras, timeouts, and more. These are
 
 Upload your own logos, banners, and favicon to personalize your Jellyfin instance.
 
-!!! info "Requirements"
-    The [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) must be installed.
+!!! info "Works out of the box"
+    Custom branding needs no extra plugins. Uploaded images are served by the plugin's own
+    built-in request-time middleware and apply on the next page load. It can be turned off
+    with the advanced [`DisableBrandingMiddleware`](#advanced-troubleshooting-toggles)
+    kill-switch (default off).
 
 | Setting | Description |
 |---|---|
@@ -64,6 +67,29 @@ a full session-control surface: it live-updates while open and offers per-sessio
 | **Show widget to non-admins** | Off | When on, non-admin users see a read-only view (no session controls, no broadcast, no IP addresses) |
 
 See [Other Features — Active Streams Widget](other-features.md#active-streams-widget) for full details.
+
+---
+
+## Extras
+
+*Extras tab*
+
+A set of optional UI tweaks and dashboard cosmetics. All default **off**. See
+[Other Features — Extras](other-features.md#extras) for screenshots and full details.
+
+| Setting | Default | Description |
+|---|---|---|
+| **Colored Ratings Backgrounds** | Off | Color-codes rating chips on detail pages (TMDB, IMDb, Rotten Tomatoes) by value/type |
+| **Theme Selector (Jellyfish)** | Off | Adds a theme selector to the Enhanced panel for switching between Jellyfish color themes |
+| **Colored Dashboard Icons** | Off | Replaces the Dashboard activity icons with colored Material Design icons |
+| **Profile Picture on Login** | Off | Shows each user's avatar on the manual login screen instead of their name |
+| **Custom Plugin Menu Icons** | Off | Replaces default plugin folder icons on the Dashboard sidebar with Material icons; enables the **Sidebar Custom Links** field |
+| **Enable Metadata Icons (Druidblack)** | Off | Swaps text metadata labels (and the plugin's Letterboxd/*arr links) for icons |
+
+!!! note "Other Extras-tab settings have their own sections"
+    The **Active Streams Widget** (above), **Letterboxd Integration**, **Splash Screen**,
+    and **Custom Branding** also live on the Extras tab and are documented separately on
+    this page.
 
 ---
 
@@ -182,3 +208,27 @@ Temporarily lock users out of the server while you perform maintenance. When ena
 
 - **Default: ON.** Assets are downloaded server-side on first use and refreshed daily by the **Refresh Cached Assets** scheduled task (cadence adjustable in Jellyfin's *Scheduled Tasks* dashboard). Cached copies live next to the plugin configuration under `asset_cache/`; the last good copy is kept if an upstream is temporarily unreachable.
 - When **disabled**, clients load these assets directly from the original CDN URLs, as older plugin versions did.
+
+---
+
+## Developer Mode
+
+*Admin tab → Developer Settings*
+
+| Setting | Default | Description |
+|---|---|---|
+| **Dev Mode** | Off | Diagnostic/development toggle. When on, JavaScript caching is disabled so the plugin's client scripts are always re-fetched from the server. Leave off for normal use. |
+
+---
+
+## Advanced troubleshooting toggles
+
+These two kill-switches have **no config-page UI** — they are set directly in the plugin
+configuration file (or via the configuration API). Both default **off** (the middleware is
+enabled), and both exist only as an escape hatch if a plugin conflict or edge case makes the
+request-time middleware misbehave.
+
+| Setting | Default | Description |
+|---|---|---|
+| **`DisableScriptInjectionMiddleware`** | Off | When on, the request-time `<script>` injection middleware no-ops and the plugin falls back to the legacy on-disk `index.html` rewrite. |
+| **`DisableBrandingMiddleware`** | Off | When on, the built-in [Custom Branding](#custom-branding) middleware stops serving your uploaded logo/banner/favicon images and Jellyfin's stock assets are used instead. |

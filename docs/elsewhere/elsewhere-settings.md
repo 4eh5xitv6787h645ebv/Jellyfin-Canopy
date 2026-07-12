@@ -23,11 +23,17 @@
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
 2. Navigate to **Elsewhere** tab
-3. Check "Enable Elsewhere"
+3. Confirm **"Enable Elsewhere"** is checked (it is **on by default**)
 4. Enter your **TMDB API Key**
 5. Select your **Default Region** (e.g., US, GB, DE)
 6. Optional: Configure default and ignored providers
 7. Click **Save**
+
+!!! note "On by default, but needs a TMDB API key"
+    **Enable Elsewhere** ships **on** (`ElsewhereEnabled = true`), so the only required
+    step is entering a valid **TMDB API Key** — the Elsewhere panel does not appear on item
+    detail pages until a key is set. Untick **Enable Elsewhere** if you want to turn the
+    detail-page panel off.
 
 
 
@@ -115,6 +121,24 @@ Multiple patterns:
 - Only appears when a message is set **and** the title has no available providers
 - Provide a URL or path to the image file (e.g. a full `https://` URL or a local path like `/web/assets/img/icon.png`)
 - Leave empty to show the message text with no icon
+
+## Per-user panel settings
+
+The settings above are the server-wide **admin defaults**. Each user can also override the
+region and provider filters just for themselves, directly from the Elsewhere panel on any
+item detail page. Click the **gear (settings) icon** in the panel header to open the
+per-user settings dialog:
+
+| Control | Description |
+|---|---|
+| **Region** | A primary region select that overrides the admin **Default Region** for this user. |
+| **Add other countries** | An autocomplete for adding extra regions. When set, the panel's **Search** button looks the title up across every selected region at once. |
+| **Providers** | A provider-filter autocomplete that overrides the admin **Default Providers** for this user — leave it empty to show every provider. |
+| **Search** | Runs the multi-region lookup for the chosen region(s) and shows availability for each. |
+
+Each user's choices are saved server-side to their own `elsewhere.json`, so they persist
+across devices and never change the admin defaults or other users' views. A user who never
+opens this dialog simply keeps the admin Default Region and Default Providers.
 
 ## Usage
 

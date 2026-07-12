@@ -1,37 +1,26 @@
 ## How can I contribute translations?
 
-### Translate on Weblate (Recommended)
+Translations live as JSON files in the repository — one per locale in
+`Jellyfin.Plugin.JellyfinElevate/js/locales/`. To add or update a language, edit
+the relevant file and open a pull request; there is no external translation
+platform to sign up for.
 
-Use Weblate for all translation work:
-
-<a href="https://hosted.weblate.org/engage/jellyfinelevate/">
-<img src="https://hosted.weblate.org/widget/jellyfinelevate/287x66-grey.png" alt="Translation status" />
-</a>
-
-- https://hosted.weblate.org/projects/jellyfinelevate/
-
-1. Open the Jellyfin Elevate project in Weblate
-2. Select your language (or request a new one)
-3. Translate strings in the web editor
-4. Save your changes
-
-### Why Weblate?
-
-- No local setup required
-- Translation quality checks are built in
-- Faster review and sync workflow
-- Keeps all language work in one place
-
-### Maintainer Fallback: Manual JSON Changes
-
-If Weblate is temporarily unavailable, maintainers can still update locale files directly:
+### Add or update a language
 
 1. Go to `Jellyfin.Plugin.JellyfinElevate/js/locales/`
-2. Copy `en.json`
-3. Rename to your language code (e.g., `es.json`)
-4. Translate all English text
-5. Run translation validation script
-6. Submit a Pull Request
+2. To add a new language, copy `en.json` (the base language) and rename it to your
+   language code — an ISO 639-1 code, optionally with an ISO 3166-1 region
+   (e.g. `es.json`, `pt-BR.json`, `zh-HK.json`). To update an existing language,
+   edit its file in place.
+3. Translate the English strings, leaving every placeholder token
+   (`{name}`, `{count}`, `{{icon:name}}`) exactly as it appears in `en.json`.
+4. Run the validator locally: `npm run validate-translations`
+5. Commit your changes and open a pull request.
+
+When a pull request touches any `js/locales/*.json` file, the **Translation
+Checks** workflow re-runs the same validation and gates the merge — a locale that
+is missing keys, drops a placeholder, or leaves a value blank fails CI. All 26
+locales must stay in sync with `en.json`.
 
 ### What the validator checks
 
@@ -61,7 +50,7 @@ build.
 
 ### Translation Updates
 
-- Synced from repository updates (including Weblate commits)
+- Synced from repository updates (merged locale-file PRs)
 - Cached for 24 hours
 - Available immediately after merge
 - No plugin update needed

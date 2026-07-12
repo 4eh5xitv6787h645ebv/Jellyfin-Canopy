@@ -17,6 +17,14 @@
 
 ### Tags Not Syncing
 
+**Run the sync task:**
+
+Tags are populated by the scheduled task **"Sync Tags from *arr to Jellyfin"** — they only appear after it runs.
+
+1. Go to **Dashboard** → **Scheduled Tasks**
+2. Find **"Sync Tags from *arr to Jellyfin"** (category: Jellyfin Elevate) and run it manually
+3. Add a schedule trigger so it runs periodically and picks up new items
+
 **Check API Keys:**
 
 1. Verify API keys are correct
@@ -83,7 +91,7 @@ If the Calendar or Requests page shows a blank screen and the browser console sh
 
 Alternatively, disable it for specific pages using a Page Rule or Configuration Rule targeting your Jellyfin URL.
 
-See [GitHub issue #570](https://github.com/n00bcodr/Jellyfin-Enhanced/issues/570) for more context.
+For more context, see [Jellyfin Enhanced issue #570](https://github.com/n00bcodr/Jellyfin-Enhanced/issues/570) — a historical reference from the upstream project this integration is based on.
 
 **Check Logs:**
 

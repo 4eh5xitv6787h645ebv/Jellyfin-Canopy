@@ -45,7 +45,7 @@ Jellyfin.Plugin.JellyfinElevate/
     ├── enhanced/            # Core features. Flat singles: config, events, playback, subtitles,
     │   │                    # pausescreen, themer, icons, native-tabs, osd-rating, tag-pipeline
     │   ├── features/        # Split feature modules (random button, details page, release dates,
-    │   │                    # remove-from-home, multi-select)
+    │   │                    # remove-home, remove-multiselect)
     │   ├── settings-panel/  # Split settings-panel modules (entry points, styles, panel, sections)
     │   ├── bookmarks/       # Bookmarks + the bookmarks library page (library-*.ts)
     │   ├── hidden-content/  # Hidden-content engine (data, save, filter, dialogs, panel, buttons)
@@ -88,7 +88,7 @@ Jellyfin.Plugin.JellyfinElevate/
     ├── plugin.js            # THE entry point: boots JE, loads config + translations,
     │                        # then loads dist/je.bundle.js (no per-file fallback)
     ├── core/globals.d.ts    # Ambient host-global types for the // @ts-check'd loader
-    └── locales/             # 26 translation files, en.json is the base (Weblate-managed)
+    └── locales/             # 26 locale JSON files, en.json is the base; validated by scripts/validate-translations.js (npm run validate-translations) in CI
 ```
 
 Everything the browser runs comes from five served artifacts: the loader (`/JellyfinElevate/script`), the bundle (`/JellyfinElevate/dist/je.bundle.js`), and the out-of-band bootstrap files (`dist/splashscreen.js`, `dist/login-image.js`, `dist/translations.js`). Per-file serving of feature scripts no longer exists.
@@ -106,6 +106,7 @@ Jellyfin.Plugin.JellyfinElevate/
 │   ├── AssetsController.cs    # Serves locally cached third-party assets (/JellyfinElevate/assets/{key}) so browsers never hit a CDN
 │   ├── JellyseerrProxyController.cs / JellyseerrUserController.cs
 │   ├── ArrLinksController.cs / ArrCalendarController.cs / ArrRequestsController.cs
+│   ├── ArrSearchController.cs # Admin-only interactive Sonarr/Radarr search / manage surface (arr/search/*)
 │   ├── UserSettingsController.cs / HiddenContentController.cs / ReviewsController.cs
 │   ├── TagCacheController.cs / ItemInfoController.cs / BrandingController.cs
 │   ├── SpoilerGuardController.cs # Spoiler Guard opt-in list (series/movies/collections), Seerr

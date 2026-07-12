@@ -1,5 +1,8 @@
 ## Jellyfin Elevate API
 
+!!! note "Scope of this page"
+    This page documents the **external-integration surface** of the `/JellyfinElevate/*` API — the endpoints meant to be called by external applications and scripts. Many additional admin- and UI-internal endpoints exist and are intentionally omitted here.
+
 ### Authentication
 
 The plugin targets **Jellyfin 12 only**, and Jellyfin 12 ignores the legacy authentication tokens (`?api_key=` query parameters, `X-Emby-Token`, `X-MediaBrowser-Token` headers). Authenticate every request with the standard header:
@@ -32,6 +35,20 @@ Fields that would leak internal topology are additionally **redacted for anonymo
 - The **maintenance-mode target-user list** (the affected-user GUIDs) — returned empty pre-login.
 
 The maintenance-mode **message** and **action** stay public because the login page's maintenance banner legitimately needs them before a user signs in.
+
+### Private Configuration
+
+The plugin also serves a **private config** payload (`/JellyfinElevate/private-config`) for the client's authenticated boot phase. Unlike `public-config`, this endpoint requires authentication (`[Authorize]` — any signed-in user):
+
+```bash
+curl -X GET \
+  -H "Authorization: MediaBrowser Token=\"<API_KEY>\"" \
+  "<JELLYFIN_URL>/JellyfinElevate/private-config"
+```
+
+- **Administrators** receive the full private-config projection.
+- **Non-admin** authenticated callers receive an empty object (`{}`) rather than a `403`, so the client still initialises but never sees admin-only fields.
+- If the plugin configuration is unavailable, the endpoint returns `503`.
 
 ## Bookmark API + Info
 

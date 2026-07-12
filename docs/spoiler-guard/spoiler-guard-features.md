@@ -1,6 +1,6 @@
 # Spoiler Guard
 
-A per-user, per-show opt-in protection layer for episodes, seasons, movies, and collections you haven't watched yet. Spoiler Guard blurs (or fully hides) thumbnail art, replaces episode titles, strips synopses, taglines, ratings, chapter names, cast lists, and reviews — all server-side, so **every Jellyfin client benefits** (Web, Android TV, iOS Swiftfin, Roku, Wholphin, Moonfin, Findroid, Streamyfin, etc.).
+A per-user, per-show opt-in protection layer for episodes, seasons, movies, and collections you haven't watched yet. Spoiler Guard blurs (or fully hides) thumbnail art, replaces episode titles, and strips synopses, taglines, ratings, chapter names, and cast lists — all server-side, so **every Jellyfin client benefits** (Web, Android TV, iOS Swiftfin, Roku, Wholphin, Moonfin, Findroid, Streamyfin, etc.). The JE **Reviews panel** is hidden too, but because that panel only exists in the web client its suppression runs client-side rather than in the server APIs.
 
 ![Spoiler Guard on a series page](web-02-bluey-series.png)
 
@@ -9,10 +9,10 @@ A per-user, per-show opt-in protection layer for episodes, seasons, movies, and 
     Spoiler Guard runs on the server inside Jellyfin's image and metadata APIs. When you have Spoiler Guard enabled for a series:
 
     - **Image bytes** for unwatched episodes are intercepted and replaced before they leave the server — your client never sees the original frame.
-    - **Episode metadata** (titles, synopses, ratings, chapter names, cast) is stripped or rewritten in the same response, so even a "lite" mobile client that ignores image transforms still gets safe text.
-    - **TMDB / user reviews** are suppressed on the affected series detail pages.
+    - **Metadata** (titles, synopses, ratings, chapter names, cast, tags, taglines, air dates) is stripped or rewritten in the same response — for unwatched episodes *and* for the guarded series' own detail-page DTO — so even a "lite" mobile client that ignores image transforms still gets safe text.
+    - **TMDB / user reviews** are suppressed on the affected series and movie detail pages. This one is a **web-client** feature — the Reviews panel only exists in Jellyfin Web / JE — so it's hidden in the client rather than in the image/metadata APIs.
 
-    The server forgets none of this — your watched-state, your per-show opt-in list, and the admin's policy all combine before each request is answered. There's no client-side check that a bad actor could bypass.
+    Your watched-state, your per-show opt-in list, and the admin's policy all combine before each **image or metadata** request is answered, with no client-side check a bad actor could bypass. (The Reviews panel is the exception: because it lives only in the web client, it's suppressed there rather than server-side.)
 
 ---
 
@@ -33,9 +33,13 @@ Once you turn Spoiler Guard on for a show or movie, the plugin hides every spoil
 | **Taglines** | TMDB taglines like "Everything changes tonight" are dropped. |
 | **Ratings** | The community/TMDB rating and the critic rating are both hidden — a 9.8/10 rating on a specific episode is a hint that something big happens. The Jellyfin Elevate card rating overlay is suppressed too on the series, season, and unwatched-episode cards of a guarded show (it won't fall back to the parent series' rating); watched episodes keep theirs. |
 | **Air date** | Hidden — a multi-month gap before an episode can imply "season finale" or "long-anticipated reveal". |
-| **Cast** | By default, only guest stars on unwatched episodes are hidden (regular cast appears in every episode anyway). Setting **Cast strip mode** to "All cast & crew" hides the entire cast. |
-| **TMDB + user reviews** | The Reviews panel is suppressed on series detail pages for shows you have Spoiler Guard on for. |
+| **Cast** | Stripped on unwatched episode cards **and on the guarded series' own detail-page cast rail**. By default only guest stars are hidden (regular cast appears in every episode anyway); setting **Cast strip mode** to "All cast & crew" hides the entire cast. Character-role names are stripped from any surviving cast too. |
+| **TMDB + user reviews** | The Reviews panel is suppressed on series **and movie** detail pages you have Spoiler Guard on for (a movie guarded directly or via an opted-in collection), until you've watched the item. |
 | **Search results** | Episode hints in search are rewritten to `Season X, Episode Y` and the matched-term echo is suppressed. |
+
+!!! note "This applies to the series' own detail page too"
+
+    On a guarded series' own detail page the series DTO itself is stripped the same way — its **description**, tags, taglines, air date, community/critic ratings, and cast (including guest stars and character-role names) are hidden while Spoiler Guard is on. Only the series **title** and **poster** stay visible so you can still find and open the show. (The description is exempt only if your admin turns **Hide descriptions** off.)
 
 Watched episodes pass through completely untouched. Your library doesn't change — Spoiler Guard only changes what you see.
 
@@ -57,7 +61,7 @@ Every other Jellyfin client you use will pick up the same protection on its next
 
 ### Per movie
 
-The same toggle button appears on Movie detail pages. Click the toggle and the description swaps to the placeholder, and chapters / cast on unwatched cards get the same treatment. By default the movie poster itself stays unblurred — the admin's **Keep movie posters unblurred** setting is on out of the box, so the movie's Primary/Thumb art passes through clear while chapter thumbs, backdrops, and screenshots follow the protection mode. If your admin turns **Keep movie posters unblurred** off, the poster blurs (or hides, depending on the artwork protection mode) too:
+The same toggle button appears on Movie detail pages. Click the toggle and the description swaps to the placeholder, and chapters / cast on unwatched cards get the same treatment. By default the movie poster itself stays unblurred — the admin's **Keep movie posters unblurred** setting is on out of the box, so the movie's Primary/Thumb art passes through clear while chapter thumbs and screenshots follow the protection mode. Backdrops / art images only follow protection when your admin also enables **Also protect backdrops / art images** (off by default). If your admin turns **Keep movie posters unblurred** off, the poster blurs (or hides, depending on the artwork protection mode) too:
 
 | Before toggle | After toggle |
 |---|---|
@@ -194,11 +198,15 @@ The same section has a **"Don't ask me to confirm when turning Spoiler Guard off
 
 A short list of things Spoiler Guard deliberately leaves alone:
 
-- **Series titles, posters, and series-level overviews** — the user-facing series identity. You opted in for this series, so its name and "this show is about X" description stay visible. Per-episode plot details are what get hidden.
+- **Series titles and posters** — the user-facing series identity. You opted in for this series, so its name and poster stay visible so you can still find and open the show. (The series *description* is **not** exempt — while Spoiler Guard is on it's replaced with the placeholder too, unless your admin turns **Hide descriptions** off, since a series synopsis can itself spoil a later arc.)
 - **Collection posters** — same reasoning. The collection art is your entry point.
 - **The "this episode is here" indicator** — episode rows and counts in the season grid stay so you can navigate. Only the thumbnail / title / synopsis / chapters etc. are hidden.
 - **Season 0 (Specials) and Season 1 *posters*** — the season poster and season overview always pass through so you have an entry point into a brand-new show without every season being a wall of placeholders. Unwatched **episodes** inside Season 0/1 are still protected (their thumbnails/titles/synopses are hidden until you watch them) — it's only the season-level art that's exempt.
 - **External-player playback** — if you launch playback in an external player (mpv, VLC, infuse, etc.), that player fetches metadata directly from Jellyfin's regular APIs and may show un-stripped fields. Spoiler Guard runs inside the JE plugin's response filters, which external players bypass.
+
+!!! note "Filename & stream-title scrubbing"
+
+    When episode titles or descriptions are hidden, the fields that could leak the episode name indirectly — media-source paths, embedded/side-loaded subtitle filenames, and ffprobe stream titles/comments — are scrubbed from the API responses too (in-client playback still works; only the title-bearing text is removed).
 
 ---
 
@@ -208,7 +216,7 @@ Spoiler Guard preferences are **per user**. Your spoiler list doesn't affect any
 
 Cache-bust tokens are also per-user, so two users on the same family network seeing different blur states of the same image is fully supported. Native-client image caches (Glide, Coil, SDWebImage) automatically refetch when your watched-state changes, even though they otherwise cache strictly by URL.
 
-How the server knows *which* user an image request belongs to: image fetches are anonymous in Jellyfin, so the plugin embeds a small per-user **identity marker** in the image URLs each user receives (part of the image's `tag` value). Every client — web, Android TV, iOS, Roku — echoes that value back when it fetches the image, letting Spoiler Guard apply exactly your blur state with no dependence on your device's IP address. This works out of the box behind reverse proxies, VPNs, and shared/NAT networks. (Requests without a marker — for example a client replaying an old cached URL — fall back to matching your session by IP, failing closed if that's ambiguous.)
+How the server knows *which* user an image request belongs to: image fetches are anonymous in Jellyfin, so the plugin embeds a small per-user **identity marker** in the image URLs each user receives (part of the image's `tag` value). Every client — web, Android TV, iOS, Roku — echoes that value back when it fetches the image, letting Spoiler Guard apply exactly your blur state with no dependence on your device's IP address. This works out of the box behind reverse proxies, VPNs, and shared/NAT networks. (Requests without a marker — for example a client replaying an old cached URL — fall back first to a validated per-browser `je-spoiler-uid` cookie the web client sets, then to matching your session by IP, failing closed if that's ambiguous.)
 
 ---
 

@@ -30,9 +30,9 @@ Upload your own logos, banners, and favicon to personalize your Jellyfin instanc
 
 ### Setup
 
-**Prerequisites:**
-
-- [file-transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) installed
+Custom branding works **out of the box** — no extra plugins required. Uploaded images
+are served by the plugin's own built-in request-time middleware, so they apply
+automatically on the next page load.
 
 **Configuration:**
 
@@ -63,6 +63,12 @@ Files stored in:
 ```
 
 This location survives Jellyfin server and web updates.
+
+!!! note "Troubleshooting: disabling the branding middleware"
+    The built-in branding middleware is on by default. If it ever conflicts with another
+    plugin or you want to fall back to Jellyfin's stock assets, an admin can set the
+    advanced **`DisableBrandingMiddleware`** kill-switch (default off) via the plugin
+    config file/API. See [Other Settings → Advanced troubleshooting toggles](other-settings.md#advanced-troubleshooting-toggles).
 
 ---
 
@@ -488,11 +494,7 @@ Multi-language support with community translations.
 
 ### Supported Languages
 
-<p align="left">
-  <a href="https://hosted.weblate.org/engage/jellyfinelevate/">
-    <img src="https://hosted.weblate.org/widget/jellyfinelevate/multi-auto.svg" alt="Translation status" />
-  </a>
-</p>
+Jellyfin Elevate ships with 26 bundled locales. Translations are maintained as locale JSON files in the repository — see [Contributing Translations](../faq-support/contributing-translations.md) to add or improve one.
 
 ### How It Works
 
@@ -532,8 +534,10 @@ Force clients to refresh cached data.
 
 ### Clear All Client Caches
 
-The config page has a single **Clear All Client Caches** button. Clicking it sets a
-timestamp so that every client clears its localStorage and tag caches on next load.
+The **Clear All Client Caches** button (Display tab) sets a timestamp so that every
+client clears its localStorage and tag caches on next load. The **Overview** tab also
+carries a **Clear all client tag caches** quick action that forces every client to
+rebuild **only** its tag cache, leaving the rest of localStorage untouched.
 
 **Use Case:**
 

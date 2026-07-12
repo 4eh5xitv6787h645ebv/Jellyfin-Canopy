@@ -1,6 +1,6 @@
-# .arr Links Integration
+# *arr Settings
 
-Quick access to Sonarr, Radarr, and Bazarr (admin only).
+Configure Sonarr, Radarr, and Bazarr integration: multi-instance links, calendar, requests, and search.
 
 ## Setup
 
@@ -56,15 +56,15 @@ Toggle the **Enabled** switch off to skip an instance in all fan-out paths (arr 
 
 ### URL Mappings (per-instance)
 
-Per-instance URL mappings override the global mapping for that instance. Format is the same as the global field:
+Per-instance URL mappings override the global mapping for that instance. Format is the same as the global field — each line maps a **Jellyfin access URL** to the *arr URL a browser opens from that context:
 
 ```text
-internal_url|external_url
+jellyfin_access_url|arr_url
 ```
 
 **Example:**
 ```text
-http://sonarr-anime:8989|https://anime.example.com
+https://jellyfin.example.com|https://anime.example.com
 ```
 
 ---

@@ -70,11 +70,14 @@ Access via:
    - Show hide buttons on Seerr items
    - Show hide buttons in library views
    - Show hide buttons on detail pages
+   - Show hide buttons on cast/actor cards (admin default off)
+   - Show a confirmation dialog before hiding (admin default on)
    - Filter library views
    - Filter discovery pages
    - Filter search results
    - Filter calendar
    - Filter Next Up
+   - Filter Upcoming episodes (admin default on)
    - Filter Continue Watching
    - Filter recommendations
    - Filter requests page
@@ -181,11 +184,12 @@ Comprehensive hotkeys for navigation, playback control, and more.
  - `-` - Decrease Playback Speed
  - `R` - Reset Playback Speed
  - `B` - Bookmark Current Time
- - `P` - Open Episode Preview
+ - `P` - Open Episode Preview *(requires the [InPlayerEpisodePreview](https://github.com/Namo2/InPlayerEpisodePreview/) plugin)*
  - `O` - Skip Intro/Outro
  - `,` - Step Back One Frame
  - `.` - Step Forward One Frame
  - `Z` - Jump to Last Position
+ - `0`–`9` - Jump to that percentage of the video (`1` = 10%, `5` = 50%, …)
 
 
 **Customization:**
@@ -194,6 +198,13 @@ Comprehensive hotkeys for navigation, playback control, and more.
 2. Go to **Shortcuts** tab
 3. Click on any key to set a custom shortcut
 4. Changes save automatically per user
+
+!!! note "Admin: disabling shortcuts server-wide"
+
+    An administrator can turn off **all** keyboard shortcuts for every user with
+    the **Disable Keyboard Shortcuts** toggle in **Dashboard** → **Plugins** →
+    **Jellyfin Elevate** → **Keyboard** tab. When enabled, the shortcuts stop
+    working and the **Shortcuts** tab is removed from the Enhanced panel.
 
 ### Random Button
 
@@ -231,7 +242,6 @@ Save timestamps and jump to specific moments with visual timeline markers.
 - Add custom labels to bookmarks
 - Sync bookmarks across duplicate items (same TMDB/TVDB ID)
 - Manage all bookmarks from the Bookmarks page (native tab, Plugin Pages, or Custom Tabs)
-- Export/import bookmark data
 
 **Usage:**
 
@@ -298,7 +308,7 @@ Fine-tune subtitle appearance with presets and custom colors.
 **Presets:**
 
 - Multiple font families
-- Size options (small, medium, large, extra large)
+- Size presets (Tiny, Small, Normal, Large, Extra Large, Gigantic)
 - Background opacity
 - Text shadow options
 - Position adjustments
@@ -649,11 +659,11 @@ Admins see a megaphone icon (📣) in the panel header. Click it to open the bro
 !!! note
     By default the widget is admin-only. Non-admin users see a read-only view (no session controls, no broadcast button, no IP addresses) when "Show widget to non-admins" is enabled.
 
-### 🎨 Colored Activity Icons
+### 🎨 Colored Dashboard Icons
 
-Replace default activity icons with Material Design icons.
+Replace default dashboard activity icons with Material Design icons and background colors.
 
-![Colored Activity Icons](../images/colored-activity-icons.png)
+![Colored Dashboard Icons](../images/colored-activity-icons.png)
 
 **Features:**
 
@@ -663,7 +673,7 @@ Replace default activity icons with Material Design icons.
 
 **Configuration:**
 
-Enable in Enhanced panel → Settings → Extras
+Enable in **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Extras** tab (**Colored Dashboard Icons**).
 
 ### 🎪 Colored Ratings
 
@@ -678,11 +688,11 @@ Color-coded backgrounds for ratings on detail pages.
 - Supports TMDB, IMDb, Rotten Tomatoes
 
 **Configuration:**
-Enable in Enhanced panel → Settings → Extras
+Enable in **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Extras** tab (**Colored Ratings Backgrounds**).
 
-### 🖼️ Login Image Display
+### 🖼️ Profile Picture on Login
 
-Show user profile images on manual login page.
+Show user profile images on the manual login page.
 
 ![Login Image](../images/login-image.png)
 
@@ -694,11 +704,11 @@ Show user profile images on manual login page.
 
 **Configuration:**
 
-Enable in Enhanced panel → Settings → Extras
+Enable in **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Extras** tab (**Profile Picture on Login**).
 
-### 🧩 Plugin Icons
+### 🧩 Custom Plugin Menu Icons
 
-Replace default plugin icons with Material Design icons.
+Replace default plugin folder icons with Material Design icons on the Dashboard sidebar.
 
 ![Plugin Icons](../images/plugin-icons.png)
 
@@ -709,9 +719,9 @@ Replace default plugin icons with Material Design icons.
 - Improved dashboard aesthetics
 
 **Configuration:**
-Enable in Enhanced panel → Settings → Extras
+Enable in **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Extras** tab (**Custom Plugin Menu Icons**).
 
-### 🎭 Theme Selector
+### 🎭 Theme Selector (Jellyfish)
 
 Choose from multiple Jellyfin theme color variants.
 
@@ -725,7 +735,7 @@ Choose from multiple Jellyfin theme color variants.
 
 **Configuration:**
 
-1. Enable in Enhanced panel → Settings → Extras
+1. Enable in **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Extras** tab (**Theme Selector (Jellyfish)**)
 2. Select theme from dropdown
 3. Optional: click the shuffle button ("Random daily theme") to rotate themes daily
 
@@ -777,7 +787,7 @@ Upload your own logos, banners, and favicon.
 
 **Requirements:**
 
-- Requires [file-transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation)
+- No extra plugins required — branding assets are served by the plugin's built-in request-time middleware
 - Recommended image formats: PNG, SVG
 - Files stored in: `/plugins/configurations/Jellyfin.Plugin.JellyfinElevate/custom_branding/`
 
@@ -787,19 +797,14 @@ Multi-language support with community translations and automatic caching.
 
 **Supported Languages:**
 
-<p align="left">
-  <a href="https://hosted.weblate.org/engage/jellyfinelevate/">
-    <img src="https://hosted.weblate.org/widget/jellyfinelevate/multi-auto.svg" alt="Translation status" />
-  </a>
-</p>
+Jellyfin Elevate ships with 26 bundled locales. Translations are maintained as locale JSON files in the repository — see [Contributing Translations](../faq-support/contributing-translations.md) to add or improve one.
 
 **How It Works:**
 
 - Automatically detects Jellyfin user profile language
-- Fetches latest translations from GitHub on first load
-- Caches translations for 24 hours in localStorage
+- Loads the plugin's bundled locale files first and caches them for 24 hours in localStorage
 - Per-version caching with automatic cleanup
-- Falls back to bundled translations if offline
+- Only falls back to fetching from GitHub when the third-party asset cache is disabled
 - Language code normalization (including region variants)
 
 **Translation Cache Refresh:**

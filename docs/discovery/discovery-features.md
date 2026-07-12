@@ -30,6 +30,9 @@ Discovery respects each user's **parental rating limit** — the same server-sid
 
 ## Make it yours
 
-Every user can tap **Customize** on their Discovery feed to choose which rows appear and in what order — include or exclude any row (including genre rows), reorder them, or reset to the defaults your admin set. Your choices are saved per user and don't affect anyone else.
+Every user can tap **Customize** on their Discovery feed to choose which rows appear and in what order — include or exclude any row (including genre rows), reorder them, or reset to the defaults your admin set. Your choices are saved for you and don't affect anyone else.
+
+!!! note "Customizations are saved per device, not on your account"
+    Your row choices are stored in your browser on the device you're using — they don't sync across your devices or browsers. If you customize your feed on your laptop, another device (or a different browser) still shows the admin defaults until you customize it there too. Clearing your browser's site data resets your choices back to the defaults.
 
 Admins set the out-of-the-box defaults on the [Discovery settings page](discovery-settings.md).

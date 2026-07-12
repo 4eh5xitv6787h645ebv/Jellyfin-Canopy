@@ -170,6 +170,7 @@ Browse and discover content by various criteria.
 - **Network Discovery** - Browse by network (Netflix, HBO, etc.)
 - **Person Discovery** - Browse by actor, director, crew
 - **Tag Discovery** - Browse by custom tags
+- **Collection Discovery** - On a collection/BoxSet page, surface the collection's movies not yet in your library, each with a request button (on by default)
 
 #### Features
 

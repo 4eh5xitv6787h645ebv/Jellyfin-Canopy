@@ -47,6 +47,13 @@ Display user reviews from TMDB on item detail pages.
 3. Enable **"Show TMDB Reviews"**
 4. Click **Save Settings**
 
+**Options:**
+
+- **Expand reviews by default** (`ReviewsExpandedByDefault`, default off) — when enabled,
+  the reviews section opens already expanded on item detail pages instead of collapsed.
+  This is a server-wide admin default; users can still collapse or expand the section in
+  their own session.
+
 !!! note
     TMDB Reviews require a valid TMDB API key. If the Elsewhere feature is already configured, no additional API key is needed.
 

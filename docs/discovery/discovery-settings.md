@@ -29,4 +29,7 @@ Which shelves appear by default. Users can add, remove and reorder rows for them
 
 Discovery resolves a user's feed as **their customization → your admin defaults → built-in defaults**. A user who never opens *Customize* always sees your defaults; once they customize, their choice wins for them only. **Reset to defaults** in the Customize modal clears their override and returns them to your admin defaults.
 
+!!! note "Per-user choices are saved per browser, not account-wide"
+    A user's customization is stored in their browser on that device (not on their Jellyfin account), so it doesn't follow them to other devices or browsers — each one shows your admin defaults until customized there. Clearing browser site data also resets a user back to your defaults.
+
 Parental filtering is always enforced server-side and is not something a user can turn off.

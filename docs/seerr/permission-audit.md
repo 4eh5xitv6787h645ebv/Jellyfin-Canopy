@@ -19,7 +19,7 @@ Open the plugin configuration and navigate to the Seerr section. Click the **Run
 ## Interpreting results
 
 - **Not linked**: The Jellyfin user does not have a corresponding Seerr account (or Seerr was unreachable). Use the Import Users feature or check Seerr manually.
-- **Permissions Missing**: A linked user lacks one or more permissions required by enabled plugin features. The audit lists the specific missing permissions (for example: `REQUEST`, `REQUEST_4K`, `REQUEST_ADVANCED`, `REQUEST_VIEW`, `MANAGE_REQUESTS`, `CREATE_ISSUES`, `VIEW_ISSUES`).
+- **Permissions Missing**: A linked user lacks one or more permissions required by enabled plugin features. The audit lists the specific missing permissions (for example: `REQUEST`, `REQUEST_MOVIE`, `REQUEST_TV`, `REQUEST_4K`, `REQUEST_4K_MOVIE`, `REQUEST_4K_TV`, `REQUEST_ADVANCED`, `REQUEST_VIEW`, `MANAGE_REQUESTS`, `CREATE_ISSUES`, `VIEW_ISSUES`, `MANAGE_ISSUES`).
 - **OK**: The user is linked and has the required permissions. OK users are shown in a collapsible section.
 
 !!! note "Note"

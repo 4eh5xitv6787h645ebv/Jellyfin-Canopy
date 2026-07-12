@@ -4,9 +4,9 @@ Quick access to Sonarr, Radarr, and Bazarr from Jellyfin, plus calendar and down
 
 !!! success "Note"
 
-    ***arr links are only visible to admin users**
+    ***arr links, Search, Interactive Search, and Manage are only visible to admin users.**
 
-    **Other features are visible to all users.**
+    **The Calendar page, Requests page, and synced tag links are available to all users.**
 
 
 !!! warning
@@ -51,7 +51,8 @@ You can configure multiple Sonarr instances and multiple Radarr instances — us
 | Field | Description |
 |---|---|
 | **Name** | Display name shown in dropdowns (e.g., "TV Shows", "Anime", "4K Movies") |
-| **URL** | Base URL of the instance (e.g., `http://192.168.1.100:8989`) |
+| **URL** | Internal base URL the Jellyfin server uses to reach the instance (e.g., `http://192.168.1.100:8989`) |
+| **External URL** | Optional public URL a user's browser opens for links to this instance (e.g., `https://sonarr.example.com`); leave empty to reuse the internal URL |
 | **API Key** | API key for authenticating with the instance |
 | **URL Mappings** | Optional per-instance URL remapping (see below) |
 | **Enabled** | Toggle to disable an instance without deleting it |
@@ -79,20 +80,22 @@ Toggle the **Enabled** switch off to temporarily disable an instance (e.g., duri
 
 ### URL Mappings
 
-Map internal and external URLs for different network contexts. Mappings can be set globally (legacy fields) or per-instance.
+Map each **Jellyfin access URL** to the *arr URL a browser should open from it — useful when the same Jellyfin server is reached at different addresses (e.g. local network vs remote). Mappings can be set globally (legacy fields) or per-instance.
 
 **Format:**
 ```text
-internal_url|external_url
+jellyfin_access_url|arr_url
 ```
+
+The left side is matched against the Jellyfin server URL the browser is currently using; the right side is the *arr link base returned for that context.
 
 **Example:**
 ```text
-http://sonarr:8989|https://sonarr.example.com
-http://radarr:7878|https://radarr.example.com
+https://jellyfin.example.com|https://sonarr.example.com
+http://192.168.1.50:8096|http://192.168.1.100:8989
 ```
 
-**Use Case:** Different URLs for local network vs remote access.
+**Use Case:** Serve different *arr link targets depending on how the user reached Jellyfin (remote HTTPS vs local network).
 
 ### Legacy Single-Instance Fields
 
@@ -142,6 +145,10 @@ Neither service is mandatory — tags sync from whichever you set up. A movie-on
 4. Ensure the Sonarr/Radarr instances you configured above have valid API keys — tag sync uses those instance keys (there is no separate key field in the Tags Sync section)
 5. Configure tag settings (see below)
 6. Click **Save**
+
+!!! important "Tags only populate when the sync task runs"
+
+    Tag syncing is performed by the scheduled task **"Sync Tags from *arr to Jellyfin"** (Dashboard → Scheduled Tasks). Tags appear on items only after this task runs — trigger it manually the first time, then add a schedule trigger so it runs periodically and picks up new items automatically.
 
 ### Tag Settings
 
@@ -256,8 +263,7 @@ View upcoming releases from Sonarr and Radarr in a calendar interface.
 
 **First Day of Week:**
 
-- Monday (default)
-- Sunday
+- Any weekday, Sunday through Saturday (default Monday)
 
 **Time Format:**
 
@@ -273,6 +279,12 @@ View upcoming releases from Sonarr and Radarr in a calendar interface.
 
 - Highlight series you're currently watching
 - Based on watch history
+
+**Filter by Library Access:**
+
+- On by default
+- Restricts calendar items to libraries the user can access
+- Upcoming items not yet in Jellyfin are matched by their Sonarr/Radarr root folder
 
 **Show Requested Only (Default):**
 
@@ -317,11 +329,11 @@ View upcoming releases from Sonarr and Radarr in a calendar interface.
 
 ---
 
-## Downloads Page
+## Requests Page
 
-![Downloads page showing active Sonarr/Radarr queue](../images/downloads-page.png)
+![Requests page showing active Sonarr/Radarr queue](../images/downloads-page.png)
 
-Monitor active downloads from Sonarr and Radarr in a dedicated page.
+Monitor active downloads from Sonarr and Radarr in a dedicated page (route `#/downloads`).
 
 ### Features
 
@@ -360,7 +372,7 @@ Fires the correct arr search command for the item and hands off to the arr's own
 | Season | Season search |
 | Episode | Episode search |
 
-If more than one configured instance tracks the item, the search runs on all of them. A toast reports how many instances started, and (when the Downloads page is enabled) points you there to watch progress.
+If more than one configured instance tracks the item, the search runs on all of them. A toast reports how many instances started, and (when the Requests page is enabled) points you there to watch progress.
 
 ### Interactive Search (manual release picker)
 
@@ -373,7 +385,7 @@ Interactive Search is offered for **movies, seasons and episodes** (Sonarr has n
 The **Manage in Sonarr/Radarr…** item opens a compact panel that:
 
 - toggles **Monitor / Unmonitor** per tracking instance,
-- shows **live download progress** for the item (reusing the same queue as the [Downloads page](#downloads-page), with a jump link there — no second downloads view),
+- shows **live download progress** for the item (reusing the same queue as the [Requests page](#requests-page), with a jump link there — no second downloads view),
 - and, for a movie or series **not yet tracked** by an instance, offers **Add to Sonarr/Radarr** with a quality-profile + root-folder picker, a monitor toggle and an optional search-on-add.
 
 The Manage actions are gated by a separate setting so you can keep search-only if you don't want changes to the arr library made from Jellyfin.
