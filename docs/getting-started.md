@@ -54,6 +54,14 @@ After the restart:
 
 If nothing appears, jump to [Troubleshooting the install](#troubleshooting-the-install).
 
+## Upgrading from Jellyfin Elevate
+
+Versions before 2.0 were published as **Jellyfin Elevate**. It is the same plugin (same plugin ID), so the catalog offers the rebranded version as a normal update:
+
+1. Update the plugin from the catalog and restart the server.
+2. Your configuration, per-user settings, custom branding, and caches migrate automatically on first startup.
+3. The only thing that does not carry over is custom **scheduled-task triggers** (Dashboard → Scheduled Tasks): the rebrand renames the task keys, so any schedule you changed by hand reverts to the plugin default — set it again once.
+
 ## First-run setup
 
 You now have Jellyfin Canopy running, but most features are **off by default**, and several of the biggest ones need a one-time connection before they do anything. Everything below lives under **Dashboard** → **Plugins** → **Jellyfin Canopy**, on the tab named in each item. Turn on what you want and skip the rest.

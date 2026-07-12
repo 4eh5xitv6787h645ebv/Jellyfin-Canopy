@@ -4,7 +4,7 @@ Jellyfin Canopy is an independent fork and extensive modernization of [Jellyfin 
 
 ## What Jellyfin Canopy is
 
-Jellyfin Enhanced started life as a userscript and grew into a full-featured plugin. Jellyfin Canopy continues that lineage on a different path: a Jellyfin 12-only rebuild rather than a port. Under the hood that means a strict-TypeScript ES-module client, policy-based server authorization, push-driven live updates, a committed Playwright end-to-end suite, and enforced performance rules — the plumbing you never see, but that keeps the features fast and predictable.
+Jellyfin Enhanced started life as a userscript and grew into a full-featured plugin. Jellyfin Canopy continues that lineage on a different path: a Jellyfin 12-only rebuild rather than a port. Until version 2.0 the project was published under the name **Jellyfin Elevate**; the rebrand changed the name and the artwork, not the plugin — the plugin ID is the same and existing installs upgrade in place. Under the hood that means a strict-TypeScript ES-module client, policy-based server authorization, push-driven live updates, a committed Playwright end-to-end suite, and enforced performance rules — the plumbing you never see, but that keeps the features fast and predictable.
 
 The project is developed **100% with AI** — agentic coding tools drive the design, implementation, testing, and review — directed and curated by a human maintainer. Nothing lands on trust alone: every change has to pass the full gate suite (type-checking, lint, unit tests, golden snapshots, and a live end-to-end run) before it ships.
 

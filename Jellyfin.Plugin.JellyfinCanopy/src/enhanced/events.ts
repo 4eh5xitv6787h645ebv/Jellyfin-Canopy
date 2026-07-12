@@ -8,6 +8,7 @@ import { createObserver } from '../core/dom-observer';
 import { isAnyModalOpen } from '../core/modal-a11y';
 import { toast } from '../core/ui-kit';
 import { stampLayoutClass } from '../core/layout';
+import { migrateLegacyClientStorage } from './legacy-storage-migration';
 import { throttle } from './helpers';
 
 /**
@@ -334,6 +335,9 @@ function addContextMenuListener(): void {
  * Initializes all event listeners for the core Jellyfin Canopy script.
  */
 JC.initializeCanopyScript = function() {
+    // Rebrand migration: adopt state written by pre-2.0 "Jellyfin Elevate" builds.
+    migrateLegacyClientStorage();
+
     // Check if local storage needs to be cleared by admin request
     const serverClearTimestamp = JC.pluginConfig.ClearLocalStorageTimestamp || 0;
     const localClearedTimestamp = parseInt(localStorage.getItem('jellyfinCanopyLastCleared') || '0', 10);

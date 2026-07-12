@@ -17,7 +17,7 @@
 
 This project **would not exist** without [n00bcodr](https://github.com/n00bcodr) and his outstanding work on [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced). Every feature here stands on that foundation — years of ideas, design, community building, and polish that made Jellyfin Enhanced the essential enhancement suite for Jellyfin.
 
-Jellyfin Canopy exists because the two projects chose different paths, not because of any shortcoming in the original:
+Jellyfin Canopy exists because the two projects chose different paths, not because of any shortcoming in the original. (Until version 2.0 this project was published as **Jellyfin Elevate** — same plugin, same plugin ID; existing installs upgrade in place.)
 
 - **Jellyfin Enhanced** continues to serve Jellyfin 10.11 — stable, proven, and actively maintained by its original author.
 - **Jellyfin Canopy** is a ground-up modernization targeting **Jellyfin 12 only**: a strict-TypeScript ES-module client, policy-based server auth, push-driven live updates, a committed Playwright e2e suite, and enforced performance rules.

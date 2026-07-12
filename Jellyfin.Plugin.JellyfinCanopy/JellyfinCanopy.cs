@@ -28,11 +28,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy
         private readonly ILogger<JellyfinCanopy> _logger;
         private const string PluginName = "Jellyfin Canopy";
 
+        // The plugin's pre-rebrand identity (shipped as "Jellyfin Elevate" ≤ 1.x, same GUID).
+        // Used only to migrate persisted state and clean up artifacts left by those builds.
+        private const string LegacyPluginName = "Jellyfin Elevate";
+        private const string LegacyAssemblyName = "Jellyfin.Plugin.JellyfinElevate";
+
         public JellyfinCanopy(IApplicationPaths applicationPaths, IServerConfigurationManager serverConfigurationManager, IXmlSerializer xmlSerializer, ILogger<JellyfinCanopy> logger, Logging.JellyfinCanopyFileLoggerProvider fileLogProvider) : base(applicationPaths, xmlSerializer)
         {
             Instance = this;
             _applicationPaths = applicationPaths;
             _logger = logger;
+            // Must run before anything touches Configuration: BasePlugin loads the
+            // config XML lazily on first access, so adopting the legacy file here
+            // means the first load already sees the migrated copy.
+            MigrateLegacyElevateState(applicationPaths);
             _logger.LogInformation($"{PluginName} v{Version} initialized. Plugin logs will be written to: {fileLogProvider.CurrentLogFilePath}");
             // Set the User-Agent used by every Seerr/TMDB outbound HTTP call.
             // Cloudflare's Browser Integrity Check / Bot Fight Mode flags
@@ -41,6 +50,61 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             CleanupOldScript();
             CheckPluginPages(applicationPaths, serverConfigurationManager, 1);
             BackfillMissingDefaultShortcuts();
+        }
+
+        /// <summary>
+        /// One-time upgrade migration from the plugin's former "Jellyfin Elevate"
+        /// identity (same GUID, different assembly name). Adopts the legacy config
+        /// XML and the legacy plugin-data directory (custom_branding, asset_cache,
+        /// user settings) under their new Canopy names so an in-place upgrade loses
+        /// no state. Both steps are idempotent no-ops once the new names exist, and
+        /// any failure degrades to first-run defaults instead of blocking startup.
+        /// </summary>
+        private void MigrateLegacyElevateState(IApplicationPaths applicationPaths)
+        {
+            MigrateLegacyStateCore(
+                applicationPaths.PluginConfigurationsPath,
+                ConfigurationFilePath,
+                Path.GetFileNameWithoutExtension(ConfigurationFileName),
+                msg => _logger.LogInformation(msg),
+                msg => _logger.LogError(msg));
+        }
+
+        // Static core of the rebrand migration, separated from BasePlugin so the
+        // filesystem behavior is unit-testable against plain temp directories.
+        internal static void MigrateLegacyStateCore(string configDir, string newConfigFilePath, string newDataDirName, Action<string> logInfo, Action<string> logError)
+        {
+            try
+            {
+                var legacyConfigPath = Path.Combine(configDir, LegacyAssemblyName + ".xml");
+                if (File.Exists(legacyConfigPath) && !File.Exists(newConfigFilePath))
+                {
+                    // Copy (not move) so a rollback to the old DLL still finds its file.
+                    File.Copy(legacyConfigPath, newConfigFilePath);
+                    logInfo($"Migrated legacy {LegacyPluginName} configuration to {Path.GetFileName(newConfigFilePath)}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                logError($"Failed to migrate the legacy {LegacyPluginName} configuration file; starting with defaults: {ex.Message}");
+            }
+
+            try
+            {
+                var legacyDataDir = Path.Combine(configDir, LegacyAssemblyName);
+                var newDataDir = Path.Combine(configDir, newDataDirName);
+                if (Directory.Exists(legacyDataDir) && !Directory.Exists(newDataDir))
+                {
+                    // Same parent directory, so this is an atomic rename — the cached
+                    // assets and per-user data can be large, copying is not an option.
+                    Directory.Move(legacyDataDir, newDataDir);
+                    logInfo($"Migrated legacy {LegacyPluginName} data directory to {Path.GetFileName(newDataDir)}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                logError($"Failed to migrate the legacy {LegacyPluginName} data directory; caches and per-user data will rebuild: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -241,6 +305,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             return $"<script plugin=\"{Name}\" version=\"{cacheKey}\" dev=\"{(devMode ? "true" : "false")}\" src=\"../JellyfinCanopy/script?v={cacheKey}\" defer></script>";
         }
 
+        // Matches this plugin's injected script tag under its current name AND its
+        // legacy "Jellyfin Elevate" name, so upgrading across the rebrand removes
+        // the stale tag (whose /JellyfinElevate/script URL no longer resolves)
+        // instead of leaving a 404ing double-load behind.
+        internal static Regex OwnScriptTagRegex() =>
+            new Regex($"<script[^>]*plugin=[\"'](?:{Regex.Escape(PluginName)}|{Regex.Escape(LegacyPluginName)})[\"'][^>]*>\\s*</script>\\n?");
+
         public void InjectScript()
         {
             UpdateIndexHtml(true);
@@ -270,7 +341,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 }
 
                 var content = File.ReadAllText(indexPath);
-                var regex = new Regex($"<script[^>]*plugin=[\"']{Name}[\"'][^>]*>\\s*</script>\\n?");
+                var regex = OwnScriptTagRegex();
 
                 if (regex.IsMatch(content))
                 {
@@ -320,6 +391,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy
 
             var namespaceName = typeof(JellyfinCanopy).Namespace;
             var pages = config["pages"]!.AsArray();
+
+            // Rebrand migration: entries registered by pre-2.0 "Jellyfin Elevate"
+            // builds point at /JellyfinElevate/* URLs that no longer resolve, and
+            // would duplicate the Canopy entries added below. Remove them once.
+            for (int i = pages.Count - 1; i >= 0; i--)
+            {
+                var pageId = (string?)pages[i]?["Id"];
+                if (pageId != null && pageId.StartsWith(LegacyAssemblyName, StringComparison.Ordinal))
+                {
+                    pages.RemoveAt(i);
+                }
+            }
 
             JsonObject? hssPageConfig = pages.FirstOrDefault(x =>
                 (string?)x?["Id"] == namespaceName) as JsonObject;
@@ -480,7 +563,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
 
                 var content = File.ReadAllText(indexPath);
                 var scriptTag = BuildScriptTag();
-                var regex = new Regex($"<script[^>]*plugin=[\"']{Name}[\"'][^>]*>\\s*</script>\\n?");
+                var regex = OwnScriptTagRegex();
 
                 // Remove any old versions of the script tag first
                 content = regex.Replace(content, string.Empty);
