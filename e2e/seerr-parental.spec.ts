@@ -8,7 +8,7 @@
 // ApiClient (which carries the per-user token the proxy resolves the policy
 // from) as both a restricted non-admin and a bypassed admin, and asserts the
 // server filtered the JSON — not the DOM.
-import { test, expect, loginAs } from './fixtures/auth';
+import { test, expect, loginAs, USERS } from './fixtures/auth';
 import { seerrReady, tmdbReady } from './fixtures/seerr';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -104,7 +104,7 @@ test.describe('seerr parental-rating filter', () => {
             !(await seerrReady(page)) || !(await tmdbReady(page)),
             'Seerr/TMDB not configured — set JELLYSEERR_* and TMDB_API_KEY at seed time to run'
         );
-        const restrictedUserId = await findRestrictedUserId(page, 'jc_arruser');
+        const restrictedUserId = await findRestrictedUserId(page, USERS.user.username);
 
         try {
             await setMaxParentalRating(page, restrictedUserId, 13);
