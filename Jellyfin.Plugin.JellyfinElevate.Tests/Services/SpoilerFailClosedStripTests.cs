@@ -47,6 +47,39 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         }
 
         [Fact]
+        public void FailClosed_StripsEpisodeDtoName_WhenReplaceTitleOnButIndexNumbersMissing()
+        {
+            // BI-SEC-010 FINAL-F2: ApplyStripping only renames an episode when both
+            // index numbers exist. On a fail-closed fault, an unnumbered episode's raw
+            // Name (and SortName / OriginalTitle) must still be replaced/cleared.
+            var lib = new CountingLibraryManager();
+            var cfg = new PluginConfiguration
+            {
+                SpoilerBlurEnabled = true,
+                SpoilerReplaceTitle = true,
+                SpoilerStripOverview = false,
+            };
+            var filter = NewFilter(lib, cfg);
+
+            var dto = new MediaBrowser.Model.Dto.BaseItemDto
+            {
+                Id = Guid.NewGuid(),
+                Type = Jellyfin.Data.Enums.BaseItemKind.Episode,
+                Name = "The Death of a Main Character",
+                SortName = "Death of a Main Character, The",
+                OriginalTitle = "The Death of a Main Character",
+                IndexNumber = null,
+                ParentIndexNumber = null,
+            };
+
+            filter.StripItemForTest(dto, FailClosed(), cfg);
+
+            Assert.NotEqual("The Death of a Main Character", dto.Name);
+            Assert.Null(dto.SortName);
+            Assert.Null(dto.OriginalTitle);
+        }
+
+        [Fact]
         public void FailClosed_StripsImageInfoPaths_RegardlessOfScope()
         {
             var lib = new CountingLibraryManager();

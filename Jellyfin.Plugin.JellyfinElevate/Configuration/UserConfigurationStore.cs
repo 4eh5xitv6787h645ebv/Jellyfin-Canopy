@@ -233,8 +233,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
             {
                 json = File.ReadAllText(configPath);
             }
-            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+            catch (FileNotFoundException)
             {
+                // ONLY a genuinely absent file is Missing. The user directory is
+                // created during ResolveUserFile, so a read-stage
+                // DirectoryNotFoundException means a path component vanished or the
+                // backing store disconnected between resolution and read — a storage
+                // fault, not a never-configured file. It must fall through to
+                // Unavailable so last-known-good / fail-closed is retained.
                 return new UserConfigReadResult<T>(UserConfigReadStatus.Missing, new T(), null);
             }
             catch (Exception ex)

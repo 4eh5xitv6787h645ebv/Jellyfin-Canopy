@@ -139,6 +139,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         internal void StripSearchHintsForTest(MediaBrowser.Model.Search.SearchHintResult shr, UserSpoilerBlur userState, PluginConfiguration cfg)
             => StripSearchHints(shr, userState, cfg, Guid.Empty);
 
+        internal void StripItemForTest(MediaBrowser.Model.Dto.BaseItemDto item, UserSpoilerBlur userState, PluginConfiguration cfg)
+            => StripItem(item, userState, cfg, Guid.Empty);
+
         public Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
         {
             // Sync fast-path bail order — three short-circuit checks before
@@ -518,6 +521,25 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             {
                 MutateImageTagsForCacheBust(item, cfg, watched: false, playbackPositionTicks: 0);
                 ApplyStripping(item, userState, cfg, userId);
+                // ApplyStripping only renames an episode when SpoilerReplaceTitle is on
+                // AND both index numbers exist. Over-strip on a fault: if any title/
+                // overview strip is enabled, guarantee an episode Name is replaced
+                // (numbered when possible, else the placeholder) and clear its alternate
+                // title fields — mirrors the fail-closed SearchHint rule so an unnumbered
+                // or overview-only-configured episode can't leak its raw title.
+                if (item.Type == Jellyfin.Data.Enums.BaseItemKind.Episode)
+                {
+                    var replaceTitle = ShouldStrip(cfg.SpoilerReplaceTitle, userState.Prefs?.ReplaceEpisodeTitles);
+                    var stripOverview = ShouldStrip(cfg.SpoilerStripOverview, userState.Prefs?.HideEpisodeDescriptions);
+                    if (replaceTitle || stripOverview)
+                    {
+                        item.Name = (replaceTitle && item.IndexNumber.HasValue && item.ParentIndexNumber.HasValue)
+                            ? $"Season {item.ParentIndexNumber.Value}, Episode {item.IndexNumber.Value}"
+                            : SanitizePlaceholder(cfg.SpoilerOverviewPlaceholder);
+                        item.SortName = null;
+                        item.OriginalTitle = null;
+                    }
+                }
                 return;
             }
 
