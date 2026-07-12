@@ -36,12 +36,12 @@ Jellyfin Elevate is developed **entirely with AI** (agentic coding tools driving
 
 ### Installation
 
-1. In Jellyfin, go to **Dashboard** → **Plugins** → **Repositories**
-2. Click **➕** and add the repository:
+1. In Jellyfin, go to **Dashboard** → **Plugins** → **Catalog**
+2. Click the gear icon (⚙️ **Manage Repositories**), click **➕**, and add the repository:
    ```
    https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/main/manifest.json
    ```
-3. Go to the **Catalog** tab, find **Jellyfin Elevate**, and click **Install**
+3. Back in the **Catalog**, find **Jellyfin Elevate** and click **Install**
 4. **Restart** your Jellyfin server
 
 > [!IMPORTANT]
@@ -58,7 +58,7 @@ Jellyfin Elevate is developed **entirely with AI** (agentic coding tools driving
 - **Advanced Keyboard Shortcuts** - Comprehensive hotkeys for navigation and playback
 - **Smart Bookmarks** - Save and jump to timestamps with visual markers
 - **Custom Pause Screen** - Beautiful overlay with media info
-- **Auto-Skip Intros/Outros** - Seamless binge-watching (requires Intro Skipper plugin)
+- **Auto-Skip Intros/Outros** - Seamless binge-watching (requires media segments — e.g. the Intro Skipper plugin or any other segment provider)
 - **Custom Subtitle Colors** - Full color customization with alpha support
 
 ### 🙈 Content Management
@@ -71,11 +71,18 @@ Jellyfin Elevate is developed **entirely with AI** (agentic coding tools driving
 - **Search & Request** - Request media directly from Jellyfin search
 - **Item Details** - Recommendations and similar items on detail pages
 - **Discovery Pages** - Browse by genre, network, person, or tag
+- **Auto Requests** - Auto-request the next season or the next movie in a collection
 - **Issue Reporting** - Report problems directly to Seerr
 - **Watchlist Sync** - Auto-sync with Jellyfin watchlist
 
+### 🧭 Discovery Feed
+- **Rows of Cards** - Customizable Trending, Popular, Upcoming, Top Rated, and genre rows inside your Movies & TV Shows libraries, opened from a **Discovery** button in the library toolbar
+- **Inline Requests** - Every card carries an availability badge and a one-tap Seerr request (Seerr-backed)
+- **Per-User Customization** - Choose which rows appear and reorder them, on top of the admin defaults
+
 ### 🔗 *arr Integration
 - **Quick Links** - Jump to Sonarr, Radarr, Bazarr pages (admin only)
+- **Search & Interactive Search** - Trigger an *arr search or pick a release by hand from the item menu; Monitor/Add (admin only)
 - **Tag Links** - Display and filter *arr tags
 - **Calendar View** - Upcoming releases from Sonarr/Radarr
 - **Requests Page** - Monitor download queue and status
@@ -90,13 +97,16 @@ Jellyfin Elevate is developed **entirely with AI** (agentic coding tools driving
 ### 🔍 Discovery
 - **Elsewhere Integration** - See where media is available to stream
 - **TMDB Reviews** - Display user reviews from TMDB
+- **User Reviews** - Users write and rate 1–5★ reviews, with admin moderation
 - **Random Button** - Discover content in your library
 
 ### 🎨 Customization
 - **Custom Branding** - Upload your own logos, banners, and favicon
 - **Theme Selector** - Choose from multiple color variants
 - **Extensive CSS Options** - Customize every visual element
-- **Multi-language Support** - Available in 25+ languages
+- **Active Streams Widget** - Live session monitor with admin Stop, Message, and Broadcast controls
+- **Maintenance Mode** - Temporarily lock users out with a login banner and in-session notice (admin)
+- **Multi-language Support** - Available in 26 languages
 
 <br>
 

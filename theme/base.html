@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{% if page and page.title and not page.is_homepage %}{{ page.title }} · {{ config.site_name }}{% else %}{{ config.site_name }} — Documentation{% endif %}{% endblock %}</title>
+  {%- if page and page.meta and page.meta.description %}
+  <meta name="description" content="{{ page.meta.description }}">
+  {%- elif config.site_description %}
+  <meta name="description" content="{{ config.site_description }}">
+  {%- endif %}
+  {%- if page and page.canonical_url %}
+  <link rel="canonical" href="{{ page.canonical_url }}">
+  {%- endif %}
+  <link rel="icon" href="{{ 'images/favicon.ico' | url }}">
+  <script>
+    /* Set the theme before first paint to avoid a flash of the wrong mode. */
+    (function () {
+      var t;
+      try { t = localStorage.getItem("elevate-theme"); } catch (e) { /* storage blocked */ }
+      if (t !== "light" && t !== "dark") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,600;1,400&display=swap">
+  <link rel="stylesheet" href="{{ 'css/theme.css' | url }}">
+  <link rel="stylesheet" href="{{ 'css/markdown.css' | url }}">
+  <link rel="stylesheet" href="{{ 'css/syntax.css' | url }}">
+  {%- for path in config.extra_css %}
+  <link rel="stylesheet" href="{{ path | url }}">
+  {%- endfor %}
+</head>
+<body data-root="{{ base_url }}"{% if page and page.is_homepage %} class="is-home"{% endif %}>
+
+<a class="skip-link" href="#content">Skip to content</a>
+
+{% include "partials/header.html" %}
+
+<div class="layout">
+  <div class="drawer-backdrop" id="drawer-backdrop"></div>
+
+  {% block sidebar %}
+  <nav class="sidebar" id="site-nav" aria-label="Documentation">
+    <div class="sidebar-inner">
+      <ul class="nav-root">
+        {%- for nav_item in nav %}
+        {% include "partials/nav-item.html" %}
+        {%- endfor %}
+      </ul>
+    </div>
+  </nav>
+  {% endblock %}
+
+  <main class="main" id="content">
+    {% block main %}
+
+    {%- if page.is_homepage %}
+    {% include "partials/hero.html" %}
+    {%- endif %}
+
+    <article class="doc">
+      {%- if page and not page.is_homepage and page.ancestors %}
+      <nav class="breadcrumbs" aria-label="Breadcrumb">
+        <ol>
+          {%- for crumb in page.ancestors | reverse %}
+          <li>{{ crumb.title }}</li>
+          {%- endfor %}
+          <li aria-current="page">{{ page.title }}</li>
+        </ol>
+      </nav>
+      {%- endif %}
+
+      {%- if page and page.toc %}
+      {%- set toc_items = page.toc %}
+      {%- if toc_items | length == 1 and (toc_items | first).level == 1 %}
+        {%- set toc_items = (toc_items | first).children %}
+      {%- endif %}
+      {%- if toc_items %}
+      <details class="mobile-toc">
+        <summary>On this page</summary>
+        {% include "partials/toc-list.html" %}
+      </details>
+      {%- endif %}
+      {%- endif %}
+
+      <div class="doc-body">
+        {{ page.content }}
+      </div>
+
+      {%- if page and (page.previous_page or page.next_page) %}
+      <nav class="pager" aria-label="Page navigation">
+        {%- if page.previous_page %}
+        <a class="pager-link pager-prev" href="{{ page.previous_page.url | url }}" rel="prev">
+          <span class="pager-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg> Previous</span>
+          <span class="pager-title">{{ page.previous_page.title }}</span>
+        </a>
+        {%- else %}<span class="pager-spacer"></span>{%- endif %}
+        {%- if page.next_page %}
+        <a class="pager-link pager-next" href="{{ page.next_page.url | url }}" rel="next">
+          <span class="pager-label">Next <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></span>
+          <span class="pager-title">{{ page.next_page.title }}</span>
+        </a>
+        {%- else %}<span class="pager-spacer"></span>{%- endif %}
+      </nav>
+      {%- endif %}
+    </article>
+    {% endblock %}
+  </main>
+
+  {% block toc %}
+  <aside class="toc-rail">
+    {%- if page and page.toc %}
+    {%- set toc_items = page.toc %}
+    {%- if toc_items | length == 1 and (toc_items | first).level == 1 %}
+      {%- set toc_items = (toc_items | first).children %}
+    {%- endif %}
+    {%- if toc_items %}
+    <nav class="toc" id="page-toc" aria-label="On this page">
+      <p class="toc-heading">On this page</p>
+      {% include "partials/toc-list.html" %}
+      <a class="toc-top" href="#content">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+        Back to top
+      </a>
+    </nav>
+    {%- endif %}
+    {%- endif %}
+  </aside>
+  {% endblock %}
+</div>
+
+{% include "partials/footer.html" %}
+{% include "partials/search-modal.html" %}
+
+<script src="{{ 'js/lunr.js' | url }}" defer></script>
+<script src="{{ 'js/theme.js' | url }}" defer></script>
+<script src="{{ 'js/search.js' | url }}" defer></script>
+{%- for script in config.extra_javascript %}
+<script src="{{ script | url }}"></script>
+{%- endfor %}
+</body>
+</html>

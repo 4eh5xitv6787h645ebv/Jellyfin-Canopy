@@ -1,0 +1,21 @@
+<div class="search-overlay" id="search-overlay" hidden>
+  <div class="search-modal" role="dialog" aria-modal="true" aria-label="Search documentation">
+    <form class="search-head" role="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input id="search-input" type="search" placeholder="Search documentation…"
+             aria-label="Search documentation" autocomplete="off" autocapitalize="off"
+             spellcheck="false" role="combobox" aria-expanded="false"
+             aria-controls="search-results" aria-activedescendant="">
+      <button type="button" class="search-close" id="search-close" aria-label="Close search">Esc</button>
+    </form>
+    <div class="search-body">
+      <ul id="search-results" role="listbox" aria-label="Search results"></ul>
+      <p class="search-status" id="search-status" role="status">Type to search the documentation.</p>
+    </div>
+    <div class="search-foot" aria-hidden="true">
+      <span><kbd>&#8593;</kbd><kbd>&#8595;</kbd> navigate</span>
+      <span><kbd>Enter</kbd> open</span>
+      <span><kbd>Esc</kbd> close</span>
+    </div>
+  </div>
+</div>

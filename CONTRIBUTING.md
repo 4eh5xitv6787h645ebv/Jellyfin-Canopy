@@ -16,9 +16,7 @@ You can contribute code through:
 
 ### 2. Translation Contributions
 
-Help make Jellyfin Elevate accessible to more users by contributing translations through Weblate:
-
-- https://hosted.weblate.org/projects/jellyfinelevate/
+Help make Jellyfin Elevate accessible to more users by contributing translations. Locale JSON files live in `Jellyfin.Plugin.JellyfinElevate/js/locales/` (one per language, `en.json` is the base). To add or update a language, edit the relevant file and open a pull request; `npm run validate-translations` must pass, and all 26 locales must stay in sync with `en.json`.
 
 See the [Contributing Translations](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Elevate/faq-support/contributing-translations/) section for details.
 

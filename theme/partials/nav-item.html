@@ -1,0 +1,23 @@
+{#- Renders one navigation item; recurses for sections via self-include.
+    Expects `nav_item` in context (mkdocs recursive-include pattern). -#}
+{%- if nav_item.children %}
+<li class="nav-section{% if nav_item.active %} is-active{% endif %}">
+  <details open>
+    <summary class="nav-summary{% if nav_item.active %} is-active{% endif %}">
+      <span>{{ nav_item.title }}</span>
+      <svg class="nav-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+    </summary>
+    <ul class="nav-list">
+      {%- for nav_item in nav_item.children %}
+      {% include "partials/nav-item.html" %}
+      {%- endfor %}
+    </ul>
+  </details>
+</li>
+{%- else %}
+<li class="nav-leaf">
+  <a class="nav-link{% if nav_item == page %} is-active{% endif %}"
+     href="{{ nav_item.url | url }}"
+     {%- if nav_item == page %} aria-current="page"{% endif %}>{{ nav_item.title }}</a>
+</li>
+{%- endif %}

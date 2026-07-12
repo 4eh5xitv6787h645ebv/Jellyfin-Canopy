@@ -1,0 +1,16 @@
+{#- Renders the on-page table of contents (levels 2–3).
+    Expects `toc_items` in context. -#}
+<ul class="toc-list">
+  {%- for item in toc_items %}
+  <li>
+    <a href="{{ item.url }}">{{ item.title }}</a>
+    {%- if item.children %}
+    <ul>
+      {%- for child in item.children %}
+      <li><a href="{{ child.url }}">{{ child.title }}</a></li>
+      {%- endfor %}
+    </ul>
+    {%- endif %}
+  </li>
+  {%- endfor %}
+</ul>
