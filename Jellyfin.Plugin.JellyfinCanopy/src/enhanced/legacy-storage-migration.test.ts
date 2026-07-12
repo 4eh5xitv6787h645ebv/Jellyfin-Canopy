@@ -74,7 +74,7 @@ describe('migrateLegacyClientStorage', () => {
 
             migrateLegacyClientStorage();
 
-            expect(getUserRowIds('movies' as never)).toEqual(['trending', 'upcoming']);
+            expect(getUserRowIds('movies')).toEqual(['trending', 'upcoming']);
             expect(localStorage.getItem('je-discovery-rows:user-1:movies')).toBeNull();
         });
 
@@ -84,7 +84,7 @@ describe('migrateLegacyClientStorage', () => {
 
             migrateLegacyClientStorage();
 
-            expect(getUserRowIds('tv' as never)).toEqual([]);
+            expect(getUserRowIds('tv')).toEqual([]);
         });
 
         it('never overwrites rows a Canopy build already wrote', () => {
