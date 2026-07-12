@@ -509,16 +509,22 @@ integration** master toggle.
 - Require all episodes watched (optional)
 - Configurable threshold (default: **2** episodes remaining)
 
-- **Next in collection** — when a movie belongs to a TMDB collection, the next
-  title is chosen by **release order**, not by the collection's raw list order,
-  so a prequel or spin-off is never requested ahead of the actual next film
-  (titles with no release date sort last).
-
 #### Auto Movie Request:
+
+!!! note "Requires a TMDB API Key"
+
+    Auto Movie Requests use TMDB to resolve a movie's collection and pick the
+    next title, so they need a **TMDB API Key** (entered on the Elsewhere or
+    Seerr tab). With no key configured the feature does nothing. (Auto Season
+    Requests do not need a TMDB key.)
 
 - Trigger on playback start
 - Trigger after X minutes watched (default: **20** minutes)
 - Check release date (only request if released)
+- **Next in collection** — when a movie belongs to a TMDB collection, the next
+  title is chosen by **release order**, not by the collection's raw list order,
+  so a prequel or spin-off is never requested ahead of the actual next film
+  (titles with no release date sort last).
 - **Quality Profile Mode** — how the auto request picks its Radarr target:
   *Default* (Seerr uses its default Radarr server and quality profile),
   *Original* (uses the same quality profile as the movie being watched, falling
