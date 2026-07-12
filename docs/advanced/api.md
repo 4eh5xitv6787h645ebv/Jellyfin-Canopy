@@ -1,4 +1,4 @@
-## Jellyfin Elevate API
+# Jellyfin Elevate API
 
 !!! note "Scope of this page"
     This page documents the **external-integration surface** of the `/JellyfinElevate/*` API — the endpoints meant to be called by external applications and scripts. Many additional admin- and UI-internal endpoints exist and are intentionally omitted here.
@@ -147,7 +147,7 @@ curl -X GET \
 
 Submits a media request to Seerr on behalf of the specified user.
 
-- `mediaType` can be `tv` or `movie`\
+- `mediaType` can be `tv` or `movie`
 - `mediaId` is the **TMDB ID** of the item
 
 ```bash

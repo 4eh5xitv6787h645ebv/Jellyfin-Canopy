@@ -1,3 +1,5 @@
+# Installation Troubleshooting
+
 ## Plugin Not Appearing After Installation
 
 **Check Installation Status:**

@@ -22,7 +22,7 @@ Search, request, and discover media directly from Jellyfin using your Seerr inst
     - **View request status** - pending, approved, available
 - **Recommendations + Discovery** - Recommendations and similar items on detail pages
 - **Issue Reporting** - Report problems directly to Seerr
-- **Watchlist Sync** - Auto-add requested media to Jellyfin watchlist *([requires the KefinTweaks plugin](https://github.com/ranaldsgift/KefinTweaks)*)
+- **Watchlist Sync** - Auto-add requested media to Jellyfin watchlist (*[requires the KefinTweaks plugin](https://github.com/ranaldsgift/KefinTweaks)*)
 
 
 !!! tip "How it works"
@@ -67,6 +67,23 @@ Search, request, and discover media directly from Jellyfin using your Seerr inst
 - **Processing** - Actively downloading
 - **Declined** - Request was declined by an admin
 - **Not Requested** - Click to request
+
+#### Seerr-Only Results Filter
+
+By default the search page shows both Jellyfin and Seerr results. To focus on
+Seerr alone, **double-click** the Seerr search icon (**double-tap** on touch
+devices, or focus it and press ++enter++ / ++space++). This toggles a "show only
+Seerr results" mode that hides the Jellyfin result sections and moves the Seerr
+section to the top; a *Showing results only from Seerr* toast confirms the
+change. Toggle it again to restore all sections (a *Showing all search results*
+toast confirms).
+
+!!! note
+
+    The filter is only available while the Seerr icon is **Active** — that is,
+    Seerr is connected and your Jellyfin user is linked (see [Icon States](#icon-states)).
+    The icon's tooltip reflects the current mode ("Double-click to show only Seerr
+    results" / "Double-click to show all results").
 
 ### Parental-Rating Filtering
 
@@ -445,9 +462,9 @@ If reviews, elsewhere, or Seerr icons not working:
 
 ### URL Mappings
 
-Jellyfin and Seerr URLs can be mapped. This changes the Seerr URLs displayed to users, depending on which URL that access Jellyfin
+Jellyfin and Seerr URLs can be mapped. This changes the Seerr URLs displayed to users, depending on which URL is used to access Jellyfin.
 
-Useful for mapping Seerr URLs to Jellyfin URls, for **local access** (LAN) and **remote access**
+Useful for mapping Seerr URLs to Jellyfin URLs, for **local access** (LAN) and **remote access**
 
 ```text title="Formatting"
 jellyfin_url|seerr_url

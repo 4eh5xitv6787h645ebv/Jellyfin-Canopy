@@ -146,7 +146,7 @@ Neither service is mandatory — tags sync from whichever you set up. A movie-on
 5. Configure tag settings (see below)
 6. Click **Save**
 
-!!! important "Tags only populate when the sync task runs"
+!!! warning "Tags only populate when the sync task runs"
 
     Tag syncing is performed by the scheduled task **"Sync Tags from *arr to Jellyfin"** (Dashboard → Scheduled Tasks). Tags appear on items only after this task runs — trigger it manually the first time, then add a schedule trigger so it runs periodically and picks up new items automatically.
 

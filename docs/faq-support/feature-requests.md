@@ -1,4 +1,4 @@
-## Submit Feature Requests
+# Submit Feature Requests
 
 Feature ideas are handled in **[GitHub Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/discussions)** — that is where proposals are gathered, discussed, and prioritized.
 

@@ -1,4 +1,4 @@
-## How can I report bugs?
+# How can I report bugs?
 
 !!! tip
 

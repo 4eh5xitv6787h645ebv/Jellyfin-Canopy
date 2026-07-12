@@ -46,7 +46,7 @@ automatically on the next page load.
    - **Favicon** - Browser tab icon
    - **Apple Touch Icon** - Icon shown when adding to the iOS Home Screen (180×180 PNG)
 5. Click **Save**
-6. Force refresh browser (Ctrl+F5)
+6. Force refresh browser (++ctrl+f5++)
 
 ### Image Requirements
 

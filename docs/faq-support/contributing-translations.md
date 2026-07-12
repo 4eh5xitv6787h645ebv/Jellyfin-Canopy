@@ -1,4 +1,4 @@
-## How can I contribute translations?
+# How can I contribute translations?
 
 Translations live as JSON files in the repository — one per locale in
 `Jellyfin.Plugin.JellyfinElevate/js/locales/`. To add or update a language, edit

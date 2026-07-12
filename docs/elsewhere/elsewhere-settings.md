@@ -49,7 +49,7 @@ setting it in one place is enough. It unlocks:
 
 ## Configuration Options
 
-## Default Region
+### Default Region
 
 Select the primary region for streaming availability checks. Empty defaults to US.
 
@@ -67,7 +67,7 @@ Select the primary region for streaming availability checks. Empty defaults to U
 - `ES` - Spain
 - `IT` - Italy
 
-## Default Providers
+### Default Providers
 
 Comma-separated list of streaming provider names to show by default. Leave blank to show all.
 
@@ -87,7 +87,7 @@ Netflix,Hulu,Disney Plus
 - Hulu
 - Crunchyroll
 
-## Ignore Providers
+### Ignore Providers
 
 Comma-separated list of provider names to hide from results. **Supports regex patterns** for advanced filtering.
 
@@ -117,7 +117,7 @@ Multiple patterns:
 - Remove free streaming options
 - Exclude rental/purchase-only services
 
-## Custom Branding
+### Custom Branding
 
 **Custom Branding Message** (labeled "Custom Branding Message" in the config page):
 
@@ -132,7 +132,7 @@ Multiple patterns:
 - Provide a URL or path to the image file (e.g. a full `https://` URL or a local path like `/web/assets/img/icon.png`)
 - Leave empty to show the message text with no icon
 
-## Per-user panel settings
+## Per-User Panel Settings
 
 The settings above are the server-wide **admin defaults**. Each user can also override the
 region and provider filters just for themselves, directly from the Elsewhere panel on any
@@ -166,7 +166,7 @@ opens this dialog simply keeps the admin Default Region and Default Providers.
 
 ## Troubleshooting
 
-## Elsewhere Not Showing
+### Elsewhere Not Showing
 
 **Check Configuration:**
 
@@ -181,7 +181,7 @@ opens this dialog simply keeps the admin Default Region and Default Providers.
 - Use VPN if needed
 - Check [Seerr troubleshooting](https://docs.seerr.dev/troubleshooting#tmdb-failed-to-retrievefetch-xxx) for TMDB access issues
 
-## No Providers Showing
+### No Providers Showing
 
 **Possible Causes:**
 

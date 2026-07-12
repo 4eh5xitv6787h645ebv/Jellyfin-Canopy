@@ -34,6 +34,7 @@ An integrated suite of playback, discovery, customization and media-management f
 ### 🔍 Elsewhere
 - **Streaming Provider Lookup** - See where media is available
 - **Multi-region Support** - Check availability across regions
+- **User Reviews** - Users write and rate 1–5★ reviews, with admin moderation
 
 ### 🪼 Seerr
 - **Search Integration** - Request media from Jellyfin search
@@ -51,8 +52,10 @@ An integrated suite of playback, discovery, customization and media-management f
 
 ### 🔗 *arr Integration
 - **Quick Links** - Jump to Sonarr, Radarr, Bazarr pages
+- **Search & Interactive Search** - Trigger an *arr search or pick a release by hand from the item menu; Monitor/Add (admin only)
 - **Tag Links** - Display and filter *arr tags
 - **Calendar View** - Upcoming releases from Sonarr/Radarr
+- **Requests Page** - Monitor download queue and status
 
 ### 🫣 [Spoiler Guard](spoiler-guard/spoiler-guard-features.md)
 - **Per-User Opt-In** - Protect individual shows, movies, and collections
@@ -64,4 +67,6 @@ An integrated suite of playback, discovery, customization and media-management f
 - **Theme Selector** - Choose from multiple color variants
 - **Colored Icons** - Activity and plugin icons
 - **Login Images** - User avatars on login page
+- **Active Streams Widget** - Live session monitor with admin Stop/Message/Broadcast
+- **Maintenance Mode** - Temporarily lock users out during maintenance (admin)
 - **Multi-language** - Available in 26 languages

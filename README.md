@@ -58,7 +58,7 @@ Jellyfin Elevate is developed **entirely with AI** (agentic coding tools driving
 - **Advanced Keyboard Shortcuts** - Comprehensive hotkeys for navigation and playback
 - **Smart Bookmarks** - Save and jump to timestamps with visual markers
 - **Custom Pause Screen** - Beautiful overlay with media info
-- **Auto-Skip Intros/Outros** - Seamless binge-watching (requires Intro Skipper plugin)
+- **Auto-Skip Intros/Outros** - Seamless binge-watching (requires media segments — e.g. the Intro Skipper plugin or any other segment provider)
 - **Custom Subtitle Colors** - Full color customization with alpha support
 
 ### 🙈 Content Management
@@ -82,6 +82,7 @@ Jellyfin Elevate is developed **entirely with AI** (agentic coding tools driving
 
 ### 🔗 *arr Integration
 - **Quick Links** - Jump to Sonarr, Radarr, Bazarr pages (admin only)
+- **Search & Interactive Search** - Trigger an *arr search or pick a release by hand from the item menu; Monitor/Add (admin only)
 - **Tag Links** - Display and filter *arr tags
 - **Calendar View** - Upcoming releases from Sonarr/Radarr
 - **Requests Page** - Monitor download queue and status
@@ -96,12 +97,15 @@ Jellyfin Elevate is developed **entirely with AI** (agentic coding tools driving
 ### 🔍 Discovery
 - **Elsewhere Integration** - See where media is available to stream
 - **TMDB Reviews** - Display user reviews from TMDB
+- **User Reviews** - Users write and rate 1–5★ reviews, with admin moderation
 - **Random Button** - Discover content in your library
 
 ### 🎨 Customization
 - **Custom Branding** - Upload your own logos, banners, and favicon
 - **Theme Selector** - Choose from multiple color variants
 - **Extensive CSS Options** - Customize every visual element
+- **Active Streams Widget** - Live session monitor with admin Stop, Message, and Broadcast controls
+- **Maintenance Mode** - Temporarily lock users out with a login banner and in-session notice (admin)
 - **Multi-language Support** - Available in 26 languages
 
 <br>

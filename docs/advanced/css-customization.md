@@ -11,7 +11,6 @@ Customization options are available for many features
     the free-form **Custom CSS Code** box below, which is admin-authored and
     applied verbatim by Jellyfin. See [Client Security → X2](client-security.md#x2-sanitize-css-context-values).
 
-<!-- preferred admonitions formatting -->
 !!! note "Applying Custom CSS"
 
     **How to apply custom CSS:**
@@ -38,7 +37,6 @@ Hide or customize pause screen elements.
 
 ## Tags
 
-<!-- todo: titles for code blocks -->
 ### Quality Tags
 
 Customize quality tag appearance.
@@ -145,6 +143,43 @@ Customize quality tag appearance.
 **Hide specific rating:**
 ```css
 .rating-tag-critic {
+    display: none !important;
+}
+```
+
+### Rating Tag OSD CSS
+
+When **Show Rating in Video Player** is enabled, the plugin injects the item's
+TMDB and Rotten Tomatoes ratings into the video player OSD, next to the "Ends
+at" time. Its default styles live in an injected `<style id="je-osd-rating-style">`
+element, so override them with `!important` (or higher specificity).
+
+Available hooks:
+
+- `#je-osd-rating-container` – the rating container span; carries a
+  `data-item-id` attribute set to the current item's id (e.g.
+  `#je-osd-rating-container[data-item-id]`)
+- `.je-chip.tmdb` / `.je-chip.critic` – the TMDB (community) and Rotten Tomatoes
+  (critic) chips
+- `.je-star` – the star glyph in the TMDB chip
+- `.je-text` – the numeric label (rating value or critic percent)
+- `.je-tomato` with `.fresh` / `.rotten` – the Rotten Tomatoes glyph (**fresh**
+  when the critic score is 60 or above, **rotten** below 60)
+
+**Restyle the rating chips:**
+```css
+#je-osd-rating-container .je-chip {
+    padding: 3px 8px !important;
+    border-radius: 6px !important;
+}
+
+/* Recolor the TMDB score */
+#je-osd-rating-container .je-chip.tmdb .je-text {
+    color: #00a4dc !important;
+}
+
+/* Hide the Rotten Tomatoes critic chip */
+#je-osd-rating-container .je-chip.critic {
     display: none !important;
 }
 ```
@@ -270,7 +305,7 @@ Available hooks:
 
     **Automatic Theme Detection:**
 
-    The Enhanced Panel automatically detects your active theme using unique CSS variables and applies appropriate styling without any configuration needed. It detects most popular Jellyfin themes.
+    The Enhanced panel automatically detects your active theme using unique CSS variables and applies appropriate styling without any configuration needed. It detects most popular Jellyfin themes.
 
     **Supported Themes:**
 

@@ -2,8 +2,6 @@
 
 ## General Questions
 
-<!-- todo: make these collapsible  -->
-
 ### What is Jellyfin Elevate?
 
 Jellyfin Elevate is a comprehensive plugin that bundles advanced features and customizations for Jellyfin. It adds keyboard shortcuts, visual enhancements, Seerr integration, custom pause screens, quality tags, and much more — all in one convenient package.
@@ -101,9 +99,6 @@ Auto-skip reads Jellyfin 12's native Media Segments and seeks to the segment's e
 
 ### Seerr integration not connecting?
 
-<!-- todo -->
-<!-- ![Seerr Settings](../images/jellyseerr.png) -->
-
 **Check Configuration:**
 
 1. Verify Seerr URL is correct and accessible
@@ -126,8 +121,7 @@ Auto-skip reads Jellyfin 12's native Media Segments and seeks to the segment's e
 
 3. Import your Jellyfin users
 
-<!-- todo -->
-<!-- ![Jellyfin Sign-In](../images/jellyfin-signin.png) -->
+![Jellyfin Sign-In](../images/jellyfin-signin.png)
 
 **Import Users:**
 
@@ -154,7 +148,6 @@ Option B (manual in Seerr):
 - Users WITH access: ![Users with access](../images/users-with-access.png)
 
 - Users WITHOUT access: ![Users without access](../images/users-no-access.png)
-<!-- todo -->
 
 **Check Logs:**
 
@@ -183,7 +176,7 @@ Option B (manual in Seerr):
 
 **Clear Cache:**
 
-1. Hard refresh browser (Ctrl+F5)
+1. Hard refresh browser (++ctrl+f5++)
 
 2. Clear all browser cache
 
@@ -199,11 +192,11 @@ Poster tags are drawn from a server-side tag cache that the plugin keeps current
 
 3. Execute the task manually *(click the button: `▶︎`)*
 
-4. Hard refresh your browser (Ctrl+F5) once it finishes
+4. Hard refresh your browser (++ctrl+f5++) once it finishes
 
 !!! tip "First install"
 
-    After a fresh install, run **Build Tag Cache** once to build the initial cache — otherwise poster tags may not appear until the first nightly run.
+    The server-side tag cache is built automatically on the first startup after install (and rebuilt nightly). If poster tags still don't appear, you can trigger a rebuild manually with **Build Tag Cache** (Dashboard → Scheduled Tasks).
 
 **Check Metadata:**
 
@@ -337,7 +330,7 @@ Use Custom CSS in Jellyfin settings:
 1. Go to **Dashboard** → **General** → **Custom CSS**
 2. Add your custom styles
 3. Click **Save**
-4. Refresh browser (Ctrl+F5)
+4. Refresh browser (++ctrl+f5++)
 
 **Examples:**
 
@@ -405,7 +398,7 @@ See [CSS Customization Guide](../advanced/css-customization.md) for complete CSS
 
 Yes, via Enhanced panel settings:
 
-1. Open Enhanced panel (press ++question-mark++)
+1. Open Enhanced panel (press `?`)
 
 2. Go to Settings tab
 

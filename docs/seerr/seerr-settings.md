@@ -132,7 +132,7 @@ When enabled, new Jellyfin users are automatically imported into Seerr the first
 
 ### Show Open Issue Indicator
 
-*Default: off.* When enabled, the **Report Issue** button turns orange and shows a
+**Default: Off.** When enabled, the **Report Issue** button turns orange and shows a
 count badge whenever the item already has open issues in Seerr, so users can tell at
 a glance that a problem has already been reported. Requires **Show 'Report Issue'
 Button**.
@@ -182,7 +182,7 @@ the user holds **REQUEST_4K** (or **REQUEST_4K_TV**).
 
 ### Show Request Quota Info
 
-*Default: on.* Request modals display a chip showing the user's current request usage
+**Default: On.** Request modals display a chip showing the user's current request usage
 and when their next request slot frees up, read from Seerr's per-user quota. When a
 request is blocked by quota, a detailed quota-error dialog is shown instead of a
 vanishing toast.
@@ -201,13 +201,13 @@ vanishing toast.
 
 ### Open Results in "More Info" Modal
 
-*Default: off.* Controls what happens when a user clicks a Seerr search result's title
+**Default: Off.** Controls what happens when a user clicks a Seerr search result's title
 or poster. When **off**, the result opens the item in Seerr. When **on**, an in-app
 **More Info** modal opens instead, keeping the user inside Jellyfin.
 
 ### Show "Request More" Button on Series
 
-*Default: on.* Adds a **Request More** button beside the Seasons heading on Series
+**Default: On.** Adds a **Request More** button beside the Seasons heading on Series
 detail pages whenever the show has unrequested seasons in Seerr, letting users request
 additional seasons without going through the search bar.
 

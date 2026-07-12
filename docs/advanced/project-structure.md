@@ -1,4 +1,4 @@
-## Project Structure
+# Project Structure
 
 The plugin is one C# project (the server side) plus one TypeScript module tree (the client), compiled into a single client artifact. The only entry point the browser loads directly is `js/plugin.js` — a small loader that boots the shared `JE` namespace (`window.JellyfinElevate`), fetches config/translations, and then loads the whole feature tree as **one esbuild bundle** (`dist/je.bundle.js`, built on every `dotnet build` and embedded in the plugin DLL — minified in production, unminified and served fresh (no-store) in dev mode — an external sourcemap ships in both).
 

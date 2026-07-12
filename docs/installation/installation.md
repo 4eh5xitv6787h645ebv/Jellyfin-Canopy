@@ -56,13 +56,13 @@ To add it:
 
 After restart:
 
-1. Refresh your browser *(`Ctrl+F5` or `Cmd+Shift+R`)*
+1. Refresh your browser *(++ctrl+f5++ or ++command+shift+r++)*
 2. Access the Jellyfin Elevate settings panel. Options:
     - In the sidebar, under the **Jellyfin Elevate** heading: click **Enhanced Panel**
     - Press `?`
 3. If you see the panel, installation was successful!
 
-## Next steps
+## Next Steps
 
 Most features are **off by default** and several need a one-time setup before they do anything. Open **Dashboard** → **Plugins** → **Jellyfin Elevate** and configure what you want:
 
@@ -73,7 +73,7 @@ Most features are **off by default** and several need a one-time setup before th
 
 Everything else (keyboard shortcuts, media tags, pause screen, bookmarks, and more) lives in the [Enhanced Settings](../enhanced/enhanced-settings.md) and the config-page tabs described below.
 
-## Where settings live
+## Where Settings Live
 
 Every admin option lives on one of the tabs in the plugin config page (**Dashboard** → **Plugins** → **Jellyfin Elevate**). This table maps each tab to what it configures and where it's documented:
 

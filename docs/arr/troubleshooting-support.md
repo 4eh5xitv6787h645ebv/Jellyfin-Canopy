@@ -1,3 +1,5 @@
+# *arr Troubleshooting & Support
+
 ## Troubleshooting
 
 ### Links Not Appearing
