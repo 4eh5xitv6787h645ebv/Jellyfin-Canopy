@@ -70,12 +70,12 @@ describe('migrateLegacyClientStorage', () => {
 
         it('adopts customized rows and the real consumer reads them back', () => {
             vi.stubGlobal('ApiClient', { getCurrentUserId: () => 'user-1' });
-            localStorage.setItem('je-discovery-rows:user-1:movies', JSON.stringify(['trending', 'upcoming']));
+            localStorage.setItem('je-discovery-rows:user-1:movie', JSON.stringify(['trending', 'upcoming']));
 
             migrateLegacyClientStorage();
 
-            expect(getUserRowIds('movies')).toEqual(['trending', 'upcoming']);
-            expect(localStorage.getItem('je-discovery-rows:user-1:movies')).toBeNull();
+            expect(getUserRowIds('movie')).toEqual(['trending', 'upcoming']);
+            expect(localStorage.getItem('je-discovery-rows:user-1:movie')).toBeNull();
         });
 
         it('preserves an explicitly-empty customization (hidden-everything is a choice)', () => {
@@ -88,13 +88,13 @@ describe('migrateLegacyClientStorage', () => {
         });
 
         it('never overwrites rows a Canopy build already wrote', () => {
-            localStorage.setItem('jc-discovery-rows:user-2:movies', JSON.stringify(['new']));
-            localStorage.setItem('je-discovery-rows:user-2:movies', JSON.stringify(['old']));
+            localStorage.setItem('jc-discovery-rows:user-2:movie', JSON.stringify(['new']));
+            localStorage.setItem('je-discovery-rows:user-2:movie', JSON.stringify(['old']));
 
             migrateLegacyClientStorage();
 
-            expect(localStorage.getItem('jc-discovery-rows:user-2:movies')).toBe(JSON.stringify(['new']));
-            expect(localStorage.getItem('je-discovery-rows:user-2:movies')).toBeNull();
+            expect(localStorage.getItem('jc-discovery-rows:user-2:movie')).toBe(JSON.stringify(['new']));
+            expect(localStorage.getItem('je-discovery-rows:user-2:movie')).toBeNull();
         });
     });
 
