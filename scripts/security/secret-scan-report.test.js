@@ -140,6 +140,17 @@ test('fingerprint is stable and never contains the raw secret', () => {
     assert.ok(!fp1.includes(RAW_SECRET), 'fingerprint must not embed the raw secret');
 });
 
+test('a secret in the Git FILE PATH is redacted from report + summary (still blocks)', () => {
+    // BI-SEC-020-PATH-LEAK: a verified secret committed in a file named after
+    // itself must not leak via the displayed path in the report/summary/artifact.
+    const r = evalJsonl(findingLine({ verified: true, file: `secrets/leak-${RAW_SECRET}.txt` }), { scannerExitCode: 0 });
+    assert.strictEqual(r.shouldFail, true);
+    const summary = S.renderSummary(r);
+    const report = JSON.stringify(S.buildReport(r));
+    assert.ok(!summary.includes(RAW_SECRET), 'summary leaks the secret via the file path');
+    assert.ok(!report.includes(RAW_SECRET), 'report leaks the secret via the file path');
+});
+
 test('report + summary never contain the raw secret', () => {
     const r = evalJsonl(findingLine({ verified: true }), { scannerExitCode: 0 });
     const summary = S.renderSummary(r);

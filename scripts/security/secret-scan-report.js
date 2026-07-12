@@ -102,6 +102,21 @@ function isVerified(finding) {
     return finding && finding.Verified === true;
 }
 
+/** Redact any raw-secret occurrence from a string that will be DISPLAYED (the Git
+ * path is scanner-controlled and can itself contain the secret, e.g. a file named
+ * `leak-<token>.txt`). Only reasonably-long secret values are substituted so
+ * ordinary path components aren't mangled; the original value is used solely
+ * inside the one-way fingerprint, never in the report/summary/artifact. */
+function redactSecrets(text, secrets) {
+    let out = String(text == null ? '' : text);
+    for (const s of secrets) {
+        if (typeof s === 'string' && s.length >= 6) {
+            out = out.split(s).join('<redacted-secret>');
+        }
+    }
+    return out;
+}
+
 /** Baseline is { allow: [{ fingerprint, reason, ... }] }. Returns a Set of
  * allowlisted fingerprints. A malformed baseline yields an empty set AND is
  * flagged so the caller can fail closed rather than trust an unreadable
@@ -144,7 +159,12 @@ function evaluate({ findings, parseErrors, scannerExitCode, baseline, baselineMa
             existing.verified = existing.verified || verified;
             existing.hasRawIdentity = existing.hasRawIdentity || rawId;
         } else {
-            byFp.set(fp, { detector: f.DetectorName || 'unknown', file, line, verified, fingerprint: fp, hasRawIdentity: rawId });
+            // Redact any secret material out of the DISPLAYED path before it is
+            // stored on the item (which is serialized into the report/summary/
+            // artifact). The unredacted path is only ever fed to fingerprint().
+            const rawSecrets = [f && f.Raw, f && f.RawV2];
+            const safeFile = redactSecrets(file, rawSecrets);
+            byFp.set(fp, { detector: redactSecrets(f.DetectorName || 'unknown', rawSecrets), file: safeFile, line, verified, fingerprint: fp, hasRawIdentity: rawId });
         }
     }
 
