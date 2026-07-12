@@ -1,6 +1,6 @@
 ## How can I report bugs?
 
-!!! success "Tip"
+!!! tip
 
     **Good Bug Reports Include:**
 

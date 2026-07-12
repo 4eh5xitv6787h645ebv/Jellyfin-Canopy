@@ -8,7 +8,7 @@ Jellyfin Elevate keeps open browser sessions in step with the server without man
 |---|---|
 | **Admin saves plugin configuration** | Every open session refetches the plugin config and applies it live — toggles that drive cheap, idempotent surfaces (e.g. tag overlays) re-render in place; everything else picks up the fresh values on its next page mount. No reload needed. |
 | **Watch state changes** (played/favorite/progress — from any device) | Watch-state-dependent overlays (rating/user-review tags) are rescanned so they match the new state. |
-| **Library changes** (items added/updated/removed) | Newly mounted cards are tagged as usual; a coalesced rescan picks up data changes behind already-visible cards. The *arr requests/downloads page refreshes its list when a monitored download lands in the library. |
+| **Library changes** (items added/updated/removed) | Newly mounted cards are tagged as usual; a coalesced rescan picks up data changes behind already-visible cards. The *arr Requests page refreshes its list when a monitored download lands in the library. |
 | **The plugin itself is updated** (new DLL while sessions are open) | Sessions still running the old client bundle detect the newer server version and show a **one-time toast** prompting a refresh. The toast only fires when the server version is strictly newer than the one the session loaded — never for a same-version session. |
 
 ## Honest limits

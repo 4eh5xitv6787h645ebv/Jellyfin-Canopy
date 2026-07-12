@@ -121,8 +121,7 @@ If you are **^^not^^ using the [file-transformation](https://github.com/IAmParad
         - /path/to/your/jellyfin/config/index.html:/jellyfin/jellyfin-web/index.html
   ```
 
-<!-- use a custom title -->
-!!! warning "Warning"
+!!! warning
 
     This method is not recommended and won't survive a `jellyfin-web` upgrade. The recommended method for Docker:
 
@@ -162,7 +161,7 @@ If clicking tabs in the plugin's admin configuration page (Elsewhere, Seerr, *ar
 
 If that doesn't help, try accessing the admin config page directly on your local network (bypassing Cloudflare) to confirm whether Cloudflare is the cause.
 
-See [GitHub issue #175](https://github.com/n00bcodr/Jellyfin-Enhanced/issues/175) for more context.
+See upstream [Jellyfin Enhanced issue #175](https://github.com/n00bcodr/Jellyfin-Enhanced/issues/175) for more context.
 
 ## Getting Help
 

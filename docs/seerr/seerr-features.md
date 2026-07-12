@@ -4,7 +4,7 @@ Search, request, and discover media directly from Jellyfin using your Seerr inst
 
 ![Seerr search results](../images/jellyseerr.png)
 
-!!! info "Note"
+!!! note
 
     **This plugin is NOT affiliated with Seerr.** Seerr is an independent project. This plugin simply integrates with it to enhance the Jellyfin experience.
 
@@ -18,7 +18,7 @@ Search, request, and discover media directly from Jellyfin using your Seerr inst
     - **4K TV Requests**
     - **Season selection**
 
-- **Requests Tab**
+- **Requests Page**
     - **View request status** - pending, approved, available
 - **Recommendations + Discovery** - Recommendations and similar items on detail pages
 - **Issue Reporting** - Report problems directly to Seerr
@@ -312,7 +312,7 @@ status chip updates immediately.
     season of a show you already have. This is why the control keys off the
     request status, not the media's availability.
 
-### Issues on Downloads Page
+### Issues on the Requests Page
 
 View and manage Seerr issues directly from the Requests page.
 
@@ -482,13 +482,15 @@ jellyfin_url|seerr_url
 
 ### Auto-Request Settings
 
-Automatically request media based on viewing behavior.
+Automatically request media based on viewing behavior. These settings are
+configured on the **Seerr** config tab and require the **Enable Seerr
+integration** master toggle.
 
 #### Auto Season Request:
 
 - Trigger when X episodes remaining in season
 - Require all episodes watched (optional)
-- Configurable threshold
+- Configurable threshold (default: **2** episodes remaining)
 
 - **Next in collection** — when a movie belongs to a TMDB collection, the next
   title is chosen by **release order**, not by the collection's raw list order,
@@ -498,7 +500,7 @@ Automatically request media based on viewing behavior.
 #### Auto Movie Request:
 
 - Trigger on playback start
-- Trigger after X minutes watched
+- Trigger after X minutes watched (default: **20** minutes)
 - Check release date (only request if released)
 - **Quality Profile Mode** — how the auto request picks its Radarr target:
   *Default* (Seerr uses its default Radarr server and quality profile),

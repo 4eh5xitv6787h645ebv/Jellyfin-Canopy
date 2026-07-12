@@ -11,7 +11,7 @@ Configure Sonarr, Radarr, and Bazarr integration: multi-instance links, calendar
 5. Configure tag filters (show/hide specific tags)
 
 ### CSS Customization
-See [ARR Tag Links CSS](../advanced/css-customization.md#arr-tag-links) for styling options.
+See [*arr Tag Links](../advanced/css-customization.md#arr-tag-links) for styling options.
 
 ---
 

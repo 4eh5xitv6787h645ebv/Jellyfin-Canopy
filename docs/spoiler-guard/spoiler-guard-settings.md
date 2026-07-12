@@ -4,7 +4,7 @@ Admin configuration for the **Spoiler Guard** section of the Jellyfin Elevate pl
 
 !!! info "Where to find it"
 
-    Jellyfin Dashboard → Plugins → **Jellyfin Elevate** → scroll to the **Spoiler Guard** section.
+    Jellyfin Dashboard → Plugins → **Jellyfin Elevate** → **Pages** tab → **Spoiler Guard** section.
 
 ---
 

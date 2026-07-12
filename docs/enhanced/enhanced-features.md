@@ -151,7 +151,7 @@ Administrators can review (and optionally manage) what other users have hidden, 
 
 **Configuration:**
 
-In **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Pages** → **Hidden Content** → **Admin Controls**, the **Let admins view and manage other users' hidden content** toggle enables the whole feature (the user-filter dropdown and the Edit toggle). On by default; turn it off to keep hidden lists private.
+In **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Pages** tab → **Hidden Content** → **Admin Controls**, the **Let admins view and manage other users' hidden content** toggle enables the whole feature (the user-filter dropdown and the Edit toggle). On by default; turn it off to keep hidden lists private.
 
 ---
 
@@ -252,7 +252,7 @@ Save timestamps and jump to specific moments with visual timeline markers.
 
 **Bookmark Management:**
 
-- Access via a native Home tab, the Plugin Pages sidebar link, or the Custom Tabs plugin (configured under the Bookmarks section of the plugin config; the native tab is recommended on Jellyfin 12's experimental layout)
+- Access via a native Home tab, the Plugin Pages sidebar link, or the Custom Tabs plugin (configured under the **Bookmarks** section of **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Pages** tab; the native tab is recommended on Jellyfin 12's experimental layout)
 - View all bookmarks across library
 - Clean up orphaned bookmarks
 - Detect and merge duplicates
@@ -311,7 +311,7 @@ Fine-tune subtitle appearance with presets and custom colors.
 - Size presets (Tiny, Small, Normal, Large, Extra Large, Gigantic)
 - Background opacity
 - Text shadow options
-- Position adjustments
+- Draggable subtitle position grid with a reset control (defaults: vertical 85%, horizontal 50%)
 
 **Custom Colors:**
 
@@ -411,9 +411,9 @@ View recommendations and similar items on detail pages.
 - Tag-based discovery
 - All with TV/Movies/All filtering
 
-### .arr Links Integration
+### *arr Links Integration
 
-![ARR links on an item detail page](../images/arr-links-item.png)
+![*arr links on an item detail page](../images/arr-links-item.png)
 
 Quick access to Sonarr, Radarr, and Bazarr (admin only).
 
@@ -577,6 +577,14 @@ Display age and birthplace information for cast members.
 - Age chips (top-left of cast cards)
 - Birthplace banner (bottom of cast cards)
 - Deceased styling (grayscale filter)
+
+!!! note "Birthplace & age-at-death need a TMDB API Key"
+
+    Birthplace and age-at-death are enriched from **TMDB** and require a **TMDB
+    API Key** to be set on the plugin config page (see [Elsewhere
+    Settings](../elsewhere/elsewhere-settings.md#getting-a-tmdb-api-key)).
+    Without a key, People Tags fall back to whatever is already in Jellyfin's
+    person metadata.
 
 !!! note "Caching"
 
@@ -756,7 +764,7 @@ Extensive CSS customization options. See [CSS Customization Guide](../advanced/c
 - Rating Tags CSS
 - Rating Tag OSD CSS
 - People Tags CSS
-- ARR Tag Links CSS
+- *arr Tag Links CSS
 - Enhanced Panel CSS
 
 

@@ -1,6 +1,6 @@
 # Other Settings
 
-Settings for custom branding, icon styles, extras, timeouts, and more. These are spread across several tabs of the plugin configuration page (**Dashboard** → **Plugins** → **Jellyfin Elevate**) rather than a single tab — each section below notes which tab (**Display**, **Playback**, **Extras**, or **Admin**) holds the setting.
+Settings for custom branding, icon styles, extras, timeouts, and more. These are spread across several tabs of the plugin configuration page (**Dashboard** → **Plugins** → **Jellyfin Elevate**) rather than a single tab — each section below notes which tab (**Overview**, **Display**, **Playback**, **Extras**, or **Admin**) holds the setting.
 
 ---
 
@@ -181,6 +181,27 @@ Jellyfin 12 ships two layouts — the **modern** React/MUI layout and the classi
 | **Clear All Client Caches** | Forces all connected clients to clear their localStorage on next page load. Use to reset client-side settings or fix corrupted state. |
 
 Translations are refreshed automatically by the **Refresh Translation Cache** scheduled task, which runs on server startup to signal connected clients to pick up fresh translations after a plugin update — there is no separate translation-cache button. By default the task has no periodic schedule; add an interval trigger in Jellyfin's *Scheduled Tasks* dashboard if you want it to run on a cadence.
+
+---
+
+## Overview Tab Quick Actions
+
+*Overview tab → Quick Actions*
+
+The **Overview** tab is otherwise a read-only dashboard, but its **Quick Actions** panel holds three one-click admin operations:
+
+| Action | Effect |
+|---|---|
+| **Re-test all service connections** | Re-runs the TMDB / Seerr / Sonarr / Radarr connection tests and refreshes the Service Status cards. Read-only — changes no settings. |
+| **Apply defaults to all users** | Saves the current configuration, then **overwrites every user's saved per-user settings** with the current admin defaults. |
+| **Clear all client tag caches** | Forces every connected client to rebuild its localStorage tag cache on the next page load. Equivalent to the **Clear All Client Caches** button above, scoped to tag caches. |
+
+!!! warning "Apply defaults to all users overwrites per-user settings"
+    **Apply defaults to all users** replaces the saved per-user preferences of **every** user on the
+    server with the current admin defaults. There is no per-user undo — a user's customized settings
+    are gone once you confirm. The button also saves the configuration currently on the page before
+    applying it, so it commits any unsaved edits in the form too. It asks for confirmation first, and
+    the new settings take effect after each user refreshes their browser.
 
 ---
 

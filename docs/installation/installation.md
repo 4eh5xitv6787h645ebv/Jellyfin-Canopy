@@ -61,3 +61,33 @@ After restart:
     - In the sidebar, under the **Jellyfin Elevate** heading: click **Enhanced Panel**
     - Press `?`
 3. If you see the panel, installation was successful!
+
+## Next steps
+
+Most features are **off by default** and several need a one-time setup before they do anything. Open **Dashboard** → **Plugins** → **Jellyfin Elevate** and configure what you want:
+
+- **TMDB API Key** — unlocks **Elsewhere**, **TMDB Reviews**, **Release Dates**, and **People-tag enrichment**. Enter it on the [Elsewhere Settings](../elsewhere/elsewhere-settings.md) page (the *Elsewhere* tab). Elsewhere itself is **on by default**, but it stays inert until a valid TMDB key is set.
+- **Seerr connection** — required for the [Seerr features](../seerr/seerr-settings.md) *and* for [Discovery](../discovery/discovery-settings.md). Seerr is **off** until you enable it and enter your Seerr URL + API key on the *Seerr* tab. Discovery's own toggle is on by default, but it shows nothing until a Seerr connection is configured.
+- **Sonarr / Radarr instances** — required for the [\*arr features](../arr/arr-settings.md). Add one or more instances on the *\*arr* tab.
+- **Spoiler Guard** — **off** until you enable it on the *Pages* tab. See [Spoiler Guard Settings](../spoiler-guard/spoiler-guard-settings.md).
+
+Everything else (keyboard shortcuts, media tags, pause screen, bookmarks, and more) lives in the [Enhanced Settings](../enhanced/enhanced-settings.md) and the config-page tabs described below.
+
+## Where settings live
+
+Every admin option lives on one of the tabs in the plugin config page (**Dashboard** → **Plugins** → **Jellyfin Elevate**). This table maps each tab to what it configures and where it's documented:
+
+| Config-page tab | Configures | Documentation |
+|---|---|---|
+| **Overview** | Read-only health snapshot (service-connection status, optional companion plugins, feature states) plus quick actions. Clicking a card jumps to the owning tab. | [Overview Quick Actions](../other/other-settings.md#overview-tab-quick-actions) |
+| **Display** | Enhanced display settings: UI preferences, media tags, icons & theme, random button, default language. | [Enhanced Settings](../enhanced/enhanced-settings.md) |
+| **Playback** | Enhanced playback settings: playback & tab-switch, auto-skip intros/outros, subtitles, panel & toast timing. | [Enhanced Settings](../enhanced/enhanced-settings.md) |
+| **Pages** | [Bookmarks](../enhanced/enhanced-features.md#smart-bookmarks), [Hidden Content](../other/other-features.md#hidden-content), [Spoiler Guard](../spoiler-guard/spoiler-guard-settings.md), [Requests Page](../arr/arr-features.md#requests-page), [Calendar Page](../arr/arr-features.md#calendar-page). | (per-feature links) |
+| **Seerr** | Seerr connection and Seerr integration features. | [Seerr Settings](../seerr/seerr-settings.md) |
+| **\*arr** | Sonarr / Radarr instances and *arr features. | [\*arr Settings](../arr/arr-settings.md) |
+| **Elsewhere** | Elsewhere panel, TMDB API key, TMDB Reviews, Release Dates. | [Elsewhere Settings](../elsewhere/elsewhere-settings.md) |
+| **Discovery** | Discovery / Trending feed (requires a Seerr connection). | [Discovery Settings](../discovery/discovery-settings.md) |
+| **Extras** | Custom branding, extras/UI-tweak toggles, Active Streams widget, Letterboxd links, splash screen. | [Other Settings](../other/other-settings.md) |
+| **Keyboard** | Keyboard shortcuts. | [Enhanced Settings](../enhanced/enhanced-settings.md) |
+| **Admin** | Maintenance Mode, Third-Party Assets, Developer Mode. | [Other Settings](../other/other-settings.md#maintenance-mode) |
+| **Docs** | Links to this documentation site. | — |

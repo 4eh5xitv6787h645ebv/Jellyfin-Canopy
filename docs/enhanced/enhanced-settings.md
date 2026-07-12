@@ -113,6 +113,21 @@ tags load instantly without per-page API calls. Disable it to fall back to the
 legacy per-page batch mode, where tags are computed client-side (not
 recommended). Set it in the **Media Tags** section of the plugin config page.
 
+#### Build Tag Cache scheduled task
+
+When the server-side cache is on, the plugin keeps it up to date for you, so you
+should rarely need to touch it:
+
+- **First run** — on the first startup after install the cache is built
+  automatically if it is empty, so poster tags work immediately.
+- **Daily rebuild** — the **Build Tag Cache** scheduled task
+  (`JellyfinElevateBuildTagCache`) runs a full rebuild every day at **03:00**.
+- **Kept current** — between rebuilds the cache is updated incrementally as
+  Jellyfin adds or changes items during library scans.
+
+If poster tags ever look missing or stale, run it manually from **Dashboard** →
+**Scheduled Tasks** → **Jellyfin Elevate** → **Build Tag Cache**.
+
 ### Persist Tag Fallback Cache in Browser Storage
 
 **Persist Tag Fallback Cache in Browser Storage**
@@ -155,6 +170,13 @@ Box, Netflix Style), **Size**, and **Font** on the plugin config page (Playback
 - **Per-user override** — each user can override all three in the Enhanced
   panel's **Settings** tab; their choice persists per user and wins over the
   admin default.
+- **Position** — the Enhanced panel's **Settings** tab has a draggable
+  subtitle **position grid**: click or drag anywhere on the grid to place the
+  subtitles, and use the **reset** button to return to the defaults. The
+  defaults are vertical **85%** and horizontal **50%**
+  (`SubtitleVerticalPosition` / `SubtitleHorizontalPosition`). Position is a
+  per-user setting and takes effect only when Jellyfin's subtitle style is set
+  to **Custom**.
 - **Disable Custom Subtitle Styles by default** — globally disables Jellyfin's
   custom subtitle style overrides so the source subtitle styling is shown
   unmodified. It is an admin default (config page) that each user can override

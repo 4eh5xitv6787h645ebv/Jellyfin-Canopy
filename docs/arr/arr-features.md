@@ -1,8 +1,8 @@
-# ARR Integration
+# *arr Integration
 
 Quick access to Sonarr, Radarr, and Bazarr from Jellyfin, plus calendar and download monitoring.
 
-!!! success "Note"
+!!! note
 
     ***arr links, Search, Interactive Search, and Manage are only visible to admin users.**
 
@@ -20,7 +20,7 @@ Quick access to Sonarr, Radarr, and Bazarr from Jellyfin, plus calendar and down
 
 ## Features
 
-The ARR integration provides convenient links to your Sonarr, Radarr, and Bazarr instances directly from Jellyfin item pages. Additionally, it can display *arr tags as clickable links and provide calendar and download monitoring pages.
+The *arr integration provides convenient links to your Sonarr, Radarr, and Bazarr instances directly from Jellyfin item pages. Additionally, it can display *arr tags as clickable links and provide calendar and download monitoring pages.
 
 - **Quick Links** - Jump to Sonarr, Radarr, Bazarr pages for any item
 - **Search & Interactive Search** - Trigger an automatic search, or pick a release by hand, from the item menu — without opening the arr UI
@@ -30,7 +30,7 @@ The ARR integration provides convenient links to your Sonarr, Radarr, and Bazarr
 - **Requests Page** - Monitor download queue and status
 - **Admin Only** - Links only visible to administrators
 
-## ARR Links
+## *arr Links
 
 ### Setup
 
@@ -118,7 +118,7 @@ The original `SonarrUrl`, `SonarrApiKey`, `RadarrUrl`, and `RadarrApiKey` fields
 - Automatically detects item type (movie/TV)
 - Shows relevant links only (Sonarr for TV, Radarr for movies)
 
-## ARR Tags
+## *arr Tags
 
 Display synced *arr tags as clickable links on item detail pages.
 

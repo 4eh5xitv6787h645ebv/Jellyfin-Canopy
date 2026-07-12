@@ -12,7 +12,7 @@ Customization options are available for many features
     applied verbatim by Jellyfin. See [Client Security → X2](client-security.md#x2-sanitize-css-context-values).
 
 <!-- preferred admonitions formatting -->
-!!! success "Applying Custom CSS"
+!!! note "Applying Custom CSS"
 
     **How to apply custom CSS:**
 

@@ -189,6 +189,22 @@ Option B (manual in Seerr):
 
 3. Restart browser
 
+**Rebuild the Server-Side Tag Cache:**
+
+Poster tags are drawn from a server-side tag cache that the plugin keeps current incrementally as your library changes, and rebuilds nightly via the **Build Tag Cache** scheduled task. If tags still look missing or stale after clearing the browser cache, run it manually:
+
+1. Go to **Dashboard** → **Scheduled Tasks**
+
+2. Under **Jellyfin Elevate**, find **Build Tag Cache**
+
+3. Execute the task manually *(click the button: `▶︎`)*
+
+4. Hard refresh your browser (Ctrl+F5) once it finishes
+
+!!! tip "First install"
+
+    After a fresh install, run **Build Tag Cache** once to build the initial cache — otherwise poster tags may not appear until the first nightly run.
+
 **Check Metadata:**
 
 - Quality tags require media file metadata
@@ -350,8 +366,11 @@ See [CSS Customization Guide](../advanced/css-customization.md) for complete CSS
 
 **Requirements:**
 
-- [file-transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) installed
 - Admin access to Jellyfin
+
+!!! info "No extra plugin needed"
+
+    Custom branding is served by Jellyfin Elevate's own built-in request-time middleware, which swaps in your uploaded logo/banner/favicon as jellyfin-web requests them. You do **not** need the File Transformation plugin (or any other plugin) for this.
 
 **Steps:**
 

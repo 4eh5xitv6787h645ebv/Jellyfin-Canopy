@@ -19,6 +19,16 @@
 4. Copy the API Key (v3 auth)
 5. Paste into plugin settings
 
+A single TMDB API key powers every TMDB-backed feature in the plugin. The same
+key is used whether you enter it on the **Elsewhere** tab or the **Seerr** tab —
+setting it in one place is enough. It unlocks:
+
+- **Elsewhere streaming availability** — the where-to-watch panel on item detail pages
+- **TMDB Reviews** — TMDB and user-written reviews on detail pages
+- **Release / Air Dates** — TMDB release-date and air-date lookups
+- **Seerr streaming-provider posters** — streaming-service icons on Seerr result cards, plus person ("More from Actor") and keyword/tag discovery
+- **People Tags** — birthplace and age enrichment for cast members on detail pages
+
 ## Setup
 
 1. Go to **Dashboard** → **Plugins** → **Jellyfin Elevate**
