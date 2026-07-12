@@ -78,8 +78,11 @@ We take the security of Jellyfin Elevate seriously. If you believe you have foun
 
 ## Automated Security Scanning
 
-Every push, pull request, and a daily schedule run the **Security Scan** workflow,
-which enforces (a green run is a real gate, not a formality):
+The **Security Scan** workflow runs on pushes to `main`/`master`, pull requests
+targeting `main`/`master`, a daily schedule, and manual dispatch. (Version-tag
+pushes are not scanned directly; release tags are expected to point at a `main`
+commit that was already scanned on its push.) It enforces — a green run is a real
+gate, not a formality:
 
 - **Secret scanning** — TruffleHog scans the full git history. A **verified**
   secret finding (or a scanner failure) **fails CI**; unverified findings are

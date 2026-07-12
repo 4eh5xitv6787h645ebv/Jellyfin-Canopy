@@ -73,16 +73,28 @@ function gitMeta(finding) {
     return { file: typeof git.file === 'string' ? git.file : '', line: Number(git.line) || 0 };
 }
 
-/** Stable, secret-free fingerprint: DetectorName + file + full SHA-256(raw match).
- * The raw match is hashed, never stored. The FULL 256-bit digest is used (not a
- * truncation) so the baseline's per-finding key has no collision margin that a
- * new secret could slip through. */
+/** Whether a finding carries usable raw identity (at least one of Raw/RawV2).
+ * A verified finding without it cannot be safely fingerprinted for allowlisting. */
+function hasRawIdentity(finding) {
+    return !!(finding && ((typeof finding.Raw === 'string' && finding.Raw !== '')
+        || (typeof finding.RawV2 === 'string' && finding.RawV2 !== '')));
+}
+
+/** Fully-opaque, secret-free fingerprint: a single SHA-256 over a length-delimited
+ * canonical tuple of (DetectorName, file, Raw, RawV2). Both raw fields are folded
+ * in (composite detectors put distinct credential parts in each), and the whole
+ * digest is used (no truncation). Because the file path is folded INTO the hash
+ * rather than concatenated in the clear, a filename that itself contains secret
+ * material is not exposed by the fingerprint. */
 function fingerprint(finding) {
     const detector = (finding && finding.DetectorName) || 'unknown';
     const { file } = gitMeta(finding);
-    const raw = (finding && (finding.Raw || finding.RawV2 || finding.Redacted)) || '';
-    const hash = crypto.createHash('sha256').update(String(raw)).digest('hex');
-    return `${detector}:${file}:${hash}`;
+    const raw = (finding && typeof finding.Raw === 'string') ? finding.Raw : '';
+    const rawV2 = (finding && typeof finding.RawV2 === 'string') ? finding.RawV2 : '';
+    const canonical = [detector, file, raw, rawV2]
+        .map((s) => `${Buffer.byteLength(String(s), 'utf8')}:${s}`)
+        .join('|');
+    return crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
 }
 
 function isVerified(finding) {
@@ -116,18 +128,34 @@ function loadBaseline(baselineObj) {
  * Core decision. Returns a structured result; the caller renders + sets exit code.
  */
 function evaluate({ findings, parseErrors, scannerExitCode, baseline, baselineMalformed }) {
-    const seen = new Set();
+    // Aggregate by fingerprint BEFORE classifying, and make verification MONOTONIC:
+    // if any record for a fingerprint is verified, the aggregate is verified. This
+    // prevents an unverified-first / verified-second ordering from dropping the
+    // verified occurrence.
+    const byFp = new Map();
+    for (const f of findings) {
+        const fp = fingerprint(f);
+        const { file, line } = gitMeta(f);
+        const verified = isVerified(f);
+        const rawId = hasRawIdentity(f);
+        const existing = byFp.get(fp);
+        if (existing) {
+            existing.verified = existing.verified || verified;
+            existing.hasRawIdentity = existing.hasRawIdentity || rawId;
+        } else {
+            byFp.set(fp, { detector: f.DetectorName || 'unknown', file, line, verified, fingerprint: fp, hasRawIdentity: rawId });
+        }
+    }
+
     const verifiedNew = [];
     const unverifiedNew = [];
     const baselinedHits = [];
-
-    for (const f of findings) {
-        const fp = fingerprint(f);
-        if (seen.has(fp)) continue; // de-dupe identical matches across commits
-        seen.add(fp);
-        const { file, line } = gitMeta(f);
-        const item = { detector: f.DetectorName || 'unknown', file, line, verified: isVerified(f), fingerprint: fp };
-        if (baseline.has(fp)) {
+    for (const item of byFp.values()) {
+        // A verified finding without raw identity (no Raw/RawV2) cannot be safely
+        // allowlisted by content, so it is never treated as baselined — it always
+        // blocks.
+        const baselinable = item.hasRawIdentity;
+        if (baselinable && baseline.has(item.fingerprint)) {
             baselinedHits.push(item);
         } else if (item.verified) {
             verifiedNew.push(item);
@@ -224,9 +252,22 @@ function main(argv) {
     // A non-numeric scanner exit is itself a fault (the workflow always passes it).
     const exitCode = Number.isFinite(scannerExitCode) ? scannerExitCode : 1;
 
-    const resultsRead = readFileSafe(args.results);
-    // A missing results file with a clean scanner exit means "no findings emitted";
-    // with a non-zero exit it is a scanner failure (handled by exitCode below).
+    // The results path MUST be a real, regular file the workflow just wrote — not a
+    // symlink or special file. A malicious PR could commit e.g.
+    // `results.jsonl -> /dev/null` inside the checkout to silently discard the
+    // scanner's findings (or `-> /dev/stderr` to leak Raw into logs). The workflow
+    // now writes under $RUNNER_TEMP (outside the PR checkout), and this is
+    // defense-in-depth: anything but a regular file — or a missing file — fails
+    // closed, since with the redirect a regular file is always created.
+    let resultsFault = null;
+    try {
+        const st = fs.lstatSync(args.results);
+        if (st.isSymbolicLink()) resultsFault = 'scanner results path is a symlink (rejected)';
+        else if (!st.isFile()) resultsFault = 'scanner results path is not a regular file';
+    } catch {
+        resultsFault = 'scanner results file is missing';
+    }
+    const resultsRead = resultsFault ? { text: '', missing: true } : readFileSafe(args.results);
     const { findings, parseErrors } = parseResults(resultsRead.text);
 
     let baselineObj = { allow: [] };
@@ -252,6 +293,12 @@ function main(argv) {
         baseline,
         baselineMalformed: malformed || baselineReadFailed,
     });
+
+    // A tampered/absent results file fails closed regardless of the finding set.
+    if (resultsFault) {
+        result.reasons.unshift(resultsFault);
+        result.shouldFail = true;
+    }
 
     const summary = renderSummary(result);
     const report = buildReport(result);

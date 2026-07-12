@@ -23,13 +23,13 @@ const S = require('./secret-scan-report.js');
 
 const RAW_SECRET = 'AKIAIOSFODNN7EXAMPLEXYZ';
 
-function findingLine({ detector = 'AWS', file = 'src/config.cs', line = 12, verified = false, raw = RAW_SECRET } = {}) {
+function findingLine({ detector = 'AWS', file = 'src/config.cs', line = 12, verified = false, raw = RAW_SECRET, rawV2 = undefined } = {}) {
     return JSON.stringify({
         DetectorName: detector,
         Verified: verified,
         Raw: raw,
-        RawV2: raw,
-        Redacted: raw.slice(0, 4) + '...REDACTED',
+        RawV2: rawV2 === undefined ? raw : rawV2,
+        Redacted: String(raw).slice(0, 4) + '...REDACTED',
         SourceMetadata: { Data: { Git: { file, line, commit: 'deadbeef' } } },
     });
 }
@@ -71,6 +71,34 @@ test('a NEW verified finding is NOT accepted by a non-empty baseline (no silent 
     // Baseline covers a DIFFERENT secret; a brand-new verified secret must still fail.
     const otherFp = S.fingerprint(JSON.parse(findingLine({ verified: true, raw: 'OLDACCEPTEDSECRET1' })));
     const r = evalJsonl(findingLine({ verified: true, raw: 'BRANDNEWSECRET2' }), { scannerExitCode: 0, baselineFps: [otherFp] });
+    assert.strictEqual(r.shouldFail, true);
+    assert.strictEqual(r.verifiedNew.length, 1);
+});
+
+test('a verified duplicate AFTER an unverified one still fails (monotonic verification)', () => {
+    // BI-SEC-020-VERIFIED-DEDUPE: same fingerprint, unverified first then verified.
+    const jsonl = findingLine({ verified: false }) + '\n' + findingLine({ verified: true });
+    const r = evalJsonl(jsonl, { scannerExitCode: 0 });
+    assert.strictEqual(r.shouldFail, true);
+    assert.strictEqual(r.verifiedNew.length, 1);
+    assert.strictEqual(r.unverifiedNew.length, 0);
+});
+
+test('same Raw but different RawV2 are distinct findings (composite detector)', () => {
+    // BI-SEC-020-INCOMPLETE-FINGERPRINT: only the RawV2 differs; the newer verified
+    // secret must NOT be absorbed by a baseline entry for the older one.
+    const oldFp = S.fingerprint(JSON.parse(findingLine({ verified: true, raw: 'SHARED', rawV2: 'OLDSECRET' })));
+    const newLine = findingLine({ verified: true, raw: 'SHARED', rawV2: 'NEWSECRET' });
+    assert.notStrictEqual(S.fingerprint(JSON.parse(newLine)), oldFp);
+    const r = evalJsonl(newLine, { scannerExitCode: 0, baselineFps: [oldFp] });
+    assert.strictEqual(r.shouldFail, true);
+    assert.strictEqual(r.verifiedNew.length, 1);
+});
+
+test('a verified finding with no raw identity is non-baselinable (always blocks)', () => {
+    const line = JSON.stringify({ DetectorName: 'X', Verified: true, Raw: '', RawV2: '', SourceMetadata: { Data: { Git: { file: 'f', line: 1 } } } });
+    const fp = S.fingerprint(JSON.parse(line));
+    const r = evalJsonl(line, { scannerExitCode: 0, baselineFps: [fp] });
     assert.strictEqual(r.shouldFail, true);
     assert.strictEqual(r.verifiedNew.length, 1);
 });
@@ -165,6 +193,25 @@ test('main() exits 0 on a clean scan', () => {
         fs.writeFileSync(results, '');
         const code = S.main(['--results', results, '--scanner-exit', '0']);
         assert.strictEqual(code, 0);
+    });
+});
+
+test('main() fails closed when the results path is a symlink', () => {
+    // BI-SEC-020-UNTRUSTED-SCAN-OUTPUT: a planted symlink must not be honored.
+    withTmp((dir) => {
+        const real = path.join(dir, 'real.jsonl');
+        fs.writeFileSync(real, ''); // empty => would otherwise be "clean"
+        const link = path.join(dir, 'results.jsonl');
+        fs.symlinkSync(real, link);
+        const code = S.main(['--results', link, '--scanner-exit', '0']);
+        assert.strictEqual(code, 1);
+    });
+});
+
+test('main() fails closed when the results file is missing', () => {
+    withTmp((dir) => {
+        const code = S.main(['--results', path.join(dir, 'nope.jsonl'), '--scanner-exit', '0']);
+        assert.strictEqual(code, 1);
     });
 });
 
