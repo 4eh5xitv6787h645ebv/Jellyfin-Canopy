@@ -78,17 +78,53 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests
         }
 
         [Fact]
-        public void KeepsExistingCanopyDataDirectoryWhenBothExist()
+        public void KeepsBothDataDirectoriesWhenBothContainData()
         {
-            Directory.CreateDirectory(Path.Combine(_dir, LegacyDataDir));
+            var legacyDir = Path.Combine(_dir, LegacyDataDir);
+            Directory.CreateDirectory(legacyDir);
+            File.WriteAllText(Path.Combine(legacyDir, "old.txt"), "elevate");
             var newDir = Path.Combine(_dir, NewDataDir);
             Directory.CreateDirectory(newDir);
             File.WriteAllText(Path.Combine(newDir, "marker.txt"), "canopy");
 
             Migrate();
 
-            Assert.True(Directory.Exists(Path.Combine(_dir, LegacyDataDir)));
+            // A genuine conflict is never auto-resolved; both survive intact.
+            Assert.Equal("elevate", File.ReadAllText(Path.Combine(legacyDir, "old.txt")));
             Assert.Equal("canopy", File.ReadAllText(Path.Combine(newDir, "marker.txt")));
+        }
+
+        [Fact]
+        public void RetriesTheMoveWhenAnEmptyCanopyDirectoryWasCreatedAfterAFailedMigration()
+        {
+            // Simulates: first upgrade's move failed, then a hosted service
+            // eagerly created the (empty) Canopy root before the next boot.
+            var legacyBranding = Path.Combine(_dir, LegacyDataDir, "custom_branding");
+            Directory.CreateDirectory(legacyBranding);
+            File.WriteAllText(Path.Combine(legacyBranding, "login.css"), ".login {}");
+            Directory.CreateDirectory(Path.Combine(_dir, NewDataDir));
+
+            Migrate();
+
+            Assert.False(Directory.Exists(Path.Combine(_dir, LegacyDataDir)));
+            Assert.Equal(
+                ".login {}",
+                File.ReadAllText(Path.Combine(_dir, NewDataDir, "custom_branding", "login.css")));
+        }
+
+        [Fact]
+        public void ConfigAdoptionSurvivesAStalePartialTempFile()
+        {
+            // Simulates a copy interrupted mid-write on a previous boot: the temp
+            // file exists (partial), the authoritative path was never published.
+            File.WriteAllText(Path.Combine(_dir, LegacyXml), "<PluginConfiguration><DevMode>true</DevMode></PluginConfiguration>");
+            File.WriteAllText(Path.Combine(_dir, NewXml + ".migrating"), "<PluginConfigur");
+
+            Migrate();
+
+            Assert.Equal(
+                "<PluginConfiguration><DevMode>true</DevMode></PluginConfiguration>",
+                File.ReadAllText(Path.Combine(_dir, NewXml)));
         }
 
         [Fact]

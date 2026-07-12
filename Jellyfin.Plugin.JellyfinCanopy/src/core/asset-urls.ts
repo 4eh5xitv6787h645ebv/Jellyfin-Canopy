@@ -43,6 +43,7 @@ export const ASSET_CDN_URLS = Object.freeze({
 export const EMBEDDED_ASSET_KEYS = Object.freeze([
     'jellyseerr/poster-fallback.svg',
     'ratings/ratings.css',
+    'branding/canopy-mark.svg',
 ] as const);
 
 export type EmbeddedAssetKey = (typeof EMBEDDED_ASSET_KEYS)[number];

@@ -79,31 +79,53 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 var legacyConfigPath = Path.Combine(configDir, LegacyAssemblyName + ".xml");
                 if (File.Exists(legacyConfigPath) && !File.Exists(newConfigFilePath))
                 {
-                    // Copy (not move) so a rollback to the old DLL still finds its file.
-                    File.Copy(legacyConfigPath, newConfigFilePath);
+                    // Copy (not move) so a rollback to the old DLL still finds its
+                    // file, and publish via temp + rename so an interrupted copy can
+                    // never leave a partial file at the authoritative path (which
+                    // would block every later retry behind the File.Exists guard).
+                    var tempPath = newConfigFilePath + ".migrating";
+                    File.Copy(legacyConfigPath, tempPath, overwrite: true);
+                    File.Move(tempPath, newConfigFilePath);
                     logInfo($"Migrated legacy {LegacyPluginName} configuration to {Path.GetFileName(newConfigFilePath)}.");
                 }
             }
             catch (Exception ex)
             {
-                logError($"Failed to migrate the legacy {LegacyPluginName} configuration file; starting with defaults: {ex.Message}");
+                logError($"Failed to migrate the legacy {LegacyPluginName} configuration file; starting with defaults (will retry next startup): {ex.Message}");
             }
 
             try
             {
                 var legacyDataDir = Path.Combine(configDir, LegacyAssemblyName);
                 var newDataDir = Path.Combine(configDir, newDataDirName);
-                if (Directory.Exists(legacyDataDir) && !Directory.Exists(newDataDir))
+                if (Directory.Exists(legacyDataDir))
                 {
-                    // Same parent directory, so this is an atomic rename — the cached
-                    // assets and per-user data can be large, copying is not an option.
-                    Directory.Move(legacyDataDir, newDataDir);
-                    logInfo($"Migrated legacy {LegacyPluginName} data directory to {Path.GetFileName(newDataDir)}.");
+                    // An empty Canopy directory is retry-safe debris: a hosted service
+                    // creates the root eagerly, so a failed first migration would
+                    // otherwise strand the legacy data forever behind the exists-check.
+                    if (Directory.Exists(newDataDir) && !Directory.EnumerateFileSystemEntries(newDataDir).Any())
+                    {
+                        Directory.Delete(newDataDir);
+                    }
+
+                    if (!Directory.Exists(newDataDir))
+                    {
+                        // Same parent directory, so this is an atomic rename — the cached
+                        // assets and per-user data can be large, copying is not an option.
+                        Directory.Move(legacyDataDir, newDataDir);
+                        logInfo($"Migrated legacy {LegacyPluginName} data directory to {Path.GetFileName(newDataDir)}.");
+                    }
+                    else
+                    {
+                        // Both roots hold data: never guess which one wins. Keep both
+                        // intact and say exactly where the stranded data lives.
+                        logError($"Both the legacy {LegacyPluginName} data directory ({legacyDataDir}) and its {PluginName} replacement contain data; leaving both untouched — move the legacy contents manually if anything is missing.");
+                    }
                 }
             }
             catch (Exception ex)
             {
-                logError($"Failed to migrate the legacy {LegacyPluginName} data directory; caches and per-user data will rebuild: {ex.Message}");
+                logError($"Failed to migrate the legacy {LegacyPluginName} data directory; caches and per-user data will rebuild (will retry next startup): {ex.Message}");
             }
         }
 

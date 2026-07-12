@@ -6,6 +6,7 @@
 // (Converted from js/enhanced/ui-panel-template.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
+import { assetUrl } from '../../core/asset-urls';
 import { escapeHtml } from '../../core/ui-kit';
 import { cssColorOr } from '../../core/css-safe';
 import { GITHUB_REPO } from './release-notes';
@@ -78,7 +79,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                 .shake-error { animation: shake 0.5s ease-in-out; }
             </style>
             <div style="padding: 18px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); background: ${headerFooterBg};">
-                <div style="font-size: 24px; font-weight: 700; margin-bottom: 8px; text-align: center; background: ${primaryAccentColor}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;">${JC.icon!(JC.IconName!.JELLYFISH)} Jellyfin Canopy</div>
+                <div style="font-size: 24px; font-weight: 700; margin-bottom: 8px; text-align: center;"><img src="${escapeHtml(assetUrl('branding/canopy-mark.svg'))}" alt="" width="28" height="24" style="vertical-align: -4px; margin-right: 8px;"><span style="background: ${primaryAccentColor}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Jellyfin Canopy</span></div>
                 <div style="text-align: center; font-size: 12px; color: rgba(255,255,255,0.8);">${escapeHtml(JC.t!('panel_version', { version: JC.pluginVersion }))}</div>
             </div>
             <div class="tabs">

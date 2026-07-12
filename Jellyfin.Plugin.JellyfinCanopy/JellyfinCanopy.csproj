@@ -66,6 +66,10 @@
          third-party asset cache; see Services/AssetCacheManifest.cs). -->
     <None Remove="Assets\poster-fallback.svg"/>
     <EmbeddedResource Include="Assets\poster-fallback.svg"/>
+    <!-- Canopy brand mark: the product logo shown by plugin-owned UI (settings
+         panel header), guaranteed available offline like every embedded asset. -->
+    <None Remove="Assets\canopy-mark.svg"/>
+    <EmbeddedResource Include="Assets\canopy-mark.svg"/>
     <!-- Colored ratings CSS: this repo's css/ratings.css is the source of truth
          (PRs land here), embedded so the asset is guaranteed available offline. -->
     <EmbeddedResource Include="..\css\ratings.css" Link="Assets\ratings.css" LogicalName="Jellyfin.Plugin.JellyfinCanopy.Assets.ratings.css"/>

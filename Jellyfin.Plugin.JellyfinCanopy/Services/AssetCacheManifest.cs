@@ -118,6 +118,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 "jellyseerr/poster-fallback.svg",
                 "Jellyfin.Plugin.JellyfinCanopy.Assets.poster-fallback.svg",
                 "image/svg+xml"),
+            // Canopy brand mark: the product logo for plugin-owned UI (settings
+            // panel header). Brand identity ships in the DLL, never off a CDN.
+            new EmbeddedAssetDescriptor(
+                "branding/canopy-mark.svg",
+                "Jellyfin.Plugin.JellyfinCanopy.Assets.canopy-mark.svg",
+                "image/svg+xml"),
             // Colored ratings CSS: this repo's css/ratings.css is the source of truth
             // (rating fixes are PRs to this repo), embedded at build time so it is
             // guaranteed available without any network fetch.

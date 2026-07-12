@@ -1088,11 +1088,15 @@
         // the entry to exist. Without masterKey in the predicate, disabling the
         // master feature would leave an orphan Custom Tabs entry that opens to
         // broken/empty content (the JC module behind it is off).
+        // `legacyHtml` is the marker the SAME entry carried before the 2.0
+        // rebrand (Elevate builds): the sync below rewrites a matching tab's
+        // ContentHtml in place so upgrades keep their tab (title, position)
+        // instead of stranding a dead entry and adding a duplicate.
         var CUSTOM_TAB_MANAGED_ENTRIES = [
             { masterKey: 'BookmarksEnabled',      parentKey: 'BookmarksUseCustomTabs',     autoKey: 'BookmarksAutoCreateCustomTab',     ownedKey: 'BookmarksCustomTabJeOwned',     title: 'Bookmarks',      html: '<div class="sections bookmarks"></div>' },
-            { masterKey: 'HiddenContentEnabled',  parentKey: 'HiddenContentUseCustomTabs', autoKey: 'HiddenContentAutoCreateCustomTab', ownedKey: 'HiddenContentCustomTabJeOwned', title: 'Hidden Content', html: '<div class="jellyfincanopy hidden-content"></div>' },
-            { masterKey: 'DownloadsPageEnabled',  parentKey: 'DownloadsUseCustomTabs',     autoKey: 'DownloadsAutoCreateCustomTab',     ownedKey: 'DownloadsCustomTabJeOwned',     title: 'Requests',       html: '<div class="jellyfincanopy requests"></div>' },
-            { masterKey: 'CalendarPageEnabled',   parentKey: 'CalendarUseCustomTabs',      autoKey: 'CalendarAutoCreateCustomTab',      ownedKey: 'CalendarCustomTabJeOwned',      title: 'Calendar',       html: '<div class="jellyfincanopy calendar"></div>' }
+            { masterKey: 'HiddenContentEnabled',  parentKey: 'HiddenContentUseCustomTabs', autoKey: 'HiddenContentAutoCreateCustomTab', ownedKey: 'HiddenContentCustomTabJeOwned', title: 'Hidden Content', html: '<div class="jellyfincanopy hidden-content"></div>', legacyHtml: '<div class="jellyfinelevate hidden-content"></div>' },
+            { masterKey: 'DownloadsPageEnabled',  parentKey: 'DownloadsUseCustomTabs',     autoKey: 'DownloadsAutoCreateCustomTab',     ownedKey: 'DownloadsCustomTabJeOwned',     title: 'Requests',       html: '<div class="jellyfincanopy requests"></div>', legacyHtml: '<div class="jellyfinelevate requests"></div>' },
+            { masterKey: 'CalendarPageEnabled',   parentKey: 'CalendarUseCustomTabs',      autoKey: 'CalendarAutoCreateCustomTab',      ownedKey: 'CalendarCustomTabJeOwned',      title: 'Calendar',       html: '<div class="jellyfincanopy calendar"></div>', legacyHtml: '<div class="jellyfinelevate calendar"></div>' }
         ];
 
         function isCustomTabsConfigShapeOk(cfg) {
@@ -1242,8 +1246,20 @@
                         savedConfig[entry.masterKey] === true;
                     var isOwned = savedConfig[entry.ownedKey] === true;
                     var idx = -1;
+                    var legacyIdx = -1;
                     for (var i = 0; i < cfg.Tabs.length; i++) {
                         if (cfg.Tabs[i].ContentHtml === entry.html) { idx = i; break; }
+                        if (legacyIdx === -1 && entry.legacyHtml && cfg.Tabs[i].ContentHtml === entry.legacyHtml) { legacyIdx = i; }
+                    }
+                    // Rebrand adoption: a tab still carrying this entry's pre-2.0
+                    // Elevate marker can only have been written for this plugin.
+                    // Rewrite the marker in place (title and position survive, no
+                    // duplicate is added); ownership stays whatever the persisted
+                    // owned flag says, exactly as for an exact-match entry.
+                    if (idx === -1 && legacyIdx !== -1) {
+                        cfg.Tabs[legacyIdx].ContentHtml = entry.html;
+                        idx = legacyIdx;
+                        changed = true;
                     }
                     if (shouldExist && idx === -1) {
                         cfg.Tabs.push({ Title: entry.title, ContentHtml: entry.html });
