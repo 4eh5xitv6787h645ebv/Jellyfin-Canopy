@@ -1,5 +1,5 @@
-// The Requests page (GET /JellyfinElevate/arr/requests, backing
-// JE.downloadsPage) must apply each caller's OWN Jellyfin parental-rating
+// The Requests page (GET /JellyfinCanopy/arr/requests, backing
+// JC.downloadsPage) must apply each caller's OWN Jellyfin parental-rating
 // limit server-side — exactly the gap SEERR-1 found: the controller returned
 // every row regardless of the caller's MaxParentalRating. A restricted user
 // must never be sent (nor rendered) a request whose title is above their
@@ -36,7 +36,7 @@ async function ensureRequest(page: any, mediaType: string, tmdbId: number): Prom
         try {
             await api.ajax({
                 type: 'POST',
-                url: api.getUrl('/JellyfinElevate/jellyseerr/request'),
+                url: api.getUrl('/JellyfinCanopy/jellyseerr/request'),
                 data: JSON.stringify({ mediaType: args.mediaType, mediaId: args.tmdbId }),
                 contentType: 'application/json',
                 dataType: 'json',
@@ -51,7 +51,7 @@ async function ensureRequest(page: any, mediaType: string, tmdbId: number): Prom
 async function requestTmdbIds(page: any): Promise<number[]> {
     return page.evaluate(async () => {
         const api = (window as any).ApiClient;
-        const res = await api.getJSON(api.getUrl('/JellyfinElevate/arr/requests?take=200'));
+        const res = await api.getJSON(api.getUrl('/JellyfinCanopy/arr/requests?take=200'));
         return ((res?.requests || []) as any[])
             .map((r) => Number(r.tmdbId))
             .filter((n) => Number.isFinite(n));
@@ -61,20 +61,20 @@ async function requestTmdbIds(page: any): Promise<number[]> {
 /** Open the ACTUAL Requests page and read the rendered request-card titles. */
 async function renderedRequestTitles(page: any): Promise<string[]> {
     await page.evaluate(() => {
-        (window as any).JellyfinElevate.downloadsPage.showPage();
+        (window as any).JellyfinCanopy.downloadsPage.showPage();
     });
     // Wait for the page container, then for the requests section to SETTLE:
     // either it rendered cards or an empty/error state (loadAllData resolved) —
-    // never assert while it still shows the `.je-loading` placeholder.
-    await page.waitForSelector('#je-downloads-page:not(.hide)', { timeout: 30_000 });
+    // never assert while it still shows the `.jc-loading` placeholder.
+    await page.waitForSelector('#jc-downloads-page:not(.hide)', { timeout: 30_000 });
     await page.waitForFunction(() => {
-        const section = document.querySelector('.je-requests-section');
+        const section = document.querySelector('.jc-requests-section');
         if (!section) return false;
-        if (section.querySelector('.je-loading')) return false;
-        return !!section.querySelector('.je-request-card, .je-empty-state');
+        if (section.querySelector('.jc-loading')) return false;
+        return !!section.querySelector('.jc-request-card, .jc-empty-state');
     }, undefined, { timeout: 30_000 });
     return page.evaluate(() =>
-        [...document.querySelectorAll('.je-requests-section .je-request-card .je-request-title')]
+        [...document.querySelectorAll('.jc-requests-section .jc-request-card .jc-request-title')]
             .map((el) => (el.textContent || '').trim())
     );
 }
@@ -84,13 +84,13 @@ async function declineRequestsFor(page: any, tmdbIds: number[]): Promise<void> {
     await page.evaluate(async (ids: number[]) => {
         const api = (window as any).ApiClient;
         try {
-            const res = await api.getJSON(api.getUrl('/JellyfinElevate/arr/requests?take=200'));
+            const res = await api.getJSON(api.getUrl('/JellyfinCanopy/arr/requests?take=200'));
             for (const row of (res?.requests || []) as any[]) {
                 if (ids.includes(Number(row.tmdbId)) && row.id != null) {
                     try {
                         await api.ajax({
                             type: 'POST',
-                            url: api.getUrl(`/JellyfinElevate/arr/requests/${row.id}/decline`),
+                            url: api.getUrl(`/JellyfinCanopy/arr/requests/${row.id}/decline`),
                             dataType: 'json',
                         });
                     } catch { /* best effort */ }

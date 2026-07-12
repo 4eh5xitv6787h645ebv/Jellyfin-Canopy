@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Builds the production client bundle: dist/je.bundle.js (+ external sourcemap).
+ * Builds the production client bundle: dist/jc.bundle.js (+ external sourcemap).
  *
  * The bundle is the whole TypeScript module tree, entry src/main.ts — esbuild
  * compiles TS natively and follows the real `import` edges, so execution order
@@ -20,7 +20,7 @@
  *
  * Deliberately NOT part of this bundle (they load out-of-band in js/plugin.js
  * and must stay individually fetchable):
- *   - the loader itself (js/plugin.js, served at /JellyfinElevate/script)
+ *   - the loader itself (js/plugin.js, served at /JellyfinCanopy/script)
  *   - splashscreen  (loaded early, before initialize())
  *   - login-image   (loaded pre-login, config-gated)
  *   - translations  (loaded before the component stage)
@@ -34,14 +34,14 @@ const fs = require('fs');
 const path = require('path');
 
 const REPO_ROOT = path.join(__dirname, '..');
-const PROJECT_DIR = path.join(REPO_ROOT, 'Jellyfin.Plugin.JellyfinElevate');
+const PROJECT_DIR = path.join(REPO_ROOT, 'Jellyfin.Plugin.JellyfinCanopy');
 const SRC_ROOT = path.join(PROJECT_DIR, 'src');
 const BOOTSTRAP_ROOT = path.join(SRC_ROOT, 'bootstrap');
 const OUT_DIR = path.join(PROJECT_DIR, 'dist');
-const OUT_FILE = path.join(OUT_DIR, 'je.bundle.js');
+const OUT_FILE = path.join(OUT_DIR, 'jc.bundle.js');
 
 // Out-of-band loaders: each compiles to its OWN dist/<name>.js IIFE (not part
-// of je.bundle.js) because js/plugin.js fetches them separately — before the
+// of jc.bundle.js) because js/plugin.js fetches them separately — before the
 // main bundle / before login. entryNames default to '[name]', so
 // src/bootstrap/splashscreen.ts -> dist/splashscreen.js, etc.
 const BOOTSTRAP_ENTRIES = ['splashscreen.ts', 'login-image.ts', 'translations.ts'];
@@ -60,7 +60,7 @@ function collectSrcModules(dir = SRC_ROOT) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) {
             // test/ is never bundled; bootstrap/ compiles to its own dist
-            // outputs (out-of-band loaders), not into je.bundle.js.
+            // outputs (out-of-band loaders), not into jc.bundle.js.
             return (entry.name === 'test' || entry.name === 'bootstrap') ? [] : collectSrcModules(full);
         }
         if (!entry.isFile() || !entry.name.endsWith('.ts')) return [];
@@ -103,14 +103,14 @@ function buildOptions() {
         // DevTools resolves stack traces to real src/ files. The map is embedded
         // alongside the bundle and served from the same dist/ route.
         sourcemap: 'linked',
-        sourceRoot: '/JellyfinElevate/js/',
+        sourceRoot: '/JellyfinCanopy/js/',
         outfile: OUT_FILE,
         metafile: true,
         logLevel: 'warning',
         banner: {
             js: devMode
-                ? '/* Jellyfin Elevate — generated DEV bundle (scripts/build-bundle.js --dev). Do not edit; sources live in src/. */'
-                : '/* Jellyfin Elevate — generated production bundle (scripts/build-bundle.js). Do not edit; sources live in src/. */',
+                ? '/* Jellyfin Canopy — generated DEV bundle (scripts/build-bundle.js --dev). Do not edit; sources live in src/. */'
+                : '/* Jellyfin Canopy — generated production bundle (scripts/build-bundle.js). Do not edit; sources live in src/. */',
         },
     };
 }
@@ -123,14 +123,14 @@ function bootstrapOptions() {
         format: 'iife',
         minify: !devMode,
         sourcemap: 'linked',
-        sourceRoot: '/JellyfinElevate/js/',
+        sourceRoot: '/JellyfinCanopy/js/',
         outdir: OUT_DIR,
         metafile: true,
         logLevel: 'warning',
         banner: {
             js: devMode
-                ? '/* Jellyfin Elevate — generated DEV bootstrap loader (scripts/build-bundle.js --dev). Do not edit; source lives in src/bootstrap/. */'
-                : '/* Jellyfin Elevate — generated production bootstrap loader (scripts/build-bundle.js). Do not edit; source lives in src/bootstrap/. */',
+                ? '/* Jellyfin Canopy — generated DEV bootstrap loader (scripts/build-bundle.js --dev). Do not edit; source lives in src/bootstrap/. */'
+                : '/* Jellyfin Canopy — generated production bootstrap loader (scripts/build-bundle.js). Do not edit; source lives in src/bootstrap/. */',
         },
     };
 }
@@ -156,7 +156,7 @@ async function build() {
         // a broken rebuild is reported (but keeps watching).
         const options = buildOptions();
         options.plugins = [{
-            name: 'je-verify',
+            name: 'jc-verify',
             setup(buildApi) {
                 buildApi.onEnd((result) => {
                     if (result.errors.length > 0) return;

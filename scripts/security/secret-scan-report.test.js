@@ -171,7 +171,7 @@ test('report + summary never contain the raw secret', () => {
 // ── main() integration via temp files: exit code + written report ────────────
 
 function withTmp(fn) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'je-secretscan-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jc-secretscan-'));
     try { return fn(dir); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 

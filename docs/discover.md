@@ -1,6 +1,6 @@
 # Discover & Request
 
-Jellyfin is great at playing what you already own. Jellyfin Elevate turns it into a place to *find* something to watch and *get* the things you don't have yet — without leaving the app. This guide covers the four features that make that happen:
+Jellyfin is great at playing what you already own. Jellyfin Canopy turns it into a place to *find* something to watch and *get* the things you don't have yet — without leaving the app. This guide covers the four features that make that happen:
 
 - **[Elsewhere](#elsewhere-where-else-a-title-is-streaming)** shows where a movie or show streams across services and regions, right on its detail page.
 - **[Discovery](#discovery-a-feed-to-find-something-to-watch)** adds a customizable feed of Trending, Popular, Upcoming and genre rows inside your libraries.
@@ -30,7 +30,7 @@ Elsewhere requires a **TMDB API key**. Everything else ships ready to go — **E
 
 !!! info "Prerequisites"
     - A **TMDB API key** ([free from TMDB](https://www.themoviedb.org/settings/api))
-    - The **Jellyfin Elevate** plugin installed (see [Getting Started](getting-started.md))
+    - The **Jellyfin Canopy** plugin installed (see [Getting Started](getting-started.md))
 
 #### Getting a TMDB API key
 
@@ -51,7 +51,7 @@ Elsewhere requires a **TMDB API key**. Everything else ships ready to go — **E
 
 ### Turn it on
 
-1. Go to **Dashboard → Plugins → Jellyfin Elevate**.
+1. Go to **Dashboard → Plugins → Jellyfin Canopy**.
 2. Open the **Elsewhere** tab.
 3. Confirm **Enable Elsewhere** is checked (it is on by default).
 4. Enter your **TMDB API Key**.
@@ -124,7 +124,7 @@ Each user's choices are saved server-side to their own `elsewhere.json`, so they
 
 Elsewhere's provider data can also appear on Seerr discovery and result cards, so people can see where a title already streams while deciding what to request. Turn it on from the **Seerr** tab:
 
-1. Go to **Dashboard → Plugins → Jellyfin Elevate → Seerr** tab.
+1. Go to **Dashboard → Plugins → Jellyfin Canopy → Seerr** tab.
 2. Check **Show Streaming Providers on Posters**.
 3. Click **Save**.
 
@@ -152,7 +152,7 @@ If a title shows **no providers**, it may not be available in the selected regio
 
 Discovery adds a customizable **rows-of-cards feed** — Trending, Popular, Upcoming, Top Rated, genre rows and more — right inside your Movies and TV Shows libraries. Instead of scrolling the same grid of what you own, you get a browsing surface for finding your next watch, with anything you don't have yet one tap away from a request.
 
-Every card behaves like the rest of Jellyfin Elevate's Seerr surfaces: real poster art, an availability badge, a one-tap **Request** button for titles you don't have, streaming-service icons, and a direct link into your library for titles you already own.
+Every card behaves like the rest of Jellyfin Canopy's Seerr surfaces: real poster art, an availability badge, a one-tap **Request** button for titles you don't have, streaming-service icons, and a direct link into your library for titles you already own.
 
 ### Where it shows up
 
@@ -187,7 +187,7 @@ Every user can tap **Customize** on their Discovery feed to choose which rows ap
 
 ### Admin defaults
 
-Admin settings live on the **Discovery** tab of the config page (**Dashboard → Plugins → Jellyfin Elevate**). They set the **defaults** that a user sees until they customize their own feed.
+Admin settings live on the **Discovery** tab of the config page (**Dashboard → Plugins → Jellyfin Canopy**). They set the **defaults** that a user sees until they customize their own feed.
 
 !!! info "Requires a Seerr connection"
     Configure a Seerr connection on the **Seerr** tab first (see [Requesting with Seerr](#requesting-with-seerr)). Rows come from Seerr, so cards carry availability, request state and inline Request buttons, and every feed is parental-rating filtered server-side.
@@ -219,7 +219,7 @@ Connect a [Seerr](https://docs.seerr.dev/) instance and your users can search fo
 ![Seerr search results inside Jellyfin](images/jellyseerr.png)
 
 !!! warning "Not affiliated with Seerr"
-    This plugin is **not** affiliated with Seerr. Seerr is an independent project that the plugin integrates with. Please report any issues with this integration to the **Jellyfin Elevate** repository, not to the Seerr team.
+    This plugin is **not** affiliated with Seerr. Seerr is an independent project that the plugin integrates with. Please report any issues with this integration to the **Jellyfin Canopy** repository, not to the Seerr team.
 
 !!! tip "How it works"
     To keep things secure and avoid CORS errors, the plugin routes every Seerr call through the **Jellyfin server as a proxy**. This keeps your Seerr API key on the server, out of the browser, and sidesteps cross-origin restrictions.
@@ -250,7 +250,7 @@ Users with access and users without access appear differently in Seerr:
 
 #### Step 3 — Configure the plugin
 
-1. Go to **Dashboard → Plugins → Jellyfin Elevate → Seerr** tab.
+1. Go to **Dashboard → Plugins → Jellyfin Canopy → Seerr** tab.
 2. Check **Enable Seerr integration** — the master toggle; nothing Seerr-related works until this is on.
 3. Check **Show Seerr Results in Search**.
 4. Enter your **Seerr URL(s)**, one per line — the **internal** address the Jellyfin *server* uses (LAN or docker-network). Use the internal URL for best performance; you can list several, and the first successful connection is used.
@@ -309,7 +309,7 @@ jellyfin_url|seerr_url
 
 Skip manual imports in Seerr by letting the plugin import users just in time. When enabled, a new Jellyfin user is imported into Seerr the first time they use Seerr Search.
 
-1. Go to **Dashboard → Plugins → Jellyfin Elevate → Seerr** tab.
+1. Go to **Dashboard → Plugins → Jellyfin Canopy → Seerr** tab.
 2. In the **Users** section, check **Auto import Jellyfin users to Seerr**.
 3. Optionally expand **Blocked Users** and select users to exclude from lookup/import.
 4. Optionally click **Import Users Now** to run an immediate bulk import.
@@ -445,7 +445,7 @@ The Requests page brings active downloads from Sonarr/Radarr together with Seerr
 
 #### Set it up
 
-1. Go to **Dashboard → Plugins → Jellyfin Elevate → Pages** tab (look for the "Requests Page" section).
+1. Go to **Dashboard → Plugins → Jellyfin Canopy → Pages** tab (look for the "Requests Page" section).
 2. Check **Enable Requests Page**.
 3. Optionally check **Show Downloads in Requests Page** to display active \*arr downloads (enabled by default).
 4. Optionally check **Show Seerr Issues Section** to display Seerr issues.
@@ -644,7 +644,7 @@ Seerr responses and derived data are cached to keep the integration fast. All of
 
 ## Reviews
 
-Jellyfin Elevate puts two kinds of reviews on your detail pages: reviews pulled from **TMDB**, and reviews your **own users** write and share on your server. Both appear in a dedicated Reviews section; the two are configured together on the **Elsewhere** tab.
+Jellyfin Canopy puts two kinds of reviews on your detail pages: reviews pulled from **TMDB**, and reviews your **own users** write and share on your server. Both appear in a dedicated Reviews section; the two are configured together on the **Elsewhere** tab.
 
 ### TMDB reviews
 
@@ -654,7 +654,7 @@ Show the reviews TMDB users have written for a title, right on its detail page.
 
 Each review shows the full text with author information, a rating score and the review date, and can be expanded or collapsed. To enable:
 
-1. Go to **Dashboard → Plugins → Jellyfin Elevate → Elsewhere** tab.
+1. Go to **Dashboard → Plugins → Jellyfin Canopy → Elsewhere** tab.
 2. Enable **Show TMDB Reviews**.
 3. Click **Save**.
 
@@ -684,7 +684,7 @@ What users get:
 
 **Enable it (admin):**
 
-1. Go to **Dashboard → Plugins → Jellyfin Elevate → Elsewhere** tab.
+1. Go to **Dashboard → Plugins → Jellyfin Canopy → Elsewhere** tab.
 2. Enable **Enable User Written Reviews**.
 3. Optionally enable **Show average user rating on poster cards** to display the average as a poster tag.
 4. Optionally disable **Show "—" on posters for unrated items** to hide the `—` placeholder on posters when no ratings exist yet.

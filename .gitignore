@@ -324,7 +324,7 @@ auth.json
 /.kiro
 
 # Generated client bundle (esbuild output; built by the csproj BuildClientBundle target)
-Jellyfin.Plugin.JellyfinElevate/dist/
+Jellyfin.Plugin.JellyfinCanopy/dist/
 
 # Playwright artifacts (root-level runs)
 test-results/

@@ -1,10 +1,10 @@
 // Live updates (core/live):
 //   1. user-data events — a favorite toggled via REST from OUTSIDE the browser
 //      session arrives in the open session as a 'user-data-changed' live event
-//      (the server's native UserDataChanged push, fanned out by JE.core.live).
+//      (the server's native UserDataChanged push, fanned out by JC.core.live).
 //   2. config hot-reload — an admin saving plugin configuration pushes
 //      'config-changed'; the open session refetches public config and
-//      JE.pluginConfig changes WITHOUT a reload.
+//      JC.pluginConfig changes WITHOUT a reload.
 //
 // Both flows restore every value they touch: the favorite goes back to its
 // original state, and the plugin configuration is restored verbatim.
@@ -19,10 +19,10 @@ test.describe('live updates', () => {
 
         // Register the live listener inside the open session.
         const hub = await page.evaluate(() => {
-            const JE = (window as any).JellyfinElevate;
-            if (!JE.core?.live) return { present: false };
+            const JC = (window as any).JellyfinCanopy;
+            if (!JC.core?.live) return { present: false };
             (window as any).__jeE2eLiveEvents = [];
-            JE.core.live.on('user-data-changed', () => {
+            JC.core.live.on('user-data-changed', () => {
                 (window as any).__jeE2eLiveEvents.push('user-data-changed');
             });
             return { present: true };
@@ -46,7 +46,7 @@ test.describe('live updates', () => {
         // itself may still be connecting right after boot — give it a moment,
         // and retry the (state-restoring) toggle once if the push was missed.
         await page.waitForFunction(
-            () => (window as any).JellyfinElevate.core.live.isConnected() === true,
+            () => (window as any).JellyfinCanopy.core.live.isConnected() === true,
             undefined,
             { timeout: 15_000 }
         );
@@ -94,7 +94,7 @@ test.describe('live updates', () => {
         assertNoRuntimeErrors(consoleErrors);
     });
 
-    test('admin config save hot-reloads JE.pluginConfig without a page reload', async ({ page, consoleErrors, baseURL }) => {
+    test('admin config save hot-reloads JC.pluginConfig without a page reload', async ({ page, consoleErrors, baseURL }) => {
         await loginAs(page, 'admin', consoleErrors);
 
         // Marker to prove no reload happens while we wait.
@@ -103,7 +103,7 @@ test.describe('live updates', () => {
         });
 
         const before = await page.evaluate(
-            () => (window as any).JellyfinElevate.pluginConfig.ToastDuration
+            () => (window as any).JellyfinCanopy.pluginConfig.ToastDuration
         );
 
         const admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
@@ -119,7 +119,7 @@ test.describe('live updates', () => {
             });
 
             await page.waitForFunction(
-                (previous) => (window as any).JellyfinElevate.pluginConfig.ToastDuration !== previous,
+                (previous) => (window as any).JellyfinCanopy.pluginConfig.ToastDuration !== previous,
                 before,
                 { timeout: 30_000 }
             );
@@ -136,7 +136,7 @@ test.describe('live updates', () => {
 
         // And the restore propagates too (leaves the session as found).
         await page.waitForFunction(
-            (original) => (window as any).JellyfinElevate.pluginConfig.ToastDuration === original,
+            (original) => (window as any).JellyfinCanopy.pluginConfig.ToastDuration === original,
             originalToast,
             { timeout: 30_000 }
         );

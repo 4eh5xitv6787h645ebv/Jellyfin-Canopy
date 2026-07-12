@@ -10,7 +10,7 @@
 //   - a configured CI/dev run RUNS the guard.
 //
 // Probes must be called AFTER loginAs — public-config lands on
-// window.JellyfinElevate.pluginConfig once the plugin has booted.
+// window.JellyfinCanopy.pluginConfig once the plugin has booted.
 import type { Page } from 'playwright/test';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -18,7 +18,7 @@ import type { Page } from 'playwright/test';
 /** Read a boolean flag off the booted plugin's public-config. */
 async function publicConfigFlag(page: Page, key: string): Promise<boolean> {
     return page.evaluate((k) => {
-        const cfg = (window as any).JellyfinElevate?.pluginConfig;
+        const cfg = (window as any).JellyfinCanopy?.pluginConfig;
         return !!(cfg && cfg[k] === true);
     }, key);
 }

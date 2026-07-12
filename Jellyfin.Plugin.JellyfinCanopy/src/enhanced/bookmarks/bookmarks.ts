@@ -1,0 +1,1174 @@
+// src/enhanced/bookmarks/bookmarks.ts
+//
+// Enhanced bookmarks system with multi-bookmark support, TMDB/TVDB tracking, and visual markers
+// (Converted from js/enhanced/bookmarks.js — bodies semantically identical.)
+
+import { JC } from '../../globals';
+import { escapeHtml, toast } from '../../core/ui-kit';
+import { getItemCached, debounce } from '../helpers';
+import { createObserver, disconnectObserver } from '../../core/dom-observer';
+import type { BookmarksApi } from './surface';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+if (!JC.pluginConfig?.BookmarksEnabled) {
+  console.log('🪼 Jellyfin Canopy: Bookmarks feature is disabled');
+} else {
+
+  const logPrefix = '🪼 Jellyfin Canopy: Bookmarks:';
+
+  // Notify other views (e.g., CustomTabs library) when bookmarks change
+  function emitBookmarksUpdated(reason = 'updated'): void {
+    try {
+      document.dispatchEvent(new CustomEvent('jc-bookmarks-updated', { detail: { reason } }));
+    } catch (e) {
+      console.warn(`${logPrefix} Failed to emit update event`, e);
+    }
+  }
+
+  /**
+   * New bookmark data structure:
+   * {
+   *   "unique-bookmark-id": {
+   *     itemId: "jellyfin-item-id",
+   *     tmdbId: "12345",
+   *     tvdbId: "67890",
+   *     mediaType: "movie" | "tv",
+   *     name: "Item Name",
+   *     timestamp: 123.45,
+   *     label: "Epic scene" (optional),
+   *     createdAt: ISO date string,
+   *     updatedAt: ISO date string
+   *   }
+   * }
+   */
+
+  /**
+   * Get current video item data (similar to osd-rating.js)
+   */
+  function getCurrentItemData(): { itemId: string } | null {
+    try {
+      // Get item ID from favorite/rating button
+      const btnUserRating = document.querySelector<HTMLElement>('.videoOsdBottom .btnUserRating[data-id]');
+      const itemId = btnUserRating?.dataset?.id || null;
+
+      if (!itemId) {
+        console.debug(`${logPrefix} No item ID found`);
+        return null;
+      }
+
+      return { itemId };
+    } catch (e) {
+      console.warn(`${logPrefix} Error getting item data:`, e);
+      return null;
+    }
+  }
+
+  interface ItemDetailsCache {
+    itemId: string | null;
+    data: any;
+    pending: Promise<any> | null;
+  }
+  const itemDetailsCache: ItemDetailsCache = { itemId: null, data: null, pending: null };
+
+  /**
+   * Fetch full item details including TMDB/TVDB IDs (cached per item for a few seconds)
+   */
+  async function fetchItemDetails(itemId: string): Promise<any> {
+    if (itemDetailsCache.itemId === itemId && itemDetailsCache.data) {
+      return itemDetailsCache.data;
+    }
+
+    if (itemDetailsCache.pending && itemDetailsCache.itemId === itemId) {
+      return itemDetailsCache.pending;
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const userId = ApiClient.getCurrentUserId?.();
+        if (!userId) return null;
+
+        const result: any = await ApiClient.ajax({
+          type: 'GET',
+          url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl(`/Users/${userId}/Items`, {
+            Ids: itemId,
+            Fields: 'ProviderIds,Type,Name,SeriesId,ParentIndexNumber,IndexNumber'
+          }),
+          dataType: 'json'
+        });
+
+        const item = result?.Items?.[0];
+        if (!item) return null;
+
+        // For episodes/seasons, also get series TMDB/TVDB
+        let sourceItem = item;
+        if ((item.Type === 'Season' || item.Type === 'Episode') && item.SeriesId) {
+          try {
+            const seriesResult: any = await ApiClient.ajax({
+              type: 'GET',
+              url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl(`/Users/${userId}/Items`, {
+                Ids: item.SeriesId,
+                Fields: 'ProviderIds,Type,Name'
+              }),
+              dataType: 'json'
+            });
+            const seriesItem = seriesResult?.Items?.[0];
+            if (seriesItem) {
+              // Merge: use series TMDB/TVDB but keep episode info
+              sourceItem = {
+                ...item,
+                ProviderIds: {
+                  ...(item.ProviderIds || {}),
+                  Tmdb: seriesItem.ProviderIds?.Tmdb || item.ProviderIds?.Tmdb,
+                  Tvdb: seriesItem.ProviderIds?.Tvdb || item.ProviderIds?.Tvdb
+                }
+              };
+            }
+          } catch (e) {
+            console.warn(`${logPrefix} Failed to fetch series info:`, e);
+          }
+        }
+
+        const tmdbId = sourceItem.ProviderIds?.Tmdb || null;
+        const tvdbId = sourceItem.ProviderIds?.Tvdb || null;
+        const mediaType = item.Type === 'Movie' ? 'movie'
+          : (item.Type === 'Series' || item.Type === 'Episode' || item.Type === 'Season') ? 'tv'
+          : (item.Type || '').toString().toLowerCase();
+
+        const details = {
+          itemId: item.Id,
+          tmdbId,
+          tvdbId,
+          mediaType,
+          name: item.Name || 'Unknown',
+          type: item.Type
+        };
+
+        itemDetailsCache.data = details;
+        return details;
+      } catch (e) {
+        console.warn(`${logPrefix} Error fetching item details:`, e);
+        return null;
+      } finally {
+        itemDetailsCache.pending = null;
+      }
+    })();
+
+    itemDetailsCache.itemId = itemId;
+    itemDetailsCache.pending = fetchPromise;
+    return fetchPromise;
+  }
+
+  /**
+   * Generate unique bookmark ID
+   */
+  function generateBookmarkId(): string {
+    return `bm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  /**
+   * Find bookmarks for current item (by itemId or TMDB/TVDB fallback)
+   * Returns both exact matches and provider ID matches separately
+   */
+  function findBookmarksForItem(itemId: string, tmdbId?: string, tvdbId?: string): { bookmarks: any[]; hasIdMismatch: boolean; exactMatches: any[]; providerMatches: any[] } {
+    const allBookmarks = (JC.userConfig as any)?.bookmark?.bookmarks || {};
+    const exactMatches: any[] = [];
+    const providerMatches: any[] = [];
+
+    for (const [bookmarkId, bookmark] of Object.entries<any>(allBookmarks)) {
+      // Skip invalid bookmarks
+      if (typeof bookmark !== 'object' || bookmark === null) continue;
+
+      // Direct itemId match (preferred)
+      if (bookmark.itemId === itemId) {
+        exactMatches.push({ id: bookmarkId, ...bookmark, exactMatch: true });
+        continue;
+      }
+
+      // Fallback: TMDB/TVDB match (different item ID)
+      if (tmdbId && bookmark.tmdbId === tmdbId) {
+        providerMatches.push({ id: bookmarkId, ...bookmark, exactMatch: false });
+        continue;
+      }
+
+      if (tvdbId && bookmark.tvdbId === tvdbId) {
+        providerMatches.push({ id: bookmarkId, ...bookmark, exactMatch: false });
+      }
+    }
+
+    // Use exact matches if available, otherwise use provider matches
+    const bookmarks = exactMatches.length > 0 ? exactMatches : providerMatches;
+    const hasIdMismatch = exactMatches.length === 0 && providerMatches.length > 0;
+
+    return { bookmarks, hasIdMismatch, exactMatches, providerMatches };
+  }
+
+  /**
+   * Add a new bookmark
+   */
+  async function addBookmark(timestamp: number, label = ''): Promise<Record<string, unknown> | null> {
+    const itemData = getCurrentItemData();
+    if (!itemData) {
+      toast(JC.t!('toast_bookmark_no_item'), 3000);
+      return null;
+    }
+
+    // Fetch full details
+    const details = await fetchItemDetails(itemData.itemId);
+    if (!details) {
+      toast(JC.t!('toast_bookmark_fetch_failed'), 3000);
+      return null;
+    }
+
+    const bookmarkId = generateBookmarkId();
+    const now = new Date().toISOString();
+
+    const bookmark = {
+      itemId: details.itemId || '',
+      tmdbId: details.tmdbId || '',
+      tvdbId: details.tvdbId || '',
+      mediaType: details.mediaType || '',
+      name: details.name || '',
+      timestamp: timestamp,
+      label: label || '',
+      createdAt: now,
+      updatedAt: now,
+      syncedFrom: ''
+    };
+
+    // Initialize bookmark structure if needed
+    if (!(JC.userConfig as any).bookmark) {
+      (JC.userConfig as any).bookmark = { bookmarks: {} };
+    }
+    if (!(JC.userConfig as any).bookmark.bookmarks) {
+      (JC.userConfig as any).bookmark.bookmarks = {};
+    }
+
+    (JC.userConfig as any).bookmark.bookmarks[bookmarkId] = bookmark;
+
+    try {
+      await JC.saveUserSettings!('bookmark.json', (JC.userConfig as any).bookmark);
+      console.log(`${logPrefix} Bookmark added:`, bookmarkId, bookmark);
+      emitBookmarksUpdated('add');
+      return { id: bookmarkId, ...bookmark };
+    } catch (e) {
+      console.error(`${logPrefix} Failed to save bookmark:`, e);
+      delete (JC.userConfig as any).bookmark.bookmarks[bookmarkId];
+      throw e;
+    }
+  }
+
+  /**
+   * Update an existing bookmark
+   */
+  async function updateBookmark(bookmarkId: string, updates: Record<string, unknown>): Promise<boolean> {
+    if (!(JC.userConfig as any)?.bookmark?.bookmarks?.[bookmarkId]) {
+      console.warn(`${logPrefix} Bookmark not found:`, bookmarkId);
+      return false;
+    }
+
+    const bookmark = (JC.userConfig as any).bookmark.bookmarks[bookmarkId];
+    Object.assign(bookmark, updates, { updatedAt: new Date().toISOString() });
+
+    try {
+      await JC.saveUserSettings!('bookmark.json', (JC.userConfig as any).bookmark);
+      console.log(`${logPrefix} Bookmark updated:`, bookmarkId);
+      emitBookmarksUpdated('update');
+      return true;
+    } catch (e) {
+      console.error(`${logPrefix} Failed to update bookmark:`, e);
+      return false;
+    }
+  }
+
+  /**
+   * Delete a bookmark
+   */
+  async function deleteBookmark(bookmarkId: string): Promise<boolean> {
+    if (!(JC.userConfig as any)?.bookmark?.bookmarks?.[bookmarkId]) {
+      console.warn(`${logPrefix} Bookmark not found:`, bookmarkId);
+      return false;
+    }
+
+    delete (JC.userConfig as any).bookmark.bookmarks[bookmarkId];
+
+    try {
+      await JC.saveUserSettings!('bookmark.json', (JC.userConfig as any).bookmark);
+      console.log(`${logPrefix} Bookmark deleted:`, bookmarkId);
+      emitBookmarksUpdated('delete');
+      return true;
+    } catch (e) {
+      console.error(`${logPrefix} Failed to delete bookmark:`, e);
+      return false;
+    }
+  }
+
+  /**
+   * Sync bookmarks from old item ID to new item ID
+   * Creates duplicates with new item ID, keeps old ones
+   */
+  async function syncBookmarks(oldBookmarks: any[], newItemDetails: any, timeOffset = 0): Promise<any[]> {
+    const synced: any[] = [];
+    const now = new Date().toISOString();
+
+    for (const oldBookmark of oldBookmarks) {
+      const newBookmarkId = generateBookmarkId();
+      const newTimestamp = Math.max(0, oldBookmark.timestamp + timeOffset);
+
+      const newBookmark = {
+        itemId: newItemDetails.itemId,
+        tmdbId: newItemDetails.tmdbId,
+        tvdbId: newItemDetails.tvdbId,
+        mediaType: newItemDetails.mediaType,
+        name: newItemDetails.name,
+        timestamp: newTimestamp,
+        label: oldBookmark.label || '',
+        createdAt: oldBookmark.createdAt || now,
+        updatedAt: now,
+        syncedFrom: oldBookmark.itemId // Track where it came from
+      };
+
+      (JC.userConfig as any).bookmark.bookmarks[newBookmarkId] = newBookmark;
+      synced.push({ id: newBookmarkId, ...newBookmark });
+    }
+
+    try {
+      await JC.saveUserSettings!('bookmark.json', (JC.userConfig as any).bookmark);
+      console.log(`${logPrefix} Synced ${synced.length} bookmarks to new item ID`);
+      emitBookmarksUpdated('sync');
+      return synced;
+    } catch (e) {
+      console.error(`${logPrefix} Failed to sync bookmarks:`, e);
+      // Rollback
+      synced.forEach(bm => delete (JC.userConfig as any).bookmark.bookmarks[bm.id]);
+      throw e;
+    }
+  }
+
+  /**
+   * Delete bookmarks for items that no longer exist in Jellyfin
+   */
+  async function cleanupOrphanedBookmarks(): Promise<{ cleaned: number; errors: number }> {
+    const allBookmarks = (JC.userConfig as any)?.bookmark?.bookmarks || {};
+    const itemIds = new Set<string>();
+    const toDelete: string[] = [];
+
+    // Collect all unique item IDs
+    for (const bookmark of Object.values<any>(allBookmarks)) {
+      if (bookmark?.itemId) itemIds.add(bookmark.itemId);
+    }
+
+    // Check which items still exist
+    const userId = ApiClient.getCurrentUserId?.();
+    if (!userId) return { cleaned: 0, errors: 0 };
+
+    let cleaned = 0;
+    let errors = 0;
+
+    for (const itemId of itemIds) {
+      try {
+        await getItemCached(itemId, { userId });
+        // Item exists, keep bookmarks
+      } catch (e) {
+        // Item doesn't exist, mark bookmarks for deletion
+        for (const [bookmarkId, bookmark] of Object.entries<any>(allBookmarks)) {
+          if (bookmark?.itemId === itemId) {
+            toDelete.push(bookmarkId);
+          }
+        }
+      }
+    }
+
+    // Delete orphaned bookmarks
+    for (const bookmarkId of toDelete) {
+      try {
+        await deleteBookmark(bookmarkId);
+        cleaned++;
+      } catch (e) {
+        errors++;
+      }
+    }
+
+    console.log(`${logPrefix} Cleanup: ${cleaned} orphaned bookmarks removed, ${errors} errors`);
+    return { cleaned, errors };
+  }
+
+  /**
+   * Format timestamp as HH:MM:SS or MM:SS
+   */
+  function formatTimestamp(seconds: number): string {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    return h > 0
+      ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+      : `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  /**
+   * Create visual bookmark markers in video OSD
+   */
+  function createBookmarkMarkers(video: HTMLVideoElement, bookmarksList: any[]): void {
+    console.log(`${logPrefix} createBookmarkMarkers called - video:`, !!video, 'bookmarks:', bookmarksList.length);
+
+    if (!video || !bookmarksList.length) {
+      console.log(`${logPrefix} Early return - no video or no bookmarks`);
+      return;
+    }
+
+    // Find or create marker container
+    const osdBottom = document.querySelector('.videoOsdBottom');
+    if (!osdBottom) {
+      console.log(`${logPrefix} No .videoOsdBottom found`);
+      return;
+    }
+
+    // Find the position slider with expanded selectors
+    const positionSlider = osdBottom.querySelector('.osdPositionSlider, .sliderBubble, .mdl-slider, input[type="range"]');
+    if (!positionSlider) {
+      console.log(`${logPrefix} No position slider found`);
+      return;
+    }
+
+    const sliderContainer = positionSlider.closest<HTMLElement>('.osdPositionSliderContainer, .sliderContainer') || positionSlider.parentElement;
+    if (!sliderContainer) {
+      console.log(`${logPrefix} No slider container found`);
+      return;
+    }
+
+    // Ensure markers position relative to the slider container
+    const sliderPos = window.getComputedStyle(sliderContainer).position;
+    if (sliderPos === 'static') {
+      sliderContainer.style.position = 'relative';
+    }
+
+    // Remove existing markers
+    const existingMarkers = sliderContainer.querySelectorAll('.jc-bookmark-marker');
+    console.log(`${logPrefix} Removing ${existingMarkers.length} existing markers`);
+    existingMarkers.forEach(el => el.remove());
+
+    const duration = video.duration;
+    if (!duration || !isFinite(duration)) {
+      console.log(`${logPrefix} Invalid duration:`, duration);
+      return;
+    }
+
+    // Create markers for each bookmark
+    bookmarksList.forEach(bookmark => {
+      const percent = (bookmark.timestamp / duration) * 100;
+      const markerColor = bookmark.exactMatch ? '#00d4ff' : '#ffa500';
+
+      const marker = document.createElement('div');
+      marker.className = 'jc-bookmark-marker';
+      marker.style.cssText = `
+        position: absolute;
+        left: ${percent}%;
+        bottom: 0%;
+        transform: translate(-50%, -50%);
+        z-index: 1000;
+        pointer-events: all;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      `;
+
+      const icon = document.createElement('span');
+      icon.className = 'material-icons';
+      icon.textContent = 'location_pin';
+      icon.style.cssText = `
+        font-size: 24px;
+        color: ${markerColor};
+        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8));
+        pointer-events: none;
+      `;
+
+      marker.appendChild(icon);
+
+      const labelText = bookmark.label || JC.t!('bookmark_no_label');
+      const versionNote = !bookmark.exactMatch ? ` ${JC.t!('bookmark_file_changed')}` : '';
+      marker.title = `${labelText} - ${formatTimestamp(bookmark.timestamp)}${versionNote}`;
+
+      // Click to jump to bookmark
+      marker.addEventListener('click', (e) => {
+        e.stopPropagation();
+        video.currentTime = bookmark.timestamp;
+        toast(`${JC.t!('toast_jumped_to_bookmark')}: ${formatTimestamp(bookmark.timestamp)}`, 2000);
+      });
+
+      sliderContainer.appendChild(marker);
+    });
+
+    console.log(`${logPrefix} ✓ Created ${bookmarksList.length} bookmark markers`);
+  }
+
+
+  /**
+   * Update bookmark markers for current video
+   */
+  async function updateBookmarkMarkersForCurrentVideo(): Promise<void> {
+    console.log(`${logPrefix} updateBookmarkMarkersForCurrentVideo called`);
+
+    const video = document.querySelector<HTMLVideoElement>('.videoPlayerContainer video');
+    if (!video) {
+      console.log(`${logPrefix} No video element found`);
+      return;
+    }
+
+    const itemData = getCurrentItemData();
+    if (!itemData) {
+      console.log(`${logPrefix} No item data (no btnUserRating?)`);
+      return;
+    }
+
+    console.log(`${logPrefix} Fetching details for item:`, itemData.itemId);
+    const details = await fetchItemDetails(itemData.itemId);
+    if (!details) {
+      console.log(`${logPrefix} Failed to fetch item details`);
+      return;
+    }
+
+    console.log(`${logPrefix} Item details:`, details);
+    const { bookmarks: bookmarksList } = findBookmarksForItem(
+      details.itemId,
+      details.tmdbId,
+      details.tvdbId
+    );
+
+    console.log(`${logPrefix} Found ${bookmarksList.length} bookmarks for this item`);
+    createBookmarkMarkers(video, bookmarksList);
+  }
+
+  /**
+   * Show bookmark management modal
+   */
+  async function showBookmarkModal(mode = 'add', existingBookmark: any = null): Promise<void> {
+    const video = document.querySelector<HTMLVideoElement>('.videoPlayerContainer video');
+    const currentTime = video?.currentTime || 0;
+
+    const itemData = getCurrentItemData();
+    if (!itemData) {
+      toast(JC.t!('toast_bookmark_no_item'), 3000);
+      return;
+    }
+
+    const details = await fetchItemDetails(itemData.itemId);
+    if (!details) {
+      toast(JC.t!('toast_bookmark_fetch_failed'), 3000);
+      return;
+    }
+
+    const { bookmarks: existingBookmarks } = findBookmarksForItem(
+      details.itemId,
+      details.tmdbId,
+      details.tvdbId
+    );
+
+    console.log('🪼 Bookmarks modal: Found', existingBookmarks.length, 'existing bookmarks for item', details.itemId);
+    console.log('🪼 Bookmarks modal: Mode =', mode, 'Existing bookmarks:', existingBookmarks);
+
+    const isEdit = mode === 'edit' && existingBookmark;
+    const title = isEdit ? JC.t!('bookmark_edit_title') : (mode === 'view' ? 'Your Bookmarks' : JC.t!('bookmark_add_title'));
+    const timestamp = isEdit ? existingBookmark.timestamp : currentTime;
+    const label = isEdit ? existingBookmark.label : '';
+
+    const formHtml = `
+      <style>
+        .jc-bm-player-modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0,0,0,0.85);
+          z-index: 9999;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          opacity: 0;
+          transition: opacity 0.2s;
+        }
+        .jc-bm-player-modal-container {
+          background: #181818;
+          border-radius: 12px;
+          max-width: 700px;
+          width: 90%;
+          max-height: 85vh;
+          padding: 24px;
+          position: relative;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.8);
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+        @media (max-width: 600px) {
+          .jc-bm-player-modal-container {
+            padding: 16px;
+            max-height: 90vh;
+            width: 95%;
+          }
+        }
+        .jc-bookmark-modal-close {
+          position: absolute;
+          top: 16px;
+          right: 16px;
+          background: transparent;
+          border: none;
+          color: #fff;
+          font-size: 32px;
+          cursor: pointer;
+          width: 40px;
+          height: 40px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 50%;
+          transition: background 0.2s;
+        }
+        .jc-bookmark-modal-close:hover {
+          background: rgba(255,255,255,0.1);
+        }
+        .jc-bookmark-modal-actions {
+          display: flex;
+          gap: 12px;
+          margin-top: 16px;
+          justify-content: flex-end;
+          flex-shrink: 0;
+        }
+        .jc-bookmark-btn-submit,
+        .jc-bookmark-btn-cancel {
+          padding: 12px 24px;
+          border: none;
+          border-radius: 6px;
+          font-size: 15px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .jc-bookmark-btn-submit {
+          background: #00a86b;
+          color: #fff;
+        }
+        .jc-bookmark-btn-submit:hover {
+          background: #00c47a;
+        }
+        .jc-bookmark-btn-cancel {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          background: rgba(255,255,255,0.1);
+          color: #fff;
+        }
+        .jc-bookmark-btn-cancel:hover {
+          background: rgba(255,255,255,0.15);
+        }
+        .jc-bookmark-modal {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+          flex: 1;
+          overflow-y: auto;
+          min-height: 0;
+        }
+        .jc-bookmark-hero { padding: 0 0 20px 0; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .jc-bookmark-hero-title { font-size: 20px; font-weight: 600; color: #fff; margin: 0 0 6px 0; }
+        .jc-bookmark-hero-icon { display: none; }
+        .jc-bookmark-hero-subtitle { font-size: 14px; color: #888; margin: 0; }
+
+        .jc-bookmark-form-grid { display: grid; gap: 20px; }
+        .jc-bookmark-input-group { position: relative; }
+        .jc-bookmark-input-group label {
+          display: block;
+          margin-bottom: 8px;
+          font-weight: 600;
+          color: #e0e0e0;
+          font-size: 13px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .jc-bookmark-input, .jc-bookmark-textarea {
+          width: 100%;
+          padding: 12px 16px;
+          border: 1px solid rgba(255,255,255,0.15);
+          border-radius: 6px;
+          background: rgba(255,255,255,0.05);
+          color: #fff;
+          font-family: inherit;
+          font-size: 15px;
+          transition: all 0.2s;
+          box-sizing: border-box;
+        }
+        .jc-bookmark-input:focus, .jc-bookmark-textarea:focus {
+          outline: none;
+          border-color: rgba(255,255,255,0.3);
+          background: rgba(255,255,255,0.08);
+        }
+        .jc-bookmark-input[readonly] {
+          background: rgba(0,0,0,0.2);
+          cursor: not-allowed;
+          border-color: rgba(255,255,255,0.1);
+        }
+        .jc-bookmark-textarea {
+          resize: vertical;
+          min-height: 80px;
+          font-family: inherit;
+        }
+
+        .jc-bookmark-list {
+          margin-top: 28px;
+          max-height: 300px;
+          overflow-y: auto;
+          padding-right: 8px;
+        }
+        @media (max-width: 600px) {
+          .jc-bookmark-list {
+            max-height: 150px;
+            margin-top: 16px;
+          }
+        }
+        .jc-bookmark-list::-webkit-scrollbar {
+          width: 8px;
+        }
+        .jc-bookmark-list::-webkit-scrollbar-track {
+          background: rgba(255,255,255,0.05);
+          border-radius: 4px;
+        }
+        .jc-bookmark-list::-webkit-scrollbar-thumb {
+          background: rgba(255,255,255,0.2);
+          border-radius: 4px;
+        }
+        .jc-bookmark-list::-webkit-scrollbar-thumb:hover {
+          background: rgba(255,255,255,0.3);
+        }
+        .jc-bookmark-list-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 12px;
+          padding-bottom: 8px;
+          border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .jc-bookmark-list-title {
+          font-size: 13px;
+          font-weight: 600;
+          color: #aaa;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .jc-bookmark-list-count {
+          background: rgba(255,255,255,0.1);
+          color: #fff;
+          padding: 4px 12px;
+          border-radius: 12px;
+          font-size: 12px;
+          font-weight: 600;
+        }
+
+        .jc-bookmark-item {
+            display: flex;
+            gap: 12px;
+            padding: 14px 16px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            margin-bottom: 10px;
+            transition: all 0.2s;
+            flex-wrap: wrap;
+            flex-direction: row;
+            align-items: center;
+        }
+
+        .jc-bookmark-item:hover {
+          background: rgba(255,255,255,0.08);
+          border-color: rgba(255,255,255,0.2);
+        }
+        .jc-bookmark-item-marker {
+          width: 3px;
+          background: rgba(255,255,255,0.3);
+          border-radius: 2px;
+          flex-shrink: 0;
+        }
+        .jc-bookmark-item-content { flex: 1; min-width: 0; }
+        .jc-bookmark-item-time {
+          font-weight: 600;
+          color: #fff;
+          font-size: 15px;
+          margin-bottom: 4px;
+        }
+        .jc-bookmark-item-label {
+          font-size: 14px;
+          color: #ccc;
+          margin-top: 4px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .jc-bookmark-item-warning {
+          color: #ffa500;
+          font-size: 12px;
+          margin-top: 6px;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .jc-bookmark-item-actions {
+          display: flex;
+          gap: 8px;
+          flex-shrink: 0;
+        }
+        .jc-bookmark-btn {
+          padding: 8px;
+          font-size: 20px;
+          border-radius: 50%;
+          cursor: pointer;
+          border: none;
+          transition: all 0.2s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 36px;
+          height: 36px;
+        }
+        .jc-bookmark-btn:hover {
+          opacity: 0.9;
+          color: #fff;
+        }
+        .jc-bookmark-btn-jump:hover {
+          background: #00a86b;
+        }
+        .jc-bookmark-btn-delete:hover {
+          background: #b60505;
+        }
+
+        .jc-bookmark-empty {
+          text-align: center;
+          padding: 40px 20px;
+          color: #888;
+          font-size: 14px;
+        }
+        .jc-bookmark-empty-icon {
+          font-size: 48px;
+          margin-bottom: 12px;
+          opacity: 0.5;
+        }
+      </style>
+      <div class="jc-bookmark-modal">
+        <div class="jc-bookmark-hero">
+          <div class="jc-bookmark-hero-title">
+            <span>${title}</span>
+          </div>
+          <div class="jc-bookmark-hero-subtitle">${escapeHtml(details.name)}</div>
+        </div>
+        <div class="jc-bookmark-form-grid">
+          <div class="jc-bookmark-input-group">
+            <label for="bookmark-time">${JC.t!('bookmark_time_label')}</label>
+            <input
+              type="text"
+              id="bookmark-time"
+              class="jc-bookmark-input"
+              value="${formatTimestamp(timestamp)}"
+              readonly>
+          </div>
+          <div class="jc-bookmark-input-group">
+            <label for="bookmark-label">${JC.t!('bookmark_label_label')}</label>
+            <input
+              type="text"
+              id="bookmark-label"
+              class="jc-bookmark-input"
+              placeholder="${JC.t!('bookmark_label_placeholder')}"
+              value="${escapeHtml(label)}"
+              maxlength="100">
+          </div>
+        </div>
+        ${existingBookmarks.length > 0 ? `
+          <div class="jc-bookmark-list">
+            <div class="jc-bookmark-list-header">
+              <div class="jc-bookmark-list-title">${JC.t!('bookmark_existing_title')}</div>
+              <div class="jc-bookmark-list-count">${existingBookmarks.length}</div>
+            </div>
+            ${existingBookmarks.map(bm => `
+              <div class="jc-bookmark-item">
+                <div class="jc-bookmark-item-marker"></div>
+                <div class="jc-bookmark-item-content">
+                  <div class="jc-bookmark-item-time">${formatTimestamp(bm.timestamp)}</div>
+                  ${bm.label ? `<div class="jc-bookmark-item-label">${escapeHtml(bm.label)}</div>` : ''}
+                  ${!bm.exactMatch ? `<div class="jc-bookmark-item-warning">${JC.t!('bookmark_file_changed')}</div>` : ''}
+                </div>
+                <div class="jc-bookmark-item-actions">
+                  <button class="jc-bookmark-btn jc-bookmark-btn-jump" data-bookmark-id="${escapeHtml(bm.id)}" title="${JC.t!('bookmark_jump')}">
+                    <span class="material-icons">forward</span>
+                  </button>
+                  <button class="jc-bookmark-btn jc-bookmark-btn-delete" data-bookmark-id="${escapeHtml(bm.id)}" title="${JC.t!('bookmark_delete_confirm')}">
+                    <span class="material-icons">delete</span>
+                  </button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : `
+          <div class="jc-bookmark-empty">
+            <div>${JC.t!('bookmark_none')}</div>
+          </div>
+        `}
+      </div>
+    `;
+
+    // Create custom modal
+    const modal = document.createElement('div');
+    modal.className = 'jc-bm-player-modal-overlay';
+    modal.innerHTML = `
+      <div class="jc-bm-player-modal-container">
+        <button class="jc-bookmark-modal-close">×</button>
+        ${formHtml}
+        <div class="jc-bookmark-modal-actions">
+          <button class="jc-bookmark-btn-submit">${isEdit ? JC.t!('bookmark_save') : JC.t!('bookmark_add')}</button>
+          <button class="jc-bookmark-btn-cancel">
+            <span class="material-icons" aria-hidden="true" style="font-size: 18px;">close</span>
+            <span>Cancel</span>
+          </button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Prevent keyboard shortcuts and wheel events from affecting video player
+    modal.addEventListener('keydown', (e) => e.stopPropagation());
+    modal.addEventListener('keyup', (e) => e.stopPropagation());
+    modal.addEventListener('keypress', (e) => e.stopPropagation());
+    modal.addEventListener('wheel', (e) => e.stopPropagation());
+
+    const closeDialog = () => {
+      modal.style.opacity = '0';
+      setTimeout(() => {
+        modal.remove();
+        // Remove navigation listener
+        document.removeEventListener('viewshow', closeDialog);
+      }, 200);
+    };
+
+    // Close modal when navigating away
+    document.addEventListener('viewshow', closeDialog);
+
+    // Close button
+    modal.querySelector('.jc-bookmark-modal-close')?.addEventListener('click', closeDialog);
+    modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeDialog();
+    });
+
+    // Focus label input after modal opens
+    setTimeout(() => {
+      const labelInput = modal.querySelector<HTMLInputElement>('#bookmark-label');
+      if (labelInput) labelInput.focus();
+      modal.style.opacity = '1';
+    }, 10);
+
+    // Submit
+    modal.querySelector('.jc-bookmark-btn-submit')?.addEventListener('click', () => { void (async () => {
+      const labelInput = modal.querySelector<HTMLInputElement>('#bookmark-label')!.value.trim();
+
+      try {
+        if (isEdit) {
+          await updateBookmark(existingBookmark.id, { label: labelInput });
+           toast(JC.t!('toast_bookmark_updated'), 2000);
+        } else {
+          await addBookmark(timestamp, labelInput);
+           toast(JC.t!('toast_bookmark_updated'), 2000);
+        }
+
+        // Refresh markers
+        void updateBookmarkMarkersForCurrentVideo();
+        closeDialog();
+      } catch (e) {
+        toast(JC.t!('toast_bookmark_save_failed'), 3000);
+      }
+    })(); });
+
+    // Jump to bookmark buttons
+    modal.querySelectorAll<HTMLElement>('.jc-bookmark-btn-jump').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const bookmarkId = btn.dataset.bookmarkId;
+        const bookmark = existingBookmarks.find(bm => bm.id === bookmarkId);
+        if (bookmark && video) {
+          video.currentTime = bookmark.timestamp;
+          toast(`${JC.t!('toast_jumped_to_bookmark')}: ${formatTimestamp(bookmark.timestamp)}`, 2000);
+          closeDialog();
+        }
+      });
+    });
+
+    // Delete bookmark buttons
+    modal.querySelectorAll<HTMLElement>('.jc-bookmark-btn-delete').forEach(btn => {
+      btn.addEventListener('click', () => { void (async () => {
+        const bookmarkId = btn.dataset.bookmarkId!;
+        await deleteBookmark(bookmarkId);
+        toast(JC.t!('toast_bookmark_deleted'), 2000);
+        void updateBookmarkMarkersForCurrentVideo();
+        closeDialog();
+        // Reopen modal to show updated list
+        setTimeout(() => { void showBookmarkModal(mode, existingBookmark); }, 300);
+      })(); });
+    });
+  }
+
+  // Public API
+  JC.bookmarks = {
+    add: addBookmark,
+    update: updateBookmark,
+    delete: deleteBookmark,
+    findForItem: findBookmarksForItem,
+    showModal: showBookmarkModal,
+    updateMarkers: updateBookmarkMarkersForCurrentVideo,
+    formatTimestamp,
+    syncBookmarks,
+    cleanupOrphaned: cleanupOrphanedBookmarks
+  } satisfies BookmarksApi;
+
+  /**
+   * Add bookmark button to the video player OSD
+   */
+  function addOsdBookmarkButton(): void {
+    // Don't add if already exists
+    if (document.getElementById('jcBookmarkBtn')) return;
+
+    const controlsContainer = document.querySelector('.videoOsdBottom .buttons.focuscontainer-x');
+    if (!controlsContainer) return;
+
+    // Find the native settings button to insert before
+    const nativeSettingsButton = controlsContainer.querySelector('.btnVideoOsdSettings');
+    if (!nativeSettingsButton) return;
+
+    const bookmarkBtn = document.createElement('button');
+    bookmarkBtn.id = 'jcBookmarkBtn';
+    bookmarkBtn.setAttribute('is', 'paper-icon-button-light');
+    bookmarkBtn.className = 'autoSize paper-icon-button-light';
+    bookmarkBtn.title = JC.t!('shortcut_BookmarkCurrentTime');
+    bookmarkBtn.innerHTML = '<span class="largePaperIconButton material-icons" aria-hidden="true">bookmark_add</span>';
+
+    bookmarkBtn.onclick = (e) => {
+      e.stopPropagation();
+      void showBookmarkModal('add');
+    };
+
+    // Insert before the settings button
+    nativeSettingsButton.parentElement!.insertBefore(bookmarkBtn, nativeSettingsButton);
+    console.log(`${logPrefix} ✓ Added OSD bookmark button`);
+  }
+
+  /**
+   * Initialize bookmarks system
+   */
+  JC.initializeBookmarks = (function() {
+    let initialized = false;
+    let cleanupFunctions: (() => void)[] = [];
+
+    return function() {
+      // Prevent multiple initializations
+      if (initialized) {
+        console.log(`${logPrefix} Already initialized, skipping...`);
+        return;
+      }
+      initialized = true;
+
+      console.log(`${logPrefix} Initializing enhanced bookmarks...`);
+
+      let lastVideoUrl: string | null = null;
+      let lastInjectedOsdKey: string | null = null;
+      const osdObserverId = 'jc-bookmarks-osd';
+      const videoObserverId = 'jc-bookmarks-video-changes';
+
+      function getOsdKey(): string {
+        const video = document.querySelector<HTMLVideoElement>('.videoPlayerContainer video');
+        return video?.currentSrc || video?.src || window.location.href;
+      }
+
+      // Debounced OSD injection - prevents rapid re-injection
+      const debouncedOsdInjection = debounce(() => {
+        if (!(JC as any).isVideoPage()) return;
+
+        const osdBottom = document.querySelector('.videoOsdBottom');
+        const video = document.querySelector('.videoPlayerContainer video');
+        const currentOsdKey = getOsdKey();
+
+        // Only inject if OSD exists and we haven't already injected for this video
+        if (osdBottom && video && currentOsdKey !== lastInjectedOsdKey) {
+          void updateBookmarkMarkersForCurrentVideo();
+          addOsdBookmarkButton();
+          lastInjectedOsdKey = currentOsdKey;
+          console.log(`${logPrefix} Injected markers/button for ${currentOsdKey}`);
+        }
+      }, 200);
+
+      // Managed observer: only watches when on video page
+      function ensureOsdObserver(): void {
+        if (!(JC as any).isVideoPage()) {
+          disconnectObserver(osdObserverId);
+          return;
+        }
+
+        // Create observer that watches for OSD appearance
+        createObserver(
+          osdObserverId,
+          debouncedOsdInjection,
+          document.body,
+          { childList: true, subtree: true }
+        );
+      }
+
+      // Debounced handlers for video events
+      const handlePlayingEvent = debounce((e: Event) => {
+        if ((e.target as HTMLElement).tagName === 'VIDEO' && (JC as any).isVideoPage()) {
+          debouncedOsdInjection();
+        }
+      }, 300);
+
+      const handleMetadataEvent = debounce((e: Event) => {
+        if ((e.target as HTMLElement).tagName === 'VIDEO' && (JC as any).isVideoPage()) {
+          debouncedOsdInjection();
+        }
+      }, 300);
+
+      const handleViewShow = () => {
+        if ((JC as any).isVideoPage()) {
+          lastInjectedOsdKey = null; // Reset for new page
+          ensureOsdObserver();
+          debouncedOsdInjection();
+        } else {
+          // Clean up when leaving video page
+          lastVideoUrl = null;
+          lastInjectedOsdKey = null;
+          disconnectObserver(osdObserverId);
+          disconnectObserver(videoObserverId);
+        }
+      };
+
+      // Register event listeners with cleanup tracking
+      document.addEventListener('playing', handlePlayingEvent, true);
+      cleanupFunctions.push(() => document.removeEventListener('playing', handlePlayingEvent, true));
+
+      document.addEventListener('loadedmetadata', handleMetadataEvent, true);
+      cleanupFunctions.push(() => document.removeEventListener('loadedmetadata', handleMetadataEvent, true));
+
+      document.addEventListener('viewshow', handleViewShow);
+      cleanupFunctions.push(() => document.removeEventListener('viewshow', handleViewShow));
+
+      // Initial setup if already on video page
+      if ((JC as any).isVideoPage()) {
+        ensureOsdObserver();
+        debouncedOsdInjection();
+      }
+
+      // Store cleanup function globally
+      JC.cleanupBookmarks = function() {
+        cleanupFunctions.forEach(fn => fn());
+        cleanupFunctions = [];
+        disconnectObserver(osdObserverId);
+        disconnectObserver(videoObserverId);
+        initialized = false;
+        console.log(`${logPrefix} Cleaned up`);
+      };
+
+      console.log(`${logPrefix} ✓ Initialized`);
+    };
+  })();
+
+}

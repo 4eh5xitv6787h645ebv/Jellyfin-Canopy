@@ -1,4 +1,4 @@
-/* Jellyfin Elevate Docs — client-side search.
+/* Jellyfin Canopy Docs — client-side search.
    Uses the mkdocs `search` plugin index (search/search_index.json) with a
    locally vendored lunr.js. All result rendering uses DOM APIs + textContent
    (never HTML strings), so index content is inert. */

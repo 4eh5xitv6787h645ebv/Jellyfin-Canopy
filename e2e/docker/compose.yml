@@ -13,7 +13,7 @@
 services:
   jellyfin:
     image: jellyfin/jellyfin:12.0-rc2
-    container_name: je-e2e-jellyfin
+    container_name: jc-e2e-jellyfin
     # Run as the invoking user so seed.sh can clean config/cache without sudo.
     user: "${JF_UID:-1000}:${JF_GID:-1000}"
     ports:

@@ -10,7 +10,7 @@ import { apiRaw, authenticate } from './fixtures/api';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-const ADMIN_ENDPOINT = '/JellyfinElevate/admin/hidden-content-users';
+const ADMIN_ENDPOINT = '/JellyfinCanopy/admin/hidden-content-users';
 
 test.describe('admin authorization', () => {
     test('authz matrix: 200 admin / 403 empty non-admin / 401 anonymous', async ({ baseURL }) => {
@@ -46,7 +46,7 @@ test.describe('admin authorization', () => {
 
         const hide = await apiRaw(
             baseURL!,
-            `/JellyfinElevate/admin/hidden-content/${user.userId}/hide`,
+            `/JellyfinCanopy/admin/hidden-content/${user.userId}/hide`,
             admin.token,
             {
                 method: 'POST',
@@ -67,15 +67,15 @@ test.describe('admin authorization', () => {
             // Enter via the page module's own public surface (the same call the
             // drawer link performs) — direct hash writes race the native router.
             await page.evaluate(() => {
-                void (window as any).JellyfinElevate.hiddenContentPage.showPage();
+                void (window as any).JellyfinCanopy.hiddenContentPage.showPage();
             });
-            await page.waitForSelector('#je-hidden-content-container', { state: 'visible', timeout: 30_000 });
-            await page.waitForSelector('.je-hidden-content-page-grid, .je-hidden-content-page-empty', { timeout: 30_000 });
+            await page.waitForSelector('#jc-hidden-content-container', { state: 'visible', timeout: 30_000 });
+            await page.waitForSelector('.jc-hidden-content-page-grid, .jc-hidden-content-page-empty', { timeout: 30_000 });
 
             // The cross-user filter is populated from the RequiresElevation-gated
             // admin endpoint — it must appear for an admin.
-            await page.waitForSelector('.je-hidden-admin-user-filter', { timeout: 30_000 });
-            const optionCount = await page.locator('.je-hidden-admin-user-filter option').count();
+            await page.waitForSelector('.jc-hidden-admin-user-filter', { timeout: 30_000 });
+            const optionCount = await page.locator('.jc-hidden-admin-user-filter option').count();
             // "View own" + at least the seeded user.
             expect(optionCount).toBeGreaterThan(1);
 
@@ -84,7 +84,7 @@ test.describe('admin authorization', () => {
             // Leave the user's hidden-content store as found.
             await apiRaw(
                 baseURL!,
-                `/JellyfinElevate/admin/hidden-content/${user.userId}/unhide`,
+                `/JellyfinCanopy/admin/hidden-content/${user.userId}/unhide`,
                 admin.token,
                 { method: 'POST', body: JSON.stringify([movie!.Id]) }
             );
@@ -95,10 +95,10 @@ test.describe('admin authorization', () => {
         await loginAs(page, 'user', consoleErrors);
 
         await page.evaluate(() => {
-            void (window as any).JellyfinElevate.hiddenContentPage.showPage();
+            void (window as any).JellyfinCanopy.hiddenContentPage.showPage();
         });
-        await page.waitForSelector('#je-hidden-content-container', { state: 'visible', timeout: 30_000 });
-        await page.waitForSelector('.je-hidden-content-page-grid, .je-hidden-content-page-empty', { timeout: 30_000 });
+        await page.waitForSelector('#jc-hidden-content-container', { state: 'visible', timeout: 30_000 });
+        await page.waitForSelector('.jc-hidden-content-page-grid, .jc-hidden-content-page-empty', { timeout: 30_000 });
 
         // The admin-filter decision is settled once the page has rendered its
         // grid/empty state and the network is idle: the non-admin's build path
@@ -108,7 +108,7 @@ test.describe('admin authorization', () => {
         // decision has been made. Only then assert the negative.
         await page.waitForLoadState('networkidle');
         const state = await page.evaluate(() => ({
-            adminFilter: !!document.querySelector('.je-hidden-admin-user-filter'),
+            adminFilter: !!document.querySelector('.jc-hidden-admin-user-filter'),
             stuckSpinners: [...document.querySelectorAll('.docspinner, .mdl-spinner, .loading-spinner')]
                 .filter((el) => (el as HTMLElement).offsetParent !== null).length,
         }));

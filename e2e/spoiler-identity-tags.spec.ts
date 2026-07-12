@@ -30,7 +30,7 @@ interface Target {
 }
 
 async function spoilerBlurEnabled(): Promise<boolean> {
-    const cfg = await api<{ SpoilerBlurEnabled?: boolean }>(BASE, '/JellyfinElevate/public-config');
+    const cfg = await api<{ SpoilerBlurEnabled?: boolean }>(BASE, '/JellyfinCanopy/public-config');
     return cfg?.SpoilerBlurEnabled === true;
 }
 
@@ -115,7 +115,7 @@ test.describe('spoiler guard identity tags (reverse-proxy-safe attribution)', ()
         test.skip(!target, 'no unwatched episode with a Primary image found');
 
         // Guard the series for the ADMIN only (POST enables, DELETE disables).
-        await api(BASE, `/JellyfinElevate/spoiler-blur/series/${target!.seriesId}`, admin.token, {
+        await api(BASE, `/JellyfinCanopy/spoiler-blur/series/${target!.seriesId}`, admin.token, {
             method: 'POST',
         });
         try {
@@ -148,7 +148,7 @@ test.describe('spoiler guard identity tags (reverse-proxy-safe attribution)', ()
                 true
             );
         } finally {
-            await api(BASE, `/JellyfinElevate/spoiler-blur/series/${target!.seriesId}`, admin.token, {
+            await api(BASE, `/JellyfinCanopy/spoiler-blur/series/${target!.seriesId}`, admin.token, {
                 method: 'DELETE',
             }).catch(() => undefined);
         }

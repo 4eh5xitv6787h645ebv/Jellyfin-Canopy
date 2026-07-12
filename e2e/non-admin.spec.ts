@@ -1,4 +1,4 @@
-// Core surfaces from a NON-admin (je_arruser) session — the perspective almost
+// Core surfaces from a NON-admin (jc_arruser) session — the perspective almost
 // every other spec skips (they all log in as admin). Per-user gating bugs
 // (a flag resolving admin-only, an admin surface leaking, a per-user tag/panel
 // surface that only works for admins) live exactly here.
@@ -6,13 +6,13 @@ import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-const ADMIN_ENDPOINT = '/JellyfinElevate/admin/hidden-content-users';
+const ADMIN_ENDPOINT = '/JellyfinCanopy/admin/hidden-content-users';
 
 const FAMILIES = [
-    { setting: 'qualityTagsEnabled', attr: 'data-je-quality-tagged' },
-    { setting: 'genreTagsEnabled', attr: 'data-je-genre-tagged' },
-    { setting: 'languageTagsEnabled', attr: 'data-je-language-tagged' },
-    { setting: 'ratingTagsEnabled', attr: 'data-je-rating-tagged' },
+    { setting: 'qualityTagsEnabled', attr: 'data-jc-quality-tagged' },
+    { setting: 'genreTagsEnabled', attr: 'data-jc-genre-tagged' },
+    { setting: 'languageTagsEnabled', attr: 'data-jc-language-tagged' },
+    { setting: 'ratingTagsEnabled', attr: 'data-jc-rating-tagged' },
 ] as const;
 
 test.describe('non-admin session', () => {
@@ -20,23 +20,23 @@ test.describe('non-admin session', () => {
         await loginAs(page, 'user', consoleErrors);
 
         const state = await page.evaluate(() => {
-            const JE = (window as any).JellyfinElevate;
+            const JC = (window as any).JellyfinCanopy;
             return {
-                initialized: JE.initialized === true,
-                pluginConfig: !!JE.pluginConfig && typeof JE.pluginConfig === 'object',
-                currentSettings: !!JE.currentSettings && typeof JE.currentSettings === 'object',
+                initialized: JC.initialized === true,
+                pluginConfig: !!JC.pluginConfig && typeof JC.pluginConfig === 'object',
+                currentSettings: !!JC.currentSettings && typeof JC.currentSettings === 'object',
                 core: {
-                    navigation: !!JE.core?.navigation,
-                    lifecycle: !!JE.core?.lifecycle,
-                    dom: !!JE.core?.dom,
-                    ui: !!JE.core?.ui,
-                    api: !!JE.core?.api,
-                    live: !!JE.core?.live,
+                    navigation: !!JC.core?.navigation,
+                    lifecycle: !!JC.core?.lifecycle,
+                    dom: !!JC.core?.dom,
+                    ui: !!JC.core?.ui,
+                    api: !!JC.core?.api,
+                    live: !!JC.core?.live,
                 },
                 facade: {
-                    t: typeof JE.t === 'function',
-                    toast: typeof JE.toast === 'function',
-                    escapeHtml: typeof JE.escapeHtml === 'function',
+                    t: typeof JC.t === 'function',
+                    toast: typeof JC.toast === 'function',
+                    escapeHtml: typeof JC.escapeHtml === 'function',
                 },
             };
         });
@@ -56,8 +56,8 @@ test.describe('non-admin session', () => {
     test('the enhanced panel opens with the settings tab and closes on Escape', async ({ page, consoleErrors }) => {
         await loginAs(page, 'user', consoleErrors);
 
-        await page.evaluate(() => { (window as any).JellyfinElevate.showEnhancedPanel(); });
-        const panel = page.locator('#jellyfin-elevate-panel');
+        await page.evaluate(() => { (window as any).JellyfinCanopy.showEnhancedPanel(); });
+        const panel = page.locator('#jellyfin-canopy-panel');
         await expect(panel).toBeVisible({ timeout: 15_000 });
 
         expect(await panel.locator('.tab-button').count()).toBeGreaterThanOrEqual(1);
@@ -76,7 +76,7 @@ test.describe('non-admin session', () => {
         await loginAs(page, 'user', consoleErrors);
 
         const enabled: string[] = await page.evaluate((families) => {
-            const settings = (window as any).JellyfinElevate?.currentSettings || {};
+            const settings = (window as any).JellyfinCanopy?.currentSettings || {};
             return families.filter((f) => settings[f.setting] === true).map((f) => f.attr);
         }, FAMILIES.map((f) => ({ setting: f.setting, attr: f.attr })));
         test.skip(enabled.length === 0, 'no tag renderer enabled for this user');
@@ -108,7 +108,7 @@ test.describe('non-admin session', () => {
         // not stranded in a hidden subtree (offsetParent is unusable on the
         // fixed AppBar).
         const randomButtonEnabled = await page.evaluate(
-            () => (window as any).JellyfinElevate?.currentSettings?.randomButtonEnabled === true
+            () => (window as any).JellyfinCanopy?.currentSettings?.randomButtonEnabled === true
         );
         if (randomButtonEnabled) {
             await page.waitForFunction(() => {
@@ -131,7 +131,7 @@ test.describe('non-admin session', () => {
         expect(adminStatus, 'the admin endpoint stays gated from a non-admin browser session').toBe(403);
 
         const adminLeak = await page.evaluate(
-            () => !!document.querySelector('.je-hidden-admin-user-filter')
+            () => !!document.querySelector('.jc-hidden-admin-user-filter')
         );
         expect(adminLeak, 'no admin-only cross-user filter leaks onto a non-admin surface').toBe(false);
 

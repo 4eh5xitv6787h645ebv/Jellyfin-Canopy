@@ -2,7 +2,7 @@
 
 /**
  * capture-traces.js — real-browser Chrome DevTools performance-trace capture
- * harness for Jellyfin Elevate.
+ * harness for Jellyfin Canopy.
  *
  * NOT wired into CI. Like e2e/perf/jank-benchmark.js this is a hand-run
  * measurement tool. Where jank-benchmark reduces a run to a handful of
@@ -21,7 +21,7 @@
  * only appears when responses land late.
  *
  * After each scenario the captured trace is parsed IN-PROCESS and a summary is
- * printed: every /JellyfinElevate/* network request (start offset, duration,
+ * printed: every /JellyfinCanopy/* network request (start offset, duration,
  * status), request/failure counts, console errors, and long tasks >50ms. The
  * `.json.gz` is always written BEFORE analysis, so an analysis error never
  * costs you the trace.
@@ -29,7 +29,7 @@
  * Usage (needs a resolvable `playwright` — the e2e suite's NODE_PATH convention):
  *   NODE_PATH=/path/with/playwright node e2e/perf/capture-traces.js \
  *     [scenario ...] [--base http://localhost:8100] \
- *     [--user je_arradmin --pass '...'] [--out e2e/perf/traces] \
+ *     [--user jc_arradmin --pass '...'] [--out e2e/perf/traces] \
  *     [--cpu 4] [--latency 300] [--download 1500] [--headed] [--list]
  *
  *   npm run perf:trace                 # all scenarios, defaults
@@ -39,8 +39,8 @@
  *
  * Env (matches e2e/fixtures/auth.ts + e2e/docker/seed.sh):
  *   JF_BASE_URL   server under test        (default http://localhost:8100)
- *   JE_TRACE_USER / JE_TRACE_PASS          trace login (falls back to the e2e
- *   JF_ADMIN_USER / JF_ADMIN_PASS          suite's admin env, then je_arradmin)
+ *   JC_TRACE_USER / JC_TRACE_PASS          trace login (falls back to the e2e
+ *   JF_ADMIN_USER / JF_ADMIN_PASS          suite's admin env, then jc_arradmin)
  *
  * Each output is <outdir>/<scenario>-<timestamp>-<seq>.json.gz (default outdir
  * e2e/perf/traces/, git-ignored). <seq> is the per-run invocation index, so
@@ -71,8 +71,8 @@ try {
 function parseArgs(argv) {
     const args = {
         base: process.env.JF_BASE_URL || 'http://localhost:8100',
-        user: process.env.JE_TRACE_USER || process.env.JF_ADMIN_USER || 'je_arradmin',
-        pass: process.env.JE_TRACE_PASS || process.env.JF_ADMIN_PASS || 'Test669Pw!x',
+        user: process.env.JC_TRACE_USER || process.env.JF_ADMIN_USER || 'jc_arradmin',
+        pass: process.env.JC_TRACE_PASS || process.env.JF_ADMIN_PASS || 'Test669Pw!x',
         out: path.join(__dirname, 'traces'),
         scenarios: [],
         cpu: 1,
@@ -174,7 +174,7 @@ async function attemptLogin(page, args, traceReload) {
 
     await page.reload({ waitUntil: 'domcontentloaded' });
     const initialized = await page
-        .waitForFunction(() => window.JellyfinElevate?.initialized === true, undefined, { timeout: 60000 })
+        .waitForFunction(() => window.JellyfinCanopy?.initialized === true, undefined, { timeout: 60000 })
         .then(() => true, () => false);
     if (!initialized || !(await hasStoredSession(page))) return false;
     const authed = await page
@@ -199,7 +199,7 @@ async function login(page, args, { traceReload = false } = {}) {
 
 async function waitJEReady(page) {
     await page.waitForFunction(
-        () => window.JellyfinElevate?.initialized === true,
+        () => window.JellyfinCanopy?.initialized === true,
         undefined,
         { timeout: 60000 }
     );
@@ -210,7 +210,7 @@ async function waitJEReady(page) {
  * Returns true when the app bounced back to sign-in — the same clobbered-session
  * race attemptLogin() detects and retries, except here the reload happened
  * INSIDE the trace window, so the driver must discard that trace and retry the
- * whole scenario rather than retry inside a trace it can no longer trust. JE
+ * whole scenario rather than retry inside a trace it can no longer trust. JC
  * initializes on the sign-in page too, so waitJEReady passing is not proof of an
  * authenticated session — getCurrentUserId() is (mirrors attemptLogin/auth.ts).
  */
@@ -590,7 +590,7 @@ function parseTrace(buffer) {
 }
 
 /**
- * Reduce a trace-event array to a per-scenario summary: /JellyfinElevate/*
+ * Reduce a trace-event array to a per-scenario summary: /JellyfinCanopy/*
  * requests (offset/duration/status), request + failure counts, and long tasks.
  * ts/dur in a Chrome trace are microseconds.
  */
@@ -633,8 +633,8 @@ function summarizeTrace(events) {
     }
 
     const requests = [...byReqId.values()].filter((r) => r.url);
-    const je = requests
-        .filter((r) => /\/JellyfinElevate\//i.test(r.url))
+    const jc = requests
+        .filter((r) => /\/JellyfinCanopy\//i.test(r.url))
         .map((r) => {
             const endTs = r.finishTs ?? r.respTs;
             return {
@@ -655,9 +655,9 @@ function summarizeTrace(events) {
         eventCount: events.length,
         traceDurationMs: Math.round(events.reduce((max, e) => (typeof e.ts === 'number' && e.ts > max ? e.ts : max), t0) - t0) / 1000,
         totalRequests,
-        je,
-        jeCount: je.length,
-        jeFailed: je.filter((r) => r.failed),
+        jc,
+        jcCount: jc.length,
+        jcFailed: jc.filter((r) => r.failed),
         longTasks: { count: longTasks.length, totalMs: round(longTasks.reduce((s, t) => s + t.durMs, 0)), top: longTasks.slice(0, 5) }
     };
 }
@@ -665,15 +665,15 @@ function summarizeTrace(events) {
 function printSummary(log, scenario, file, sizeBytes, summary, consoleErrors, note) {
     log(`--- ${scenario} summary ---`);
     log(`  trace: ${path.relative(process.cwd(), file)} (${(sizeBytes / 1024).toFixed(1)} KiB gz, ${summary.eventCount} events, ~${summary.traceDurationMs}ms window)`);
-    log(`  requests: ${summary.totalRequests} total, ${summary.jeCount} to /JellyfinElevate/*` +
-        `${summary.jeFailed.length ? `, ${summary.jeFailed.length} FAILED` : ''}`);
-    for (const r of summary.je) {
+    log(`  requests: ${summary.totalRequests} total, ${summary.jcCount} to /JellyfinCanopy/*` +
+        `${summary.jcFailed.length ? `, ${summary.jcFailed.length} FAILED` : ''}`);
+    for (const r of summary.jc) {
         log(`    ${(r.offsetMs === null ? '   ?   ' : `+${Math.round(r.offsetMs)}ms`).padStart(8)}  ` +
             `${r.durationMs === null ? '   ?   ' : `${Math.round(r.durationMs)}ms`.padStart(7)}  ` +
             `${String(r.status ?? '---').padStart(3)}${r.failed ? ' FAIL' : '     '}  ${r.path}`);
     }
-    if (summary.jeFailed.length) {
-        for (const r of summary.jeFailed) log(`    FAILED: ${r.status ?? 'net'} ${r.path}`);
+    if (summary.jcFailed.length) {
+        for (const r of summary.jcFailed) log(`    FAILED: ${r.status ?? 'net'} ${r.path}`);
     }
     log(`  long tasks >50ms: ${summary.longTasks.count} (${summary.longTasks.totalMs || 0}ms total)` +
         `${summary.longTasks.top.length ? `; top ${summary.longTasks.top.map((t) => `${Math.round(t.durMs)}ms@+${Math.round(t.offsetMs)}`).join(', ')}` : ''}`);
@@ -828,7 +828,7 @@ async function main() {
     log('=== RUN COMPLETE ===');
     for (const r of results) {
         const detail = r.status === 'ok'
-            ? `${r.summary.jeCount} JE req, ${r.summary.jeFailed.length} failed, ${r.consoleErrors} console err → ${path.basename(r.file)}`
+            ? `${r.summary.jcCount} JC req, ${r.summary.jcFailed.length} failed, ${r.consoleErrors} console err → ${path.basename(r.file)}`
             : r.status === 'skipped' ? r.reason
                 : r.status === 'ok-noanalysis' ? `saved ${path.basename(r.file)} (analysis skipped)`
                     : (r.error || '');

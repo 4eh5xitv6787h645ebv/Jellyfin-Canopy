@@ -111,7 +111,7 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: List vulnerable packages
-        run: dotnet list Jellyfin.Plugin.JellyfinElevate/JellyfinElevate.csproj package --vulnerable --include-transitive 2>&1 | tee vulnerable-packages.txt
+        run: dotnet list Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj package --vulnerable --include-transitive 2>&1 | tee vulnerable-packages.txt
 
       - name: Check for vulnerabilities
         run: |

@@ -1,0 +1,72 @@
+<div id="jc-loading">Loading…</div>
+<div data-role="content">
+  <div class="content-primary jc-calendar-page" style="padding: 0 !important;">
+    <div id="jc-calendar-container"></div>
+  </div>
+</div>
+<div id="jc-error" style="display:none">
+  Jellyfin Canopy not ready.
+</div>
+<script>
+(function () {
+  const MAX_WAIT = 5000;
+  const INTERVAL = 50;
+  let waited = 0;
+
+  const loadingEl = document.getElementById("jc-loading");
+  const errorEl = document.getElementById("jc-error");
+  const preferencesPages = Array.from(document.querySelectorAll("#userPluginPreferencesPage"));
+  const preferencesPage = preferencesPages.find(p => p.offsetWidth > 0 && p.offsetHeight > 0);
+
+  // Keep this page's own authored container; drop only stray copies that are not
+  // inside a visible preferences page. Recreate into our own page (never gated on
+  // a visible #userPluginPreferencesPage existing) so the page can't blank out —
+  // mirrors BookmarksPage.
+  const ownPage = document.querySelector(".jc-calendar-page");
+  document.querySelectorAll("#jc-calendar-container").forEach(el => {
+    if (ownPage && ownPage.contains(el)) return;
+    if (!preferencesPage || !preferencesPage.contains(el)) {
+      el.remove();
+    }
+  });
+
+  if (!ownPage?.querySelector("#jc-calendar-container")) {
+    const newContainer = document.createElement("div");
+    newContainer.id = "jc-calendar-container";
+    const target = ownPage || document.body;
+    target.appendChild(newContainer);
+  }
+
+  const JC = window.JellyfinCanopy;
+
+  const timer = setInterval(() => {
+
+    if (JC && JC.calendarPage) {
+      clearInterval(timer);
+
+      loadingEl.remove();
+      JC.calendarPage.injectStyles();
+      JC.calendarPage.loadSettings();
+      JC.calendarPage.renderPage();
+      JC.calendarPage.refresh()
+      document.addEventListener("click", JC.calendarPage.handleEventClick);
+      console.log('🪼 Jellyfin Canopy: Calendar Page Loaded.');
+      return;
+    }
+
+    waited += INTERVAL;
+    if (waited >= MAX_WAIT) {
+      clearInterval(timer);
+
+      loadingEl.style.display = "none";
+      errorEl.style.display = "block";
+    }
+  }, INTERVAL);
+})();
+</script>
+
+<style>
+  .jc-calendar-header {
+    padding-top: 0px;
+  }
+</style>

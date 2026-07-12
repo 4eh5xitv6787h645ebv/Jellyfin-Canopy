@@ -12,10 +12,10 @@ import { api, authenticate, PLUGIN_ID } from './fixtures/api';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const FAMILIES = [
-    { setting: 'qualityTagsEnabled', attr: 'data-je-quality-tagged' },
-    { setting: 'genreTagsEnabled', attr: 'data-je-genre-tagged' },
-    { setting: 'languageTagsEnabled', attr: 'data-je-language-tagged' },
-    { setting: 'ratingTagsEnabled', attr: 'data-je-rating-tagged' },
+    { setting: 'qualityTagsEnabled', attr: 'data-jc-quality-tagged' },
+    { setting: 'genreTagsEnabled', attr: 'data-jc-genre-tagged' },
+    { setting: 'languageTagsEnabled', attr: 'data-jc-language-tagged' },
+    { setting: 'ratingTagsEnabled', attr: 'data-jc-rating-tagged' },
 ] as const;
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
@@ -27,7 +27,7 @@ test.describe('search-page tag hiding', () => {
         // The families enabled for this user; those are the ones that must be
         // hidden on search. Nothing to hide → nothing to guard.
         const enabled: string[] = await page.evaluate((families) => {
-            const settings = (window as any).JellyfinElevate?.currentSettings || {};
+            const settings = (window as any).JellyfinCanopy?.currentSettings || {};
             return families.filter((f) => settings[f.setting] === true).map((f) => f.attr);
         }, FAMILIES.map((f) => ({ setting: f.setting, attr: f.attr })));
         test.skip(enabled.length === 0, 'no tag renderer enabled for this user');
@@ -58,8 +58,8 @@ test.describe('search-page tag hiding', () => {
             await page.reload({ waitUntil: 'domcontentloaded' });
             consoleErrors.reset();
             await page.waitForFunction(
-                () => (window as any).JellyfinElevate?.initialized === true
-                    && (window as any).JellyfinElevate?.pluginConfig?.DisableTagsOnSearchPage === true,
+                () => (window as any).JellyfinCanopy?.initialized === true
+                    && (window as any).JellyfinCanopy?.pluginConfig?.DisableTagsOnSearchPage === true,
                 undefined,
                 { timeout: 60_000 }
             );

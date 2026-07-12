@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/Jellyfin.Plugin.JellyfinCanopy.Tests/">
+    <Project Path="Jellyfin.Plugin.JellyfinCanopy.Tests/JellyfinCanopy.Tests.csproj" />
+  </Folder>
+  <Folder Name="/Jellyfin.Plugin.JellyfinCanopy/">
+    <Project Path="Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj" />
+  </Folder>
+</Solution>

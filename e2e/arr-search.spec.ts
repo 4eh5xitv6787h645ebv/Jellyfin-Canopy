@@ -14,7 +14,7 @@ import type { Page } from 'playwright/test';
 /** True when the (admin) session's plugin config has an enabled Sonarr or Radarr instance. */
 async function arrConfigured(page: Page): Promise<boolean> {
     return page.evaluate(() => {
-        const cfg = (window as unknown as { JellyfinElevate?: { pluginConfig?: Record<string, unknown> } }).JellyfinElevate?.pluginConfig || {};
+        const cfg = (window as unknown as { JellyfinCanopy?: { pluginConfig?: Record<string, unknown> } }).JellyfinCanopy?.pluginConfig || {};
         const has = (list: unknown): boolean => Array.isArray(list)
             && list.some((i) => i && (i as { Enabled?: boolean }).Enabled !== false && !!(i as { Url?: string }).Url);
         return has(cfg.SonarrInstances) || has(cfg.RadarrInstances);
@@ -40,20 +40,20 @@ test.describe('arr Search — action-sheet items', () => {
         await openMovieCardMenu(page);
 
         const sheet = page.locator('.actionSheetScroller').last();
-        await expect(sheet.locator('[data-id="je-arr-search"]')).toBeVisible({ timeout: 10_000 });
-        await expect(sheet.locator('[data-id="je-arr-interactive"]')).toBeVisible();
-        await expect(sheet.locator('[data-id="je-arr-manage"]')).toBeVisible();
+        await expect(sheet.locator('[data-id="jc-arr-search"]')).toBeVisible({ timeout: 10_000 });
+        await expect(sheet.locator('[data-id="jc-arr-interactive"]')).toBeVisible();
+        await expect(sheet.locator('[data-id="jc-arr-manage"]')).toBeVisible();
 
         // Manage opens the modal, driven by a live server context call (no indexer hit).
-        await sheet.locator('[data-id="je-arr-manage"]').click();
-        await expect(page.locator('.je-arr-modal')).toBeVisible({ timeout: 20_000 });
+        await sheet.locator('[data-id="jc-arr-manage"]').click();
+        await expect(page.locator('.jc-arr-modal')).toBeVisible({ timeout: 20_000 });
         // ...and the native action sheet must fully close (dialogHelper <div>, backdrop and all) —
         // otherwise the modal sits behind a stale sheet (regression guard for the mobile close bug).
         await expect(page.locator('.actionSheet')).toHaveCount(0);
         await expect(page.locator('.dialogBackdrop')).toHaveCount(0);
         // It resolves past the loading spinner into real content (a section or a message).
-        await expect(page.locator('.je-arr-modal .je-arr-spinner')).toHaveCount(0, { timeout: 30_000 });
-        await expect(page.locator('.je-arr-modal .je-arr-section, .je-arr-modal .je-arr-message').first()).toBeVisible();
+        await expect(page.locator('.jc-arr-modal .jc-arr-spinner')).toHaveCount(0, { timeout: 30_000 });
+        await expect(page.locator('.jc-arr-modal .jc-arr-section, .jc-arr-modal .jc-arr-message').first()).toBeVisible();
 
         assertNoRuntimeErrors(consoleErrors);
     });
@@ -63,9 +63,9 @@ test.describe('arr Search — action-sheet items', () => {
         await openMovieCardMenu(page);
 
         const sheet = page.locator('.actionSheetScroller').last();
-        await expect(sheet.locator('[data-id="je-arr-search"]')).toHaveCount(0);
-        await expect(sheet.locator('[data-id="je-arr-interactive"]')).toHaveCount(0);
-        await expect(sheet.locator('[data-id="je-arr-manage"]')).toHaveCount(0);
+        await expect(sheet.locator('[data-id="jc-arr-search"]')).toHaveCount(0);
+        await expect(sheet.locator('[data-id="jc-arr-interactive"]')).toHaveCount(0);
+        await expect(sheet.locator('[data-id="jc-arr-manage"]')).toHaveCount(0);
 
         assertNoRuntimeErrors(consoleErrors);
     });

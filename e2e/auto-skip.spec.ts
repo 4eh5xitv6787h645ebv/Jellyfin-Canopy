@@ -48,12 +48,12 @@ test.describe('Auto-Skip v2 (native media segments)', () => {
         // transient auto-skip toasts (they auto-dismiss ~1.5s).
         await page.evaluate(() => {
             /* eslint-disable @typescript-eslint/no-explicit-any */
-            (window as any).JellyfinElevate.currentSettings.autoSkipIntro = true;
+            (window as any).JellyfinCanopy.currentSettings.autoSkipIntro = true;
             (window as any).__jeToasts = [];
             const observer = new MutationObserver((mutations) => {
                 for (const mutation of mutations) {
                     for (const node of mutation.addedNodes) {
-                        if (node instanceof HTMLElement && node.classList.contains('jellyfin-elevate-toast')) {
+                        if (node instanceof HTMLElement && node.classList.contains('jellyfin-canopy-toast')) {
                             (window as any).__jeToasts.push(node.textContent || '');
                         }
                     }
@@ -128,7 +128,7 @@ test.describe('Auto-Skip v2 (native media segments)', () => {
         expect(consoleErrors.real(), 'unexpected console errors').toEqual([]);
         const pluginFourxx = consoleErrors
             .unexpected4xx()
-            .filter((r) => /\/JellyfinElevate\//i.test(r.url));
+            .filter((r) => /\/JellyfinCanopy\//i.test(r.url));
         expect(pluginFourxx, 'no 4xx from plugin endpoints').toEqual([]);
     });
 });

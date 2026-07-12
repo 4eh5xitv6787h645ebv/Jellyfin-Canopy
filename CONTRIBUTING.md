@@ -1,14 +1,14 @@
-# Contributing to Jellyfin Elevate
+# Contributing to Jellyfin Canopy
 
-Thank you for your interest in contributing to Jellyfin Elevate! This document provides guidelines and information to help you get started.
+Thank you for your interest in contributing to Jellyfin Canopy! This document provides guidelines and information to help you get started.
 
 ## 🤝 Ways to Contribute
 
 ### 1. Code Contributions
 
 You can contribute code through:
-- **Open Pull Requests**: Check the [open PRs](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/pulls) for issues that need help
-- **Discussions**: Browse [Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/discussions) for feature requests and ideas that interest you
+- **Open Pull Requests**: Check the [open PRs](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/pulls) for issues that need help
+- **Discussions**: Browse [Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions) for feature requests and ideas that interest you
 - **Bug Fixes**: Fix any bugs you encounter and submit a PR
 
 > [!NOTE]
@@ -16,9 +16,9 @@ You can contribute code through:
 
 ### 2. Translation Contributions
 
-Help make Jellyfin Elevate accessible to more users by contributing translations. Locale JSON files live in `Jellyfin.Plugin.JellyfinElevate/js/locales/` (one per language, `en.json` is the base). To add or update a language, edit the relevant file and open a pull request; `npm run validate-translations` must pass, and all 26 locales must stay in sync with `en.json`.
+Help make Jellyfin Canopy accessible to more users by contributing translations. Locale JSON files live in `Jellyfin.Plugin.JellyfinCanopy/js/locales/` (one per language, `en.json` is the base). To add or update a language, edit the relevant file and open a pull request; `npm run validate-translations` must pass, and all 26 locales must stay in sync with `en.json`.
 
-See the [Contributing Translations](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Elevate/faq-support/contributing-translations/) section for details.
+See the [Contributing Translations](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/faq-support/contributing-translations/) section for details.
 
 ## 🚀 Getting Started
 
@@ -26,10 +26,10 @@ See the [Contributing Translations](https://4eh5xitv6787h645ebv.github.io/Jellyf
 
 The plugin is one C# project (server) plus one TypeScript module tree (client), bundled into a single client artifact:
 
-- `Jellyfin.Plugin.JellyfinElevate/src/` — **the client.** TypeScript ES modules (strict mode, real imports), organized by area: `core/` (platform layer: navigation, lifecycle, dom-observer, ui-kit, api-client, live) whose modules `src/main.ts` imports individually, plus the feature areas `enhanced/`, `jellyseerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/` — each feature area has an `index.ts` barrel that `src/main.ts` imports; `scripts/build-bundle.js` (esbuild) produces `dist/je.bundle.js`.
-- `Jellyfin.Plugin.JellyfinElevate/Controllers/` — one small feature controller per HTTP surface, nearly all deriving from `JellyfinElevateControllerBase` (the anonymous asset-serving `AssetsController` derives directly from `ControllerBase`).
-- `Jellyfin.Plugin.JellyfinElevate/Configuration/` — `PluginConfiguration.cs` (admin settings), `SettingDescriptors.cs` (the settings registry — the single source of truth for what reaches clients), the admin config page.
-- `Jellyfin.Plugin.JellyfinElevate.Tests/` — xUnit tests, including golden snapshots that pin the config payload contract.
+- `Jellyfin.Plugin.JellyfinCanopy/src/` — **the client.** TypeScript ES modules (strict mode, real imports), organized by area: `core/` (platform layer: navigation, lifecycle, dom-observer, ui-kit, api-client, live) whose modules `src/main.ts` imports individually, plus the feature areas `enhanced/`, `jellyseerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/` — each feature area has an `index.ts` barrel that `src/main.ts` imports; `scripts/build-bundle.js` (esbuild) produces `dist/jc.bundle.js`.
+- `Jellyfin.Plugin.JellyfinCanopy/Controllers/` — one small feature controller per HTTP surface, nearly all deriving from `JellyfinCanopyControllerBase` (the anonymous asset-serving `AssetsController` derives directly from `ControllerBase`).
+- `Jellyfin.Plugin.JellyfinCanopy/Configuration/` — `PluginConfiguration.cs` (admin settings), `SettingDescriptors.cs` (the settings registry — the single source of truth for what reaches clients), the admin config page.
+- `Jellyfin.Plugin.JellyfinCanopy.Tests/` — xUnit tests, including golden snapshots that pin the config payload contract.
 - `e2e/` — the committed Playwright suite + `e2e/docker/` (dockerized, seeded Jellyfin 12 for CI and local runs).
 - `docs/` — the MkDocs site, including **[`docs/v12-platform.md`](docs/v12-platform.md) — read this before touching injection, navigation or websocket code.** It is the evidence-based reference for how the Jellyfin 12 web client actually behaves (stable anchors, re-render survival, router traps, auth policy contract).
 
@@ -49,12 +49,12 @@ It generates a typed client module, a controller, an e2e spec stub and a docs st
    Add the property to `PluginConfiguration.cs`, register it in `SettingDescriptors.BuildRegistry()` (`Public(...)` / `Private(...)` / `PublicUser(...)` for per-user overrides — exposure lists are whitelists; secrets never get a descriptor), and add a control with `data-config-key="MyFeatureEnabled"` to `Configuration/configPage.html` — the config-page binder loads/saves every `data-config-key` automatically. The golden snapshot tests pin the payload contract, so a renamed or leaked setting fails CI.
 
 2. **An endpoint = a small controller + a policy attribute.**
-   A class deriving from `JellyfinElevateControllerBase` with `[Route("JellyfinElevate")]`. Auth is declarative: bare `[Authorize]` for any authenticated user, `[Authorize(Policy = Policies.RequiresElevation)]` for admin-only (returns a bare 403 with an empty body — clients branch on status code alone; JSON envelopes are for business errors only).
+   A class deriving from `JellyfinCanopyControllerBase` with `[Route("JellyfinCanopy")]`. Auth is declarative: bare `[Authorize]` for any authenticated user, `[Authorize(Policy = Policies.RequiresElevation)]` for admin-only (returns a bare 403 with an empty body — clients branch on status code alone; JSON envelopes are for business errors only).
 
-3. **UI = a typed module over `JE.core`.**
-   Import `JE` from `src/globals`, register a lifecycle handle (`JE.core.lifecycle` — tracked resources get torn down cleanly), inject via `JE.core.dom.ensureInjected(key, anchorFn, buildFn)` — durable, idempotent, re-attaches across React re-renders, param-only navigations and the `/video` round trip — and build markup with the ui-kit (`JE.core.ui.muiIconButton` / `muiMenuItem` / `sectionContainer`) so it wears native MUI classes and theme tokens. Type the public surface as an interface and augment `JEGlobal` — the `window.JellyfinElevate` contract stays compile-checked.
+3. **UI = a typed module over `JC.core`.**
+   Import `JC` from `src/globals`, register a lifecycle handle (`JC.core.lifecycle` — tracked resources get torn down cleanly), inject via `JC.core.dom.ensureInjected(key, anchorFn, buildFn)` — durable, idempotent, re-attaches across React re-renders, param-only navigations and the `/video` round trip — and build markup with the ui-kit (`JC.core.ui.muiIconButton` / `muiMenuItem` / `sectionContainer`) so it wears native MUI classes and theme tokens. Type the public surface as an interface and augment `JEGlobal` — the `window.JellyfinCanopy` contract stays compile-checked.
 
-4. **Live updates = `JE.core.live.on(LIVE.*)`.**
+4. **Live updates = `JC.core.live.on(LIVE.*)`.**
    Subscribe to `LIVE.CONFIG_CHANGED` (admin saved config — re-init instead of requiring a reload), `LIVE.LIBRARY_CHANGED`, or `LIVE.USER_DATA_CHANGED` instead of polling. The server side pushes through `ISessionManager` (see `Services/LiveNotifierService.cs`).
 
 5. **Proof = an `e2e/` spec.**
@@ -66,9 +66,9 @@ Injected UI must never jank the host client — and must never silently fail to 
 
 - [ ] **R1** Injected UI is pre-paint (`ensureInjected(..., { prePaint: true })`) or occupies reserved dimensions (`min-width` chips / `expandIn`). No insert-then-move, no placeholder-then-swap-width.
 - [ ] **R2** Decorations on existing content (tags, badges, buttons on cards) are `position:absolute` overlays — they cannot shift layout.
-- [ ] **R3** No new body-wide `MutationObserver` — use `JE.core.dom.onBodyMutation` or navigation events; page-scoped observers tear down via lifecycle. Never observe attributes/characterData body-wide.
+- [ ] **R3** No new body-wide `MutationObserver` — use `JC.core.dom.onBodyMutation` or navigation events; page-scoped observers tear down via lifecycle. Never observe attributes/characterData body-wide.
 - [ ] **R4** Layout reads are cached per navigation (the `getHeaderRightContainer` pattern); none inside observer ticks; reads and writes never interleave in loops.
-- [ ] **R5** No `setInterval` for DOM detection; data polls are page-scoped + visibility-gated + push-nudged via `JE.core.live`.
+- [ ] **R5** No `setInterval` for DOM detection; data polls are page-scoped + visibility-gated + push-nudged via `JC.core.live`.
 - [ ] **R6** No remote assets: every third-party asset goes through `src/core/asset-urls.ts` + the `AssetCacheManifest` mirror. A CDN URL anywhere else fails review (content images and user-clicked links exempt).
 - [ ] **R7** Feature DOM is built off-DOM and inserted once, content ready; late async data gets a compositor-only fade, never a layout-affecting swap.
 - [ ] **R8** Synchronous per-mutation-batch work stays under ~2 ms (`performance.now()` guard) and overflows to the async path.
@@ -82,14 +82,14 @@ And one server-side rule (guarded by `LibraryScanEventGuardTests`):
 
 Two client-side security rules, each backed by a source-scan guard test that fails the build on a new violation:
 
-- [ ] **X1** Every `${...}` interpolated into HTML (templates, `innerHTML`, `toast()`, `insertAdjacentHTML`) is a compile-time constant / trusted producer, a coerced number (`Number(x) || 0`), or wrapped in `escapeHtml(...)` — in attribute **and** text positions; `toast()` renders innerHTML and `JE.t()` does **not** escape params. Guarded by `src/test/escape-guard.test.ts`.
+- [ ] **X1** Every `${...}` interpolated into HTML (templates, `innerHTML`, `toast()`, `insertAdjacentHTML`) is a compile-time constant / trusted producer, a coerced number (`Number(x) || 0`), or wrapped in `escapeHtml(...)` — in attribute **and** text positions; `toast()` renders innerHTML and `JC.t()` does **not** escape params. Guarded by `src/test/escape-guard.test.ts`.
 - [ ] **X2** Every config/user-derived value entering a CSS context (`style="..."`, a stylesheet rule, `insertRule`, `color-mix()`, a CSS `var()`) is validated — colours through `cssColorOr(...)`/`isCssColor(...)` (`src/core/css-safe.ts`), because `escapeHtml` does not neutralize a CSS payload. Guarded by `src/test/css-injection-guard.test.ts`.
 
 See [Client Security](docs/advanced/client-security.md).
 
 ### Guard tests
 
-Beyond the per-feature unit tests, `npm run test:client` runs cross-cutting **guard tests** in `src/test/` that parse the shipped source and fail on a whole *class* of regression: `escape-guard` and `css-injection-guard` (injection, above), `leak-guard` (object URLs, un-torn-down observers, unbounded caches/retry loops), `perf-rules-guard` (the [performance rules](docs/advanced/performance-rules.md)), and `error-as-empty-guard` (a failed fetch must surface an error, never a silent empty state). Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber. The config-bridge tests in `Jellyfin.Plugin.JellyfinElevate.Tests/Configuration/` apply the same idea to settings wiring: over one shared config-page parser (`ConfigPageSource.cs`), `ConfigControlCoverageTests` fails if an admin-settable descriptor has no config-page control and `ClientConfigKeyLivenessTests` fails if a `JE.pluginConfig.X` client read has no projecting descriptor (an always-`undefined` knob). A PR that reintroduces one of these bug classes fails CI without anyone having to spot it in review.
+Beyond the per-feature unit tests, `npm run test:client` runs cross-cutting **guard tests** in `src/test/` that parse the shipped source and fail on a whole *class* of regression: `escape-guard` and `css-injection-guard` (injection, above), `leak-guard` (object URLs, un-torn-down observers, unbounded caches/retry loops), `perf-rules-guard` (the [performance rules](docs/advanced/performance-rules.md)), and `error-as-empty-guard` (a failed fetch must surface an error, never a silent empty state). Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber. The config-bridge tests in `Jellyfin.Plugin.JellyfinCanopy.Tests/Configuration/` apply the same idea to settings wiring: over one shared config-page parser (`ConfigPageSource.cs`), `ConfigControlCoverageTests` fails if an admin-settable descriptor has no config-page control and `ClientConfigKeyLivenessTests` fails if a `JC.pluginConfig.X` client read has no projecting descriptor (an always-`undefined` knob). A PR that reintroduces one of these bug classes fails CI without anyone having to spot it in review.
 
 ## 📝 Code Contribution Guidelines
 
@@ -97,7 +97,7 @@ Beyond the per-feature unit tests, `npm run test:client` runs cross-cutting **gu
 
 1. **New client code is TypeScript.**
 
-   New client modules are ES modules under `Jellyfin.Plugin.JellyfinElevate/src/` (strict mode, real imports, unit tests where the logic is pure). The legacy `js/` tree is frozen except for conversions and bug fixes. New C# logic that can be tested without a running Jellyfin server should come with unit tests.
+   New client modules are ES modules under `Jellyfin.Plugin.JellyfinCanopy/src/` (strict mode, real imports, unit tests where the logic is pure). The legacy `js/` tree is frozen except for conversions and bug fixes. New C# logic that can be tested without a running Jellyfin server should come with unit tests.
 
 2. **Comments are Essential**
 
@@ -195,7 +195,7 @@ npm run syntax                 # node --check on the frozen legacy js/ tree
 npm run typecheck              # opt-in @ts-check over legacy js/ files
 
 # Server (Jellyfin 12 / net10.0; TreatWarningsAsErrors — zero warnings)
-dotnet build Jellyfin.Plugin.JellyfinElevate/JellyfinElevate.csproj -c Release
+dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release
 dotnet test                    # xUnit; add --collect:"XPlat Code Coverage" +
                                # node scripts/check-dotnet-coverage.js for the ratchet
 
@@ -213,7 +213,7 @@ The ESLint warning cap (`--max-warnings` in the `lint` script) is the same idea 
 No dev server handy? The compose stack seeds a throwaway Jellyfin 12 with the freshly built plugin, generated media and the test users:
 
 ```bash
-dotnet build Jellyfin.Plugin.JellyfinElevate/JellyfinElevate.csproj -c Release
+dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release
 bash e2e/docker/seed.sh                        # boots + seeds on port 8100
 JF_BASE_URL=http://localhost:8100 npm run e2e
 docker compose -f e2e/docker/compose.yml down -v
@@ -270,10 +270,10 @@ If you have questions or need help:
 
 For UI changes:
 
-- Use the ui-kit (`JE.core.ui`) so injected UI matches native markup and follows the active theme
+- Use the ui-kit (`JC.core.ui`) so injected UI matches native markup and follows the active theme
 - Test with different Jellyfin themes and both layouts
 - Provide before/after screenshots
 
 ---
 
-**Thank you for contributing to Jellyfin Elevate! Your efforts help make Jellyfin better for everyone.** 💜
+**Thank you for contributing to Jellyfin Canopy! Your efforts help make Jellyfin better for everyone.** 💜

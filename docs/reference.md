@@ -1,10 +1,10 @@
 # Reference
 
-This is the power-user reference for Jellyfin Elevate: a map of where every admin setting lives, and the full catalogue of CSS hooks the plugin exposes so you can restyle or hide almost anything it draws. If you know what you want and need the exact tab, selector, class, or data attribute, this is the page to keep open.
+This is the power-user reference for Jellyfin Canopy: a map of where every admin setting lives, and the full catalogue of CSS hooks the plugin exposes so you can restyle or hide almost anything it draws. If you know what you want and need the exact tab, selector, class, or data attribute, this is the page to keep open.
 
 ## Where Settings Live
 
-Every admin option lives on one of the tabs in the plugin config page: **Dashboard** → **Plugins** → **Jellyfin Elevate**. The config page is split into twelve tabs, each owning a distinct slice of the plugin. Use this table to find the tab you need and the guide that explains it in depth.
+Every admin option lives on one of the tabs in the plugin config page: **Dashboard** → **Plugins** → **Jellyfin Canopy**. The config page is split into twelve tabs, each owning a distinct slice of the plugin. Use this table to find the tab you need and the guide that explains it in depth.
 
 | Config-page tab | Configures | Documented in |
 |---|---|---|
@@ -27,7 +27,7 @@ Every admin option lives on one of the tabs in the plugin config page: **Dashboa
 
 ## Custom CSS
 
-Jellyfin Elevate draws a lot of on-screen furniture — pause-screen panels, media tags, an in-player rating overlay, tag links, the Enhanced Panel itself — and every piece carries a stable id, class, or data attribute you can target. That means you can recolor, resize, or hide almost anything with a few lines of CSS, without waiting for a setting to exist.
+Jellyfin Canopy draws a lot of on-screen furniture — pause-screen panels, media tags, an in-player rating overlay, tag links, the Enhanced Panel itself — and every piece carries a stable id, class, or data attribute you can target. That means you can recolor, resize, or hide almost anything with a few lines of CSS, without waiting for a setting to exist.
 
 !!! note "Admin-supplied colours are validated"
 
@@ -46,7 +46,7 @@ Everything below is a selector you can drop into that box.
 
 ### Pause screen
 
-When you pause playback, Jellyfin Elevate replaces the default screen with an information panel. Each element is individually targetable, so you can trim it down to only the parts you want. (For what the pause screen does and its toggles, see [The Enhanced Experience](enhanced.md).)
+When you pause playback, Jellyfin Canopy replaces the default screen with an information panel. Each element is individually targetable, so you can trim it down to only the parts you want. (For what the pause screen does and its toggles, see [The Enhanced Experience](enhanced.md).)
 
 | Element | CSS Selector | Example CSS to hide |
 | --- | --- | --- |
@@ -59,7 +59,7 @@ When you pause playback, Jellyfin Elevate replaces the default screen with an in
 
 ### Media tag styling
 
-The tags and overlays that Jellyfin Elevate stamps onto posters and detail pages all expose classes and data attributes, so you can restyle a whole tag family at once or single out one value. These are the client-side overlays configured on the **Display** tab; see [The Enhanced Experience](enhanced.md) for what each tag family means.
+The tags and overlays that Jellyfin Canopy stamps onto posters and detail pages all expose classes and data attributes, so you can restyle a whole tag family at once or single out one value. These are the client-side overlays configured on the **Display** tab; see [The Enhanced Experience](enhanced.md) for what each tag family means.
 
 #### Quality tags
 
@@ -180,31 +180,31 @@ Hide the critic rating:
 
 #### In-player rating OSD
 
-When **Show Rating in Video Player** is enabled, the plugin injects the item's TMDB and Rotten Tomatoes ratings into the video player OSD, next to the "Ends at" time. Its default styles live in an injected `<style id="je-osd-rating-style">` element, so override them with `!important` (or higher specificity).
+When **Show Rating in Video Player** is enabled, the plugin injects the item's TMDB and Rotten Tomatoes ratings into the video player OSD, next to the "Ends at" time. Its default styles live in an injected `<style id="jc-osd-rating-style">` element, so override them with `!important` (or higher specificity).
 
 Available hooks:
 
-- `#je-osd-rating-container` – the rating container span; carries a `data-item-id` attribute set to the current item's id (e.g. `#je-osd-rating-container[data-item-id]`)
-- `.je-chip.tmdb` / `.je-chip.critic` – the TMDB (community) and Rotten Tomatoes (critic) chips
-- `.je-star` – the star glyph in the TMDB chip
-- `.je-text` – the numeric label (rating value or critic percent)
-- `.je-tomato` with `.fresh` / `.rotten` – the Rotten Tomatoes glyph (**fresh** when the critic score is 60 or above, **rotten** below 60)
+- `#jc-osd-rating-container` – the rating container span; carries a `data-item-id` attribute set to the current item's id (e.g. `#jc-osd-rating-container[data-item-id]`)
+- `.jc-chip.tmdb` / `.jc-chip.critic` – the TMDB (community) and Rotten Tomatoes (critic) chips
+- `.jc-star` – the star glyph in the TMDB chip
+- `.jc-text` – the numeric label (rating value or critic percent)
+- `.jc-tomato` with `.fresh` / `.rotten` – the Rotten Tomatoes glyph (**fresh** when the critic score is 60 or above, **rotten** below 60)
 
 Restyle the rating chips:
 
 ```css
-#je-osd-rating-container .je-chip {
+#jc-osd-rating-container .jc-chip {
     padding: 3px 8px !important;
     border-radius: 6px !important;
 }
 
 /* Recolor the TMDB score */
-#je-osd-rating-container .je-chip.tmdb .je-text {
+#jc-osd-rating-container .jc-chip.tmdb .jc-text {
     color: #00a4dc !important;
 }
 
 /* Hide the Rotten Tomatoes critic chip */
-#je-osd-rating-container .je-chip.critic {
+#jc-osd-rating-container .jc-chip.critic {
     display: none !important;
 }
 ```
@@ -214,7 +214,7 @@ Restyle the rating chips:
 The people-tag enrichment adds age chips and a birthplace banner. Customize the age chips:
 
 ```css
-.je-people-age-chip {
+.jc-people-age-chip {
     padding: 6px 12px !important;
     font-size: 13px !important;
 }
@@ -223,7 +223,7 @@ The people-tag enrichment adds age chips and a birthplace banner. Customize the 
 Hide the birthplace banner:
 
 ```css
-.je-people-place-banner {
+.jc-people-place-banner {
     display: none !important;
 }
 ```
@@ -237,18 +237,18 @@ Structure of each link:
 ```html
 <a class="button-link emby-button arr-tag-link"
    href="#..."
-   title="View all items with tag: JE Arr Tag: in-netflix"
+   title="View all items with tag: JC Arr Tag: in-netflix"
    data-id="in-netflix"
-   data-tag="JE Arr Tag: in-netflix"
+   data-tag="JC Arr Tag: in-netflix"
    data-tag-name="in-netflix"
-   data-tag-prefix="JE Arr Tag: ">
+   data-tag-prefix="JC Arr Tag: ">
   <span class="arr-tag-link-icon" aria-hidden="true"><!-- inline tag SVG --></span>
   <span class="arr-tag-link-text"
         data-id="in-netflix"
-        data-tag="JE Arr Tag: in-netflix"
+        data-tag="JC Arr Tag: in-netflix"
         data-tag-name="in-netflix"
-        data-tag-prefix="JE Arr Tag: ">
-    JE Arr Tag: in-netflix
+        data-tag-prefix="JC Arr Tag: ">
+    JC Arr Tag: in-netflix
   </span>
  </a>
 ```
@@ -264,7 +264,7 @@ Data attributes on both the link and text spans:
 - `data-id` – a CSS-friendly slug of the raw tag (e.g. `in-netflix`)
 - `data-tag` – full tag text including the prefix
 - `data-tag-name` – tag without the prefix
-- `data-tag-prefix` – the configured prefix (default: `JE Arr Tag: `)
+- `data-tag-prefix` – the configured prefix (default: `JC Arr Tag: `)
 
 **Common recipes:**
 
@@ -334,18 +334,18 @@ The [Enhanced Panel](enhanced.md) is the settings and shortcuts overlay the plug
     - **ElegantFin** — matches the theme's header and accent color
     - **Default** — clean, universal styling for unrecognized themes
 
-To override the automatic theming or customize the panel further, use the selectors below. The panel's root is `#jellyfin-elevate-panel`; toast notifications use `.jellyfin-elevate-toast`. This example is a complete universal override you can adapt:
+To override the automatic theming or customize the panel further, use the selectors below. The panel's root is `#jellyfin-canopy-panel`; toast notifications use `.jellyfin-canopy-toast`. This example is a complete universal override you can adapt:
 
 ```css
 
     /*
     * ===================================================================
-    * Universal Style Override for the Jellyfin Elevate Panel
+    * Universal Style Override for the Jellyfin Canopy Panel
     * ===================================================================
     */
 
     /* --- Main Panel & Backdrop --- */
-    #jellyfin-elevate-panel {
+    #jellyfin-canopy-panel {
         background: rgba(25, 35, 45, 0.85) !important;
         border: 1px solid rgba(125, 150, 175, 0.3) !important;
         backdrop-filter: blur(20px) !important;
@@ -354,50 +354,50 @@ To override the automatic theming or customize the panel further, use the select
     }
 
     /* --- Panel Header --- */
-    #jellyfin-elevate-panel > div:first-child {
+    #jellyfin-canopy-panel > div:first-child {
         background: rgba(0, 0, 0, 0.25) !important;
         border-bottom: 1px solid rgba(125, 150, 175, 0.3) !important;
     }
 
-    /* --- Main Title ("Jellyfin Elevate") --- */
-    #jellyfin-elevate-panel div[style*="-webkit-background-clip: text"] {
+    /* --- Main Title ("Jellyfin Canopy") --- */
+    #jellyfin-canopy-panel div[style*="-webkit-background-clip: text"] {
         background: linear-gradient(135deg, #00a4dc, #aa5cc3) !important;
         -webkit-background-clip: text !important;
         -webkit-text-fill-color: transparent !important;
     }
 
     /* --- Tab Buttons --- */
-    #jellyfin-elevate-panel .tab-button {
+    #jellyfin-canopy-panel .tab-button {
         background: rgba(0, 0, 0, 0.2) !important;
         color: rgba(255, 255, 255, 0.6) !important;
         border-bottom: 3px solid transparent !important;
     }
 
-    #jellyfin-elevate-panel .tab-button:hover {
+    #jellyfin-canopy-panel .tab-button:hover {
         background: rgba(0, 0, 0, 0.4) !important;
         color: #ffffff !important;
     }
 
-    #jellyfin-elevate-panel .tab-button.active {
+    #jellyfin-canopy-panel .tab-button.active {
         color: #ffffff !important;
         border-bottom-color: #00a4dc !important;
         background: rgba(0, 0, 0, 0.3) !important;
     }
 
     /* --- Section Headers & <details> Summary --- */
-    #jellyfin-elevate-panel h3,
-    #jellyfin-elevate-panel details summary {
+    #jellyfin-canopy-panel h3,
+    #jellyfin-canopy-panel details summary {
         color: #00a4dc !important;
     }
 
     /* --- Collapsible <details> Sections --- */
-    #jellyfin-elevate-panel details {
+    #jellyfin-canopy-panel details {
         background-color: rgba(0, 0, 0, 0.2) !important;
         border: 1px solid rgba(125, 150, 175, 0.2) !important;
     }
 
     /* --- Keyboard Key Styling (<kbd>) --- */
-    #jellyfin-elevate-panel kbd,
+    #jellyfin-canopy-panel kbd,
     .shortcut-key {
         background: #34495e !important;
         color: #ecf0f1 !important;
@@ -406,30 +406,30 @@ To override the automatic theming or customize the panel further, use the select
     }
 
     /* --- Toggles & Checkboxes --- */
-    #jellyfin-elevate-panel input[type="checkbox"] {
+    #jellyfin-canopy-panel input[type="checkbox"] {
         accent-color: #aa5cc3 !important;
     }
 
     /* --- Panel Footer --- */
-    #jellyfin-elevate-panel .panel-footer {
+    #jellyfin-canopy-panel .panel-footer {
         background: rgba(0, 0, 0, 0.25) !important;
         border-top: 1px solid rgba(125, 150, 175, 0.3) !important;
     }
 
     /* --- Buttons in Footer --- */
-    #jellyfin-elevate-panel .footer-buttons a,
-    #jellyfin-elevate-panel .footer-buttons button {
+    #jellyfin-canopy-panel .footer-buttons a,
+    #jellyfin-canopy-panel .footer-buttons button {
         background-color: rgba(255, 255, 255, 0.08) !important;
         transition: background-color 0.2s ease;
     }
 
-    #jellyfin-elevate-panel .footer-buttons a:hover,
-    #jellyfin-elevate-panel .footer-buttons button:hover {
+    #jellyfin-canopy-panel .footer-buttons a:hover,
+    #jellyfin-canopy-panel .footer-buttons button:hover {
         background-color: rgba(255, 255, 255, 0.15) !important;
     }
 
     /* --- Style for Toast Notifications --- */
-    .jellyfin-elevate-toast {
+    .jellyfin-canopy-toast {
         background: linear-gradient(135deg, #00a4dc, #aa5cc3) !important;
         color: white !important;
         border: none !important;

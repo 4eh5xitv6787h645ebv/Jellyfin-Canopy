@@ -13,7 +13,7 @@
   <script>
     (function () {
       var t;
-      try { t = localStorage.getItem("elevate-theme"); } catch (e) { /* storage blocked */ }
+      try { t = localStorage.getItem("canopy-theme"); } catch (e) { /* storage blocked */ }
       if (t !== "light" && t !== "dark") {
         t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
       }

@@ -31,11 +31,11 @@ One connection puts links to your Sonarr, Radarr, and Bazarr instances directly 
 
 ## Connecting your instances
 
-Everything starts on the **\*arr** tab: **Dashboard → Plugins → Jellyfin Elevate → \*arr**. You can connect several Sonarr and several Radarr instances at once — handy when you split libraries by type or quality (TV vs. Anime, HD vs. 4K). Neither service is mandatory; set up whichever you run.
+Everything starts on the **\*arr** tab: **Dashboard → Plugins → Jellyfin Canopy → \*arr**. You can connect several Sonarr and several Radarr instances at once — handy when you split libraries by type or quality (TV vs. Anime, HD vs. 4K). Neither service is mandatory; set up whichever you run.
 
 To enable the on-page links:
 
-1. Go to **Dashboard → Plugins → Jellyfin Elevate** and open the **\*arr** tab.
+1. Go to **Dashboard → Plugins → Jellyfin Canopy** and open the **\*arr** tab.
 2. Check **"Enable \*arr Links on Detail Pages"**.
 3. Add one or more Sonarr and/or Radarr instances (below).
 4. Optionally add a **Bazarr URL** for subtitle-management links (see [Bazarr](#bazarr)).
@@ -200,13 +200,13 @@ Sonarr series tags are matched to your Jellyfin library by **TVDB id** — Sonar
 
 !!! warning "Tags only populate when the sync task runs"
 
-    Tag syncing is performed by the scheduled task **"Sync Tags from \*arr to Jellyfin"** (**Dashboard → Scheduled Tasks**, category Jellyfin Elevate). Tags appear on items only after this task runs. Trigger it manually the first time, then add a schedule trigger so it runs periodically and picks up new items automatically.
+    Tag syncing is performed by the scheduled task **"Sync Tags from \*arr to Jellyfin"** (**Dashboard → Scheduled Tasks**, category Jellyfin Canopy). Tags appear on items only after this task runs. Trigger it manually the first time, then add a schedule trigger so it runs periodically and picks up new items automatically.
 
 ### Tag settings
 
 | Setting | Default | What it does |
 |---|---|---|
-| **Tag Prefix** | `JE Arr Tag: ` | Prefix added to synced tags so plugin-managed tags are easy to identify. Leaving the field blank falls back to the same `JE Arr Tag: ` default on both the write and read sides, so a cleared prefix no longer leaves orphaned tags. |
+| **Tag Prefix** | `JC Arr Tag: ` | Prefix added to synced tags so plugin-managed tags are easy to identify. Leaving the field blank falls back to the same `JC Arr Tag: ` default on both the write and read sides, so a cleared prefix no longer leaves orphaned tags. |
 | **Clear old tags before sync** | Recommended on | Removes old plugin-managed tags before syncing, keeping tags clean and up to date. |
 | **Show synced tags as links** | Recommended on | Displays tags as clickable links on item pages; clicking one shows all items with that tag. |
 
@@ -261,7 +261,7 @@ The Calendar page collects upcoming releases from all your enabled Sonarr and Ra
 
 ### Enabling
 
-1. Go to **Dashboard → Plugins → Jellyfin Elevate** and open the **Pages** tab.
+1. Go to **Dashboard → Plugins → Jellyfin Canopy** and open the **Pages** tab.
 2. Check **"Enable Calendar Page"**.
 3. Choose how it's surfaced:
     - **Add Calendar as a native Home tab** — adds Calendar as its own tab on the Home page, no external plugin needed (recommended on Jellyfin 12's experimental layout, which is the default).
@@ -300,7 +300,7 @@ The Requests page shows the active download queue from Sonarr and Radarr in one 
 
 ### Enabling
 
-1. Go to **Dashboard → Plugins → Jellyfin Elevate** and open the **Pages** tab.
+1. Go to **Dashboard → Plugins → Jellyfin Canopy** and open the **Pages** tab.
 2. Check **"Enable Requests Page"** (under the "Requests Page" section).
 3. Choose how it's surfaced — **Native Home Tab**, **Plugin Pages**, or **Custom Tabs**. The Native Home Tab adds Requests as its own tab on the Home page and needs no external plugin (recommended on Jellyfin 12's experimental layout).
 4. Click **Save**, and restart Jellyfin if you chose Plugin Pages.
@@ -355,7 +355,7 @@ If they still don't show, open the arr URLs in a browser to confirm they're reac
 First, **run the sync task** — tags are populated by the scheduled task **"Sync Tags from \*arr to Jellyfin"** and only appear after it runs:
 
 1. Go to **Dashboard → Scheduled Tasks**.
-2. Find **"Sync Tags from \*arr to Jellyfin"** (category: Jellyfin Elevate) and run it manually.
+2. Find **"Sync Tags from \*arr to Jellyfin"** (category: Jellyfin Canopy) and run it manually.
 3. Add a schedule trigger so it runs periodically and picks up new items.
 
 If tags still don't appear, check that the API keys are correct and test API access manually (and check the arr logs for errors). Then check your tag settings: the prefix should match, the sync filter shouldn't be too restrictive, and the tags must exist in the arr.
@@ -400,4 +400,4 @@ If you're stuck:
 1. Check the [FAQ](help.md) for common solutions.
 2. Verify your arr URLs and API keys.
 3. Check the browser console and server logs.
-4. Report issues on [GitHub](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues).
+4. Report issues on [GitHub](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues).

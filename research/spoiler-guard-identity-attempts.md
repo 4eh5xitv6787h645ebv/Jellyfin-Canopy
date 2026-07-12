@@ -6,7 +6,7 @@ user itself. Today's resolution ladder (`SpoilerUserResolver`):
 
 1. `ClaimsPrincipal` — authoritative, present only when the request carries a
    token Jellyfin authenticates.
-2. `je-spoiler-uid` cookie — web browsers only; trusted only when that user
+2. `jc-spoiler-uid` cookie — web browsers only; trusted only when that user
    also has a session on the request IP.
 3. Session-by-IP — every user with a session from the request IP is a
    candidate; ambiguous ⇒ fail closed (blur if ANY candidate guards the item).
@@ -116,11 +116,11 @@ rejected), 10 (A7/A8, rejected).
 | Client | Auth header | Token in query | deviceId | UA | Cookies |
 |---|---|---|---|---|---|
 | Android TV (+ Plethorafin/Moonfin) | no | no | no | `okhttp/x.y.z` | no |
-| Android mobile (WebView UI) | no | no | no | WebView UA | JE cookie ✅ (it IS jellyfin-web) |
+| Android mobile (WebView UI) | no | no | no | WebView UA | JC cookie ✅ (it IS jellyfin-web) |
 | Android mobile (native ImageProvider, launcher tiles only) | **yes** (full `MediaBrowser …Token=`) | no | in header | okhttp | no |
 | Swiftfin (iOS/tvOS) | no | no | no | `Swiftfin/… CFNetwork/…` | no |
 | Roku | no (impossible on Poster nodes) | no | no | Roku firmware UA | no |
-| Web | no | no | no | browser UA | JE cookie ✅ |
+| Web | no | no | no | browser UA | JC cookie ✅ |
 
 Every client passes the DTO tag verbatim into `?tag=` (Kotlin SDK
 `getItemImageUrl`, Swift SDK `url(with:)` with `queryAPIKey=false`, Roku
@@ -227,8 +227,8 @@ ladder preserved).
 via the deliberately misconfigured nginx proxy on :8102):** wire capture
 shows the app's image requests are fully anonymous (`auth:""`, no cookie,
 `okhttp/5.3.2`, no XFF) and echo the stamped tag (`…-jeu56c6f557be45`)
-verbatim. je_arradmin (guarding): episode stills substituted, "Spoiler Guard
-activated" placeholder. je_arruser (same proxy IP): real overview + clean
+verbatim. jc_arradmin (guarding): episode stills substituted, "Spoiler Guard
+activated" placeholder. jc_arruser (same proxy IP): real overview + clean
 episode stills — the over-blur this project set out to fix is gone.
 Screenshots: research/evidence/atv-emulator-*.png
 

@@ -26,7 +26,7 @@ const QUERY = 'night of the living dead';
 async function searchMovieIds(page: any): Promise<number[]> {
     return page.evaluate(async (query: string) => {
         const api = (window as any).ApiClient;
-        const url = api.getUrl(`/JellyfinElevate/jellyseerr/search?query=${encodeURIComponent(query)}&page=1&language=en`);
+        const url = api.getUrl(`/JellyfinCanopy/jellyseerr/search?query=${encodeURIComponent(query)}&page=1&language=en`);
         const res = await api.getJSON(url);
         return ((res.results || []) as any[]).filter((r) => r.mediaType === 'movie').map((r) => r.id);
     }, QUERY);
@@ -50,7 +50,7 @@ async function postRequestStatus(page: any, tmdbId: number): Promise<number> {
         try {
             await api.ajax({
                 type: 'POST',
-                url: api.getUrl('/JellyfinElevate/jellyseerr/request'),
+                url: api.getUrl('/JellyfinCanopy/jellyseerr/request'),
                 data: JSON.stringify({ mediaType: 'movie', mediaId: id }),
                 contentType: 'application/json',
                 dataType: 'json',
@@ -83,13 +83,13 @@ test.describe('Seerr parental tag blocking', () => {
             expect(ids.length, 'non-matching titles must survive a keyword block').toBeGreaterThan(0);
 
             // Detail: bare 403 for the blocked title.
-            expect(await getStatus(userPage, `/JellyfinElevate/jellyseerr/movie/${NOTLD_1968}`)).toBe(403);
+            expect(await getStatus(userPage, `/JellyfinCanopy/jellyseerr/movie/${NOTLD_1968}`)).toBe(403);
 
             // Request creation: blocked pre-proxy.
             expect(await postRequestStatus(userPage, NOTLD_1968)).toBe(403);
 
             // The admin's own view stays unfiltered (bypass, matching core).
-            expect(await getStatus(adminPage, `/JellyfinElevate/jellyseerr/movie/${NOTLD_1968}`)).toBe(200);
+            expect(await getStatus(adminPage, `/JellyfinCanopy/jellyseerr/movie/${NOTLD_1968}`)).toBe(200);
 
             await userCtx.close();
         } finally {

@@ -17,8 +17,8 @@
         "skipLibCheck": true
     },
     "include": [
-        "Jellyfin.Plugin.JellyfinElevate/js/**/*.js",
-        "Jellyfin.Plugin.JellyfinElevate/js/**/*.d.ts"
+        "Jellyfin.Plugin.JellyfinCanopy/js/**/*.js",
+        "Jellyfin.Plugin.JellyfinCanopy/js/**/*.d.ts"
     ],
     "exclude": ["node_modules", "**/bin", "**/obj"]
 }

@@ -1,5 +1,5 @@
 {
-    // Type-checking for the TypeScript module tree (Jellyfin.Plugin.JellyfinElevate/src/).
+    // Type-checking for the TypeScript module tree (Jellyfin.Plugin.JellyfinCanopy/src/).
     //
     // Strict from day one — src/ is the post-migration world. The legacy js/
     // tree keeps its own looser program (jsconfig.json, opt-in // @ts-check)
@@ -21,6 +21,6 @@
         "noImplicitOverride": true,
         "types": []
     },
-    "include": ["Jellyfin.Plugin.JellyfinElevate/src/**/*.ts"],
+    "include": ["Jellyfin.Plugin.JellyfinCanopy/src/**/*.ts"],
     "exclude": ["node_modules", "**/bin", "**/obj"]
 }

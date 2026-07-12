@@ -11,7 +11,7 @@
 //      legacy *ExternalUrl keys) plus the shared unit-tested resolver
 //      (src/arr/url-resolve.test.ts).
 //   2. RESILIENCE — with every Seerr call failing (unreachable / non-JSON /
-//      502), the app still boots clean (window.JellyfinElevate.initialized),
+//      502), the app still boots clean (window.JellyfinCanopy.initialized),
 //      Seerr surfaces stay absent, and there are zero real console errors
 //      beyond the deliberately-induced request failures.
 import { test, expect, loginAs, type Role } from './fixtures/auth';
@@ -21,8 +21,8 @@ import { test, expect, loginAs, type Role } from './fixtures/auth';
 /** Read the resolved Seerr link base the injected client would use for deep links. */
 async function resolveSeerrBase(page: import('playwright/test').Page): Promise<string> {
     return page.evaluate(() => {
-        const JE = (window as any).JellyfinElevate;
-        return (JE?.jellyseerrAPI?.resolveJellyseerrBaseUrl?.() as string) || '';
+        const JC = (window as any).JellyfinCanopy;
+        return (JC?.jellyseerrAPI?.resolveJellyseerrBaseUrl?.() as string) || '';
     });
 }
 
@@ -32,11 +32,11 @@ test.describe('Seerr/arr split internal/external URLs', () => {
             await loginAs(page, role, consoleErrors);
 
             const { baseUrl, resolved } = await page.evaluate(() => {
-                const cfg = (window as any).JellyfinElevate?.pluginConfig || {};
-                const JE = (window as any).JellyfinElevate;
+                const cfg = (window as any).JellyfinCanopy?.pluginConfig || {};
+                const JC = (window as any).JellyfinCanopy;
                 return {
                     baseUrl: cfg.JellyseerrBaseUrl ?? null,
-                    resolved: (JE?.jellyseerrAPI?.resolveJellyseerrBaseUrl?.() as string) || '',
+                    resolved: (JC?.jellyseerrAPI?.resolveJellyseerrBaseUrl?.() as string) || '',
                 };
             });
 
@@ -60,10 +60,10 @@ test.describe('Seerr/arr split internal/external URLs', () => {
         // projection client-side and confirm the resolver honours it verbatim (no
         // mapping configured, so external wins).
         const resolved = await page.evaluate(() => {
-            const JE = (window as any).JellyfinElevate;
-            JE.pluginConfig.JellyseerrUrlMappings = '';
-            JE.pluginConfig.JellyseerrBaseUrl = 'https://requests.example.com';
-            return JE.jellyseerrAPI.resolveJellyseerrBaseUrl();
+            const JC = (window as any).JellyfinCanopy;
+            JC.pluginConfig.JellyseerrUrlMappings = '';
+            JC.pluginConfig.JellyseerrBaseUrl = 'https://requests.example.com';
+            return JC.jellyseerrAPI.resolveJellyseerrBaseUrl();
         });
         expect(resolved).toBe('https://requests.example.com');
     });
@@ -72,12 +72,12 @@ test.describe('Seerr/arr split internal/external URLs', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         const resolved = await page.evaluate(() => {
-            const JE = (window as any).JellyfinElevate;
+            const JC = (window as any).JellyfinCanopy;
             const origin = ((window as any).ApiClient?.serverAddress?.() as string) || window.location.origin;
             // External base set, but a mapping matches the current access URL — mapping wins.
-            JE.pluginConfig.JellyseerrBaseUrl = 'https://external.example.com';
-            JE.pluginConfig.JellyseerrUrlMappings = `${origin}|https://mapped.example.com`;
-            return JE.jellyseerrAPI.resolveJellyseerrBaseUrl();
+            JC.pluginConfig.JellyseerrBaseUrl = 'https://external.example.com';
+            JC.pluginConfig.JellyseerrUrlMappings = `${origin}|https://mapped.example.com`;
+            return JC.jellyseerrAPI.resolveJellyseerrBaseUrl();
         });
         expect(resolved).toBe('https://mapped.example.com');
     });
@@ -86,7 +86,7 @@ test.describe('Seerr/arr split internal/external URLs', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         const contract = await page.evaluate(() => {
-            const cfg = (window as any).JellyfinElevate?.pluginConfig || {};
+            const cfg = (window as any).JellyfinCanopy?.pluginConfig || {};
             const firstSonarr = Array.isArray(cfg.SonarrInstances) && cfg.SonarrInstances.length > 0
                 ? cfg.SonarrInstances[0] : null;
             return {
@@ -114,7 +114,7 @@ test.describe('Seerr resilience: a bad/down Seerr never breaks the UI (591)', ()
             // abort (connection refused), half return a non-JSON login page with 502.
             // The client must survive both without throwing or spamming the console.
             let seerrCalls = 0;
-            await page.route('**/JellyfinElevate/jellyseerr/**', async (route) => {
+            await page.route('**/JellyfinCanopy/jellyseerr/**', async (route) => {
                 seerrCalls++;
                 if (seerrCalls % 2 === 0) {
                     await route.fulfill({
@@ -130,8 +130,8 @@ test.describe('Seerr resilience: a bad/down Seerr never breaks the UI (591)', ()
             await loginAs(page, role, consoleErrors);
 
             // The plugin must have fully initialised despite Seerr being dead.
-            const initialized = await page.evaluate(() => (window as any).JellyfinElevate?.initialized === true);
-            expect(initialized, 'JE must boot even when Seerr is unreachable').toBe(true);
+            const initialized = await page.evaluate(() => (window as any).JellyfinCanopy?.initialized === true);
+            expect(initialized, 'JC must boot even when Seerr is unreachable').toBe(true);
 
             // Drive a global search, the surface most likely to fire Seerr calls, then
             // give the deferred Seerr fetches time to fail and be handled.

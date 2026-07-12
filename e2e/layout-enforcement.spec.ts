@@ -28,7 +28,7 @@ const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 // Counts REAL document loads (full navigations/reloads), not SPA route changes,
 // via an init script that runs before page scripts on every navigation.
 async function readLoads(page: any): Promise<number> {
-    return page.evaluate(() => parseInt(sessionStorage.getItem('je_e2e_loads') || '0', 10));
+    return page.evaluate(() => parseInt(sessionStorage.getItem('jc_e2e_loads') || '0', 10));
 }
 
 /**
@@ -41,15 +41,15 @@ async function readLoads(page: any): Promise<number> {
 async function armPage(page: any, seedLayout: string | null): Promise<void> {
     await page.addInitScript((seed: string | null) => {
         try {
-            if (!sessionStorage.getItem('je_e2e_armed')) {
-                sessionStorage.setItem('je_e2e_armed', '1');
-                sessionStorage.setItem('je_e2e_loads', '0');
-                sessionStorage.removeItem('je_layout_enforced');
+            if (!sessionStorage.getItem('jc_e2e_armed')) {
+                sessionStorage.setItem('jc_e2e_armed', '1');
+                sessionStorage.setItem('jc_e2e_loads', '0');
+                sessionStorage.removeItem('jc_layout_enforced');
                 if (seed === null) localStorage.removeItem('layout');
                 else localStorage.setItem('layout', seed);
             }
-            const n = parseInt(sessionStorage.getItem('je_e2e_loads') || '0', 10) + 1;
-            sessionStorage.setItem('je_e2e_loads', String(n));
+            const n = parseInt(sessionStorage.getItem('jc_e2e_loads') || '0', 10) + 1;
+            sessionStorage.setItem('jc_e2e_loads', String(n));
         } catch (e) { /* storage unavailable in this env — test will surface it */ }
     }, seedLayout);
     await page.goto('/web/', { waitUntil: 'domcontentloaded' });
@@ -92,7 +92,7 @@ test.describe('layout enforcement', () => {
         // 'experimental' AND a second document load has occurred.
         await page.waitForFunction(
             () => localStorage.getItem('layout') === 'experimental'
-                && parseInt(sessionStorage.getItem('je_e2e_loads') || '0', 10) >= 2,
+                && parseInt(sessionStorage.getItem('jc_e2e_loads') || '0', 10) >= 2,
             undefined,
             { timeout: 60_000 }
         );
@@ -104,7 +104,7 @@ test.describe('layout enforcement', () => {
         await page.waitForTimeout(5_000);
         expect(await readLoads(page), 'exactly one enforcement reload — no loop').toBe(2);
         expect(await page.evaluate(() => localStorage.getItem('layout'))).toBe('experimental');
-        expect(await page.evaluate(() => sessionStorage.getItem('je_layout_enforced')), 'loop marker cleared after convergence').toBeNull();
+        expect(await page.evaluate(() => sessionStorage.getItem('jc_layout_enforced')), 'loop marker cleared after convergence').toBeNull();
 
         assertNoRuntimeErrors(consoleErrors);
     });
@@ -116,7 +116,7 @@ test.describe('layout enforcement', () => {
         // protects every already-modern device from a reload on every visit.
         await Promise.all([
             page.waitForResponse(
-                (r: any) => /\/JellyfinElevate\/public-config/.test(r.url()),
+                (r: any) => /\/JellyfinCanopy\/public-config/.test(r.url()),
                 { timeout: 60_000 }
             ),
             armPage(page, 'experimental'),
@@ -126,7 +126,7 @@ test.describe('layout enforcement', () => {
         await page.waitForTimeout(4_000);
         expect(await readLoads(page), 'converged device must not reload').toBe(1);
         expect(await page.evaluate(() => localStorage.getItem('layout'))).toBe('experimental');
-        expect(await page.evaluate(() => sessionStorage.getItem('je_layout_enforced')), 'no loop marker on the converged path').toBeNull();
+        expect(await page.evaluate(() => sessionStorage.getItem('jc_layout_enforced')), 'no loop marker on the converged path').toBeNull();
     });
 
     test('None leaves a legacy-set client untouched (no reload)', async ({ page, baseURL }) => {
@@ -136,7 +136,7 @@ test.describe('layout enforcement', () => {
         // public-config fetch (when the no-op decision is made) to resolve.
         await Promise.all([
             page.waitForResponse(
-                (r: any) => /\/JellyfinElevate\/public-config/.test(r.url()),
+                (r: any) => /\/JellyfinCanopy\/public-config/.test(r.url()),
                 { timeout: 60_000 }
             ),
             armPage(page, 'desktop'),
@@ -146,6 +146,6 @@ test.describe('layout enforcement', () => {
         await page.waitForTimeout(4_000);
         expect(await readLoads(page), 'None must not trigger a reload').toBe(1);
         expect(await page.evaluate(() => localStorage.getItem('layout')), 'None must not touch the stored layout').toBe('desktop');
-        expect(await page.evaluate(() => sessionStorage.getItem('je_layout_enforced')), 'None never arms the reload guard').toBeNull();
+        expect(await page.evaluate(() => sessionStorage.getItem('jc_layout_enforced')), 'None never arms the reload guard').toBeNull();
     });
 });

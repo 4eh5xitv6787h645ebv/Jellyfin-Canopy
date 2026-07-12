@@ -1,6 +1,6 @@
 # Getting Started
 
-Jellyfin Elevate layers a richer, faster front-end and a set of opt-in power features on top of your Jellyfin server. This guide takes you from a fresh Jellyfin 12 install to a working Enhanced Panel, then points you at the one-time setup that turns on the features you care about. Budget about ten minutes.
+Jellyfin Canopy layers a richer, faster front-end and a set of opt-in power features on top of your Jellyfin server. This guide takes you from a fresh Jellyfin 12 install to a working Enhanced Panel, then points you at the one-time setup that turns on the features you care about. Budget about ten minutes.
 
 !!! info "Prerequisites"
 
@@ -10,7 +10,7 @@ Jellyfin Elevate layers a richer, faster front-end and a set of opt-in power fea
 
 ## Jellyfin 12 only
 
-Jellyfin Elevate targets **Jellyfin 12 and nothing else**. Its manifest publishes only a Jellyfin 12 build (target ABI `12.0.0.0`), so a Jellyfin 10.11 server's catalog will never list it — there is no 10.11-compatible release to install.
+Jellyfin Canopy targets **Jellyfin 12 and nothing else**. Its manifest publishes only a Jellyfin 12 build (target ABI `12.0.0.0`), so a Jellyfin 10.11 server's catalog will never list it — there is no 10.11-compatible release to install.
 
 If you're still on Jellyfin 10.11, install the original [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) plugin instead. It stays actively maintained for 10.11, and your settings carry across cleanly if you later move to Jellyfin 12.
 
@@ -22,11 +22,11 @@ Installation is the standard Jellyfin plugin flow: add the repository, install f
 
 1. In Jellyfin, go to **Dashboard** → **Plugins** → **Catalog**.
 2. Click the gear icon (⚙️ **Manage Repositories**), then click **➕** (Add) to add a new repository.
-3. Give the repository a name, for example "Jellyfin Elevate".
+3. Give the repository a name, for example "Jellyfin Canopy".
 4. Set the **Repository URL** to the manifest:
 
     ```
-    https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/main/manifest.json
+    https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/main/manifest.json
     ```
 
 5. Click **Save**.
@@ -34,7 +34,7 @@ Installation is the standard Jellyfin plugin flow: add the repository, install f
 ### Step 2 — Install from the catalog
 
 1. Open the **Catalog** tab.
-2. Find **Jellyfin Elevate** in the plugin list.
+2. Find **Jellyfin Canopy** in the plugin list.
 3. Click **Install**.
 4. Wait for the installation to complete.
 
@@ -47,8 +47,8 @@ Restart your Jellyfin server to finish the install — the plugin doesn't take e
 After the restart:
 
 1. Refresh your browser with a hard reload (++ctrl+f5++ or ++command+shift+r++).
-2. Open the Jellyfin Elevate settings panel — either route works:
-    - In the sidebar, under the **Jellyfin Elevate** heading, click **Enhanced Panel**.
+2. Open the Jellyfin Canopy settings panel — either route works:
+    - In the sidebar, under the **Jellyfin Canopy** heading, click **Enhanced Panel**.
     - Or press `?`.
 3. If the **Enhanced Panel** opens, the install worked.
 
@@ -56,7 +56,7 @@ If nothing appears, jump to [Troubleshooting the install](#troubleshooting-the-i
 
 ## First-run setup
 
-You now have Jellyfin Elevate running, but most features are **off by default**, and several of the biggest ones need a one-time connection before they do anything. Everything below lives under **Dashboard** → **Plugins** → **Jellyfin Elevate**, on the tab named in each item. Turn on what you want and skip the rest.
+You now have Jellyfin Canopy running, but most features are **off by default**, and several of the biggest ones need a one-time connection before they do anything. Everything below lives under **Dashboard** → **Plugins** → **Jellyfin Canopy**, on the tab named in each item. Turn on what you want and skip the rest.
 
 !!! tip "The two states to watch for"
 
@@ -107,13 +107,13 @@ Most install problems come down to a missed restart, a stale browser cache, or a
 **Check installation status:**
 
 1. Go to **Dashboard** → **Plugins**.
-2. Verify **Jellyfin Elevate** is listed under **Installed**.
+2. Verify **Jellyfin Canopy** is listed under **Installed**.
 3. Check that it's enabled (not disabled).
 
 **Run the startup task:**
 
 1. Go to **Dashboard** → **Scheduled Tasks**.
-2. Under **Jellyfin Elevate**, find the task **Jellyfin Elevate Startup**.
+2. Under **Jellyfin Canopy**, find the task **Jellyfin Canopy Startup**.
 3. Run it manually (click the **▶︎** button).
 4. Refresh your browser (++ctrl+f5++).
 
@@ -134,23 +134,23 @@ Most install problems come down to a missed restart, a stale browser cache, or a
 
 !!! note "How the script is delivered on Jellyfin 12"
 
-    By default the client script is injected at request time by the built-in injection middleware, which runs on every `/web/` index request independently of any scheduled task. Re-adding the `On application startup` trigger to the **Jellyfin Elevate Startup** task will **not** fix scripts failing to load in the default configuration — that task only performs background initialisation and cleanup and no longer governs script delivery.
+    By default the client script is injected at request time by the built-in injection middleware, which runs on every `/web/` index request independently of any scheduled task. Re-adding the `On application startup` trigger to the **Jellyfin Canopy Startup** task will **not** fix scripts failing to load in the default configuration — that task only performs background initialisation and cleanup and no longer governs script delivery.
 
 **Check the browser console:**
 
 1. Press ++f12++ to open developer tools.
 2. Go to the **Console** tab.
-3. Look for errors mentioning "Jellyfin Elevate".
+3. Look for errors mentioning "Jellyfin Canopy".
 4. Report any errors on GitHub.
 
-**Legacy on-disk fallback:** the **Jellyfin Elevate Startup** task and its `On application startup` trigger only matter when an admin has switched to the legacy on-disk `index.html` rewrite (see [Permission issues](#permission-issues)). In that mode the task performs the on-disk rewrite at startup, so it should carry the `On application startup` trigger. If it's missing under **Dashboard** → **Scheduled Tasks**, add it manually.
+**Legacy on-disk fallback:** the **Jellyfin Canopy Startup** task and its `On application startup` trigger only matter when an admin has switched to the legacy on-disk `index.html` rewrite (see [Permission issues](#permission-issues)). In that mode the task performs the on-disk rewrite at startup, so it should carry the `On application startup` trigger. If it's missing under **Dashboard** → **Scheduled Tasks**, add it manually.
 
 ### Update not working
 
 If an update didn't take, do a clean reinstall:
 
 1. Go to **Dashboard** → **Plugins** → **My Plugins**.
-2. Find Jellyfin Elevate and click **Uninstall**.
+2. Find Jellyfin Canopy and click **Uninstall**.
 3. Restart the server.
 4. Reinstall from the **Catalog**.
 5. Restart the server again.
@@ -241,5 +241,5 @@ If that doesn't help, access the admin config page directly on your local networ
 ### Still stuck?
 
 1. Check the [FAQ](help.md) for common solutions.
-2. Search the [GitHub issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues), and open a new one if needed — please include logs and details.
+2. Search the [GitHub issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues), and open a new one if needed — please include logs and details.
 3. Join the [Discord community](https://discord.gg/EYNFf7y4CG).

@@ -3,7 +3,7 @@
 /**
  * Translation Validation and Helper Script
  *
- * This script helps manage translations for Jellyfin Elevate by:
+ * This script helps manage translations for Jellyfin Canopy by:
  * - Validating all translation files against the base (en.json)
  * - Detecting missing keys in translations
  * - Finding unused translation keys not referenced in code
@@ -24,15 +24,15 @@
 const fs = require('fs');
 const path = require('path');
 
-const LOCALES_DIR = path.join(__dirname, '../Jellyfin.Plugin.JellyfinElevate/js/locales');
+const LOCALES_DIR = path.join(__dirname, '../Jellyfin.Plugin.JellyfinCanopy/js/locales');
 // Translation call sites live in the TypeScript module tree (src/) plus the
 // remaining legacy loader files under js/ — scan both.
 const CODE_DIRS = [
-    path.join(__dirname, '../Jellyfin.Plugin.JellyfinElevate/src'),
-    path.join(__dirname, '../Jellyfin.Plugin.JellyfinElevate/js'),
+    path.join(__dirname, '../Jellyfin.Plugin.JellyfinCanopy/src'),
+    path.join(__dirname, '../Jellyfin.Plugin.JellyfinCanopy/js'),
 ];
 const BASE_LANG = 'en';
-const WEBLATE_URL = 'https://hosted.weblate.org/projects/jellyfinelevate/';
+const WEBLATE_URL = 'https://hosted.weblate.org/projects/jellyfincanopy/';
 
 // ANSI color codes for terminal output
 const colors = {
@@ -276,9 +276,9 @@ function findUnusedKeys() {
             } else if (entry.isFile() && /\.(js|ts)$/.test(entry.name) && !entry.name.endsWith('.d.ts')) {
                 const content = fs.readFileSync(filePath, 'utf8');
 
-                // Call shapes across the TS tree: JE.t('k'), JE.t!('k') (non-null
-                // assertion), JE.t?.('k'), plus local aliases t('k') / tWithFallback('k', ...).
-                const tMatches = content.matchAll(/(?:(?:JE|window\.JellyfinElevate)\.t\s*!?\s*(?:\?\.)?|\bt(?:WithFallback)?)\s*\(\s*['"]([^'"]+)['"]/g);
+                // Call shapes across the TS tree: JC.t('k'), JC.t!('k') (non-null
+                // assertion), JC.t?.('k'), plus local aliases t('k') / tWithFallback('k', ...).
+                const tMatches = content.matchAll(/(?:(?:JC|window\.JellyfinCanopy)\.t\s*!?\s*(?:\?\.)?|\bt(?:WithFallback)?)\s*\(\s*['"]([^'"]+)['"]/g);
                 for (const match of tMatches) {
                     usedKeys.add(match[1]);
                 }
@@ -291,7 +291,7 @@ function findUnusedKeys() {
                 }
 
                 // Match feature_ and status_ keys used in dynamic translation patterns
-                // e.g., JE.t('feature_' + name) or JE.t(`feature_${name}`)
+                // e.g., JC.t('feature_' + name) or JC.t(`feature_${name}`)
                 // Also catch literal strings like 'feature_auto_pause', 'status_enabled'
                 const dynamicMatches = content.matchAll(/['"`]((?:feature_|status_|jellyseerr_|elsewhere_)[a-z_]+)['"`]/g);
                 for (const match of dynamicMatches) {
@@ -300,7 +300,7 @@ function findUnusedKeys() {
 
                 // Match template literal patterns: `${prefix}_${variable}`
                 // This catches cases where keys are built dynamically
-                const templateMatches = content.matchAll(/JE\.t\s*\(\s*`([^`]*)\$\{[^}]+\}([^`]*)`/g);
+                const templateMatches = content.matchAll(/JC\.t\s*\(\s*`([^`]*)\$\{[^}]+\}([^`]*)`/g);
                 for (const match of templateMatches) {
                     // Mark keys with dynamic parts as used if they match known patterns
                     const prefix = match[1];
@@ -322,14 +322,14 @@ function findUnusedKeys() {
                 }
 
                 // Match title/tooltip attributes that use translation keys
-                // e.g., title = JE.t('key') or .title = JE.t('key')
-                const titleMatches = content.matchAll(/\.title\s*=\s*JE\.t\s*(?:\?\.)?\s*\(\s*['"]([^'"]+)['"]/g);
+                // e.g., title = JC.t('key') or .title = JC.t('key')
+                const titleMatches = content.matchAll(/\.title\s*=\s*JC\.t\s*(?:\?\.)?\s*\(\s*['"]([^'"]+)['"]/g);
                 for (const match of titleMatches) {
                     usedKeys.add(match[1]);
                 }
 
                 // Match textContent assignments
-                const textContentMatches = content.matchAll(/\.textContent\s*=\s*JE\.t\s*(?:\?\.)?\s*\(\s*['"]([^'"]+)['"]/g);
+                const textContentMatches = content.matchAll(/\.textContent\s*=\s*JC\.t\s*(?:\?\.)?\s*\(\s*['"]([^'"]+)['"]/g);
                 for (const match of textContentMatches) {
                     usedKeys.add(match[1]);
                 }

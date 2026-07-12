@@ -1,4 +1,4 @@
-// Late-load resilience (PERF R9): JE-injected content must arrive LATE on a
+// Late-load resilience (PERF R9): JC-injected content must arrive LATE on a
 // slow or flaky server/connection — never NEVER. These specs simulate the
 // transient failures users hit in the wild and assert the content still lands
 // in the same page view:
@@ -41,7 +41,7 @@ async function suitableMovieId(
 
 /**
  * The failure-injection specs deliberately abort plugin requests, so the
- * browser logs resource failures and JE logs its (expected) fetch errors.
+ * browser logs resource failures and JC logs its (expected) fetch errors.
  * Everything else must still be clean.
  */
 function assertOnlyInducedErrors(real: string[], induced: RegExp): void {
@@ -56,7 +56,7 @@ test.describe('late-load resilience (R9)', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         const enabled = await page.evaluate(() => {
-            const config = (window as any).JellyfinElevate?.pluginConfig;
+            const config = (window as any).JellyfinCanopy?.pluginConfig;
             return config?.ShowFileSizes === true && config?.ShowWatchProgress === true;
         });
         test.skip(!enabled, 'file-size / watch-progress chips disabled on this server');
@@ -66,14 +66,14 @@ test.describe('late-load resilience (R9)', () => {
         // second retry succeeds), not just a single lucky reattempt.
         let fileSizeFailures = 0;
         let progressFailures = 0;
-        await page.route('**/JellyfinElevate/file-size/**', (route) => {
+        await page.route('**/JellyfinCanopy/file-size/**', (route) => {
             if (fileSizeFailures < 2) {
                 fileSizeFailures++;
                 return route.abort('failed');
             }
             return route.continue();
         });
-        await page.route('**/JellyfinElevate/watch-progress/**', (route) => {
+        await page.route('**/JellyfinCanopy/watch-progress/**', (route) => {
             if (progressFailures < 2) {
                 progressFailures++;
                 return route.abort('failed');
@@ -86,7 +86,7 @@ test.describe('late-load resilience (R9)', () => {
         // unwatched answer, so the recovery proof for watch-progress is a
         // SUCCESSFUL response arriving after the two induced failures.
         const progressRecovered = page.waitForResponse(
-            (response) => response.url().includes('/JellyfinElevate/watch-progress/') && response.ok(),
+            (response) => response.url().includes('/JellyfinCanopy/watch-progress/') && response.ok(),
             { timeout: 30_000 }
         );
         await showRoute(page, `/details?id=${movieId}`);
@@ -116,7 +116,7 @@ test.describe('late-load resilience (R9)', () => {
         // reload (the viewshow listener was never registered).
         let blockStatus = true;
         let blockedCount = 0;
-        await page.route('**/JellyfinElevate/jellyseerr/status', (route) => {
+        await page.route('**/JellyfinCanopy/jellyseerr/status', (route) => {
             if (blockStatus) {
                 blockedCount++;
                 return route.abort('failed');
@@ -127,7 +127,7 @@ test.describe('late-load resilience (R9)', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         const enabled = await page.evaluate(() => {
-            const config = (window as any).JellyfinElevate?.pluginConfig;
+            const config = (window as any).JellyfinCanopy?.pluginConfig;
             return config?.JellyseerrEnabled === true && config?.JellyseerrShowReportButton === true;
         });
         test.skip(!enabled, 'Seerr report button disabled on this server');

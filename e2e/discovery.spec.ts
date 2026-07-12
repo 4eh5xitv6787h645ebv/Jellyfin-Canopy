@@ -10,7 +10,7 @@ import type { Page } from 'playwright/test';
 /** True when the session's plugin config has a Discovery data source (Seerr or TMDB) configured. */
 async function discoveryAvailable(page: Page): Promise<boolean> {
     return page.evaluate(() => {
-        const cfg = (window as unknown as { JellyfinElevate?: { pluginConfig?: Record<string, unknown> } }).JellyfinElevate?.pluginConfig || {};
+        const cfg = (window as unknown as { JellyfinCanopy?: { pluginConfig?: Record<string, unknown> } }).JellyfinCanopy?.pluginConfig || {};
         return cfg.DiscoveryEnabled !== false && (cfg.JellyseerrEnabled === true || cfg.TmdbEnabled === true);
     });
 }
@@ -23,19 +23,19 @@ test.describe('Discovery / Trending — library placement', () => {
         await page.waitForTimeout(3000);
         test.skip(!(await discoveryAvailable(page)), 'no Discovery data source configured (bare seed)');
 
-        const toggle = page.locator('#je-discovery-toggle-movies');
+        const toggle = page.locator('#jc-discovery-toggle-movies');
         await expect(toggle).toBeVisible({ timeout: 20_000 });
         await toggle.click();
 
         // The pane renders at least one real shelf with cards.
-        await expect(page.locator('.je-discovery-pane')).toBeVisible({ timeout: 10_000 });
-        const shelf = page.locator('.je-discovery-row').first();
+        await expect(page.locator('.jc-discovery-pane')).toBeVisible({ timeout: 10_000 });
+        const shelf = page.locator('.jc-discovery-row').first();
         await expect(shelf).toBeVisible({ timeout: 20_000 });
         await expect(shelf.locator('.overflowPortraitCard, .card').first()).toBeVisible({ timeout: 20_000 });
 
         // The per-user Customize modal opens with a reorderable row list.
-        await page.locator('.je-discovery-customize-btn').click();
-        const overlay = page.locator('.je-discovery-customize-overlay');
+        await page.locator('.jc-discovery-customize-btn').click();
+        const overlay = page.locator('.jc-discovery-customize-overlay');
         await expect(overlay).toBeVisible({ timeout: 8000 });
         expect(await overlay.locator('input[type="checkbox"]').count()).toBeGreaterThan(3);
         await page.getByRole('button', { name: 'Cancel' }).click();
@@ -46,7 +46,7 @@ test.describe('Discovery / Trending — library placement', () => {
         // defect), so we scope the 4xx check to the plugin's own endpoints rather than all 4xx.
         expect(consoleErrors.real(), 'console errors').toEqual([]);
         expect(
-            consoleErrors.unexpected4xx().filter((r) => /\/JellyfinElevate\//.test(r.url)),
+            consoleErrors.unexpected4xx().filter((r) => /\/JellyfinCanopy\//.test(r.url)),
             'plugin-endpoint 4xx',
         ).toEqual([]);
     });

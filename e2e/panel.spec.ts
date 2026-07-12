@@ -1,4 +1,4 @@
-// Enhanced settings panel: opens via the public JE.showEnhancedPanel()
+// Enhanced settings panel: opens via the public JC.showEnhancedPanel()
 // surface (the same call every entry point makes), renders its tab strip,
 // switches tabs, and closes on Escape.
 import { test, expect, loginAs } from './fixtures/auth';
@@ -10,9 +10,9 @@ test.describe('panel', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         await page.evaluate(() => {
-            void (window as any).JellyfinElevate.showEnhancedPanel();
+            void (window as any).JellyfinCanopy.showEnhancedPanel();
         });
-        const panel = page.locator('#jellyfin-elevate-panel');
+        const panel = page.locator('#jellyfin-canopy-panel');
         await expect(panel).toBeVisible({ timeout: 15_000 });
 
         // Tab strip: at least the Settings tab is always rendered (Shortcuts is

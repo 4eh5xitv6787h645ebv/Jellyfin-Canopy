@@ -2,10 +2,10 @@
 
 **Problem.** Jellyfin user policies support tag-based parental controls
 (`BlockedTags` — free-text strings matched against library items' Tags) in
-addition to the max parental rating. JE's Seerr parental filtering enforces
+addition to the max parental rating. JC's Seerr parental filtering enforces
 only the rating limit, so a user blocked from e.g. "horror" in Jellyfin can
 still browse, view, and request horror titles through the Requests page.
-Goal: enforce Jellyfin tag blocks on Seerr (and other applicable JE)
+Goal: enforce Jellyfin tag blocks on Seerr (and other applicable JC)
 surfaces, mapping free-text Jellyfin tags onto TMDB-sourced Seerr content.
 
 **Status legend:** ✅ adopted · 🟡 partial · ❌ rejected · 🔬 under test
@@ -48,8 +48,8 @@ High precision, but only covers already-imported items (a minority of Seerr
 browse content). Complement, not a solution.
 
 ### T5 — TMDB discover-side exclusion (`without_keywords`/`without_genres`) 🔬
-Ask TMDB/Seerr to exclude upstream. JE proxies Seerr's API — Seerr builds its
-own TMDB queries, so JE cannot inject TMDB params unless Seerr's discover
+Ask TMDB/Seerr to exclude upstream. JC proxies Seerr's API — Seerr builds its
+own TMDB queries, so JC cannot inject TMDB params unless Seerr's discover
 endpoints forward them. Verify; likely limited to discover (not search/
 similar/trending) even if possible.
 
@@ -149,7 +149,7 @@ unenforceable) — that documentation gets retired by this work.
   client gates green; goldens/save-keys regenerated (expected deltas).
   Shared test doubles extracted (StubPolicyUserManager, FakeLocalization)
   from nested duplicates per the fix-at-source rule.
-- **Live on jellyfin-12 + seerr-dev:** BlockedTags ["zombie"] on je_arruser →
+- **Live on jellyfin-12 + seerr-dev:** BlockedTags ["zombie"] on jc_arruser →
   the 1968 Night of the Living Dead (zombie keyword) vanishes from search,
   detail 403, request POST 403; sparse-keyword remakes correctly survive
   (keyword precision — the earlier "not working" scare was a remake whose

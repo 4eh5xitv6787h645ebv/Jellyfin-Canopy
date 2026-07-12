@@ -12,7 +12,7 @@ import { tmdbReady } from './fixtures/seerr';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-const CONFIG_HASH = '#/configurationpage?name=Jellyfin%20Elevate';
+const CONFIG_HASH = '#/configurationpage?name=Jellyfin%20Canopy';
 
 // The reproducible docker seed is bare: with no TMDB key the config page never
 // populates TMDB_API_KEY (this spec's "config page fully loaded" signal), so

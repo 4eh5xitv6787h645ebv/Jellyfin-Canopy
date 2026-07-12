@@ -1,10 +1,10 @@
-/* Jellyfin Elevate Docs — theme behaviors (no dependencies).
+/* Jellyfin Canopy Docs — theme behaviors (no dependencies).
    Theme toggle, mobile drawer, code copy buttons, TOC scroll-spy,
    table wrapping, heading anchors, screenshot framing. */
 (function () {
   "use strict";
 
-  var STORAGE_KEY = "elevate-theme";
+  var STORAGE_KEY = "canopy-theme";
 
   /* ------------------------------------------------------------------
      Theme toggle (initial attribute is set inline in <head>)

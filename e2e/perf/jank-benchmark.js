@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * jank-benchmark.js — manual before/after jank benchmark for Jellyfin Elevate.
+ * jank-benchmark.js — manual before/after jank benchmark for Jellyfin Canopy.
  *
  * NOT wired into CI. This is a measurement tool, run by hand against a live
  * server, that produces the numbers behind docs/advanced/performance-rules.md
@@ -10,33 +10,33 @@
  * scroll) and records, per run:
  *
  *   - layout shifts: cumulative score (CLS-style, input-excluded) and the
- *     JE-attributable subset (any shift whose source node is JE-injected UI)
+ *     JC-attributable subset (any shift whose source node is JC-injected UI)
  *   - long tasks: count + total ms during boot and during the 30s scroll
  *   - element pop-in: delay between an anchor's mount (card / header tray /
- *     detail buttons) and its JE decoration; tag delays ≤ one frame (~17ms)
+ *     detail buttons) and its JC decoration; tag delays ≤ one frame (~17ms)
  *     count as the synchronous pre-paint path (R1), so the warm-cache library
  *     revisit yields the sync-path hit rate
  *   - runtime observer census: live MutationObserver instances (constructor +
  *     observe/disconnect are monkey-patched BEFORE any page script runs),
- *     split into JE-created vs host, body-wide vs scoped, attribute-observing
+ *     split into JC-created vs host, body-wide vs scoped, attribute-observing
  *     body-wide (R3 violations); plus active setInterval timers (R5)
- *   - request census: /JellyfinElevate/* request count + bytes during boot,
+ *   - request census: /JellyfinCanopy/* request count + bytes during boot,
  *     and every third-party host touched across the whole flow (R6 — asset
  *     CDNs must be ZERO; TMDB/YouTube images + api.github.com are content)
  *
  * Usage:
  *   NODE_PATH=/path/with/playwright node e2e/perf/jank-benchmark.js \
  *     --base http://localhost:8099 --label after [--runs 3] [--legacy] \
- *     [--user je_arradmin --pass '...'] [--out results.json]
+ *     [--user jc_arradmin --pass '...'] [--out results.json]
  *
- *   --legacy   readiness gate for pre-refactor builds (no JE.initialized flag):
+ *   --legacy   readiness gate for pre-refactor builds (no JC.initialized flag):
  *              waits for the "All components initialized successfully" console
  *              line, falling back to a 15s settle.
  *
  * Cross-version note: comparing a 10.11 + old-main run against a 12 + fixed
  * run is NOT apples-to-apples for whole-page metrics (total CLS, host long
- * tasks) — the host client differs. The JE-owned metrics ARE comparable:
- * JE-attributed shifts, JE request count/bytes, JE observer/interval counts,
+ * tasks) — the host client differs. The JC-owned metrics ARE comparable:
+ * JC-attributed shifts, JC request count/bytes, JC observer/interval counts,
  * and pop-in delays, because they measure only what the plugin does.
  */
 
@@ -52,7 +52,7 @@ function parseArgs(argv) {
         label: 'run',
         runs: 3,
         legacy: false,
-        user: 'je_arradmin',
+        user: 'jc_arradmin',
         pass: process.env.JF_PASS || 'Test669Pw!x',
         out: null,
         scrollSeconds: 30
@@ -76,7 +76,7 @@ function parseArgs(argv) {
 
 function initScript() {
     if (window.__jePerf) return;
-    const JE_RE = /JellyfinElevate|je\.bundle/i;
+    const JC_RE = /JellyfinCanopy|jc\.bundle/i;
     const perf = {
         phase: 'boot',
         phases: [{ name: 'boot', start: 0 }],
@@ -98,7 +98,7 @@ function initScript() {
             perf.moCreated++;
             const stack = String(new Error().stack || '').split('\n').slice(2, 6).join(' | ');
             moInfo.set(this, {
-                je: JE_RE.test(stack),
+                jc: JC_RE.test(stack),
                 stack,
                 observing: false,
                 bodyWide: false,
@@ -136,18 +136,18 @@ function initScript() {
     window.setInterval = function (fn, delay, ...rest) {
         const id = origSetInterval.call(window, fn, delay, ...rest);
         const stack = String(new Error().stack || '').split('\n').slice(2, 5).join(' | ');
-        activeIntervals.set(id, { je: JE_RE.test(stack), delay: Number(delay) || 0, stack });
+        activeIntervals.set(id, { jc: JC_RE.test(stack), delay: Number(delay) || 0, stack });
         return id;
     };
     window.clearInterval = function (id) { activeIntervals.delete(id); return origClearInterval.call(window, id); };
     // Some code clears intervals through clearTimeout (shared id pool).
     window.clearTimeout = function (id) { activeIntervals.delete(id); return origClearTimeout.call(window, id); };
 
-    // --- JE-node classifier (shifts + pop-in attribution) ---
-    const JE_SEL = [
-        '[data-je-key]', '[id^="je-"]',
+    // --- JC-node classifier (shifts + pop-in attribution) ---
+    const JC_SEL = [
+        '[data-jc-key]', '[id^="jc-"]',
         '#enhancedSettingsBtn', '#randomItemButton',
-        '#jellyfinElevateUserPrefsLink', '#jellyfinElevateSettingsLink',
+        '#jellyfinCanopyUserPrefsLink', '#jellyfinCanopySettingsLink',
         '.genre-overlay-container', '.quality-overlay-container',
         '.language-overlay-container', '.rating-overlay-container',
         '.arr-link', '.arr-dropdown', '.arr-badge',
@@ -158,7 +158,7 @@ function initScript() {
         try {
             let el = node && node.nodeType === 1 ? node : node && node.parentElement;
             if (!el || !el.matches) return false;
-            return el.matches(JE_SEL) || !!(el.closest && el.closest(JE_SEL));
+            return el.matches(JC_SEL) || !!(el.closest && el.closest(JC_SEL));
         } catch { return false; }
     };
     const describe = (node) => {
@@ -176,13 +176,13 @@ function initScript() {
     try {
         new PerformanceObserver((list) => {
             for (const entry of list.getEntries()) {
-                const sources = (entry.sources || []).map((s) => ({ sel: describe(s.node), je: isJeNode(s.node) }));
+                const sources = (entry.sources || []).map((s) => ({ sel: describe(s.node), jc: isJeNode(s.node) }));
                 perf.shifts.push({
                     t: Math.round(entry.startTime),
                     value: entry.value,
                     input: !!entry.hadRecentInput,
                     phase: perf.phase,
-                    je: sources.some((s) => s.je),
+                    jc: sources.some((s) => s.jc),
                     sources
                 });
             }
@@ -198,8 +198,8 @@ function initScript() {
         }).observe({ type: 'longtask', buffered: true });
     } catch { /* longtask unsupported */ }
 
-    // --- Pop-in timing (anchor mount → JE decoration) ---
-    // Overlays mount inside .cardScalable (.je-tag-host) on current builds and
+    // --- Pop-in timing (anchor mount → JC decoration) ---
+    // Overlays mount inside .cardScalable (.jc-tag-host) on current builds and
     // inside .cardImageContainer on legacy ones, so anchor times are tracked on
     // both the outer .card and the .cardImageContainer.
     const CARD_SEL = '.card,.cardImageContainer';
@@ -231,9 +231,9 @@ function initScript() {
             for (let el = tag.parentElement; el; el = el.parentElement) {
                 if (cardTimes.has(el)) { t0 = cardTimes.get(el); break; }
             }
-            // je-tag-fadein marks the async (post-paint) render pass (R7);
+            // jc-tag-fadein marks the async (post-paint) render pass (R7);
             // its absence on current builds marks the pre-paint sync path (R1).
-            if (typeof t0 === 'number') record('tag', now - t0, tag.classList.contains('je-tag-fadein'));
+            if (typeof t0 === 'number') record('tag', now - t0, tag.classList.contains('jc-tag-fadein'));
         }
         for (const el of collect(node, HEADER_DECOR)) {
             if (seenDecor.has(el)) continue;
@@ -261,27 +261,27 @@ function initScript() {
         perf.phases.push({ name, start: Math.round(performance.now()) });
     };
     perf.census = () => {
-        let live = 0, jeLive = 0, bodyWide = 0, jeBodyWide = 0, attrBodyWide = 0;
+        let live = 0, jcLive = 0, bodyWide = 0, jcBodyWide = 0, attrBodyWide = 0;
         const liveList = [];
         for (const mo of perf.moReg) {
             const info = moInfo.get(mo);
             if (!info || !info.observing) continue;
             live++;
-            if (info.je) jeLive++;
+            if (info.jc) jcLive++;
             if (info.bodyWide) {
                 bodyWide++;
-                if (info.je) jeBodyWide++;
+                if (info.jc) jcBodyWide++;
                 if (info.attrs) attrBodyWide++;
             }
-            liveList.push({ je: info.je, bodyWide: info.bodyWide, attrs: info.attrs, stack: info.stack.slice(0, 220) });
+            liveList.push({ jc: info.jc, bodyWide: info.bodyWide, attrs: info.attrs, stack: info.stack.slice(0, 220) });
         }
         const intervals = [...activeIntervals.values()];
         return {
-            mo: { created: perf.moCreated, disconnects: perf.moDisconnects, live, jeLive, bodyWide, jeBodyWide, attrBodyWide, liveList },
+            mo: { created: perf.moCreated, disconnects: perf.moDisconnects, live, jcLive, bodyWide, jcBodyWide, attrBodyWide, liveList },
             intervals: {
                 active: intervals.length,
-                je: intervals.filter((i) => i.je).length,
-                list: intervals.map((i) => ({ je: i.je, delay: i.delay, stack: i.stack.slice(0, 180) }))
+                jc: intervals.filter((i) => i.jc).length,
+                list: intervals.map((i) => ({ jc: i.jc, delay: i.delay, stack: i.stack.slice(0, 180) }))
             }
         };
     };
@@ -333,22 +333,22 @@ async function runOnce(args, runIdx, log) {
     await context.addInitScript(initScript);
     const page = await context.newPage();
 
-    let jeReadyConsole = false;
+    let jcReadyConsole = false;
     page.on('console', (m) => {
-        if (m.text().includes('All components initialized successfully')) jeReadyConsole = true;
+        if (m.text().includes('All components initialized successfully')) jcReadyConsole = true;
     });
 
     // Request census — reset at the measured (post-login) reload.
     let measuring = false;
     let bootDone = false;
-    const jeBoot = [];
+    const jcBoot = [];
     const externalHosts = new Map();
     page.on('response', (res) => {
         if (!measuring || bootDone) return;
         const url = res.url();
-        if (!url.includes('/JellyfinElevate')) return;
+        if (!url.includes('/JellyfinCanopy')) return;
         const entry = { url, bytes: 0 };
-        jeBoot.push(entry);
+        jcBoot.push(entry);
         res.body().then((b) => { entry.bytes = b.length; }).catch(() => {
             const len = Number(res.headers()['content-length']);
             if (Number.isFinite(len)) entry.bytes = len;
@@ -376,18 +376,18 @@ async function runOnce(args, runIdx, log) {
             [args.user, args.pass]
         );
     }
-    jeReadyConsole = false;
+    jcReadyConsole = false;
     measuring = true;
     const bootStart = Date.now();
     await page.reload({ waitUntil: 'load' });
 
-    // Readiness gate: JE.initialized (current builds) or the boot-complete
+    // Readiness gate: JC.initialized (current builds) or the boot-complete
     // console line / 15s settle (legacy builds without the flag).
     if (args.legacy) {
         const deadline = Date.now() + 15000;
-        while (!jeReadyConsole && Date.now() < deadline) await wait(250);
+        while (!jcReadyConsole && Date.now() < deadline) await wait(250);
     } else {
-        await page.waitForFunction(() => window.JellyfinElevate?.initialized === true, { timeout: 60000 });
+        await page.waitForFunction(() => window.JellyfinCanopy?.initialized === true, { timeout: 60000 });
     }
     const bootMs = Date.now() - bootStart;
     await wait(2000); // let boot-tail requests land before closing the census
@@ -439,8 +439,8 @@ async function runOnce(args, runIdx, log) {
     // Reduce
     const shifts = data.shifts.filter((s) => !s.input);
     const cls = shifts.reduce((sum, s) => sum + s.value, 0);
-    const jeCls = shifts.filter((s) => s.je).reduce((sum, s) => sum + s.value, 0);
-    const jeShiftCount = shifts.filter((s) => s.je).length;
+    const jcCls = shifts.filter((s) => s.jc).reduce((sum, s) => sum + s.value, 0);
+    const jcShiftCount = shifts.filter((s) => s.jc).length;
     const shiftBySource = {};
     for (const s of shifts) {
         for (const src of s.sources) {
@@ -450,8 +450,8 @@ async function runOnce(args, runIdx, log) {
     const topShiftSources = Object.entries(shiftBySource)
         .sort((a, b) => b[1] - a[1]).slice(0, 8)
         .map(([sel, v]) => ({ sel, value: round(v, 4) }));
-    // Every JE-attributed shift, verbatim — these are the R1/R2 violations (if any).
-    const jeShifts = shifts.filter((s) => s.je)
+    // Every JC-attributed shift, verbatim — these are the R1/R2 violations (if any).
+    const jcShifts = shifts.filter((s) => s.jc)
         .map((s) => ({ t: s.t, phase: s.phase, value: round(s.value, 4), sources: s.sources }));
 
     const bucket = (phase) => data.longtasks.filter((t) => t.phase === phase);
@@ -470,10 +470,10 @@ async function runOnce(args, runIdx, log) {
         run: runIdx,
         bootMs,
         cls: round(cls, 4),
-        jeCls: round(jeCls, 4),
-        jeShiftCount,
+        jcCls: round(jcCls, 4),
+        jcShiftCount,
         topShiftSources,
-        jeShifts,
+        jcShifts,
         longtasks: {
             boot: { count: ltBoot.length, totalMs: ltBoot.reduce((s, t) => s + t.dur, 0) },
             scroll: { count: ltScroll.length, totalMs: ltScroll.reduce((s, t) => s + t.dur, 0) },
@@ -488,21 +488,21 @@ async function runOnce(args, runIdx, log) {
         censusIdleHome,
         censusEnd: data.censusEnd,
         requests: {
-            jeBootCount: jeBoot.length,
-            jeBootBytes: jeBoot.reduce((s, r) => s + r.bytes, 0),
-            jeBootUrls: jeBoot.map((r) => ({ url: r.url.replace(args.base, ''), bytes: r.bytes })),
+            jcBootCount: jcBoot.length,
+            jcBootBytes: jcBoot.reduce((s, r) => s + r.bytes, 0),
+            jcBootUrls: jcBoot.map((r) => ({ url: r.url.replace(args.base, ''), bytes: r.bytes })),
             externalHosts: [...externalHosts.entries()].map(([host, n]) => ({ host, n })),
             assetCdnHits: [...externalHosts.keys()].filter((h) => ASSET_CDNS.test(h))
         },
         rawPopins: popins
     };
-    log(`  run ${runIdx}: boot ${bootMs}ms, CLS ${result.cls} (JE ${result.jeCls}), ` +
+    log(`  run ${runIdx}: boot ${bootMs}ms, CLS ${result.cls} (JC ${result.jcCls}), ` +
         `longtasks boot ${result.longtasks.boot.count}/${result.longtasks.boot.totalMs}ms ` +
         `scroll ${result.longtasks.scroll.count}/${result.longtasks.scroll.totalMs}ms, ` +
         `tags warm n=${tagWarm.length} sync=${syncHits}, ` +
-        `JE boot req ${result.requests.jeBootCount}/${result.requests.jeBootBytes}B, ` +
-        `MO live ${censusIdleHome.mo.live} (JE ${censusIdleHome.mo.jeLive}), ` +
-        `intervals ${censusIdleHome.intervals.active} (JE ${censusIdleHome.intervals.je})`);
+        `JC boot req ${result.requests.jcBootCount}/${result.requests.jcBootBytes}B, ` +
+        `MO live ${censusIdleHome.mo.live} (JC ${censusIdleHome.mo.jcLive}), ` +
+        `intervals ${censusIdleHome.intervals.active} (JC ${censusIdleHome.intervals.jc})`);
     return result;
 }
 
@@ -533,8 +533,8 @@ async function main() {
         date: new Date().toISOString(),
         bootMsMedian: median(runs.map((r) => r.bootMs)),
         clsMedian: round(median(runs.map((r) => r.cls)), 4),
-        jeClsMedian: round(median(runs.map((r) => r.jeCls)), 4),
-        jeShiftCountMedian: median(runs.map((r) => r.jeShiftCount)),
+        jcClsMedian: round(median(runs.map((r) => r.jcCls)), 4),
+        jcShiftCountMedian: median(runs.map((r) => r.jcShiftCount)),
         longtasksBootCountMedian: median(runs.map((r) => r.longtasks.boot.count)),
         longtasksBootMsMedian: median(runs.map((r) => r.longtasks.boot.totalMs)),
         longtasksScrollCountMedian: median(runs.map((r) => r.longtasks.scroll.count)),
@@ -555,8 +555,8 @@ async function main() {
         observers: last.censusIdleHome.mo,
         intervals: last.censusIdleHome.intervals,
         requests: {
-            jeBootCountMedian: median(runs.map((r) => r.requests.jeBootCount)),
-            jeBootBytesMedian: median(runs.map((r) => r.requests.jeBootBytes)),
+            jcBootCountMedian: median(runs.map((r) => r.requests.jcBootCount)),
+            jcBootBytesMedian: median(runs.map((r) => r.requests.jcBootBytes)),
             assetCdnHits: last.requests.assetCdnHits,
             externalHosts: last.requests.externalHosts
         },

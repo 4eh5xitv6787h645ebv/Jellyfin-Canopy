@@ -1,6 +1,6 @@
 # Help & Community
 
-Most questions about Jellyfin Elevate have a short answer and a clear fix, and this page collects them in one place: a practical FAQ, general troubleshooting, and the exact channels for reporting bugs, proposing ideas, translating the plugin, and reaching other users. For problems that are specific to one feature, each feature guide has its own troubleshooting section — this page links you there when that is the faster route.
+Most questions about Jellyfin Canopy have a short answer and a clear fix, and this page collects them in one place: a practical FAQ, general troubleshooting, and the exact channels for reporting bugs, proposing ideas, translating the plugin, and reaching other users. For problems that are specific to one feature, each feature guide has its own troubleshooting section — this page links you there when that is the faster route.
 
 ## Frequently asked questions
 
@@ -8,31 +8,31 @@ Quick answers to the things people ask most. If your problem is confined to one 
 
 ### The basics
 
-#### What is Jellyfin Elevate?
+#### What is Jellyfin Canopy?
 
-Jellyfin Elevate is a comprehensive plugin that bundles advanced features and customizations for Jellyfin in one package. It adds keyboard shortcuts, visual enhancements, Seerr integration, custom pause screens, quality tags, and much more — so you get a stack of upgrades from a single install rather than juggling several plugins and scripts.
+Jellyfin Canopy is a comprehensive plugin that bundles advanced features and customizations for Jellyfin in one package. It adds keyboard shortcuts, visual enhancements, Seerr integration, custom pause screens, quality tags, and much more — so you get a stack of upgrades from a single install rather than juggling several plugins and scripts.
 
 #### Which apps and platforms does it work on?
 
-Jellyfin Elevate runs on any client that uses Jellyfin's embedded web UI. That includes the official Jellyfin web UI, the desktop apps, and the official Android and iOS apps — every feature is available as long as the app renders Jellyfin's web interface.
+Jellyfin Canopy runs on any client that uses Jellyfin's embedded web UI. That includes the official Jellyfin web UI, the desktop apps, and the official Android and iOS apps — every feature is available as long as the app renders Jellyfin's web interface.
 
 It does **not** work on Android TV or other native TV apps, because those clients don't use the embedded web UI.
 
 #### Can I customize the keyboard shortcuts?
 
-Yes. Open the Jellyfin Elevate panel — click its item in the sidebar or press `?` — then go to the **Shortcuts** tab. Click any key to set a custom shortcut. Changes save automatically. See [The Enhanced Experience](enhanced.md) for the full shortcut list.
+Yes. Open the Jellyfin Canopy panel — click its item in the sidebar or press `?` — then go to the **Shortcuts** tab. Click any key to set a custom shortcut. Changes save automatically. See [The Enhanced Experience](enhanced.md) for the full shortcut list.
 
 #### How do I change the plugin's language?
 
-The plugin automatically follows the language set in your Jellyfin user profile. If your language isn't available yet, it falls back to English. If you'd like to add or improve a language, see [Translate Jellyfin Elevate](#translate-jellyfin-elevate).
+The plugin automatically follows the language set in your Jellyfin user profile. If your language isn't available yet, it falls back to English. If you'd like to add or improve a language, see [Translate Jellyfin Canopy](#translate-jellyfin-canopy).
 
-#### Is Jellyfin Elevate affiliated with Seerr?
+#### Is Jellyfin Canopy affiliated with Seerr?
 
-No. Seerr is an independent project; Jellyfin Elevate integrates with it to enrich the Jellyfin experience.
+No. Seerr is an independent project; Jellyfin Canopy integrates with it to enrich the Jellyfin experience.
 
 !!! warning "Report plugin issues to this repository"
 
-    Please report plugin issues to the [Jellyfin Elevate repository](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues), **not** to the Seerr team.
+    Please report plugin issues to the [Jellyfin Canopy repository](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues), **not** to the Seerr team.
 
 #### Whatever happened to the userscript?
 
@@ -42,11 +42,11 @@ The userscript has been discontinued — the plugin's functionality has grown we
 
 #### Which Jellyfin versions are supported?
 
-Jellyfin Elevate targets Jellyfin 12.
+Jellyfin Canopy targets Jellyfin 12.
 
 | Plugin | Jellyfin 12 | Jellyfin 10.11 | Notes |
 |--------|:-----------:|:--------------:|-------|
-| Jellyfin Elevate | ✅ | ❌ | On Jellyfin 10.11, install the original [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) plugin instead. |
+| Jellyfin Canopy | ✅ | ❌ | On Jellyfin 10.11, install the original [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) plugin instead. |
 
 If you're moving up from a 10.11 setup, [Getting Started](getting-started.md) walks through the migration to v12.
 
@@ -63,14 +63,14 @@ These are all installation-environment issues rather than plugin bugs, and [Gett
 
 #### Auto-skip intros isn't working
 
-Auto-skip reads Jellyfin 12's native **Media Segments** and seeks to each segment's exact end boundary. It therefore needs media segments to exist for your media, which are produced by a segment provider such as the [Intro Skipper plugin](https://github.com/intro-skipper/intro-skipper) — Jellyfin Elevate does not detect intros itself.
+Auto-skip reads Jellyfin 12's native **Media Segments** and seeks to each segment's exact end boundary. It therefore needs media segments to exist for your media, which are produced by a segment provider such as the [Intro Skipper plugin](https://github.com/intro-skipper/intro-skipper) — Jellyfin Canopy does not detect intros itself.
 
 To get it working:
 
 1. Install a media segment provider (for example, the Intro Skipper plugin).
 2. Enable intro/outro detection in that provider's settings.
 3. Run detection on your library so segments are created.
-4. Enable auto-skip in Jellyfin Elevate settings (Intro and/or Outro).
+4. Enable auto-skip in Jellyfin Canopy settings (Intro and/or Outro).
 5. Confirm segments were detected for your media (check `GET /MediaSegments/{itemId}`).
 
 !!! note "How the skip behaves"
@@ -102,7 +102,7 @@ Then import users using whichever route you prefer:
 
 === "Automatic (recommended)"
 
-    1. In Jellyfin, go to **Dashboard → Plugins → Jellyfin Elevate → Seerr**.
+    1. In Jellyfin, go to **Dashboard → Plugins → Jellyfin Canopy → Seerr**.
     2. Enable **Auto import Jellyfin users to Seerr**.
     3. Optionally click **Import Users Now** to run a bulk import immediately.
 
@@ -134,7 +134,7 @@ First, make sure the tags are enabled and your browser isn't serving a stale cac
 If they're still missing, rebuild the tag cache. Poster tags are drawn from a server-side cache that the plugin keeps current *incrementally* as your library changes, and rebuilds nightly via the **Build Tag Cache** scheduled task. To force a rebuild:
 
 1. Go to **Dashboard → Scheduled Tasks**.
-2. Under **Jellyfin Elevate**, find **Build Tag Cache**.
+2. Under **Jellyfin Canopy**, find **Build Tag Cache**.
 3. Run it manually (click `▶︎`).
 4. Hard-refresh your browser (++ctrl+f5++) once it finishes.
 
@@ -157,12 +157,12 @@ The same user account should reach the same bookmarks from any device, because b
 
     **Stored in each browser's `localStorage` (independent per browser):**
 
-    - Your Elevate settings (see [The Enhanced Experience](enhanced.md))
+    - Your Canopy settings (see [The Enhanced Experience](enhanced.md))
 
 To troubleshoot missing bookmarks:
 
 - Confirm you're signed in as the same user account.
-- Confirm the bookmark file exists on the server, at `/config/plugins/configurations/Jellyfin.Plugin.JellyfinElevate/{userId}/bookmark.json`. Here `{userId}` is your user ID with all hyphens removed and converted to lowercase — for example `12345678-90AB-...` becomes the folder `1234567890ab...`.
+- Confirm the bookmark file exists on the server, at `/config/plugins/configurations/Jellyfin.Plugin.JellyfinCanopy/{userId}/bookmark.json`. Here `{userId}` is your user ID with all hyphens removed and converted to lowercase — for example `12345678-90AB-...` becomes the folder `1234567890ab...`.
 - Check the browser console for errors.
 
 #### The custom pause screen won't appear
@@ -233,11 +233,11 @@ You'll need admin access to Jellyfin.
 
 !!! info "No extra plugin needed"
 
-    Custom branding is served by Jellyfin Elevate's own built-in request-time middleware, which swaps in your uploaded logo, banner, and favicon as jellyfin-web requests them. You do **not** need the File Transformation plugin (or any other plugin) for this.
+    Custom branding is served by Jellyfin Canopy's own built-in request-time middleware, which swaps in your uploaded logo, banner, and favicon as jellyfin-web requests them. You do **not** need the File Transformation plugin (or any other plugin) for this.
 
 To upload:
 
-1. Go to **Dashboard → Plugins → Jellyfin Elevate**.
+1. Go to **Dashboard → Plugins → Jellyfin Canopy**.
 2. Open the **Extras** tab.
 3. Find the **Custom Image Assets** section.
 4. Upload your images:
@@ -286,20 +286,20 @@ Good logs turn a vague report into a fixable one. Collect from all three sources
 
 1. Press ++f12++ to open developer tools.
 2. Go to the **Console** tab.
-3. Filter by `🪼 Jellyfin Elevate`.
+3. Filter by `🪼 Jellyfin Canopy`.
 4. Look for errors (red text) and copy the messages.
 
 **Network logs**
 
 1. Press ++f12++ and open the **Network** tab.
-2. Filter by `JellyfinElevate`.
+2. Filter by `JellyfinCanopy`.
 3. Look for failed requests (red) and note their status codes.
 
 **Server logs**
 
 1. Go to **Dashboard → Logs**.
-2. Look for `JellyfinElevate` entries.
-3. Check the log files named `JellyfinElevate_yyyy-mm-dd.log`.
+2. Look for `JellyfinCanopy` entries.
+3. Check the log files named `JellyfinCanopy_yyyy-mm-dd.log`.
 4. Copy the relevant errors.
 
 When you write up the report, include: the plugin version, Jellyfin version, browser and version, operating system, exact steps to reproduce, the console errors, the server-log errors, and screenshots where they help.
@@ -310,7 +310,7 @@ When you write up the report, include: the plugin version, Jellyfin version, bro
 |-------|----------|
 | `Access to the path '/jellyfin/jellyfin-web/index.html' is denied.` | Install the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) or follow the Docker workaround in [Getting Started](getting-started.md). |
 | `Access to the path 'C:\Program Files\Jellyfin\Server\jellyfin-web\index.html' is denied.` | Grant "NETWORK SERVICE" Read/Write permissions to the Jellyfin folder. |
-| Plugin installed but scripts don't load | Scripts are injected at request time by the built-in middleware in the default config — see the scripts-not-loading fix in [Getting Started](getting-started.md). The "Jellyfin Elevate Startup" task only matters in the legacy on-disk `index.html` rewrite mode. |
+| Plugin installed but scripts don't load | Scripts are injected at request time by the built-in middleware in the default config — see the scripts-not-loading fix in [Getting Started](getting-started.md). The "Jellyfin Canopy Startup" task only matters in the legacy on-disk `index.html` rewrite mode. |
 | Reviews / Elsewhere / Seerr icons not working | TMDB API may be blocked in your region — see [Seerr's TMDB troubleshooting](https://docs.seerr.dev/troubleshooting#tmdb-failed-to-retrievefetch-xxx). |
 | Seerr search not working | Enable "Jellyfin Sign-In" in Seerr, then either enable plugin auto-import and run "Import Users Now" or import users manually in Seerr. Also verify the user isn't on the blocked-users list. |
 | Tags not appearing | Enable them in settings, clear the cache, and verify the metadata exists (see [Poster tags aren't showing up](#poster-tags-arent-showing-up)). |
@@ -355,14 +355,14 @@ Bug reports go to **GitHub Issues**. A clear, reproducible report is the single 
 
 **Before reporting**
 
-1. Search the [existing issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues) — someone may have hit it already.
+1. Search the [existing issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues) — someone may have hit it already.
 2. Verify the plugin is up to date.
 3. Test with a clean browser profile.
 4. Gather logs — see [Gather logs before you report](#gather-logs-before-you-report).
 
 **Open the issue**
 
-1. Go to [GitHub Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues/new).
+1. Go to [GitHub Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/new).
 2. Use the bug-report template.
 3. Include all the requested information.
 4. Attach your logs and screenshots.
@@ -370,9 +370,9 @@ Bug reports go to **GitHub Issues**. A clear, reproducible report is the single 
 
 ## Request a feature
 
-Have an idea? Feature proposals are gathered, discussed, and prioritized in **[GitHub Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/discussions)** — not in Issues.
+Have an idea? Feature proposals are gathered, discussed, and prioritized in **[GitHub Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions)** — not in Issues.
 
-1. Check the [existing discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/discussions) to see whether your idea is already there.
+1. Check the [existing discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions) to see whether your idea is already there.
 2. Start a new discussion in the **Ideas** category.
 3. Describe the feature clearly.
 4. Explain the use case and who benefits.
@@ -380,13 +380,13 @@ Have an idea? Feature proposals are gathered, discussed, and prioritized in **[G
 
 The strongest requests pair a clear description with a concrete use case, add mockups or examples where they help, and take existing features into account.
 
-## Translate Jellyfin Elevate
+## Translate Jellyfin Canopy
 
-Jellyfin Elevate ships its translations as JSON files in the repository — one per locale in `Jellyfin.Plugin.JellyfinElevate/js/locales/`. Adding or improving a language is a plain pull request: edit a file and open a PR. There's **no external translation platform to sign up for** and no Weblate — the workflow is validated entirely in CI.
+Jellyfin Canopy ships its translations as JSON files in the repository — one per locale in `Jellyfin.Plugin.JellyfinCanopy/js/locales/`. Adding or improving a language is a plain pull request: edit a file and open a PR. There's **no external translation platform to sign up for** and no Weblate — the workflow is validated entirely in CI.
 
 ### Add or update a language
 
-1. Go to `Jellyfin.Plugin.JellyfinElevate/js/locales/`.
+1. Go to `Jellyfin.Plugin.JellyfinCanopy/js/locales/`.
 2. To add a new language, copy `en.json` (the base language) and rename it to your language code — an ISO 639-1 code, optionally with an ISO 3166-1 region (for example `es.json`, `pt-BR.json`, `zh-HK.json`). To update an existing language, edit its file in place.
 3. Translate the English strings, leaving every placeholder token — `{name}`, `{count}`, `{{icon:name}}` — exactly as it appears in `en.json`.
 4. Run the validator locally: `npm run validate-translations`.
@@ -409,17 +409,17 @@ Extra keys and extra placeholders (present in the locale but not in `en.json`) s
 
 Translations are synced from repository updates (merged locale-file PRs) and cached for 24 hours. A merged locale is available immediately after merge — no plugin update is needed.
 
-The language selector lists the available translations by asking the plugin's own server endpoint (`/JellyfinElevate/locales`) which locale files ship with the installed build. The browser does **not** call GitHub to discover languages, so the list is correct on isolated networks and is never affected by GitHub's anonymous rate limits. A newly-merged locale file becomes selectable once it's part of an installed plugin build.
+The language selector lists the available translations by asking the plugin's own server endpoint (`/JellyfinCanopy/locales`) which locale files ship with the installed build. The browser does **not** call GitHub to discover languages, so the list is correct on isolated networks and is never affected by GitHub's anonymous rate limits. A newly-merged locale file becomes selectable once it's part of an installed plugin build.
 
 ## Community and support
 
 There are three official channels, each suited to a different kind of question:
 
-- **[GitHub Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues)** — bug reports (see [Report an issue](#report-an-issue)).
-- **[GitHub Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/discussions)** — feature ideas (see [Request a feature](#request-a-feature)) and general questions.
+- **[GitHub Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues)** — bug reports (see [Report an issue](#report-an-issue)).
+- **[GitHub Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions)** — feature ideas (see [Request a feature](#request-a-feature)) and general questions.
 - **[Discord Community](https://discord.gg/EYNFf7y4CG)** — real-time chat and support.
 
-The source lives in the [Jellyfin Elevate GitHub repository](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate).
+The source lives in the [Jellyfin Canopy GitHub repository](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy).
 
 **Before you ask**
 

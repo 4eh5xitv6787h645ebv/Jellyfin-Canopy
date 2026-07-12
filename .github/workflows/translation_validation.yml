@@ -3,7 +3,7 @@ name: "Translation Checks"
 on:
   pull_request:
     paths:
-      - 'Jellyfin.Plugin.JellyfinElevate/js/locales/**.json'
+      - 'Jellyfin.Plugin.JellyfinCanopy/js/locales/**.json'
 
 permissions:
   contents: read
@@ -31,8 +31,8 @@ jobs:
         id: changed_files
         run: |
           # Get all changed locale files in the PR
-          changed_files=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}...${{ github.sha }} -- 'Jellyfin.Plugin.JellyfinElevate/js/locales/*.json')
-          new_files=$(git diff --name-only --diff-filter=A origin/${{ github.event.pull_request.base.ref }}...${{ github.sha }} -- 'Jellyfin.Plugin.JellyfinElevate/js/locales/*.json')
+          changed_files=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}...${{ github.sha }} -- 'Jellyfin.Plugin.JellyfinCanopy/js/locales/*.json')
+          new_files=$(git diff --name-only --diff-filter=A origin/${{ github.event.pull_request.base.ref }}...${{ github.sha }} -- 'Jellyfin.Plugin.JellyfinCanopy/js/locales/*.json')
 
           echo "changed_files<<EOF" >> $GITHUB_OUTPUT
           echo "$changed_files" >> $GITHUB_OUTPUT
@@ -98,5 +98,5 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Translation Completion Statistics"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          # Registered for Jellyfin Elevate CI (no functional change).
+          # Registered for Jellyfin Canopy CI (no functional change).
           node scripts/validate-translations.js stats

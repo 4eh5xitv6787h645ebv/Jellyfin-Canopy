@@ -51,7 +51,7 @@ test.describe('details view-cache (chips land in the visible page)', () => {
     test('details→details→details keeps chips on the current page, never a cached one', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
         const enabled = await page.evaluate(() => {
-            const config = (window as any).JellyfinElevate?.pluginConfig;
+            const config = (window as any).JellyfinCanopy?.pluginConfig;
             return config?.ShowFileSizes === true;
         });
         test.skip(!enabled, 'file-size chips disabled on this server');
@@ -83,7 +83,7 @@ test.describe('details view-cache (chips land in the visible page)', () => {
     test('chips survive late item-data (host innerHTML wipe after the fill)', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
         const enabled = await page.evaluate(() => {
-            const config = (window as any).JellyfinElevate?.pluginConfig;
+            const config = (window as any).JellyfinCanopy?.pluginConfig;
             return config?.ShowFileSizes === true;
         });
         test.skip(!enabled, 'file-size chips disabled on this server');
@@ -93,7 +93,7 @@ test.describe('details view-cache (chips land in the visible page)', () => {
         await expect(visibleChip(page, a)).toBeVisible({ timeout: 20_000 });
 
         // Delay the host's item-data fetches so renderMiscInfo (the innerHTML
-        // wipe of .itemMiscInfo-primary) lands well AFTER JE's first fill —
+        // wipe of .itemMiscInfo-primary) lands well AFTER JC's first fill —
         // the slow-server order from the field trace. The chip must still end
         // up present (observer catch-all re-injects from cache).
         await page.route(/\/(Users\/[^/]+\/)?Items\/[0-9a-f-]{30,}(\?|$)/, async (route) => {
@@ -109,7 +109,7 @@ test.describe('details view-cache (chips land in the visible page)', () => {
     test('a wiped misc-info row is re-populated (observer gate is alive with cached duplicates)', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
         const enabled = await page.evaluate(() => {
-            const config = (window as any).JellyfinElevate?.pluginConfig;
+            const config = (window as any).JellyfinCanopy?.pluginConfig;
             return config?.ShowFileSizes === true;
         });
         test.skip(!enabled, 'file-size chips disabled on this server');

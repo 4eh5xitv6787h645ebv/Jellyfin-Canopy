@@ -1,5 +1,5 @@
 // Navigation survival: header-tray injections (the random button, a durable
-// ensureInjected('je-random-button', ..., { headerTray: true }) injection)
+// ensureInjected('jc-random-button', ..., { headerTray: true }) injection)
 // must survive every navigation class the v12 client throws at them:
 //   - route changes (home → library → home),
 //   - param-only navigations (/movies?topParentId=A → B — no viewshow fires),
@@ -27,7 +27,7 @@ test.describe('navigation', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         const enabled = await page.evaluate(
-            () => (window as any).JellyfinElevate?.currentSettings?.randomButtonEnabled === true
+            () => (window as any).JellyfinCanopy?.currentSettings?.randomButtonEnabled === true
         );
         test.skip(!enabled, 'random button disabled for this user');
 
@@ -91,7 +91,7 @@ test.describe('navigation', () => {
         await waitForHeaderButton(page);
 
         // ── param-only navigation (same route, different params) ────────────
-        // Fires NO viewshow — only HISTORY_UPDATE/je:navigate. Runs LAST
+        // Fires NO viewshow — only HISTORY_UPDATE/jc:navigate. Runs LAST
         // because a param-only Emby.Page.show() leaves the router's internal
         // promise chain unresolved, deadlocking every later show() call
         // (docs/v12-platform.md §6.3) — the navigation itself still happens.

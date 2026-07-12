@@ -31,9 +31,9 @@ async function enableActiveStreams(baseURL: string): Promise<void> {
 // device holds one session per client; if the arruser and the admin both
 // authenticated on the fixture's shared device id, the admin's login would
 // supersede (close) the arruser's playing session before we could observe it.
-const STREAM_CLIENT = 'MediaBrowser Client="JE-E2E", Device="je-e2e-sc", DeviceId="je-e2e-sc-stream", Version="1.0.0"';
+const STREAM_CLIENT = 'MediaBrowser Client="JC-E2E", Device="jc-e2e-sc", DeviceId="jc-e2e-sc-stream", Version="1.0.0"';
 
-/** Report a movie as playing for je_arruser on its own device; return its name. */
+/** Report a movie as playing for jc_arruser on its own device; return its name. */
 async function startUserPlayback(baseURL: string): Promise<string> {
     const authRes = await fetch(`${baseURL}/Users/AuthenticateByName`, {
         method: 'POST',
@@ -68,7 +68,7 @@ test.describe('session control', () => {
         const admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
 
         // The plugin surface reports the session with the fields the client needs.
-        const sessions = await api<Array<any>>(baseURL!, '/JellyfinElevate/active-streams/sessions', admin.token);
+        const sessions = await api<Array<any>>(baseURL!, '/JellyfinCanopy/active-streams/sessions', admin.token);
         const target = (sessions || []).find((s) => s?.NowPlayingItem?.Name === itemName);
         expect(target, 'admin session list includes the played item').toBeTruthy();
         expect(typeof target.Id).toBe('string');
@@ -77,15 +77,15 @@ test.describe('session control', () => {
         // The admin UI renders the session panel with a card for that stream.
         await loginAs(page, 'admin', consoleErrors);
         await page.waitForFunction(
-            () => (window as any).JellyfinElevate?.initialized === true
-                && (window as any).JellyfinElevate?.pluginConfig?.ActiveStreamsEnabled === true,
+            () => (window as any).JellyfinCanopy?.initialized === true
+                && (window as any).JellyfinCanopy?.pluginConfig?.ActiveStreamsEnabled === true,
             undefined,
             { timeout: 60_000 },
         );
-        const widget = page.locator('#je-active-streams');
+        const widget = page.locator('#jc-active-streams');
         await expect(widget).toBeVisible({ timeout: 30_000 });
         await widget.click();
-        const card = page.locator('#je-active-streams-panel .je-as-card').first();
+        const card = page.locator('#jc-active-streams-panel .jc-as-card').first();
         await expect(card).toBeVisible({ timeout: 15_000 });
         await expect(card).toContainText(itemName);
 
@@ -98,13 +98,13 @@ test.describe('session control', () => {
         // claim on-screen delivery here. Real client rendering of the core
         // message dialog is out of scope for this fixture; the per-card compose /
         // send UI is covered by the unit tests.
-        const msg = await apiRaw(baseURL!, `/JellyfinElevate/active-streams/sessions/${target.Id}/message`, admin.token, {
+        const msg = await apiRaw(baseURL!, `/JellyfinCanopy/active-streams/sessions/${target.Id}/message`, admin.token, {
             method: 'POST',
             body: JSON.stringify({ text: 'Please pause your stream', timeoutMs: 5000 }),
         });
         expect(msg.status, 'admin message endpoint accepts the request → 200').toBe(200);
 
-        const stop = await apiRaw(baseURL!, `/JellyfinElevate/active-streams/sessions/${target.Id}/stop`, admin.token, {
+        const stop = await apiRaw(baseURL!, `/JellyfinCanopy/active-streams/sessions/${target.Id}/stop`, admin.token, {
             method: 'POST',
         });
         expect(stop.status, 'admin stop → 200').toBe(200);
@@ -124,19 +124,19 @@ test.describe('session control', () => {
         // No widget for a non-admin when "show to non-admins" is off.
         await loginAs(page, 'user', consoleErrors);
         await page.waitForFunction(
-            () => (window as any).JellyfinElevate?.initialized === true,
+            () => (window as any).JellyfinCanopy?.initialized === true,
             undefined,
             { timeout: 60_000 },
         );
-        await expect(page.locator('#je-active-streams')).toHaveCount(0);
+        await expect(page.locator('#jc-active-streams')).toHaveCount(0);
 
         // Every session-control endpoint is forbidden for a non-admin token.
         const user = await authenticate(baseURL!, USERS.user.username, USERS.user.password);
-        const list = await apiRaw(baseURL!, '/JellyfinElevate/active-streams/sessions', user.token);
+        const list = await apiRaw(baseURL!, '/JellyfinCanopy/active-streams/sessions', user.token);
         expect(list.status, 'non-admin sessions list → 403').toBe(403);
-        const stop = await apiRaw(baseURL!, '/JellyfinElevate/active-streams/sessions/anything/stop', user.token, { method: 'POST' });
+        const stop = await apiRaw(baseURL!, '/JellyfinCanopy/active-streams/sessions/anything/stop', user.token, { method: 'POST' });
         expect(stop.status, 'non-admin stop → 403').toBe(403);
-        const msg = await apiRaw(baseURL!, '/JellyfinElevate/active-streams/sessions/anything/message', user.token, {
+        const msg = await apiRaw(baseURL!, '/JellyfinCanopy/active-streams/sessions/anything/message', user.token, {
             method: 'POST',
             body: JSON.stringify({ text: 'x' }),
         });

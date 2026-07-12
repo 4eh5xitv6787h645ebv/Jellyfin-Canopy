@@ -1,0 +1,256 @@
+// src/bootstrap/translations.ts
+//
+// Out-of-band loader: compiled to its own dist/translations.js IIFE and served
+// separately (js/plugin.js fetches it before the component stage / pre-login).
+// It is NOT part of jc.bundle.js — it must be individually fetchable so the
+// loader can pull translations before the main bundle exists.
+//
+// Attaches JC.loadTranslations to the shared namespace. Behaviour is identical
+// to the former js/enhanced/translations.js; this is a typed port.
+
+import type { JEGlobal } from '../types/jc';
+
+(function (JC: JEGlobal) {
+    'use strict';
+
+    // The v12 fork's locales — the upstream repo (n00bcodr/main) is a different
+    // codebase whose key set differs, so its JSON would introduce missing/mismatched
+    // strings. Only used as the last-resort fallback when AssetCacheEnabled === false.
+    const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/main/Jellyfin.Plugin.JellyfinCanopy/js/locales';
+    const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+    type LangResult = { translations: Record<string, string>; usedLang: string };
+
+    function normalizeLangCode(code: string | null | undefined): string {
+        if (!code) return '';
+        const parts = code.split('-');
+        if (parts.length === 1) return parts[0].toLowerCase();
+        if (parts.length === 2) return `${parts[0].toLowerCase()}-${parts[1].toUpperCase()}`;
+        return code;
+    }
+
+    function buildLanguageChain(primaryLang: string): string[] {
+        const normalizedLang = normalizeLangCode(primaryLang);
+        const langCodes: string[] = [];
+
+        if (normalizedLang) {
+            langCodes.push(normalizedLang);
+        }
+
+        if (normalizedLang && normalizedLang.includes('-')) {
+            const baseLang = normalizedLang.split('-')[0];
+            if (!langCodes.includes(baseLang)) {
+                langCodes.push(baseLang);
+            }
+        }
+
+        if (langCodes[langCodes.length - 1] !== 'en') {
+            langCodes.push('en');
+        }
+
+        return Array.from(new Set(langCodes.filter(Boolean)));
+    }
+
+    async function getPluginVersion(): Promise<string> {
+        let pluginVersion = JC?.pluginVersion;
+        if (pluginVersion && pluginVersion !== 'unknown') return pluginVersion;
+
+        try {
+            const versionResponse = await fetch(ApiClient.getUrl('/JellyfinCanopy/version'));
+            if (versionResponse.ok) {
+                pluginVersion = await versionResponse.text();
+                if (JC) {
+                    JC.pluginVersion = pluginVersion;
+                }
+                return pluginVersion;
+            }
+        } catch (e) {
+            console.warn('🪼 Jellyfin Canopy: Failed to fetch plugin version', e);
+        }
+
+        return 'unknown';
+    }
+
+    function cleanOldTranslationCache(pluginVersion: string): void {
+        try {
+            for (let i = localStorage.length - 1; i >= 0; i--) {
+                const key = localStorage.key(i);
+                if (key && (key.startsWith('JC_translation_') || key.startsWith('JC_translation_ts_'))) {
+                    if (!key.includes(`_${pluginVersion}`)) {
+                        localStorage.removeItem(key);
+                        console.log(`🪼 Jellyfin Canopy: Removed old translation cache: ${key}`);
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('🪼 Jellyfin Canopy: Failed to clean up old translation caches', e);
+        }
+    }
+
+    async function tryLoadSingleLanguage(code: string, pluginVersion: string): Promise<LangResult> {
+        const cacheKey = `JC_translation_${code}_${pluginVersion}`;
+        const timestampKey = `JC_translation_ts_${code}_${pluginVersion}`;
+        const cachedTranslations = localStorage.getItem(cacheKey);
+        const cachedTimestamp = localStorage.getItem(timestampKey);
+
+        if (cachedTranslations && cachedTimestamp) {
+            const age = Date.now() - parseInt(cachedTimestamp, 10);
+            if (age < CACHE_DURATION) {
+                console.log(`🪼 Jellyfin Canopy: Using cached translations for ${code} (age: ${Math.round(age / 1000 / 60)} minutes, version: ${pluginVersion})`);
+                try {
+                    return { translations: JSON.parse(cachedTranslations) as Record<string, string>, usedLang: code };
+                } catch (e) {
+                    console.warn('🪼 Jellyfin Canopy: Failed to parse cached translations, will fetch fresh', e);
+                }
+            }
+        }
+
+        console.log(`🪼 Jellyfin Canopy: Loading bundled translations for ${code}...`);
+        try {
+            const bundledResponse = await fetch(ApiClient.getUrl(`/JellyfinCanopy/locales/${code}.json`));
+            if (bundledResponse.ok) {
+                const translations = await bundledResponse.json() as Record<string, string>;
+                try {
+                    localStorage.setItem(cacheKey, JSON.stringify(translations));
+                    localStorage.setItem(timestampKey, Date.now().toString());
+                    console.log(`🪼 Jellyfin Canopy: Successfully loaded and cached bundled translations for ${code} (version: ${pluginVersion})`);
+                } catch (e) { /* ignore */ }
+                return { translations, usedLang: code };
+            }
+        } catch (bundledError) {
+            console.warn('🪼 Jellyfin Canopy: Bundled translations failed, falling back to GitHub:', (bundledError as Error).message);
+        }
+
+        // PERF(R6): no remote assets — with the asset cache enabled (default; also the
+        // pre-config assumption, since this loader can run before public-config)
+        // the GitHub-raw fallback is skipped so the browser never contacts a
+        // third-party host: the server already fell back base-language → English
+        // for bundled locales, and the final bundled retries below still run.
+        const cdnFallbackAllowed = JC.pluginConfig?.AssetCacheEnabled === false;
+
+        try {
+            if (!cdnFallbackAllowed) {
+                throw new Error('GitHub locale fallback disabled (asset cache active)');
+            }
+
+            console.log(`🪼 Jellyfin Canopy: Fetching translations for ${code} from GitHub...`);
+            const githubResponse = await fetch(`${GITHUB_RAW_BASE}/${code}.json`, {
+                method: 'GET',
+                cache: 'no-cache',
+                headers: { 'Accept': 'application/json' }
+            });
+
+            if (githubResponse.ok) {
+                const translations = await githubResponse.json() as Record<string, string>;
+                try {
+                    localStorage.setItem(cacheKey, JSON.stringify(translations));
+                    localStorage.setItem(timestampKey, Date.now().toString());
+                    console.log(`🪼 Jellyfin Canopy: Successfully fetched and cached translations for ${code} from GitHub (version: ${pluginVersion})`);
+                } catch (storageError) {
+                    console.warn('🪼 Jellyfin Canopy: Failed to cache translations (localStorage full?)', storageError);
+                }
+                return { translations, usedLang: code };
+            }
+
+            if (githubResponse.status === 404 && code !== 'en') {
+                console.warn(`🪼 Jellyfin Canopy: Language ${code} not found on GitHub, falling back to English`);
+                const englishResponse = await fetch(`${GITHUB_RAW_BASE}/en.json`, {
+                    method: 'GET',
+                    cache: 'no-cache',
+                    headers: { 'Accept': 'application/json' }
+                });
+
+                if (englishResponse.ok) {
+                    const translations = await englishResponse.json() as Record<string, string>;
+                    try {
+                        const enCacheKey = `JC_translation_en_${pluginVersion}`;
+                        const enTimestampKey = `JC_translation_ts_en_${pluginVersion}`;
+                        localStorage.setItem(enCacheKey, JSON.stringify(translations));
+                        localStorage.setItem(enTimestampKey, Date.now().toString());
+                    } catch (e) { /* ignore */ }
+                    return { translations, usedLang: 'en' };
+                }
+            }
+
+            if (githubResponse.status === 403) {
+                console.warn('🪼 Jellyfin Canopy: GitHub rate limit detected, using bundled fallback');
+            } else if (githubResponse.status >= 500) {
+                console.warn(`🪼 Jellyfin Canopy: GitHub server error (${githubResponse.status}), using bundled fallback`);
+            }
+
+            throw new Error(`GitHub fetch failed with status ${githubResponse.status}`);
+        } catch (githubError) {
+            console.warn('🪼 Jellyfin Canopy: GitHub fetch failed, falling back to bundled translations:', (githubError as Error).message);
+        }
+
+        console.log(`🪼 Jellyfin Canopy: Loading bundled translations for ${code}...`);
+        let response = await fetch(ApiClient.getUrl(`/JellyfinCanopy/locales/${code}.json`));
+
+        if (response.ok) {
+            const translations = await response.json() as Record<string, string>;
+            try {
+                localStorage.setItem(cacheKey, JSON.stringify(translations));
+                localStorage.setItem(timestampKey, Date.now().toString());
+            } catch (e) { /* ignore */ }
+            return { translations, usedLang: code };
+        }
+
+        console.warn(`🪼 Jellyfin Canopy: Bundled ${code} not found, falling back to bundled English`);
+        response = await fetch(ApiClient.getUrl('/JellyfinCanopy/locales/en.json'));
+        if (response.ok) {
+            return { translations: await response.json() as Record<string, string>, usedLang: 'en' };
+        }
+
+        throw new Error('Failed to load English fallback translations');
+    }
+
+    JC.loadTranslations = async function (): Promise<Record<string, string>> {
+        try {
+            const pluginVersion = await getPluginVersion();
+
+            let user: unknown = ApiClient.getCurrentUser ? ApiClient.getCurrentUser() : null;
+            if (user instanceof Promise) {
+                user = await user;
+            }
+
+            const userId = (user as { Id?: string } | null)?.Id;
+            let lang = 'en';
+            if (userId) {
+                const storageKey = `${userId}-language`;
+                const storedLang = localStorage.getItem(storageKey);
+                if (storedLang) {
+                    lang = normalizeLangCode(storedLang);
+                } else {
+                    // Fall back to the HTML lang attribute set by Jellyfin's web client.
+                    // This covers the Android app and other clients where the localStorage
+                    // key may not exist but Jellyfin has already resolved the user's
+                    // preferred language from server-side settings.
+                    const docLang = document.documentElement.lang;
+                    if (docLang) {
+                        lang = normalizeLangCode(docLang);
+                    }
+                }
+            }
+
+            cleanOldTranslationCache(pluginVersion);
+
+            const langCodes = buildLanguageChain(lang);
+            for (const code of langCodes) {
+                try {
+                    const result = await tryLoadSingleLanguage(code, pluginVersion);
+                    if (result && result.translations) {
+                        return result.translations;
+                    }
+                } catch (e) {
+                    console.warn(`🪼 Jellyfin Canopy: Failed to load translations for ${code}`, e);
+                }
+            }
+
+            console.error('🪼 Jellyfin Canopy: Failed to load translations from any source');
+            return {};
+        } catch (error) {
+            console.error('🪼 Jellyfin Canopy: Failed to load translations:', error);
+            return {};
+        }
+    };
+})(window.JellyfinCanopy);
