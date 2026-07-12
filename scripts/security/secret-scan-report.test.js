@@ -133,6 +133,21 @@ test('main() exits 1 on a verified finding and writes a leak-free report', () =>
     });
 });
 
+test('the uploaded report (only artifact) stays leak-free when scanner output has Raw/RawV2', () => {
+    // BI-SEC-020-RAW-ARTIFACT: only secret-scan-report.json is published; the raw
+    // trufflehog JSONL (which carries Raw/RawV2) is kept runner-local. Prove the
+    // published report never contains that material even when the input does.
+    withTmp((dir) => {
+        const results = path.join(dir, 'r.jsonl');
+        const report = path.join(dir, 'secret-scan-report.json');
+        fs.writeFileSync(results, findingLine({ verified: true }) + '\n' + findingLine({ verified: false, raw: 'ANOTHERRAWSECRET3' }) + '\n');
+        S.main(['--results', results, '--scanner-exit', '0', '--report', report]);
+        const written = fs.readFileSync(report, 'utf8');
+        assert.ok(!written.includes(RAW_SECRET), 'published report leaks a verified raw secret');
+        assert.ok(!written.includes('ANOTHERRAWSECRET3'), 'published report leaks an unverified raw secret');
+    });
+});
+
 test('main() exits 0 on a clean scan', () => {
     withTmp((dir) => {
         const results = path.join(dir, 'r.jsonl');

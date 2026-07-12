@@ -66,14 +66,18 @@ jobs:
       # Durable, actionable report surface. (This private repo has no GitHub
       # Advanced Security, so code-scanning SARIF ingest is unavailable — the
       # artifact + step summary are the report, and no job claims SARIF.)
+      #
+      # Upload ONLY the redacted report. The raw trufflehog-results.jsonl carries
+      # Raw/RawV2 match material for any real finding, so it is kept runner-local
+      # (input to the evaluator only) and never published — otherwise a real
+      # verified secret would be downloadable from the artifact for its whole
+      # retention window even after the commit is rewritten.
       - name: Upload secret-scan report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: secret-scan-report
-          path: |
-            secret-scan-report.json
-            trufflehog-results.jsonl
+          path: secret-scan-report.json
           if-no-files-found: warn
           retention-days: 30
 
