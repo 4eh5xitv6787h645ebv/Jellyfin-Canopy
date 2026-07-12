@@ -110,7 +110,11 @@ function isVerified(finding) {
 function redactSecrets(text, secrets) {
     let out = String(text == null ? '' : text);
     for (const s of secrets) {
-        if (typeof s === 'string' && s.length >= 6) {
+        // Redact ANY non-empty raw value (no length threshold — a short verified
+        // secret must not leak either); over-redaction of a path is fail-closed.
+        // The empty-string guard is required: splitting on '' would insert the
+        // marker between every character.
+        if (typeof s === 'string' && s.length >= 1) {
             out = out.split(s).join('<redacted-secret>');
         }
     }

@@ -151,6 +151,15 @@ test('a secret in the Git FILE PATH is redacted from report + summary (still blo
     assert.ok(!report.includes(RAW_SECRET), 'report leaks the secret via the file path');
 });
 
+test('a SHORT secret in the file path is also redacted (no length threshold)', () => {
+    // BI-SEC-020-PATH-LEAK follow-up: a short verified secret must not leak either.
+    const shortSecret = 'abcde';
+    const r = evalJsonl(findingLine({ verified: true, raw: shortSecret, file: `leak-${shortSecret}.txt` }), { scannerExitCode: 0 });
+    assert.strictEqual(r.shouldFail, true);
+    const combined = S.renderSummary(r) + JSON.stringify(S.buildReport(r));
+    assert.ok(!combined.includes(`leak-${shortSecret}`), 'short secret leaked via the file path');
+});
+
 test('report + summary never contain the raw secret', () => {
     const r = evalJsonl(findingLine({ verified: true }), { scannerExitCode: 0 });
     const summary = S.renderSummary(r);
