@@ -6,42 +6,13 @@ site_description: Jellyfin Elevate is an independent fork and extensive moderniz
 site_author: Jellyfin Elevate contributors
 copyright: Copyright &copy;2026 Jellyfin Elevate contributors. A fork of Jellyfin Enhanced by n00bcodr — made with 💜 for Jellyfin and the community
 
+# Custom theme, built from scratch in ./theme (no framework).
 theme:
-  name: material
-  logo: images/favicon.ico
-  favicon: images/favicon.ico
-  palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: custom
-      accent: custom
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: custom
-      accent: custom
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
-  features:
-    - navigation.instant
-    - navigation.tracking
-    - navigation.tabs
-    - navigation.sections
-    - navigation.expand
-    - navigation.top
-    - navigation.footer
-    - navigation.indexes
-    - toc.follow
-    - toc.integrate
-    - search.suggest
-    - search.highlight
-    - search.share
-    - content.code.copy
-    - content.code.annotate
-    - announce.dismiss
+  name: null
+  custom_dir: theme
+  locale: en
+  static_templates:
+    - 404.html
 
 extra:
   404_page: true
@@ -89,124 +60,14 @@ markdown_extensions:
 
 # main tabs/headers
 nav:
-  # ——————————————
-  # landing page
-  # ——————————————
   - Home: index.md
-
-
-  # ——————————————
-  # Installation
-  # ——————————————
-  - Installation:
-    - Installation: installation/installation.md
-    - Migrating to v12: installation/migrating-to-v12.md
-    - Troubleshooting installation: installation/troubleshooting.md
-
-
-  # ——————————————
-  # Enhanced
-  # ——————————————
-  - Enhanced:
-    # Feature overview
-    - Enhanced Features: enhanced/enhanced-features.md
-
-    # Enhanced Settings
-    - Enhanced Settings: enhanced/enhanced-settings.md
-
-
-  # ——————————————
-  # Elsewhere
-  # ——————————————
-  - Elsewhere:
-    # Features overview
-    - Elsewhere Features: elsewhere/elsewhere-features.md
-
-    # Elsewhere Settings
-    - Elsewhere Settings: elsewhere/elsewhere-settings.md
-
-
-  # ——————————————
-  # Seerr
-  # ——————————————
-  - Seerr:
-    # Features overview
-    - Seerr Features: seerr/seerr-features.md
-
-    # Seerr Settings
-    - Seerr Settings: seerr/seerr-settings.md
-    - Permission Audit: seerr/permission-audit.md
-
-
-  # ——————————————
-  # Discovery
-  # ——————————————
-  - Discovery:
-    # Features overview
-    - Discovery Features: discovery/discovery-features.md
-
-    # Discovery Settings
-    - Discovery Settings: discovery/discovery-settings.md
-
-
-  # ——————————————
-  # Spoiler Guard
-  # ——————————————
-  - Spoiler Guard:
-    # Features overview
-    - Spoiler Guard Features: spoiler-guard/spoiler-guard-features.md
-
-    # Spoiler Guard Settings
-    - Spoiler Guard Settings: spoiler-guard/spoiler-guard-settings.md
-
-
-  # ——————————————
-  # *arr
-  # ——————————————
-  - "*arr":
-    # Features overview
-    - "*arr Features": arr/arr-features.md
-
-    # *arr Settings
-    - "*arr Settings": arr/arr-settings.md
-
-    # Troubleshooting + Support
-    - Troubleshooting + Support: arr/troubleshooting-support.md
-
-
-  # ——————————————
-  # Other
-  # ——————————————
-  - Other:
-    # Features overview
-    - Other Features: other/other-features.md
-
-    # Other Settings
-    - Other Settings: other/other-settings.md
-
-
-  # ——————————————
-  # Advanced, misc
-  # ——————————————
-  - Advanced:
-    - CSS Customization: advanced/css-customization.md
-    - API: advanced/api.md
-    - Live Updates: advanced/live-updates.md
-    - Performance Rules: advanced/performance-rules.md
-    - Performance Trace Capture: advanced/perf-trace-capture.md
-    - Client Security: advanced/client-security.md
-    - Project Structure: advanced/project-structure.md
-    - Jellyfin 12 Platform: v12-platform.md
-  - FAQ + Support:
-    - FAQ: faq-support/faq.md
-    - Report issues: faq-support/report-issues.md
-    - Feature Requests: faq-support/feature-requests.md
-    - Contributing Translations: faq-support/contributing-translations.md
-    - Support + Community: faq-support/support.md
-  - Related Projects: other-projects/other-projects.md
+  - Getting Started: getting-started.md
+  - The Enhanced Experience: enhanced.md
+  - Discover & Request: discover.md
+  - Sonarr & Radarr: sonarr-radarr.md
+  - Spoiler Guard: spoiler-guard.md
+  - Customization: customization.md
+  - Reference: reference.md
+  - Developer Guide: developers.md
+  - Help & Community: help.md
   - About: about.md
-
-extra_css:
-  - stylesheets/extra.css
-extra_javascript:
-  - javascripts/extra.js

@@ -1,0 +1,802 @@
+/* ==========================================================================
+   Jellyfin Elevate Docs — rendered Markdown content
+   Everything inside .doc (article) + breadcrumbs, pager, mobile TOC.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Breadcrumbs, mobile TOC, pager
+   -------------------------------------------------------------------------- */
+
+.breadcrumbs {
+  margin-bottom: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.breadcrumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.breadcrumbs li + li::before {
+  content: "/";
+  margin-right: 0.4rem;
+  color: var(--border-strong);
+}
+.breadcrumbs li[aria-current] {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.mobile-toc {
+  margin: 1rem 0 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-bg);
+  font-size: 0.85rem;
+}
+.mobile-toc > summary {
+  padding: 0.55rem 0.9rem;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  user-select: none;
+}
+.mobile-toc[open] > summary {
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.mobile-toc .toc-list {
+  margin: 0.6rem 0.9rem 0.75rem;
+}
+
+.pager {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-top: 3.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+}
+.pager-link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+}
+.pager-link:hover {
+  border-color: var(--accent-border);
+}
+.pager-next {
+  text-align: right;
+  align-items: flex-end;
+}
+.pager-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.pager-label svg {
+  width: 13px;
+  height: 13px;
+}
+.pager-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+}
+.pager-link:hover .pager-title {
+  color: var(--accent);
+}
+@media (max-width: 640px) {
+  .pager {
+    grid-template-columns: 1fr;
+  }
+  .pager-spacer {
+    display: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   2. Headings + text
+   -------------------------------------------------------------------------- */
+
+.doc-body {
+  font-size: 1rem;
+  line-height: 1.7;
+  word-wrap: break-word;
+}
+
+.doc-body h1,
+.doc-body h2,
+.doc-body h3,
+.doc-body h4,
+.doc-body h5,
+.doc-body h6 {
+  font-family: var(--font-display);
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  scroll-margin-top: calc(var(--topbar-h) + 1.25rem);
+}
+.doc-body h1 {
+  margin: 0.25rem 0 1.1rem;
+  font-size: 2.1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.doc-body h2 {
+  margin: 2.6rem 0 1rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 1.5rem;
+}
+.doc-body h3 {
+  margin: 2rem 0 0.75rem;
+  font-size: 1.17rem;
+}
+.doc-body h4 {
+  margin: 1.6rem 0 0.6rem;
+  font-size: 1rem;
+}
+.doc-body h5,
+.doc-body h6 {
+  margin: 1.4rem 0 0.5rem;
+  font-size: 0.88rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.h-anchor {
+  margin-left: 0.4rem;
+  color: var(--text-muted);
+  font-weight: 400;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.doc-body h2:hover .h-anchor,
+.doc-body h3:hover .h-anchor,
+.doc-body h4:hover .h-anchor,
+.h-anchor:focus-visible {
+  opacity: 1;
+}
+.h-anchor:hover {
+  color: var(--accent);
+}
+
+.doc-body p {
+  margin: 1rem 0;
+}
+
+.doc-body a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: var(--accent-border);
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.12s ease;
+}
+.doc-body a:hover {
+  text-decoration-color: currentColor;
+}
+
+.doc-body strong {
+  font-weight: 650;
+}
+.doc-body mark {
+  background: var(--accent-soft);
+  color: var(--text);
+  padding: 0.05em 0.25em;
+  border-radius: 3px;
+}
+.doc-body ins {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+.doc-body del {
+  color: var(--text-muted);
+}
+
+.doc-body hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 2.5rem 0;
+}
+
+.doc-body ul,
+.doc-body ol {
+  margin: 1rem 0;
+  padding-left: 1.5rem;
+}
+.doc-body li {
+  margin: 0.3rem 0;
+}
+.doc-body li > ul,
+.doc-body li > ol {
+  margin: 0.3rem 0;
+}
+
+.doc-body dt {
+  font-weight: 650;
+  margin-top: 0.9rem;
+}
+.doc-body dd {
+  margin: 0.25rem 0 0.75rem 1.25rem;
+  color: var(--text-muted);
+}
+
+.doc-body blockquote {
+  margin: 1.25rem 0;
+  padding: 0.15rem 1.15rem;
+  border-left: 3px solid var(--accent-border);
+  color: var(--text-muted);
+}
+.doc-body blockquote > :first-child {
+  margin-top: 0.35rem;
+}
+.doc-body blockquote > :last-child {
+  margin-bottom: 0.35rem;
+}
+
+.doc-body img {
+  max-width: 100%;
+  height: auto;
+}
+.doc-body img.img-framed {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+}
+
+/* footnotes (pymdownx-compatible markup) */
+.doc-body .footnote {
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.doc-body .footnote-ref,
+.doc-body .footnote-backref {
+  text-decoration: none;
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------
+   3. Code — inline + fenced blocks (token colors live in syntax.css)
+   -------------------------------------------------------------------------- */
+
+.doc-body code {
+  font-family: var(--font-mono);
+  font-size: 0.83em;
+  background: var(--code-inline-bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.1em 0.35em;
+  overflow-wrap: break-word;
+}
+.doc-body a code {
+  color: inherit;
+}
+
+/* inline highlighted code (pymdownx.inlinehilite) keeps chip chrome */
+.doc-body :not(pre) > code.highlight {
+  background: var(--code-inline-bg);
+}
+
+.doc-body .highlight {
+  position: relative;
+  margin: 1.25rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.doc-body .highlight pre {
+  margin: 0;
+  padding: 1rem 1.15rem;
+  overflow-x: auto;
+  line-height: 1.65;
+  border-radius: var(--radius);
+}
+.doc-body .highlight pre code {
+  display: block;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 0.82rem;
+  overflow-wrap: normal;
+  word-wrap: normal;
+}
+
+.code-meta {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.code-lang {
+  font: 600 0.64rem var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  background: var(--code-inline-bg);
+  opacity: 0.85;
+  user-select: none;
+}
+.code-copy {
+  display: grid;
+  place-items: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card-bg);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.doc-body .highlight:hover .code-copy,
+.code-copy:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .code-copy {
+    opacity: 1;
+  }
+}
+.code-copy:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.code-copy svg {
+  width: 14px;
+  height: 14px;
+}
+.code-copy .icon-check {
+  display: none;
+}
+.code-copy.is-copied {
+  color: var(--c-tip);
+  border-color: var(--c-tip);
+  opacity: 1;
+}
+.code-copy.is-copied .icon-copy {
+  display: none;
+}
+.code-copy.is-copied .icon-check {
+  display: block;
+}
+
+/* --------------------------------------------------------------------------
+   4. Tables
+   -------------------------------------------------------------------------- */
+
+/* no-JS fallback: let wide tables scroll on their own */
+.doc-body table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 1.25rem 0;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+/* JS wraps tables in .table-wrap for proper framing */
+.table-wrap {
+  margin: 1.25rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  overflow-x: auto;
+}
+.table-wrap table {
+  display: table;
+  width: 100%;
+  margin: 0;
+  overflow: visible;
+}
+
+.doc-body th,
+.doc-body td {
+  padding: 0.55rem 0.95rem;
+  text-align: left;
+  vertical-align: top;
+}
+.doc-body thead th {
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.doc-body tbody tr + tr td {
+  border-top: 1px solid var(--border);
+}
+.doc-body tbody tr:hover td {
+  background: var(--hover-bg);
+}
+
+/* --------------------------------------------------------------------------
+   5. Admonitions + collapsible details
+   -------------------------------------------------------------------------- */
+
+.doc-body .admonition,
+.doc-body details.note,
+.doc-body details.info,
+.doc-body details.tip,
+.doc-body details.hint,
+.doc-body details.important,
+.doc-body details.warning,
+.doc-body details.caution,
+.doc-body details.attention,
+.doc-body details.danger,
+.doc-body details.error,
+.doc-body details.failure,
+.doc-body details.bug,
+.doc-body details.example,
+.doc-body details.question,
+.doc-body details.quote,
+.doc-body details.abstract,
+.doc-body details.success {
+  --adm: var(--c-note);
+  --adm-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z'/%3E%3C/svg%3E");
+  margin: 1.5rem 0;
+  padding: 0.85rem 1.15rem;
+  border: 1px solid color-mix(in srgb, var(--adm) 30%, transparent);
+  border-left: 3px solid var(--adm);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--adm) 5%, var(--card-bg));
+  font-size: 0.92rem;
+}
+
+.doc-body .admonition-title,
+.doc-body details.note > summary,
+.doc-body details.info > summary,
+.doc-body details.tip > summary,
+.doc-body details.hint > summary,
+.doc-body details.important > summary,
+.doc-body details.warning > summary,
+.doc-body details.caution > summary,
+.doc-body details.attention > summary,
+.doc-body details.danger > summary,
+.doc-body details.error > summary,
+.doc-body details.failure > summary,
+.doc-body details.bug > summary,
+.doc-body details.example > summary,
+.doc-body details.question > summary,
+.doc-body details.quote > summary,
+.doc-body details.abstract > summary,
+.doc-body details.success > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 650;
+  color: var(--adm);
+}
+.doc-body .admonition-title::before,
+.doc-body details > summary::before {
+  content: "";
+  flex: none;
+  width: 1.05em;
+  height: 1.05em;
+  background: currentColor;
+  -webkit-mask: var(--adm-icon) center / contain no-repeat;
+  mask: var(--adm-icon) center / contain no-repeat;
+}
+
+.doc-body .admonition > :last-child {
+  margin-bottom: 0.15rem;
+}
+.doc-body .admonition > p {
+  margin: 0.5rem 0;
+}
+
+/* type accents */
+.doc-body .admonition.info,
+.doc-body details.info {
+  --adm: var(--c-info);
+  --adm-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 16v-4'/%3E%3Cpath d='M12 8h.01'/%3E%3C/svg%3E");
+}
+.doc-body .admonition.abstract,
+.doc-body details.abstract {
+  --adm: var(--c-info);
+}
+.doc-body .admonition.tip,
+.doc-body .admonition.hint,
+.doc-body .admonition.important,
+.doc-body .admonition.success,
+.doc-body details.tip,
+.doc-body details.hint,
+.doc-body details.important,
+.doc-body details.success {
+  --adm: var(--c-tip);
+  --adm-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1.3.5 2.6 1.5 3.5.8.8 1.3 1.5 1.5 2.5'/%3E%3Cpath d='M9 18h6'/%3E%3Cpath d='M10 22h4'/%3E%3C/svg%3E");
+}
+.doc-body .admonition.warning,
+.doc-body .admonition.caution,
+.doc-body .admonition.attention,
+.doc-body details.warning,
+.doc-body details.caution,
+.doc-body details.attention {
+  --adm: var(--c-warning);
+  --adm-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z'/%3E%3Cpath d='M12 9v4'/%3E%3Cpath d='M12 17h.01'/%3E%3C/svg%3E");
+}
+.doc-body .admonition.danger,
+.doc-body .admonition.error,
+.doc-body .admonition.failure,
+.doc-body .admonition.bug,
+.doc-body details.danger,
+.doc-body details.error,
+.doc-body details.failure,
+.doc-body details.bug {
+  --adm: var(--c-danger);
+  --adm-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86L7.86 2z'/%3E%3Cpath d='M12 8v4'/%3E%3Cpath d='M12 16h.01'/%3E%3C/svg%3E");
+}
+.doc-body .admonition.example,
+.doc-body details.example {
+  --adm: var(--c-example);
+  --adm-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 2v7.5a2 2 0 0 1-.2.9L4.7 20.6a1 1 0 0 0 .9 1.4h12.8a1 1 0 0 0 .9-1.4L14.2 10.4a2 2 0 0 1-.2-.9V2'/%3E%3Cpath d='M8.5 2h7'/%3E%3Cpath d='M7 16h10'/%3E%3C/svg%3E");
+}
+.doc-body .admonition.question,
+.doc-body .admonition.quote,
+.doc-body details.question,
+.doc-body details.quote {
+  --adm: var(--text-muted);
+  --adm-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3'/%3E%3Cpath d='M12 17h.01'/%3E%3C/svg%3E");
+}
+
+/* fallback where color-mix is unsupported: flat card background */
+@supports not (background: color-mix(in srgb, red 5%, blue)) {
+  .doc-body .admonition {
+    background: var(--card-bg);
+    border-color: var(--border);
+    border-left-color: var(--adm);
+  }
+}
+
+/* collapsible details (pymdownx.details) */
+.doc-body details > summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.doc-body details > summary::-webkit-details-marker {
+  display: none;
+}
+.doc-body details > summary::after {
+  content: "";
+  width: 0.9em;
+  height: 0.9em;
+  margin-left: auto;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: transform 0.15s ease;
+}
+.doc-body details:not([open]) > summary {
+  margin-bottom: 0;
+}
+.doc-body details:not([open]) > summary::after {
+  transform: rotate(-90deg);
+}
+
+/* plain details without an admonition class */
+.doc-body details:not([class]) {
+  margin: 1.25rem 0;
+  padding: 0.85rem 1.15rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-bg);
+}
+.doc-body details:not([class]) > summary {
+  display: flex;
+  align-items: center;
+  font-weight: 650;
+  font-size: 0.9rem;
+}
+
+/* --------------------------------------------------------------------------
+   6. Content tabs (pymdownx.tabbed, alternate style)
+   -------------------------------------------------------------------------- */
+
+.doc-body .tabbed-set {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin: 1.5rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+}
+
+.doc-body .tabbed-set > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.doc-body .tabbed-labels {
+  display: flex;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: none;
+}
+.doc-body .tabbed-labels::-webkit-scrollbar {
+  display: none;
+}
+.doc-body .tabbed-labels > label {
+  flex: none;
+  padding: 0.6rem 1.1rem;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.doc-body .tabbed-labels > label:hover {
+  color: var(--text);
+}
+
+.doc-body .tabbed-content {
+  padding: 0.35rem 1.15rem;
+  min-width: 0;
+}
+.doc-body .tabbed-block {
+  display: none;
+}
+
+/* checked input n  ->  active label n + visible block n (supports 10 tabs) */
+.doc-body .tabbed-set > input:nth-of-type(1):checked ~ .tabbed-labels > label:nth-of-type(1),
+.doc-body .tabbed-set > input:nth-of-type(2):checked ~ .tabbed-labels > label:nth-of-type(2),
+.doc-body .tabbed-set > input:nth-of-type(3):checked ~ .tabbed-labels > label:nth-of-type(3),
+.doc-body .tabbed-set > input:nth-of-type(4):checked ~ .tabbed-labels > label:nth-of-type(4),
+.doc-body .tabbed-set > input:nth-of-type(5):checked ~ .tabbed-labels > label:nth-of-type(5),
+.doc-body .tabbed-set > input:nth-of-type(6):checked ~ .tabbed-labels > label:nth-of-type(6),
+.doc-body .tabbed-set > input:nth-of-type(7):checked ~ .tabbed-labels > label:nth-of-type(7),
+.doc-body .tabbed-set > input:nth-of-type(8):checked ~ .tabbed-labels > label:nth-of-type(8),
+.doc-body .tabbed-set > input:nth-of-type(9):checked ~ .tabbed-labels > label:nth-of-type(9),
+.doc-body .tabbed-set > input:nth-of-type(10):checked ~ .tabbed-labels > label:nth-of-type(10) {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.doc-body .tabbed-set > input:nth-of-type(1):focus-visible ~ .tabbed-labels > label:nth-of-type(1),
+.doc-body .tabbed-set > input:nth-of-type(2):focus-visible ~ .tabbed-labels > label:nth-of-type(2),
+.doc-body .tabbed-set > input:nth-of-type(3):focus-visible ~ .tabbed-labels > label:nth-of-type(3),
+.doc-body .tabbed-set > input:nth-of-type(4):focus-visible ~ .tabbed-labels > label:nth-of-type(4),
+.doc-body .tabbed-set > input:nth-of-type(5):focus-visible ~ .tabbed-labels > label:nth-of-type(5),
+.doc-body .tabbed-set > input:nth-of-type(6):focus-visible ~ .tabbed-labels > label:nth-of-type(6),
+.doc-body .tabbed-set > input:nth-of-type(7):focus-visible ~ .tabbed-labels > label:nth-of-type(7),
+.doc-body .tabbed-set > input:nth-of-type(8):focus-visible ~ .tabbed-labels > label:nth-of-type(8),
+.doc-body .tabbed-set > input:nth-of-type(9):focus-visible ~ .tabbed-labels > label:nth-of-type(9),
+.doc-body .tabbed-set > input:nth-of-type(10):focus-visible ~ .tabbed-labels > label:nth-of-type(10) {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.doc-body .tabbed-set > input:nth-of-type(1):checked ~ .tabbed-content > .tabbed-block:nth-of-type(1),
+.doc-body .tabbed-set > input:nth-of-type(2):checked ~ .tabbed-content > .tabbed-block:nth-of-type(2),
+.doc-body .tabbed-set > input:nth-of-type(3):checked ~ .tabbed-content > .tabbed-block:nth-of-type(3),
+.doc-body .tabbed-set > input:nth-of-type(4):checked ~ .tabbed-content > .tabbed-block:nth-of-type(4),
+.doc-body .tabbed-set > input:nth-of-type(5):checked ~ .tabbed-content > .tabbed-block:nth-of-type(5),
+.doc-body .tabbed-set > input:nth-of-type(6):checked ~ .tabbed-content > .tabbed-block:nth-of-type(6),
+.doc-body .tabbed-set > input:nth-of-type(7):checked ~ .tabbed-content > .tabbed-block:nth-of-type(7),
+.doc-body .tabbed-set > input:nth-of-type(8):checked ~ .tabbed-content > .tabbed-block:nth-of-type(8),
+.doc-body .tabbed-set > input:nth-of-type(9):checked ~ .tabbed-content > .tabbed-block:nth-of-type(9),
+.doc-body .tabbed-set > input:nth-of-type(10):checked ~ .tabbed-content > .tabbed-block:nth-of-type(10) {
+  display: block;
+}
+
+/* --------------------------------------------------------------------------
+   7. Keyboard keys (pymdownx.keys)
+   -------------------------------------------------------------------------- */
+
+.doc-body .keys {
+  white-space: nowrap;
+}
+.doc-body .keys kbd {
+  font-size: 0.78em;
+  color: var(--text);
+  vertical-align: baseline;
+}
+.doc-body .keys span {
+  color: var(--text-muted);
+  padding: 0 0.2em;
+  font-size: 0.85em;
+}
+
+/* --------------------------------------------------------------------------
+   8. Task lists (pymdownx.tasklist, custom_checkbox)
+   -------------------------------------------------------------------------- */
+
+.doc-body .task-list-item {
+  list-style-type: none;
+  position: relative;
+}
+.doc-body ul:has(> .task-list-item) {
+  padding-left: 0.5rem;
+}
+.doc-body .task-list-control {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 0.35rem;
+}
+.doc-body .task-list-control input[type="checkbox"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.doc-body .task-list-indicator {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--card-bg);
+  vertical-align: -0.15em;
+}
+.doc-body .task-list-control input:checked ~ .task-list-indicator {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  -webkit-mask: none;
+}
+.doc-body .task-list-control input:checked ~ .task-list-indicator::before {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--on-accent);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / 70% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / 70% no-repeat;
+}
+
+/* --------------------------------------------------------------------------
+   9. Misc content
+   -------------------------------------------------------------------------- */
+
+.doc-body iframe,
+.doc-body video {
+  max-width: 100%;
+}
+
+.doc-body .headerlink {
+  margin-left: 0.4rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  opacity: 0;
+}
+.doc-body :hover > .headerlink,
+.doc-body .headerlink:focus-visible {
+  opacity: 1;
+}

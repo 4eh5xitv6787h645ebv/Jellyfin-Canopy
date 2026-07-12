@@ -1,0 +1,74 @@
+{#- Standalone 404 page. Served by GitHub Pages at any missing URL depth, so
+    every URL must be absolute — built from site_url (mkdocs serve rewrites
+    site_url to the local dev address, so this also works locally). -#}
+{%- set root = (config.site_url or '.').rstrip('/') -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page not found · {{ config.site_name }}</title>
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="{{ root }}/images/favicon.ico">
+  <script>
+    (function () {
+      var t;
+      try { t = localStorage.getItem("elevate-theme"); } catch (e) { /* storage blocked */ }
+      if (t !== "light" && t !== "dark") {
+        t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,600;1,400&display=swap">
+  <link rel="stylesheet" href="{{ root }}/css/theme.css">
+</head>
+<body data-root="{{ root }}">
+
+<a class="skip-link" href="#content">Skip to content</a>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="{{ root }}/">
+      <img class="brand-mark" src="{{ root }}/images/favicon.ico" alt="" width="26" height="26">
+      <span class="brand-name">{{ config.site_name }}</span>
+      <span class="brand-tag">Docs</span>
+    </a>
+    <div class="topbar-spring"></div>
+    <nav class="topbar-links" aria-label="Project links">
+      <button class="icon-btn" id="theme-toggle" aria-label="Switch color theme">
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+      </button>
+    </nav>
+  </div>
+</header>
+
+<main class="notfound" id="content">
+  <p class="notfound-code" aria-hidden="true">404</p>
+  <h1>Page not found</h1>
+  <p class="notfound-lede">The page you're looking for doesn't exist or has moved. Try the docs home or search from there.</p>
+  <div class="hero-actions">
+    <a class="btn btn-primary" href="{{ root }}/">
+      Go to docs home
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+    </a>
+    <a class="btn btn-ghost" href="{{ config.repo_url }}/issues">Report a broken link</a>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <p class="footer-copy">{{ config.copyright }}</p>
+    <nav class="footer-links" aria-label="Footer links">
+      <a href="{{ config.repo_url }}">GitHub</a>
+      <a href="https://discord.gg/EYNFf7y4CG">Discord</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="{{ root }}/js/theme.js" defer></script>
+</body>
+</html>

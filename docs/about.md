@@ -1,41 +1,35 @@
 # About Jellyfin Elevate
 
-## Project Overview
+Jellyfin Elevate is an independent fork and extensive modernization of [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) by [n00bcodr](https://github.com/n00bcodr), rebuilt from the ground up for **Jellyfin 12**. It bundles playback, discovery, customization, and media-management features into one plugin so you can shape how your server looks and behaves without stitching together a dozen scripts. This page tells you where it came from, who to thank for it, and which related projects pair well with it.
 
-Jellyfin Elevate is an independent fork and extensive modernization of [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced), providing an integrated suite of playback, discovery, customization and media-management features for Jellyfin 12.
+## What Jellyfin Elevate is
 
-The original project started as a userscript and evolved into a full-featured plugin. Jellyfin Elevate continues that lineage on a different path: a ground-up Jellyfin 12-only rebuild with a strict-TypeScript ES-module client, policy-based server auth, push-driven live updates, a committed Playwright e2e suite, and enforced performance rules.
+Jellyfin Enhanced started life as a userscript and grew into a full-featured plugin. Jellyfin Elevate continues that lineage on a different path: a Jellyfin 12-only rebuild rather than a port. Under the hood that means a strict-TypeScript ES-module client, policy-based server authorization, push-driven live updates, a committed Playwright end-to-end suite, and enforced performance rules — the plumbing you never see, but that keeps the features fast and predictable.
 
-Jellyfin Elevate is developed **100% with AI** (agentic coding tools driving design, implementation, testing, and review), directed and curated by a human maintainer. Every change must pass the project's full gate suite — type-checking, lint, unit tests, golden snapshots, and a live end-to-end suite — before it lands.
+The project is developed **100% with AI** — agentic coding tools drive the design, implementation, testing, and review — directed and curated by a human maintainer. Nothing lands on trust alone: every change has to pass the full gate suite (type-checking, lint, unit tests, golden snapshots, and a live end-to-end run) before it ships.
 
+!!! warning "On Jellyfin 10.11? Use Jellyfin Enhanced"
+    Jellyfin Elevate targets **Jellyfin 12 only**. If your server is still on **Jellyfin 10.11**, install [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) instead — it is n00bcodr's original project and remains actively maintained for 10.11. When you are ready to move up, see [Getting Started](getting-started.md) for installation and migration.
 
-## Credits & Acknowledgments
+The Jellyfin Elevate source lives at **[github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate)**. If you want the technical tour of how the plugin is put together, the [Developer Guide](developers.md) goes deep on the architecture, live updates, and performance rules.
 
-### The Original Author
+## Credits & acknowledgments
 
-**[n00bcodr](https://github.com/n00bcodr)** — creator of [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced)
+Jellyfin Elevate exists because other people built the foundations first. Credit is due, and it is not a formality.
 
-- This project **would not exist without him**. Every feature in Jellyfin Elevate stands on the foundation he designed, built, and maintained.
-- Jellyfin Enhanced remains actively maintained for Jellyfin 10.11 — if you are on 10.11, use it.
-- All donation links in this project intentionally point to him: [Ko-Fi](https://ko-fi.com/n00bcodr) ⦁ [Buy Me a Coffee](https://www.buymeacoffee.com/n00bcodr)
+### The original author
 
-### Special Thanks
+**[n00bcodr](https://github.com/n00bcodr)** — creator of [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced).
 
-**[Jellyfin Team](https://jellyfin.org/)**
+This project **would not exist without him**. Every feature in Jellyfin Elevate stands on the foundation he designed, built, and maintained. Jellyfin Enhanced remains actively maintained for Jellyfin 10.11 — if that is your server, use it. Every donation link in this project points to him on purpose: [Ko-Fi](https://ko-fi.com/n00bcodr) and [Buy Me a Coffee](https://www.buymeacoffee.com/n00bcodr).
 
-- For creating and maintaining the amazing open-source media server that makes all of this possible
+### Special thanks
 
-**[BobHasNoSoul](https://github.com/BobHasNoSoul/)**
+- **[The Jellyfin Team](https://jellyfin.org/)** — for creating and maintaining the open-source media server that makes all of this possible.
+- **[BobHasNoSoul](https://github.com/BobHasNoSoul/)** — a huge inspiration for the original project's Jellyfin modding, and the original creator of [Jellyfin PauseScreen](https://github.com/BobHasNoSoul/Jellyfin-PauseScreen) and [Jellyfin Quality Tags](https://github.com/BobHasNoSoul/Jellyfin-Qualitytags/).
+- **[IAmParadox27](https://github.com/IAmParadox27/)** — the inspiration for moving Jellyfin Enhanced from a userscript to a plugin, and the creator of excellent Jellyfin plugins including [File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) and [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages).
 
-- Huge inspiration for the original project's Jellyfin modding
-- Original creator of [Jellyfin PauseScreen](https://github.com/BobHasNoSoul/Jellyfin-PauseScreen) and [Jellyfin Quality Tags](https://github.com/BobHasNoSoul/Jellyfin-Qualitytags/)
-
-**[IAmParadox27](https://github.com/IAmParadox27/)**
-
-- Inspiration for transitioning Jellyfin Enhanced from a userscript to a plugin
-- Creator of amazing Jellyfin plugins including [File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) and [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)
-
-**and all the amazing people who contributed to Jellyfin Enhanced, whose work carries forward into this fork:**
+And thanks to all the people who contributed to Jellyfin Enhanced, whose work carries forward into this fork:
 
 <div align="center">
   <a href="https://github.com/n00bcodr/Jellyfin-Enhanced/graphs/contributors">
@@ -43,84 +37,68 @@ Jellyfin Elevate is developed **100% with AI** (agentic coding tools driving des
   </a>
 </div>
 
+### The community
 
-### Community Contributors
+- **Translators** — the community members who contributed translations in 26 languages to the original project. Their work is what makes Jellyfin Elevate usable worldwide.
+- **Bug reporters & testers** — the people who file issues, test features, and send back the feedback that makes the plugin better for everyone.
+- **Feature requesters** — the users whose suggestions shape where the project goes next.
 
-**Translators:**
+If you would like to join them, [Help & Community](help.md) explains how to report issues, request features, and contribute translations.
 
-- Thank you to all community members who contributed translations in 26 languages to the original project
-- Your work makes Jellyfin Elevate accessible to users worldwide
+## Related projects
 
-**Bug Reporters & Testers:**
+These are the projects worth knowing about if you run Jellyfin Elevate — n00bcodr's related work, plus the plugins Elevate integrates with. The first group are things you might install alongside Elevate; the second are integrations Elevate reaches out to when they are present.
 
-- Community members who report issues, test features, and provide valuable feedback
-- Your contributions help improve the plugin for everyone
+### n00bcodr's projects
 
-**Feature Requesters:**
+| Project | Type | What it is | Status |
+| --- | --- | --- | --- |
+| [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) | Plugin | The original project Elevate forked from — the **Jellyfin 10.11** counterpart. Use this if you are on 10.11. | Active (10.11) |
+| [Jellyfin Tweaks](https://github.com/n00bcodr/JellyfinTweaks) | Plugin | Additional UI tweaks, performance options, and extra customization that complement Elevate. | Active |
+| [Jellyfin JavaScript Injector](https://github.com/n00bcodr/Jellyfin-JavaScript-Injector) | Plugin | Inject custom JavaScript into the Jellyfin web interface without touching core files — useful for testing, prototyping, and standalone enhancements. | Active |
+| [Jellyfin Elsewhere](https://github.com/n00bcodr/Jellyfin-Elsewhere) | JavaScript | The standalone version of the Elsewhere streaming-provider lookup. | Inactive |
+| [Jellyfish](https://github.com/n00bcodr/Jellyfish/) | CSS theme | A modern Jellyfin theme with multiple color variants (Aurora, Jellyblue, Ocean, Sunset, Forest, and more). Designed to work well alongside Elevate. | Active |
 
-- Users who suggest new features and improvements
-- Your ideas help shape the direction of the plugin
+!!! note "Elsewhere is built in"
+    The Elsewhere streaming-availability feature now ships as part of the Jellyfin Elevate plugin, so you no longer need the standalone script. See [Discover & Request](discover.md) for how it works inside Elevate.
 
-### Related Projects & Integrations
+### Integrations Elevate works with
 
-**[Seerr](https://github.com/seerr-team/seerr)**
+Jellyfin Elevate cooperates with a handful of other plugins and services. Some are recommended, one is required-adjacent, and the rest are optional but nicely complementary.
 
-- Media request management system
-- Jellyfin Elevate provides deep integration with Seerr
+- **[Seerr](https://github.com/seerr-team/seerr)** — the media-request management system. Elevate provides deep Seerr integration; see [Discover & Request](discover.md).
+- **[File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation)** — safe file modifications for plugins. Highly recommended for a Jellyfin Elevate install; [Getting Started](getting-started.md) covers it.
+- **[Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)** — adds custom pages to the Jellyfin sidebar. Elevate can optionally use it to host its Calendar, Requests, Bookmarks, and Hidden Content pages when the corresponding `*UsePluginPages` options are enabled. By default, Elevate renders these pages natively, so Plugin Pages is not required.
+- **[Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)** — custom navigation tabs for Jellyfin. Jellyfin Elevate features can be embedded in custom tabs.
+- **[Kefin Tweaks](https://github.com/ranaldsgift/KefinTweaks)** — watchlist and additional tweaks that complement Elevate.
 
-**[Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)**
+## Get involved
 
-- Custom navigation tabs for Jellyfin
-- Jellyfin Elevate features can be embedded in custom tabs
+Contributions are welcome, whether or not you write code. You can report bugs, suggest features, add or improve translations, improve the documentation, submit code, star the repository, or help other users in discussions.
 
-**[Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)**
+The best starting points:
 
-- Add custom pages to Jellyfin sidebar
-- Optionally used by Jellyfin Elevate to host its Calendar, Requests, Bookmarks, and Hidden Content pages when the corresponding `*UsePluginPages` options are enabled (Jellyfin Elevate renders these natively by default)
-
-**[File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation)**
-
-- Safe file modifications for plugins
-- Highly recommended for Jellyfin Elevate installation
-
-**[Kefin Tweaks](https://github.com/ranaldsgift/KefinTweaks)**
-
-- Watchlist and additional tweaks
-- Complements Jellyfin Elevate features
-
-
-## Contributing
-
-We welcome contributions from the community!
-
-**Ways to Contribute:**
-
-- Report bugs and issues
-- Suggest new features
-- Add or improve translations
-- Improve documentation
-- Submit code contributions
-- Star the repository
-- Help others in discussions
-
-**Get Started:**
-
-- [Report Issues and Feature Requests](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues)
+- [Report issues and request features](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/issues)
 - [Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Elevate/discussions)
-- [Contributing Translations](faq-support/contributing-translations.md)
-- [Troubleshooting Guide](installation/troubleshooting.md)
+- [Discord community](https://discord.gg/EYNFf7y4CG)
 
-## Support the Original Author
+For the full walkthrough — how to file a good bug report, propose a feature, or contribute a translation — head to [Help & Community](help.md).
 
-If Jellyfin Elevate has enhanced your media experience, please support **n00bcodr**, the original author of Jellyfin Enhanced — these links go to him, not to this fork's maintainer:
+## Support the original author
+
+If Jellyfin Elevate has improved your media experience, please support **n00bcodr**, the author of Jellyfin Enhanced. These links go to him — the original author — not to this fork's maintainer.
 
 <div align="center">
-  <a href='https://ko-fi.com/G2G51TIZF0' target='_blank'><img height='6' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi5.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
+  <a href='https://ko-fi.com/n00bcodr' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi5.png?v=6' border='0' alt='Support n00bcodr on Ko-Fi' /></a>
   &nbsp;&nbsp;&nbsp;
   <a href="https://www.buymeacoffee.com/n00bcodr">
     <img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=☕&slug=n00bcodr&button_colour=FFDD00&font_colour=000000&font_family=Ubuntu&outline_colour=000000&coffee_colour=ffffff" alt="Buy Me A Coffee" />
   </a>
 </div>
+
+## License
+
+Jellyfin Elevate is open source under the **GPL-3.0** license. The related projects listed above are also open source under GPL-3.0 unless their repository states otherwise — check each repository for its exact license terms.
 
 ---
 
