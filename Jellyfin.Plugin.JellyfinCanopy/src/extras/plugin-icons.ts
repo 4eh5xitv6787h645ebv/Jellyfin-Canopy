@@ -236,7 +236,9 @@ async function processPluginIcons(): Promise<void> {
             {
                 selector: 'a[href*="Jellyfin%20Canopy"]',
                 type: 'image',
-                src: assetUrl('icons/jellyfish-favicon.ico'),
+                // The plugin's own entry carries the Canopy brand mark (embedded
+                // asset), not the legacy jellyfish glyph.
+                src: assetUrl('branding/canopy-mark.svg'),
                 alt: 'Jellyfin Canopy'
             },
             {
