@@ -73,13 +73,15 @@ function gitMeta(finding) {
     return { file: typeof git.file === 'string' ? git.file : '', line: Number(git.line) || 0 };
 }
 
-/** Stable, secret-free fingerprint: DetectorName + file + SHA-256(raw match).
- * The raw match is hashed, never stored. */
+/** Stable, secret-free fingerprint: DetectorName + file + full SHA-256(raw match).
+ * The raw match is hashed, never stored. The FULL 256-bit digest is used (not a
+ * truncation) so the baseline's per-finding key has no collision margin that a
+ * new secret could slip through. */
 function fingerprint(finding) {
     const detector = (finding && finding.DetectorName) || 'unknown';
     const { file } = gitMeta(finding);
     const raw = (finding && (finding.Raw || finding.RawV2 || finding.Redacted)) || '';
-    const hash = crypto.createHash('sha256').update(String(raw)).digest('hex').slice(0, 16);
+    const hash = crypto.createHash('sha256').update(String(raw)).digest('hex');
     return `${detector}:${file}:${hash}`;
 }
 
@@ -97,7 +99,13 @@ function loadBaseline(baselineObj) {
     }
     const set = new Set();
     for (const entry of baselineObj.allow) {
-        if (entry && typeof entry.fingerprint === 'string' && entry.fingerprint.trim() !== '') {
+        // An allowlist entry is honored ONLY when it has both a non-empty
+        // fingerprint AND a non-empty reason. A reason-less entry is ignored (so
+        // that finding is NOT allowlisted and still fails) — the documented
+        // "every entry must carry a reason" governance rule, enforced.
+        if (entry
+            && typeof entry.fingerprint === 'string' && entry.fingerprint.trim() !== ''
+            && typeof entry.reason === 'string' && entry.reason.trim() !== '') {
             set.add(entry.fingerprint.trim());
         }
     }

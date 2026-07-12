@@ -36,13 +36,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Pinned to the same TruffleHog release the repo already trusts (v3.95.6).
+      # Pinned by IMMUTABLE DIGEST (the same v3.95.6 release the repo trusts via the
+      # TruffleHog action) — this image is the gate's root of trust, so it must not
+      # ride a mutable tag. NOTE: no verbose/--debug flag is passed, so TruffleHog's
+      # stderr (echoed below) carries only progress logs, never raw match material;
+      # keep it that way. Findings go to stdout as JSONL; --no --fail so the exit
+      # code signals only whether the scanner RAN (crash) vs found things (in JSON).
       - name: Run TruffleHog (full git history, JSON)
         id: scan
         run: |
           set +e
           docker run --rm -v "${{ github.workspace }}:/repo:ro" \
-            ghcr.io/trufflesecurity/trufflehog:v3.95.6 \
+            ghcr.io/trufflesecurity/trufflehog@sha256:96f8429082cb2d4ae73b1096dcdb2f5aa139881d97042b0c5e5fa226a392e056 \
             git file:///repo --json > trufflehog-results.jsonl 2> trufflehog.log
           code=$?
           set -e

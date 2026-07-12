@@ -87,6 +87,17 @@ test('malformed scanner output fails closed', () => {
     assert.match(r.reasons.join(' '), /unparseable/i);
 });
 
+test('a baseline entry WITHOUT a reason does not allowlist (still fails)', () => {
+    const fp = S.fingerprint(JSON.parse(findingLine({ verified: true })));
+    // Same fingerprint, but the entry has no reason -> must NOT be honored.
+    const { set } = S.loadBaseline({ allow: [{ fingerprint: fp }] });
+    assert.strictEqual(set.has(fp), false);
+    const { findings, parseErrors } = S.parseResults(findingLine({ verified: true }));
+    const r = S.evaluate({ findings, parseErrors, scannerExitCode: 0, baseline: set, baselineMalformed: false });
+    assert.strictEqual(r.shouldFail, true);
+    assert.strictEqual(r.verifiedNew.length, 1);
+});
+
 test('a malformed baseline fails closed', () => {
     const { set, malformed } = S.loadBaseline({ allow: 'not-an-array' });
     const r = S.evaluate({ findings: [], parseErrors: 0, scannerExitCode: 0, baseline: set, baselineMalformed: malformed });
