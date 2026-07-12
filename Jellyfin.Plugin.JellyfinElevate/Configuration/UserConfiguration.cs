@@ -198,6 +198,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         // empty Prefs object (all nullable bools = null), so unmigrated
         // spoilerblur.json files continue to honor admin policy unchanged.
         public SpoilerBlurUserPrefs Prefs { get; set; } = new SpoilerBlurUserPrefs();
+
+        // Transient, in-memory-only fail-closed marker. Set by
+        // SpoilerUserResolver.LoadUserState when this user's policy read faulted
+        // (corrupt/unavailable) with no last-known-good to retain, so the image
+        // and field-strip filters over-protect rather than silently disclose.
+        // [JsonIgnore] guarantees it is never persisted and never round-trips
+        // through a save even though the resolver's loaded state is read-only.
+        [JsonIgnore]
+        public bool FailClosed { get; set; }
     }
 
     public class UserShortcuts

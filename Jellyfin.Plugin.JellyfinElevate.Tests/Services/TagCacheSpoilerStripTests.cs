@@ -189,6 +189,30 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
         }
 
         [Fact]
+        public void Resolve_FailClosed_StripsEveryRecognizedEntry_RegardlessOfScopeOrWatched()
+        {
+            // BI-SEC-010 FINAL-F1: a cold-start policy fault (FailClosed sentinel with
+            // empty dicts) must strip every recognized entry rather than fail open.
+            var failClosed = new UserSpoilerBlur { FailClosed = true };
+            foreach (var type in new[] { "Episode", "Season", "Movie", "Series" })
+            {
+                var entry = new TagCacheEntry { Type = type, SeriesId = Guid.NewGuid().ToString("N") };
+                var d = TagCacheService.ResolveTagStripDecision(
+                    Guid.NewGuid().ToString("N"), entry, failClosed,
+                    // Out of scope, never played, not-a-season — the OLD behavior Keeps.
+                    NeverInScope, NeverPlayed, NotASeason, NeverPlayed, IgnoreKey);
+                Assert.Equal(TagCacheService.TagStripDecision.Strip, d);
+            }
+            // A non-media entry is still Keep even under fail-closed.
+            var boxset = new TagCacheEntry { Type = "BoxSet" };
+            Assert.Equal(
+                TagCacheService.TagStripDecision.Keep,
+                TagCacheService.ResolveTagStripDecision(
+                    Guid.NewGuid().ToString("N"), boxset, failClosed,
+                    NeverInScope, NeverPlayed, NotASeason, NeverPlayed, IgnoreKey));
+        }
+
+        [Fact]
         public void Resolve_WatchedEpisode_Keeps()
         {
             var seriesN = Guid.NewGuid().ToString("N");

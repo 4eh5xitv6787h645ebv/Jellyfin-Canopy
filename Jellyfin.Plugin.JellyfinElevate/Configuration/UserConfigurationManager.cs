@@ -55,6 +55,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
         public T GetUserConfigurationStrict<T>(string userId, string fileName) where T : new()
             => _store.GetUserConfigurationStrict<T>(userId, fileName);
 
+        // Typed, side-effect-free policy read for security enforcement: classifies
+        // Missing/Valid/Corrupt/Unavailable so callers can retain last-known-good
+        // and fail closed instead of collapsing a fault into an empty policy.
+        public UserConfigReadResult<T> ReadUserConfiguration<T>(string userId, string fileName) where T : new()
+            => _store.ReadUserConfiguration<T>(userId, fileName);
+
         // Locked read-modify-write: holds GetUserFileLock, strict-reads, mutates, and saves when the mutator returns > 0.
         public int RmwUserConfiguration<T>(string userId, string fileName, Func<T, int> mutate) where T : class, new()
             => _store.RmwUserConfiguration(userId, fileName, mutate);

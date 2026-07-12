@@ -74,6 +74,17 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         internal static bool IsUserStateCachedForTest(string userIdN)
             => !string.IsNullOrEmpty(userIdN) && _userStateCache.ContainsKey(userIdN);
 
+        // Test seam: force a user's cross-request entry to appear stale (TTL elapsed)
+        // WITHOUT removing it, so the next LoadUserState re-reads disk while the entry
+        // is still present as last-known-good. Distinct from InvalidateUser (which
+        // drops the entry — the repair path). Lets a test prove LKG retention across a
+        // genuine TTL expiry deterministically without a wall-clock wait.
+        internal static void ExpireUserStateCacheForTest(string userIdN)
+        {
+            if (!string.IsNullOrEmpty(userIdN) && _userStateCache.TryGetValue(userIdN, out var e))
+                _userStateCache[userIdN] = (e.State, DateTime.MinValue);
+        }
+
         private readonly UserConfigurationManager _userConfigManager;
         private readonly ILibraryManager _libraryManager;
         private readonly RequestIdentityService _identity;
@@ -221,42 +232,36 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             }
 
             // 2. F7 cross-request cache — skips the disk read + parse when a
-            //    recent copy exists. Invalidated by every write path.
+            //    recent copy exists. Invalidated by every write path. A stale
+            //    entry is retained (not dropped) so a policy fault can fall back
+            //    to it as last-known-good instead of failing open.
             var now = DateTime.UtcNow;
-            if (_userStateCache.TryGetValue(userIdN, out var entry)
-                && (now - entry.CachedAt) < UserStateCacheTtl)
+            var hasEntry = _userStateCache.TryGetValue(userIdN, out var entry);
+            if (hasEntry && (now - entry.CachedAt) < UserStateCacheTtl)
             {
                 httpContext.Items[cacheKey] = entry.State;
                 return entry.State;
             }
 
-            // 3. Miss — read from disk.
-            UserSpoilerBlur state;
-            try
+            // 3. Miss or stale — typed, side-effect-free read from disk. Unlike the
+            //    old lenient GetUserConfiguration path (which collapsed every fault
+            //    into an empty new T() and silently disabled protection), this
+            //    classifies Missing/Valid/Corrupt/Unavailable so a fault retains
+            //    last-known-good or fails CLOSED instead of leaking artwork/fields.
+            var read = _userConfigManager.ReadUserConfiguration<UserSpoilerBlur>(
+                userIdN,
+                SpoilerBlurImageFilter.SpoilerBlurFileName);
+            var lastKnownGood = hasEntry ? entry.State : null;
+            var state = ResolvePolicyState(read, lastKnownGood);
+
+            if (read.IsFault)
             {
-                state = _userConfigManager.GetUserConfiguration<UserSpoilerBlur>(
-                    userIdN,
-                    SpoilerBlurImageFilter.SpoilerBlurFileName);
-            }
-            catch (Exception ex)
-            {
-                // GetUserConfiguration is the LENIENT path — it already
-                // swallows IOException + JsonException + parse failures
-                // internally and returns `new T()` (it logs at Error level
-                // via the config manager's own _logger, so the corruption
-                // fact is observable, just not under our namespace). This
-                // outer catch-all only fires for exceptions that escape the
-                // lenient path (e.g. ResolveUserFile throwing on a bad
-                // userId). Rate-limited so a flood of bad requests doesn't
-                // spam logs. Do NOT populate the cross-request cache with a
-                // spurious empty on this rare escape — only the per-request
-                // layer, so a retry re-reads.
+                var posture = lastKnownGood != null
+                    ? "retaining last-known-good spoiler protection"
+                    : "no last-known-good — failing CLOSED (protecting all items)";
                 WarnRateLimited(
-                    "userstate-load:" + ex.GetType().FullName,
-                    $"Spoiler Guard resolver: failed to read user state for {userId} — passing through unblurred. {ex.Message}");
-                state = new UserSpoilerBlur();
-                httpContext.Items[cacheKey] = state;
-                return state;
+                    "userstate-" + read.Status + ":" + (read.FaultDetail ?? "?"),
+                    $"Spoiler Guard resolver: {read.Status} spoilerblur.json for {userId} ({read.FaultDetail}) — {posture} until repaired.");
             }
 
             _userStateCache[userIdN] = (state, now);
@@ -274,6 +279,24 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             return state;
         }
 
+        // Pure policy decision: how a typed read maps to the enforced spoiler state.
+        //   Missing/Valid → use the (possibly empty) value — an intentional policy.
+        //     A missing file is the common "user never opted anything in" case and
+        //     MUST pass through, so only genuine faults trigger protection.
+        //   Corrupt/Unavailable → retain last-known-good if present, else a
+        //     FailClosed sentinel so the image/field filters over-protect.
+        internal static UserSpoilerBlur ResolvePolicyState(
+            UserConfigReadResult<UserSpoilerBlur> read,
+            UserSpoilerBlur? lastKnownGood)
+        {
+            if (read.HasUsableValue)
+            {
+                return read.Value ?? new UserSpoilerBlur();
+            }
+
+            return lastKnownGood ?? new UserSpoilerBlur { FailClosed = true };
+        }
+
         public void WarnRateLimited(string key, string message)
         {
             var now = DateTime.UtcNow;
@@ -283,13 +306,13 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             _logger.LogWarning(message);
         }
 
-        // Track per-user corruption events so the admin can surface a
-        // banner in the JE management UI when any user's spoilerblur.json
-        // was rolled into the .corrupt-backup file. The file-on-disk has
-        // been rewritten with an empty state by UserConfigurationManager
-        // (fail-open per SECURITY.md) so the user's image/strip pipeline
-        // silently no-ops until they re-enable items. Surfacing this lets
-        // the user know to retry.
+        // Track per-user corruption events so the admin can surface a banner in the
+        // JE management UI. Populated by the controller/tag-cache STRICT read+write
+        // path when a mutation hits a corrupt spoilerblur.json (it backs the file up
+        // to .corrupt-* and refuses to overwrite). Note the runtime ENFORCEMENT read
+        // (LoadUserState) no longer fails open on corruption: it retains
+        // last-known-good or fails CLOSED, so protection is preserved rather than
+        // silently no-op'd. The banner still lets the user know a repair is needed.
         private static readonly ConcurrentDictionary<string, CorruptionEvent> _corruptionLog = new();
 
         public class CorruptionEvent

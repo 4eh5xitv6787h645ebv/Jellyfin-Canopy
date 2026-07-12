@@ -141,6 +141,11 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                     };
                     return 1;
                 });
+            // The strict RMW above proved spoilerblur.json is currently readable and
+            // valid, so drop any cached FailClosed / stale enforcement state for this
+            // user (repair invalidation, matching the promotion and existing-item
+            // branches) — even on the no-change or cap-exceeded outcome.
+            SpoilerUserResolver.InvalidateUser(userKey);
             if (capExceeded[0])
             {
                 _logger.LogWarning($"Spoiler Guard pending: cap of {MaxPendingTmdbPerUser} reached for {ResolveUserDisplay(userKey)} — rejecting new {pendingKey}");

@@ -102,10 +102,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                     // overwrites the user's real data with defaults.
                     // (Newtonsoft equivalent: NullValueHandling.Ignore on deserialization,
                     // reproduced by the StripNullMembers pre-pass — see PersistedJson.)
-                    var node = JsonNode.Parse(json, documentOptions: PersistedJson.ParseOptions);
-                    var settings = PersistedJson.StripNullMembers(node) is JsonNode stripped
-                        ? stripped.Deserialize<T>(PersistedJson.ReadOptions)
-                        : default;
+                    var settings = TryDeserializeStripped<T>(json);
 
                     if (settings == null)
                     {
@@ -162,10 +159,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                 // fails: empty/whitespace/literal-null is rejected above, malformed JSON
                 // throws in JsonNode.Parse, and a non-object payload deserializes to null
                 // (or throws) — both caught below and backed up.
-                var node = JsonNode.Parse(json, documentOptions: PersistedJson.ParseOptions);
-                var parsed = PersistedJson.StripNullMembers(node) is JsonNode stripped
-                    ? stripped.Deserialize<T>(PersistedJson.ReadOptions)
-                    : default;
+                var parsed = TryDeserializeStripped<T>(json);
                 if (parsed == null)
                 {
                     _logger.LogError($"'{fileName}' for user '{userId}' deserialized to null; refusing to overwrite.");
@@ -183,6 +177,100 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                 _logger.LogError($"Failed to parse '{fileName}' for user '{userId}': {ex.Message}");
                 BackupCorruptFile(configPath);
                 throw;
+            }
+        }
+
+        // Shared JSON-null-tolerant deserialize used by every read path (lenient
+        // GET, strict RMW, and the typed policy read) so all three classify a file
+        // identically. Applies the StripNullMembers pre-pass (= Newtonsoft
+        // NullValueHandling.Ignore) then binds with the shared ReadOptions. Throws
+        // only for malformed JSON (JsonNode.Parse); returns null when the payload
+        // parses but yields no object (literal null / non-object). Callers decide
+        // what a null result means (lenient → new T(); strict/typed → corrupt).
+        private static T? TryDeserializeStripped<T>(string json)
+        {
+            var node = JsonNode.Parse(json, documentOptions: PersistedJson.ParseOptions);
+            return PersistedJson.StripNullMembers(node) is JsonNode stripped
+                ? stripped.Deserialize<T>(PersistedJson.ReadOptions)
+                : default;
+        }
+
+        // Typed, side-effect-free policy read for security enforcement (Hidden
+        // Content, Spoiler Guard). Unlike the lenient GET it never collapses a
+        // fault into new T(), and unlike the strict RMW read it neither throws nor
+        // rewrites/back-ups the file — enforcement reads must not mutate disk. It
+        // classifies the outcome so the caller can retain last-known-good and fail
+        // CLOSED on a cold-start fault instead of silently dropping protection.
+        //
+        //   Missing      → file absent; Value = new T() (an intentionally empty policy).
+        //   Valid        → parsed; Value = the deserialized policy.
+        //   Corrupt      → exists but empty/literal-null/malformed/deserialized-null; Value = null.
+        //   Unavailable  → unreadable (I/O, permissions, or any escaping exception); Value = null.
+        public UserConfigReadResult<T> ReadUserConfiguration<T>(string userId, string fileName) where T : new()
+        {
+            string configPath;
+            try
+            {
+                configPath = ResolveUserFile(userId, fileName);
+            }
+            catch (Exception ex)
+            {
+                // A bad userId/fileName is a programming error, not an empty policy.
+                // Fail closed: treat as Unavailable so callers retain protection.
+                _logger.LogError($"Refusing to resolve policy file '{fileName}' for user '{userId}': {ex.Message}");
+                return new UserConfigReadResult<T>(UserConfigReadStatus.Unavailable, default, ex.Message);
+            }
+
+            // Read directly and let the exception type classify the outcome. A
+            // File.Exists pre-check must NOT own this decision: File.Exists returns
+            // false (rather than throwing) for permission/stat/invalid-path/other
+            // I/O failures and for a directory in the file's place, so it would
+            // collapse an UNAVAILABLE policy into Missing → an empty fail-open
+            // policy. Only a genuinely absent file (FileNotFound/DirectoryNotFound)
+            // maps to Missing; every other failure fails closed as Unavailable.
+            string json;
+            try
+            {
+                json = File.ReadAllText(configPath);
+            }
+            catch (FileNotFoundException)
+            {
+                // ONLY a genuinely absent file is Missing. The user directory is
+                // created during ResolveUserFile, so a read-stage
+                // DirectoryNotFoundException means a path component vanished or the
+                // backing store disconnected between resolution and read — a storage
+                // fault, not a never-configured file. It must fall through to
+                // Unavailable so last-known-good / fail-closed is retained.
+                return new UserConfigReadResult<T>(UserConfigReadStatus.Missing, new T(), null);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Unable to read policy file '{fileName}' for user '{userId}' — treating as UNAVAILABLE (protection retained): {ex.Message}");
+                return new UserConfigReadResult<T>(UserConfigReadStatus.Unavailable, default, ex.Message);
+            }
+
+            if (string.IsNullOrWhiteSpace(json)
+                || string.Equals(json.Trim(), "null", StringComparison.Ordinal))
+            {
+                _logger.LogError($"Policy file '{fileName}' for user '{userId}' is empty or literal-null — treating as CORRUPT (protection retained).");
+                return new UserConfigReadResult<T>(UserConfigReadStatus.Corrupt, default, "empty-or-null");
+            }
+
+            try
+            {
+                var parsed = TryDeserializeStripped<T>(json);
+                if (parsed == null)
+                {
+                    _logger.LogError($"Policy file '{fileName}' for user '{userId}' deserialized to null — treating as CORRUPT (protection retained).");
+                    return new UserConfigReadResult<T>(UserConfigReadStatus.Corrupt, default, "deserialized-null");
+                }
+
+                return new UserConfigReadResult<T>(UserConfigReadStatus.Valid, parsed, null);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Policy file '{fileName}' for user '{userId}' is malformed — treating as CORRUPT (protection retained): {ex.Message}");
+                return new UserConfigReadResult<T>(UserConfigReadStatus.Corrupt, default, ex.Message);
             }
         }
 

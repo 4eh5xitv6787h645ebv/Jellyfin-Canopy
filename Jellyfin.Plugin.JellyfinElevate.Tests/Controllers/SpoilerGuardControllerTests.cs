@@ -265,6 +265,28 @@ namespace Jellyfin.Plugin.JellyfinElevate.Tests.Controllers
             SpoilerSeerrPendingPromoter.UnregisterPending("tv:888", h.User.Id);
         }
 
+        [Fact]
+        public void AddPending_PendingOnlyPath_InvalidatesCachedEnforcementState()
+        {
+            // BI-SEC-010 FINAL-F4: a successful pending-only RMW proves spoilerblur.json
+            // is readable/valid again, so it must invalidate any cached FailClosed/stale
+            // enforcement state (parity with the promotion branches), not leave it
+            // lingering for up to the cache TTL.
+            using var h = Build();
+            h.Lib.GetItemListHook = _ => Array.Empty<BaseItem>();
+            var userKey = h.User.Id.ToString("N");
+
+            SpoilerUserResolver.SeedUserStateCacheForTest(userKey);
+            Assert.True(SpoilerUserResolver.IsUserStateCachedForTest(userKey));
+
+            var res = h.Pending.AddPending(h.User.Id, h.User, "tv", "999", "My Show");
+            Assert.Equal("pending", res.Promoted);
+
+            Assert.False(SpoilerUserResolver.IsUserStateCachedForTest(userKey));
+
+            SpoilerSeerrPendingPromoter.UnregisterPending("tv:999", h.User.Id);
+        }
+
         // ─── Health endpoint: non-admin sees only own corruption events ───────────
 
         [Fact]

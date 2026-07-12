@@ -48,6 +48,26 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         internal static bool IsCachedForTest(string userIdN)
             => !string.IsNullOrEmpty(userIdN) && _hcCache.ContainsKey(userIdN);
 
+        // Test seam: force a user's cache entry to appear stale (TTL elapsed) WITHOUT
+        // removing it, so the next read re-reads disk while the entry is still present
+        // as last-known-good. Distinct from InvalidateUser, which drops the entry (the
+        // repair path). Lets a test prove LKG retention across a genuine TTL expiry
+        // deterministically without a wall-clock wait.
+        internal static void ExpireCacheForTest(string userIdN)
+        {
+            if (!string.IsNullOrEmpty(userIdN) && _hcCache.TryGetValue(userIdN, out var e))
+                _hcCache[userIdN] = (e.Ctx, DateTime.MinValue);
+        }
+
+        // Test seam: run the real disk+cache load path for a user on a fresh request
+        // and report whether the given item would be hidden on the given surface.
+        // Returns primitives only so the private HideContext never leaks.
+        internal bool WouldHideForTest(Guid userId, string itemIdN, string surface)
+        {
+            var hide = LoadHideContext(new DefaultHttpContext(), userId);
+            return IsHiddenById(itemIdN, null, hide, surface);
+        }
+
         private static readonly Dictionary<(string, string), (string Surface, ResponseHandler Handler)> _routes
             = new(KeyComparer.Instance)
         {
@@ -195,37 +215,55 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             }
 
             // 2. Cross-request in-memory cache, avoids disk reads on every Jellyfin API call.
+            //    The entry doubles as last-known-good: a stale entry is retained (not
+            //    dropped) so a policy fault can fall back to it instead of failing open.
             var userIdN = userId.ToString("N");
             var now = DateTime.UtcNow;
-            if (_hcCache.TryGetValue(userIdN, out var entry) && (now - entry.CachedAt) < _hcCacheTtl)
+            var hasEntry = _hcCache.TryGetValue(userIdN, out var entry);
+            if (hasEntry && (now - entry.CachedAt) < _hcCacheTtl)
             {
                 httpContext.Items[CacheKey] = entry.Ctx;
                 return entry.Ctx;
             }
 
-            // 3. Cache miss, read from disk.
-            UserHiddenContent? data;
-            try
+            // 3. Cache miss or stale — typed, side-effect-free read from disk.
+            var read = _configManager.ReadUserConfiguration<UserHiddenContent>(userIdN, FileName);
+            var lastKnownGood = hasEntry ? entry.Ctx : null;
+            var ctx = ResolvePolicyContext(read, lastKnownGood);
+
+            if (read.IsFault)
             {
-                data = _configManager.GetUserConfiguration<UserHiddenContent>(userIdN, FileName);
-            }
-            catch (Exception ex)
-            {
-                // Dedup once per user per process so a corrupt file doesn't spam Error on every matched request.
+                // Dedup once per user per process so a persistent fault doesn't spam Error on every matched request.
                 if (_warnedReadFailure.TryAdd(userId, 0))
                 {
-                    _logger.LogError($"HC response filter: failed to read hidden-content.json for user {userId} — entries will pass through unfiltered until the file is repaired: {ex.Message}");
+                    var posture = lastKnownGood != null
+                        ? "retaining last-known-good hidden-content protection"
+                        : "no last-known-good — failing CLOSED (hiding all matched surfaces)";
+                    _logger.LogError($"HC response filter: {read.Status} hidden-content.json for user {userId} ({read.FaultDetail}) — {posture} until repaired.");
                 }
-                data = null;
+            }
+            else
+            {
+                _warnedReadFailure.TryRemove(userId, out _);
             }
 
-            if (data != null) _warnedReadFailure.TryRemove(userId, out _);
-
-            var ctx = HideContext.Build(data);
+            // Cache the resolved context (an intentional policy, retained LKG, or the
+            // fail-closed sentinel) with a fresh timestamp — never an empty fail-open
+            // entry after a fault. A repair invalidates this via InvalidateUser.
             _hcCache[userIdN] = (ctx, now);
             httpContext.Items[CacheKey] = ctx;
             return ctx;
         }
+
+        // Pure policy decision: how a typed read maps to the enforced context.
+        //   Missing/Valid → build from the (possibly empty) value — an intentional policy.
+        //   Corrupt/Unavailable → retain last-known-good if present, else fail closed.
+        // A missing file is the common "feature enabled globally, user never configured
+        // it" case and MUST pass through, so only genuine faults trigger protection.
+        private static HideContext ResolvePolicyContext(UserConfigReadResult<UserHiddenContent> read, HideContext? lastKnownGood)
+            => read.HasUsableValue
+                ? HideContext.Build(read.Value)
+                : (lastKnownGood ?? HideContext.FailClosed);
 
         private static void FilterQueryResult(ActionExecutedContext executed, HideContext hide, string surface, ILogger<HiddenContentResponseFilter> logger)
         {
@@ -302,6 +340,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
 
         private static bool IsHiddenById(string itemIdStr, string? seriesIdStr, HideContext hide, string surface)
         {
+            // Fail-closed: a policy fault with no last-known-good over-hides every
+            // item on every matched surface rather than disclosing content the user
+            // had hidden. The per-surface Settings gate is deliberately bypassed —
+            // we have no readable Settings, so we protect all routed surfaces.
+            if (hide.IsFailClosed) return true;
+
             var itemId = NormalizeId(itemIdStr);
             var seriesId = seriesIdStr is null ? null : NormalizeId(seriesIdStr);
 
@@ -380,11 +424,23 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         {
             public static readonly HideContext Empty = new HideContext();
 
+            // Fail-closed sentinel: served only when the user's policy read faulted
+            // (corrupt/unavailable) with no last-known-good to retain. It over-hides
+            // every item on every matched surface so a persistence fault can never
+            // silently disclose content the user had chosen to hide. Bounded and
+            // self-healing — a repair (via any write path → InvalidateUser) or the
+            // next Valid read replaces it.
+            public static readonly HideContext FailClosed = new HideContext { IsFailClosed = true };
+
             public Dictionary<string, HashSet<string>> ItemIdScopes { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, HashSet<string>> SeriesIdScopes { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HiddenContentSettings Settings { get; private set; } = new HiddenContentSettings();
 
-            public bool IsEmpty => ItemIdScopes.Count == 0 && SeriesIdScopes.Count == 0;
+            public bool IsFailClosed { get; private init; }
+
+            // Fail-closed is never "empty": the filter must engage so its handlers
+            // over-hide. Otherwise emptiness is the absence of any hide scope.
+            public bool IsEmpty => !IsFailClosed && ItemIdScopes.Count == 0 && SeriesIdScopes.Count == 0;
 
             public static HideContext Build(UserHiddenContent? data)
             {

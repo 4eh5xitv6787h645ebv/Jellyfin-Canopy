@@ -498,6 +498,11 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             var isSeries = string.Equals(entry.Type, "Series", StringComparison.Ordinal);
             if (!isEpisode && !isSeason && !isMovie && !isSeries) return TagStripDecision.Keep;
 
+            // Fail-closed: the user's policy read faulted with no last-known-good.
+            // Strip every recognized entry regardless of scope or watched state rather
+            // than leak genres / ratings / title-bearing stream data.
+            if (spState.FailClosed) return TagStripDecision.Strip;
+
             // ── Scope gate ──
             if (isMovie)
             {

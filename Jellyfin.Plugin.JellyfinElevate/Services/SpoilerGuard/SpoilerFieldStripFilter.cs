@@ -126,6 +126,22 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             _configProvider = configProvider;
         }
 
+        // Test seams (Tests has InternalsVisibleTo): exercise the FailClosed
+        // over-strip of each non-BaseItemDto response shape. On a FailClosed state
+        // the route/scope membership gate is short-circuited, so the (unused)
+        // ActionExecutingContext is never dereferenced.
+        internal void StripImageInfosForTest(IEnumerable<MediaBrowser.Model.Dto.ImageInfo> imgs, UserSpoilerBlur userState, PluginConfiguration cfg)
+            => StripImageInfos(imgs, userState, cfg, Guid.Empty, null!);
+
+        internal void StripPlaybackInfoForTest(MediaBrowser.Model.MediaInfo.PlaybackInfoResponse pbi, UserSpoilerBlur userState, PluginConfiguration cfg)
+            => StripPlaybackInfo(pbi, userState, cfg, Guid.Empty, null!);
+
+        internal void StripSearchHintsForTest(MediaBrowser.Model.Search.SearchHintResult shr, UserSpoilerBlur userState, PluginConfiguration cfg)
+            => StripSearchHints(shr, userState, cfg, Guid.Empty);
+
+        internal void StripItemForTest(MediaBrowser.Model.Dto.BaseItemDto item, UserSpoilerBlur userState, PluginConfiguration cfg)
+            => StripItem(item, userState, cfg, Guid.Empty);
+
         public Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
         {
             // Sync fast-path bail order — three short-circuit checks before
@@ -174,7 +190,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             // /Items/{id}/PlaybackInfo, and /Items/{id}/Images unstripped
             // despite the Movie branches in StripItem +
             // RouteParentIsSpoilerEpisode. Mirror the image-filter checks.
-            if (userState.Series.Count == 0 && userState.Movies.Count == 0 && userState.Collections.Count == 0)
+            // FailClosed (policy read faulted with no last-known-good) must NOT
+            // short-circuit: it over-strips every item rather than leak fields.
+            if (!userState.FailClosed
+                && userState.Series.Count == 0 && userState.Movies.Count == 0 && userState.Collections.Count == 0)
             {
                 await next().ConfigureAwait(false);
                 return;
@@ -318,7 +337,8 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             Guid userId,
             ActionExecutingContext context)
         {
-            if (!RouteParentIsSpoilerEpisode(context, userState, userId)) return;
+            // FailClosed over-strips regardless of route/scope membership.
+            if (!userState.FailClosed && !RouteParentIsSpoilerEpisode(context, userState, userId)) return;
             // Auxiliary "scrub title-bearing fields" path — only relevant when a
             // title/overview strip is actually going to run for this user. Mirror
             // the same admin-cap + user-opt-out semantics as ApplyStripping.
@@ -344,7 +364,8 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             ActionExecutingContext context)
         {
             if (pbi.MediaSources == null) return;
-            if (!RouteParentIsSpoilerEpisode(context, userState, userId)) return;
+            // FailClosed over-strips regardless of route/scope membership.
+            if (!userState.FailClosed && !RouteParentIsSpoilerEpisode(context, userState, userId)) return;
             // Same scrubbing gate as StripImageInfos — honor the user's opt-outs.
             if (!ShouldStrip(cfg.SpoilerReplaceTitle, userState.Prefs?.ReplaceEpisodeTitles)
                 && !ShouldStrip(cfg.SpoilerStripOverview, userState.Prefs?.HideEpisodeDescriptions)) return;
@@ -492,6 +513,35 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         private void StripItem(BaseItemDto item, UserSpoilerBlur userState, PluginConfiguration cfg, Guid userId)
         {
             if (item == null) return;
+
+            // Fail-closed: the user's policy read faulted with no last-known-good.
+            // Over-strip every item's admin-enabled sensitive fields rather than
+            // leak them, and cache-bust so native clients refetch once repaired.
+            if (userState.FailClosed)
+            {
+                MutateImageTagsForCacheBust(item, cfg, watched: false, playbackPositionTicks: 0);
+                ApplyStripping(item, userState, cfg, userId);
+                // ApplyStripping only renames an episode when SpoilerReplaceTitle is on
+                // AND both index numbers exist. Over-strip on a fault: if any title/
+                // overview strip is enabled, guarantee an episode Name is replaced
+                // (numbered when possible, else the placeholder) and clear its alternate
+                // title fields — mirrors the fail-closed SearchHint rule so an unnumbered
+                // or overview-only-configured episode can't leak its raw title.
+                if (item.Type == Jellyfin.Data.Enums.BaseItemKind.Episode)
+                {
+                    var replaceTitle = ShouldStrip(cfg.SpoilerReplaceTitle, userState.Prefs?.ReplaceEpisodeTitles);
+                    var stripOverview = ShouldStrip(cfg.SpoilerStripOverview, userState.Prefs?.HideEpisodeDescriptions);
+                    if (replaceTitle || stripOverview)
+                    {
+                        item.Name = (replaceTitle && item.IndexNumber.HasValue && item.ParentIndexNumber.HasValue)
+                            ? $"Season {item.ParentIndexNumber.Value}, Episode {item.IndexNumber.Value}"
+                            : SanitizePlaceholder(cfg.SpoilerOverviewPlaceholder);
+                        item.SortName = null;
+                        item.OriginalTitle = null;
+                    }
+                }
+                return;
+            }
 
             // Series path: when the item is the Series itself (Series detail
             // page = /Items/{seriesId}), strip cast / overview / tags / etc.
@@ -807,6 +857,35 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 var isEpisodeHint = hint.Type == Jellyfin.Data.Enums.BaseItemKind.Episode;
                 var isMovieHint = hint.Type == Jellyfin.Data.Enums.BaseItemKind.Movie;
                 if (!isEpisodeHint && !isMovieHint) continue;
+
+                // FailClosed: the policy read faulted with no last-known-good. We
+                // cannot trust — or even need — a library lookup here, so over-strip
+                // every episode/movie hint by its declared Type alone. This closes
+                // the gap where a null / removed / mismatched GetItemById result
+                // would otherwise fall through and leak the raw Name / MatchedTerm.
+                if (userState.FailClosed)
+                {
+                    var replaceTitle = ShouldStrip(cfg.SpoilerReplaceTitle, userState.Prefs?.ReplaceEpisodeTitles);
+                    var stripOverview = ShouldStrip(cfg.SpoilerStripOverview, userState.Prefs?.HideEpisodeDescriptions);
+                    // If ANY title/overview strip is enabled, the episode Name must be
+                    // replaced — prefer the numbered form when both index numbers are
+                    // present, otherwise fall back to the safe placeholder. Never leave
+                    // the raw Name just because the numbered form can't be built.
+                    if (isEpisodeHint && (replaceTitle || stripOverview))
+                    {
+                        hint.Name = (replaceTitle && hint.IndexNumber.HasValue && hint.ParentIndexNumber.HasValue)
+                            ? $"Season {hint.ParentIndexNumber.Value}, Episode {hint.IndexNumber.Value}"
+                            : SanitizePlaceholder(cfg.SpoilerOverviewPlaceholder);
+                    }
+                    // Movie hint Name is intentionally not rewritten (mirrors the
+                    // scoped path); MatchedTerm is nulled for both shapes.
+                    if (replaceTitle || stripOverview)
+                    {
+                        hint.MatchedTerm = null;
+                    }
+                    continue;
+                }
+
                 if (hint.Id == Guid.Empty) continue;
 
                 // Look up the actual item. For Episodes we need SeriesId
@@ -827,6 +906,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 if (isEpisodeHint)
                 {
                     if (actualItem is not MediaBrowser.Controller.Entities.TV.Episode ep) continue;
+                    // (FailClosed is handled at the top of the loop, before the lookup.)
                     if (ep.SeriesId == Guid.Empty) continue;
                     if (!userState.Series.ContainsKey(ep.SeriesId.ToString("N"))) continue;
                     if (ResolvePlayedServerSide(userId, hint.Id)) continue;
@@ -848,6 +928,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                     // is still nulled below to suppress autocomplete
                     // substring leak of any non-title-bearing match).
                     if (actualItem is not MediaBrowser.Controller.Entities.Movies.Movie) continue;
+                    // (FailClosed is handled at the top of the loop, before the lookup.)
                     if (!_resolver.IsMovieInSpoilerScope(userState, hint.Id)) continue;
                     if (ResolvePlayedServerSide(userId, hint.Id)) continue;
                 }

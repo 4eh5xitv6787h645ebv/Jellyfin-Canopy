@@ -114,7 +114,11 @@ public sealed class CountingLibraryManager : ILibraryManager
 
     public List<VirtualFolderInfo> GetVirtualFolders(bool includeRefreshState) => throw new NotImplementedException();
 
-    public BaseItem? GetItemById(Guid id) => throw new NotImplementedException();
+    /// <summary>When set, backs the non-generic <see cref="GetItemById(Guid)"/>.</summary>
+    public Func<Guid, BaseItem?>? GetItemByIdNonGenericHook { get; set; }
+
+    public BaseItem? GetItemById(Guid id)
+        => GetItemByIdNonGenericHook is null ? throw new NotImplementedException() : GetItemByIdNonGenericHook(id);
 
     public T? GetItemById<T>(Guid id)
         where T : BaseItem => GetItemByIdHook is null ? throw new NotImplementedException() : GetItemByIdHook(id) as T;

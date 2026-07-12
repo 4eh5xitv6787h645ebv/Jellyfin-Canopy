@@ -135,18 +135,16 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
             var sanitizeTitleStreams = spCfg.SpoilerReplaceTitle || spCfg.SpoilerStripOverview;
             if (!stripGenresEnabled && !stripRatingsEnabled && !sanitizeTitleStreams) return;
 
-            // Strict-read so corruption is observable (rate-limited warn) rather than
-            // silently passing through.
-            var loaded = LoadSpoilerStateForTagStrip(userId);
-            if (loaded == null
-                || (loaded.Series.Count == 0 && loaded.Movies.Count == 0 && loaded.Collections.Count == 0))
+            // Load through the owning resolver (typed read + last-known-good retention
+            // + fail-closed sentinel), so a corrupt/unavailable spoilerblur.json can't
+            // silently disable tag stripping. Never null: a fault returns last-known-good
+            // or a FailClosed sentinel that ResolveTagStripDecision strips wholesale.
+            Configuration.UserSpoilerBlur spState = _spoilerResolver.LoadUserState(HttpContext, userId);
+            if (!spState.FailClosed
+                && spState.Series.Count == 0 && spState.Movies.Count == 0 && spState.Collections.Count == 0)
             {
                 return;
             }
-
-            // Non-null local so the capturing delegates below don't see a nullable
-            // (a captured local keeps its DECLARED nullability inside lambdas).
-            Configuration.UserSpoilerBlur spState = loaded;
 
             // Apply per-user override prefs on top of admin policy — the same
             // "user opt-out wins" contract as SpoilerFieldStripFilter. Prefs is
@@ -250,11 +248,15 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
                 && (spStripGenres || spStripRatings || spReplaceTitle || spStripOverview);
             if (stripTagsEnabled)
             {
-                spoilerState = LoadSpoilerStateForTagStrip(userId);
-                // Empty lists = nothing to strip; treat as off. Check all three dicts,
-                // not just Series.Count, so a movies-only user isn't short-circuited.
-                // Mirrors the GetTagCache + image-filter checks.
-                if (spoilerState == null || (spoilerState.Series.Count == 0 && spoilerState.Movies.Count == 0 && spoilerState.Collections.Count == 0))
+                // Load through the owning resolver (typed read + last-known-good +
+                // fail-closed sentinel); never null. A corrupt/unavailable policy can
+                // no longer silently disable tag stripping on this endpoint.
+                spoilerState = _spoilerResolver.LoadUserState(HttpContext, userId);
+                // Empty lists = nothing to strip; treat as off — UNLESS fail-closed
+                // (policy fault, no last-known-good), which over-strips every item.
+                // Check all three dicts so a movies-only user isn't short-circuited.
+                if (!spoilerState.FailClosed
+                    && spoilerState.Series.Count == 0 && spoilerState.Movies.Count == 0 && spoilerState.Collections.Count == 0)
                 {
                     stripTagsEnabled = false;
                 }
@@ -288,6 +290,41 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
 
                 var kind = item.GetBaseItemKind();
                 var isContainer = kind == BaseItemKind.Series || kind == BaseItemKind.Season;
+
+                // Fail-closed: the policy read faulted with no last-known-good. Return
+                // a fully-stripped Id+Type stub for EVERY item regardless of type,
+                // scope, or watched state, so no tags/ratings/streams/title-bearing
+                // fields leak while the policy is unreadable.
+                if (stripTagsEnabled && spoilerState != null && spoilerState.FailClosed)
+                {
+                    string? fcName = item.Name;
+                    if (item is MediaBrowser.Controller.Entities.TV.Episode fcEp
+                        && (spReplaceTitle || spStripOverview))
+                    {
+                        fcName = (spReplaceTitle && fcEp.IndexNumber.HasValue && fcEp.ParentIndexNumber.HasValue)
+                            ? $"Season {fcEp.ParentIndexNumber.Value}, Episode {fcEp.IndexNumber.Value}"
+                            : (string.IsNullOrWhiteSpace(spoilerCfg!.SpoilerOverviewPlaceholder)
+                                ? "Spoiler Guard activated"
+                                : spoilerCfg.SpoilerOverviewPlaceholder);
+                    }
+                    results.Add(new
+                    {
+                        Id = item.Id,
+                        Type = kind.ToString(),
+                        Genres = Array.Empty<string>(),
+                        CommunityRating = (float?)null,
+                        CriticRating = (float?)null,
+                        SeriesId = (Guid?)null,
+                        ProviderIds = (IDictionary<string, string>?)null,
+                        Name = fcName,
+                        Path = (string?)null,
+                        MediaStreams = (List<object>?)null,
+                        MediaSources = (List<object>?)null,
+                        FirstEpisode = (object?)null,
+                        Tags = Array.Empty<string>(),
+                    });
+                    continue;
+                }
 
                 // Spoiler Guard tag-strip: for an unwatched Episode of a guarded
                 // series, return an Id+Type-only stub so the frontend tag renderers
@@ -688,62 +725,6 @@ namespace Jellyfin.Plugin.JellyfinElevate.Controllers
             int formattedProgress = (int)Math.Clamp(progress, 0, 100);
 
             return Ok(new { success = true, progress = formattedProgress, totalPlaybackTicks, totalRuntimeTicks });
-        }
-
-        // Tag-cache + tag-data both load the user's spoiler state. Strict-read so
-        // corruption is detected (rate-limited warn), then fall back to null so the
-        // strip silently no-ops rather than 503-ing the unrelated tag request — the
-        // user's own /spoiler-blur/series endpoint will surface the error next call.
-        // See SpoilerUserResolver.IsMovieInSpoilerScope for scope semantics
-        // (direct opt-in or via an opted-in BoxSet).
-        private Configuration.UserSpoilerBlur? LoadSpoilerStateForTagStrip(Guid userId)
-        {
-            var userKey = userId.ToString("N");
-            var fileName = Services.SpoilerBlurImageFilter.SpoilerBlurFileName;
-            if (!_userConfigurationManager.UserConfigurationExists(userKey, fileName))
-            {
-                return null;
-            }
-            try
-            {
-                return _userConfigurationManager.GetUserConfigurationStrict<Configuration.UserSpoilerBlur>(userKey, fileName);
-            }
-            catch (InvalidDataException ex)
-            {
-                _spoilerResolver.WarnRateLimited(
-                    "tagstrip-corrupt:" + userKey,
-                    $"Spoiler Guard tag-strip: spoilerblur.json corrupt for {ResolveUserDisplay(userKey)} (backed up): {ex.Message}");
-                Services.SpoilerUserResolver.RecordCorruption(userKey, ResolveUserDisplay(userKey), ex.Message);
-                return null;
-            }
-            catch (System.Text.Json.JsonException ex)
-            {
-                _spoilerResolver.WarnRateLimited(
-                    "tagstrip-corrupt:" + userKey,
-                    $"Spoiler Guard tag-strip: spoilerblur.json corrupt for {ResolveUserDisplay(userKey)} (backed up): {ex.Message}");
-                Services.SpoilerUserResolver.RecordCorruption(userKey, ResolveUserDisplay(userKey), ex.Message);
-                return null;
-            }
-            catch (IOException ex)
-            {
-                _spoilerResolver.WarnRateLimited(
-                    "tagstrip-io:" + ex.GetType().FullName,
-                    $"Spoiler Guard tag-strip: IO error reading state for {ResolveUserDisplay(userKey)}: {ex.Message}");
-                return null;
-            }
-            catch (Exception ex)
-            {
-                // The specific catches above handle InvalidData/Json/IOException.
-                // Others (UnauthorizedAccess from a chmod-mangled config dir, Security,
-                // PathTooLong, DirectoryNotFound) would otherwise escape and 500 the whole
-                // tag-cache/tag-data request, breaking every client's tag rail on every poll.
-                // Catch-all returns null (skip strip) with rate-limited warn so a real
-                // failure mode stays observable without taking down the unrelated surface.
-                _spoilerResolver.WarnRateLimited(
-                    "tagstrip-unexpected:" + ex.GetType().FullName,
-                    $"Spoiler Guard tag-strip: unexpected {ex.GetType().Name} reading state for {ResolveUserDisplay(userKey)}: {ex.Message}");
-                return null;
-            }
         }
 
         private List<BaseItem> GetLeafPlayableItems(JUser user, BaseItem root)

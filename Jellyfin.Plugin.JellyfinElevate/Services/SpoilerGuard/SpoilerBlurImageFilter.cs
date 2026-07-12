@@ -378,7 +378,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             {
                 if (candidate == Guid.Empty) continue;
                 var candidateState = _resolver.LoadUserState(context.HttpContext, candidate);
-                if (candidateState.Series.Count == 0
+                // FailClosed (policy read faulted with no last-known-good) protects
+                // EVERY item — do not skip it as "protects nothing".
+                if (!candidateState.FailClosed
+                    && candidateState.Series.Count == 0
                     && candidateState.Movies.Count == 0
                     && candidateState.Collections.Count == 0)
                 {
@@ -767,6 +770,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         //   BoxSet / other   → not protected here (its own art passes through)
         private bool ItemInSpoilerScope(UserSpoilerBlur userState, BaseItem item)
         {
+            // Fail-closed: an unresolvable policy protects every item (over-blur)
+            // rather than leak unwatched artwork.
+            if (userState.FailClosed) return true;
+
             switch (item)
             {
                 case Episode ep:
@@ -813,6 +820,9 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             UserSpoilerBlur userState,
             JUser jUser)
         {
+            // Fail-closed: an unresolvable policy blurs (never passes through).
+            if (userState.FailClosed) return false;
+
             if (item is MediaBrowser.Controller.Entities.Movies.Movie movie)
             {
                 // Not in THIS candidate's movie scope → nothing to blur for them.
