@@ -52,14 +52,14 @@ Install the [File Transformation plugin](https://github.com/IAmParadox27/jellyfi
 
 ### Step 4 — Restart your server
 
-Restart your Jellyfin server to complete the installation. This step is required for the plugin to take effect.
+Restart your Jellyfin server to finish the install — the plugin doesn't take effect until you do.
 
 ### Step 5 — Verify the panel appears
 
 After the restart:
 
 1. Refresh your browser with a hard reload (++ctrl+f5++ or ++command+shift+r++).
-2. Open the Jellyfin Elevate settings panel, either way:
+2. Open the Jellyfin Elevate settings panel — either route works:
     - In the sidebar, under the **Jellyfin Elevate** heading, click **Enhanced Panel**.
     - Or press `?`.
 3. If the **Enhanced Panel** opens, the install worked.
@@ -100,11 +100,11 @@ To drive Sonarr and Radarr from inside Jellyfin — searching, adding, and manag
 
 ### Enable Spoiler Guard
 
-[Spoiler Guard](spoiler-guard.md) hides episode thumbnails, titles, and descriptions that could spoil what you haven't watched yet. It's **off until you enable it** on the **Pages** tab. See [Spoiler Guard](spoiler-guard.md).
+[Spoiler Guard](spoiler-guard.md) hides episode thumbnails, titles, and descriptions that could spoil what you haven't watched yet. It's **off until you enable it** on the **Pages** tab. The full walkthrough is in [Spoiler Guard](spoiler-guard.md).
 
 ### Everything else
 
-Keyboard shortcuts, media tags, the pause screen, bookmarks, and the rest of the day-to-day polish are covered in the Enhanced experience and the customization options. Explore them in [Customization](customization.md) and the other guides once the essentials above are in place.
+Keyboard shortcuts, media tags, the pause screen, bookmarks, and the rest of the day-to-day polish live in the Enhanced experience and the customization options. Once the essentials above are in place, explore them at your own pace in [Customization](customization.md) and the other guides.
 
 !!! note "Where every setting lives"
 
@@ -134,7 +134,7 @@ Jellyfin Elevate and Jellyfin Enhanced ship from **separate repositories** with 
 - **Reviews** — user reviews and ratings
 - **Admin plugin configuration** — the whole Dashboard → Plugins → Jellyfin Elevate configuration
 
-The on-disk formats of these files are **unchanged and frozen**. The plugin's test suite round-trips real Jellyfin Enhanced-era user files and pins the exact serialized output, so any format drift fails the build before it ships. Reverting to Jellyfin Enhanced on Jellyfin 10.11 would also find its data intact.
+The on-disk formats of these files are **unchanged and frozen**. The plugin's test suite round-trips real Jellyfin Enhanced-era user files and pins the exact serialized output, so any format drift fails the build before it ships. Even a revert to Jellyfin Enhanced on Jellyfin 10.11 finds its data intact.
 
 ### What changed for user-script authors
 

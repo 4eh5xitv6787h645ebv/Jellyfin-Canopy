@@ -4,7 +4,7 @@ Most questions about Jellyfin Elevate have a short answer and a clear fix, and t
 
 ## Frequently asked questions
 
-Quick answers to the things people ask most. If your problem is narrow to one area, the [Troubleshooting](#troubleshooting) section and the feature guides go deeper.
+Quick answers to the things people ask most. If your problem is confined to one area, the [Troubleshooting](#troubleshooting) section and the feature guides go deeper.
 
 ### The basics
 
@@ -28,7 +28,7 @@ The plugin automatically follows the language set in your Jellyfin user profile.
 
 #### Is Jellyfin Elevate affiliated with Seerr?
 
-No. Seerr is an independent project; Jellyfin Elevate simply integrates with it to enrich the Jellyfin experience.
+No. Seerr is an independent project; Jellyfin Elevate integrates with it to enrich the Jellyfin experience.
 
 !!! warning "Report plugin issues to this repository"
 
@@ -94,7 +94,7 @@ Work through the connection basics first:
     - 🔴 **No Access** — user not imported
     - ⚫ **Offline** — cannot connect
 
-Most "No Access" cases come down to sign-in and user import. Enable Jellyfin Sign-In in Seerr under **Settings → Users**, turn on **Enable Jellyfin Sign-In**, and import your Jellyfin users.
+Most "No Access" cases come down to sign-in and user import. In Seerr, go to **Settings → Users**, turn on **Enable Jellyfin Sign-In**, and import your Jellyfin users.
 
 ![Jellyfin Sign-In](images/jellyfin-signin.png)
 
@@ -131,7 +131,7 @@ First, make sure the tags are enabled and your browser isn't serving a stale cac
 2. Enable the tags you want — **Quality Tags**, **Genre Tags**, **Language Tags**, **Rating Tags** — and adjust their position if needed.
 3. Hard-refresh the browser with ++ctrl+f5++, clear the browser cache, and restart the browser if tags still look stale.
 
-If they're still missing, rebuild the server-side tag cache. Poster tags are drawn from a server-side tag cache that the plugin keeps current *incrementally* as your library changes, and rebuilds nightly via the **Build Tag Cache** scheduled task. To force a rebuild:
+If they're still missing, rebuild the tag cache. Poster tags are drawn from a server-side cache that the plugin keeps current *incrementally* as your library changes, and rebuilds nightly via the **Build Tag Cache** scheduled task. To force a rebuild:
 
 1. Go to **Dashboard → Scheduled Tasks**.
 2. Under **Jellyfin Elevate**, find **Build Tag Cache**.
@@ -191,7 +191,7 @@ How it works:
 - It hides the item from that row only. Your progress is **not** reset, and the item is **not** marked played.
 - The hidden state is stored server-side per-user, so it applies across all your devices.
 
-And yes, it's reversible: removed items appear in the **Hidden Content** management page, where each has an **Add back** button, and simply *resuming* a hidden item unhides it automatically. This is a tidy way to clear the Continue Watching / Next Up rows without losing your place. See [The Enhanced Experience](enhanced.md) for more.
+And yes, it's reversible: removed items appear in the **Hidden Content** management page, where each has an **Add back** button, and *resuming* a hidden item unhides it automatically. This is a tidy way to clear the Continue Watching / Next Up rows without losing your place. See [The Enhanced Experience](enhanced.md) for more.
 
 ### Customization
 
@@ -378,7 +378,7 @@ Have an idea? Feature proposals are gathered, discussed, and prioritized in **[G
 4. Explain the use case and who benefits.
 5. Be open to discussion.
 
-The strongest requests pair a clear description with a concrete use case, add mockups or examples where they help, take existing features into account, and stay open to refinement.
+The strongest requests pair a clear description with a concrete use case, add mockups or examples where they help, and take existing features into account.
 
 ## Translate Jellyfin Elevate
 

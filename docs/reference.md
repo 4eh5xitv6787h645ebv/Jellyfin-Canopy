@@ -1,6 +1,6 @@
 # Reference
 
-This is the power-user reference for Jellyfin Elevate: a map of where every admin setting lives, and the full catalogue of CSS hooks the plugin exposes so you can restyle or hide almost anything it draws. If you know what you want and just need the exact tab, selector, class, or data attribute, this is the page to keep open.
+This is the power-user reference for Jellyfin Elevate: a map of where every admin setting lives, and the full catalogue of CSS hooks the plugin exposes so you can restyle or hide almost anything it draws. If you know what you want and need the exact tab, selector, class, or data attribute, this is the page to keep open.
 
 ## Where Settings Live
 
@@ -129,7 +129,7 @@ The media stub tags — **BluRay, HD DVD, DVD, VHS, HDTV, Physical** — are mat
 
 #### Genre tags
 
-Genre tags collapse to an icon until hover. To keep the text always visible:
+Genre tags collapse to an icon until you hover over them. To keep the text always visible:
 
 ```css
 .genre-tag {
@@ -230,7 +230,7 @@ Hide the birthplace banner:
 
 ### *arr Tag Links
 
-When **Show synced tags as links** is enabled in plugin config settings, the plugin injects tags into the item page under the external links section. Each tag becomes a link you can restyle per service, rename, or hide. (For how tags get synced in the first place, see [Sonarr & Radarr](sonarr-radarr.md).)
+When **Show synced tags as links** is enabled in the plugin config, the plugin injects tags into the item page under the external links section. Each tag becomes a link you can restyle per service, rename, or hide. (For how tags get synced in the first place, see [Sonarr & Radarr](sonarr-radarr.md).)
 
 Structure of each link:
 
@@ -282,7 +282,7 @@ Data attributes on both the link and text spans:
 }
 ```
 
-2) Hide a specific tag entirely (recommended to use Hide Filter in config instead)
+2) Hide a specific tag entirely (though the Hide Filter in config is usually the better tool)
 
 ```css
 .itemExternalLinks a.arr-tag-link[data-id="in-netflix"] { display: none !important; }
@@ -328,7 +328,7 @@ The [Enhanced Panel](enhanced.md) is the settings and shortcuts overlay the plug
 
 !!! note "Automatic theme detection"
 
-    The Enhanced Panel automatically detects your active theme using unique CSS variables and applies appropriate styling without any configuration needed. It detects most popular Jellyfin themes:
+    The Enhanced Panel automatically detects your active theme using unique CSS variables and styles itself to match — no configuration needed. It detects most popular Jellyfin themes:
 
     - **Jellyfish** — uses the theme's accent colors and blur effects
     - **ElegantFin** — matches the theme's header and accent color

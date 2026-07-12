@@ -2,7 +2,7 @@
 
 Jellyfin Elevate is a single plugin that makes Jellyfin 12 feel finished. It sharpens the parts of the app you touch every day — the player, the library, search — and adds the things power users always end up wanting: streaming availability, a trending feed, one-click requests through Seerr, Sonarr and Radarr integration, spoiler protection, and branding that makes the server unmistakably yours.
 
-It's an independent fork and ground-up modernization of [Jellyfin Enhanced](about.md), rebuilt for Jellyfin 12. Nothing here is vaporware — every feature on this site ships in the plugin, documented exactly as it behaves.
+It's an independent fork of [Jellyfin Enhanced](about.md), rebuilt from the ground up for Jellyfin 12. Nothing here is vaporware — every feature on this site ships in the plugin, documented exactly as it behaves.
 
 ## New here? Start with setup
 

@@ -118,7 +118,7 @@ Everything above is the server-wide admin default. Any user can override the reg
 | **Providers** | A provider-filter autocomplete that overrides the admin **Default Providers** for this user. Leave it empty to show every provider. |
 | **Search** | Runs the multi-region lookup for the chosen region(s) and shows availability for each. |
 
-Each user's choices are saved server-side to their own `elsewhere.json`, so they persist across devices and never change the admin defaults or anyone else's view. A user who never opens the dialog simply keeps the admin Default Region and Default Providers.
+Each user's choices are saved server-side to their own `elsewhere.json`, so they persist across devices and never change the admin defaults or anyone else's view. A user who never opens the dialog keeps the admin Default Region and Default Providers.
 
 ### Streaming posters on Seerr cards
 
@@ -150,7 +150,7 @@ If a title shows **no providers**, it may not be available in the selected regio
 
 ## Discovery — a feed to find something to watch
 
-Discovery adds a customizable **rows-of-cards feed** — Trending, Popular, Upcoming, Top Rated, genre rows and more — right inside your Movies and TV Shows libraries. Instead of scrolling the same grid of what you own, you get a browsing surface for finding your next watch, with anything you don't have yet just a tap away from a request.
+Discovery adds a customizable **rows-of-cards feed** — Trending, Popular, Upcoming, Top Rated, genre rows and more — right inside your Movies and TV Shows libraries. Instead of scrolling the same grid of what you own, you get a browsing surface for finding your next watch, with anything you don't have yet one tap away from a request.
 
 Every card behaves like the rest of Jellyfin Elevate's Seerr surfaces: real poster art, an availability badge, a one-tap **Request** button for titles you don't have, streaming-service icons, and a direct link into your library for titles you already own.
 
@@ -219,7 +219,7 @@ Connect a [Seerr](https://docs.seerr.dev/) instance and your users can search fo
 ![Seerr search results inside Jellyfin](images/jellyseerr.png)
 
 !!! warning "Not affiliated with Seerr"
-    This plugin is **not** affiliated with Seerr. Seerr is an independent project; the plugin simply integrates with it. Please report any issues with this integration to the **Jellyfin Elevate** repository, not to the Seerr team.
+    This plugin is **not** affiliated with Seerr. Seerr is an independent project that the plugin integrates with. Please report any issues with this integration to the **Jellyfin Elevate** repository, not to the Seerr team.
 
 !!! tip "How it works"
     To keep things secure and avoid CORS errors, the plugin routes every Seerr call through the **Jellyfin server as a proxy**. This keeps your Seerr API key on the server, out of the browser, and sidesteps cross-origin restrictions.
@@ -492,11 +492,11 @@ With **Show Seerr Issues Section** on, reported Seerr issues appear in their own
 
 ### Reporting issues
 
-Users can report problems with media directly to Seerr from a detail page.
+A corrupt file or out-of-sync subtitles shouldn't need a message to the admin. Users can report problems with media directly to Seerr from a detail page.
 
-Issue types: **Video** (quality, corruption, wrong file), **Audio** (sync, missing tracks, quality), **Subtitles** (sync, missing, incorrect) and **Other** (metadata, artwork, etc.).
+Issue types cover **Video** (quality, corruption, wrong file), **Audio** (sync, missing tracks, quality), **Subtitles** (sync, missing, incorrect) and **Other** (metadata, artwork, etc.).
 
-To report: open a movie or TV detail page, click the report icon in the action buttons, select the issue type, choose a season and episode for TV (optional), enter a description, and submit.
+To report one: open a movie or TV detail page, click the report icon in the action buttons, select the issue type, choose a season and episode for TV (optional), enter a description, and submit.
 
 Two related settings on the **Seerr** tab:
 
@@ -536,7 +536,7 @@ Keep watchlists in step between Seerr and Jellyfin, in either direction. Configu
 
 ### Recently-added sync to Seerr
 
-**Trigger Seerr recently-added scan when new Jellyfin items are added** (default **off**) — when on, the plugin asks Seerr to run its recently-added scan whenever new items are imported into your Jellyfin library, so Seerr marks matching requests as available sooner.
+Close the gap between new items landing in Jellyfin and Seerr noticing them. **Trigger Seerr recently-added scan when new Jellyfin items are added** (default **off**) — when on, the plugin asks Seerr to run its recently-added scan whenever new items are imported into your Jellyfin library, so Seerr marks matching requests as available sooner.
 
 - **Debounce (seconds)** (default **60**, range **5–3600**) — coalesces bursts of item-added events into a single Seerr scan, so a large import triggers one scan after activity settles rather than one per item.
 
@@ -587,7 +587,7 @@ The Permission Audit is an administrator-only tool that checks every Jellyfin us
 - **OK** — the user is linked and has the required permissions. OK users are collapsed into an expandable section.
 
 !!! note "REQUEST_VIEW & MANAGE_REQUESTS"
-    If these two are flagged, it may just mean those users will only see *their own* requests on the Requests page rather than everyone's. If that's what you intend, the missing permission can be safely ignored.
+    If these two are flagged, it may mean nothing more than that those users will only see *their own* requests on the Requests page rather than everyone's. If that's what you intend, the missing permission can be safely ignored.
 
 **Quick steps:**
 

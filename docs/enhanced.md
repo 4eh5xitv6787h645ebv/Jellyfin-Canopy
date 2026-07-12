@@ -22,7 +22,7 @@ The panel has two tabs:
 - **Shortcuts** — customize the keyboard shortcuts (see [Advanced keyboard shortcuts](#advanced-keyboard-shortcuts)).
 - **Settings** — enable or disable features and adjust positions, sizes, colors, and modes.
 
-Toggling a feature applies **immediately** — no restart, no page reload. Among the toggles you'll find here are Quality Tags, Genre Tags, Language Tags, Rating Tags, People Tags, Pause Screen, Auto-skip Intros, Auto-skip Outros, Auto Picture-in-Picture, Show Watch Progress, Show File Sizes, Show Audio Languages, and more.
+Toggling a feature applies **immediately** — no restart, no page reload. The toggles you'll find here include Quality Tags, Genre Tags, Language Tags, Rating Tags, People Tags, Pause Screen, Auto-skip Intros, Auto-skip Outros, Auto Picture-in-Picture, Show Watch Progress, Show File Sizes, Show Audio Languages, and more.
 
 ### Settings persistence
 
@@ -52,7 +52,7 @@ These features make the player itself better — faster to drive from the keyboa
 
 ### Advanced keyboard shortcuts
 
-A comprehensive set of hotkeys for navigation and playback, so you can drive Jellyfin without reaching for the mouse. Every shortcut is remappable per user.
+Drive Jellyfin without reaching for the mouse: a comprehensive set of hotkeys covers navigation and playback, and every shortcut is remappable per user.
 
 ![Enhanced panel — Shortcuts tab](images/enhanced-panel-shortcuts.png)
 
@@ -176,7 +176,7 @@ Both are per-user settings in the Enhanced Panel's **Settings** tab, each with a
 
 ### Smart playback
 
-A set of small conveniences that make playback feel aware of what you're doing — pausing when you look away, resuming when you come back, and letting you nudge the speed.
+Smart playback is a handful of small conveniences that make the player feel aware of what you're doing — pausing when you look away, resuming when you come back, and letting you nudge the speed.
 
 - **Auto-pause** — pauses playback when you switch browser tabs.
 - **Auto-resume** — resumes when you return to the tab.
@@ -293,7 +293,7 @@ A few controls change *where* and *whether* the poster overlays draw, so artwork
 
 #### The tag cache
 
-Poster tags are computed once on the server and served in a single request, so they appear instantly instead of firing per-page API calls. This is on by default and, when it is, the plugin keeps it current for you — you should rarely need to touch it.
+Poster tags are computed once on the server and served in a single request, so they appear instantly instead of firing per-page API calls. It's on by default, and while it is, the plugin keeps the cache current for you — you should rarely need to touch it.
 
 | Setting | Scope | Default | What it does |
 | --- | --- | --- | --- |
@@ -466,7 +466,7 @@ Administrators can review — and optionally manage — what other users have hi
 
 ### Tidying your home screen: Remove from Continue Watching / Next Up
 
-A lightweight, **non-destructive** way to clean up the home screen. It adds a **Remove** option to an item's "⋯" menu for items in the **Continue Watching** and **Next Up** rows, taking the item out of that row without touching your playback position or watched state.
+Clean up the home screen without losing anything: this adds a lightweight, **non-destructive** **Remove** option to an item's "⋯" menu for items in the **Continue Watching** and **Next Up** rows, taking the item out of that row without touching your playback position or watched state.
 
 ![The Remove option in an item's menu](images/remove-from-row.png)
 

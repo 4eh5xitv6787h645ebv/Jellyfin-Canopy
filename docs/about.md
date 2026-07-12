@@ -47,7 +47,7 @@ If you would like to join them, [Help & Community](help.md) explains how to repo
 
 ## Related projects
 
-These are the projects worth knowing about if you run Jellyfin Elevate — n00bcodr's related work, plus the plugins Elevate integrates with. The first group are things you might install alongside Elevate; the second are integrations Elevate reaches out to when they are present.
+If you run Jellyfin Elevate, these are the projects worth knowing about: n00bcodr's related work, which you might install alongside it, and the plugins Elevate reaches out to when they are present.
 
 ### n00bcodr's projects
 
@@ -64,7 +64,7 @@ These are the projects worth knowing about if you run Jellyfin Elevate — n00bc
 
 ### Integrations Elevate works with
 
-Jellyfin Elevate cooperates with a handful of other plugins and services. Some are recommended, one is required-adjacent, and the rest are optional but nicely complementary.
+Jellyfin Elevate cooperates with a handful of other plugins and services. Some come highly recommended; the rest are optional but pair nicely with it.
 
 - **[Seerr](https://github.com/seerr-team/seerr)** — the media-request management system. Elevate provides deep Seerr integration; see [Discover & Request](discover.md).
 - **[File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation)** — safe file modifications for plugins. Highly recommended for a Jellyfin Elevate install; [Getting Started](getting-started.md) covers it.
@@ -74,7 +74,7 @@ Jellyfin Elevate cooperates with a handful of other plugins and services. Some a
 
 ## Get involved
 
-Contributions are welcome, whether or not you write code. You can report bugs, suggest features, add or improve translations, improve the documentation, submit code, star the repository, or help other users in discussions.
+Contributions are welcome, whether or not you write code. You can report bugs, suggest features, add or improve translations, polish the documentation, submit code, star the repository, or help other users in discussions.
 
 The best starting points:
 
@@ -86,7 +86,7 @@ For the full walkthrough — how to file a good bug report, propose a feature, o
 
 ## Support the original author
 
-If Jellyfin Elevate has improved your media experience, please support **n00bcodr**, the author of Jellyfin Enhanced. These links go to him — the original author — not to this fork's maintainer.
+If Jellyfin Elevate has improved your media experience, please support **n00bcodr**, the author of Jellyfin Enhanced. These links go to him, not to this fork's maintainer.
 
 <div align="center">
   <a href='https://ko-fi.com/n00bcodr' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi5.png?v=6' border='0' alt='Support n00bcodr on Ko-Fi' /></a>

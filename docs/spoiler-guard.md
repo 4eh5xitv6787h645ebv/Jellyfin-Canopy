@@ -68,7 +68,7 @@ Native-client image caches (Glide, Coil, SDWebImage) normally key strictly by UR
 
 ### Multi-client support
 
-Because interception happens on the server, there's nothing to install per client. These have been tested:
+Because interception happens on the server, there's nothing to install per client. These clients have been tested:
 
 - **Jellyfin Web** (Chrome, Firefox, Safari)
 - **Wholphin** and **Moonfin** (Android TV)
@@ -194,7 +194,7 @@ The same panel section holds a per-user **"Don't ask me to confirm when turning 
 
 ## What Spoiler Guard leaves alone
 
-A few things are deliberately left visible:
+Spoiler Guard hides the surprise, not the show — a few things are deliberately left visible so you can still find and navigate what you've protected:
 
 - **Series titles and posters** — your series identity. You opted this show in, so its name and poster stay visible so you can still find and open it. (The series *description* is **not** exempt: while protection is on it's replaced with the placeholder too, unless your admin turns **Hide descriptions** off.)
 - **Collection posters** — same reasoning; the collection art is your entry point.
@@ -276,6 +276,8 @@ Most entries are INFO; corruption and unexpected-shape events log at WARNING.
 ---
 
 ## Troubleshooting
+
+Most issues come down to one of two things: a master switch that isn't on yet, or a client-side image cache serving stale bytes.
 
 **The toggle button isn't showing on a series page.** The admin needs to flip the master **Enable Spoiler Guard** switch in the plugin config. Until that's on, no user-facing UI appears.
 

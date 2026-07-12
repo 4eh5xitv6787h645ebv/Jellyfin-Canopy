@@ -2,7 +2,7 @@
 
 Jellyfin Elevate lets you shape both how your server looks and how it behaves. You can put your own logo and banners in front of every user, layer in cosmetic touches like colored ratings and custom themes, watch (and steer) live playback from the header, and — as an admin — enforce a client layout, lock the server for maintenance, and manage caches for everyone at once. This guide covers all of it.
 
-The settings live across several tabs of the plugin configuration page at **Dashboard → Plugins → Jellyfin Elevate** rather than one tab. Each section below names the tab that holds its settings — **Overview**, **Display**, **Playback**, **Extras**, or **Admin** — so you always know where to look. For styling the plugin's own UI with CSS, see the [Reference](reference.md) guide.
+These settings span several tabs of the plugin configuration page at **Dashboard → Plugins → Jellyfin Elevate**, not just one — so each section below names the tab that holds its settings (**Overview**, **Display**, **Playback**, **Extras**, or **Admin**), and you always know where to look. For styling the plugin's own UI with CSS, see the [Reference](reference.md) guide.
 
 ## Custom branding
 
@@ -27,7 +27,7 @@ Everything lives on the **Extras** tab, in the **Custom Image Assets** section:
 !!! note "The banner mapping is easy to read backwards"
     **Banner Light** is served on the **dark** login theme and **Banner Dark** on the **light** login theme. Double-check this pairing when you upload, so each banner lands on the theme you intended.
 
-**Image guidance:** PNG or SVG are recommended, logos look best with transparent backgrounds, use dimensions appropriate to each asset type, and keep file sizes reasonable for performance.
+**Image guidance:** PNG or SVG are recommended, logos look best with a transparent background, and each image should use dimensions appropriate to its asset type — keep file sizes reasonable for performance.
 
 Uploaded files are stored alongside the plugin configuration, so they survive Jellyfin server and web updates:
 
@@ -155,7 +155,7 @@ Admins can message every active session at once from the panel header (the megap
 
 ## Letterboxd links
 
-This adds a Letterboxd link to movie and person (cast/crew) detail pages, so viewers can jump straight from a film or an actor to its Letterboxd page. Configure it on the **Extras** tab:
+A Letterboxd link on movie and person (cast/crew) detail pages lets viewers jump straight from a film or an actor to its Letterboxd page. Configure it on the **Extras** tab:
 
 | Setting | What it does |
 |---|---|
@@ -166,14 +166,14 @@ On a movie page the link opens the film on Letterboxd; on a cast or crew member'
 
 ## Splash screen
 
-The splash screen override replaces the image Jellyfin shows while it is loading. Turn it on from the **Extras** tab:
+The splash screen override replaces the image Jellyfin shows while it loads, so even the wait carries your look. Turn it on from the **Extras** tab:
 
 | Setting | What it does |
 |---|---|
 | **Enable Splash Screen Override** | Enables the custom splash screen |
 | **Splash Screen Image URL** | Full URL or relative path to the image. Defaults to `/web/assets/img/banner-light.png` |
 
-Point **Splash Screen Image URL** at any full URL or a relative path. To use your own image, place it somewhere accessible from the web root — for example, drop it in the Jellyfin web directory and reference it as `/web/custom/splash.png` — then save and refresh. Use a PNG, JPG, or SVG sized for full-screen display, and pick something that holds up responsively across screen sizes.
+To use your own image, place it somewhere accessible from the web root — for example, drop it in the Jellyfin web directory and reference it as `/web/custom/splash.png` — then save and refresh. Use a PNG, JPG, or SVG sized for full-screen display, and pick something that holds up responsively across screen sizes.
 
 ## Icons
 
@@ -196,7 +196,7 @@ After changing the style, refresh the browser to see it applied.
 
 ## Timeouts
 
-These two settings, on the **Playback** tab, control how long a couple of Enhanced-panel UI elements stay on screen before they disappear on their own.
+Two settings on the **Playback** tab set how long the shortcuts panel and toast notifications stay on screen before dismissing themselves.
 
 | Setting | Default | What it does |
 |---|---|---|

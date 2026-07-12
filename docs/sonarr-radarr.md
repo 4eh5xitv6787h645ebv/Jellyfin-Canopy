@@ -16,7 +16,7 @@ New to the plugin? Start with [Getting Started](getting-started.md) to install i
 
 ## What you get
 
-The integration adds convenient links to your Sonarr, Radarr, and Bazarr instances directly on Jellyfin item pages, and can surface arr tags, upcoming releases, and the live download queue.
+One connection puts links to your Sonarr, Radarr, and Bazarr instances directly on Jellyfin item pages, and can surface arr tags, upcoming releases, and the live download queue alongside them.
 
 - **Quick links** — jump to Sonarr, Radarr, or Bazarr for any item.
 - **Search & Interactive Search** — trigger an automatic search, or pick a release by hand, straight from the item menu.
@@ -33,7 +33,7 @@ The integration adds convenient links to your Sonarr, Radarr, and Bazarr instanc
 
 Everything starts on the **\*arr** tab: **Dashboard → Plugins → Jellyfin Elevate → \*arr**. You can connect several Sonarr and several Radarr instances at once — handy when you split libraries by type or quality (TV vs. Anime, HD vs. 4K). Neither service is mandatory; set up whichever you run.
 
-To turn on the on-page links:
+To enable the on-page links:
 
 1. Go to **Dashboard → Plugins → Jellyfin Elevate** and open the **\*arr** tab.
 2. Check **"Enable \*arr Links on Detail Pages"**.
@@ -189,7 +189,7 @@ Tag sync copies the tags you keep in Sonarr and Radarr onto the matching Jellyfi
 
 ### How matching works
 
-Sonarr series tags are matched to your Jellyfin library by **TVDB id** — Sonarr's canonical, always-present id — falling back to **IMDb id**. That means TVDB-scraped libraries, whose series may have no IMDb id, now sync their tags reliably. Radarr movies are matched by **TMDB id**.
+Sonarr series tags are matched to your Jellyfin library by **TVDB id** — Sonarr's canonical, always-present id — falling back to **IMDb id**. That means TVDB-scraped libraries, whose series may have no IMDb id, sync their tags reliably. Radarr movies are matched by **TMDB id**.
 
 ### Enabling tag sync
 
@@ -257,7 +257,7 @@ See [Reference](reference.md) for more CSS hooks and examples.
 
 ![Calendar page showing upcoming Sonarr and Radarr releases](images/calendar-page.png)
 
-The Calendar page collects upcoming releases from all your enabled Sonarr and Radarr instances into a single view, so everyone on the server can see what's arriving and when. It offers day, week, month, and agenda views, colour-codes events by series or movie, and supports filtering by Sonarr/Radarr and free-text search. Click an event to view its details.
+The Calendar page collects upcoming releases from all your enabled Sonarr and Radarr instances into a single view, so everyone on the server can see what's arriving and when. It offers day, week, month, and agenda views, colour-codes events by series or movie, and lets you filter by Sonarr/Radarr or search by text. Click an event to view its details.
 
 ### Enabling
 
@@ -360,7 +360,7 @@ If tags still don't appear, check that the API keys are correct and test API acc
 
 ### Calendar icons or links wrong across instances
 
-If a show or movie exists in **multiple** Sonarr/Radarr instances and its calendar event shows the wrong instance icon or opens the wrong instance, this is fixed — events are now disambiguated per instance. Make sure each instance has a distinct **Name** in the plugin settings.
+If a show or movie exists in **multiple** Sonarr/Radarr instances and its calendar event shows the wrong instance icon or opens the wrong instance, that shouldn't happen — events are disambiguated per instance. Make sure each instance has a distinct **Name** in the plugin settings.
 
 ### An \*arr URL is blocked
 
