@@ -400,6 +400,10 @@ The **server-wide enable** and the **integration method** are admin-only and liv
 - Choose the integration method for the management page: a native Home tab (recommended on the Jellyfin 12 experimental layout), **Plugin Pages** (requires the Plugin Pages plugin), or **Custom Tabs** (requires the Custom Tabs plugin).
 - Set the admin defaults for the per-user toggles below.
 
+!!! note "Plugin Pages and Custom Tabs need File Transformation"
+
+    The **Plugin Pages** and **Custom Tabs** integrations (offered here and for Bookmarks) are separate community plugins that rely on the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) to register their pages — install it first if you plan to use either. The native Home tab needs no extra plugins.
+
 **Per-user** — Enhanced Panel (press `?`) → **Settings** → **Hidden Content**. Each toggle has a matching admin default:
 
 - Show hide buttons on Seerr items

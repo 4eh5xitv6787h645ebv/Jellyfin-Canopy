@@ -457,6 +457,10 @@ The Requests page brings active downloads from Sonarr/Radarr together with Seerr
 7. Configure the polling settings (below).
 8. Click **Save**, and restart Jellyfin if you chose Plugin Pages.
 
+!!! note "Plugin Pages and Custom Tabs need File Transformation"
+
+    The **Plugin Pages** and **Custom Tabs** integrations are separate community plugins that rely on the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) to register their pages — install it first if you plan to use either. The native Home tab needs no extra plugins.
+
 Reach the page via the sidebar link (Plugin Pages), the custom tab (Custom Tabs), or directly at `/web/index.html#/downloads`.
 
 #### What's on it

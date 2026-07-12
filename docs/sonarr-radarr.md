@@ -305,6 +305,10 @@ The Requests page shows the active download queue from Sonarr and Radarr in one 
 3. Choose how it's surfaced — **Native Home Tab**, **Plugin Pages**, or **Custom Tabs**. The Native Home Tab adds Requests as its own tab on the Home page and needs no external plugin (recommended on Jellyfin 12's experimental layout).
 4. Click **Save**, and restart Jellyfin if you chose Plugin Pages.
 
+!!! note "Plugin Pages and Custom Tabs need File Transformation"
+
+    The **Plugin Pages** and **Custom Tabs** integrations are separate community plugins that rely on the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) to register their pages — install it first if you plan to use either. The Native Home Tab needs no extra plugins.
+
 Direct URL: `/web/index.html#/downloads`.
 
 !!! note "One page, two sources"
