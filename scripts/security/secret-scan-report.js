@@ -26,11 +26,12 @@
  * the raw match (with detector + path for readability); the report shows only the
  * detector, path/line, verified flag, and fingerprint — no secret material.
  *
- * Run via `npm run test:scripts` (unit) or as the workflow step:
+ * Run via `npm run test:scripts` (unit) or as the workflow step (results/report
+ * live under $RUNNER_TEMP, outside the PR-controlled checkout):
  *   node scripts/security/secret-scan-report.js \
- *     --results trufflehog-results.jsonl --scanner-exit "$CODE" \
+ *     --results "$RUNNER_TEMP/secret-scan/results.jsonl" --scanner-exit "$CODE" \
  *     --baseline .github/secret-scan-baseline.json \
- *     --summary "$GITHUB_STEP_SUMMARY" --report secret-scan-report.json
+ *     --summary "$GITHUB_STEP_SUMMARY" --report "$RUNNER_TEMP/secret-scan/report.json"
  */
 
 'use strict';
