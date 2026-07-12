@@ -62,29 +62,29 @@ Access via:
 
 **Configuration:**
 
-1. Open Enhanced panel (press `?`)
-2. Go to Settings tab
-3. Find Hidden Content section
-4. Enable/disable the feature
-5. Configure filter toggles:
-   - Show hide buttons on Seerr items
-   - Show hide buttons in library views
-   - Show hide buttons on detail pages
-   - Show hide buttons on cast/actor cards (admin default off)
-   - Show a confirmation dialog before hiding (admin default on)
-   - Filter library views
-   - Filter discovery pages
-   - Filter search results
-   - Filter calendar
-   - Filter Next Up
-   - Filter Upcoming episodes (admin default on)
-   - Filter Continue Watching
-   - Filter recommendations
-   - Filter requests page
-   - Hide Collections & Libraries (experimental) — extends hiding beyond individual movies/series to whole My Media libraries, collections, and playlists. Off by default and strongly discouraged for typical users (can break browsing); exposed as a per-user toggle with a matching admin default ('Allow hiding collections, libraries, and playlists (experimental)') on the config page.
-6. Choose integration method:
-   - Plugin Pages (requires Plugin Pages plugin)
-   - Custom Tabs (requires Custom Tabs plugin)
+**Admin (server-wide)** — **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Pages** tab → **Hidden Content**:
+
+- Enable or disable the feature server-wide
+- Choose the integration method for the management page: a native Home tab (recommended on the Jellyfin 12 experimental layout), **Plugin Pages** (requires the Plugin Pages plugin), or **Custom Tabs** (requires the Custom Tabs plugin)
+- Set the admin defaults for the per-user toggles below
+
+**Per-user** — Enhanced panel (press `?`) → **Settings** → **Hidden Content** (each toggle has a matching admin default):
+
+- Show hide buttons on Seerr items
+- Show hide buttons in library views
+- Show hide buttons on detail pages
+- Show hide buttons on cast/actor cards (admin default off)
+- Show a confirmation dialog before hiding (admin default on)
+- Filter library views
+- Filter discovery pages
+- Filter search results
+- Filter calendar
+- Filter Next Up
+- Filter Upcoming episodes (admin default on)
+- Filter Continue Watching
+- Filter recommendations
+- Filter requests page
+- Hide Collections & Libraries (experimental) — extends hiding beyond individual movies/series to whole My Media libraries, collections, and playlists. Off by default and strongly discouraged for typical users (can break browsing); exposed as a per-user toggle with a matching admin default ('Allow hiding collections, libraries, and playlists (experimental)') on the config page.
 
 !!! note "Home rows filter independently of Filter Library"
 
