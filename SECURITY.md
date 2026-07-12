@@ -76,6 +76,25 @@ We take the security of Jellyfin Elevate seriously. If you believe you have foun
 - User-provided URLs are validated before use
 - XSS protection is implemented for user-generated content
 
+## Automated Security Scanning
+
+Every push, pull request, and a daily schedule run the **Security Scan** workflow,
+which enforces (a green run is a real gate, not a formality):
+
+- **Secret scanning** — TruffleHog scans the full git history. A **verified**
+  secret finding (or a scanner failure) **fails CI**; unverified findings are
+  reported for review without blocking. Accepted findings are allowlisted by a
+  one-way fingerprint in `.github/secret-scan-baseline.json`, which cannot
+  silently accept a *new* secret. Results are published as the run's step summary
+  and a downloadable `secret-scan-report` artifact (no raw secret material is ever
+  written). This repository is private without GitHub Advanced Security, so
+  findings are not ingested into the code-scanning "Security" tab.
+- **.NET dependency audit** — `dotnet list package --vulnerable` fails CI on any
+  known-vulnerable direct or transitive package.
+
+CodeQL, Scorecard, and Dependency Review are **not** run (they require GitHub
+Advanced Security or a public repository).
+
 ## Contact
 
 For security concerns that don't constitute a vulnerability, you can:

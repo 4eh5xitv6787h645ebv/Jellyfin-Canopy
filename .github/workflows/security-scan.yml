@@ -12,11 +12,16 @@ on:
 
 permissions:
   contents: read
-  security-events: write
-  actions: read
 
 jobs:
-  # Scan for secrets accidentally committed
+  # Scan the FULL git history for committed secrets. TruffleHog runs with --json
+  # (all findings, verified AND unverified) and WITHOUT --fail, so its exit code
+  # signals only whether the scanner RAN; the gate decision (fail on a verified,
+  # non-baselined finding or a scanner crash; report unverified findings) is owned
+  # by scripts/security/secret-scan-report.js so it is unit-tested and cannot be
+  # silently suppressed. Scanning full history on every event shape (push / PR /
+  # schedule) makes coverage uniform and removes the old, PR-broken
+  # `base: github.event.before` diff range.
   secret-scan:
     name: Secret Scanning
     runs-on: ubuntu-latest
@@ -31,14 +36,46 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: TruffleHog OSS
-        uses: trufflesecurity/trufflehog@30d5bb91af1a771378349dbbb0c82129392acf70
+      # Pinned to the same TruffleHog release the repo already trusts (v3.95.6).
+      - name: Run TruffleHog (full git history, JSON)
+        id: scan
+        run: |
+          set +e
+          docker run --rm -v "${{ github.workspace }}:/repo:ro" \
+            ghcr.io/trufflesecurity/trufflehog:v3.95.6 \
+            git file:///repo --json > trufflehog-results.jsonl 2> trufflehog.log
+          code=$?
+          set -e
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          echo "TruffleHog exit code: ${code}"
+          echo "----- scanner log (tail) -----"
+          tail -n 30 trufflehog.log || true
+
+      # Single decision owner: fails on a verified non-baselined finding or a
+      # scanner failure; reports unverified findings (non-blocking); writes the
+      # step summary + a machine-readable report. Never emits raw secret material.
+      - name: Evaluate findings and gate
+        run: |
+          node scripts/security/secret-scan-report.js \
+            --results trufflehog-results.jsonl \
+            --scanner-exit "${{ steps.scan.outputs.exit_code }}" \
+            --baseline .github/secret-scan-baseline.json \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --report secret-scan-report.json
+
+      # Durable, actionable report surface. (This private repo has no GitHub
+      # Advanced Security, so code-scanning SARIF ingest is unavailable — the
+      # artifact + step summary are the report, and no job claims SARIF.)
+      - name: Upload secret-scan report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          path: ./
-          base: ${{ github.event.before }}
-          head: ${{ github.sha }}
-          extra_args: --debug --only-verified
-        continue-on-error: true
+          name: secret-scan-report
+          path: |
+            secret-scan-report.json
+            trufflehog-results.jsonl
+          if-no-files-found: warn
+          retention-days: 30
 
   # Scan .NET dependencies for known vulnerabilities
   dotnet-security:
@@ -70,24 +107,3 @@ jobs:
           else
             echo "No vulnerable packages found."
           fi
-
-  # SARIF upload for GitHub Security tab
-  upload-sarif:
-    name: Upload SARIF Results
-    runs-on: ubuntu-latest
-    needs: [secret-scan, dotnet-security]
-    if: always()
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-
-      - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-
-      - name: Create summary
-        run: |
-          echo "## Security Scan Summary" >> $GITHUB_STEP_SUMMARY
-          echo "All security scans completed. Check individual job results for details." >> $GITHUB_STEP_SUMMARY
-# Registered for Jellyfin Elevate CI (no functional change).
