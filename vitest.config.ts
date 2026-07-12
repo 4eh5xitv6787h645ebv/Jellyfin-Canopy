@@ -1,9 +1,9 @@
 // Vitest configuration for the client-side TypeScript modules
-// (Jellyfin.Plugin.JellyfinElevate/src/). Run via `npm run test:client`.
+// (Jellyfin.Plugin.JellyfinCanopy/src/). Run via `npm run test:client`.
 //
 // jsdom provides just enough DOM for the core modules' module-level wiring
 // (history patching, document listeners, MutationObserver). The setup file
-// creates the window.JellyfinElevate bootstrap stub that js/plugin.js
+// creates the window.JellyfinCanopy bootstrap stub that js/plugin.js
 // provides in the real client.
 //
 // Coverage gate (`npm run test:client:coverage`, enforced in CI): line
@@ -16,11 +16,11 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
     test: {
         environment: 'jsdom',
-        setupFiles: ['./Jellyfin.Plugin.JellyfinElevate/src/test/setup.ts'],
-        include: ['Jellyfin.Plugin.JellyfinElevate/src/**/*.test.ts'],
+        setupFiles: ['./Jellyfin.Plugin.JellyfinCanopy/src/test/setup.ts'],
+        include: ['Jellyfin.Plugin.JellyfinCanopy/src/**/*.test.ts'],
         coverage: {
             provider: 'v8',
-            include: ['Jellyfin.Plugin.JellyfinElevate/src/core/**'],
+            include: ['Jellyfin.Plugin.JellyfinCanopy/src/core/**'],
             reporter: ['text', 'text-summary'],
             thresholds: {
                 lines: 47,

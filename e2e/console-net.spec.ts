@@ -10,8 +10,8 @@ import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-const BAD = '/JellyfinElevate/does-not-exist';
-const ALLOWED = '/JellyfinElevate/admin/does-not-exist';
+const BAD = '/JellyfinCanopy/does-not-exist';
+const ALLOWED = '/JellyfinCanopy/admin/does-not-exist';
 
 /**
  * Fetch a plugin path in the browser (same origin, authenticated) and return
@@ -63,7 +63,7 @@ test.describe('console 4xx safety net', () => {
             'a non-allowlisted 404 is surfaced by unexpected4xx()'
         ).toBe(true);
 
-        // … while the /JellyfinElevate/admin/ authz-degrade url is NOT.
+        // … while the /JellyfinCanopy/admin/ authz-degrade url is NOT.
         expect(
             unexpected.some((r) => r.url.includes('/admin/does-not-exist')),
             'an allowlisted admin-path 4xx is not surfaced'

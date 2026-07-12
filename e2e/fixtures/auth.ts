@@ -1,10 +1,10 @@
-// Shared E2E fixtures: browser login, JE boot wait, and console-error
+// Shared E2E fixtures: browser login, JC boot wait, and console-error
 // collection with the established noise whitelist.
 //
 // Login convention (proven by this repo's ad-hoc verification scripts):
 // authenticate through the web client's own ApiClient.authenticateUserByName,
 // reload so the app boots authenticated, then wait for the plugin's
-// window.JellyfinElevate.initialized === true flag.
+// window.JellyfinCanopy.initialized === true flag.
 import { test as base, expect, type Page } from 'playwright/test';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -12,18 +12,18 @@ import { test as base, expect, type Page } from 'playwright/test';
 /** Test users. Defaults match both the local dev server and e2e/docker/seed.sh. */
 export const USERS = {
     admin: {
-        username: process.env.JF_ADMIN_USER || 'je_arradmin',
+        username: process.env.JF_ADMIN_USER || 'jc_arradmin',
         password: process.env.JF_ADMIN_PASS || 'Test669Pw!x',
     },
     user: {
-        username: process.env.JF_USER_NAME || 'je_arruser',
+        username: process.env.JF_USER_NAME || 'jc_arruser',
         password: process.env.JF_USER_PASS || 'Test669Pw!x',
     },
 } as const;
 
 export type Role = keyof typeof USERS;
 
-// Expected browser noise on a stock Jellyfin 12 + JE session; anything NOT
+// Expected browser noise on a stock Jellyfin 12 + JC session; anything NOT
 // matching one of these is a real error and fails the spec:
 //   - favicon / optional-asset fetch failures
 //   - the dead legacy websocket the v12 client still probes at /socket (403)
@@ -54,16 +54,16 @@ const CONSOLE_NOISE: RegExp[] = [
 //   - favicon                  : optional favicon asset
 //   - cast_sender / gstatic cast: Google Cast sender SDK, absent in the
 //                                 headless test env
-//   - /JellyfinElevate/admin/ : RequiresElevation endpoints a non-admin
+//   - /JellyfinCanopy/admin/ : RequiresElevation endpoints a non-admin
 //                                 session legitimately hits and degrades on
 //                                 (bare 403 — docs/v12-platform.md §5)
-//   - /Plugins (bare list)     : the core Jellyfin plugin-list endpoint JE
+//   - /Plugins (bare list)     : the core Jellyfin plugin-list endpoint JC
 //                                 probes at boot (js/plugin.js) to detect the
 //                                 Custom Tabs / Plugin Pages delivery plugins.
 //                                 It is admin-gated, so a non-admin session gets
-//                                 a 403 that JE catches and degrades on (leaves
+//                                 a 403 that JC catches and degrades on (leaves
 //                                 the delivery flags as reported). Same
-//                                 authz-degrade shape as /JellyfinElevate/admin/.
+//                                 authz-degrade shape as /JellyfinCanopy/admin/.
 //                                 Scoped to the bare list — /Plugins/{id}/… is
 //                                 NOT matched, so a broken per-plugin call still
 //                                 surfaces.
@@ -75,7 +75,7 @@ const ALLOWED_4XX_URL: RegExp[] = [
     /\/socket(\?|$)/i,
     /favicon/i,
     /cast_sender|gstatic\.com\/cast/i,
-    /\/JellyfinElevate\/admin\//i,
+    /\/JellyfinCanopy\/admin\//i,
     /\/Plugins(\?|$)/i,
 ];
 
@@ -210,14 +210,14 @@ async function attemptLogin(
     // retry the whole attempt instead of timing out.
     const initialized = await page
         .waitForFunction(
-            () => (window as any).JellyfinElevate?.initialized === true,
+            () => (window as any).JellyfinCanopy?.initialized === true,
             undefined,
             { timeout: 60_000 }
         )
         .then(() => true, () => false);
     if (!initialized || !(await hasStoredSession(page))) return false;
 
-    // JE initializes on the sign-in page too — prove this is an authenticated
+    // JC initializes on the sign-in page too — prove this is an authenticated
     // session, not a raced login bounced back to "Please sign in".
     const authenticated = await page
         .waitForFunction(

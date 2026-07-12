@@ -1,5 +1,5 @@
 // Feature guard: Seerr 4K requests are gated on the Seerr server's real 4K
-// capability AND the signed-in user's 4K permission — not on the JE admin toggle
+// capability AND the signed-in user's 4K permission — not on the JC admin toggle
 // alone. This spec drives the booted plugin's own gate (canRequest4k) and the
 // user-status endpoint against the LIVE server for both an admin and a non-admin
 // session, and proves that with the admin toggle forced ON the 4K option still
@@ -27,18 +27,18 @@ interface UserStatus {
 async function fetchUserStatus(page: any): Promise<UserStatus> {
     return page.evaluate(async () => {
         const api = (window as any).ApiClient;
-        return api.getJSON(api.getUrl('/JellyfinElevate/jellyseerr/user-status'));
+        return api.getJSON(api.getUrl('/JellyfinCanopy/jellyseerr/user-status'));
     });
 }
 
 /** Resolve user-status, force the admin master switch, then read the gate. */
 async function gateWithAdminToggle(page: any, mediaType: 'movie' | 'tv', adminToggle: boolean): Promise<boolean> {
     return page.evaluate(async (args: { mediaType: string; adminToggle: boolean }) => {
-        const je = (window as any).JellyfinElevate;
-        await je.jellyseerrAPI.checkUserStatus(); // ensure capability is resolved
-        je.pluginConfig.JellyseerrEnable4KRequests = args.adminToggle;
-        je.pluginConfig.JellyseerrEnable4KTvRequests = args.adminToggle;
-        return je.jellyseerrAPI.canRequest4k(args.mediaType) as boolean;
+        const jc = (window as any).JellyfinCanopy;
+        await jc.jellyseerrAPI.checkUserStatus(); // ensure capability is resolved
+        jc.pluginConfig.JellyseerrEnable4KRequests = args.adminToggle;
+        jc.pluginConfig.JellyseerrEnable4KTvRequests = args.adminToggle;
+        return jc.jellyseerrAPI.canRequest4k(args.mediaType) as boolean;
     }, { mediaType, adminToggle });
 }
 
@@ -50,10 +50,10 @@ for (const role of ['admin', 'user'] as Role[]) {
 
             // The shared gate and the collection modal are present on the facade.
             const surface = await page.evaluate(() => {
-                const je = (window as any).JellyfinElevate;
+                const jc = (window as any).JellyfinCanopy;
                 return {
-                    hasGate: typeof je?.jellyseerrAPI?.canRequest4k === 'function',
-                    hasCollectionModal: typeof je?.jellyseerrUI?.showCollectionRequestModal === 'function',
+                    hasGate: typeof jc?.jellyseerrAPI?.canRequest4k === 'function',
+                    hasCollectionModal: typeof jc?.jellyseerrUI?.showCollectionRequestModal === 'function',
                 };
             });
             expect(surface.hasGate, 'canRequest4k gate exposed').toBe(true);

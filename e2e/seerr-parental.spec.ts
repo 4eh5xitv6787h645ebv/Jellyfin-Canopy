@@ -8,7 +8,7 @@
 // ApiClient (which carries the per-user token the proxy resolves the policy
 // from) as both a restricted non-admin and a bypassed admin, and asserts the
 // server filtered the JSON — not the DOM.
-import { test, expect, loginAs } from './fixtures/auth';
+import { test, expect, loginAs, USERS } from './fixtures/auth';
 import { seerrReady, tmdbReady } from './fixtures/seerr';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -19,11 +19,11 @@ const DEADPOOL2_R = 383498;       // Deadpool 2 — US "R" (score 17)
 const DEADPOOL_PERSON = 4790510;  // a person result — never rating-gated
 const QUERY = 'Deadpool';
 
-/** Search the JE Seerr proxy in the current user's authenticated context. */
+/** Search the JC Seerr proxy in the current user's authenticated context. */
 async function searchIds(page: any): Promise<{ movies: number[]; all: number[] }> {
     return page.evaluate(async (query: string) => {
         const api = (window as any).ApiClient;
-        const url = api.getUrl(`/JellyfinElevate/jellyseerr/search?query=${encodeURIComponent(query)}&page=1&language=en`);
+        const url = api.getUrl(`/JellyfinCanopy/jellyseerr/search?query=${encodeURIComponent(query)}&page=1&language=en`);
         const res = await api.getJSON(url);
         const results = (res.results || []) as any[];
         return {
@@ -53,7 +53,7 @@ async function postRequestStatus(page: any, mediaType: string, tmdbId: number): 
         try {
             await api.ajax({
                 type: 'POST',
-                url: api.getUrl('/JellyfinElevate/jellyseerr/request'),
+                url: api.getUrl('/JellyfinCanopy/jellyseerr/request'),
                 data: JSON.stringify({ mediaType: args.mediaType, mediaId: args.tmdbId }),
                 contentType: 'application/json',
                 dataType: 'json',
@@ -65,7 +65,7 @@ async function postRequestStatus(page: any, mediaType: string, tmdbId: number): 
     }, { mediaType, tmdbId });
 }
 
-/** Find je_arruser's id (non-admin) via the admin session. */
+/** Find jc_arruser's id (non-admin) via the admin session. */
 async function findRestrictedUserId(page: any, username: string): Promise<string> {
     return page.evaluate(async (name: string) => {
         const api = (window as any).ApiClient;
@@ -104,7 +104,7 @@ test.describe('seerr parental-rating filter', () => {
             !(await seerrReady(page)) || !(await tmdbReady(page)),
             'Seerr/TMDB not configured — set JELLYSEERR_* and TMDB_API_KEY at seed time to run'
         );
-        const restrictedUserId = await findRestrictedUserId(page, 'je_arruser');
+        const restrictedUserId = await findRestrictedUserId(page, USERS.user.username);
 
         try {
             await setMaxParentalRating(page, restrictedUserId, 13);
@@ -116,9 +116,9 @@ test.describe('seerr parental-rating filter', () => {
 
             // Admin can also open any title's detail (no gate) — via both the Seerr
             // detail endpoint and the raw TMDB passthrough.
-            expect(await getStatus(page, `/JellyfinElevate/jellyseerr/movie/${DEADPOOL_R}`),
+            expect(await getStatus(page, `/JellyfinCanopy/jellyseerr/movie/${DEADPOOL_R}`),
                 'admin detail fetch is not gated').toBe(200);
-            expect(await getStatus(page, `/JellyfinElevate/tmdb/movie/${DEADPOOL_R}`),
+            expect(await getStatus(page, `/JellyfinCanopy/tmdb/movie/${DEADPOOL_R}`),
                 'admin raw TMDB fetch is not gated').toBe(200);
 
             // ── Restricted user: R titles removed, subset of admin, person kept ──
@@ -140,9 +140,9 @@ test.describe('seerr parental-rating filter', () => {
 
             // The same restriction gates the detail endpoint and the request POST, so a
             // restricted user can neither open nor request a blocked title by tmdbId.
-            expect(await getStatus(page, `/JellyfinElevate/jellyseerr/movie/${DEADPOOL_R}`),
+            expect(await getStatus(page, `/JellyfinCanopy/jellyseerr/movie/${DEADPOOL_R}`),
                 'restricted user is blocked from a blocked title detail').toBe(403);
-            expect(await getStatus(page, `/JellyfinElevate/tmdb/movie/${DEADPOOL_R}`),
+            expect(await getStatus(page, `/JellyfinCanopy/tmdb/movie/${DEADPOOL_R}`),
                 'restricted user is blocked from the raw TMDB detail too').toBe(403);
             expect(await postRequestStatus(page, 'movie', DEADPOOL_R),
                 'restricted user cannot request a blocked title').toBe(403);

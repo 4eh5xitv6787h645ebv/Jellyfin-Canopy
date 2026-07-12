@@ -1,8 +1,8 @@
 # Customization
 
-Jellyfin Elevate lets you shape both how your server looks and how it behaves. You can put your own logo and banners in front of every user, layer in cosmetic touches like colored ratings and custom themes, watch (and steer) live playback from the header, and — as an admin — enforce a client layout, lock the server for maintenance, and manage caches for everyone at once. This guide covers all of it.
+Jellyfin Canopy lets you shape both how your server looks and how it behaves. You can put your own logo and banners in front of every user, layer in cosmetic touches like colored ratings and custom themes, watch (and steer) live playback from the header, and — as an admin — enforce a client layout, lock the server for maintenance, and manage caches for everyone at once. This guide covers all of it.
 
-These settings span several tabs of the plugin configuration page at **Dashboard → Plugins → Jellyfin Elevate**, not just one — so each section below names the tab that holds its settings (**Overview**, **Display**, **Playback**, **Extras**, or **Admin**), and you always know where to look. For styling the plugin's own UI with CSS, see the [Reference](reference.md) guide.
+These settings span several tabs of the plugin configuration page at **Dashboard → Plugins → Jellyfin Canopy**, not just one — so each section below names the tab that holds its settings (**Overview**, **Display**, **Playback**, **Extras**, or **Admin**), and you always know where to look. For styling the plugin's own UI with CSS, see the [Reference](reference.md) guide.
 
 ## Custom branding
 
@@ -10,7 +10,7 @@ Custom branding replaces Jellyfin's stock logo, login banners, favicon, and iOS 
 
 Everything lives on the **Extras** tab, in the **Custom Image Assets** section:
 
-1. Go to **Dashboard → Plugins → Jellyfin Elevate**.
+1. Go to **Dashboard → Plugins → Jellyfin Canopy**.
 2. Open the **Extras** tab and find **Custom Image Assets**.
 3. Upload the images you want to override (all are optional):
 
@@ -32,7 +32,7 @@ Everything lives on the **Extras** tab, in the **Custom Image Assets** section:
 Uploaded files are stored alongside the plugin configuration, so they survive Jellyfin server and web updates:
 
 ```text
-/plugins/configurations/Jellyfin.Plugin.JellyfinElevate/custom_branding/
+/plugins/configurations/Jellyfin.Plugin.JellyfinCanopy/custom_branding/
 ```
 
 !!! info "Turning the branding middleware off"
@@ -113,7 +113,7 @@ The Active Streams widget puts a live stream counter in the Jellyfin header and,
 
 To enable it:
 
-1. Go to **Dashboard → Plugins → Jellyfin Elevate** and open the **Extras** tab.
+1. Go to **Dashboard → Plugins → Jellyfin Canopy** and open the **Extras** tab.
 2. Enable **Active Streams Header Widget**.
 3. Optionally enable **Show widget to non-admins**.
 4. Click **Save**.
@@ -207,7 +207,7 @@ Both values are **advisory only** — the input enforces no minimum or maximum, 
 
 ## Internationalization
 
-Jellyfin Elevate speaks 26 bundled languages and picks the right one automatically, so most users never touch a language setting. It detects each user's Jellyfin profile language, loads the matching translation from the plugin's bundled locale files on first load, and caches it for 24 hours. Only when the [third-party asset cache](#third-party-assets) is disabled does it fall back to fetching translations from GitHub. Outdated caches are cleared automatically when the plugin updates.
+Jellyfin Canopy speaks 26 bundled languages and picks the right one automatically, so most users never touch a language setting. It detects each user's Jellyfin profile language, loads the matching translation from the plugin's bundled locale files on first load, and caches it for 24 hours. Only when the [third-party asset cache](#third-party-assets) is disabled does it fall back to fetching translations from GitHub. Outdated caches are cleared automatically when the plugin updates.
 
 **Default UI Language** (on the **Display** tab) overrides the automatic detection for everyone:
 
@@ -295,7 +295,7 @@ The **Overview** tab is otherwise a read-only dashboard, but its **Quick Actions
 
 *Admin tab → Third-Party Assets*
 
-**Serve third-party assets locally (recommended)** mirrors every remote asset the plugin's client scripts use — Material Symbols fonts, \*arr/Seerr/Letterboxd icons, country flags, metadata-icon and ratings CSS, Jellyfish theme styles, and Elsewhere region/provider lists — onto your server and serves them from `/JellyfinElevate/assets/…`, so browsers never contact third-party CDNs (jsDelivr, Google Fonts, cdnjs, flagcdn).
+**Serve third-party assets locally (recommended)** mirrors every remote asset the plugin's client scripts use — Material Symbols fonts, \*arr/Seerr/Letterboxd icons, country flags, metadata-icon and ratings CSS, Jellyfish theme styles, and Elsewhere region/provider lists — onto your server and serves them from `/JellyfinCanopy/assets/…`, so browsers never contact third-party CDNs (jsDelivr, Google Fonts, cdnjs, flagcdn).
 
 - **Default: On.** Assets are downloaded server-side on first use and refreshed daily by the **Refresh Cached Assets** scheduled task (cadence adjustable in Jellyfin's *Scheduled Tasks* dashboard). Cached copies live next to the plugin configuration under `asset_cache/`, and the last good copy is kept if an upstream is temporarily unreachable.
 - **When disabled,** clients load these assets directly from the original CDN URLs, as older plugin versions did. This is also the only mode in which [Internationalization](#internationalization) falls back to fetching translations from GitHub.

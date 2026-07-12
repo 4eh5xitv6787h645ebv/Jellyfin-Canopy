@@ -14,7 +14,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const JS_ROOT = path.join(__dirname, '..', 'Jellyfin.Plugin.JellyfinElevate', 'js');
+const JS_ROOT = path.join(__dirname, '..', 'Jellyfin.Plugin.JellyfinCanopy', 'js');
 
 /** Recursively collect .js files under a directory. */
 function collectJsFiles(dir) {

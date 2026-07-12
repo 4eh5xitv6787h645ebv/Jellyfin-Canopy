@@ -30,7 +30,7 @@ async function ensureRequest(page: any, tmdbId: number): Promise<void> {
         try {
             await api.ajax({
                 type: 'POST',
-                url: api.getUrl('/JellyfinElevate/jellyseerr/request'),
+                url: api.getUrl('/JellyfinCanopy/jellyseerr/request'),
                 data: JSON.stringify({ mediaType: 'movie', mediaId: id }),
                 contentType: 'application/json',
                 dataType: 'json',
@@ -45,7 +45,7 @@ async function ensureRequest(page: any, tmdbId: number): Promise<void> {
 async function fetchRequests(page: any): Promise<{ canApproveRequests: boolean; rows: any[] }> {
     return page.evaluate(async () => {
         const api = (window as any).ApiClient;
-        const res = await api.getJSON(api.getUrl('/JellyfinElevate/arr/requests?take=200'));
+        const res = await api.getJSON(api.getUrl('/JellyfinCanopy/arr/requests?take=200'));
         return { canApproveRequests: res?.canApproveRequests === true, rows: (res?.requests || []) as any[] };
     });
 }
@@ -59,14 +59,14 @@ function pendingRowId(rows: any[], tmdbId: number): number | null {
 /** Open the actual Requests page and wait for the requests section to settle. */
 async function openRequestsPage(page: any): Promise<void> {
     await page.evaluate(() => {
-        (window as any).JellyfinElevate.downloadsPage.showPage();
+        (window as any).JellyfinCanopy.downloadsPage.showPage();
     });
-    await page.waitForSelector('#je-downloads-page:not(.hide)', { timeout: 30_000 });
+    await page.waitForSelector('#jc-downloads-page:not(.hide)', { timeout: 30_000 });
     await page.waitForFunction(() => {
-        const section = document.querySelector('.je-requests-section');
+        const section = document.querySelector('.jc-requests-section');
         if (!section) return false;
-        if (section.querySelector('.je-loading')) return false;
-        return !!section.querySelector('.je-request-card, .je-empty-state');
+        if (section.querySelector('.jc-loading')) return false;
+        return !!section.querySelector('.jc-request-card, .jc-empty-state');
     }, undefined, { timeout: 30_000 });
 }
 
@@ -75,13 +75,13 @@ async function declinePendingFor(page: any, tmdbIds: number[]): Promise<void> {
     await page.evaluate(async (ids: number[]) => {
         const api = (window as any).ApiClient;
         try {
-            const res = await api.getJSON(api.getUrl('/JellyfinElevate/arr/requests?take=200'));
+            const res = await api.getJSON(api.getUrl('/JellyfinCanopy/arr/requests?take=200'));
             for (const row of (res?.requests || []) as any[]) {
                 if (ids.includes(Number(row.tmdbId)) && Number(row.requestStatus) === 1 && row.id != null) {
                     try {
                         await api.ajax({
                             type: 'POST',
-                            url: api.getUrl(`/JellyfinElevate/arr/requests/${row.id}/decline`),
+                            url: api.getUrl(`/JellyfinCanopy/arr/requests/${row.id}/decline`),
                             dataType: 'json',
                         });
                     } catch { /* best effort */ }
@@ -114,19 +114,19 @@ test.describe('in-app request approvals', () => {
             expect(before.canApproveRequests, 'admin endpoint reports canApproveRequests').toBe(true);
             await openRequestsPage(page);
             const buttons = await page.evaluate(() => ({
-                approve: document.querySelectorAll('.je-requests-section .je-request-approve-btn').length,
-                decline: document.querySelectorAll('.je-requests-section .je-request-decline-btn').length,
+                approve: document.querySelectorAll('.jc-requests-section .jc-request-approve-btn').length,
+                decline: document.querySelectorAll('.jc-requests-section .jc-request-decline-btn').length,
             }));
             expect(buttons.approve, 'approve buttons render for admin on pending requests').toBeGreaterThan(0);
             expect(buttons.decline, 'decline buttons render for admin on pending requests').toBeGreaterThan(0);
 
-            // Round-trip: decline the seeded request through the JE endpoint and
+            // Round-trip: decline the seeded request through the JC endpoint and
             // confirm it leaves the pending set (also the cleanup for this row).
             const declineStatus = await page.evaluate(async (id: number) => {
                 const api = (window as any).ApiClient;
                 const res = await api.ajax({
                     type: 'POST',
-                    url: api.getUrl(`/JellyfinElevate/arr/requests/${id}/decline`),
+                    url: api.getUrl(`/JellyfinCanopy/arr/requests/${id}/decline`),
                     dataType: 'json',
                 });
                 return res?.success === true;
@@ -161,9 +161,9 @@ test.describe('in-app request approvals', () => {
 
             await openRequestsPage(page);
             const counts = await page.evaluate(() => ({
-                cards: document.querySelectorAll('.je-requests-section .je-request-card').length,
-                approve: document.querySelectorAll('.je-requests-section .je-request-approve-btn').length,
-                decline: document.querySelectorAll('.je-requests-section .je-request-decline-btn').length,
+                cards: document.querySelectorAll('.jc-requests-section .jc-request-card').length,
+                approve: document.querySelectorAll('.jc-requests-section .jc-request-approve-btn').length,
+                decline: document.querySelectorAll('.jc-requests-section .jc-request-decline-btn').length,
             }));
             expect(counts.cards, 'the non-admin still sees their request cards').toBeGreaterThan(0);
             expect(counts.approve, 'no approve buttons render for the non-admin').toBe(0);
@@ -172,7 +172,7 @@ test.describe('in-app request approvals', () => {
             // The server still enforces: a direct POST is refused with 403.
             const status = await page.evaluate(async (id: number) => {
                 const api = (window as any).ApiClient;
-                const res = await fetch(api.getUrl(`/JellyfinElevate/arr/requests/${id}/approve`), {
+                const res = await fetch(api.getUrl(`/JellyfinCanopy/arr/requests/${id}/approve`), {
                     method: 'POST',
                     headers: {
                         Authorization: `MediaBrowser Token="${api.accessToken()}", Client="cc", Device="cc", DeviceId="cc", Version="1"`,

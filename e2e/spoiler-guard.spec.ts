@@ -56,15 +56,15 @@ function norm(id: string): string {
 }
 
 // Opening a SERIES detail page fires the Seerr issue-indicator feature
-// (jellyseerr/api.ts fetchIssuesForMedia → GET /JellyfinElevate/jellyseerr/issue).
+// (jellyseerr/api.ts fetchIssuesForMedia → GET /JellyfinCanopy/jellyseerr/issue).
 // On the shared dev server (:8099) Seerr is configured but that endpoint returns
-// 403 for the non-admin token, so JE logs a caught "Failed to fetch issues" error
+// 403 for the non-admin token, so JC logs a caught "Failed to fetch issues" error
 // and the response is a 403 — both entirely unrelated to Spoiler Guard, and both
 // absent on the :8100 seed (no Seerr → the indicator never runs). Scope exactly
 // that pair out here (like settings-persist.spec's DASHBOARD_CHROME) so the check
 // still catches any REAL Spoiler Guard console error or plugin 4xx.
 const SEERR_ISSUE_NOISE_TEXT = /Seerr API: Failed to fetch issues/i;
-const SEERR_ISSUE_NOISE_URL = /\/JellyfinElevate\/jellyseerr\/issue/i;
+const SEERR_ISSUE_NOISE_URL = /\/JellyfinCanopy\/jellyseerr\/issue/i;
 
 function assertNoSpoilerRuntimeErrors(consoleErrors: {
     real(): string[];
@@ -79,7 +79,7 @@ function assertNoSpoilerRuntimeErrors(consoleErrors: {
 /** Fetch the admin-exposed public config once (unauthenticated is fine). */
 async function spoilerBlurEnabled(): Promise<boolean> {
     try {
-        const res = await fetch(`${BASE}/JellyfinElevate/public-config`);
+        const res = await fetch(`${BASE}/JellyfinCanopy/public-config`);
         if (!res.ok) return false;
         const cfg = (await res.json()) as { SpoilerBlurEnabled?: boolean };
         return cfg.SpoilerBlurEnabled === true;
@@ -136,7 +136,7 @@ async function pickTarget(user: Session): Promise<Target | null> {
 async function setSeriesGuard(user: Session, seriesId: string, on: boolean): Promise<void> {
     await apiRaw(
         BASE,
-        `/JellyfinElevate/spoiler-blur/series/${norm(seriesId)}`,
+        `/JellyfinCanopy/spoiler-blur/series/${norm(seriesId)}`,
         user.token,
         { method: on ? 'POST' : 'DELETE' }
     );
@@ -144,7 +144,7 @@ async function setSeriesGuard(user: Session, seriesId: string, on: boolean): Pro
 
 /** The set of guarded series ids (normalized) for a user. */
 async function guardedSeriesIds(user: Session): Promise<Set<string>> {
-    const state = (await api(BASE, '/JellyfinElevate/spoiler-blur/series', user.token)) as
+    const state = (await api(BASE, '/JellyfinCanopy/spoiler-blur/series', user.token)) as
         | { Series?: Record<string, unknown> }
         | null;
     return new Set(Object.keys(state?.Series ?? {}).map((k) => norm(k)));
@@ -152,7 +152,7 @@ async function guardedSeriesIds(user: Session): Promise<Set<string>> {
 
 /** Read a single user's override prefs. */
 async function getUserPrefs(user: Session): Promise<Record<string, unknown>> {
-    return ((await api(BASE, '/JellyfinElevate/spoiler-blur/user-prefs', user.token)) ?? {}) as Record<
+    return ((await api(BASE, '/JellyfinCanopy/spoiler-blur/user-prefs', user.token)) ?? {}) as Record<
         string,
         unknown
     >;
@@ -170,22 +170,22 @@ async function openDetailWithButton(page: Page, seriesId: string): Promise<void>
     await page.evaluate((id) => {
         window.location.hash = `#/details?id=${id}`;
     }, seriesId);
-    await page.waitForSelector('#itemDetailPage:not(.hide) .je-spoiler-blur-btn', { timeout: 60_000 });
+    await page.waitForSelector('#itemDetailPage:not(.hide) .jc-spoiler-blur-btn', { timeout: 60_000 });
 }
 
 /** The visible detail page's Spoiler Guard toggle button. */
 function guardButton(page: Page) {
-    return page.locator('#itemDetailPage:not(.hide) .je-spoiler-blur-btn').first();
+    return page.locator('#itemDetailPage:not(.hide) .jc-spoiler-blur-btn').first();
 }
 
-/** Arm a one-shot observer that records when a JE toast is appended. */
+/** Arm a one-shot observer that records when a JC toast is appended. */
 async function armToastWatcher(page: Page): Promise<void> {
     await page.evaluate(() => {
         (window as any).__jeToastSeen = false;
         const obs = new MutationObserver((muts) => {
             for (const m of muts) {
                 for (const n of Array.from(m.addedNodes)) {
-                    if (n instanceof HTMLElement && n.classList.contains('jellyfin-elevate-toast')) {
+                    if (n instanceof HTMLElement && n.classList.contains('jellyfin-canopy-toast')) {
                         (window as any).__jeToastSeen = true;
                     }
                 }
@@ -220,8 +220,8 @@ let target: Target | null = null;
 test.beforeAll(async () => {
     enabled = await spoilerBlurEnabled();
     if (!enabled) return;
-    admin = await authenticate(BASE, process.env.JF_ADMIN_USER || 'je_arradmin', process.env.JF_ADMIN_PASS || 'Test669Pw!x');
-    user = await authenticate(BASE, process.env.JF_USER_NAME || 'je_arruser', process.env.JF_USER_PASS || 'Test669Pw!x');
+    admin = await authenticate(BASE, process.env.JF_ADMIN_USER || 'jc_arradmin', process.env.JF_ADMIN_PASS || 'Test669Pw!x');
+    user = await authenticate(BASE, process.env.JF_USER_NAME || 'jc_arruser', process.env.JF_USER_PASS || 'Test669Pw!x');
     target = await pickTarget(user);
 });
 
@@ -292,13 +292,13 @@ test.describe('Spoiler Guard', () => {
 
             // Clicking OFF raises the native confirm dialog (default prefs: confirm on).
             await btn.click();
-            const dialog = page.locator('.je-spoiler-confirm-overlay .je-spoiler-confirm-dialog');
+            const dialog = page.locator('.jc-spoiler-confirm-overlay .jc-spoiler-confirm-dialog');
             await expect(dialog).toBeVisible({ timeout: 15_000 });
-            await expect(dialog.locator('#je-spoiler-confirm-title')).toHaveText('Disable Spoiler Guard?');
+            await expect(dialog.locator('#jc-spoiler-confirm-title')).toHaveText('Disable Spoiler Guard?');
 
             // Confirm the disable.
-            await dialog.locator('.je-spoiler-confirm-ok').click();
-            await expect(page.locator('.je-spoiler-confirm-overlay')).toHaveCount(0, { timeout: 10_000 });
+            await dialog.locator('.jc-spoiler-confirm-ok').click();
+            await expect(page.locator('.jc-spoiler-confirm-overlay')).toHaveCount(0, { timeout: 10_000 });
             await expect(btn).toHaveAttribute('aria-pressed', 'false');
 
             // Server state cleared, and the episode title/overview are restored to
@@ -360,9 +360,9 @@ test.describe('Spoiler Guard', () => {
 
             // Open the panel → settings tab → the Spoiler Guard override <details>.
             await page.evaluate(() => {
-                (window as any).JellyfinElevate.showEnhancedPanel();
+                (window as any).JellyfinCanopy.showEnhancedPanel();
             });
-            const panel = page.locator('#jellyfin-elevate-panel');
+            const panel = page.locator('#jellyfin-canopy-panel');
             await expect(panel).toBeVisible({ timeout: 15_000 });
             await panel.locator('.tab-button[data-tab="settings"]').click();
 
@@ -386,7 +386,7 @@ test.describe('Spoiler Guard', () => {
             const [prefsResponse] = await Promise.all([
                 page.waitForResponse(
                     (r) =>
-                        /\/JellyfinElevate\/spoiler-blur\/user-prefs$/.test(r.url()) &&
+                        /\/JellyfinCanopy\/spoiler-blur\/user-prefs$/.test(r.url()) &&
                         r.request().method() === 'POST',
                     { timeout: 30_000 }
                 ),
@@ -404,7 +404,7 @@ test.describe('Spoiler Guard', () => {
             assertNoRuntimeErrors(consoleErrors);
         } finally {
             // Restore the exact prior prefs (POST replaces the whole prefs object).
-            await api(BASE, '/JellyfinElevate/spoiler-blur/user-prefs', user.token, {
+            await api(BASE, '/JellyfinCanopy/spoiler-blur/user-prefs', user.token, {
                 method: 'POST',
                 body: JSON.stringify(original),
             });

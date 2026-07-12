@@ -6,7 +6,7 @@
 // render the full-size genre/language/quality/rating overlays straight into that
 // thumbnail, burying the artwork. The fix excludes every `.listItem` row at the
 // single shared pipeline gate (src/enhanced/tag-pipeline.ts isListViewRow), so
-// list rows carry NO JE tag overlays while poster/grid CARD views are untouched.
+// list rows carry NO JC tag overlays while poster/grid CARD views are untouched.
 //
 // This spec proves BOTH halves in one session, on the exact reported surface (a
 // real library toggled to List view):
@@ -17,11 +17,11 @@
 //     the bug produced (card-sized overlays rendered into the tiny row thumbnail)
 //     and what the fix removes.
 //
-// The spec also checks that no row carries a `.je-tag-host` or a `data-je-*-tagged`
+// The spec also checks that no row carries a `.jc-tag-host` or a `data-jc-*-tagged`
 // marker, but those are INVARIANT SANITY CHECKS, not proof of the fix: even with
-// the bug present neither artifact ever landed on a list row — `.je-tag-host` is
+// the bug present neither artifact ever landed on a list row — `.jc-tag-host` is
 // only ever created inside a `.cardScalable` (resolveRenderTarget) and the
-// `data-je-*-tagged` markers stamp onto `.card`, neither of which exists on a
+// `data-jc-*-tagged` markers stamp onto `.card`, neither of which exists on a
 // `.listItem`. They guard against a future renderer regressing that invariant.
 // It restores the library's original view-mode setting on the way out (try/finally).
 import { test, expect, loginAs, showRoute, waitForHash } from './fixtures/auth';
@@ -30,10 +30,10 @@ import { test, expect, loginAs, showRoute, waitForHash } from './fixtures/auth';
 
 // setting flag → the marker each family's renderer stamps when it renders.
 const FAMILIES = [
-    { setting: 'qualityTagsEnabled', attr: 'data-je-quality-tagged' },
-    { setting: 'genreTagsEnabled', attr: 'data-je-genre-tagged' },
-    { setting: 'languageTagsEnabled', attr: 'data-je-language-tagged' },
-    { setting: 'ratingTagsEnabled', attr: 'data-je-rating-tagged' },
+    { setting: 'qualityTagsEnabled', attr: 'data-jc-quality-tagged' },
+    { setting: 'genreTagsEnabled', attr: 'data-jc-genre-tagged' },
+    { setting: 'languageTagsEnabled', attr: 'data-jc-language-tagged' },
+    { setting: 'ratingTagsEnabled', attr: 'data-jc-rating-tagged' },
 ] as const;
 
 // A full LibraryViewSettings object (jellyfin-web
@@ -56,7 +56,7 @@ test.describe('list-view tags', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         const enabled: string[] = await page.evaluate((families) => {
-            const settings = (window as any).JellyfinElevate?.currentSettings || {};
+            const settings = (window as any).JellyfinCanopy?.currentSettings || {};
             return families.filter((f) => settings[f.setting] === true).map((f) => f.attr);
         }, FAMILIES.map((f) => ({ setting: f.setting, attr: f.attr })));
         test.skip(enabled.length === 0, 'no tag renderer enabled for this user');
@@ -120,7 +120,7 @@ test.describe('list-view tags', () => {
                 let overlays = 0, hosts = 0, marked = 0;
                 for (const row of rows) {
                     overlays += row.querySelectorAll('[class*="-overlay-container"]').length;
-                    hosts += row.querySelectorAll('.je-tag-host').length;
+                    hosts += row.querySelectorAll('.jc-tag-host').length;
                     for (const a of attrs) {
                         if (row.matches(`[${a}]`) || row.querySelector(`[${a}]`)) { marked++; break; }
                     }
@@ -131,10 +131,10 @@ test.describe('list-view tags', () => {
             expect(listState.rows, 'library should be showing list rows').toBeGreaterThan(0);
             // The real regression guard: the bug rendered card-sized overlay
             // containers into the tiny row thumbnail. The fix produces zero.
-            expect(listState.overlays, 'list rows must carry NO JE tag overlay containers').toBe(0);
+            expect(listState.overlays, 'list rows must carry NO JC tag overlay containers').toBe(0);
             // Invariant sanity checks (never landed on a list row even with the bug —
             // see header): guard against a future renderer breaking that invariant.
-            expect(listState.hosts, 'list rows must carry NO je-tag-host (invariant)').toBe(0);
+            expect(listState.hosts, 'list rows must carry NO jc-tag-host (invariant)').toBe(0);
             expect(listState.marked, 'no list row may be stamped as tag-rendered (invariant)').toBe(0);
         } finally {
             // ── Restore the library's original view mode ────────────────────

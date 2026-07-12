@@ -34,4 +34,4 @@ jobs:
           stale-pr-label: "stale"
           exempt-issue-labels: "help wanted, open-for-discussion, enhancement, no-stale"
           exempt-draft-pr: true
-# Registered for Jellyfin Elevate CI (no functional change).
+# Registered for Jellyfin Canopy CI (no functional change).

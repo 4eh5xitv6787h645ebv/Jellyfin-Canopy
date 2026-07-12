@@ -67,7 +67,7 @@ async function ensureRenderableBoxSet(page: any): Promise<BoxSetFixture> {
         /** A TMDB collection has "missing" parts when any part isn't available (status 5). */
         const collectionHasMissing = async (collectionId: string | number): Promise<boolean> => {
             try {
-                const c = await api.getJSON(api.getUrl('JellyfinElevate/jellyseerr/collection/' + collectionId));
+                const c = await api.getJSON(api.getUrl('JellyfinCanopy/jellyseerr/collection/' + collectionId));
                 const parts = (c && c.parts) || [];
                 return parts.length > 0 && parts.some((p: any) => ((p.mediaInfo && p.mediaInfo.status) || 1) !== 5);
             } catch {
@@ -99,7 +99,7 @@ async function ensureRenderableBoxSet(page: any): Promise<BoxSetFixture> {
             if (!tmdb) continue;
             let detail: any;
             try {
-                detail = await api.getJSON(api.getUrl('JellyfinElevate/jellyseerr/movie/' + tmdb));
+                detail = await api.getJSON(api.getUrl('JellyfinCanopy/jellyseerr/movie/' + tmdb));
             } catch {
                 continue;
             }
@@ -116,7 +116,7 @@ async function ensureRenderableBoxSet(page: any): Promise<BoxSetFixture> {
 
         const created = await api.ajax({
             type: 'POST',
-            url: api.getUrl('Collections', { Name: 'JE E2E Fixture Collection', Ids: seedIds.join(',') }),
+            url: api.getUrl('Collections', { Name: 'JC E2E Fixture Collection', Ids: seedIds.join(',') }),
             dataType: 'json',
         });
         const createdId = created && created.Id;
@@ -154,8 +154,8 @@ test.describe('mobile viewport fits', () => {
     test('settings panel + shortcuts fit the phone (no clipping)', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
 
-        await page.evaluate(() => { void (window as any).JellyfinElevate.showEnhancedPanel(); });
-        const panel = page.locator('#jellyfin-elevate-panel');
+        await page.evaluate(() => { void (window as any).JellyfinCanopy.showEnhancedPanel(); });
+        const panel = page.locator('#jellyfin-canopy-panel');
         await expect(panel).toBeVisible({ timeout: 15_000 });
 
         // Show the shortcuts tab if present (config may disable shortcuts).
@@ -166,7 +166,7 @@ test.describe('mobile viewport fits', () => {
         }
 
         const geom = await page.evaluate(() => {
-            const p = document.getElementById('jellyfin-elevate-panel')!;
+            const p = document.getElementById('jellyfin-canopy-panel')!;
             const pr = p.getBoundingClientRect();
             const cols = [...p.querySelectorAll('.shortcuts-container > div')].map(
                 (c) => Math.round(c.getBoundingClientRect().width)
@@ -198,13 +198,13 @@ test.describe('mobile viewport fits', () => {
     test('Hidden Content page: heading clears the header, no horizontal scroll', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
 
-        await page.evaluate(() => { (window as any).JellyfinElevate.hiddenContentPage.showPage(); });
-        await page.waitForSelector('.je-hidden-content-title', { state: 'visible', timeout: 30_000 });
+        await page.evaluate(() => { (window as any).JellyfinCanopy.hiddenContentPage.showPage(); });
+        await page.waitForSelector('.jc-hidden-content-title', { state: 'visible', timeout: 30_000 });
 
         const layout = await page.evaluate(() => {
             const header = document.querySelector('.MuiAppBar-root') || document.querySelector('.skinHeader');
             const headerBottom = header ? header.getBoundingClientRect().bottom : 0;
-            const title = document.querySelector('.je-hidden-content-title')!;
+            const title = document.querySelector('.jc-hidden-content-title')!;
             return {
                 headerBottom: Math.round(headerBottom),
                 titleTop: Math.round(title.getBoundingClientRect().top),
@@ -220,14 +220,14 @@ test.describe('mobile viewport fits', () => {
     test('standalone pages do not scroll horizontally', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
 
-        await page.evaluate(() => { (window as any).JellyfinElevate.calendarPage.showPage(); });
-        await page.waitForSelector('#je-calendar-container', { state: 'visible', timeout: 30_000 });
+        await page.evaluate(() => { (window as any).JellyfinCanopy.calendarPage.showPage(); });
+        await page.waitForSelector('#jc-calendar-container', { state: 'visible', timeout: 30_000 });
         await page.waitForTimeout(1000);
         expect(await docOverflow(page), 'calendar page horizontal overflow').toBeLessThanOrEqual(1);
 
         await goHome(page);
-        await page.evaluate(() => { (window as any).JellyfinElevate.downloadsPage.showPage(); });
-        await page.waitForSelector('#je-downloads-container', { state: 'visible', timeout: 30_000 });
+        await page.evaluate(() => { (window as any).JellyfinCanopy.downloadsPage.showPage(); });
+        await page.waitForSelector('#jc-downloads-container', { state: 'visible', timeout: 30_000 });
         await page.waitForTimeout(1500);
         expect(await docOverflow(page), 'requests page horizontal overflow').toBeLessThanOrEqual(1);
 

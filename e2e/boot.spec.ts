@@ -9,24 +9,24 @@ test.describe('boot', () => {
         await loginAs(page, 'admin', consoleErrors);
 
         const state = await page.evaluate(() => {
-            const JE = (window as any).JellyfinElevate;
+            const JC = (window as any).JellyfinCanopy;
             return {
-                initialized: JE.initialized === true,
-                pluginVersion: typeof JE.pluginVersion === 'string' && JE.pluginVersion.length > 0,
-                pluginConfig: !!JE.pluginConfig && typeof JE.pluginConfig === 'object',
+                initialized: JC.initialized === true,
+                pluginVersion: typeof JC.pluginVersion === 'string' && JC.pluginVersion.length > 0,
+                pluginConfig: !!JC.pluginConfig && typeof JC.pluginConfig === 'object',
                 core: {
-                    navigation: !!JE.core?.navigation,
-                    lifecycle: !!JE.core?.lifecycle,
-                    dom: !!JE.core?.dom,
-                    ui: !!JE.core?.ui,
-                    api: !!JE.core?.api,
-                    live: !!JE.core?.live,
+                    navigation: !!JC.core?.navigation,
+                    lifecycle: !!JC.core?.lifecycle,
+                    dom: !!JC.core?.dom,
+                    ui: !!JC.core?.ui,
+                    api: !!JC.core?.api,
+                    live: !!JC.core?.live,
                 },
                 // Frozen public facade members user scripts rely on.
                 facade: {
-                    t: typeof JE.t === 'function',
-                    toast: typeof JE.toast === 'function',
-                    escapeHtml: typeof JE.escapeHtml === 'function',
+                    t: typeof JC.t === 'function',
+                    toast: typeof JC.toast === 'function',
+                    escapeHtml: typeof JC.escapeHtml === 'function',
                 },
             };
         });
@@ -50,14 +50,14 @@ test.describe('boot', () => {
         // Then the no-errors assertion (real() + unexpected4xx()) covers it.
         await page.waitForSelector('#indexPage .card', { timeout: 60_000 });
         const anyTagsEnabled = await page.evaluate(() => {
-            const settings = (window as any).JellyfinElevate?.currentSettings || {};
+            const settings = (window as any).JellyfinCanopy?.currentSettings || {};
             return ['qualityTagsEnabled', 'genreTagsEnabled', 'languageTagsEnabled', 'ratingTagsEnabled']
                 .some((key) => settings[key] === true);
         });
         if (anyTagsEnabled) {
             await page.waitForFunction(
                 () => document.querySelectorAll(
-                    '[data-je-quality-tagged],[data-je-genre-tagged],[data-je-language-tagged],[data-je-rating-tagged]'
+                    '[data-jc-quality-tagged],[data-jc-genre-tagged],[data-jc-language-tagged],[data-jc-rating-tagged]'
                 ).length > 0,
                 undefined,
                 { timeout: 60_000 }

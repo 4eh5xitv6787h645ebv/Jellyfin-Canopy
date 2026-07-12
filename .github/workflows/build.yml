@@ -32,10 +32,10 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Build (Release)
-        run: dotnet build Jellyfin.Plugin.JellyfinElevate/JellyfinElevate.csproj -c Release
+        run: dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release
 
       - name: Assert DLL produced
-        run: test -f "Jellyfin.Plugin.JellyfinElevate/bin/Release/net10.0/Jellyfin.Plugin.JellyfinElevate.dll"
+        run: test -f "Jellyfin.Plugin.JellyfinCanopy/bin/Release/net10.0/Jellyfin.Plugin.JellyfinCanopy.dll"
 
   unit-tests:
     name: Unit tests
@@ -54,7 +54,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Test
-        run: dotnet test Jellyfin.Plugin.JellyfinElevate.Tests/JellyfinElevate.Tests.csproj -c Release --logger "console;verbosity=normal"
+        run: dotnet test Jellyfin.Plugin.JellyfinCanopy.Tests/JellyfinCanopy.Tests.csproj -c Release --logger "console;verbosity=normal"
 
       # Line-coverage ratchet over the plugin assembly (coverlet.collector).
       # The threshold lives in scripts/check-dotnet-coverage.js — set just
@@ -62,7 +62,7 @@ jobs:
       # grows, never lower it.
       - name: Coverage (plugin assembly line-coverage ratchet)
         run: |
-          dotnet test Jellyfin.Plugin.JellyfinElevate.Tests/JellyfinElevate.Tests.csproj -c Release --collect:"XPlat Code Coverage"
+          dotnet test Jellyfin.Plugin.JellyfinCanopy.Tests/JellyfinCanopy.Tests.csproj -c Release --collect:"XPlat Code Coverage"
           node scripts/check-dotnet-coverage.js
 
   client-scripts:
@@ -97,7 +97,7 @@ jobs:
       - name: Type check (opt-in @ts-check files)
         run: npm run typecheck
 
-      # Builds dist/je.bundle.js the same way the csproj BuildClientBundle target
+      # Builds dist/jc.bundle.js the same way the csproj BuildClientBundle target
       # does on every dotnet build — catches bundle breakage (a bad entry in
       # allComponentScripts, an esbuild-incompatible construct) at PR time.
       - name: Client bundle (esbuild)
@@ -144,7 +144,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Build plugin (Release)
-        run: dotnet build Jellyfin.Plugin.JellyfinElevate/JellyfinElevate.csproj -c Release
+        run: dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -178,7 +178,7 @@ jobs:
 
       - name: Server logs on failure
         if: failure()
-        run: docker logs je-e2e-jellyfin --tail 200 || true
+        run: docker logs jc-e2e-jellyfin --tail 200 || true
 
       - name: Upload traces and screenshots on failure
         if: failure()
@@ -214,4 +214,4 @@ jobs:
       # No dependencies needed; the validator is a self-contained Node script.
       - name: Validate manifest.json
         run: node scripts/release/validate-manifest.js manifest.json
-# Registered for Jellyfin Elevate CI (no functional change).
+# Registered for Jellyfin Canopy CI (no functional change).

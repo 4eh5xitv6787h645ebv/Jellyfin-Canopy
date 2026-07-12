@@ -24,7 +24,7 @@ updates, and a malformed entry bricks in-app updates for all users.
      the csproj is never bumped by CI);
    - packages one ZIP, with exactly the plugin DLL at the zip root, using
      the established asset name:
-     - `Jellyfin.Plugin.JellyfinElevate_12.0.0.zip` (Jellyfin 12, net10.0)
+     - `Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip` (Jellyfin 12, net10.0)
    - creates the GitHub Release with a changelog generated from the commit
      subjects since the previous tag, and attaches the ZIP;
    - regenerates `manifest.json` (new entry prepended, MD5 checksum computed

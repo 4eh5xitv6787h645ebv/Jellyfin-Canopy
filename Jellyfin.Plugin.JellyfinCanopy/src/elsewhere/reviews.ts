@@ -1,0 +1,1283 @@
+// src/elsewhere/reviews.ts
+
+import { JC as JEBase } from '../globals';
+import { ensureMaterialSymbolsFont } from '../core/ui-kit';
+import { decideReviewSuppression } from '../enhanced/spoiler-guard/suppression';
+import type { ApiApi, JELegacyHelpers, UserSettings } from '../types/jc';
+
+/**
+ * Local view of the shared namespace adding the public member this module
+ * OWNS plus the legacy translation/icon/helper members it reads that are not
+ * yet typed on JEGlobal (owned by unconverted js/ modules).
+ */
+type ReviewsJE = typeof JEBase & {
+    initializeReviewsScript?: () => void;
+    t: (key: string, params?: Record<string, unknown>) => string;
+    icon: (name: unknown) => string;
+    IconName: Record<string, unknown>;
+    loadSettings?: () => UserSettings;
+    saveUserSettings?: (fileName: string, data: unknown) => void;
+    invalidateUserReviewTagCache?: (tmdbKey?: string) => void;
+    core: { api: ApiApi };
+    helpers: JELegacyHelpers & {
+        onViewPage: (
+            cb: (view: unknown, element: Element | null, hash: string | undefined, itemPromise: unknown) => void | Promise<void>,
+            options?: { pages?: string[] | null; fetchItem?: boolean; immediate?: boolean }
+        ) => () => void;
+        getItemCached?: (itemId: string, options?: { userId?: string }) => Promise<unknown>;
+    };
+};
+
+const JC = JEBase as ReviewsJE;
+
+/** Dashboard global exposed by jellyfin-web (not typed in src/types/global.d.ts). */
+interface DashboardLike {
+    confirm?: (text: string, title: string | undefined, callback: (confirmed: boolean) => void) => void;
+    alert?: (options: { title: string; message: string }) => void;
+}
+
+/**
+ * Resolve which TMDB review a read-more toggle belongs to, by the stable index
+ * stored on the card in {@link HTMLElement.dataset} — never by matching the
+ * author text. The old code compared `escapeHtml(author)` to the card's DECODED
+ * `textContent`, which mismatched for any author containing ' & < > " (e.g.
+ * "O'Brien") and silently no-op'd the expand. Exported for direct testing.
+ */
+export function resolveReviewByCard<T>(reviews: readonly T[], card: HTMLElement): T | undefined {
+    const index = Number(card.dataset.reviewIndex);
+    return Number.isInteger(index) ? reviews[index] : undefined;
+}
+
+JC.initializeReviewsScript = function () {
+    const tmdbReviewsEnabled = JC.pluginConfig.ShowReviews && JC.pluginConfig.TmdbEnabled;
+    const userReviewsEnabled = JC.pluginConfig.ShowUserReviews;
+    if (!tmdbReviewsEnabled && !userReviewsEnabled) {
+        console.log('🪼 Jellyfin Canopy: Reviews feature disabled.');
+        return;
+    }
+
+    const logPrefix = '🪼 Jellyfin Canopy: Reviews:';
+
+    // Suppress the reviews panel when the item has Spoiler Guard enabled by the
+    // user AND the admin has SpoilerStripReviews on — TMDB and user reviews
+    // routinely contain plot spoilers. Async because Spoiler Guard loads its
+    // state lazily; whenLoaded() gives an authoritative answer even on a cold
+    // page load before the state fetch completes. Fail-CLOSED (suppress) on load
+    // failure or any error — "show reviews" is the spoiler-leaking path.
+    async function shouldSuppressForSpoilerMode(item: any, mediaType: string | undefined): Promise<boolean> {
+        try {
+            if (!JC.pluginConfig?.SpoilerBlurEnabled) return false;
+            // Default-on when the field is missing (server returns the C# default true).
+            if (JC.pluginConfig?.SpoilerStripReviews === false) return false;
+            const sg = JC.spoilerGuard;
+            if (!sg) return false;
+            if (typeof sg.whenLoaded === 'function') await sg.whenLoaded();
+
+            const hideReviews = (sg.getUserPrefs?.().HideReviews) !== false;
+            const loadOk = typeof sg.isLoadOk === 'function' ? sg.isLoadOk() === true : true;
+            const isMovieEnabled = (id: string) => (sg.isMovieEnabledFor ? sg.isMovieEnabledFor(id) === true : false);
+            const hasEnabledCollections = typeof sg.hasEnabledCollections === 'function'
+                ? sg.hasEnabledCollections() === true : false;
+
+            // A movie can be guarded via an opted-in COLLECTION, which the local
+            // sets can't resolve. Consult the server scope endpoint — but only
+            // when every gate that could lead to the collection branch holds,
+            // so users without spoiler state pay no extra request:
+            //   feature on (above) + strip on (above) + state loaded + user not
+            //   opted out + this is a Movie + not directly enabled + at least
+            //   one collection opted in. movieScope stays undefined otherwise
+            //   (the pure decision then never reaches the scope branch).
+            let movieScope: Awaited<ReturnType<NonNullable<typeof sg.fetchMovieScope>>> | undefined;
+            const movieId: string = item?.Id || '';
+            if (mediaType === 'Movie' && loadOk && hideReviews
+                && movieId && !isMovieEnabled(movieId) && hasEnabledCollections
+                && typeof sg.fetchMovieScope === 'function') {
+                // fetchMovieScope resolves null on error/non-200 → decision fails CLOSED.
+                movieScope = await sg.fetchMovieScope(movieId);
+            }
+
+            return decideReviewSuppression(item, mediaType, {
+                spoilerBlurEnabled: true,
+                stripReviews: true,
+                hideReviews,
+                loadOk,
+                isMovieEnabled,
+                isSeriesEnabled: (id) => (sg.isEnabledFor ? sg.isEnabledFor(id) === true : false),
+                hasEnabledCollections,
+                movieScope,
+            });
+        } catch (e) {
+            console.warn(`${logPrefix} Spoiler Guard check failed; suppressing reviews:`, e);
+            return true;
+        }
+    }
+
+    // If suppression flips on between two visits to the same page, an existing
+    // reviews section may already be in the DOM. Strip it on suppress.
+    function removeReviewsSection(page: Element | null): void {
+        try {
+            const root = page || document.querySelector('#itemDetailPage:not(.hide)') || document;
+            const sec = root.querySelector('.tmdb-reviews-section');
+            sec?.parentNode?.removeChild(sec);
+        } catch (e) {
+            console.warn(`${logPrefix} removeReviewsSection failed:`, e);
+        }
+    }
+
+    function fetchReviews(tmdbId: string, mediaType: string): Promise<any[] | null> {
+        const apiMediaType = mediaType === 'Series' ? 'tv' : 'movie';
+        const url = `${ApiClient.getUrl(`/JellyfinCanopy/tmdb/${apiMediaType}/${tmdbId}/reviews`)}?language=en-US&page=1`;
+        return JC.core.api.fetch(url)
+            .then((data: any) => data.results || [])
+            .catch((error: unknown) => {
+                console.error(`${logPrefix} Failed to fetch reviews.`, error);
+                return null;
+            });
+    }
+
+    /**
+     * Fetches all user-written reviews for a TMDB item (aggregated across all users).
+     */
+    function fetchUserReviews(tmdbId: string, mediaType: string): Promise<any[]> {
+        // mediaType is already in API format ('movie' or 'tv') — no conversion needed
+        return JC.core.api.plugin(`/reviews/${mediaType}/${tmdbId}`)
+            .then((data: any) => data.reviews || [])
+            .catch((err: unknown) => {
+                console.error(`${logPrefix} Failed to fetch user reviews.`, err);
+                return [];
+            });
+    }
+
+    /**
+     * Saves (creates or updates) the current user's review for a TMDB item.
+     */
+    async function saveUserReview(tmdbId: string, mediaType: string, content: string, rating: number | null): Promise<unknown> {
+        const body = { content, rating: rating || null };
+        try {
+            // skipRetry: saving a review is not idempotent — never auto-repeat it.
+            return await JC.core.api.plugin(`/reviews/${mediaType}/${tmdbId}`, {
+                method: 'POST',
+                body,
+                skipRetry: true
+            });
+        } catch (e: any) {
+            // Preserve the server-provided message when present, matching the
+            // hand-rolled fetch's `err.message || \`HTTP ${status}\`` shape.
+            throw new Error(e?.responseJSON?.message || e.message);
+        }
+    }
+
+    /**
+     * Deletes the current user's review for a TMDB item.
+     */
+    async function deleteUserReview(tmdbId: string, mediaType: string): Promise<void> {
+        // skipRetry keeps the original single-attempt semantics for this mutation.
+        // Core throws Error('HTTP <status>') on failure — same shape as before.
+        await JC.core.api.plugin(`/reviews/${mediaType}/${tmdbId}`, { method: 'DELETE', skipRetry: true });
+    }
+
+    /**
+     * Admin moderation: deletes another user's review for a TMDB item.
+     * Backed by DELETE /JellyfinCanopy/reviews/admin/{userIdN}/{mediaType}/{tmdbId},
+     * which is gated on IsAdministrator server-side. A 404 from the
+     * server now means "no matching review to delete" (race with a
+     * concurrent admin, already-deleted review, wrong target) — we
+     * translate that into a human-readable Error so the caller can
+     * show a sensible message.
+     */
+    async function adminDeleteUserReview(targetUserId: string, tmdbId: string, mediaType: string): Promise<void> {
+        const userIdN = (targetUserId || '').replace(/-/g, '');
+        try {
+            // skipRetry keeps the original single-attempt semantics for this mutation.
+            await JC.core.api.plugin(`/reviews/admin/${userIdN}/${mediaType}/${tmdbId}`, { method: 'DELETE', skipRetry: true });
+        } catch (e: any) {
+            if (e && e.status === 404) {
+                throw new Error('No matching review to delete (it may have already been removed).');
+            }
+            throw e;
+        }
+    }
+
+    const escapeHtml = JC.escapeHtml;
+
+    /**
+     * Shows a Jellyfin-native confirm dialog and returns a Promise<boolean>.
+     * Prefers window.Dashboard.confirm (the built-in Jellyfin modal, which
+     * auto-themes and handles keyboard nav). Falls back to window.confirm
+     * on unusual clients where Dashboard is not exposed, so the feature
+     * still works even if the platform surface changes.
+     *
+     * The native-confirm fallback prepends the title to the text because
+     * window.confirm() has no title parameter — without this, an admin
+     * deleting someone else's review would lose the "(admin)" context.
+     */
+    function jcConfirm(text: string, title?: string): Promise<boolean> {
+        return new Promise(resolve => {
+            const dashboard = (window as { Dashboard?: DashboardLike }).Dashboard;
+            if (dashboard && typeof dashboard.confirm === 'function') {
+                try {
+                    dashboard.confirm(text, title, resolve);
+                    return;
+                } catch (err) {
+                    console.warn(`${logPrefix} Dashboard.confirm threw, falling back:`, err);
+                }
+            }
+            const combined = title ? `${title}\n\n${text}` : text;
+            resolve(window.confirm(combined));
+        });
+    }
+
+    /**
+     * Shows a Jellyfin-native alert dialog. Falls back to window.alert on
+     * clients without Dashboard. Used to surface delete failures so admins
+     * get visible feedback instead of a silent console.error.
+     */
+    function jcAlert(text: string, title?: string): void {
+        const dashboard = (window as { Dashboard?: DashboardLike }).Dashboard;
+        if (dashboard && typeof dashboard.alert === 'function') {
+            try {
+                dashboard.alert({ title: title || '', message: text || '' });
+                return;
+            } catch (err) {
+                console.warn(`${logPrefix} Dashboard.alert threw, falling back:`, err);
+            }
+        }
+        window.alert(title ? `${title}\n\n${text}` : text);
+    }
+
+    // Track which translation keys we've already warned about falling
+    // back on, so a broken i18n system is visible in the console once per
+    // key instead of spamming on every render.
+    const _tFallbackWarned = new Set<string>();
+
+    /**
+     * JC.t with an inline English fallback. Needed because the translation
+     * loader prefers remote en.json over the bundled copy, which means a
+     * brand-new key can return its literal name for one release cycle
+     * until the remote catches up.
+     *
+     * Uses String.prototype.replace with a replacement *function* rather
+     * than a string literal, because a raw replacement string treats `$&`,
+     * `$'`, `` $` ``, `$1`-`$99`, and `$$` as backreferences. Jellyfin's
+     * username regex doesn't allow `$`, so today's only param (a username)
+     * is safe — but if a future caller interpolates a free-form string
+     * into the fallback, the function form avoids the footgun.
+     */
+    function tWithFallback(key: string, fallback: string, params?: Record<string, unknown>): string {
+        let result: string | null;
+        try {
+            result = JC.t(key, params);
+        } catch (err) {
+            console.warn(`${logPrefix} JC.t('${key}') threw, using fallback:`, err);
+            result = null;
+        }
+        if (!result || result === key) {
+            if (!_tFallbackWarned.has(key)) {
+                _tFallbackWarned.add(key);
+                console.warn(`${logPrefix} Missing translation key '${key}', using inline fallback.`);
+            }
+            let out = fallback;
+            if (params) {
+                for (const [k, v] of Object.entries(params)) {
+                    out = out.replace(new RegExp(`\\{${k}\\}`, 'g'), () => String(v));
+                }
+            }
+            return out;
+        }
+        return result;
+    }
+
+    /**
+     * Converts markdown text to safe HTML. Escapes raw HTML before applying
+     * markdown transforms so that API-sourced review content cannot inject tags.
+     * @param text - Raw markdown text from TMDB reviews.
+     * @returns HTML string safe for innerHTML assignment.
+     */
+    function parseMarkdown(text: string): string {
+        if (!text) return '';
+
+        // Escape HTML first
+        let html = escapeHtml(text);
+
+        // Parse markdown elements
+        // Bold (**text** or __text__)
+        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
+
+        // Italic (*text* or _text_)
+        html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+        html = html.replace(/_(.+?)_/g, '<em>$1</em>');
+
+        // Strikethrough (~~text~~)
+        html = html.replace(/~~(.+?)~~/g, '<del>$1</del>');
+
+        // Inline code (`code`)
+        html = html.replace(/`(.+?)`/g, '<code>$1</code>');
+
+        // Links [text](url) - only allow http(s) schemes
+        html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/gi, '<a is="emby-linkbutton" href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+        // Auto-link plain URLs (http:// or https://)
+        // Match URLs that aren't already inside href attributes
+        html = html.replace(/(^|[^"'>])(https?:\/\/[^\s<]+[^\s<.,;!?)])/gi, function(match, prefix: string, url: string) {
+            // Don't linkify if already part of an anchor tag
+            return prefix + '<a is="emby-linkbutton" href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>';
+        });
+
+        // Process line by line for block elements
+        const lines = html.split(/\r?\n/);
+        const processed: string[] = [];
+        let inBlockquote = false;
+        let blockquoteLines: string[] = [];
+        let inList = false;
+        let listItems: string[] = [];
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const trimmedLine = line.trim();
+
+            // Blockquotes (> text)
+            if (trimmedLine.startsWith('&gt; ')) {
+                if (!inBlockquote) {
+                    inBlockquote = true;
+                    blockquoteLines = [];
+                }
+                blockquoteLines.push(trimmedLine.substring(5));
+                continue;
+            } else if (inBlockquote) {
+                processed.push('<blockquote>' + blockquoteLines.join('<br>') + '</blockquote>');
+                inBlockquote = false;
+                blockquoteLines = [];
+            }
+
+            // Unordered lists (- item or * item)
+            if (trimmedLine.match(/^[-*]\s+/)) {
+                if (!inList) {
+                    inList = true;
+                    listItems = [];
+                }
+                listItems.push('<li>' + trimmedLine.substring(2) + '</li>');
+                continue;
+            } else if (inList) {
+                processed.push('<ul>' + listItems.join('') + '</ul>');
+                inList = false;
+                listItems = [];
+            }
+
+            // Headings (### text)
+            if (trimmedLine.match(/^#{1,6}\s/)) {
+                const level = trimmedLine.match(/^#+/)![0].length;
+                const text = trimmedLine.substring(level + 1);
+                processed.push(`<h${level}>${text}</h${level}>`);
+                continue;
+            }
+
+            // Horizontal rule (--- or ***)
+            if (trimmedLine.match(/^([-*]){3,}$/)) {
+                processed.push('<hr>');
+                continue;
+            }
+
+            // Regular line
+            if (trimmedLine) {
+                processed.push(line);
+            } else {
+                processed.push('<br>');
+            }
+        }
+
+        // Close any open blocks
+        if (inBlockquote) {
+            processed.push('<blockquote>' + blockquoteLines.join('<br>') + '</blockquote>');
+        }
+        if (inList) {
+            processed.push('<ul>' + listItems.join('') + '</ul>');
+        }
+
+        return processed.join('');
+    }
+
+    function createReviewElement(review: any, index: number): HTMLElement {
+        const REVIEW_PREVIEW_LENGTH = 350;
+        const reviewCard = document.createElement('div');
+        reviewCard.className = 'tmdb-review-card';
+        // Stable key for the read-more toggle: resolve the review by its index into
+        // `reviews`, never by matching the (escaped vs decoded) author text — that
+        // mismatched for authors with ' & < > " (e.g. "O'Brien") and no-op'd expand.
+        reviewCard.dataset.reviewIndex = String(index);
+
+        const content = review.content || 'No content available';
+        const isLongReview = content.length > REVIEW_PREVIEW_LENGTH;
+        const previewContent = isLongReview ? content.substring(0, REVIEW_PREVIEW_LENGTH) : content;
+
+        const reviewDate = review.created_at ? new Date(review.created_at).toLocaleDateString(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric'
+        }) : '';
+
+        const rating = review.author_details?.rating;
+        const ratingDisplay = rating ? `<span class="tmdb-review-rating">${JC.icon(JC.IconName.STAR)} ${Number(rating) || 0}</span>` : '';
+
+        reviewCard.innerHTML = `
+            <div class="tmdb-review-header">
+                <div class="tmdb-review-author-info">
+                    <strong class="tmdb-review-author">${escapeHtml(review.author || 'Anonymous')}</strong>
+                    <span class="tmdb-review-date">${reviewDate}</span>
+                </div>
+                ${ratingDisplay}
+            </div>
+            <div class="tmdb-review-content-wrapper">
+                <p class="tmdb-review-text"></p>
+            </div>
+        `;
+
+        const textElement = reviewCard.querySelector('.tmdb-review-text')!;
+        textElement.innerHTML = parseMarkdown(previewContent) +
+            (isLongReview ? `<span class="tmdb-review-toggle">${JC.t('reviews_read_more')}</span>` : '');
+
+        return reviewCard;
+    }
+
+    /**
+     * Builds the star display HTML for a 1–5 rating.
+     * @param rating - Integer 1 to 5.
+     */
+    function renderUserStarRating(rating: number): string {
+        if (!rating) return '';
+
+        const stars = Array.from({ length: 5 }, (_, index) => {
+            const filled = index < rating;
+            return `<span class="jc-user-star${filled ? ' jc-user-star-filled' : ''}" aria-hidden="true">★</span>`;
+        }).join('');
+
+        return `<span class="jc-user-star-rating">${stars}</span>`;
+    }
+
+    /**
+     * Creates a review card for a user-written review (different border colour).
+     * Own reviews get edit + delete. Non-own reviews get an admin delete button
+     * when the viewer is an admin (for moderation).
+     */
+    function createUserReviewElement(
+        review: any,
+        currentUserId: string,
+        viewerIsAdmin: boolean,
+        onEditCallback: (review: any) => void,
+        onDeleteCallback: (review: any) => void | Promise<void>
+    ): HTMLElement {
+        const REVIEW_PREVIEW_LENGTH = 350;
+        const reviewCard = document.createElement('div');
+        reviewCard.className = 'tmdb-review-card jc-user-review-card';
+
+        const content = review.content || '';
+        const hasContent = content.length > 0;
+        const isLongReview = content.length > REVIEW_PREVIEW_LENGTH;
+        const previewContent = isLongReview ? content.substring(0, REVIEW_PREVIEW_LENGTH) : content;
+
+        const reviewDate = review.updatedAt
+            ? new Date(review.updatedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+            : (review.createdAt ? new Date(review.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '');
+
+        const ratingDisplay = review.rating
+            ? `<span class="tmdb-review-rating jc-user-review-rating">${renderUserStarRating(review.rating)}</span>`
+            : '';
+
+        // Avatar URL — Jellyfin serves user images at /Users/{id}/Images/Primary
+        // userId stored in "N" format (no dashes); Jellyfin accepts both formats
+        const avatarSrc = ApiClient.getUrl(`/Users/${review.userId}/Images/Primary`) + '?width=48&quality=90';
+
+        const isOwn = review.userId.replace(/-/g, '') === currentUserId.replace(/-/g, '');
+        const showModerationDelete = !isOwn && viewerIsAdmin;
+        // Tooltips route through tWithFallback because JC.t returns the
+        // raw key on miss (which is truthy), so a plain `JC.t(key) || 'X'`
+        // would show literal `reviews_edit` until the remote en.json
+        // catches up.
+        const editTitle = tWithFallback('reviews_edit', 'Edit');
+        const deleteTitle = tWithFallback('reviews_delete', 'Delete');
+        const adminDeleteTitle = tWithFallback('reviews_admin_delete', 'Delete as admin');
+        let actionButtons = '';
+        if (isOwn) {
+            actionButtons = `
+            <div class="jc-user-review-actions">
+                <button class="jc-review-btn jc-review-edit-btn" title="${escapeHtml(editTitle)}"><span class="material-icons" aria-hidden="true">edit</span></button>
+                <button class="jc-review-btn jc-review-delete-btn" title="${escapeHtml(deleteTitle)}"><span class="material-icons" aria-hidden="true">delete</span></button>
+            </div>`;
+        } else if (showModerationDelete) {
+            actionButtons = `
+            <div class="jc-user-review-actions">
+                <button class="jc-review-btn jc-review-delete-btn jc-review-admin-delete-btn" title="${escapeHtml(adminDeleteTitle)}"><span class="material-icons" aria-hidden="true">delete</span></button>
+            </div>`;
+        }
+
+        reviewCard.innerHTML = `
+            <div class="tmdb-review-header jc-user-review-header">
+                <div class="jc-user-review-avatar-wrapper">
+                    <img class="jc-user-avatar" src="${escapeHtml(avatarSrc)}" alt="" onerror="this.style.display='none'">
+                </div>
+                <div class="tmdb-review-author-info">
+                    <strong class="tmdb-review-author">${escapeHtml(review.userName || 'User')}</strong>
+                    <span class="tmdb-review-date">${reviewDate}</span>
+                </div>
+                ${ratingDisplay}
+                ${actionButtons}
+            </div>
+            ${hasContent ? `
+            <div class="tmdb-review-content-wrapper">
+                <p class="tmdb-review-text"></p>
+            </div>` : ''}
+        `;
+
+        const textElement = reviewCard.querySelector('.tmdb-review-text');
+        if (textElement) {
+            textElement.innerHTML = parseMarkdown(previewContent) +
+                (isLongReview ? `<span class="tmdb-review-toggle">${JC.t('reviews_read_more')}</span>` : '');
+        }
+
+        // Store full content for toggling
+        reviewCard.dataset.fullContent = content;
+
+        if (isOwn) {
+            reviewCard.querySelector('.jc-review-edit-btn')!.addEventListener('click', () => onEditCallback(review));
+            reviewCard.querySelector('.jc-review-delete-btn')!.addEventListener('click', () => { void onDeleteCallback(review); });
+        } else if (showModerationDelete) {
+            reviewCard.querySelector('.jc-review-admin-delete-btn')!.addEventListener('click', () => { void onDeleteCallback(review); });
+        }
+
+        return reviewCard;
+    }
+
+    /**
+     * Creates and injects the inline review form (add / edit).
+     * @param existingReview - Existing review data when editing, null when adding.
+     * @param onSave - Called with (content, rating) when the user submits.
+     * @param onCancel - Called when the user cancels.
+     */
+    function createReviewForm(
+        existingReview: any,
+        onSave: (content: string, rating: number | null) => Promise<void>,
+        onCancel: () => void
+    ): HTMLElement {
+        const form = document.createElement('div');
+        form.className = 'jc-review-form';
+        let currentRating: number = existingReview?.rating || 0;
+
+        form.innerHTML = `
+            ${existingReview ? '' : `<h4 class="jc-review-form-title">${JC.t('reviews_add')}</h4>`}
+            <div class="jc-review-star-picker" role="radiogroup">
+                ${[1,2,3,4,5].map(n => `<button class="jc-star-btn${currentRating >= n ? ' jc-star-selected' : ''}" data-value="${n}" type="button">★</button>`).join('')}
+                <button class="jc-star-clear-btn" type="button"><span class="material-icons" aria-hidden="true">close</span></button>
+                <span class="jc-star-label"></span>
+            </div>
+            <textarea class="jc-review-textarea" maxlength="2000">${escapeHtml(existingReview?.content || '')}</textarea>
+            <div class="jc-review-char-counter"><span class="jc-review-char-count">${existingReview?.content?.length || 0}</span>/2000</div>
+            <div class="jc-review-form-btns">
+                <button class="jc-review-btn jc-review-submit-btn" type="button"><span class="material-icons" aria-hidden="true">save</span></button>
+                <button class="jc-review-btn jc-review-cancel-btn" type="button"><span class="material-icons" aria-hidden="true">close</span></button>
+            </div>
+            <div class="jc-review-form-error" aria-live="polite"></div>
+        `;
+
+        const starBtns = form.querySelectorAll<HTMLButtonElement>('.jc-star-btn');
+        const clearBtn = form.querySelector<HTMLButtonElement>('.jc-star-clear-btn')!;
+        const starLabel = form.querySelector<HTMLElement>('.jc-star-label')!;
+        const textarea = form.querySelector<HTMLTextAreaElement>('.jc-review-textarea')!;
+        const charCount = form.querySelector<HTMLElement>('.jc-review-char-count')!;
+        const submitBtn = form.querySelector<HTMLButtonElement>('.jc-review-submit-btn')!;
+        const cancelBtn = form.querySelector<HTMLButtonElement>('.jc-review-cancel-btn')!;
+        const errorEl = form.querySelector<HTMLElement>('.jc-review-form-error')!;
+
+        function updateStars(value: number): void {
+            currentRating = value;
+            starBtns.forEach(btn => {
+                const v = parseInt(btn.dataset.value!, 10);
+                btn.classList.toggle('jc-star-selected', v <= currentRating);
+            });
+            starLabel.textContent = currentRating > 0 ? `${currentRating}/5` : '';
+        }
+
+        updateStars(currentRating);
+
+        starBtns.forEach(btn => {
+            btn.addEventListener('click', () => updateStars(parseInt(btn.dataset.value!, 10)));
+            btn.addEventListener('mouseenter', () => starBtns.forEach(b => b.classList.toggle('jc-star-hover', parseInt(b.dataset.value!, 10) <= parseInt(btn.dataset.value!, 10))));
+            btn.addEventListener('mouseleave', () => starBtns.forEach(b => b.classList.remove('jc-star-hover')));
+        });
+
+        clearBtn.addEventListener('click', () => updateStars(0));
+
+        textarea.addEventListener('input', () => {
+            charCount.textContent = String(textarea.value.length);
+        });
+
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises -- async click handler, matches the pre-conversion behavior
+        submitBtn.addEventListener('click', async () => {
+            const content = textarea.value.trim();
+            if (!content && !currentRating) {
+                errorEl.textContent = JC.t('reviews_form_error_empty');
+                return;
+            }
+            errorEl.textContent = '';
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="material-icons" aria-hidden="true">hourglass_empty</span>';
+            try {
+                await onSave(content, currentRating || null);
+            } catch (err) {
+                errorEl.textContent = JC.t('reviews_form_error_save');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<span class="material-icons" aria-hidden="true">save</span>';
+            }
+        });
+
+        cancelBtn.addEventListener('click', onCancel);
+
+        return form;
+    }
+
+    function addReviewsToPage(reviews: any[] | null, userReviews: any[], contextPage: Element, tmdbId: string, tmdbMediaType: string, currentUser: any): void {
+        const existingSection = contextPage.querySelector('.tmdb-reviews-section');
+        if (existingSection) {
+            existingSection.remove();
+        }
+
+        // Inject average user rating chip next to the TMDB/RT rating chips
+        if (userReviewsEnabled && userReviews.length > 0) {
+            const ratingsWithValue = userReviews.filter(r => r.rating);
+            if (ratingsWithValue.length > 0) {
+                const avg = ratingsWithValue.reduce((sum, r) => sum + r.rating, 0) / ratingsWithValue.length;
+                const raw = avg * 2; // convert 1-5 → raw out of 10
+                const avgDisplay = Number.isInteger(raw) ? `${raw}` : `${raw.toFixed(1)}`;
+
+                // Remove any existing chip first
+                contextPage.querySelector('.jc-avg-user-rating-chip')?.remove();
+
+                const chip = document.createElement('div');
+                chip.className = 'mediaInfoCriticRating mediaInfoItem jc-avg-user-rating-chip';
+                chip.title = tWithFallback('reviews_avg_rating_tooltip',
+                    'Average rating from {count} user(s)', { count: ratingsWithValue.length });
+                chip.innerHTML = `<span class="material-symbols-rounded starIcon" aria-hidden="true" style="color:#e91e8c;">person_heart</span>${avgDisplay}`;
+
+                // Insert after starRatingContainer, or after mediaInfoCriticRating if present,
+                // falling back to appending to the mediaInfoItems container
+                const criticRating = contextPage.querySelector('.mediaInfoCriticRating');
+                const starRating = contextPage.querySelector('.starRatingContainer');
+                const anchor = criticRating || starRating;
+                if (anchor && anchor.parentNode) {
+                    anchor.parentNode.insertBefore(chip, anchor.nextSibling);
+                } else {
+                    const container = contextPage.querySelector('.mediaInfoItems');
+                    if (container) container.appendChild(chip);
+                }
+            }
+        }
+
+        // `currentUser` is resolved fresh by the caller (processPage /
+        // refreshReviews) instead of read from the cached `JC.currentUser`
+        // set once at plugin init. This matters for:
+        //   1. Admin viewers on first render (race: JC.currentUser promise
+        //      may not have resolved yet, so admin would briefly see no
+        //      moderation buttons).
+        //   2. In-session login switches (Jellyfin's SPA router doesn't
+        //      re-init the plugin, so JC.currentUser stays stale as the
+        //      previous user — a non-admin who logged in after an admin
+        //      would see phantom admin controls, while the backend still
+        //      blocks the actual delete with 403).
+        // Using the live ApiClient session fixes both.
+        const currentUserId: string = (currentUser?.Id) || ApiClient.getCurrentUserId() || '';
+        const viewerIsAdmin = currentUser?.Policy?.IsAdministrator === true;
+        const ownReview = userReviews.find(r => r.userId.replace(/-/g, '') === currentUserId.replace(/-/g, ''));
+        let reviewsSection: HTMLDetailsElement;
+
+        // Always build the section, even with zero reviews, so users can add their own.
+        {
+            reviewsSection = document.createElement('details');
+            reviewsSection.className = 'detailSection tmdb-reviews-section';
+            if (JC.currentSettings?.reviewsExpandedByDefault) {
+                reviewsSection.setAttribute('open', '');
+            }
+
+            const totalCount = (reviews ? reviews.length : 0) + userReviews.length;
+            const summary = document.createElement('summary');
+            summary.className = 'sectionTitle';
+            summary.innerHTML = `${JC.t('reviews_title', { count: totalCount })} <i class="material-icons expand-icon">expand_more</i>`;
+            reviewsSection.appendChild(summary);
+
+            // ── "Write a Review" / "Edit Review" button bar ──────────────
+            const actionBar = document.createElement('div');
+            actionBar.className = 'jc-review-action-bar';
+            let writeBtn: HTMLButtonElement | null = null;
+
+            if (userReviewsEnabled && !ownReview) {
+                writeBtn = document.createElement('button');
+                writeBtn.className = 'jc-review-btn jc-review-write-btn';
+                writeBtn.textContent = JC.t('reviews_add');
+                actionBar.appendChild(writeBtn);
+            }
+            reviewsSection.appendChild(actionBar);
+
+            // ── Inline form placeholder (hidden until button clicked) ──────────
+            const formPlaceholder = document.createElement('div');
+            formPlaceholder.className = 'jc-review-form-placeholder';
+            reviewsSection.appendChild(formPlaceholder);
+
+            const swipeContainer = document.createElement('div');
+            swipeContainer.className = 'tmdb-review-swipe-container';
+
+            // Render user reviews first (distinct border colour)
+            userReviews.forEach(userReview => {
+                const card = createUserReviewElement(
+                    userReview,
+                    currentUserId,
+                    viewerIsAdmin,
+                    // Edit callback (own reviews only)
+                    (r) => openForm(r),
+                    // Delete callback — routes to self-delete for own reviews,
+                    // admin moderation delete for others (admin viewers only).
+                    async (r) => {
+                        const isOwn = r.userId.replace(/-/g, '') === currentUserId.replace(/-/g, '');
+                        const userName = r.userName || 'user';
+                        const title = isOwn
+                            ? tWithFallback('reviews_delete_title', 'Delete review')
+                            : tWithFallback('reviews_admin_delete_title', 'Delete review (admin)');
+                        const body = isOwn
+                            ? tWithFallback('reviews_delete_confirm',
+                                'Delete your review for this item?')
+                            : tWithFallback('reviews_admin_delete_confirm',
+                                'Delete this review by {user}? This cannot be undone.',
+                                { user: userName });
+                        if (!(await jcConfirm(body, title))) return;
+                        try {
+                            if (isOwn) {
+                                await deleteUserReview(tmdbId, tmdbMediaType);
+                            } else {
+                                await adminDeleteUserReview(r.userId, tmdbId, tmdbMediaType);
+                            }
+                            void refreshReviews(contextPage);
+                        } catch (e: any) {
+                            // Surface the failure to the admin instead of
+                            // silently failing: without this, a 403/404/500
+                            // on the delete call would leave the review on
+                            // screen with no feedback, making the admin
+                            // believe the content was moderated when it
+                            // wasn't.
+                            console.error(`${logPrefix} Delete failed`, e);
+                            const errTitle = tWithFallback('reviews_delete_error_title',
+                                'Delete failed');
+                            const errBody = tWithFallback('reviews_delete_error_body',
+                                'Could not delete the review: {err}',
+                                { err: (e && e.message) ? e.message : 'Unknown error' });
+                            jcAlert(errBody, errTitle);
+                            // Re-fetch so the admin sees the real current state
+                            // (in case the review was actually removed but the
+                            // response was 500 on the way back, or a concurrent
+                            // admin deleted it first).
+                            void refreshReviews(contextPage);
+                        }
+                    }
+                );
+                swipeContainer.appendChild(card);
+            });
+
+            // Render TMDB reviews after
+            if (reviews && reviews.length > 0) {
+                reviews.slice(0, 10).forEach((review, index) => {
+                    swipeContainer.appendChild(createReviewElement(review, index));
+                });
+            }
+
+            reviewsSection.appendChild(swipeContainer);
+
+            // ── Form open/close helpers ──────────────────────────────────────
+            function openForm(existingReview: any): void {
+                formPlaceholder.innerHTML = '';
+                const form = createReviewForm(
+                    existingReview || null,
+                    async (content, rating) => {
+                        await saveUserReview(tmdbId, tmdbMediaType, content, rating);
+                        void refreshReviews(contextPage);
+                    },
+                    () => { formPlaceholder.innerHTML = ''; }
+                );
+                formPlaceholder.appendChild(form);
+                // Automatically open the details section so the form is visible
+                reviewsSection.setAttribute('open', '');
+                form.querySelector<HTMLTextAreaElement>('.jc-review-textarea')!.focus();
+            }
+
+            if (writeBtn) {
+                writeBtn.addEventListener('click', () => {
+                    if (formPlaceholder.querySelector('.jc-review-form')) {
+                        formPlaceholder.innerHTML = '';
+                    } else {
+                        openForm(ownReview || null);
+                    }
+                });
+            }
+
+            // ── Read-more toggle for TMDB reviews ─────────────────────────────
+            swipeContainer.addEventListener('click', function (e) {
+                const target = e.target as HTMLElement;
+                if (target.classList.contains('tmdb-review-toggle')) {
+                    const textElement = target.parentElement!;
+                    const card = textElement.closest<HTMLElement>('.tmdb-review-card')!;
+                    // Skip user review cards (they use dataset.fullContent)
+                    if (card.classList.contains('jc-user-review-card')) {
+                        const full = card.dataset.fullContent || '';
+                        if (textElement.classList.toggle('expanded')) {
+                            textElement.innerHTML = parseMarkdown(full) + `<span class="tmdb-review-toggle">${JC.t('reviews_read_less')}</span>`;
+                        } else {
+                            textElement.innerHTML = parseMarkdown(full.substring(0, 350)) + `<span class="tmdb-review-toggle">${JC.t('reviews_read_more')}</span>`;
+                        }
+                        return;
+                    }
+                    const review = resolveReviewByCard(reviews!, card);
+                    if (!review) return;
+                    if (textElement.classList.toggle('expanded')) {
+                        textElement.innerHTML = parseMarkdown(review.content) + `<span class="tmdb-review-toggle">${JC.t('reviews_read_less')}</span>`;
+                    } else {
+                        const previewContent = review.content.substring(0, 350);
+                        textElement.innerHTML = parseMarkdown(previewContent) + `<span class="tmdb-review-toggle">${JC.t('reviews_read_more')}</span>`;
+                    }
+                }
+            });
+
+            // Persist user's expand/collapse choice for future pages
+            reviewsSection.addEventListener('toggle', function () {
+                try {
+                    if (!window.JellyfinCanopy) return;
+                    const JC = window.JellyfinCanopy as ReviewsJE;
+                    JC.currentSettings = JC.currentSettings || JC.loadSettings?.() || {};
+                    JC.currentSettings.reviewsExpandedByDefault = reviewsSection.open;
+                    if (typeof JC.saveUserSettings === 'function') {
+                        void JC.saveUserSettings('settings.json', JC.currentSettings);
+                    }
+                } catch (err) {
+                    console.error(`${logPrefix} Failed to persist reviews expanded state`, err);
+                }
+            });
+        }
+
+        const insertionAnchor =
+            contextPage.querySelector('.streaming-lookup-container') ||
+            contextPage.querySelector('.itemExternalLinks') ||
+            contextPage.querySelector('.tagline');
+
+        if (insertionAnchor && insertionAnchor.parentNode) {
+            insertionAnchor.parentNode.insertBefore(reviewsSection, insertionAnchor.nextSibling);
+        } else {
+            console.error(`${logPrefix} Could not find a suitable anchor to insert reviews.`);
+        }
+    }
+
+    /**
+     * Re-fetches and re-renders the review section for the current page.
+     */
+    async function refreshReviews(contextPage: Element): Promise<void> {
+        try {
+            const itemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
+            const userId = ApiClient.getCurrentUserId();
+            if (!itemId || !userId) return;
+
+            const item = (JC.helpers?.getItemCached
+                ? await JC.helpers.getItemCached(itemId, { userId })
+                : await ApiClient.getItem(userId, itemId)) as any;
+            const mediaType = item?.Type;
+
+            if (await shouldSuppressForSpoilerMode(item, mediaType)) {
+                removeReviewsSection(contextPage);
+                return;
+            }
+
+            let tmdbKey: string | null = null;
+            let apiMediaType: string;
+
+            if (mediaType === 'Movie') {
+                const tmdbId = item?.ProviderIds?.Tmdb;
+                if (!tmdbId) return;
+                tmdbKey = String(tmdbId);
+                apiMediaType = 'movie';
+            } else if (mediaType === 'Series') {
+                const tmdbId = item?.ProviderIds?.Tmdb;
+                if (!tmdbId) return;
+                tmdbKey = String(tmdbId);
+                apiMediaType = 'tv';
+            } else if (mediaType === 'Season') {
+                    let seriesTmdbId = item?.SeriesProviderIds?.Tmdb;
+                    if (!seriesTmdbId && item?.SeriesId) {
+                        try {
+                            const series = await ApiClient.getItem(userId, item.SeriesId) as any;
+                            seriesTmdbId = series?.ProviderIds?.Tmdb;
+                        } catch (_) {}
+                    }
+                    if (!seriesTmdbId || item?.IndexNumber == null) return;
+                    tmdbKey = `${seriesTmdbId}:s${item.IndexNumber}`;
+                    apiMediaType = 'tv';
+                } else if (mediaType === 'Episode') {
+                    let seriesTmdbId = item?.SeriesProviderIds?.Tmdb;
+                    if (!seriesTmdbId && item?.SeriesId) {
+                        try {
+                            const series = await ApiClient.getItem(userId, item.SeriesId) as any;
+                            seriesTmdbId = series?.ProviderIds?.Tmdb;
+                        } catch (_) {}
+                    }
+                    if (!seriesTmdbId || item?.ParentIndexNumber == null || item?.IndexNumber == null) return;
+                    tmdbKey = `${seriesTmdbId}:s${item.ParentIndexNumber}:e${item.IndexNumber}`;
+                apiMediaType = 'tv';
+            } else {
+                return;
+            }
+
+            if (!tmdbKey) return;
+
+            const [tmdbReviews, userReviews, currentUser] = await Promise.all([
+                (tmdbReviewsEnabled && (mediaType === 'Movie' || mediaType === 'Series'))
+                    ? fetchReviews(tmdbKey.split(':')[0], mediaType)
+                    : Promise.resolve(null),
+                userReviewsEnabled ? fetchUserReviews(tmdbKey, apiMediaType) : Promise.resolve([]),
+                ApiClient.getCurrentUser().catch(() => null),
+            ]);
+
+            const page = document.querySelector('#itemDetailPage:not(.hide)') || contextPage;
+            addReviewsToPage(tmdbReviews, userReviews, page, tmdbKey, apiMediaType, currentUser);
+
+            // Bust the poster tag cache for this item so the overlay updates
+            if (typeof JC.invalidateUserReviewTagCache === 'function') {
+                JC.invalidateUserReviewTagCache(tmdbKey);
+            }
+        } catch (err) {
+            console.error(`${logPrefix} Failed to refresh reviews:`, err);
+        }
+    }
+
+    function injectCss(): void {
+        // Shared @font-face lives in core/ui-kit (local asset cache), not here.
+        ensureMaterialSymbolsFont();
+        const styleId = 'tmdb-reviews-enhanced-styles';
+        if (document.getElementById(styleId)) return;
+
+        const style = document.createElement('style');
+        style.id = styleId;
+        style.textContent = `
+            .material-symbols-rounded {
+                font-family: 'Material Symbols Rounded';
+                font-weight: normal;
+                font-style: normal;
+                line-height: 1;
+                letter-spacing: normal;
+                text-transform: none;
+                display: inline-block;
+                white-space: nowrap;
+                word-wrap: normal;
+                direction: ltr;
+                -webkit-font-feature-settings: 'liga';
+                font-feature-settings: 'liga';
+                -webkit-font-smoothing: antialiased;
+            }
+            .tmdb-reviews-section { margin: 2em 0 1em 0; display: flex !important; flex-direction: column;}
+            .tmdb-reviews-section summary { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; -webkit-tap-highlight-color: transparent;}
+            .tmdb-reviews-section summary .expand-icon { color: rgba(255, 255, 255,.8);transition: transform 0.2s ease-in-out;}
+            .tmdb-reviews-section[open] summary .expand-icon { transform: rotate(180deg);}
+            .tmdb-review-swipe-container {
+                display: flex;
+                overflow-x: auto;
+                gap: 1.2em;
+                padding: 1em 0.5em;
+                scroll-snap-type: x mandatory;
+            }
+            .tmdb-review-card {
+                flex: 0 0 85%;
+                max-width: 500px;
+                background: rgba(0, 0, 0, 0.3);
+                border-radius: 8px;
+                border-left: 4px solid rgb(1, 180, 228);
+                padding: 1.5em;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+                scroll-snap-align: start;
+                display: flex;
+                flex-direction: column;
+            }
+            .jc-user-review-card {
+                border-left-color: rgb(94, 213, 95);
+                background: rgba(10, 26, 10, 0.52);
+            }
+            @media (min-width: 768px) { .tmdb-review-card { flex-basis: 400px; } }
+            .tmdb-review-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1em; }
+            .jc-user-review-header { align-items: center; gap: 0.75em; }
+            .tmdb-review-author-info { display: flex; flex-direction: column; gap: 0.3em; flex: 1; }
+            .tmdb-review-author { color: #fff; font-size: 1.1em; font-weight: 600; }
+            .tmdb-review-date { color: #aaa; font-size: 0.9em; }
+            .tmdb-review-rating { color: #ffd700; background: rgba(255, 215, 0, 0.1); padding: 0.2em 0.5em; border-radius: 4px; }
+            .jc-user-review-rating {
+                white-space: nowrap;
+                background: rgba(94, 213, 95, 0.12);
+                color: #ffd700;
+            }
+            .jc-user-star-rating { display: inline-flex; align-items: center; gap: 0.08em; }
+            .jc-user-star { color: rgba(255, 255, 255, 0.28); font-size: 0.95em; }
+            .jc-user-star-filled { color: #ffd700; }
+            .tmdb-review-content-wrapper { flex-grow: 1; line-height: 1.7; overflow-y: auto; color: #ddd; font-size: 0.95em; }
+            .tmdb-review-text { word-wrap: break-word; }
+            .tmdb-review-text strong { color: #fff; font-weight: 600; }
+            .tmdb-review-text em { font-style: italic; color: #e0e0e0; }
+            .tmdb-review-text del { text-decoration: line-through; opacity: 0.7; }
+            .tmdb-review-text code { background: rgba(255, 255, 255, 0.1); padding: 2px 6px; border-radius: 3px; font-family: monospace; font-size: 0.9em; color: #ffa500; }
+            .tmdb-review-text blockquote { border-left: 3px solid rgb(1, 180, 228); padding-left: 1em; margin: 0.8em 0; color: #aaa; font-style: italic; }
+            .tmdb-review-text h1, .tmdb-review-text h2, .tmdb-review-text h3, .tmdb-review-text h4, .tmdb-review-text h5, .tmdb-review-text h6 { color: #fff; margin: 0.8em 0 0.4em 0; font-weight: 600; }
+            .tmdb-review-text h1 { font-size: 1.5em; }
+            .tmdb-review-text h2 { font-size: 1.3em; }
+            .tmdb-review-text h3 { font-size: 1.15em; }
+            .tmdb-review-text h4, .tmdb-review-text h5, .tmdb-review-text h6 { font-size: 1.05em; }
+            .tmdb-review-text ul, .tmdb-review-text ol { margin: 0.5em 0; padding-left: 1.5em; }
+            .tmdb-review-text li { margin: 0.3em 0; }
+            .tmdb-review-text hr { border: none; border-top: 1px solid rgba(255, 255, 255, 0.2); margin: 1em 0; }
+            .tmdb-review-text a { color: rgb(1, 180, 228); text-decoration: underline; }
+            .tmdb-review-text a:hover { color: rgb(50, 200, 250); }
+            .tmdb-review-toggle { color: rgb(1, 180, 228); font-weight: bold; cursor: pointer; text-decoration: underline; margin-left: 0.3em; }
+
+            /* User avatar */
+            .jc-user-avatar-wrapper { flex-shrink: 0; }
+            .jc-user-avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid rgb(94, 213, 95); display: block; }
+
+            /* Action bar */
+            .jc-review-action-bar { padding: 0.5em 0.5em 0; display: flex; gap: 0.75em; }
+            .jc-user-review-actions { display: flex; gap: 0.5em; flex-shrink: 0; }
+
+            /* Shared button style */
+            .jc-review-btn {
+                background: rgba(255,255,255,0.08);
+                border: 1px solid rgba(255,255,255,0.15);
+                border-radius: 6px;
+                color: #fff;
+                cursor: pointer;
+                font-size: 0.85em;
+                padding: 0.35em 0.9em;
+                transition: background 0.15s;
+            }
+            .jc-review-btn:hover { background: rgba(255,255,255,0.15); }
+            .jc-review-write-btn { border-color: rgb(94, 213, 95); color: rgb(94, 213, 95); }
+            .jc-review-write-btn:hover { background: rgba(94, 213, 95, 0.15); }
+            .jc-review-edit-btn, .jc-review-delete-btn, .jc-review-submit-btn, .jc-review-cancel-btn {
+                width: 2.4em;
+                height: 2.4em;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                padding: 0;
+            }
+            .jc-review-edit-btn .material-icons, .jc-review-delete-btn .material-icons, .jc-review-submit-btn .material-icons, .jc-review-cancel-btn .material-icons, .jc-star-clear-btn .material-icons { font-size: 18px; }
+            .jc-review-edit-btn { border-color: rgb(94, 213, 95); color: rgb(94, 213, 95); }
+            .jc-review-delete-btn { border-color: rgb(244, 67, 54); color: rgb(244, 67, 54); }
+            .jc-review-delete-btn:hover { background: rgba(244, 67, 54, 0.15); }
+
+            /* Inline review form */
+            .jc-review-form-placeholder { padding: 0 0.5em; }
+            .jc-review-form {
+                background: rgba(0,0,0,0.4);
+                border: 1px solid rgba(94, 213, 95, 0.4);
+                border-radius: 8px;
+                padding: 1.2em;
+                margin: 0.75em 0;
+                display: flex;
+                flex-direction: column;
+                gap: 0.75em;
+            }
+            .jc-review-form-title { margin: 0; font-size: 1em; color: #fff; font-weight: 600; }
+            .jc-review-star-picker { display: flex; align-items: center; gap: 0.3em; }
+            .jc-star-btn {
+                background: none;
+                border: none;
+                cursor: pointer;
+                font-size: 1.6em;
+                color: rgba(255,255,255,0.2);
+                padding: 0;
+                line-height: 1;
+                transition: color 0.1s, transform 0.1s;
+            }
+            .jc-star-btn:hover, .jc-star-btn.jc-star-hover, .jc-star-btn.jc-star-selected { color: #ffd700; }
+            .jc-star-btn:hover { transform: scale(1.2); }
+            .jc-star-clear-btn {
+                background: rgba(255,255,255,0.08);
+                border: 1px solid rgba(255,255,255,0.15);
+                border-radius: 6px;
+                cursor: pointer;
+                color: rgba(255,255,255,0.7);
+                width: 2.2em;
+                height: 2.2em;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                padding: 0;
+            }
+            .jc-star-clear-btn:hover { background: rgba(255,255,255,0.15); }
+            .jc-star-label { color: #ffd700; font-size: 0.9em; margin-left: 0.25em; min-width: 2.5em; }
+            .jc-review-textarea {
+                width: 100%;
+                min-height: 100px;
+                resize: vertical;
+                background: rgba(255,255,255,0.06);
+                border: 1px solid rgba(255,255,255,0.15);
+                border-radius: 6px;
+                color: #fff;
+                font-size: 0.95em;
+                padding: 0.6em 0.8em;
+                box-sizing: border-box;
+                font-family: inherit;
+                line-height: 1.5;
+            }
+            .jc-review-textarea:focus { outline: none; border-color: rgb(94, 213, 95); }
+            .jc-review-char-counter { font-size: 0.8em; color: rgba(255,255,255,0.4); text-align: right; }
+            .jc-review-form-btns { display: flex; gap: 0.75em; }
+            .jc-review-submit-btn { border-color: rgb(94, 213, 95); color: rgb(94, 213, 95); }
+            .jc-review-submit-btn:hover { background: rgba(94, 213, 95, 0.15); }
+            .jc-review-submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+            .jc-review-form-error { color: rgb(244, 67, 54); font-size: 0.85em; min-height: 1em; }
+
+            /* Average user rating chip in item details */
+            .jc-avg-user-rating-chip .starIcon { color: #e91e8c !important; }
+            /* Remove the padding coming from using critic rating container */
+            .jc-avg-user-rating-chip { padding-left: 0 !important; }
+            /* Remove the % added by ElegantFin Theme */
+            .mediaInfoCriticRating.mediaInfoItem.jc-avg-user-rating-chip::after {
+                content: "";
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    async function processPage(visiblePage: Element): Promise<void> {
+        if (!visiblePage || visiblePage.querySelector('.tmdb-reviews-section')) {
+            return;
+        }
+
+        try {
+            const itemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
+            const userId = ApiClient.getCurrentUserId();
+
+            if (itemId && userId) {
+                const item = (JC.helpers?.getItemCached
+                    ? await JC.helpers.getItemCached(itemId, { userId })
+                    : await ApiClient.getItem(userId, itemId)) as any;
+                const mediaType = item?.Type;
+
+                if (await shouldSuppressForSpoilerMode(item, mediaType)) {
+                    removeReviewsSection(visiblePage);
+                    return;
+                }
+
+                // Resolve tmdbKey and apiMediaType based on item type
+                let tmdbKey: string | null = null;
+                let apiMediaType: string;
+
+                if (mediaType === 'Movie') {
+                    const tmdbId = item?.ProviderIds?.Tmdb;
+                    if (!tmdbId) return;
+                    tmdbKey = String(tmdbId);
+                    apiMediaType = 'movie';
+                } else if (mediaType === 'Series') {
+                    const tmdbId = item?.ProviderIds?.Tmdb;
+                    if (!tmdbId) return;
+                    tmdbKey = String(tmdbId);
+                    apiMediaType = 'tv';
+                } else if (mediaType === 'Season') {
+                    let seriesTmdbId = item?.SeriesProviderIds?.Tmdb;
+                    if (!seriesTmdbId && item?.SeriesId) {
+                        try {
+                            const series = await ApiClient.getItem(userId, item.SeriesId) as any;
+                            seriesTmdbId = series?.ProviderIds?.Tmdb;
+                        } catch (_) {}
+                    }
+                    if (!seriesTmdbId || item?.IndexNumber == null) return;
+                    tmdbKey = `${seriesTmdbId}:s${item.IndexNumber}`;
+                    apiMediaType = 'tv';
+                } else if (mediaType === 'Episode') {
+                    let seriesTmdbId = item?.SeriesProviderIds?.Tmdb;
+                    if (!seriesTmdbId && item?.SeriesId) {
+                        try {
+                            const series = await ApiClient.getItem(userId, item.SeriesId) as any;
+                            seriesTmdbId = series?.ProviderIds?.Tmdb;
+                        } catch (_) {}
+                    }
+                    if (!seriesTmdbId || item?.ParentIndexNumber == null || item?.IndexNumber == null) return;
+                    tmdbKey = `${seriesTmdbId}:s${item.ParentIndexNumber}:e${item.IndexNumber}`;
+                    apiMediaType = 'tv';
+                } else {
+                    return;
+                }
+
+                if (tmdbKey) {
+                    const [tmdbReviews, userReviews, currentUser] = await Promise.all([
+                        // TMDB reviews only available for top-level movie/tv, not seasons/episodes
+                        (tmdbReviewsEnabled && (mediaType === 'Movie' || mediaType === 'Series'))
+                            ? fetchReviews(tmdbKey.split(':')[0], mediaType)
+                            : Promise.resolve(null),
+                        userReviewsEnabled ? fetchUserReviews(tmdbKey, apiMediaType) : Promise.resolve([]),
+                        ApiClient.getCurrentUser().catch(() => null),
+                    ]);
+                    addReviewsToPage(tmdbReviews, userReviews, visiblePage, tmdbKey, apiMediaType, currentUser);
+                }
+            }
+        } catch (error) {
+            console.error(`${logPrefix} Error processing page:`, error);
+        }
+    }
+
+    injectCss();
+
+    // Use Emby.Page.onViewShow hook for reliable page navigation detection
+    const unregister = JC.helpers.onViewPage(async (view, element, hash) => {
+        // Check if feature is still enabled
+        if (!JC?.pluginConfig?.ShowReviews && !JC?.pluginConfig?.ShowUserReviews) {
+            unregister();
+            return;
+        }
+
+        // Check if this might be an item detail page by looking at current URL or element
+        const currentHash = window.location.hash;
+        const hasItemId = currentHash.includes('id=') || (hash && hash.includes('id='));
+        const isItemDetailElement = element && (
+            element.id === 'itemDetailPage' ||
+            element.classList?.contains('itemDetailPage')
+        );
+
+        if (!hasItemId && !isItemDetailElement) {
+            return;
+        }
+
+        // PERF(R7): no unconditional 150ms sleep — process immediately when the
+        // detail page is already visible (the common case). PERF(R9): fail
+        // open — a single 150ms retry lost the whole reviews section whenever
+        // the page unhid later than that (routine on slow servers). The unhide
+        // is a `hide` class flip, which the structural body observer
+        // deliberately drops (attribute-only batch), so there is no mutation
+        // signal to wait on — poll instead, R5-compliant: nav-guarded,
+        // visibility-gated, decaying interval, with the deadline as a leak
+        // backstop only (nav/hash change is the real terminator). The section
+        // itself is built fully off-DOM in addReviewsToPage and inserted
+        // once, post-fetch (single insert, below the fold).
+        let visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
+        if (!visiblePage) {
+            const hardDeadline = Date.now() + 10 * 60 * 1000; // absolute termination guarantee
+            // Soft leak backstop counts VISIBLE time only — a tab hidden past
+            // the whole window would otherwise get one probe on return and
+            // drop the reviews for the view.
+            let remainingVisibleMs = 120_000;
+            let delay = 150;
+            while (!visiblePage) {
+                await new Promise(resolve => setTimeout(resolve, delay));
+                if (window.location.hash !== currentHash) return; // navigated away
+                if (Date.now() >= hardDeadline) break;
+                if (document.visibilityState !== 'hidden') {
+                    visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
+                    remainingVisibleMs -= delay;
+                    if (!visiblePage && remainingVisibleMs <= 0) break;
+                }
+                delay = Math.min(8000, delay * 2);
+            }
+        }
+        if (visiblePage) {
+            void processPage(visiblePage);
+        }
+    }, {
+        pages: null, // Trigger on all pages, we'll filter by hash
+        fetchItem: false,
+        immediate: true // Process current page immediately on load
+    });
+};

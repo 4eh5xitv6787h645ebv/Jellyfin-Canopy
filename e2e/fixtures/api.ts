@@ -8,7 +8,7 @@
 // (?api_key=, X-Emby-Token) are ignored — only the full
 // `Authorization: MediaBrowser Token="..."` header works.
 
-const CLIENT_AUTH = 'MediaBrowser Client="JE-E2E", Device="je-e2e", DeviceId="je-e2e", Version="1.0.0"';
+const CLIENT_AUTH = 'MediaBrowser Client="JC-E2E", Device="jc-e2e", DeviceId="jc-e2e", Version="1.0.0"';
 
 export const PLUGIN_ID = '9ffa12bc-f4b5-406c-ab1d-d575acbeea7b';
 

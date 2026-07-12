@@ -23,7 +23,7 @@ const path = require('path');
 const { extractPlaceholders, validateEntries } = require('./validate-translations.js');
 // The require is side-effect-free: main() is guarded by require.main === module.
 
-const LOCALES_DIR = path.join(__dirname, '../Jellyfin.Plugin.JellyfinElevate/js/locales');
+const LOCALES_DIR = path.join(__dirname, '../Jellyfin.Plugin.JellyfinCanopy/js/locales');
 
 // --- MB-5: icon-token + curly placeholder parity ---
 test('extractPlaceholders captures well-formed icon tokens', () => {

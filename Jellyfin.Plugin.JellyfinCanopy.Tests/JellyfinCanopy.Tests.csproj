@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Unit tests for the plugin (Jellyfin 12 / net10.0 — the only target). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <!-- Coverlet must resolve shared-framework assemblies (e.g.
+         Microsoft.Extensions.Logging.Abstractions) when instrumenting the plugin
+         DLL; without the compilation context it throws CecilAssemblyResolutionException
+         on SDK 10.0.3xx and silently emits an EMPTY cobertura report. -->
+    <PreserveCompilationContext>true</PreserveCompilationContext>
+    <!-- Same analyzer ratchet as the plugin project: warning-free stays warning-free. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <RootNamespace>Jellyfin.Plugin.JellyfinCanopy.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <!-- Line-coverage collection for the CI ratchet: dotnet test with the
+         "XPlat Code Coverage" collector, checked by
+         scripts/check-dotnet-coverage.js against the plugin assembly. -->
+    <!-- 6.0.4 instruments nothing (silently empty cobertura) on the newer
+         .NET 10 SDKs GitHub CI resolves for 10.0.x — 10.x fixes it. -->
+    <PackageReference Include="coverlet.collector" Version="10.0.1">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <!-- The plugin references SkiaSharp with ExcludeAssets=runtime (the Jellyfin
+         host ships the native libSkiaSharp). The test host is not Jellyfin, so
+         pull the native asset in here (TEST project only) to exercise
+         ImageBlurService's Skia paths (StockCard/Blur/eviction). Skia-dependent
+         tests skip themselves if the native lib fails to load. -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="3.116.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Jellyfin.Plugin.JellyfinCanopy\JellyfinCanopy.csproj" />
+  </ItemGroup>
+
+  <!-- Golden snapshots for the public/private config payload contract
+       (see Controllers/ConfigPayloadGoldenTests.cs). -->
+  <ItemGroup>
+    <None Include="Snapshots\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

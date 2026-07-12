@@ -30,7 +30,7 @@ If applicable, add screenshots to help explain your problem.
 
 Please provide server logs and browser console logs as applicable (make sure sensitive information is redacted)
 
-[How to gather logs?](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Elevate/faq-support/faq/#troubleshooting)
+[How to gather logs?](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/faq-support/faq/#troubleshooting)
 
 **Additional context**
 Add any other context about the problem here.

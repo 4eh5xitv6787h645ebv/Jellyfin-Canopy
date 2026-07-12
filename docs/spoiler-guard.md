@@ -23,7 +23,7 @@ Once you turn Spoiler Guard on for a show or movie, the plugin hides every spoil
 | **Chapter thumbnails** | Stripped on unwatched episodes. For movies, only chapter thumbs **after** your current watch position are stripped (progressive reveal). |
 | **Trickplay timeline previews** | The sprite-sheet tiles your player uses for hover-scrubbing are blurred or hidden, with the same progressive reveal as chapters — a preview tile stays clear once its whole time range is behind your watch position, so scrubbing back over scenes you've seen shows them normally while scenes ahead stay blurred. |
 | **Taglines** | TMDB taglines like "Everything changes tonight" are dropped. |
-| **Ratings** | The community/TMDB rating and the critic rating are both hidden — a 9.8/10 on a specific episode is a hint that something big happens. The Jellyfin Elevate card rating overlay is suppressed too on the series, season, and unwatched-episode cards of a guarded show (it won't fall back to the parent series' rating); watched episodes keep theirs. |
+| **Ratings** | The community/TMDB rating and the critic rating are both hidden — a 9.8/10 on a specific episode is a hint that something big happens. The Jellyfin Canopy card rating overlay is suppressed too on the series, season, and unwatched-episode cards of a guarded show (it won't fall back to the parent series' rating); watched episodes keep theirs. |
 | **Air date** | Hidden — a multi-month gap before an episode can imply "season finale" or "long-anticipated reveal". |
 | **Cast** | Stripped on unwatched episode cards **and on the guarded series' own detail-page cast rail**. By default only guest stars are hidden; setting **Cast strip mode** to "All cast & crew" hides the entire cast. Character-role names are stripped from any surviving cast too. |
 | **TMDB + user reviews** | The Reviews panel is suppressed on series **and movie** detail pages you have Spoiler Guard on for, until you've watched the item. |
@@ -44,7 +44,7 @@ Spoiler Guard combines three things before it answers any image or metadata requ
 
 !!! warning "One piece is client-side: the Reviews panel"
 
-    The JE **Reviews panel** (TMDB and user reviews, covered in [Discover & Request](discover.md)) is suppressed on guarded series and movies too — but it only exists in Jellyfin Web / JE, so that suppression runs in the **web client**, not in the server APIs. Everything else described here is enforced server-side. It's worth being precise about the distinction: an external metadata client can't see the JE Reviews panel to begin with, so there's nothing for it to bypass, but the panel's suppression is the one protection that isn't a server-side guarantee.
+    The JC **Reviews panel** (TMDB and user reviews, covered in [Discover & Request](discover.md)) is suppressed on guarded series and movies too — but it only exists in Jellyfin Web / JC, so that suppression runs in the **web client**, not in the server APIs. Everything else described here is enforced server-side. It's worth being precise about the distinction: an external metadata client can't see the JC Reviews panel to begin with, so there's nothing for it to bypass, but the panel's suppression is the one protection that isn't a server-side guarantee.
 
 ### Progressive reveal
 
@@ -61,7 +61,7 @@ Image fetches are anonymous in Jellyfin, so to know *which* user a request belon
 When a request arrives with no marker — for example a native client replaying an image URL it cached before this feature existed — the server falls back down a ladder:
 
 1. the **identity marker** in the image tag (the normal path);
-2. a validated per-browser **`je-spoiler-uid` cookie** the web client sets, trusted only to disambiguate among users who actually have a session on the request's IP;
+2. a validated per-browser **`jc-spoiler-uid` cookie** the web client sets, trusted only to disambiguate among users who actually have a session on the request's IP;
 3. matching your **session by IP** — and if that's ambiguous (several users behind one IP), it fails closed and over-protects rather than risk a leak.
 
 Native-client image caches (Glide, Coil, SDWebImage) normally key strictly by URL, so Spoiler Guard appends a per-user cache-bust token (the `sb-` token) that changes with your spoiler state, forcing those clients to refetch when your watched-state changes.
@@ -170,13 +170,13 @@ A "Don't ask again for 15 minutes" checkbox lets you batch-disable a few shows w
 Two optional, admin-controlled toggles save you from opting in manually for every new title. Both are off by default; ask your admin to turn them on if you want a hands-free experience.
 
 - **Auto-enable on first play of a series' S1E1** — the first time you press play on S1E1 of a series you've never watched, the plugin adds it to your Spoiler Guard list. Rewatches and jumping in at a later episode don't trigger it (it's checked against your watched history, not just the current play).
-- **Auto-enable on Seerr request** — every successful Seerr request you submit via JE registers a pending intent, so protection is already on for you when the content lands. See [Discover & Request](discover.md) for the request flow itself.
+- **Auto-enable on Seerr request** — every successful Seerr request you submit via JC registers a pending intent, so protection is already on for you when the content lands. See [Discover & Request](discover.md) for the request flow itself.
 
 ---
 
 ## Making it yours — per-user overrides
 
-Your admin decides which spoiler surfaces get stripped, but you can relax any of them for yourself. Open the JE settings panel (gear icon → **Jellyfin Elevate**, part of the [Enhanced experience](enhanced.md)) and expand the **Spoiler Guard** section. Under **"Show me this even with Spoiler Guard on"** there's a checkbox per category:
+Your admin decides which spoiler surfaces get stripped, but you can relax any of them for yourself. Open the JC settings panel (gear icon → **Jellyfin Canopy**, part of the [Enhanced experience](enhanced.md)) and expand the **Spoiler Guard** section. Under **"Show me this even with Spoiler Guard on"** there's a checkbox per category:
 
 > Episode descriptions · Episode titles · Chapter names · Cast list · Ratings · Air date · Taglines · Tags · Reviews
 
@@ -200,7 +200,7 @@ Spoiler Guard hides the surprise, not the show — a few things are deliberately
 - **Collection posters** — same reasoning; the collection art is your entry point.
 - **The "this episode is here" indicator** — episode rows and counts in the season grid stay so you can navigate. Only the thumbnail / title / synopsis / chapters are hidden.
 - **Season 0 (Specials) and Season 1 posters** — the season poster and season overview always pass through so a brand-new show isn't a wall of placeholders. Unwatched **episodes** inside Season 0/1 are still protected — it's only the season-level art that's exempt.
-- **External-player playback** — launch playback in an external player (mpv, VLC, Infuse, …) and it fetches metadata directly from Jellyfin's regular APIs, which may show un-stripped fields. Spoiler Guard runs inside the JE plugin's response filters, which external players bypass.
+- **External-player playback** — launch playback in an external player (mpv, VLC, Infuse, …) and it fetches metadata directly from Jellyfin's regular APIs, which may show un-stripped fields. Spoiler Guard runs inside the JC plugin's response filters, which external players bypass.
 
 !!! note "Filename and stream-title scrubbing"
 
@@ -214,7 +214,7 @@ All Spoiler Guard policy is server-wide and lives in one place:
 
 !!! info "Where to find it"
 
-    Jellyfin Dashboard → Plugins → **Jellyfin Elevate** → **Pages** tab → **Spoiler Guard** section.
+    Jellyfin Dashboard → Plugins → **Jellyfin Canopy** → **Pages** tab → **Spoiler Guard** section.
 
 The master switch is the only setting that requires explicit admin opt-in. Everything below it is the default policy applied when a user enables Spoiler Guard for one of their shows — and because those metadata toggles all **default to on**, the out-of-the-box posture is strict: flip the master switch, a user opts a show in, and every spoiler surface is protected without further configuration. Admins who want a looser setup can untick anything they don't need.
 
@@ -227,19 +227,19 @@ The master switch is the only setting that requires explicit admin opt-in. Every
 | **Keep movie posters unblurred** | On | A guarded movie's **Primary** (poster) and **Thumb** pass through clear; its chapter thumbnails (progressive), screenshots, and — if the setting above is on — backdrops/art stay protected. Turn off to hide movie posters until each is watched. Series and Episodes are unaffected (they use their own per-aspect logic). |
 | **Per-user image identity tags** | On | Appends the per-user identity marker to image tags so protection stays precise behind reverse proxies, VPNs, and shared/NAT networks with zero proxy config. Leave on — turning it off reverts non-web clients to session-by-IP matching, which over-blurs when several users share one IP. |
 | **Auto-enable on first play of a series' S1E1** | Off | Auto-adds a series to the user's list the first time they play a fresh S1E1. Rewatches and later-episode plays don't trigger it. Applies to all users. |
-| **Auto-enable on Seerr request** | Off | Every successful Seerr request via JE registers a pending entry that promotes to real protection when the content lands. The Seerr **More Info** toggle is available regardless of this setting. |
+| **Auto-enable on Seerr request** | Off | Every successful Seerr request via JC registers a pending entry that promotes to real protection when the content lands. The Seerr **More Info** toggle is available regardless of this setting. |
 | **Full page reload on toggle (strict refresh)** | Off | Off = in-place image refresh only (no flash; text updates on next navigation). On = image refresh **plus** a full page reload so DOM text re-renders immediately. The mark-watched/unwatched path is always soft regardless. |
 | **Hide episode/movie descriptions (Overview)** | On | Replaces the synopsis with the placeholder text below. The single biggest spoiler vector. |
 | **Overview placeholder text** | `Spoiler Guard activated` | Shown in place of the description so the client doesn't render an empty section. Server-side sanitized on every serve (HTML tags and angle brackets stripped, capped at 200 chars), so even a hand-edited plugin XML gets the same defense-in-depth. |
 | **Hide tags** | On | Drops the TMDB Tags array on unwatched-episode cards **and on the guarded series' own DTO**. (Genre/quality/language overlays are governed elsewhere and aren't affected by Spoiler Guard.) |
 | **Hide chapter names** | On | Strips chapter names but keeps the timestamp markers, so the seek bar still shows dividers. Chapter thumbnails are stripped too. For movies this is a **progressive strip** — only chapters starting after the resume point are hidden. |
 | **Hide taglines** | On | TMDB taglines are hidden via an empty array (not null), matching what Jellyfin returns for an item legitimately without tags. |
-| **Hide ratings (community & critic)** | On | Hides **both** the community/TMDB and critic ratings (via null, so clients don't render "0/10"). Suppresses the JE card rating overlay on the series, season, and unwatched-episode cards (no fallback to the parent rating); watched episodes keep theirs. |
+| **Hide ratings (community & critic)** | On | Hides **both** the community/TMDB and critic ratings (via null, so clients don't render "0/10"). Suppresses the JC card rating overlay on the series, season, and unwatched-episode cards (no fallback to the parent rating); watched episodes keep theirs. |
 | **Hide air / premiere dates** | On | Hidden via null — a scheduling gap can itself imply "finale" or "long-anticipated reveal". |
 | **Replace episode titles with "Season X, Episode Y"** | On | Synthesizes the title everywhere it appears — list views, Next Up, Continue Watching, search results, the player's now-playing overlay. Some clients use the title in tooltips/breadcrumbs where the synthesized form looks jarring; turn off if that's a deal-breaker. |
 | **Hide cast** | On | Strips the cast on unwatched episodes **and on the guarded series' own cast rail**. See **Cast strip mode** below. |
 | **Cast strip mode** | Guest stars only | `Guest stars only (keep regular cast)` removes only `Type=GuestStar` entries (regular cast appears every episode anyway). `All cast & crew` removes every People entry. When **Replace episode titles** *or* **Hide descriptions** is on, the character `Role` is also stripped from surviving People regardless of mode. |
-| **Hide the Reviews panel on guarded series** | On | Suppresses the JE Reviews panel on guarded series **and movie** detail pages (a movie guarded directly or via an opted-in collection) until watched. This one is applied **in the web client**, since the panel only exists there. |
+| **Hide the Reviews panel on guarded series** | On | Suppresses the JC Reviews panel on guarded series **and movie** detail pages (a movie guarded directly or via an opted-in collection) until watched. This one is applied **in the web client**, since the panel only exists there. |
 
 ### Fail-closed behavior
 
@@ -255,14 +255,14 @@ Separately, when a corrupt file is *detected* (truncated by a power loss mid-wri
 
 Corruption events are exposed through a diagnostic JSON endpoint so you can check whether Spoiler Guard preferences were reset without shell access:
 
-- `GET /JellyfinElevate/spoiler-blur/health` — query corruption events. Scoping is per-user: non-admins see only their own events; admins see all, so they can advise affected users.
-- `DELETE /JellyfinElevate/spoiler-blur/health/{userId}` — acknowledges (clears) an event.
+- `GET /JellyfinCanopy/spoiler-blur/health` — query corruption events. Scoping is per-user: non-admins see only their own events; admins see all, so they can advise affected users.
+- `DELETE /JellyfinCanopy/spoiler-blur/health/{userId}` — acknowledges (clears) an event.
 
 There's no in-UI banner yet — the surface is the endpoint, not a management-UI notification.
 
 ### What gets logged
 
-For diagnostics, the plugin writes rate-limited entries to `/config/log/JellyfinElevate_{date}.log`:
+For diagnostics, the plugin writes rate-limited entries to `/config/log/JellyfinCanopy_{date}.log`:
 
 - Auto-enable events: `SpoilerAutoEnable: enabled Spoiler Guard for series '<name>' (...) on first-play of S1E1 by user <id>`
 - Seerr pre-acquisition records: `Spoiler Guard pending recorded tv:<tmdbId> for <user>`

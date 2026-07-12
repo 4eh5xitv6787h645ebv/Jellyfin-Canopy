@@ -1,4 +1,4 @@
-# Jellyfin Elevate — repo conventions, codified (v12 Phase 4 analyzer ratchet).
+# Jellyfin Canopy — repo conventions, codified (v12 Phase 4 analyzer ratchet).
 #
 # Rules mirror the style the codebase already uses; nothing here reformats
 # existing code. Build-breaking strictness lives in the csproj

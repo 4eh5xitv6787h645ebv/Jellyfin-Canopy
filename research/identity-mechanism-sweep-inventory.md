@@ -13,10 +13,10 @@ Generated 2026-07-08 by the identity-mechanism-sweep workflow: 7 parallel ideati
 - **Vs current ladder:** complements/beats tier 4 — directly resolves the reverse-proxy ambiguity the current ladder explicitly gives up on; does not touch the proxy-proof marker tier.
 - **Evaluator:** Safely it only reconstructs tier-4 (a candidate SET, fail-closed) on the truer client IP, so it helps the shrinking residual that already lacks a marker (unstamped DTO shapes, stale native caches) while the TTL'd learned map risks aging out a quietly-scrolling guarding user (leak) unless bounded against CGNAT IP-reassignment leaks.
 
-## HMAC-signed identity cookie (upgrade of the je-spoiler-uid cookie)
+## HMAC-signed identity cookie (upgrade of the jc-spoiler-uid cookie)
 *Lens:* http-protocol · *Verdict:* **complement** (feasibility 5/5, value 2/5)
 
-- **Mechanism:** Replace the raw-GUID je-spoiler-uid cookie with a server-secret-HMAC cookie carrying {userId, issuedAt}, set (HttpOnly, SameSite=Lax, Secure) during the authenticated web session. On an anonymous same-origin <img>/CSS-background fetch the browser attaches it; the filter verifies the signature and trusts the named user WITHOUT the session-on-IP cross-check the current cookie needs (the signature proves it was minted inside that user's real session).
+- **Mechanism:** Replace the raw-GUID jc-spoiler-uid cookie with a server-secret-HMAC cookie carrying {userId, issuedAt}, set (HttpOnly, SameSite=Lax, Secure) during the authenticated web session. On an anonymous same-origin <img>/CSS-background fetch the browser attaches it; the filter verifies the signature and trusts the named user WITHOUT the session-on-IP cross-check the current cookie needs (the signature proves it was minted inside that user's real session).
 - **Coverage:** Web browsers only — native TV/mobile clients keep no shared cookie jar and don't send it on image requests.
 - **Trust tier:** authoritative for web (unforgeable, self-authenticating), vs the current cookie's 'strong only when a session is on the IP'.
 - **Misattribution risk:** Low. Cannot be forged without the server secret. Residual: two humans sharing one browser profile — the cookie reflects the last login, so the earlier user's cached posters could be scored under the later user. Bounded to genuine profile-sharing (same risk class as any browser-scoped signal).
@@ -167,7 +167,7 @@ Generated 2026-07-08 by the identity-mechanism-sweep workflow: 7 parallel ideati
 - **Vs current ladder:** complements — an authoritative signal for the playback window where the tag marker may be absent; higher trust than tag but narrower coverage.
 - **Evaluator:** Server-minted and authoritative for the playback window, but its coverage (anonymous subtitle/trickplay during active playback) is a strict subset of the tag marker's, it needs an event-subscription + TTL map to build, and the spoiler-critical surface (posters during idle browsing) is exactly when PlaySessionId is absent, so it hardens a narrow already-covered slice.
 
-## je-spoiler-uid browser cookie, session-on-IP validated (ladder tier 3, shipped)
+## jc-spoiler-uid browser cookie, session-on-IP validated (ladder tier 3, shipped)
 *Lens:* jellyfin-internals · *Verdict:* **complement** (feasibility 5/5, value 2/5)
 
 - **Mechanism:** Web client JS sets a per-browser cookie; browsers attach it to same-origin anonymous <img>/CSS-background fetches. Trusted only to disambiguate among users that actually hold a session on the request IP.
@@ -392,7 +392,7 @@ Generated 2026-07-08 by the identity-mechanism-sweep workflow: 7 parallel ideati
 - **Cost:** medium — introduce a persisted server secret + HMAC util (none exist in-repo today) and a longer tag; validate cache-header behavior with longer tags.
 - **Vs current ladder:** beats the current marker on trust IF identity is ever reused for access-control features. For Spoiler Guard alone it is not required (threat model says forgery only self-spoils), so it is a strategic upgrade, not a correctness fix.
 
-## je-spoiler-uid cookie validated against session-on-IP (ladder tier 3, SHIPPED)
+## jc-spoiler-uid cookie validated against session-on-IP (ladder tier 3, SHIPPED)
 *Lens:* dto-echo-channels · *Verdict:* **n/a** (feasibility ?/5, value ?/5)
 
 - **Mechanism:** Web client sets a per-browser cookie on load; browsers attach it to same-origin anonymous <img>/CSS-background fetches. Trusted only to pick among users who actually have a session on the request IP.
@@ -436,7 +436,7 @@ Generated 2026-07-08 by the identity-mechanism-sweep workflow: 7 parallel ideati
 ## Client-cooperation identity header from own fork (Plethorafin) (A7)
 *Lens:* dto-echo-channels · *Verdict:* **complement** (feasibility 4/5, value 1/5)
 
-- **Mechanism:** The user's own Android TV fork (Plethorafin/Moonfin) emits an X-JE-User (or signed) header on image requests.
+- **Mechanism:** The user's own Android TV fork (Plethorafin/Moonfin) emits an X-JC-User (or signed) header on image requests.
 - **Coverage:** Only that one client build; stock ATV/Swiftfin/Roku cannot be changed server-side.
 - **Trust tier:** authoritative for the cooperating client (if signed).
 - **Misattribution risk:** none for the cooperating client; irrelevant elsewhere.
@@ -616,7 +616,7 @@ Generated 2026-07-08 by the identity-mechanism-sweep workflow: 7 parallel ideati
 - **Cost:** already implemented; the one non-trivial cost is stamping ALL tag-bearing DTO fields + ImageBlurHashes re-keying across all routes.
 - **Vs current ladder:** IS the ladder's decisive middle tier and the single reliable channel for native clients — everything below only exists to cover the gap before a client refreshes its cached (unstamped) URLs.
 
-## L3 — je-spoiler-uid cookie validated against session-on-IP (existing ladder tier 3)
+## L3 — jc-spoiler-uid cookie validated against session-on-IP (existing ladder tier 3)
 *Lens:* ecosystem-prior-art · *Verdict:* **n/a** (feasibility ?/5, value ?/5)
 
 - **Mechanism:** Web client sets a per-browser cookie; browsers attach it to same-origin anonymous <img>/CSS-background fetches. Trusted only to pick among users who actually have a session on the request IP.
@@ -773,17 +773,17 @@ Generated 2026-07-08 by the identity-mechanism-sweep workflow: 7 parallel ideati
 ## Plugin-served image proxy route with identity in the path (mostly dominated)
 *Lens:* ecosystem-prior-art · *Verdict:* **n/a** (feasibility ?/5, value ?/5)
 
-- **Mechanism:** Generalization of L2 / the Overseerr-Jellyseerr image-proxy pattern: serve images through a plugin route like /JellyfinElevate/Images/{item}?u={signedMarker} and hand clients that full URL. Home Assistant/Nextcloud/CloudFront all do identity-in-the-URL this way.
+- **Mechanism:** Generalization of L2 / the Overseerr-Jellyseerr image-proxy pattern: serve images through a plugin route like /JellyfinCanopy/Images/{item}?u={signedMarker} and hand clients that full URL. Home Assistant/Nextcloud/CloudFront all do identity-in-the-URL this way.
 - **Coverage:** Would cover any client — BUT only if the client actually requests THAT url. Jellyfin item images are client-CONSTRUCTED from itemId+tag, not taken from a URL field in the DTO, so clients won't hit a custom route unless the URL is one they build. That is exactly why L2 rides the ?tag= field instead of a new path.
 - **Trust tier:** authoritative in principle.
 - **Misattribution risk:** none (server controls the route).
 - **Cost:** high, and blocked by the client-constructs-the-URL reality.
 - **Vs current ladder:** dominated by L2 — L2 is the only form of this pattern that clients will actually round-trip without cooperation; the ?tag= channel is the plugin's only injection point into a client-built URL.
 
-## Signed/session-bound je-spoiler-uid cookie (harden tier 3)
+## Signed/session-bound jc-spoiler-uid cookie (harden tier 3)
 *Lens:* web-client-channels · *Verdict:* **complement** (feasibility 4/5, value 2/5)
 
-- **Mechanism:** Server mints a short-lived token over the authenticated channel (HMAC of userId + expiry under a persisted plugin secret, or the userId encrypted). Injected client stores it as the je-spoiler-uid cookie instead of the raw GUID. Browsers attach it automatically to same-origin <img>/CSS-background fetches (no URL rewrite, no flicker). The image action filter verifies the HMAC/expiry and attributes directly, WITHOUT the current session-on-IP validation.
+- **Mechanism:** Server mints a short-lived token over the authenticated channel (HMAC of userId + expiry under a persisted plugin secret, or the userId encrypted). Injected client stores it as the jc-spoiler-uid cookie instead of the raw GUID. Browsers attach it automatically to same-origin <img>/CSS-background fetches (no URL rewrite, no flicker). The image action filter verifies the HMAC/expiry and attributes directly, WITHOUT the current session-on-IP validation.
 - **Coverage:** Web + Android-mobile WebView (which IS jellyfin-web). Not native TV/Swiftfin/Roku (they send no cookies).
 - **Trust tier:** authoritative (for web) — value is server-minted and tamper-evident, so it can be trusted on its own
 - **Misattribution risk:** Near-zero if bound to session lifetime and short expiry. Residual risk: a not-yet-expired token lingering after logout could name the previous user on that browser — mitigate by re-priming on every load (already done) + short TTL + optional server-side session-validity check. Fail-safe: bad/expired signature falls through to the existing IP ladder.
@@ -794,7 +794,7 @@ Generated 2026-07-08 by the identity-mechanism-sweep workflow: 7 parallel ideati
 ## Service Worker fetch interception (identity header on img + CSS requests)
 *Lens:* web-client-channels · *Verdict:* **n/a** (feasibility ?/5, value ?/5)
 
-- **Mechanism:** Injected script registers a first-party service worker at root scope; its fetch handler intercepts EVERY network request in scope — including <img> and CSS background-image loads that fetch/XHR patching cannot see — and clones them with an added header (e.g. X-JE-Uid or the signed cookie value), deriving the live userId from app state via postMessage/IndexedDB keyed on the fetch event's clientId.
+- **Mechanism:** Injected script registers a first-party service worker at root scope; its fetch handler intercepts EVERY network request in scope — including <img> and CSS background-image loads that fetch/XHR patching cannot see — and clones them with an added header (e.g. X-JC-Uid or the signed cookie value), deriving the live userId from app state via postMessage/IndexedDB keyed on the fetch event's clientId.
 - **Coverage:** Web + Android-mobile WebView only. Uniquely (vs fetch-patching) it DOES cover <img>/CSS-background, the actual poster loaders.
 - **Trust tier:** strong disambiguation (as trustworthy as the cookie; can carry the signed token to reach authoritative)
 - **Misattribution risk:** Manageable but footgun-heavy: (a) SW is one registration shared across all same-origin tabs, so a multi-account browser must map fetch clientId→uid, not cache a single uid, or it will stamp the wrong user; (b) stale identity across an account switch if the SW caches uid instead of re-deriving per fetch.
@@ -804,7 +804,7 @@ Generated 2026-07-08 by the identity-mechanism-sweep workflow: 7 parallel ideati
 ## fetch()/XMLHttpRequest monkey-patching to attach an identity header
 *Lens:* web-client-channels · *Verdict:* **n/a** (feasibility ?/5, value ?/5)
 
-- **Mechanism:** Override window.fetch and XMLHttpRequest.prototype.open/send to inject an X-JE-Uid header (or Authorization) on outgoing requests.
+- **Mechanism:** Override window.fetch and XMLHttpRequest.prototype.open/send to inject an X-JC-Uid header (or Authorization) on outgoing requests.
 - **Coverage:** Only requests that actually go through fetch/XHR. The problem images are loaded by the browser's native image loader via <img src> and CSS background-image, which do NOT pass through fetch/XHR and cannot be intercepted this way.
 - **Trust tier:** strong for the requests it can touch — but those are the wrong requests
 - **Misattribution risk:** Low where it applies, but it doesn't apply to poster loads, so it adds no protection there.
@@ -817,7 +817,7 @@ Generated 2026-07-08 by the identity-mechanism-sweep workflow: 7 parallel ideati
 - **Mechanism:** Injected code appends the per-user marker (or a uid param) to each poster URL before the browser fetches it, reading the current uid from localStorage/app state, so the marker rides in ?tag= without a server DTO rewrite.
 - **Coverage:** Web + WebView only.
 - **Trust tier:** strong disambiguation (same class as the server marker)
-- **Misattribution risk:** Rewriting AFTER the browser has begun loading double-fetches every card (native→BlurHash→rewrite→BlurHash) — the exact visible flicker the identity.ts comment documents and forbids. Doing it BEFORE first paint requires hooking Jellyfin's card builder or a body-wide DOM observer, both forbidden by JE perf rules R1–R8.
+- **Misattribution risk:** Rewriting AFTER the browser has begun loading double-fetches every card (native→BlurHash→rewrite→BlurHash) — the exact visible flicker the identity.ts comment documents and forbids. Doing it BEFORE first paint requires hooking Jellyfin's card builder or a body-wide DOM observer, both forbidden by JC perf rules R1–R8.
 - **Cost:** Medium, and it violates the no-flicker / no-body-observer rules.
 - **Vs current ladder:** dominated by the existing server ?tag= marker (tier 2), which achieves identical per-user URL identity for ALL clients with zero client code and zero flicker (stamped in the authenticated DTO).
 
@@ -896,7 +896,7 @@ Generated 2026-07-08 by the identity-mechanism-sweep workflow: 7 parallel ideati
 - **Vs current ladder:** baseline top tier; nothing beats it where credentials are present.
 - **Evaluator:** Incumbent authoritative top tier with zero misattribution risk; unbeatable wherever credentials are present, though the flagship image-fetch clients send none so it rarely fires on the target gap.
 
-## je-spoiler-uid cookie validated by session-on-IP (existing tier 3)
+## jc-spoiler-uid cookie validated by session-on-IP (existing tier 3)
 *Lens:* web-client-channels · *Verdict:* **adopt-candidate** (feasibility 5/5, value 4/5)
 
 - **Mechanism:** Raw-GUID cookie set by identity.ts, trusted only if that user has a session on the request IP.
@@ -987,7 +987,7 @@ Generated 2026-07-08 by the identity-mechanism-sweep workflow: 7 parallel ideati
 ## Plugin-owned signed image route (own the endpoint, don't borrow ?tag=)
 *Lens:* creative-wildcards · *Verdict:* **reject** (feasibility 2/5, value 1/5)
 
-- **Mechanism:** Register a plugin controller at a NEW route (e.g. /JellyfinElevate/Img/{signedToken}) and rewrite every image URL in authenticated per-user DTOs to point at it, where signedToken = HMAC(userId|itemId|imageType) under a persisted server secret. The client echoes the whole URL verbatim on the anonymous fetch; the plugin controller decodes token->user, decides blur vs clean, then streams bytes (or 302s to the real core endpoint for clean). Same per-user-DTO channel as the marker, but the identity lives in the PATH the plugin fully owns, not a core query param whose survival/filter-ordering the plugin only borrows.
+- **Mechanism:** Register a plugin controller at a NEW route (e.g. /JellyfinCanopy/Img/{signedToken}) and rewrite every image URL in authenticated per-user DTOs to point at it, where signedToken = HMAC(userId|itemId|imageType) under a persisted server secret. The client echoes the whole URL verbatim on the anonymous fetch; the plugin controller decodes token->user, decides blur vs clean, then streams bytes (or 302s to the real core endpoint for clean). Same per-user-DTO channel as the marker, but the identity lives in the PATH the plugin fully owns, not a core query param whose survival/filter-ordering the plugin only borrows.
 - **Coverage:** Every client that echoes DTO image URLs (web + Android TV + Swiftfin + Roku, all verified to echo verbatim). Only items whose DTOs the plugin rewrote — same reach as the marker.
 - **Trust tier:** strong disambiguation (per-user authenticated channel, proxy-proof, no IP)
 - **Misattribution risk:** Low. A shared/forged token only opts the sender into another user's policy = self-spoil, acceptable per threat model. Real risk is functional (byte-proxy latency, cache-header/range-request correctness), not misattribution.
@@ -1149,13 +1149,13 @@ Generated 2026-07-08 by the identity-mechanism-sweep workflow: 7 parallel ideati
 ## Referer / Origin correlation for browser image fetches
 *Lens:* creative-wildcards · *Verdict:* **reject** (feasibility 2/5, value 0/5)
 
-- **Mechanism:** Browser <img>/CSS-background requests carry Referer (the page) and the je-spoiler-uid cookie; correlate to the browsing user.
+- **Mechanism:** Browser <img>/CSS-background requests carry Referer (the page) and the jc-spoiler-uid cookie; correlate to the browsing user.
 - **Coverage:** Web browsers only; native clients send no Referer.
 - **Trust tier:** weak narrowing
 - **Misattribution risk:** Low but redundant.
 - **Cost:** Low.
-- **Vs current ladder:** dominated — the je-spoiler-uid cookie tier (Tier 3) already covers the browser case better. No incremental value.
-- **Evaluator:** Referer names a page/origin, not a user, so it cannot attribute on its own, and the browser case it targets is already handled strictly better by the je-spoiler-uid cookie tier (which names the user directly and is validated against session-on-IP); native clients send no Referer anyway — strictly dominated.
+- **Vs current ladder:** dominated — the jc-spoiler-uid cookie tier (Tier 3) already covers the browser case better. No incremental value.
+- **Evaluator:** Referer names a page/origin, not a user, so it cannot attribute on its own, and the browser case it targets is already handled strictly better by the jc-spoiler-uid cookie tier (which names the user directly and is validated against session-on-IP); native clients send no Referer anyway — strictly dominated.
 
 ## Force-auth by proxying images through a plugin route that DEMANDS a token
 *Lens:* creative-wildcards · *Verdict:* **reject** (feasibility 2/5, value 0/5)

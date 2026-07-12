@@ -1,6 +1,6 @@
 # The Enhanced Experience
 
-The Enhanced area is the part of Jellyfin Elevate you touch every day: sharper playback controls, subtitles you can actually read, poster tags that tell you at a glance what a title is, bookmarks that stick, and a tidy home screen with nothing you don't want to see. Almost everything here is a **per-user** preference you set in the **Enhanced Panel** — and almost every one of those has a matching **admin default** so a server owner can pick sensible starting values for everyone.
+The Enhanced area is the part of Jellyfin Canopy you touch every day: sharper playback controls, subtitles you can actually read, poster tags that tell you at a glance what a title is, bookmarks that stick, and a tidy home screen with nothing you don't want to see. Almost everything here is a **per-user** preference you set in the **Enhanced Panel** — and almost every one of those has a matching **admin default** so a server owner can pick sensible starting values for everyone.
 
 This guide walks through the whole Enhanced experience: the panel itself, the playback and control features, and everything that shapes how you browse your library. If you haven't installed the plugin yet, start with [Getting Started](getting-started.md); for a map of which config tab every admin setting lives on, see the [Reference](reference.md).
 
@@ -13,7 +13,7 @@ The Enhanced Panel is your control center. It's where you turn features on and o
 **Open it two ways:**
 
 - Press `?` anywhere in the web client.
-- Click **Jellyfin Elevate** in the sidebar.
+- Click **Jellyfin Canopy** in the sidebar.
 
 ![Enhanced panel — Settings tab overview](images/enhanced-panel-settings.png)
 
@@ -26,15 +26,15 @@ Toggling a feature applies **immediately** — no restart, no page reload. The t
 
 ### Settings persistence
 
-Your preferences follow you. Everything you set in the Enhanced Panel is saved **server-side, per Jellyfin user** — stored in the plugin's per-user `settings.json` (via the `/JellyfinElevate/user-settings/{userId}/settings.json` endpoint). Because the settings live on the server keyed to your account, they sync automatically across every device and browser where you log in as the same user.
+Your preferences follow you. Everything you set in the Enhanced Panel is saved **server-side, per Jellyfin user** — stored in the plugin's per-user `settings.json` (via the `/JellyfinCanopy/user-settings/{userId}/settings.json` endpoint). Because the settings live on the server keyed to your account, they sync automatically across every device and browser where you log in as the same user.
 
 ### Admin defaults vs. per-user settings
 
-Nearly every per-user toggle in the panel also exists as an **admin default** on the plugin config page (**Dashboard** → **Plugins** → **Jellyfin Elevate**). The admin default is the value a user starts with; the moment a user changes that setting in their own panel, their choice takes over for them. A handful of settings are **admin-only** (server-wide), and a few are noted below as such. The [Reference](reference.md) guide maps every admin setting to the config tab it lives on.
+Nearly every per-user toggle in the panel also exists as an **admin default** on the plugin config page (**Dashboard** → **Plugins** → **Jellyfin Canopy**). The admin default is the value a user starts with; the moment a user changes that setting in their own panel, their choice takes over for them. A handful of settings are **admin-only** (server-wide), and a few are noted below as such. The [Reference](reference.md) guide maps every admin setting to the config tab it lives on.
 
 ### Default Language
 
-You can run the plugin's interface in your own language. Jellyfin Elevate auto-detects your Jellyfin profile language, but you can override it per user from the language selector in the Enhanced Panel's **Settings** tab. The list of available languages is served by the plugin's own `/JellyfinElevate/locales` endpoint, so language discovery works on isolated networks and doesn't depend on GitHub.
+You can run the plugin's interface in your own language. Jellyfin Canopy auto-detects your Jellyfin profile language, but you can override it per user from the language selector in the Enhanced Panel's **Settings** tab. The list of available languages is served by the plugin's own `/JellyfinCanopy/locales` endpoint, so language discovery works on isolated networks and doesn't depend on GitHub.
 
 | Setting | Scope | Default | What it does |
 | --- | --- | --- | --- |
@@ -97,7 +97,7 @@ Drive Jellyfin without reaching for the mouse: a comprehensive set of hotkeys co
 
     An administrator can turn off **all** keyboard shortcuts for every user with
     the **Disable Keyboard Shortcuts** toggle in **Dashboard** → **Plugins** →
-    **Jellyfin Elevate** → **Keyboard** tab. When enabled, the shortcuts stop
+    **Jellyfin Canopy** → **Keyboard** tab. When enabled, the shortcuts stop
     working and the **Shortcuts** tab is removed from the Enhanced Panel.
 
 ### Customizable subtitles
@@ -304,7 +304,7 @@ Poster tags are computed once on the server and served in a single request, so t
 !!! note "The Build Tag Cache scheduled task"
 
     When the server-side cache is on, the **Build Tag Cache** scheduled task
-    (`JellyfinElevateBuildTagCache`) keeps it fresh:
+    (`JellyfinCanopyBuildTagCache`) keeps it fresh:
 
     - **First run** — on the first startup after install, the cache builds
       automatically if it's empty, so poster tags work right away.
@@ -313,7 +313,7 @@ Poster tags are computed once on the server and served in a single request, so t
       Jellyfin adds or changes items during library scans.
 
     If poster tags ever look missing or stale, run it manually from **Dashboard** →
-    **Scheduled Tasks** → **Jellyfin Elevate** → **Build Tag Cache**.
+    **Scheduled Tasks** → **Jellyfin Canopy** → **Build Tag Cache**.
 
 ### Detail-page enhancements
 
@@ -352,7 +352,7 @@ Bookmarks **sync across duplicate items** — copies of the same title that shar
 
 **Managing bookmarks:** a dedicated Bookmarks page collects every bookmark across your library, where you can view them all, **clean up orphaned** bookmarks, **detect and merge duplicates**, and **adjust time offsets** for synced bookmarks.
 
-The management page is surfaced through one of three integration methods, configured under the **Bookmarks** section of **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Pages** tab:
+The management page is surfaced through one of three integration methods, configured under the **Bookmarks** section of **Dashboard** → **Plugins** → **Jellyfin Canopy** → **Pages** tab:
 
 - a **native Home tab** (recommended on Jellyfin 12's experimental layout),
 - the **Plugin Pages** sidebar link (requires the Plugin Pages plugin), or
@@ -360,7 +360,7 @@ The management page is surfaced through one of three integration methods, config
 
 | Setting | Scope | Default | What it does |
 | --- | --- | --- | --- |
-| **Add the Custom Tabs entry for me** (`BookmarksAutoCreateCustomTab`) | Admin only | **off** | When routing Bookmarks through the Custom Tabs plugin, lets Jellyfin Elevate create the matching Custom Tabs entry on save (and remove it if you turn *Use Custom Tabs* off). Only appears once *Use Custom Tabs* is enabled, which requires the Custom Tabs plugin. |
+| **Add the Custom Tabs entry for me** (`BookmarksAutoCreateCustomTab`) | Admin only | **off** | When routing Bookmarks through the Custom Tabs plugin, lets Jellyfin Canopy create the matching Custom Tabs entry on save (and remove it if you turn *Use Custom Tabs* off). Only appears once *Use Custom Tabs* is enabled, which requires the Custom Tabs plugin. |
 
 !!! note "No export/import"
 
@@ -394,7 +394,7 @@ Every action shows an undo toast, and you can always reverse it from the managem
 
 The **server-wide enable** and the **integration method** are admin-only and live on the **Pages** tab; the day-to-day **filter and button toggles** are per-user in the panel (each with a matching admin default).
 
-**Admin (server-wide)** — **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Pages** tab → **Hidden Content**:
+**Admin (server-wide)** — **Dashboard** → **Plugins** → **Jellyfin Canopy** → **Pages** tab → **Hidden Content**:
 
 - Enable or disable the feature server-wide.
 - Choose the integration method for the management page: a native Home tab (recommended on the Jellyfin 12 experimental layout), **Plugin Pages** (requires the Plugin Pages plugin), or **Custom Tabs** (requires the Custom Tabs plugin).
@@ -502,7 +502,7 @@ Not sure what to watch? A **Play Random** button in the Jellyfin header opens a 
 - Can limit the pool to items you haven't watched yet.
 - Independent toggles to include movies and/or TV shows in the pool.
 
-**Configure it** (admin, **Dashboard** → **Plugins** → **Jellyfin Elevate** → **Display** tab → **Random Button**):
+**Configure it** (admin, **Dashboard** → **Plugins** → **Jellyfin Canopy** → **Display** tab → **Random Button**):
 
 1. Enable **Enable Random Button**.
 2. Optionally adjust the pool:
