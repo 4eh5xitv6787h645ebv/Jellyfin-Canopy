@@ -42,7 +42,7 @@ function tWithFallback(key: string, fallback?: string): string {
 export function buildPanelHtml(ctx: PanelContext): string {
     const { panelBgColor, headerFooterBg, detailsBackground, primaryAccentColor,
             toggleAccentColor, kbdBackground, presetBoxBackground, githubButtonBg,
-            releaseNotesBg, checkUpdatesBorder, releaseNotesTextColor, logoUrl } = ctx;
+            releaseNotesTextColor, logoUrl, brandGradient } = ctx;
 
     const generatePresetHTML = (presets: any[], type: string) => {
         const html = presets.map((preset: any, index: number) => {
@@ -70,16 +70,18 @@ export function buildPanelHtml(ctx: PanelContext): string {
     return `
             <style>
                 #jellyfin-canopy-panel .tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); }
-                #jellyfin-canopy-panel .tab-button { font-family: inherit; flex: 1; padding: 14px; text-align: center; cursor: pointer; background: transparent; border: none; color: rgba(255,255,255,0.6); font-size: 15px; font-weight: 600; transition: all 0.2s; border-bottom: 2px solid transparent; background: ${panelBgColor}; }
+                #jellyfin-canopy-panel .tab-button { font-family: inherit; flex: 1; padding: 14px; text-align: center; cursor: pointer; border: none; color: rgba(255,255,255,0.6); font-size: 15px; font-weight: 600; transition: all 0.2s; border-bottom: 2px solid transparent; background: ${panelBgColor}; position: relative; }
                 #jellyfin-canopy-panel .tab-button:hover { background: ${panelBgColor}; color: #fff; }
-                #jellyfin-canopy-panel .tab-button.active { color: #fff; border-bottom-color: ${primaryAccentColor}; background: ${headerFooterBg}; }
+                #jellyfin-canopy-panel .tab-button.active { color: #fff; background: ${headerFooterBg}; }
+                /* Canopy signature: gradient underline on the active tab. */
+                #jellyfin-canopy-panel .tab-button.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -2px; height: 2px; background: ${brandGradient}; }
                 #jellyfin-canopy-panel .tab-content { display: none; }
                 #jellyfin-canopy-panel .tab-content.active { display: block; }
                 @keyframes shake { 10%, 90% { transform: translateX(-1px); } 20%, 80% { transform: translateX(2px); } 30%, 50%, 70% { transform: translateX(-4px); } 40%, 60% { transform: translateX(4px); } }
                 .shake-error { animation: shake 0.5s ease-in-out; }
             </style>
             <div style="padding: 18px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); background: ${headerFooterBg};">
-                <div style="font-size: 24px; font-weight: 700; margin-bottom: 8px; text-align: center;"><img src="${escapeHtml(assetUrl('branding/canopy-mark.svg'))}" alt="" width="28" height="24" style="vertical-align: -4px; margin-right: 8px;"><span style="background: ${primaryAccentColor}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Jellyfin Canopy</span></div>
+                <div style="font-size: 24px; font-weight: 700; margin-bottom: 8px; text-align: center;"><img src="${escapeHtml(assetUrl('branding/canopy-mark.svg'))}" alt="" width="28" height="24" style="vertical-align: -4px; margin-right: 8px;"><span style="background: ${brandGradient}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Jellyfin Canopy</span></div>
                 <div style="text-align: center; font-size: 12px; color: rgba(255,255,255,0.8);">${escapeHtml(JC.t!('panel_version', { version: JC.pluginVersion }))}</div>
             </div>
             <div class="tabs">
@@ -623,7 +625,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                 <div class="close-helptext" style="font-size:12px; color:rgba(255,255,255,0.5);">${JC.t!('panel_footer_close')}</div>
                 ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" class="footer-logo" alt="Theme Logo" style="height: 40px;">` : ''}
                 <div class="footer-buttons" style="display:flex; gap:12px; align-items:center;">
-                    <button id="releaseNotesBtn" style="font-family:inherit; background:${releaseNotesBg}; color:${releaseNotesTextColor}; border:${checkUpdatesBorder}; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:500; cursor:pointer; transition:all 0.2s; display:flex; align-items:center; gap:6px;" onmouseover="this.style.background='${primaryAccentColor}'" onmouseout="this.style.background='${releaseNotesBg}'">${JC.t!('panel_footer_release_notes')}</button>
+                    <button id="releaseNotesBtn" style="font-family:inherit; background:${brandGradient}; color:#fff; text-shadow:0 1px 2px rgba(0,6,17,0.35); border:none; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; transition:opacity 0.2s; display:flex; align-items:center; gap:6px;" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">${JC.t!('panel_footer_release_notes')}</button>
                     <a href="https://github.com/${GITHUB_REPO}/" target="_blank" style="color:${primaryAccentColor}; text-decoration:none; display:flex; align-items:center; gap:6px; font-size:12px; padding:4px 8px; border-radius:4px; background:${githubButtonBg}; transition:background 0.2s;" onmouseover="this.style.background='rgba(102, 179, 255, 0.2)'" onmouseout="this.style.background='${githubButtonBg}'"><svg height="12" viewBox="0 0 24 24" width="12" fill="currentColor"><path d="M12 1C5.923 1 1 5.923 1 12c0 4.867 3.149 8.979 7.521 10.436.55.096.756-.233.756-.522 0-.262-.013-1.128-.013-2.049-2.764.509-3.479-.674-3.699-1.292-.124-.317-.66-1.293-1.127-1.554-.385-.207-.936-.715-.014-.729.866-.014 1.485.797 1.691 1.128.99 1.663 2.571 1.196 3.204.907.096-.715.385-1.196.701-1.471-2.448-.275-5.005-1.224-5.005-5.432 0-1.196.426-2.186 1.128-2.956-.111-.275-.496-1.402.11-2.915 0 0 .921-.288 3.024 1.128a10.193 10.193 0 0 1 2.75-.371c.936 0 1.871.123 2.75.371 2.104-1.43 3.025-1.128 3.025-1.128.605 1.513.221 2.64.111 2.915.701.77 1.127 1.747 1.127 2.956 0 4.222-2.571 5.157-5.019 5.432.399.344.743 1.004.743 2.035 0 1.471-.014 2.654-.014 3.025 0 .289.206.632.756.522C19.851 20.979 23 16.854 23 12c0-6.077-4.922-11-11-11Z"></path></svg> ${JC.t!('panel_footer_contribute')}</a>
                 </div>
             </div>
