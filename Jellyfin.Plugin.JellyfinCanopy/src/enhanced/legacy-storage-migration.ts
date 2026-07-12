@@ -18,6 +18,17 @@ export function migrateLegacyClientStorage(): void {
         }
         localStorage.removeItem('jellyfinElevateLastCleared');
         localStorage.removeItem('jellyfinElevateSettings');
+
+        // Hide-confirm "don't ask again" suppression window (15 min): adopt an
+        // active legacy timestamp so the user's explicit choice survives the
+        // upgrade, and drop the stale key either way.
+        if (localStorage.getItem('jc_hide_confirm_suppressed_until') === null) {
+            const legacySuppressed = localStorage.getItem('je_hide_confirm_suppressed_until');
+            if (legacySuppressed !== null) {
+                localStorage.setItem('jc_hide_confirm_suppressed_until', legacySuppressed);
+            }
+        }
+        localStorage.removeItem('je_hide_confirm_suppressed_until');
     } catch {
         // Storage can be blocked (private mode, embedded webviews); the clear
         // flow already tolerates a missing marker, so silently skip.
