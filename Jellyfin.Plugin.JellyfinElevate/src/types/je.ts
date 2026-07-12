@@ -30,6 +30,8 @@ export interface PluginConfig {
     AssetCacheEnabled?: boolean;
     /** Gate the in-app Approve/Decline affordance on pending Seerr requests (default true). */
     RequestApprovalsEnabled?: boolean;
+    /** Show the Awards section (Wikidata-sourced wins/nominations) on movie & series detail pages (default false). */
+    ShowAwards?: boolean;
     [key: string]: unknown;
 }
 

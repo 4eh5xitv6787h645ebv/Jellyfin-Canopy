@@ -108,6 +108,8 @@ Jellyfin.Plugin.JellyfinElevate/
 │   ├── ArrLinksController.cs / ArrCalendarController.cs / ArrRequestsController.cs
 │   ├── UserSettingsController.cs / HiddenContentController.cs / ReviewsController.cs
 │   ├── TagCacheController.cs / ItemInfoController.cs / BrandingController.cs
+│   ├── AwardsController.cs    # Per-item awards from the server-side index (caller-scoped lookup,
+│   │                          # no per-view network — see Services/Awards)
 │   ├── SpoilerGuardController.cs # Spoiler Guard opt-in list (series/movies/collections), Seerr
 │   │                          # pending pre-arm, and the corruption-recovery health endpoints
 │   └── ActiveStreamsController.cs / MaintenanceModeController.cs / ViewsController.cs
@@ -136,6 +138,10 @@ Jellyfin.Plugin.JellyfinElevate/
 │   │                          # ladder (authenticated token → per-user ?tag= identity marker →
 │   │                          # je-spoiler-uid cookie → session-by-IP candidates), returned with a
 │   │                          # confidence tier so consumers pick single-user vs fail-closed posture
+│   ├── Awards/                # Awards index: WikidataAwardsProvider (bulk SPARQL fetch of wins +
+│   │                          # nominations per ceremony, independent of library size), AwardsCacheService
+│   │                          # (versioned, atomically-persisted index keyed by IMDb/TMDb id; local
+│   │                          # per-item lookup). Refreshed by ScheduledTasks/BuildAwardsCacheTask (weekly)
 │   └── SpoilerGuard/          # Spoiler Guard server core: ImageBlurService (SkiaSharp Gaussian blur +
 │                              # stock-card render + pre-encoded fail-closed JPEG, cached),
 │                              # SpoilerBlurImageFilter (per-user image-byte replacement over the Image/

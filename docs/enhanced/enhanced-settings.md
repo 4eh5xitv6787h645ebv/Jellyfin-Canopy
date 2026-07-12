@@ -165,6 +165,26 @@ episodes), sourced from TMDB.
   country's release dates to prefer, falling back to US and then any region TMDB
   has for that release type.
 
+## Show Awards
+
+**Show Awards** (`ShowAwards`, admin-only) adds an **Awards** section on Movie
+and Series detail pages listing the wins and nominations the title received from
+the Oscars, Golden Globes, BAFTA, Cannes, Venice, Berlin, Screen Actors Guild,
+Critics' Choice and the Emmys.
+
+- **Admin config toggle** — enable it in the **Awards** section of the plugin
+  config page. There is no per-user override.
+- **No API key required** — the data is sourced from [Wikidata](https://www.wikidata.org)
+  (open data), not TMDB or a paid awards API.
+- **Scales to large libraries** — the server builds one global award index from
+  Wikidata and matches each item locally by its IMDb/TMDb id, so there are **no
+  per-item network requests** at view time regardless of library size.
+- **Populate + refresh** — run the **Build Awards Cache** task under **Dashboard**
+  → **Scheduled Tasks** once after enabling to build the initial index. It then
+  refreshes automatically every 7 days (award data changes rarely); you can retune
+  the cadence or run it manually from the same page. The index is saved to disk, so
+  a server restart never re-fetches.
+
 ## Home Row Filtering
 
 **Filter Continue Watching** and **Filter Next Up** (in the Hidden Content

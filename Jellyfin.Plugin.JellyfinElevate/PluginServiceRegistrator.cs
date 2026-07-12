@@ -50,6 +50,9 @@ namespace Jellyfin.Plugin.JellyfinElevate
                 .ConfigurePrimaryHttpMessageHandler(() => Helpers.ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: true));
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.TmdbClient);
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.AssetsClient);
+            // Wikidata Query Service (query.wikidata.org) — the awards data source. Hardcoded
+            // allowlisted host, no credentials; default handler like the TMDB/assets clients.
+            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.WikidataClient);
             // Dedicated JellyfinElevate_*.log sink (a documented product feature)
             // plus a closed-generic ILogger<T> registration for every plugin type.
             // Each FileForwardingLogger<T> writes the file AND forwards to the host
@@ -115,6 +118,13 @@ namespace Jellyfin.Plugin.JellyfinElevate
             serviceCollection.AddSingleton<SeerrScanTriggerService>();
             serviceCollection.AddSingleton<TagCacheService>();
             serviceCollection.AddSingleton<TagCacheMonitor>();
+            // Awards index: a global, disk-persisted map of award-winning/nominated titles the
+            // client looks up per item with no per-view network cost. The provider does the bulk
+            // Wikidata fetch; the cache service holds/persists the index; the build task refreshes
+            // it on an infrequent cadence. Provider is HttpClient-backed, hence a singleton.
+            serviceCollection.AddSingleton<Services.Awards.AwardsCacheService>();
+            serviceCollection.AddSingleton<Services.Awards.IAwardsProvider, Services.Awards.WikidataAwardsProvider>();
+            serviceCollection.AddTransient<BuildAwardsCacheTask>();
             serviceCollection.AddTransient<ArrTagsSyncTask>();
             serviceCollection.AddTransient<BuildTagCacheTask>();
             serviceCollection.AddTransient<JellyseerrWatchlistSyncTask>();

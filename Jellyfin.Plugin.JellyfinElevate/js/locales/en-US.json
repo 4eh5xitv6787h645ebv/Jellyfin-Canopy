@@ -698,5 +698,8 @@
   "discovery_customize_move_down": "Move down",
   "discovery_customize_reset": "Reset to defaults",
   "discovery_customize_cancel": "Cancel",
-  "discovery_customize_save": "Save"
+  "discovery_customize_save": "Save",
+  "awards_section_title": "Awards",
+  "awards_won": "Winner",
+  "awards_nominated": "Nominee"
 }

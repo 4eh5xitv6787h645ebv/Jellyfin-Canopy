@@ -171,6 +171,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Configuration
                 Public("HideReviewsFromHiddenUsers", c => c.HideReviewsFromHiddenUsers),
                 Public("HideReviewsFromDisabledUsers", c => c.HideReviewsFromDisabledUsers),
                 Public("ShowReleaseDates", c => c.ShowReleaseDates),
+                Public("ShowAwards", c => c.ShowAwards),
                 Public("ShowUserRatingOnPosters", c => c.ShowUserRatingOnPosters),
                 Public("ShowUserRatingDash", c => c.ShowUserRatingDash),
                 PublicUser("PauseScreenEnabled", c => c.PauseScreenEnabled, nameof(UserSettings.PauseScreenEnabled)),

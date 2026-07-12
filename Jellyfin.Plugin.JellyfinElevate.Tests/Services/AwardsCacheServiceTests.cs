@@ -1,0 +1,415 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using Jellyfin.Plugin.JellyfinElevate.Model.Awards;
+using Jellyfin.Plugin.JellyfinElevate.Services.Awards;
+using Jellyfin.Plugin.JellyfinElevate.Tests.TestDoubles;
+using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
+using Microsoft.Extensions.Logging.Abstractions;
+using Xunit;
+
+namespace Jellyfin.Plugin.JellyfinElevate.Tests.Services
+{
+    /// <summary>
+    /// Covers the awards index: grouping/dedup/sort on rebuild, IMDb and TMDb (movie vs tv)
+    /// lookup, person-id rejection, the atomic version bump, and the disk round-trip. These
+    /// are the stateful, bug-prone parts — the lookup path is what every detail-page view hits.
+    /// </summary>
+    public sealed class AwardsCacheServiceTests : IDisposable
+    {
+        private readonly string _dir;
+
+        public AwardsCacheServiceTests()
+        {
+            _dir = Path.Combine(Path.GetTempPath(), "je-awards-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(_dir);
+        }
+
+        public void Dispose()
+        {
+            try { Directory.Delete(_dir, recursive: true); } catch { /* best-effort */ }
+        }
+
+        private AwardsCacheService NewService() =>
+            new(new StubAppPaths(_dir), NullLogger<AwardsCacheService>.Instance);
+
+        private static Movie Movie(string? imdb = null, string? tmdb = null)
+        {
+            var m = new Movie { Id = Guid.NewGuid() };
+            if (imdb != null) m.ProviderIds["Imdb"] = imdb;
+            if (tmdb != null) m.ProviderIds["Tmdb"] = tmdb;
+            return m;
+        }
+
+        private static Series Series(string? imdb = null, string? tmdb = null)
+        {
+            var s = new Series { Id = Guid.NewGuid() };
+            if (imdb != null) s.ProviderIds["Imdb"] = imdb;
+            if (tmdb != null) s.ProviderIds["Tmdb"] = tmdb;
+            return s;
+        }
+
+        private static AwardRow Row(string ceremony, string category, bool won, int? year, string? imdb = null, string? tmdb = null, string media = "movie") =>
+            new() { Ceremony = ceremony, Category = category, Won = won, Year = year, ImdbId = imdb, TmdbId = tmdb, MediaType = media };
+
+        [Fact]
+        public void NewService_IsEmpty_AndVersionZero()
+        {
+            var svc = NewService();
+            Assert.True(svc.IsEmpty);
+            Assert.Equal(0, svc.Version);
+            Assert.Empty(svc.LookupForItem(Movie(imdb: "tt1")));
+        }
+
+        [Fact]
+        public void ReplaceFrom_ImdbLookup_ReturnsEntry_AndBumpsVersion()
+        {
+            var svc = NewService();
+            svc.ReplaceFrom(new[] { Row("Academy Awards", "Academy Award for Best Picture", true, 2024, imdb: "tt6710474") });
+
+            Assert.False(svc.IsEmpty);
+            Assert.Equal(1, svc.Version);
+
+            var awards = svc.LookupForItem(Movie(imdb: "tt6710474"));
+            var award = Assert.Single(awards);
+            Assert.Equal("Academy Awards", award.Ceremony);
+            Assert.Equal("Academy Award for Best Picture", award.Category);
+            Assert.True(award.Won);
+            Assert.Equal(2024, award.Year);
+
+            // An empty row set never clears an existing index (a fetch that returns nothing is
+            // treated as "keep what we have", never "wipe it").
+            svc.ReplaceFrom(Array.Empty<AwardRow>());
+            Assert.Equal(1, svc.Version);
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt6710474")));
+        }
+
+        [Fact]
+        public void TmdbLookup_SeparatesMovieAndTvNamespaces()
+        {
+            var svc = NewService();
+            svc.ReplaceFrom(new[]
+            {
+                Row("Academy Awards", "Best Picture", true, 2020, tmdb: "100", media: "movie"),
+                Row("Primetime Emmy Awards", "Outstanding Drama Series", true, 2020, tmdb: "100", media: "tv"),
+            });
+
+            // A movie with TMDb 100 sees only the movie-namespaced award, never the tv one.
+            var movieAwards = svc.LookupForItem(Movie(tmdb: "100"));
+            Assert.Single(movieAwards);
+            Assert.Equal("Academy Awards", movieAwards[0].Ceremony);
+
+            // A series with TMDb 100 sees only the tv-namespaced award.
+            var seriesAwards = svc.LookupForItem(Series(tmdb: "100"));
+            Assert.Single(seriesAwards);
+            Assert.Equal("Primetime Emmy Awards", seriesAwards[0].Ceremony);
+        }
+
+        [Fact]
+        public void Lookup_MergesImdbAndTmdb_AndDeduplicates()
+        {
+            var svc = NewService();
+            // Same award reachable by both ids, plus an exact duplicate row — one entry survives.
+            svc.ReplaceFrom(new[]
+            {
+                Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1", tmdb: "50", media: "movie"),
+                Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1", tmdb: "50", media: "movie"),
+                Row("BAFTA Awards", "Best Film", true, 2024, tmdb: "50", media: "movie"),
+            });
+
+            var awards = svc.LookupForItem(Movie(imdb: "tt1", tmdb: "50"));
+            Assert.Equal(2, awards.Count);
+            Assert.Contains(awards, a => a.Ceremony == "Academy Awards");
+            Assert.Contains(awards, a => a.Ceremony == "BAFTA Awards");
+        }
+
+        [Fact]
+        public void Lookup_WinSuppressesMatchingNomination_SameCategoryAndYear()
+        {
+            var svc = NewService();
+            svc.ReplaceFrom(new[]
+            {
+                Row("Academy Awards", "Best Sound Editing", true, 1986, imdb: "tt1"),   // win
+                Row("Academy Awards", "Best Sound Editing", false, 1986, imdb: "tt1"),  // redundant nomination
+                Row("Academy Awards", "Best Original Screenplay", false, 1986, imdb: "tt1"), // distinct nomination
+            });
+
+            var awards = svc.LookupForItem(Movie(imdb: "tt1"));
+            Assert.Equal(2, awards.Count);
+            var soundEditing = Assert.Single(awards, a => a.Category == "Best Sound Editing");
+            Assert.True(soundEditing.Won); // only the win survives for that category/year
+            Assert.Contains(awards, a => a.Category == "Best Original Screenplay" && !a.Won); // untouched
+        }
+
+        [Fact]
+        public void Sort_NewestYearFirst_WinsBeforeNominations()
+        {
+            var svc = NewService();
+            svc.ReplaceFrom(new[]
+            {
+                Row("Academy Awards", "Old Nomination", false, 2000, imdb: "tt1"),
+                Row("Academy Awards", "Recent Nomination", false, 2024, imdb: "tt1"),
+                Row("Academy Awards", "Recent Win", true, 2024, imdb: "tt1"),
+            });
+
+            var awards = svc.LookupForItem(Movie(imdb: "tt1"));
+            Assert.Equal(3, awards.Count);
+            // 2024 win first, then 2024 nomination, then the 2000 nomination.
+            Assert.Equal("Recent Win", awards[0].Category);
+            Assert.True(awards[0].Won);
+            Assert.Equal("Recent Nomination", awards[1].Category);
+            Assert.Equal(2000, awards[2].Year);
+        }
+
+        [Fact]
+        public void Lookup_NonMovieOrSeriesItem_ReturnsEmpty_EvenOnTmdbCollision()
+        {
+            var svc = NewService();
+            svc.ReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, tmdb: "100", media: "movie") });
+
+            // An Episode whose TMDb id numerically collides with the awarded movie's must not
+            // surface that movie's awards — awards are Movie/Series only.
+            var ep = new Episode { Id = Guid.NewGuid() };
+            ep.ProviderIds["Tmdb"] = "100";
+            Assert.Empty(svc.LookupForItem(ep));
+
+            // The real movie still resolves.
+            Assert.Single(svc.LookupForItem(Movie(tmdb: "100")));
+        }
+
+        [Fact]
+        public void PersonId_IsNotIndexed()
+        {
+            var svc = NewService();
+            // A person award row (nm…) with no TMDb id must not be stored or matchable.
+            svc.ReplaceFrom(new[] { Row("Academy Awards", "Best Actor", true, 2024, imdb: "nm123") });
+
+            Assert.Equal(0, svc.TitleCount);
+            Assert.Empty(svc.LookupForItem(Movie(imdb: "nm123")));
+        }
+
+        [Fact]
+        public void BlankCeremonyOrCategory_IsSkipped()
+        {
+            var svc = NewService();
+            svc.ReplaceFrom(new[]
+            {
+                Row("", "Best Picture", true, 2024, imdb: "tt1"),
+                Row("Academy Awards", "", true, 2024, imdb: "tt1"),
+                Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1"),
+            });
+
+            var awards = svc.LookupForItem(Movie(imdb: "tt1"));
+            Assert.Single(awards);
+        }
+
+        [Fact]
+        public void DiskRoundTrip_RestoresIndexAndVersion()
+        {
+            var first = NewService();
+            first.ReplaceFrom(new[]
+            {
+                Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1"),
+                Row("Cannes Film Festival", "Palme d'Or", true, 2019, tmdb: "77", media: "movie"),
+            });
+            var versionBefore = first.Version;
+
+            // A fresh instance (as on server restart) loads the same data from disk.
+            var reloaded = NewService();
+            reloaded.LoadFromDisk();
+
+            Assert.False(reloaded.IsEmpty);
+            Assert.Equal(versionBefore, reloaded.Version);
+            Assert.Single(reloaded.LookupForItem(Movie(imdb: "tt1")));
+            Assert.Equal("Palme d'Or", reloaded.LookupForItem(Movie(tmdb: "77")).Single().Category);
+        }
+
+        [Fact]
+        public void GetAwardsView_ReturnsConsistentSnapshot()
+        {
+            var svc = NewService();
+
+            // Before any build: empty + version 0 + no awards, all from one snapshot.
+            var before = svc.GetAwardsView(Movie(imdb: "tt1"));
+            Assert.True(before.IsEmpty);
+            Assert.Equal(0, before.Version);
+            Assert.Empty(before.Awards);
+
+            Assert.False(before.Complete);
+
+            svc.ReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1") });
+
+            var after = svc.GetAwardsView(Movie(imdb: "tt1"));
+            Assert.False(after.IsEmpty);
+            Assert.True(after.Complete); // ReplaceFrom publishes a complete snapshot
+            Assert.Equal(1, after.Version);
+            Assert.Single(after.Awards);
+        }
+
+        [Fact]
+        public void GetAwardsView_PartialIndex_ReportsIncomplete()
+        {
+            var svc = NewService();
+            // A partial first-install build (some ceremony failed).
+            svc.TryReplaceFrom(new[] { Row("BAFTA Awards", "Best Film", true, 2024, imdb: "tt-bafta") }, complete: false, svc.NextRefreshGeneration());
+
+            // A movie whose awards are in a not-yet-fetched ceremony reads empty but INCOMPLETE,
+            // so the client keeps trying rather than caching "no awards".
+            var view = svc.GetAwardsView(Movie(imdb: "tt-oscar-only"));
+            Assert.False(view.IsEmpty);   // index has BAFTA rows
+            Assert.False(view.Complete);  // but it is partial
+            Assert.Empty(view.Awards);
+        }
+
+        [Fact]
+        public void TryReplaceFrom_Complete_Publishes()
+        {
+            var svc = NewService();
+            Assert.True(svc.TryReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1") }, complete: true));
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt1")));
+        }
+
+        [Fact]
+        public void TryReplaceFrom_PartialOverExistingIndex_IsRejected()
+        {
+            var svc = NewService();
+            svc.TryReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1") }, complete: true);
+            var versionBefore = svc.Version;
+
+            // Partial run with different data must NOT replace the complete index.
+            Assert.False(svc.TryReplaceFrom(new[] { Row("BAFTA Awards", "Best Film", true, 2024, imdb: "tt2") }, complete: false));
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt1"))); // old award survives
+            Assert.Empty(svc.LookupForItem(Movie(imdb: "tt2")));
+            Assert.Equal(versionBefore, svc.Version);
+        }
+
+        [Fact]
+        public void TryReplaceFrom_PartialOnFirstInstall_Publishes()
+        {
+            var svc = NewService(); // empty
+            Assert.True(svc.TryReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1") }, complete: false));
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt1")));
+        }
+
+        [Fact]
+        public void TryReplaceFrom_CompleteEmpty_OnFirstInstall_MarksBuiltNotStuck()
+        {
+            var svc = NewService();
+            // A complete build that legitimately yields no awards must mark the index BUILT (not
+            // "never built"), so the client stops treating it as not-ready.
+            Assert.True(svc.TryReplaceFrom(Array.Empty<AwardRow>(), complete: true, svc.NextRefreshGeneration()));
+            Assert.False(svc.IsEmpty);
+            Assert.Equal(1, svc.Version);
+            Assert.False(svc.GetAwardsView(Movie(imdb: "tt1")).IsEmpty);
+        }
+
+        [Fact]
+        public void TryReplaceFrom_PartialEmpty_OnFirstInstall_DoesNotPublish()
+        {
+            var svc = NewService();
+            // A partial fetch that produced nothing is not a built index — stay empty and wait.
+            Assert.False(svc.TryReplaceFrom(Array.Empty<AwardRow>(), complete: false, svc.NextRefreshGeneration()));
+            Assert.True(svc.IsEmpty);
+        }
+
+        [Fact]
+        public void TryReplaceFrom_EmptyRows_DoesNotPublish()
+        {
+            var svc = NewService();
+            svc.TryReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt1") }, complete: true);
+            var versionBefore = svc.Version;
+
+            Assert.False(svc.TryReplaceFrom(Array.Empty<AwardRow>(), complete: true));
+            Assert.Equal(versionBefore, svc.Version); // unchanged — empty never clears
+        }
+
+        [Fact]
+        public void TryReplaceFrom_StaleGeneration_IsRejected()
+        {
+            var svc = NewService();
+            var genEarly = svc.NextRefreshGeneration(); // an earlier-started refresh
+            var genLate = svc.NextRefreshGeneration();  // a later-started refresh
+
+            // The later-started refresh completes and publishes first.
+            Assert.True(svc.TryReplaceFrom(new[] { Row("Academy Awards", "Newer", true, 2024, imdb: "tt-new") }, complete: true, genLate));
+            // The earlier-started refresh finishes afterwards — its stale generation is rejected.
+            Assert.False(svc.TryReplaceFrom(new[] { Row("Academy Awards", "Older", true, 2024, imdb: "tt-old") }, complete: true, genEarly));
+
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt-new")));
+            Assert.Empty(svc.LookupForItem(Movie(imdb: "tt-old")));
+        }
+
+        [Fact]
+        public void LoadFromDisk_AfterInProcessPublish_KeepsFreshDataOverHigherVersionDisk()
+        {
+            var svc = NewService();
+            // A refresh publishes fresh data in-process (in-memory version restarts at 1).
+            svc.ReplaceFrom(new[] { Row("Academy Awards", "Fresh", true, 2024, imdb: "tt-fresh") });
+
+            // A stale snapshot with a much HIGHER persisted version sits on disk (as if written
+            // before a restart). Version comparison alone would wrongly install it.
+            var path = Path.Combine(_dir, "configurations", "Jellyfin.Plugin.JellyfinElevate", "awards-cache.json");
+            File.WriteAllText(
+                path,
+                "{\"SchemaVersion\":2,\"Version\":99,\"LastModified\":0,\"BuiltAtUtc\":null,\"Complete\":true,"
+                + "\"ByImdb\":{\"tt-stale\":[{\"ceremony\":\"Old\",\"category\":\"Old\",\"year\":2000,\"won\":true}]},"
+                + "\"ByTmdb\":{}}");
+
+            svc.LoadFromDisk();
+
+            // The fresh in-process data is kept; the higher-version but stale disk snapshot is ignored.
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt-fresh")));
+            Assert.Empty(svc.LookupForItem(Movie(imdb: "tt-stale")));
+        }
+
+        [Fact]
+        public void TryReplaceFrom_PartialOverExistingPartial_IsRejected()
+        {
+            var svc = NewService();
+            // First install publishes a PARTIAL snapshot (one ceremony query failed).
+            Assert.True(svc.TryReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt-a") }, complete: false, svc.NextRefreshGeneration()));
+
+            // A later PARTIAL refresh (different ceremony lost) must NOT replace it — that would
+            // erase tt-a's awards. A partial only ever publishes onto an empty index.
+            Assert.False(svc.TryReplaceFrom(new[] { Row("BAFTA Awards", "Best Film", true, 2024, imdb: "tt-b") }, complete: false, svc.NextRefreshGeneration()));
+
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt-a")));
+            Assert.Empty(svc.LookupForItem(Movie(imdb: "tt-b")));
+        }
+
+        [Fact]
+        public void TryReplaceFrom_CompleteSupersedesPartialFirstBuild_RegardlessOfGeneration()
+        {
+            var svc = NewService();
+            var genComplete = svc.NextRefreshGeneration(); // started first (older generation)
+            var genPartial = svc.NextRefreshGeneration();  // started later (newer generation)
+
+            // The later-started PARTIAL first-build finishes first and publishes.
+            Assert.True(svc.TryReplaceFrom(new[] { Row("BAFTA Awards", "Best Film", true, 2024, imdb: "tt-partial") }, complete: false, genPartial));
+
+            // The earlier-started COMPLETE build finishes afterwards — it MUST supersede the partial
+            // despite carrying an older generation (completeness outranks generation).
+            Assert.True(svc.TryReplaceFrom(new[] { Row("Academy Awards", "Best Picture", true, 2024, imdb: "tt-complete") }, complete: true, genComplete));
+
+            Assert.Single(svc.LookupForItem(Movie(imdb: "tt-complete")));
+            Assert.Empty(svc.LookupForItem(Movie(imdb: "tt-partial")));
+        }
+
+        [Fact]
+        public void MissingYear_IsPreservedAsNull_AndSortsLast()
+        {
+            var svc = NewService();
+            svc.ReplaceFrom(new[]
+            {
+                Row("Academy Awards", "No Year", true, null, imdb: "tt1"),
+                Row("Academy Awards", "Has Year", true, 2010, imdb: "tt1"),
+            });
+
+            var awards = svc.LookupForItem(Movie(imdb: "tt1"));
+            Assert.Equal("Has Year", awards[0].Category);
+            Assert.Null(awards[1].Year);
+        }
+    }
+}

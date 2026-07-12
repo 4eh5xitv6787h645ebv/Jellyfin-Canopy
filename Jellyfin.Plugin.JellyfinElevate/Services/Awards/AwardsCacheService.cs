@@ -1,0 +1,548 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Threading;
+using Jellyfin.Plugin.JellyfinElevate.Configuration;
+using Jellyfin.Plugin.JellyfinElevate.Model.Awards;
+using MediaBrowser.Common.Configuration;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
+using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Logging;
+
+namespace Jellyfin.Plugin.JellyfinElevate.Services.Awards
+{
+    /// <summary>
+    /// Holds the global awards index — the set of every title that has won or been nominated
+    /// for a tracked award — keyed by external id (IMDb and TMDb) so a per-item lookup at view
+    /// time is an in-memory dictionary hit with no network call. This is what makes the feature
+    /// scale to large libraries: the index is fetched ONCE per infrequent scheduled refresh
+    /// (<c>BuildAwardsCacheTask</c>), not per item and not per page view.
+    ///
+    /// The index is an immutable snapshot swapped atomically: readers take the current reference
+    /// and read dictionaries that are never mutated after publication, so lookups need no lock.
+    /// A rebuild builds a fresh snapshot and swaps it in, then persists it to disk via
+    /// <see cref="AtomicFile"/>. On startup the last snapshot is loaded from disk, so a restart
+    /// never re-fetches from Wikidata.
+    /// </summary>
+    public sealed class AwardsCacheService
+    {
+        // Bump when the on-disk shape changes so an older cache is discarded and rebuilt
+        // instead of being deserialized into an incompatible structure.
+        private const int CurrentSchemaVersion = 2;
+
+        private readonly IApplicationPaths _applicationPaths;
+        private readonly ILogger<AwardsCacheService> _logger;
+        private readonly object _saveLock = new();
+
+        // Serializes rebuilds so the version read-modify-write and snapshot swap are atomic
+        // across concurrent callers (e.g. the first-install startup build racing a manual
+        // dashboard run of the refresh task). Reads never take this lock — they read the
+        // volatile snapshot reference directly.
+        private readonly object _rebuildLock = new();
+
+        // Monotonic refresh generation: a caller stamps its refresh with NextRefreshGeneration()
+        // BEFORE fetching, so a slower older-started refresh that finishes late can be rejected in
+        // favor of a newer one — publication order follows freshness, not completion order.
+        private long _generationCounter;
+        private long _lastPublishedGeneration;
+
+        // Set once a refresh has published in THIS process. LoadFromDisk refuses to install a disk
+        // snapshot afterwards — an on-disk version number is meaningless across a restart (the
+        // in-memory version restarts at 0), so a fresh in-process publish must never be replaced by
+        // a stale disk read that merely has a higher persisted version.
+        private bool _publishedInProcess;
+
+        private volatile AwardsIndex _index = AwardsIndex.Empty;
+
+        public AwardsCacheService(IApplicationPaths applicationPaths, ILogger<AwardsCacheService> logger)
+        {
+            _applicationPaths = applicationPaths;
+            _logger = logger;
+        }
+
+        private string CacheFilePath =>
+            Path.Combine(_applicationPaths.PluginsPath, "configurations", "Jellyfin.Plugin.JellyfinElevate", "awards-cache.json");
+
+        /// <summary>Monotonic index version, bumped on every rebuild. 0 until the first build.</summary>
+        public long Version => _index.Version;
+
+        /// <summary>Unix-ms timestamp of the last rebuild.</summary>
+        public long LastModified => _index.LastModified;
+
+        /// <summary>Number of distinct titles carrying at least one award (by IMDb id).</summary>
+        public int TitleCount => _index.ByImdb.Count;
+
+        /// <summary>True until the first successful build/load — i.e. the index has never been populated.</summary>
+        public bool IsEmpty => _index.Version == 0 && _index.ByImdb.Count == 0 && _index.ByTmdb.Count == 0;
+
+        /// <summary>True when the current index came from a fully successful (all-ceremony) fetch.</summary>
+        public bool IsComplete => _index.Complete;
+
+        /// <summary>
+        /// Replace the whole index from a fresh set of provider rows, unconditionally. Groups
+        /// rows by title, deduplicates awards, sorts them (newest first, wins before nominations),
+        /// bumps the version, swaps the snapshot atomically, then persists to disk. Prefer
+        /// <see cref="TryReplaceFrom"/> from refresh callers so a partial fetch can't clobber a
+        /// complete index; this primitive is for callers that always want to publish.
+        /// </summary>
+        public void ReplaceFrom(IReadOnlyCollection<AwardRow> rows)
+            => TryReplaceFrom(rows, complete: true, NextRefreshGeneration());
+
+        /// <summary>
+        /// Reserve a monotonic refresh generation. A refresh caller calls this BEFORE it starts
+        /// fetching, then passes the value to <see cref="TryReplaceFrom(IReadOnlyCollection{AwardRow}, bool, long)"/>,
+        /// so an older-started refresh that finishes after a newer one is rejected rather than
+        /// republishing older data.
+        /// </summary>
+        public long NextRefreshGeneration() => Interlocked.Increment(ref _generationCounter);
+
+        /// <summary>
+        /// Convenience overload that reserves a fresh generation at call time (for callers that
+        /// publish immediately and don't span a long fetch, e.g. tests).
+        /// </summary>
+        public bool TryReplaceFrom(IReadOnlyCollection<AwardRow> rows, bool complete)
+            => TryReplaceFrom(rows, complete, NextRefreshGeneration());
+
+        /// <summary>
+        /// Publish a fresh index, but only when it is safe to do so. Returns true if published.
+        /// A <paramref name="complete"/> run always publishes; a PARTIAL run publishes only when
+        /// the index is currently empty (first install) — never over an existing populated index,
+        /// so a single failed ceremony query can't erase that ceremony's awards. A publication
+        /// whose <paramref name="generation"/> is not newer than the last published one is also
+        /// rejected, so an older-started refresh can't overwrite a newer one. The generation check,
+        /// the currently-empty check, the version bump and the swap+persist all happen under one
+        /// lock, so concurrent startup/manual/scheduled refreshes can't race. An empty row set
+        /// never publishes.
+        /// </summary>
+        public bool TryReplaceFrom(IReadOnlyCollection<AwardRow> rows, bool complete, long generation)
+        {
+            ArgumentNullException.ThrowIfNull(rows);
+
+            var byImdb = new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase);
+            var byTmdb = new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var row in rows)
+            {
+                var entry = new AwardEntry
+                {
+                    Ceremony = row.Ceremony?.Trim() ?? string.Empty,
+                    Category = row.Category?.Trim() ?? string.Empty,
+                    Year = row.Year,
+                    Won = row.Won
+                };
+                if (entry.Ceremony.Length == 0 || entry.Category.Length == 0)
+                {
+                    continue;
+                }
+
+                var imdb = NormalizeImdb(row.ImdbId);
+                if (imdb != null)
+                {
+                    AddEntry(byImdb, imdb, entry);
+                }
+
+                var tmdbKey = NormalizeTmdbKey(row.TmdbId, row.MediaType);
+                if (tmdbKey != null)
+                {
+                    AddEntry(byTmdb, tmdbKey, entry);
+                }
+            }
+
+            DedupeAndSort(byImdb);
+            DedupeAndSort(byTmdb);
+
+            // The accept decision (partial vs complete over the CURRENT state) and the version
+            // bump + swap + persist all happen under one lock, so the check is atomic with the
+            // publish. The grouping work above is pure on locals, so it stays outside the lock.
+            AwardsIndex next;
+            lock (_rebuildLock)
+            {
+                var currentlyEmpty = _index.Version == 0 && _index.ByImdb.Count == 0 && _index.ByTmdb.Count == 0;
+                var producesEmpty = byImdb.Count == 0 && byTmdb.Count == 0;
+
+                // Guard 1: an empty result never CLEARS an existing non-empty index — even a
+                // "complete" one. This is deliberate: an all-zero result from every ceremony query
+                // is far more likely our own ceremony QIDs/linkage having gone stale (a maintenance
+                // failure) than Wikidata genuinely dropping all film awards. Keeping the previous
+                // awards is the safer failure mode than wiping the whole index; the next refresh
+                // with corrected queries republishes real data over it.
+                if (producesEmpty && !currentlyEmpty)
+                {
+                    _logger.LogWarning("[Awards] Rejected an empty rebuild over the existing index of {Titles} titles.", _index.ByImdb.Count);
+                    return false;
+                }
+
+                // Guard 2: a partial fetch that produced nothing is not a "built" index — wait for a
+                // real result. (A COMPLETE empty result DOES publish on first install: a legitimate
+                // "built, no awards" state that clears indexEmpty.)
+                if (producesEmpty && !complete)
+                {
+                    return false;
+                }
+
+                // Precedence: does the incoming result supersede the currently published snapshot?
+                //   - a PARTIAL result publishes ONLY onto an empty (never-built) index — a
+                //     first-install best-effort. Once ANY built snapshot exists it never publishes,
+                //     so two successive partials that each lose a different ceremony can't erase
+                //     each other's awards.
+                //   - a COMPLETE result supersedes a PARTIAL one regardless of generation (a
+                //     later-started partial first-build must not block a complete result — F4);
+                //   - a COMPLETE result supersedes an older COMPLETE one only with a newer
+                //     generation (an older-started refresh finishing late can't overwrite it — F9).
+                bool supersedes;
+                if (complete)
+                {
+                    supersedes = !_index.Complete || generation > _lastPublishedGeneration;
+                }
+                else
+                {
+                    supersedes = currentlyEmpty;
+                }
+
+                if (!supersedes)
+                {
+                    _logger.LogWarning(
+                        "[Awards] Rejected a {Kind} rebuild (generation {Gen}); the current index is {CurKind} at generation {Last}.",
+                        complete ? "complete" : "partial", generation,
+                        _index.Complete ? "complete" : "partial", _lastPublishedGeneration);
+                    return false;
+                }
+
+                next = new AwardsIndex
+                {
+                    Version = _index.Version + 1,
+                    LastModified = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    BuiltAtUtc = DateTime.UtcNow.ToString("O"),
+                    Complete = complete,
+                    ByImdb = byImdb,
+                    ByTmdb = byTmdb
+                };
+
+                _index = next;
+                _lastPublishedGeneration = generation;
+                _publishedInProcess = true;
+
+                _logger.LogInformation(
+                    "[Awards] Rebuilt index v{Version} ({Completeness}): {Titles} titles by IMDb, {TmdbTitles} by TMDb.",
+                    next.Version, complete ? "complete" : "partial first build", byImdb.Count, byTmdb.Count);
+
+                SaveToDisk(next);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Awards for a single item, resolved from its provider ids. Merges the IMDb-keyed and
+        /// TMDb-keyed lookups (a row may carry only one id), deduplicates, and returns them
+        /// newest-first. Empty when the item has no tracked awards or no external id.
+        /// </summary>
+        public IReadOnlyList<AwardEntry> LookupForItem(BaseItem item)
+            => item == null ? Array.Empty<AwardEntry>() : LookupInIndex(_index, item);
+
+        /// <summary>
+        /// The item's awards together with the version and emptiness of the SAME index snapshot,
+        /// read once. This keeps the three values mutually consistent even if a rebuild publishes
+        /// mid-request — the response can't claim the index is empty while also carrying awards.
+        /// </summary>
+        public AwardsView GetAwardsView(BaseItem item)
+        {
+            var index = _index; // single consistent snapshot
+            var isEmpty = index.Version == 0 && index.ByImdb.Count == 0 && index.ByTmdb.Count == 0;
+            var awards = item == null ? Array.Empty<AwardEntry>() : LookupInIndex(index, item);
+            return new AwardsView(index.Version, isEmpty, index.Complete, awards);
+        }
+
+        private static IReadOnlyList<AwardEntry> LookupInIndex(AwardsIndex index, BaseItem item)
+        {
+            // Awards are only tracked for Movies and Series. Restricting the lookup to those types
+            // also prevents a TMDb id-namespace collision: a Person/Episode/Season/MusicVideo TMDb
+            // id is a different namespace from a movie's and could numerically match an award-winning
+            // movie, which would otherwise surface that movie's awards on an unrelated page.
+            if (item is not Movie && item is not Series)
+            {
+                return Array.Empty<AwardEntry>();
+            }
+
+            List<AwardEntry>? merged = null;
+
+            var imdb = NormalizeImdb(item.GetProviderId(MetadataProvider.Imdb));
+            if (imdb != null && index.ByImdb.TryGetValue(imdb, out var byImdb))
+            {
+                merged = new List<AwardEntry>(byImdb);
+            }
+
+            var mediaType = item is Series ? "tv" : "movie";
+            var tmdbKey = NormalizeTmdbKey(item.GetProviderId(MetadataProvider.Tmdb), mediaType);
+            if (tmdbKey != null && index.ByTmdb.TryGetValue(tmdbKey, out var byTmdb))
+            {
+                if (merged == null)
+                {
+                    merged = new List<AwardEntry>(byTmdb);
+                }
+                else
+                {
+                    merged.AddRange(byTmdb);
+                }
+            }
+
+            if (merged == null || merged.Count == 0)
+            {
+                return Array.Empty<AwardEntry>();
+            }
+
+            return DedupeSorted(merged);
+        }
+
+        /// <summary>Load the last-built index from disk on startup. Leaves the index empty on any failure.</summary>
+        public void LoadFromDisk()
+        {
+            var path = CacheFilePath;
+            if (!File.Exists(path))
+            {
+                _logger.LogInformation("[Awards] No cache file found, starting empty.");
+                return;
+            }
+
+            try
+            {
+                var json = File.ReadAllText(path);
+                var data = JsonSerializer.Deserialize<AwardsCacheDiskFormat>(json);
+                if (data == null)
+                {
+                    return;
+                }
+
+                if (data.SchemaVersion != CurrentSchemaVersion)
+                {
+                    _logger.LogInformation(
+                        "[Awards] On-disk cache schema v{OnDisk} != current v{Current}; discarding and rebuilding on next refresh.",
+                        data.SchemaVersion, CurrentSchemaVersion);
+                    return;
+                }
+
+                var loaded = new AwardsIndex
+                {
+                    Version = data.Version,
+                    LastModified = data.LastModified,
+                    BuiltAtUtc = data.BuiltAtUtc,
+                    Complete = data.Complete,
+                    ByImdb = data.ByImdb != null
+                        ? new Dictionary<string, List<AwardEntry>>(data.ByImdb, StringComparer.OrdinalIgnoreCase)
+                        : new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase),
+                    ByTmdb = data.ByTmdb != null
+                        ? new Dictionary<string, List<AwardEntry>>(data.ByTmdb, StringComparer.OrdinalIgnoreCase)
+                        : new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase)
+                };
+
+                // Install under the rebuild lock, but only if no refresh has already published in
+                // this process. A version comparison is NOT enough: the in-memory version restarts
+                // at 0, so a fresh in-process refresh (v1) can carry a lower number than a stale disk
+                // snapshot (v5) while holding newer data — the published-in-process flag captures
+                // "an in-flight refresh already won" independent of the numeric version. The loaded
+                // generation seeds _lastPublishedGeneration to 0 so any in-session refresh supersedes.
+                lock (_rebuildLock)
+                {
+                    if (_publishedInProcess)
+                    {
+                        _logger.LogInformation(
+                            "[Awards] A refresh already published in-process; discarding the older disk snapshot (v{OnDisk}).",
+                            loaded.Version);
+                    }
+                    else
+                    {
+                        _index = loaded;
+                        _logger.LogInformation(
+                            "[Awards] Loaded {Titles} titles from disk (v{Version}, {Completeness}).",
+                            loaded.ByImdb.Count, loaded.Version, loaded.Complete ? "complete" : "partial");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("[Awards] Failed to load cache from disk: {Message}", ex.Message);
+            }
+        }
+
+        private void SaveToDisk(AwardsIndex index)
+        {
+            lock (_saveLock)
+            {
+                try
+                {
+                    var dir = Path.GetDirectoryName(CacheFilePath);
+                    if (dir != null)
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+
+                    var data = new AwardsCacheDiskFormat
+                    {
+                        SchemaVersion = CurrentSchemaVersion,
+                        Version = index.Version,
+                        LastModified = index.LastModified,
+                        BuiltAtUtc = index.BuiltAtUtc,
+                        Complete = index.Complete,
+                        ByImdb = index.ByImdb,
+                        ByTmdb = index.ByTmdb
+                    };
+
+                    var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = false });
+                    AtomicFile.WriteAllText(CacheFilePath, json);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("[Awards] Failed to persist cache to disk: {Message}", ex.Message);
+                }
+            }
+        }
+
+        private static void AddEntry(Dictionary<string, List<AwardEntry>> map, string key, AwardEntry entry)
+        {
+            if (!map.TryGetValue(key, out var list))
+            {
+                list = new List<AwardEntry>();
+                map[key] = list;
+            }
+
+            list.Add(entry);
+        }
+
+        private static void DedupeAndSort(Dictionary<string, List<AwardEntry>> map)
+        {
+            foreach (var key in map.Keys.ToList())
+            {
+                map[key] = DedupeSorted(map[key]);
+            }
+        }
+
+        private static string CategoryKey(AwardEntry e)
+            // Unit-separator delimited so distinct fields can't collide across boundaries.
+            => string.Join("\u001f", e.Ceremony, e.Category, e.Year?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty);
+
+        private static List<AwardEntry> DedupeSorted(IEnumerable<AwardEntry> entries)
+        {
+            var list = entries as ICollection<AwardEntry> ?? entries.ToList();
+
+            // Wikidata frequently records BOTH a win and a nomination for the same category/year
+            // (a win implies the nomination). Collapse those to just the win so the UI never shows
+            // e.g. "Best Sound Editing" as both won and nominated.
+            var wonKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in list)
+            {
+                if (e.Won)
+                {
+                    wonKeys.Add(CategoryKey(e));
+                }
+            }
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var result = new List<AwardEntry>();
+            foreach (var e in list)
+            {
+                if (!e.Won && wonKeys.Contains(CategoryKey(e)))
+                {
+                    continue; // a win for this category/year is present — drop the redundant nomination
+                }
+
+                var key = string.Join("\u001f", CategoryKey(e), e.Won ? "1" : "0");
+                if (seen.Add(key))
+                {
+                    result.Add(e);
+                }
+            }
+
+            // Newest first; within a year wins before nominations; then ceremony/category for stability.
+            result.Sort((a, b) =>
+            {
+                var ay = a.Year ?? int.MinValue;
+                var by = b.Year ?? int.MinValue;
+                if (ay != by)
+                {
+                    return by.CompareTo(ay);
+                }
+
+                if (a.Won != b.Won)
+                {
+                    return a.Won ? -1 : 1;
+                }
+
+                var c = string.CompareOrdinal(a.Ceremony, b.Ceremony);
+                return c != 0 ? c : string.CompareOrdinal(a.Category, b.Category);
+            });
+
+            return result;
+        }
+
+        private static string? NormalizeImdb(string? imdb)
+        {
+            if (string.IsNullOrWhiteSpace(imdb))
+            {
+                return null;
+            }
+
+            var trimmed = imdb.Trim();
+            // Titles only ("tt…"); person ids ("nm…") are never a library item.
+            return trimmed.StartsWith("tt", StringComparison.OrdinalIgnoreCase) ? trimmed : null;
+        }
+
+        private static string? NormalizeTmdbKey(string? tmdbId, string? mediaType)
+        {
+            if (string.IsNullOrWhiteSpace(tmdbId))
+            {
+                return null;
+            }
+
+            var kind = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movie";
+            return kind + ":" + tmdbId.Trim();
+        }
+
+        /// <summary>An immutable index snapshot. Dictionaries are never mutated after publication.</summary>
+        private sealed class AwardsIndex
+        {
+            public static readonly AwardsIndex Empty = new()
+            {
+                Version = 0,
+                LastModified = 0,
+                BuiltAtUtc = null,
+                Complete = false,
+                ByImdb = new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase),
+                ByTmdb = new Dictionary<string, List<AwardEntry>>(StringComparer.OrdinalIgnoreCase)
+            };
+
+            public long Version { get; init; }
+
+            public long LastModified { get; init; }
+
+            public string? BuiltAtUtc { get; init; }
+
+            /// <summary>Whether the snapshot came from a fully successful fetch (all ceremonies).</summary>
+            public bool Complete { get; init; }
+
+            public Dictionary<string, List<AwardEntry>> ByImdb { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+            public Dictionary<string, List<AwardEntry>> ByTmdb { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private sealed class AwardsCacheDiskFormat
+        {
+            public int SchemaVersion { get; set; }
+
+            public long Version { get; set; }
+
+            public long LastModified { get; set; }
+
+            public string? BuiltAtUtc { get; set; }
+
+            public bool Complete { get; set; }
+
+            public Dictionary<string, List<AwardEntry>>? ByImdb { get; set; }
+
+            public Dictionary<string, List<AwardEntry>>? ByTmdb { get; set; }
+        }
+    }
+}

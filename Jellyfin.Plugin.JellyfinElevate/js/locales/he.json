@@ -698,5 +698,8 @@
   "discovery_customize_move_down": "Move down",
   "discovery_customize_reset": "איפוס לברירת מחדל",
   "discovery_customize_cancel": "Cancel",
-  "discovery_customize_save": "Save"
+  "discovery_customize_save": "Save",
+  "awards_section_title": "פרסים",
+  "awards_won": "זוכה",
+  "awards_nominated": "מועמד"
 }

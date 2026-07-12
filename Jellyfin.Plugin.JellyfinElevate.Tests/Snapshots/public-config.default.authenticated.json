@@ -248,6 +248,7 @@
   "ShowArrLinksAsText": false,
   "ShowAudioInfoTag": true,
   "ShowAudioLanguages": true,
+  "ShowAwards": false,
   "ShowCollectionsInSearch": true,
   "ShowDownloadsInRequests": true,
   "ShowDynamicRangeTag": true,

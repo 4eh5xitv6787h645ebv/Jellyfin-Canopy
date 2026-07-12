@@ -698,5 +698,8 @@
   "discovery_customize_move_down": "Flytt ned",
   "discovery_customize_reset": "Tilbakestill til standard",
   "discovery_customize_cancel": "Avbryt",
-  "discovery_customize_save": "Lagre"
+  "discovery_customize_save": "Lagre",
+  "awards_section_title": "Priser",
+  "awards_won": "Vinner",
+  "awards_nominated": "Nominert"
 }

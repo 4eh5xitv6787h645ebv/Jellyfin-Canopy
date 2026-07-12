@@ -698,5 +698,8 @@
   "discovery_customize_move_down": "Lefelé",
   "discovery_customize_reset": "Alapértelmezettek visszaállítása",
   "discovery_customize_cancel": "Mégsem",
-  "discovery_customize_save": "Mentés"
+  "discovery_customize_save": "Mentés",
+  "awards_section_title": "Díjak",
+  "awards_won": "Győztes",
+  "awards_nominated": "Jelölt"
 }
