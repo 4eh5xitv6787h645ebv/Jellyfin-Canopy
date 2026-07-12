@@ -112,42 +112,56 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
 
         internal bool ContainsKeyForTest(string key) => _cache.ContainsKey(key);
 
+        // Read the live cache entry for a key (or null). Lets reconcile tests assert reference
+        // identity (proving an unchanged item was reused, not re-probed) and timestamp retention.
+        internal TagCacheEntry? GetEntryForTest(string key) => _cache.TryGetValue(key, out var e) ? e : null;
+
         private string CacheFilePath =>
             Path.Combine(_applicationPaths.PluginsPath, "configurations", "Jellyfin.Plugin.JellyfinElevate", "tag-cache.json");
 
         /// <summary>
-        /// Build the complete tag cache for all library items.
-        /// Called by the scheduled task on startup and periodically.
+        /// Reconcile the tag cache against the current library. Called by the scheduled task
+        /// (daily / manual) and by the first-install build. Rather than rebuilding every entry,
+        /// it reuses the existing entry for any item whose source revision
+        /// (<see cref="BaseItem.DateLastSaved"/>) is unchanged — skipping the media probe — and
+        /// only (re)builds new or changed items, drops items no longer in the library, and bumps
+        /// <see cref="Version"/> (the client's full-reload signal) only when something is actually
+        /// removed. Containers (Series/Season) derive from their child episodes, which their own
+        /// timestamp does not track, so they are always rebuilt; a structural comparison then
+        /// retains the old timestamp when nothing really changed, so the client delta doesn't churn.
         /// </summary>
         public void BuildFullCache(IProgress<double>? progress, CancellationToken cancellationToken)
         {
-            _logger.LogInformation("[TagCache] Starting full cache build...");
+            _logger.LogInformation("[TagCache] Starting cache reconcile...");
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
-            // Serialize the rebuild against incremental flushes: hold the flush guard across the
-            // whole build + swap. While we hold it, a FlushPending that fires sees _flushing==1 and
-            // re-arms WITHOUT draining (it never mutates the OLD _cache we're about to discard), so
-            // events raised during the build stay in _pending and are applied onto the NEW cache
-            // below.
+            // Serialize the reconcile against incremental flushes: hold the flush guard across the
+            // whole pass + swap. While we hold it, a FlushPending that fires sees _flushing==1 and
+            // re-arms WITHOUT draining (it never mutates the OLD _cache), so events raised during
+            // the reconcile stay in _pending and are applied onto the NEW cache below.
             //
             // Crucially we take the guard BEFORE the library snapshot below. If a flush is ALREADY
-            // running when we start it has already drained _pending and is mutating the OLD cache we
-            // will discard — its deltas are gone from _pending, so proceeding to swap would silently
-            // drop them (the post-swap drain finds nothing to re-apply). That is the lost-update
-            // window. So instead of a lossy timeout-and-proceed, we WAIT (bounded) for the in-flight
-            // flush to finish; once it does, its changes are committed to the library and the fresh
-            // scan below captures them. Only if a flush is STILL running after ~30s do we abort this
-            // rebuild rather than swap lossily — incremental flushes keep the cache fresh and the
-            // scheduled task retries next cycle. AcquireFlushGuard polls (10ms sleeps), so this
-            // neither busy-spins nor deadlocks (the single guard is always released by its holder).
+            // running when we start it has already drained _pending and is mutating _cache — its
+            // deltas are gone from _pending, so proceeding to swap would silently drop them (the
+            // post-swap drain finds nothing to re-apply). That is the lost-update window. So instead
+            // of a lossy timeout-and-proceed, we WAIT (bounded) for the in-flight flush to finish;
+            // once it does, its changes are committed to the library and the fresh scan below
+            // captures them. Only if a flush is STILL running after ~30s do we abort this reconcile
+            // rather than swap lossily — incremental flushes keep the cache fresh and the scheduled
+            // task retries next cycle. AcquireFlushGuard polls (10ms sleeps), so this neither
+            // busy-spins nor deadlocks (the single guard is always released by its holder).
             if (!AcquireFlushGuard(maxSpins: _rebuildFlushGuardSpins, spinMs: 10))
             {
-                _logger.LogWarning("[TagCache] Skipping full rebuild: an incremental flush is still running after the guard wait; retrying next cycle to avoid a lost-update swap.");
+                _logger.LogWarning("[TagCache] Skipping reconcile: an incremental flush is still running after the guard wait; retrying next cycle to avoid a lost-update swap.");
                 return;
             }
 
             try
             {
+                // Stable snapshot of the current cache. The guard keeps flushes from mutating it
+                // while we reconcile, so both the rating pre-pass and the main loop read one state.
+                var oldCache = _cache;
+
                 var allItems = _libraryManager.GetItemList(new InternalItemsQuery
                 {
                     IncludeItemTypes = TaggableTypes.ToArray(),
@@ -157,18 +171,84 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
 
                 _logger.LogInformation($"[TagCache] Found {allItems.Count} taggable items");
 
+                // Pass 1: which series' own rating changed since its cached entry was built. An
+                // Episode with no rating of its own inherits its parent series' rating, so a series
+                // rating change must re-derive those episodes even when the episode's own
+                // DateLastSaved is unchanged. A Series entry stores the series' own rating verbatim
+                // (no fallback), so comparing the live value against the old entry is exact.
+                var seriesRatingChanged = new HashSet<Guid>();
+                foreach (var item in allItems)
+                {
+                    if (item.GetBaseItemKind() != BaseItemKind.Series) continue;
+                    var sKey = item.Id.ToString("N").ToLowerInvariant();
+                    if (!oldCache.TryGetValue(sKey, out var oldSeries)
+                        || oldSeries.CommunityRating != item.CommunityRating
+                        || oldSeries.CriticRating != item.CriticRating)
+                    {
+                        seriesRatingChanged.Add(item.Id);
+                    }
+                }
+
                 var newCache = new ConcurrentDictionary<string, TagCacheEntry>();
+                var changed = false; // an add or a genuine content change (drives the ?since= delta)
                 var processed = 0;
 
                 foreach (var item in allItems)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    var entry = BuildEntryForItem(item);
-                    if (entry != null)
+                    var key = item.Id.ToString("N").ToLowerInvariant();
+                    var kind = item.GetBaseItemKind();
+                    var revision = item.DateLastSaved.Ticks;
+                    oldCache.TryGetValue(key, out var old);
+
+                    var parentSeriesRatingChanged =
+                        kind == BaseItemKind.Episode
+                        && item is MediaBrowser.Controller.Entities.TV.Episode epDep
+                        && seriesRatingChanged.Contains(epDep.SeriesId);
+
+                    if (!ShouldRebuild(kind, old, revision, parentSeriesRatingChanged))
                     {
-                        var key = item.Id.ToString("N").ToLowerInvariant();
-                        newCache[key] = entry;
+                        // Unchanged: reuse the existing entry verbatim — no media probe, timestamp
+                        // preserved. old is non-null here (ShouldRebuild returns true when it is).
+                        newCache[key] = old!;
+                    }
+                    else
+                    {
+                        var entry = BuildEntryForItem(item);
+                        if (entry == null)
+                        {
+                            // Unexpected build failure (a bug, not a media-probe failure — those return
+                            // a degraded entry below): keep the last-good entry rather than dropping it
+                            // (dropping would look like a removal and force a client full reload). Its
+                            // OLD SourceRevision keeps it a rebuild candidate next cycle.
+                            if (old != null) newCache[key] = old;
+                        }
+                        else
+                        {
+                            // A degraded entry (media probe failed) carries SourceRevision == 0
+                            // (unconfirmed): keep its fresh probe-independent data (own + inherited
+                            // rating/genres) but retain the last-good streams, and leave it unconfirmed
+                            // so the gate rebuilds it every cycle until the probe recovers.
+                            if (entry.SourceRevision == 0 && old != null)
+                            {
+                                entry.StreamData = old.StreamData;
+                                entry.AudioLanguages = old.AudioLanguages;
+                            }
+
+                            if (old != null && ContentEquals(old, entry))
+                            {
+                                // Rebuilt but content-identical (e.g. a container whose first episode
+                                // is unchanged, or a no-op re-save): retain the old timestamp so the
+                                // client delta doesn't churn. SourceRevision is still refreshed.
+                                entry.LastUpdated = old.LastUpdated;
+                            }
+                            else
+                            {
+                                changed = true;
+                            }
+                            newCache[key] = entry;
+                        }
                     }
 
                     processed++;
@@ -178,23 +258,48 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                     }
                 }
 
+                // A key that was cached but is no longer in the library is a removal — the one
+                // transition the incremental ?since= delta cannot express (it carries no tombstone),
+                // so it is the sole trigger for a client full reload via a Version bump.
+                var removed = false;
+                foreach (var key in oldCache.Keys)
+                {
+                    if (!newCache.ContainsKey(key)) { removed = true; break; }
+                }
+
                 OnBeforeSwapForTest?.Invoke();
 
-                // Atomic reference swap — readers see old or new cache, never partial
+                // Atomic reference swap — readers see old or new cache, never partial.
                 _cache = newCache;
-                Interlocked.Increment(ref _version);
-                Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                // Invalidate user access cache since items may have changed
-                _userAccessCache.Clear();
 
-                // Apply any events queued while we were building onto the freshly-published cache,
-                // so the swap can't strand a change that arrived mid-rebuild.
-                ApplyBatch(_pending.Drain(), RebuildEntry, RemoveEntry);
+                if (changed || removed)
+                {
+                    Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    // Added/updated/removed items may change a user's accessible set. Only cleared on
+                    // an actual change so a no-op reconcile doesn't force every user to recompute.
+                    _userAccessCache.Clear();
+                }
+                if (removed)
+                {
+                    Interlocked.Increment(ref _version);
+                }
+
+                // Apply events queued while we were reconciling onto the freshly-published cache, so
+                // the swap can't strand a change that arrived mid-reconcile. A removal here bumps
+                // Version too (same client-reload contract).
+                if (ApplyPendingBatch(_pending.Drain(), out var drainRemoved))
+                {
+                    Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                }
+                if (drainRemoved)
+                {
+                    Interlocked.Increment(ref _version);
+                }
 
                 progress?.Report(100);
 
                 sw.Stop();
-                _logger.LogInformation($"[TagCache] Full cache build complete: {_cache.Count} entries in {sw.Elapsed.TotalSeconds:F1}s");
+                _logger.LogInformation($"[TagCache] Reconcile complete: {_cache.Count} entries (changed={changed}, removed={removed || drainRemoved}) in {sw.Elapsed.TotalSeconds:F1}s");
             }
             finally
             {
@@ -203,6 +308,55 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             }
 
             SaveToDisk();
+        }
+
+        /// <summary>
+        /// Decide whether the reconcile must rebuild an item's entry, or can reuse the cached one.
+        /// Pure so the gate can be unit-tested without a live library. A rebuild is required for a
+        /// new item, for containers (Series/Season) whose derived data tracks their child episodes
+        /// rather than their own timestamp, when the source revision changed, or when an Episode's
+        /// parent-series rating changed (the episode inherits it when it has none of its own).
+        /// </summary>
+        internal static bool ShouldRebuild(BaseItemKind kind, TagCacheEntry? old, long revision, bool parentSeriesRatingChanged)
+        {
+            if (old == null) return true;
+            if (kind == BaseItemKind.Series || kind == BaseItemKind.Season) return true;
+            if (old.SourceRevision != revision) return true;
+            if (kind == BaseItemKind.Episode && parentSeriesRatingChanged) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Two entries are content-equal when everything a client renders is identical, ignoring the
+        /// volatile bookkeeping fields (LastUpdated = when WE built it, SourceRevision = the source
+        /// gate). Used to retain the old timestamp when a rebuild produced no real change, so the
+        /// client delta doesn't churn.
+        /// </summary>
+        internal static bool ContentEquals(TagCacheEntry a, TagCacheEntry b)
+        {
+            if (ReferenceEquals(a, b)) return true;
+            if (a == null || b == null) return false;
+            return ContentSignature(a) == ContentSignature(b);
+        }
+
+        private static string ContentSignature(TagCacheEntry e)
+        {
+            // Clone() is the audited copy-every-field method, so a new field is captured
+            // automatically. Zero the volatile fields and normalise the one hash-ordered collection:
+            // AudioLanguages is built from a HashSet<string>, and .NET randomises string hashing per
+            // process, so its array order can differ across restarts for the same languages — sorting
+            // a COPY (Clone() is shallow; the array is shared with the real entry) prevents a false
+            // "changed" that would churn the delta.
+            var copy = e.Clone();
+            copy.LastUpdated = 0;
+            copy.SourceRevision = 0;
+            if (copy.AudioLanguages is { Length: > 1 })
+            {
+                var langs = (string[])copy.AudioLanguages.Clone();
+                Array.Sort(langs, StringComparer.Ordinal);
+                copy.AudioLanguages = langs;
+            }
+            return JsonSerializer.Serialize(copy);
         }
 
         /// <summary>
@@ -304,9 +458,13 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             try
             {
                 Interlocked.Exchange(ref _firstPendingTicks, 0);
-                if (ApplyBatch(_pending.Drain(), RebuildEntry, RemoveEntry))
+                if (ApplyPendingBatch(_pending.Drain(), out var removed))
                 {
                     Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    // A removal is the client's only full-reload trigger: the ?since= delta carries
+                    // no tombstone, so bump Version so already-loaded clients drop the stale key.
+                    // ScheduleDebouncedSave persists the bumped version.
+                    if (removed) Interlocked.Increment(ref _version);
                     ScheduleDebouncedSave();
                 }
 
@@ -378,6 +536,24 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         }
 
         /// <summary>
+        /// Apply a drained pending batch via the standard rebuild/remove delegates, additionally
+        /// reporting whether any entry was actually removed from the cache. A removal is the only
+        /// transition the client's ?since= delta can't express (no tombstone), so callers bump
+        /// <see cref="Version"/> on it to force a client full reload. Wrapping the remove delegate
+        /// keeps <see cref="ApplyBatch"/>'s tested signature untouched.
+        /// </summary>
+        private bool ApplyPendingBatch(IReadOnlyList<(Guid Id, bool Removed)> batch, out bool removedFromCache)
+        {
+            var removed = false;
+            var changed = ApplyBatch(
+                batch,
+                RebuildEntry,
+                id => { var r = RemoveEntry(id); if (r) removed = true; return r; });
+            removedFromCache = removed;
+            return changed;
+        }
+
+        /// <summary>
         /// Resolve an id to its live library item and (re)build its cache entry.
         /// Returns true if the cache was modified. Runs on the flush worker only.
         /// </summary>
@@ -393,6 +569,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             if (entry == null) return false;
 
             var key = id.ToString("N").ToLowerInvariant();
+            // A degraded entry (media probe failed) carries SourceRevision == 0: retain the last-good
+            // streams and leave it unconfirmed so the next reconcile rebuilds it. Mirrors the
+            // reconcile so an incremental event during a probe outage doesn't drop the streams.
+            if (entry.SourceRevision == 0 && _cache.TryGetValue(key, out var existing) && existing != null)
+            {
+                entry.StreamData = existing.StreamData;
+                entry.AudioLanguages = existing.AudioLanguages;
+            }
             _cache[key] = entry;
             return true;
         }
@@ -804,9 +988,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             // would leave those items stale until the next event or the daily rebuild.
             try
             {
-                if (ApplyBatch(_pending.Drain(), RebuildEntry, RemoveEntry))
+                if (ApplyPendingBatch(_pending.Drain(), out var removed))
                 {
                     Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    // Persist a Version bump for a shutdown-time removal so clients reconnecting
+                    // after restart (which loads Version from disk) drop the stale key.
+                    if (removed) Interlocked.Increment(ref _version);
                     MarkDirty();
                 }
             }
@@ -827,6 +1014,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
         /// <summary>
         /// Build a TagCacheEntry for a single library item.
         /// For Series/Season, resolves first-episode data server-side.
+        /// If the media probe fails, the probe-independent data (own + inherited rating/genres) is
+        /// still built and the entry is stamped SourceRevision == 0 (unconfirmed) so the reconcile
+        /// retains the last-good streams and rebuilds it every cycle until the probe recovers,
+        /// rather than confirming a degraded entry. Returns null only on an UNEXPECTED failure.
         /// </summary>
         private TagCacheEntry? BuildEntryForItem(BaseItem item)
         {
@@ -834,6 +1025,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             {
                 var kind = item.GetBaseItemKind();
                 var isContainer = kind == BaseItemKind.Series || kind == BaseItemKind.Season;
+                var probeFailed = false;
 
                 // Capture parent series ID for Episodes/Seasons so the Spoiler
                 // Guard filter can strip unwatched-episode entries without a
@@ -857,6 +1049,10 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                     CriticRating = item.CriticRating,
                     LastUpdated = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     SeriesId = seriesIdN,
+                    // Capture the source revision so the reconcile can skip re-probing an
+                    // item whose DateLastSaved is unchanged. Set here so BOTH the daily
+                    // reconcile and the incremental RebuildEntry populate the gate key.
+                    SourceRevision = item.DateLastSaved.Ticks,
                 };
 
                 if (isContainer)
@@ -869,15 +1065,22 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                             entry.Genres = firstEp.Genres;
                         }
 
-                        var (streams, sources, languages) = ExtractMediaData(firstEp);
-                        entry.StreamData = new TagStreamData
+                        var media = ExtractMediaData(firstEp);
+                        if (media == null)
                         {
-                            Streams = streams,
-                            Sources = sources,
-                            ItemName = firstEp.Name,
-                            ItemPath = string.IsNullOrEmpty(firstEp.Path) ? null : Path.GetFileName(firstEp.Path)
-                        };
-                        entry.AudioLanguages = languages;
+                            probeFailed = true; // leave StreamData/AudioLanguages for the caller to retain last-good
+                        }
+                        else
+                        {
+                            entry.StreamData = new TagStreamData
+                            {
+                                Streams = media.Value.Streams,
+                                Sources = media.Value.Sources,
+                                ItemName = firstEp.Name,
+                                ItemPath = string.IsNullOrEmpty(firstEp.Path) ? null : Path.GetFileName(firstEp.Path)
+                            };
+                            entry.AudioLanguages = media.Value.Languages;
+                        }
                     }
 
                     if (kind == BaseItemKind.Season && entry.CommunityRating == null)
@@ -905,15 +1108,22 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                 }
                 else
                 {
-                    var (streams, sources, languages) = ExtractMediaData(item);
-                    entry.StreamData = new TagStreamData
+                    var media = ExtractMediaData(item);
+                    if (media == null)
                     {
-                        Streams = streams,
-                        Sources = sources,
-                        ItemName = item.Name,
-                        ItemPath = string.IsNullOrEmpty(item.Path) ? null : Path.GetFileName(item.Path)
-                    };
-                    entry.AudioLanguages = languages;
+                        probeFailed = true; // leave StreamData/AudioLanguages for the caller to retain last-good
+                    }
+                    else
+                    {
+                        entry.StreamData = new TagStreamData
+                        {
+                            Streams = media.Value.Streams,
+                            Sources = media.Value.Sources,
+                            ItemName = item.Name,
+                            ItemPath = string.IsNullOrEmpty(item.Path) ? null : Path.GetFileName(item.Path)
+                        };
+                        entry.AudioLanguages = media.Value.Languages;
+                    }
 
                     if (kind == BaseItemKind.Episode && entry.CommunityRating == null)
                     {
@@ -936,6 +1146,14 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
                     }
                 }
 
+                if (probeFailed)
+                {
+                    // Mark unconfirmed so the reconcile gate rebuilds this item every cycle until the
+                    // probe recovers, and retains its last-good streams in the meantime. 0 also means
+                    // "unconfirmed" for a pre-upgrade on-disk entry, so the semantics are consistent.
+                    entry.SourceRevision = 0;
+                }
+
                 return entry;
             }
             catch (Exception ex)
@@ -945,7 +1163,12 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             }
         }
 
-        private (List<TagMediaStream>, List<TagMediaSource>, string[]) ExtractMediaData(BaseItem item)
+        // Returns null when the media probe itself FAILED (GetMediaSources threw), distinct from a
+        // successful-but-empty result for an item that legitimately has no media. This matters for
+        // the revision-gated reconcile: on a real failure BuildEntryForItem stamps SourceRevision==0
+        // (unconfirmed) instead of the current revision, so the gate keeps rebuilding the item until
+        // the probe recovers rather than confirming — and reusing — a silently-degraded entry.
+        private (List<TagMediaStream> Streams, List<TagMediaSource> Sources, string[] Languages)? ExtractMediaData(BaseItem item)
         {
             var streams = new List<TagMediaStream>();
             var sources = new List<TagMediaSource>();
@@ -996,6 +1219,7 @@ namespace Jellyfin.Plugin.JellyfinElevate.Services
             catch (Exception ex)
             {
                 _logger.LogWarning($"[TagCache] Failed to extract media data for {item.Id}: {ex.Message}");
+                return null; // real probe failure — signal it so the caller keeps last-good data
             }
 
             return (streams, sources, languages.ToArray());
