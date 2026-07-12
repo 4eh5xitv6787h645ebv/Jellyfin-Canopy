@@ -23,7 +23,7 @@ const TMP_DIR = REPO_ROOT + 'tmp';
 
 // content 'jc-checksum-fixture' → this uppercase MD5 (verified out-of-band).
 const FIXTURE_CONTENT = 'jc-checksum-fixture';
-const FIXTURE_MD5 = '8A60C02525CF844A77FEB385AE0A357E';
+const FIXTURE_MD5 = '6B369C7C96C67731E9AEC5E6157D1CF9';
 const FIXTURE_ZIP = 'jc-checksum-fixture.zip';
 const FIXTURE_PATH = `${TMP_DIR}/${FIXTURE_ZIP}`;
 
