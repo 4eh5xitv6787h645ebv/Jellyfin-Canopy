@@ -40,7 +40,7 @@ jobs:
       # TruffleHog action) — this image is the gate's root of trust, so it must not
       # ride a mutable tag. NOTE: no verbose/--debug flag is passed, so TruffleHog's
       # stderr (echoed below) carries only progress logs, never raw match material;
-      # keep it that way. Findings go to stdout as JSONL; --no --fail so the exit
+      # keep it that way. Findings go to stdout as JSONL; no `--fail` so the exit
       # code signals only whether the scanner RAN (crash) vs found things (in JSON).
       - name: Run TruffleHog (full git history, JSON)
         id: scan
