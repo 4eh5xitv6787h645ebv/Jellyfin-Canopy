@@ -31,6 +31,27 @@ test('accepts the observed Home race only with both Jellyfin host chunks', () =>
     );
 });
 
+test('rejects a mixed Home race stack containing a Canopy plugin frame', () => {
+    assert.equal(
+        isKnownHiddenContentHostNoise(
+            `${OBSERVED_HOME_RACE}\n    at renderHiddenContent (http://localhost:8100/JellyfinCanopy/dist/jc.bundle.js?v=1:4:20)`
+        ),
+        false
+    );
+    assert.equal(
+        isKnownHiddenContentHostNoise(
+            `${OBSERVED_HOME_RACE}\n    at JellyfinCanopy.show (http://localhost:8100/JellyfinCanopy/script?v=1:8:15)`
+        ),
+        false
+    );
+    assert.equal(
+        isKnownHiddenContentHostNoise(
+            `${OBSERVED_HOME_RACE}\nrenderHiddenContent@http://localhost:8100/JellyfinCanopy/dist/jc.bundle.js:4:20`
+        ),
+        false
+    );
+});
+
 test('a different Home, querySelector, or Canopy error remains fatal', () => {
     assert.equal(
         isKnownHiddenContentHostNoise(OBSERVED_HOME_RACE.replace("reading 'querySelector'", "reading 'remove'")),

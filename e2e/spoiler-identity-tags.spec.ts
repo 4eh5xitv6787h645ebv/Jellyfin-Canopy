@@ -18,6 +18,10 @@ import { test, expect } from './fixtures/auth';
 import { USERS } from './fixtures/auth';
 import { authenticate, api, authHeader, type Session } from './fixtures/api';
 import { createGuardRestorePlan } from '../scripts/e2e/spoiler-guard-restore';
+import {
+    getSpoilerState,
+    restoreSeriesGuards,
+} from './fixtures/spoiler-state';
 
 const BASE = process.env.JF_BASE_URL || 'http://localhost:8099';
 
@@ -137,13 +141,20 @@ test.describe('spoiler guard identity tags (reverse-proxy-safe attribution)', ()
         test.skip(!enabled, 'SpoilerBlurEnabled is off on the target server');
         test.skip(!target, 'no unwatched episode with a Primary image found');
 
-        const plan = createGuardRestorePlan(
-            await seriesIsGuarded(admin, target!.seriesId),
-            true
-        );
+        const [adminState, userState] = await Promise.all([
+            getSpoilerState(BASE, admin),
+            getSpoilerState(BASE, user),
+        ]);
+        const adminPlan = createGuardRestorePlan(adminState, target!.seriesId, true);
+        const userPlan = createGuardRestorePlan(userState, target!.seriesId, false);
         try {
-            // Guard the series for the ADMIN only (POST enables, DELETE disables).
-            await setSeriesGuard(admin, target!.seriesId, plan.requiredGuarded);
+            // Establish both sides explicitly: only the admin is guarded,
+            // regardless of either account's pre-test state.
+            await setSeriesGuard(user, target!.seriesId, userPlan.requiredGuarded);
+            await setSeriesGuard(admin, target!.seriesId, adminPlan.requiredGuarded);
+            expect(await seriesIsGuarded(admin, target!.seriesId), 'admin target is guarded').toBe(true);
+            expect(await seriesIsGuarded(user, target!.seriesId), 'user target is unguarded').toBe(false);
+
             // Tags must be re-read AFTER guarding: the strip filter adds its
             // sb- cache-bust prefix for the guarding user.
             const adminTag = await primaryTagFor(admin, target!.episodeId);
@@ -173,7 +184,10 @@ test.describe('spoiler guard identity tags (reverse-proxy-safe attribution)', ()
                 true
             );
         } finally {
-            await setSeriesGuard(admin, target!.seriesId, plan.restoreGuarded);
+            await restoreSeriesGuards(BASE, [
+                { session: admin, plan: adminPlan },
+                { session: user, plan: userPlan },
+            ]);
         }
     });
 

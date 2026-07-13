@@ -61,17 +61,21 @@ test('every shard reports current-attempt evidence under unique artifact names',
     assert.doesNotMatch(shard, /jc-e2e-shard-results[^\n]*e2e\/test-results/);
 });
 
-test('stable advisory aggregate rejects failed, stale, or missing shard evidence', () => {
+test('stable advisory aggregate reuses same-run attempts and rejects invalid shard evidence', () => {
     const aggregate = jobBlock('e2e', 'manifest');
 
     assert.match(aggregate, /name: E2E \(dockerized Jellyfin 12\)/);
     assert.match(aggregate, /needs: e2e_shard/);
     assert.match(aggregate, /if: always\(\)/);
     assert.match(aggregate, /continue-on-error: true/);
+    assert.match(aggregate, /permissions:\n\s+actions: read\n\s+contents: read/);
+    assert.match(aggregate, /github-token: \$\{\{ github\.token \}\}/);
+    assert.match(aggregate, /run-id: \$\{\{ github\.run_id \}\}/);
     assert.match(
         aggregate,
-        /pattern: e2e-status-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}-shard-\*-of-4/
+        /pattern: e2e-status-\$\{\{ github\.run_id \}\}-\*-shard-\*-of-4/
     );
+    assert.match(aggregate, /merge-multiple: false/);
     assert.match(aggregate, /scripts\/e2e\/shard-result\.js aggregate/);
     for (const argument of ['--total 4', '--sha', '--run-id', '--run-attempt']) {
         assert.ok(aggregate.includes(argument), `aggregate lost ${argument}`);

@@ -216,6 +216,7 @@ function aggregateMarkers(entries, expectedValues, initialErrors = []) {
     const expected = expectedRun(expectedValues);
     const errors = [...initialErrors];
     const byShard = new Map();
+    const latestByShard = new Map();
 
     for (const entry of entries) {
         const label = entry.file || 'shard marker';
@@ -227,30 +228,31 @@ function aggregateMarkers(entries, expectedValues, initialErrors = []) {
             continue;
         }
 
-        let currentAttempt = true;
+        let eligible = true;
         if (marker.total !== expected.total) {
             errors.push(
                 `${label}: shard total ${marker.total} does not match expected ${expected.total}`
             );
-            currentAttempt = false;
+            eligible = false;
         }
         if (marker.headSha !== expected.headSha) {
             errors.push(
                 `${label}: head SHA ${marker.headSha} does not match expected ${expected.headSha}`
             );
-            currentAttempt = false;
+            eligible = false;
         }
         if (marker.runId !== expected.runId) {
             errors.push(`${label}: run ID ${marker.runId} does not match expected ${expected.runId}`);
-            currentAttempt = false;
+            eligible = false;
         }
-        if (marker.runAttempt !== expected.runAttempt) {
+        if (marker.runAttempt > expected.runAttempt) {
             errors.push(
-                `${label}: run attempt ${marker.runAttempt} does not match expected ${expected.runAttempt}`
+                `${label}: run attempt ${marker.runAttempt} is newer than current attempt `
+                + `${expected.runAttempt}`
             );
-            currentAttempt = false;
+            eligible = false;
         }
-        if (!currentAttempt || marker.shard > expected.total) {
+        if (!eligible || marker.shard > expected.total) {
             continue;
         }
 
@@ -262,21 +264,45 @@ function aggregateMarkers(entries, expectedValues, initialErrors = []) {
     for (let shard = 1; shard <= expected.total; shard += 1) {
         const markers = byShard.get(shard) || [];
         if (markers.length === 0) {
-            errors.push(`Missing current-attempt marker for shard ${shard} of ${expected.total}`);
+            errors.push(
+                `Missing valid marker for shard ${shard} of ${expected.total} at or before `
+                + `run attempt ${expected.runAttempt}`
+            );
             continue;
         }
-        if (markers.length > 1) {
-            errors.push(
-                `Duplicate current-attempt markers for shard ${shard} of ${expected.total}: `
-                + markers.map((entry) => entry.file || '<memory>').join(', ')
-            );
+
+        const markersByAttempt = new Map();
+        for (const entry of markers) {
+            const attemptMarkers = markersByAttempt.get(entry.marker.runAttempt) || [];
+            attemptMarkers.push(entry);
+            markersByAttempt.set(entry.marker.runAttempt, attemptMarkers);
         }
-        for (const { marker } of markers) {
+
+        for (const [attempt, attemptMarkers] of markersByAttempt) {
+            if (attemptMarkers.length > 1) {
+                errors.push(
+                    `Duplicate markers for shard ${shard} of ${expected.total} in run attempt `
+                    + `${attempt}: `
+                    + attemptMarkers.map((entry) => entry.file || '<memory>').join(', ')
+                );
+            }
+        }
+
+        const latestAttempt = Math.max(...markersByAttempt.keys());
+        const latestMarkers = markersByAttempt.get(latestAttempt);
+        latestByShard.set(shard, latestMarkers);
+        for (const { marker } of latestMarkers) {
             if (marker.seedOutcome !== 'success') {
-                errors.push(`Shard ${shard} seed outcome is ${marker.seedOutcome}, not success`);
+                errors.push(
+                    `Shard ${shard} newest seed outcome (attempt ${latestAttempt}) is `
+                    + `${marker.seedOutcome}, not success`
+                );
             }
             if (marker.testOutcome !== 'success') {
-                errors.push(`Shard ${shard} test outcome is ${marker.testOutcome}, not success`);
+                errors.push(
+                    `Shard ${shard} newest test outcome (attempt ${latestAttempt}) is `
+                    + `${marker.testOutcome}, not success`
+                );
             }
         }
     }
@@ -285,6 +311,7 @@ function aggregateMarkers(entries, expectedValues, initialErrors = []) {
         ok: errors.length === 0,
         expected,
         byShard,
+        latestByShard,
         errors,
     };
 }
@@ -311,13 +338,22 @@ function renderSummary(result) {
     ];
     for (let shard = 1; shard <= result.expected.total; shard += 1) {
         const entries = result.byShard.get(shard) || [];
-        if (entries.length === 0) {
+        const latestEntries = result.latestByShard.get(shard) || [];
+        if (latestEntries.length === 0) {
             lines.push(`| ${shard} / ${result.expected.total} | — | — | Missing |`);
             continue;
         }
-        const seeds = entries.map(({ marker }) => marker.seedOutcome).join(', ');
-        const tests = entries.map(({ marker }) => marker.testOutcome).join(', ');
-        const markerStatus = entries.length === 1 ? 'Current attempt' : `Duplicate (${entries.length})`;
+        const latestAttempt = latestEntries[0].marker.runAttempt;
+        const seeds = latestEntries.map(({ marker }) => marker.seedOutcome).join(', ');
+        const tests = latestEntries.map(({ marker }) => marker.testOutcome).join(', ');
+        const attempts = [...new Set(entries.map(({ marker }) => marker.runAttempt))]
+            .sort((left, right) => left - right);
+        let markerStatus = `Attempt ${latestAttempt}`;
+        if (latestEntries.length > 1) {
+            markerStatus = `Duplicate attempt ${latestAttempt} (${latestEntries.length})`;
+        } else if (attempts.length > 1) {
+            markerStatus += ` selected (history: ${attempts.join(', ')})`;
+        }
         lines.push(
             `| ${shard} / ${result.expected.total} | ${markdownCell(seeds)} | `
             + `${markdownCell(tests)} | ${markerStatus} |`

@@ -118,7 +118,7 @@ test('all-success markers aggregate and the CLI appends a readable step summary'
     const summaryText = fs.readFileSync(summary, 'utf8');
     assert.match(summaryText, /^Existing summary/m);
     assert.match(summaryText, /Dockerized Jellyfin E2E shard results/);
-    assert.match(summaryText, /\| 4 \/ 4 \| success \| success \| Current attempt \|/);
+    assert.match(summaryText, /\| 4 \/ 4 \| success \| success \| Attempt 2 \|/);
 });
 
 test('a failed seed or test outcome fails aggregation and the aggregate CLI exits nonzero', (t) => {
@@ -135,8 +135,8 @@ test('a failed seed or test outcome fails aggregation and the aggregate CLI exit
 
     const result = aggregateDirectory(directory, EXPECTED);
     assert.equal(result.ok, false);
-    assert.match(result.errors.join('\n'), /Shard 2 seed outcome is failure/);
-    assert.match(result.errors.join('\n'), /Shard 3 test outcome is cancelled/);
+    assert.match(result.errors.join('\n'), /Shard 2 newest seed outcome \(attempt 2\) is failure/);
+    assert.match(result.errors.join('\n'), /Shard 3 newest test outcome \(attempt 2\) is cancelled/);
     const cli = runCli(aggregateArguments(directory));
     assert.equal(cli.status, 1);
     assert.match(cli.stderr, /E2E shard result error/);
@@ -145,7 +145,7 @@ test('a failed seed or test outcome fails aggregation and the aggregate CLI exit
 test('a missing shard fails exact 1-through-N validation', () => {
     const result = aggregateMarkers([entry(1), entry(2), entry(4)], EXPECTED);
     assert.equal(result.ok, false);
-    assert.match(result.errors.join('\n'), /Missing current-attempt marker for shard 3 of 4/);
+    assert.match(result.errors.join('\n'), /Missing valid marker for shard 3 of 4/);
 });
 
 test('duplicate shard markers fail even when every outcome succeeded', () => {
@@ -157,20 +157,74 @@ test('duplicate shard markers fail even when every outcome succeeded', () => {
         entry(4),
     ], EXPECTED);
     assert.equal(result.ok, false);
-    assert.match(result.errors.join('\n'), /Duplicate current-attempt markers for shard 2 of 4/);
-    assert.match(renderSummary(result), /Duplicate \(2\)/);
+    assert.match(result.errors.join('\n'), /Duplicate markers for shard 2 of 4 in run attempt 2/);
+    assert.match(renderSummary(result), /Duplicate attempt 2 \(2\)/);
 });
 
-test('a stale run attempt is rejected and cannot satisfy the expected shard', () => {
+test('a failed shard recovered on attempt 2 reuses nested attempt-1 artifacts', (t) => {
+    const directory = temporaryDirectory(t);
+    const entries = [
+        entry(1, { runAttempt: 1, testOutcome: 'failure' }),
+        entry(1, { runAttempt: 2 }),
+        entry(2, { runAttempt: 1 }),
+        entry(3, { runAttempt: 1 }),
+        entry(4, { runAttempt: 1 }),
+    ];
+    entries.forEach(({ value }, index) => {
+        const artifactDirectory = path.join(directory, `attempt-artifact-${index + 1}`);
+        fs.mkdirSync(artifactDirectory);
+        fs.writeFileSync(
+            path.join(artifactDirectory, `shard-${value.shard}.json`),
+            JSON.stringify(value),
+            'utf8'
+        );
+    });
+
+    const result = aggregateDirectory(directory, EXPECTED);
+    assert.equal(result.ok, true, result.errors.join('\n'));
+    assert.equal(result.latestByShard.get(1)[0].marker.runAttempt, 2);
+    assert.equal(result.latestByShard.get(2)[0].marker.runAttempt, 1);
+    assert.match(renderSummary(result), /Attempt 2 selected \(history: 1, 2\)/);
+});
+
+test('a duplicate in an older attempt remains fatal after a newer successful retry', () => {
+    const result = aggregateMarkers([
+        entry(1, { runAttempt: 1 }, '-attempt-1-a'),
+        entry(1, { runAttempt: 1 }, '-attempt-1-b'),
+        entry(1, { runAttempt: 2 }, '-attempt-2'),
+        entry(2, { runAttempt: 1 }),
+        entry(3, { runAttempt: 1 }),
+        entry(4, { runAttempt: 1 }),
+    ], EXPECTED);
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join('\n'), /Duplicate markers for shard 1 of 4 in run attempt 1/);
+});
+
+test('a failed newest shard marker is not hidden by an older success', () => {
+    const result = aggregateMarkers([
+        entry(1, { runAttempt: 1 }, '-attempt-1'),
+        entry(1, { runAttempt: 2, testOutcome: 'failure' }, '-attempt-2'),
+        entry(2, { runAttempt: 1 }),
+        entry(3, { runAttempt: 1 }),
+        entry(4, { runAttempt: 1 }),
+    ], EXPECTED);
+    assert.equal(result.ok, false);
+    assert.match(
+        result.errors.join('\n'),
+        /Shard 1 newest test outcome \(attempt 2\) is failure/
+    );
+});
+
+test('a future run attempt is rejected and cannot satisfy the expected shard', () => {
     const result = aggregateMarkers([
         entry(1),
-        entry(2, { runAttempt: 1 }),
+        entry(2, { runAttempt: 3 }),
         entry(3),
         entry(4),
     ], EXPECTED);
     assert.equal(result.ok, false);
-    assert.match(result.errors.join('\n'), /run attempt 1 does not match expected 2/);
-    assert.match(result.errors.join('\n'), /Missing current-attempt marker for shard 2 of 4/);
+    assert.match(result.errors.join('\n'), /run attempt 3 is newer than current attempt 2/);
+    assert.match(result.errors.join('\n'), /Missing valid marker for shard 2 of 4/);
 });
 
 test('a marker for a different head SHA is rejected as stale', () => {
@@ -182,7 +236,19 @@ test('a marker for a different head SHA is rejected as stale', () => {
     ], EXPECTED);
     assert.equal(result.ok, false);
     assert.match(result.errors.join('\n'), new RegExp(`head SHA ${OTHER_SHA} does not match`));
-    assert.match(result.errors.join('\n'), /Missing current-attempt marker for shard 3 of 4/);
+    assert.match(result.errors.join('\n'), /Missing valid marker for shard 3 of 4/);
+});
+
+test('a marker from a different run is rejected even when its SHA and outcome match', () => {
+    const result = aggregateMarkers([
+        entry(1),
+        entry(2, { runId: '1234567890' }),
+        entry(3),
+        entry(4),
+    ], EXPECTED);
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join('\n'), /run ID 1234567890 does not match expected 9876543210/);
+    assert.match(result.errors.join('\n'), /Missing valid marker for shard 2 of 4/);
 });
 
 test('malformed JSON, malformed fields, and out-of-range coordinates are rejected', (t) => {

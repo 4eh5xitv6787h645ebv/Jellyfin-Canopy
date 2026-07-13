@@ -124,7 +124,8 @@ jobs:
   # Each shard owns a fresh Jellyfin server. Specs remain serial within that
   # server; only independent seeded environments run concurrently. The stable
   # aggregate job below preserves the existing check name and rejects missing,
-  # stale, or failed shard markers.
+  # stale, duplicate, or failed shard markers. On a failed-jobs rerun it can
+  # reuse successful markers from prior attempts of the same run and commit.
   #
   # NEW INFRASTRUCTURE — continue-on-error keeps the shard and aggregate jobs
   # advisory while this lane earns trust. Once it has proven reliable, remove
@@ -236,6 +237,9 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
@@ -249,14 +253,20 @@ jobs:
         with:
           node-version: 22
 
-      - name: Download current-attempt shard results
+      - name: Download same-run shard results
         id: download
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: e2e-status-${{ github.run_id }}-${{ github.run_attempt }}-shard-*-of-4
+          # Force the run-scoped REST listing so a partial rerun can see marker
+          # artifacts retained from prior attempts of this same workflow run.
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
+          pattern: e2e-status-${{ github.run_id }}-*-shard-*-of-4
           path: ${{ runner.temp }}/jc-e2e-shard-results
-          merge-multiple: true
+          # Each attempt reuses shard-N.json; separate artifact directories
+          # prevent prior and current attempts from overwriting one another.
+          merge-multiple: false
 
       - name: Require shard artifact download
         if: always()

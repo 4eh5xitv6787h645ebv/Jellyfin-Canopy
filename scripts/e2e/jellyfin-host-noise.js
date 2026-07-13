@@ -5,6 +5,7 @@ const SCROLL_HANDLER_ERROR = 'pageerror: t.scrollHandler is not a function';
 const HOME_TAB_PREFIX = "[Home] failed to get tab controller TypeError: Cannot read properties of undefined (reading 'querySelector')";
 const HOME_TAB_CHUNK = /\/web\/hometab\.[A-Za-z0-9]+\.chunk\.js:\d+:\d+/;
 const HOME_CHUNK = /\/web\/home\.[A-Za-z0-9]+\.chunk\.js:\d+:\d+/;
+const CANOPY_STACK_FRAME = /(?:^|\n)[^\n]*(?:\bJellyfinCanopy\b|\/JellyfinCanopy(?:\/|[?#]))/i;
 
 /**
  * Exact Jellyfin-web host errors observed while the standalone Hidden Content
@@ -17,7 +18,8 @@ function isKnownHiddenContentHostNoise(text) {
     if (text === SCROLL_HANDLER_ERROR) return true;
     return text.startsWith(HOME_TAB_PREFIX)
         && HOME_TAB_CHUNK.test(text)
-        && HOME_CHUNK.test(text);
+        && HOME_CHUNK.test(text)
+        && !CANOPY_STACK_FRAME.test(text);
 }
 
 module.exports = {

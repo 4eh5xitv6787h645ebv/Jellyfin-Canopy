@@ -47,3 +47,22 @@ test('session-control has no per-test configuration setup left behind', () => {
         'configuration writes belong only in beforeAll and afterAll'
     );
 });
+
+test('session-control always clears its synthetic playback through Jellyfin core', () => {
+    const fixture = sliceBetween('async function startUserPlayback(', "test.describe('session control'");
+    const adminTest = sliceBetween("test('admin sees", "test('non-admin gets");
+    const tryIndex = adminTest.indexOf('try {');
+    const finallyIndex = adminTest.indexOf('} finally {');
+    const cleanupIndex = adminTest.indexOf('await playback.stop();');
+
+    assert.match(fixture, /\/Sessions\/Playing\/Stopped/);
+    assert.match(fixture, /Failed:\s*true/);
+    assert.doesNotMatch(fixture, /JellyfinCanopy\/active-streams\/sessions\/.+\/stop/);
+    assert.ok(tryIndex >= 0, 'admin assertions must be guarded by try/finally');
+    assert.ok(finallyIndex > tryIndex, 'playback cleanup must live in finally');
+    assert.ok(cleanupIndex > finallyIndex, 'finally must await the playback cleanup');
+    assert.match(adminTest, /expect\(stop\.status, 'admin stop → 200'\)\.toBe\(200\)/);
+    assert.match(adminTest, /primaryFailure\s*=\s*error/);
+    assert.match(adminTest, /new AggregateError\(\s*\[primaryFailure, cleanupFailure\]/);
+    assert.match(adminTest, /throw cleanupFailure/);
+});

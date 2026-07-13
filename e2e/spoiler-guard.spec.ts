@@ -24,6 +24,11 @@ import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
 import { authenticate, api, type Session } from './fixtures/api';
 import type { Page } from 'playwright/test';
 import { createGuardRestorePlan } from '../scripts/e2e/spoiler-guard-restore';
+import {
+    getSpoilerState,
+    restoreSeriesGuard,
+    restoreSeriesGuards,
+} from './fixtures/spoiler-state';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -233,7 +238,8 @@ test.describe('Spoiler Guard', () => {
         const t = target!;
 
         const plan = createGuardRestorePlan(
-            (await guardedSeriesIds(user)).has(norm(t.seriesId)),
+            await getSpoilerState(BASE, user),
+            t.seriesId,
             false
         );
         try {
@@ -277,7 +283,7 @@ test.describe('Spoiler Guard', () => {
 
             assertNoSpoilerRuntimeErrors(consoleErrors);
         } finally {
-            await setSeriesGuard(user, t.seriesId, plan.restoreGuarded);
+            await restoreSeriesGuard(BASE, user, plan);
         }
     });
 
@@ -287,7 +293,8 @@ test.describe('Spoiler Guard', () => {
         const t = target!;
 
         const plan = createGuardRestorePlan(
-            (await guardedSeriesIds(user)).has(norm(t.seriesId)),
+            await getSpoilerState(BASE, user),
+            t.seriesId,
             true
         );
         try {
@@ -321,7 +328,7 @@ test.describe('Spoiler Guard', () => {
 
             assertNoSpoilerRuntimeErrors(consoleErrors);
         } finally {
-            await setSeriesGuard(user, t.seriesId, plan.restoreGuarded);
+            await restoreSeriesGuard(BASE, user, plan);
         }
     });
 
@@ -330,22 +337,29 @@ test.describe('Spoiler Guard', () => {
         test.skip(!target, 'no series with an unwatched episode available on the target server');
         const t = target!;
 
-        // Capture the admin's real (never-guarded) title up front.
-        const adminReal = (await listEpisodes(admin, t.seriesId)).find((e) => e.id === t.unwatched.id);
-        expect(adminReal, 'admin can see the target episode').toBeTruthy();
-
-        const plan = createGuardRestorePlan(
-            (await guardedSeriesIds(user)).has(norm(t.seriesId)),
-            true
-        );
+        const [userState, adminState] = await Promise.all([
+            getSpoilerState(BASE, user),
+            getSpoilerState(BASE, admin),
+        ]);
+        const userPlan = createGuardRestorePlan(userState, t.seriesId, true);
+        const adminPlan = createGuardRestorePlan(adminState, t.seriesId, false);
         try {
-            // Guard the series for the NON-admin only.
-            await setSeriesGuard(user, t.seriesId, plan.requiredGuarded);
+            // Establish both sides explicitly: the user is guarded and the
+            // admin is not, regardless of either account's pre-test state.
+            await setSeriesGuard(admin, t.seriesId, adminPlan.requiredGuarded);
+            await setSeriesGuard(user, t.seriesId, userPlan.requiredGuarded);
+
+            const adminReal = (await listEpisodes(admin, t.seriesId))
+                .find((e) => e.id === t.unwatched.id);
+            expect(adminReal, 'admin can see the target episode').toBeTruthy();
             // Boot a clean non-admin session purely to prove no console/net errors
             // while the user is guarded (the isolation itself is asserted via API).
             await loginAs(page, 'user', consoleErrors);
 
             // The user's API view is stripped …
+            expect(await guardedSeriesIds(user), 'the user has guard state for this series').toContain(
+                norm(t.seriesId)
+            );
             const userEp = (await listEpisodes(user, t.seriesId)).find((e) => e.id === t.unwatched.id);
             expect(userEp!.name, 'the guarded user sees a stripped title').toMatch(STRIPPED_NAME);
 
@@ -359,7 +373,10 @@ test.describe('Spoiler Guard', () => {
 
             assertNoRuntimeErrors(consoleErrors);
         } finally {
-            await setSeriesGuard(user, t.seriesId, plan.restoreGuarded);
+            await restoreSeriesGuards(BASE, [
+                { session: user, plan: userPlan },
+                { session: admin, plan: adminPlan },
+            ]);
         }
     });
 

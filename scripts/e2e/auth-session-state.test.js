@@ -142,6 +142,44 @@ test('the plugin phase still receives the full sixty-second allowance', async ()
     assert.equal(result.elapsedMs, 60_000);
 });
 
+test('phase handoff stops immediately once plugin initialization reaches current-user', async () => {
+    const clock = fakeClock();
+    const result = await waitForSessionDecision(async () => snapshot({
+        currentUserId: '',
+    }), EXPECTED_USER_ID, {
+        timeoutMs: PLUGIN_INIT_TIMEOUT_MS,
+        stopOnPendingPhases: ['current-user'],
+        now: clock.now,
+        sleep: clock.sleep,
+    });
+
+    assert.equal(result.outcome, 'pending');
+    assert.equal(result.phase, 'current-user');
+    assert.equal(result.timedOut, false);
+    assert.equal(result.elapsedMs, 0);
+    assert.equal(clock.elapsed(), 0);
+});
+
+test('the current-user phase receives its independent fifteen-second allowance', async () => {
+    const clock = fakeClock();
+    const result = await waitForSessionDecision(async () => snapshot({
+        currentUserId: clock.elapsed() >= CURRENT_USER_TIMEOUT_MS - 100
+            ? EXPECTED_USER_ID
+            : '',
+    }), EXPECTED_USER_ID, {
+        timeoutMs: CURRENT_USER_TIMEOUT_MS,
+        pollIntervalMs: 100,
+        now: clock.now,
+        sleep: clock.sleep,
+    });
+
+    assert.equal(result.outcome, 'authenticated');
+    assert.equal(result.phase, 'current-user');
+    assert.equal(result.timedOut, false);
+    assert.equal(result.elapsedMs, CURRENT_USER_TIMEOUT_MS - 100);
+    assert.equal(clock.elapsed(), CURRENT_USER_TIMEOUT_MS - 100);
+});
+
 test('auth.ts retains the full phase timeouts and captures the login result user', () => {
     const source = fs.readFileSync(path.join(ROOT, 'e2e/fixtures/auth.ts'), 'utf8');
 
@@ -150,6 +188,7 @@ test('auth.ts retains the full phase timeouts and captures the login result user
     assert.match(source, /timeoutMs: FAST_BOUNCE_TIMEOUT_MS/);
     assert.match(source, /timeoutMs: PLUGIN_INIT_TIMEOUT_MS/);
     assert.match(source, /timeoutMs: CURRENT_USER_TIMEOUT_MS/);
+    assert.match(source, /stopOnPendingPhases: \['current-user'\]/);
     assert.match(source, /authenticationResult\?\.User\?\.Id/);
     assert.match(source, /expectedUserId/);
     assert.match(source, /consoleErrors\?\.reset\(\)/);
