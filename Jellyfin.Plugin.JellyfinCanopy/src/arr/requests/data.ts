@@ -154,18 +154,10 @@ export interface RequestsPageState {
     issuesFilter: string;
     issuesPermissionDenied?: boolean;
     isLoading: boolean;
-    pollTimer: ReturnType<typeof setInterval> | null;
-    pageVisible: boolean;
-    previousPage: Element | null;
-    locationSignature: string | null;
-    locationUnsubscribe: (() => void) | null;
     downloadsActiveTab: string;
     downloadsSearchQuery: string;
     downloadsSearchVisible: boolean;
     searchDebounceTimer: ReturnType<typeof setTimeout> | null;
-    _customTabContainer: HTMLElement | null;
-    _customTabMode?: boolean;
-    _pluginPageVisible?: boolean;
 }
 
 // State management
@@ -183,16 +175,10 @@ export const state: RequestsPageState = {
     issuesError: false,
     issuesFilter: 'open',
     isLoading: false,
-    pollTimer: null,
-    pageVisible: false,
-    previousPage: null,
-    locationSignature: null,
-    locationUnsubscribe: null,
     downloadsActiveTab: 'all',
     downloadsSearchQuery: '',
     downloadsSearchVisible: false,
     searchDebounceTimer: null,
-    _customTabContainer: null,
 };
 
 const issueMediaCache = new Map<string, IssueMediaDetails | null>();
@@ -553,10 +539,15 @@ export async function fetchIssues(): Promise<unknown> {
     }
 }
 
-/**
- * Load all data
- */
-export async function loadAllData(): Promise<void> {
+// Coalescing gate: the fetch pipeline writes into shared module state, so two
+// overlapping loads (initial adopt + a poll tick, a live nudge landing mid-load)
+// could interleave and leave a stale writer last. One load runs at a time;
+// requests that arrive mid-flight collapse into a single follow-up pass that
+// reads the LATEST filter/page state.
+let loadInFlight: Promise<void> | null = null;
+let loadQueued = false;
+
+async function loadAllDataOnce(): Promise<void> {
     state.isLoading = true;
     renderPage();
 
@@ -564,6 +555,27 @@ export async function loadAllData(): Promise<void> {
 
     state.isLoading = false;
     renderPage();
+}
+
+/**
+ * Load all data (serialized: overlapping calls coalesce into one follow-up).
+ */
+export function loadAllData(): Promise<void> {
+    if (loadInFlight) {
+        loadQueued = true;
+        return loadInFlight;
+    }
+    loadInFlight = (async () => {
+        try {
+            do {
+                loadQueued = false;
+                await loadAllDataOnce();
+            } while (loadQueued);
+        } finally {
+            loadInFlight = null;
+        }
+    })();
+    return loadInFlight;
 }
 
 export async function handleRequestAction(btn: HTMLButtonElement, action: 'approve' | 'decline'): Promise<void> {
