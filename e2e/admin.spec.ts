@@ -115,6 +115,18 @@ test.describe('admin authorization', () => {
         expect(state.adminFilter).toBe(false);
         expect(state.stuckSpinners).toBe(0);
 
-        assertNoRuntimeErrors(consoleErrors);
+        // Jellyfin web's own hashed host chunk can emit this exact pageerror
+        // while mounting a full standalone page. The retained CI trace for
+        // #195 attributes it to /web/49275.*.chunk.js, and the same narrow host
+        // noise is already scoped in pages-lifecycle and settings-persist.
+        // Keep every other console error and every unexpected plugin 4xx fatal.
+        const pluginErrors = consoleErrors.real().filter(
+            (text) => text !== 'pageerror: t.scrollHandler is not a function'
+        );
+        expect(pluginErrors, 'unexpected Canopy console errors').toEqual([]);
+        expect(
+            consoleErrors.unexpected4xx(),
+            'unexpected 4xx responses from plugin endpoints'
+        ).toEqual([]);
     });
 });
