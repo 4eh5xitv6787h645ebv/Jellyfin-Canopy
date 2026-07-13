@@ -18,7 +18,7 @@
   <a href='https://www.buymeacoffee.com/n00bcodr' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png' border='0' alt='Buy Me a Coffee' /></a>
 </p>
 
-**Jellyfin Canopy is one plugin that turns a Jellyfin 12 server into a complete home-theater experience** — smarter playback, a built-in discovery and request flow, family-safe viewing, beautiful posters, and real admin superpowers. Install it once on the server and it lights up everywhere the Jellyfin web interface runs: browsers, the official mobile apps, and desktop apps. Nothing to install on your users' devices, nothing for them to configure — though almost everything can be personalized per user if they want to.
+**Jellyfin Canopy is one plugin that turns a Jellyfin 12 server into a complete home-theater experience** — smarter playback, a built-in discovery and request flow, family-safe viewing, beautiful posters, and real admin superpowers. Install it once on the server and it works everywhere the Jellyfin web interface runs: browsers, the official mobile apps, and desktop apps — nothing to install on your users' devices. The core experience lights up immediately; the bigger feature areas are opt-in, and a few connect to services you may already run (Seerr, Sonarr/Radarr, TMDB) — you enable what you want from one settings page, and almost everything can then be personalized per user.
 
 <br>
 
@@ -26,7 +26,7 @@
 
 - **It feels native.** Every button, panel, and page is built to look and behave like Jellyfin itself — no janky overlays, no popped-in widgets, both light and dark themes.
 - **Your whole household benefits.** Features work per user: everyone gets their own settings, their own discovery feed, their own hidden titles, their own spoiler protection.
-- **Admins stay in control.** Every user-facing option has an admin default, and the redesigned settings app makes hundreds of options easy to find with built-in search.
+- **Admins stay in control.** Nearly every per-user toggle has an admin-set default, and the redesigned settings app makes hundreds of options easy to find with built-in search.
 - **It replaces half a dozen browser tabs.** Requesting new media, approving requests, kicking a stream, grabbing a stubborn release from Sonarr — all without leaving Jellyfin.
 
 <br>
@@ -60,7 +60,7 @@ Connect [Seerr](https://github.com/seerr-team/seerr) once, and Jellyfin's own se
 - **Approve in-app** — admins (or trusted users) approve or decline pending requests with one tap.
 - **Auto-requests** — automatically request the next season as you finish one, or the next movie in a collection.
 - **Report issues** — users flag playback problems directly to Seerr from the item page.
-- **Watchlist sync** — keep your Seerr and Jellyfin watchlists in step, in either direction.
+- **Watchlist sync** — keep your Seerr and Jellyfin watchlists in step (Jellyfin → Seerr out of the box; the reverse direction needs the [KefinTweaks plugin](https://github.com/ranaldsgift/KefinTweaks) for Jellyfin watchlist support).
 
 → Setup & details: [Discover & Request](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/discover/)
 
@@ -151,7 +151,7 @@ Four new pages living right in Jellyfin's navigation, reorderable, native on des
    https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/main/manifest.json
    ```
 3. Back in the **Catalog**, find **Jellyfin Canopy** and click **Install**
-4. **Restart** your Jellyfin server — done. Users get the goodies immediately; you'll find the admin settings under **Dashboard → Plugins → Jellyfin Canopy**.
+4. **Restart** your Jellyfin server, then open **Dashboard → Plugins → Jellyfin Canopy** to switch on the feature areas you want — the [Getting Started guide](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/getting-started/) walks the first-run setup step by step.
 
 > [!IMPORTANT]
 > **Jellyfin 12 required.** On Jellyfin 10.11, use the original [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) instead.
