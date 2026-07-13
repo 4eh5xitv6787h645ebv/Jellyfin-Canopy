@@ -27,6 +27,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             {
                 @"\.jellyfin-tab-button\.active",   // brand gradient fill
                 @"\.jc-save-dock-btn",              // brand gradient fill
+                @"\.jc-nav-toggle",                 // brand gradient fill (mobile drawer pill)
                 @"\.jc-branding-delete",            // white glyph on a dark scrim OVER a user image (theme-independent)
                 @"\.jc-preview-panel-card",         // background: rgb(24, 24, 24)
                 @"\.jc-preview-toast",              // dark gradient toast
