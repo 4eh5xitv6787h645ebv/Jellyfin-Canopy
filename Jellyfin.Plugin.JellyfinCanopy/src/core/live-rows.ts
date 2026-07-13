@@ -10,11 +10,10 @@
 // buttons and tanstack rows in place off the same messages; this keeps JC's
 // overlays in step without a navigation or manual refresh.
 //
-// Deliberately conservative to honour the no-jank rule: it schedules a coalesced
-// tag rescan (which picks up untagged/new cards) rather than force-clearing and
-// re-rendering every existing overlay on every push — a full re-render on each
-// batched UserDataChanged would flicker. Overlays on already-tagged cards refresh
-// on the next scan/navigation.
+// Library changes keep the conservative coalesced scan. User-data changes also
+// enter the tag pipeline's synchronous fail-closed projection barrier: only the
+// pushed item ids are blanked immediately, then the server's bounded per-user
+// journal supplies the exact item/season/series closure to re-render.
 
 import { JC } from '../globals';
 import { LIVE, on } from './live';
@@ -38,11 +37,25 @@ function scheduleRescan(): void {
     }, 300);
 }
 
+function handleUserDataChanged(data: unknown): void {
+    try {
+        if (JC.tagPipeline?.refreshServerProjection) {
+            void JC.tagPipeline.refreshServerProjection(data).catch((err) => {
+                console.debug(`${logPrefix} projection refresh failed closed:`, err);
+            });
+        }
+    } catch (err) {
+        console.debug(`${logPrefix} projection invalidation skipped:`, err);
+    }
+    // Keeps batch-mode/new-card behavior and coalesces any non-projection work.
+    scheduleRescan();
+}
+
 // Items added/updated → re-tag any newly-eligible cards JC owns overlays on.
 on(LIVE.LIBRARY_CHANGED, scheduleRescan);
 
 // Watch-state / favourite / played changes → refresh watch-state-dependent
 // overlays (e.g. user-review / rating tags) to match the new state.
-on(LIVE.USER_DATA_CHANGED, scheduleRescan);
+on(LIVE.USER_DATA_CHANGED, handleUserDataChanged);
 
 console.log(`${logPrefix} initialized`);

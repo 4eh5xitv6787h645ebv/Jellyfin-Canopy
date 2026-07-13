@@ -18,6 +18,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly AutoMovieRequestMonitor _autoMovieRequestMonitor;
         private readonly WatchlistMonitor _watchlistMonitor;
         private readonly TagCacheService _tagCacheService;
+        private readonly TagCacheProjectionRevisionService _tagCacheProjectionRevisionService;
         private readonly TagCacheMonitor _tagCacheMonitor;
         private readonly SeerrScanTriggerService _seerrScanTriggerService;
         private readonly IPluginConfigProvider _configProvider;
@@ -27,7 +28,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         public string Description => "Initializes Jellyfin Canopy background services and performs necessary cleanups. The client script is injected at request time by the injection middleware.";
         public string Category => "Jellyfin Canopy";
 
-        public StartupService(ILogger<StartupService> logger, IApplicationPaths applicationPaths, AutoSeasonRequestMonitor autoSeasonRequestMonitor, AutoMovieRequestMonitor autoMovieRequestMonitor, WatchlistMonitor watchlistMonitor, TagCacheService tagCacheService, TagCacheMonitor tagCacheMonitor, SeerrScanTriggerService seerrScanTriggerService, IPluginConfigProvider configProvider)
+        public StartupService(
+            ILogger<StartupService> logger,
+            IApplicationPaths applicationPaths,
+            AutoSeasonRequestMonitor autoSeasonRequestMonitor,
+            AutoMovieRequestMonitor autoMovieRequestMonitor,
+            WatchlistMonitor watchlistMonitor,
+            TagCacheService tagCacheService,
+            TagCacheProjectionRevisionService tagCacheProjectionRevisionService,
+            TagCacheMonitor tagCacheMonitor,
+            SeerrScanTriggerService seerrScanTriggerService,
+            IPluginConfigProvider configProvider)
         {
             _logger = logger;
             _applicationPaths = applicationPaths;
@@ -35,6 +46,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _autoMovieRequestMonitor = autoMovieRequestMonitor;
             _watchlistMonitor = watchlistMonitor;
             _tagCacheService = tagCacheService;
+            _tagCacheProjectionRevisionService = tagCacheProjectionRevisionService;
             _tagCacheMonitor = tagCacheMonitor;
             _seerrScanTriggerService = seerrScanTriggerService;
             _configProvider = configProvider;
@@ -58,6 +70,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                 // Initialize on-demand Seerr recently-added scan trigger
                 _seerrScanTriggerService.Initialize();
+
+                // Watched-state is a live per-user projection over the shared tag
+                // cache. Subscribe before loading/building the cache so no user-data
+                // transition after plugin startup can fall outside its journal.
+                _tagCacheProjectionRevisionService.Initialize();
 
                 // Load tag cache from disk. New/changed items are picked up by the
                 // monitor via Jellyfin's library scan events (ItemAdded/ItemUpdated).

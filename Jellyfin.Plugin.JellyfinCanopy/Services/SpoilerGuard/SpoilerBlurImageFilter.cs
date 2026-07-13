@@ -928,10 +928,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // otherwise. Always show Season 1 (and Specials S0) as an entry
             // point.
             var season = (Season)item;
-            var seasonNum = season.IndexNumber.GetValueOrDefault(int.MaxValue);
-            if (seasonNum <= 1) return true;
-            if (HasWatchedAnyEpisodeInSeason(jUser, season)) return true;
-            return false; // blur
+            var seasonNum = season.IndexNumber;
+            var anyWatched = seasonNum.HasValue
+                && seasonNum.Value > 1
+                && HasWatchedAnyEpisodeInSeason(jUser, season);
+            var seasonDecision = TagCacheService.ResolveGuardedSeasonStripDecision(
+                seasonNum,
+                anyWatched);
+            return seasonDecision == TagCacheService.TagStripDecision.SeasonRatingOnly;
         }
 
         // Per-(user, season) "any episode watched?" probe with a short TTL

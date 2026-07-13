@@ -49,11 +49,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     [ApiController]
     public class TagCacheController : JellyfinCanopyControllerBase
     {
+        private const int MaxProjectionStabilizationPasses = 3;
+
         private readonly Services.TagCacheService _tagCacheService;
         private readonly ILibraryManager _libraryManager;
         private readonly IUserDataManager _userDataManager;
         private readonly Services.SpoilerUserResolver _spoilerResolver;
         private readonly UserConfigurationManager _userConfigurationManager;
+        private readonly Services.TagCacheProjectionRevisionService _projectionRevisionService;
 
         public TagCacheController(
             IHttpClientFactory httpClientFactory,
@@ -65,7 +68,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             ILibraryManager libraryManager,
             IUserDataManager userDataManager,
             Services.SpoilerUserResolver spoilerResolver,
-            UserConfigurationManager userConfigurationManager)
+            UserConfigurationManager userConfigurationManager,
+            Services.TagCacheProjectionRevisionService projectionRevisionService)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _tagCacheService = tagCacheService;
@@ -73,12 +77,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             _userDataManager = userDataManager;
             _spoilerResolver = spoilerResolver;
             _userConfigurationManager = userConfigurationManager;
+            _projectionRevisionService = projectionRevisionService;
         }
 
         [HttpGet("tag-cache/{userId}")]
         [Authorize]
         [Produces("application/json")]
-        public IActionResult GetTagCache(Guid userId, [FromQuery] long? since = null)
+        public IActionResult GetTagCache(
+            Guid userId,
+            [FromQuery] long? since = null,
+            [FromQuery] string? projectionEpoch = null,
+            [FromQuery] long? projectionRevision = null,
+            [FromQuery] bool projectionOnly = false)
         {
             if (_configProvider.ConfigurationOrNull?.TagCacheServerMode != true)
             {
@@ -91,24 +101,169 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
-            var items = _tagCacheService.GetCacheForUser(user, since);
+            // Guid.Empty is a supported alias for the authenticated user in
+            // UserHelper. From this point onward every personalized read and cursor
+            // must use the resolved identity, not the route placeholder; otherwise
+            // accessible rows for the real user could be projected with the empty
+            // user's spoiler policy and revision journal.
+            var effectiveUserId = user.Id;
 
-            // Spoiler Guard tag-strip: when SpoilerBlur is on with any tag-relevant
-            // strip toggle, walk the cache and zero out matching fields for unwatched
-            // episodes/movies/seasons/series that are in the user's spoiler list.
-            // Needed because the JC tag-pipeline reads serverCache BEFORE GetTagData,
-            // so card overlays would still leak despite the toggle. Mirrors the
-            // per-batch strip in GetTagData. Strips a per-request CLONE only — the
-            // shared cache entry is never mutated (see TagCacheEntry.Clone()).
-            ApplyTagCacheSpoilerStrip(items, userId, user);
+            // Capture the shared-content cursor BEFORE selecting any cache rows.
+            // A reconcile can atomically swap the cache (or a flush can mutate it)
+            // while this request is being projected. Returning a later timestamp
+            // with an earlier row snapshot would make the client's next ?since=
+            // request permanently skip the intervening content change. An earlier
+            // cursor may cause one harmless duplicate delta; it cannot lose data.
+            var contentVersion = _tagCacheService.Version;
+            var contentTimestamp = _tagCacheService.LastModified;
+
+            // A projection cursor is independent from the shared content timestamp:
+            // watched state is per-user and deliberately never mutates TagCacheEntry.
+            // Incremental requests must carry both halves so a process restart or a
+            // bounded-journal gap becomes an explicit reset instead of a silent leak.
+            var hasProjectionCursorInput = projectionEpoch != null || projectionRevision.HasValue;
+            var legacySinceOnly = since.HasValue && !projectionOnly && !hasProjectionCursorInput;
+            var requireProjectionCursor = projectionOnly || hasProjectionCursorInput;
+            var projection = _projectionRevisionService.GetDelta(
+                effectiveUserId,
+                projectionEpoch,
+                projectionRevision,
+                requireProjectionCursor);
+
+            if (projection.ResetRequired)
+            {
+                // Do not fall through to GetCacheForUser: a reset response is a
+                // control message, and especially projection-only must never pay the
+                // 15k-entry access-query/cache-scan cost.
+                return ProjectionResetResponse(
+                    effectiveUserId,
+                    projection,
+                    contentVersion,
+                    contentTimestamp);
+            }
+
+            // Pre-projection clients know only ?since= and ignore the reset fields.
+            // They cannot prove which watched-state journal revisions they already
+            // hold, so the backward-safe answer is one full personalized snapshot.
+            // New clients always send epoch+revision and retain the bounded delta.
+            var contentSince = legacySinceOnly ? null : since;
+            var items = projectionOnly
+                ? new Dictionary<string, Model.TagCacheEntry>()
+                : _tagCacheService.GetCacheForUser(user, contentSince);
+            var projectionIds = new HashSet<string>(projection.ItemIds, StringComparer.Ordinal);
+            ReplaceProjectionEntries(items, user, projection.ItemIds);
+
+            // UserDataSaved can race the live strip below. Stabilize against the
+            // journal revision after each strip: when it advanced, replace every
+            // newly affected row from the shared cache and strip the whole response
+            // again using the latest user data. This prevents a response labelled R
+            // from containing a mixture read across R+1. The bounded retry fails
+            // closed with an explicit reset if watched state churn never settles.
+            var projectionStable = false;
+            for (var pass = 0; pass < MaxProjectionStabilizationPasses; pass++)
+            {
+                // Spoiler Guard tag-strip: when SpoilerBlur is on with any tag-relevant
+                // strip toggle, walk the cache and zero out matching fields for unwatched
+                // episodes/movies/seasons/series that are in the user's spoiler list.
+                // Strips a per-request CLONE only; the shared entry is never mutated.
+                ApplyTagCacheSpoilerStrip(items, effectiveUserId, user);
+
+                var afterStrip = _projectionRevisionService.GetDelta(
+                    effectiveUserId,
+                    projection.Epoch,
+                    projection.Revision,
+                    requireCursor: true);
+                if (afterStrip.ResetRequired)
+                {
+                    return ProjectionResetResponse(
+                        effectiveUserId,
+                        afterStrip,
+                        contentVersion,
+                        contentTimestamp);
+                }
+
+                if (afterStrip.Revision == projection.Revision)
+                {
+                    projection = afterStrip;
+                    projectionStable = true;
+                    break;
+                }
+
+                foreach (var itemId in afterStrip.ItemIds)
+                {
+                    projectionIds.Add(itemId);
+                }
+
+                ReplaceProjectionEntries(items, user, afterStrip.ItemIds);
+                projection = afterStrip;
+            }
+
+            if (!projectionStable)
+            {
+                var latest = _projectionRevisionService.GetDelta(
+                    effectiveUserId,
+                    projection.Epoch,
+                    projection.Revision,
+                    requireCursor: true);
+                return ProjectionResetResponse(
+                    effectiveUserId,
+                    latest,
+                    contentVersion,
+                    contentTimestamp);
+            }
 
             return Ok(new
             {
-                version = _tagCacheService.Version,
-                timestamp = _tagCacheService.LastModified,
+                version = contentVersion,
+                timestamp = contentTimestamp,
                 count = items.Count,
-                items
+                items,
+                projectionUserId = effectiveUserId.ToString("N"),
+                projectionEpoch = projection.Epoch,
+                projectionRevision = projection.Revision,
+                projectionReset = false,
+                reset = false,
+                projectionIds = projectionIds.OrderBy(static id => id, StringComparer.Ordinal).ToArray()
             });
+        }
+
+        private IActionResult ProjectionResetResponse(
+            Guid userId,
+            Services.TagCacheProjectionRevisionService.ProjectionDelta projection,
+            long contentVersion,
+            long contentTimestamp)
+        {
+            return Ok(new
+            {
+                version = contentVersion,
+                timestamp = contentTimestamp,
+                count = 0,
+                items = new Dictionary<string, Model.TagCacheEntry>(),
+                projectionUserId = userId.ToString("N"),
+                projectionEpoch = projection.Epoch,
+                projectionRevision = projection.Revision,
+                projectionReset = true,
+                reset = true,
+                projectionIds = Array.Empty<string>()
+            });
+        }
+
+        private void ReplaceProjectionEntries(
+            Dictionary<string, Model.TagCacheEntry> items,
+            JUser user,
+            string[] itemIds)
+        {
+            // Remove first so missing/inaccessible cache rows remain authoritative
+            // tombstones rather than leaving an older row in a normal content delta.
+            foreach (var itemId in itemIds)
+            {
+                items.Remove(itemId);
+            }
+
+            foreach (var (key, entry) in _tagCacheService.GetCacheEntriesForUserByIds(user, itemIds))
+            {
+                items[key] = entry;
+            }
         }
 
         // Per-user strip for the server-mode tag-cache response. The gating logic
@@ -172,7 +327,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             };
             Func<Guid, int?> seasonIndexNumber = guid =>
                 _libraryManager.GetItemById<BaseItem>(guid) is MediaBrowser.Controller.Entities.TV.Season s
-                    ? s.IndexNumber.GetValueOrDefault(int.MaxValue)
+                    ? s.IndexNumber
                     : (int?)null;
             Func<Guid, bool> seasonAnyWatched = guid =>
             {
@@ -222,6 +377,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
+            // Match AuthorizeUserAccess/UserHelper semantics: Guid.Empty names the
+            // authenticated user, so policy must be loaded under that resolved id.
+            var effectiveUserId = user.Id;
+
             if (ids == null || ids.Length == 0)
             {
                 return BadRequest(new { error = "ids array required" });
@@ -251,7 +410,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // Load through the owning resolver (typed read + last-known-good +
                 // fail-closed sentinel); never null. A corrupt/unavailable policy can
                 // no longer silently disable tag stripping on this endpoint.
-                spoilerState = _spoilerResolver.LoadUserState(HttpContext, userId);
+                spoilerState = _spoilerResolver.LoadUserState(HttpContext, effectiveUserId);
                 // Empty lists = nothing to strip; treat as off — UNLESS fail-closed
                 // (policy fault, no last-known-good), which over-strips every item.
                 // Check all three dicts so a movies-only user isn't short-circuited.
@@ -290,6 +449,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                 var kind = item.GetBaseItemKind();
                 var isContainer = kind == BaseItemKind.Series || kind == BaseItemKind.Season;
+                Services.TagCacheService.GuardedSeasonRatingProjection? guardedSeasonRatings = null;
 
                 // Fail-closed: the policy read faulted with no last-known-good. Return
                 // a fully-stripped Id+Type stub for EVERY item regardless of type,
@@ -511,20 +671,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // it would spoil their own navigation. Movies inside opted-in collections
                 // are already handled by the Movie-stub via IsMovieInSpoilerScope.
 
-                // Season stub: for a Season of a guarded series with no watched episode
-                // and not S0/S1, return an Id+Type stub so JC tag overlays don't render
-                // on the blurred season poster. Mirrors the field-strip filter's Season
-                // strip + the image filter's HasWatchedAnyEpisodeInSeason gate.
+                // Guarded-Season projection. S0/S1 and a later Season with any
+                // watched episode keep their non-rating metadata, but ratings remain
+                // hidden because a Season card can fall back to the guarded Series'
+                // rating. A later entirely-unwatched Season still takes the full stub.
                 if (stripTagsEnabled
                     && spoilerState != null
                     && item is MediaBrowser.Controller.Entities.TV.Season spSeason
                     && spSeason.SeriesId != Guid.Empty
                     && spoilerState.Series.ContainsKey(spSeason.SeriesId.ToString("N")))
                 {
-                    var sNum = spSeason.IndexNumber.GetValueOrDefault(int.MaxValue);
-                    if (sNum > 1)
+                    bool anyWatched = false;
+                    if (spSeason.IndexNumber.HasValue && spSeason.IndexNumber.Value > 1)
                     {
-                        bool anyWatched = false;
                         try
                         {
                             foreach (var ep in spSeason.GetEpisodes(user, new MediaBrowser.Controller.Dto.DtoOptions(false), shouldIncludeMissingEpisodes: false))
@@ -541,32 +700,42 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                                 $"Spoiler Guard tag-data: season any-watched probe failed for {spSeason.Id}: {ex.Message}");
                             // Fail-CLOSED: assume not watched, proceed to stub.
                         }
+                    }
 
-                        if (!anyWatched)
+                    var seasonDecision = Services.TagCacheService.ResolveGuardedSeasonStripDecision(
+                        spSeason.IndexNumber,
+                        anyWatched);
+                    guardedSeasonRatings = Services.TagCacheService.ProjectGuardedSeasonRatings(
+                        spSeason.CommunityRating,
+                        spSeason.CriticRating,
+                        seasonDecision,
+                        spStripRatings);
+
+                    if (seasonDecision == Services.TagCacheService.TagStripDecision.Strip)
+                    {
+                        string? stubName = item.Name;
+                        if (spReplaceTitle && spSeason.IndexNumber.HasValue)
                         {
-                            string? stubName = item.Name;
-                            if (spReplaceTitle && spSeason.IndexNumber.HasValue)
-                            {
-                                stubName = $"Season {spSeason.IndexNumber.Value}";
-                            }
-                            results.Add(new
-                            {
-                                Id = item.Id,
-                                Type = kind.ToString(),
-                                Genres = spStripGenres ? Array.Empty<string>() : (spSeason.Genres ?? Array.Empty<string>()),
-                                CommunityRating = spStripRatings ? (float?)null : spSeason.CommunityRating,
-                                CriticRating = spStripRatings ? (float?)null : spSeason.CriticRating,
-                                SeriesId = spStripRatings ? (Guid?)null : spSeason.SeriesId,
-                                ProviderIds = (IDictionary<string, string>?)null,
-                                Name = stubName,
-                                Path = (string?)null,
-                                MediaStreams = (List<object>?)null,
-                                MediaSources = (List<object>?)null,
-                                FirstEpisode = (object?)null,
-                                Tags = spStripGenres ? Array.Empty<string>() : (spSeason.Tags ?? Array.Empty<string>()),
-                            });
-                            continue;
+                            stubName = $"Season {spSeason.IndexNumber.Value}";
                         }
+                        results.Add(new
+                        {
+                            Id = item.Id,
+                            Type = kind.ToString(),
+                            Genres = spStripGenres ? Array.Empty<string>() : (spSeason.Genres ?? Array.Empty<string>()),
+                            CommunityRating = guardedSeasonRatings.Value.CommunityRating,
+                            CriticRating = guardedSeasonRatings.Value.CriticRating,
+                            SeriesId = guardedSeasonRatings.Value.Suppressed ? (Guid?)null : spSeason.SeriesId,
+                            RatingSuppressed = guardedSeasonRatings.Value.Suppressed,
+                            ProviderIds = (IDictionary<string, string>?)null,
+                            Name = stubName,
+                            Path = (string?)null,
+                            MediaStreams = (List<object>?)null,
+                            MediaSources = (List<object>?)null,
+                            FirstEpisode = (object?)null,
+                            Tags = spStripGenres ? Array.Empty<string>() : (spSeason.Tags ?? Array.Empty<string>()),
+                        });
+                        continue;
                     }
                 }
 
@@ -645,9 +814,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     Id = item.Id,
                     Type = kind.ToString(),
                     Genres = item.Genres,
-                    CommunityRating = item.CommunityRating,
-                    CriticRating = item.CriticRating,
+                    CommunityRating = guardedSeasonRatings.HasValue
+                        ? guardedSeasonRatings.Value.CommunityRating
+                        : item.CommunityRating,
+                    CriticRating = guardedSeasonRatings.HasValue
+                        ? guardedSeasonRatings.Value.CriticRating
+                        : item.CriticRating,
                     SeriesId = seriesId,
+                    // Keep SeriesId for genre/review identity. The explicit marker
+                    // tells the client not to reintroduce a hidden parent-Series
+                    // rating when this exempt Season's own rating fields are null.
+                    RatingSuppressed = guardedSeasonRatings.HasValue
+                        && guardedSeasonRatings.Value.Suppressed,
                     ProviderIds = item.ProviderIds,
                     Name = item.Name,
                     Path = string.IsNullOrEmpty(item.Path) ? null : System.IO.Path.GetFileName(item.Path),

@@ -57,6 +57,21 @@ describe('config hot-reload reaction', () => {
         expect(() => emit(LIVE.CONFIG_CHANGED, {})).not.toThrow();
         await vi.waitFor(() => expect(consoleError).toHaveBeenCalled());
     });
+
+    it('rebuilds the personalized tag projection when admin spoiler policy changes', async () => {
+        JC.pluginConfig.SpoilerStripRatings = false;
+        JC.core.api = {
+            plugin: vi.fn((path: string) => path.startsWith('/public-config')
+                ? Promise.resolve({ SpoilerStripRatings: true })
+                : Promise.resolve({})),
+        } as unknown as NonNullable<typeof JC.core.api>;
+        const invalidateServerCache = vi.fn().mockResolvedValue(undefined);
+        JC.tagPipeline = { registerRenderer: vi.fn(), invalidateServerCache };
+
+        emit(LIVE.CONFIG_CHANGED, {});
+
+        await vi.waitFor(() => expect(invalidateServerCache).toHaveBeenCalledTimes(1));
+    });
 });
 describe('config hot-reload in-flight guard (CORE-9)', () => {
     afterEach(() => {

@@ -11,7 +11,7 @@
 // fixture, plus a source guard that keeps the shared list container-scoped.
 
 import * as ts from 'typescript';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
 import { register } from './tag-renderer-base';
 import type { TagSpec } from '../types/jc';
@@ -133,5 +133,54 @@ describe('tag-renderer-base STANDARD_IGNORE_SELECTORS stay container-scoped (MIS
                 `leaf-scoped ignore selector re-introduced (ends in .card): ${sel}`,
             ).toBe(false);
         }
+    });
+});
+
+describe('tag-renderer-base projection invalidation (BI-SEC-035)', () => {
+    it('clears targeted persistent/hot values plus the overlay and tagged marker', () => {
+        const registerRenderer = vi.fn();
+        JC.tagPipeline = { registerRenderer };
+        JC.pluginConfig = { TagCacheServerMode: false };
+
+        const name = `projection-cache-${Date.now()}`;
+        const cacheKey = `jc-test-${name}`;
+        const spec: TagSpec = {
+            logPrefix: 'projection-test',
+            settingKey: 'qualityTagsEnabled',
+            containerClass: 'projection-overlay',
+            taggedAttr: 'jcProjectionTagged',
+            cache: {
+                key: cacheKey,
+                legacyPrefix: `${cacheKey}-legacy`,
+                hotBucket: `${name}-hot`,
+                saveOnUnload: false,
+            },
+            pipeline: { render: () => undefined },
+        };
+        const ctx = register(name, spec);
+        const itemId = '11111111111111111111111111111111';
+        ctx.setPersistent(itemId, { value: 'secret', timestamp: Date.now() });
+        ctx.hot?.set(itemId, { value: 'secret', timestamp: Date.now() });
+
+        const host = buildCardHost('indexPage');
+        const card = host.closest<HTMLElement>('.card')!;
+        card.dataset.jcProjectionTagged = '1';
+        const overlay = document.createElement('div');
+        overlay.className = 'projection-overlay';
+        host.appendChild(overlay);
+
+        const config = registerRenderer.mock.calls.at(-1)![1] as {
+            onServerCacheRefresh(ids: string[] | null): void;
+            invalidateCard(el: HTMLElement): void;
+        };
+        config.onServerCacheRefresh([itemId]);
+        config.invalidateCard(host);
+
+        expect(ctx.getPersistent(itemId)).toBeUndefined();
+        expect(ctx.hot!.get(itemId)).toBeUndefined();
+        expect(host.querySelector('.projection-overlay')).toBeNull();
+        expect(card.dataset.jcProjectionTagged).toBeUndefined();
+
+        localStorage.removeItem(cacheKey);
     });
 });

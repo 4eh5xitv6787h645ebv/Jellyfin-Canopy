@@ -34,6 +34,27 @@ interface ItemCacheEntry {
 const itemCache = new Map<string, ItemCacheEntry>();
 const ITEM_CACHE_TTL_MS = 30000; // 30s -- long enough for batch prefetch to warm cache before tag systems scan
 
+/**
+ * Drop short-lived native item DTOs for one account (or every account).
+ * Privacy-policy/watch-state transitions call this before a global tag reset so
+ * a failed tag-data request cannot fall back to a pre-transition DTO.
+ */
+export function clearItemCache(userId?: string, itemIds?: string[]): void {
+    if (!userId) {
+        itemCache.clear();
+        return;
+    }
+    const prefix = `${userId}:`;
+    const selected = itemIds && itemIds.length > 0
+        ? new Set(itemIds.map((id) => id.replace(/-/g, '').toLowerCase()))
+        : null;
+    for (const key of itemCache.keys()) {
+        if (!key.startsWith(prefix)) continue;
+        const itemId = key.slice(prefix.length).replace(/-/g, '').toLowerCase();
+        if (!selected || selected.has(itemId)) itemCache.delete(key);
+    }
+}
+
 export interface GetItemCachedOptions {
     userId?: string;
     ttlMs?: number;
@@ -64,11 +85,16 @@ export async function getItemCached(itemId: string, options: GetItemCachedOption
 
     const promise = ApiClient.getItem(userId, itemId)
         .then((item) => {
-            itemCache.set(key, { item, ts: Date.now(), promise: null });
+            // A privacy reset or newer forced fetch may retire this request while
+            // it is in flight. Only the promise that still owns the key may publish.
+            if (itemCache.get(key)?.promise === promise) {
+                itemCache.set(key, { item, ts: Date.now(), promise: null });
+            }
             return item;
         })
         .catch((err: unknown) => {
-            itemCache.delete(key);
+            // Likewise, an older rejection must not delete a newer request/value.
+            if (itemCache.get(key)?.promise === promise) itemCache.delete(key);
             throw err;
         });
 

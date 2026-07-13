@@ -11,7 +11,7 @@
 
 import { JC } from '../globals';
 import type { TagPipelineLike } from '../types/jc';
-import { addCSS, getItemCached } from './helpers';
+import { addCSS, clearItemCache, getItemCached } from './helpers';
 import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate } from '../core/navigation';
 
@@ -33,6 +33,228 @@ const logPrefix = '🪼 Jellyfin Canopy [TagPipeline]:';
 let serverCache: Map<string, any> | null = null; // Map<itemId, TagCacheEntry> loaded from server
 let serverCacheVersion = 0;
 let serverCacheTimestamp = 0;
+let serverProjection: TagProjectionIdentity | null = null;
+let serverCacheLoadGeneration = 0;
+let tagCacheOwnerUserId: string | null = null;
+
+/** Identity of one user's watched/privacy projection in one server process. */
+export interface TagProjectionIdentity {
+    userId: string;
+    epoch: string;
+    revision: number;
+}
+
+export type ProjectionResponseDecision = 'apply' | 'ignore' | 'reset';
+
+/** Normalize Jellyfin ids/cache keys for stable comparisons across dashed/N forms. */
+export function normalizeProjectionKey(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().replace(/-/g, '').toLowerCase();
+    return normalized.length > 0 ? normalized : null;
+}
+
+/** Parse the server-owned projection identity carried by every tag-cache response. */
+export function readProjectionIdentity(response: any): TagProjectionIdentity | null {
+    const userId = normalizeProjectionKey(response?.projectionUserId);
+    const epoch = typeof response?.projectionEpoch === 'string'
+        ? response.projectionEpoch.trim()
+        : '';
+    const revision = Number(response?.projectionRevision);
+    if (!userId || !epoch || !Number.isSafeInteger(revision) || revision < 0) return null;
+    return { userId, epoch, revision };
+}
+
+/**
+ * Decide whether an incremental response may mutate the current per-user cache.
+ * Older revisions and other users are ignored; epoch changes require a fresh full
+ * projection because revisions are process-local and restart at server startup.
+ */
+export function decideProjectionResponse(
+    current: TagProjectionIdentity | null,
+    response: any,
+    expectedUserId: string,
+): ProjectionResponseDecision {
+    const expected = normalizeProjectionKey(expectedUserId);
+    const incoming = readProjectionIdentity(response);
+    if (!expected || !incoming || incoming.userId !== expected) return 'ignore';
+    if (response?.projectionReset === true || response?.reset === true) return 'reset';
+    if (!current || current.userId !== expected || incoming.epoch !== current.epoch) return 'reset';
+    if (incoming.revision < current.revision) return 'ignore';
+    return 'apply';
+}
+
+/** Extract the item ids carried by a native UserDataChanged payload. */
+export function extractUserDataChangedIds(data: unknown, expectedUserId: string): string[] {
+    if (!data || typeof data !== 'object') return [];
+    const payload = data as { UserId?: unknown; userId?: unknown; UserDataList?: unknown; userDataList?: unknown };
+    const eventUser = normalizeProjectionKey(payload.UserId ?? payload.userId);
+    const expected = normalizeProjectionKey(expectedUserId);
+    // Native sockets are user-scoped, but an explicit other-user payload must
+    // never evict or replace this session's projection.
+    if (eventUser && expected && eventUser !== expected) return [];
+
+    const list = payload.UserDataList ?? payload.userDataList;
+    if (!Array.isArray(list)) return [];
+    const ids = new Set<string>();
+    for (const raw of list) {
+        if (!raw || typeof raw !== 'object') continue;
+        const row = raw as { ItemId?: unknown; itemId?: unknown };
+        const id = normalizeProjectionKey(row.ItemId ?? row.itemId);
+        if (id) ids.add(id);
+    }
+    return [...ids];
+}
+
+type ProjectionDependencyMeta = {
+    type: string;
+    relationKey: string | null;
+    seriesId: string | null;
+};
+
+export type ProjectionDependencyExpansion = {
+    ids: string[];
+    /** False means the loaded snapshot could not prove the full privacy closure. */
+    complete: boolean;
+};
+
+/**
+ * Bounded in-memory dependency index built from the already-downloaded cache.
+ * It lets a native Episode push synchronously blank Episode + Season + Series
+ * before the journal round trip; no per-event full-cache scan is required.
+ */
+export class TagProjectionDependencyIndex {
+    private readonly dependencies = new Map<string, Set<string>>();
+    private readonly metadata = new Map<string, ProjectionDependencyMeta>();
+    private readonly seasonsByRelation = new Map<string, Set<string>>();
+    private readonly episodesByRelation = new Map<string, Set<string>>();
+
+    clear(): void {
+        this.dependencies.clear();
+        this.metadata.clear();
+        this.seasonsByRelation.clear();
+        this.episodesByRelation.clear();
+    }
+
+    replaceAll(entries: ReadonlyMap<string, unknown>): void {
+        this.clear();
+        // Seasons first means Episode insertion can resolve its parent in O(1).
+        for (const [id, entry] of entries) {
+            if (this.readType(entry) === 'Season') this.replace(id, entry);
+        }
+        for (const [id, entry] of entries) {
+            if (this.readType(entry) !== 'Season') this.replace(id, entry);
+        }
+    }
+
+    replace(rawId: string, entry: unknown): void {
+        const id = normalizeProjectionKey(rawId);
+        if (!id) return;
+        this.remove(id);
+
+        const type = this.readType(entry);
+        const seriesId = this.readSeriesId(entry);
+        const relationKey = seriesId ? this.readRelationKey(entry, seriesId) : null;
+        const deps = new Set<string>([id]);
+        if (seriesId) deps.add(seriesId);
+
+        if (type === 'Season' && relationKey) {
+            let seasons = this.seasonsByRelation.get(relationKey);
+            if (!seasons) {
+                seasons = new Set<string>();
+                this.seasonsByRelation.set(relationKey, seasons);
+            }
+            seasons.add(id);
+            for (const episodeId of this.episodesByRelation.get(relationKey) || []) {
+                this.dependencies.get(episodeId)?.add(id);
+            }
+        } else if (type === 'Episode' && relationKey) {
+            let episodes = this.episodesByRelation.get(relationKey);
+            if (!episodes) {
+                episodes = new Set<string>();
+                this.episodesByRelation.set(relationKey, episodes);
+            }
+            episodes.add(id);
+            for (const seasonId of this.seasonsByRelation.get(relationKey) || []) {
+                deps.add(seasonId);
+            }
+        }
+
+        this.dependencies.set(id, deps);
+        this.metadata.set(id, { type, relationKey, seriesId });
+    }
+
+    remove(rawId: string): void {
+        const id = normalizeProjectionKey(rawId);
+        if (!id) return;
+        const meta = this.metadata.get(id);
+        if (meta?.type === 'Episode' && meta.relationKey) {
+            const episodes = this.episodesByRelation.get(meta.relationKey);
+            episodes?.delete(id);
+            if (episodes?.size === 0) this.episodesByRelation.delete(meta.relationKey);
+        } else if (meta?.type === 'Season' && meta.relationKey) {
+            const seasons = this.seasonsByRelation.get(meta.relationKey);
+            seasons?.delete(id);
+            if (seasons?.size === 0) this.seasonsByRelation.delete(meta.relationKey);
+            for (const episodeId of this.episodesByRelation.get(meta.relationKey) || []) {
+                this.dependencies.get(episodeId)?.delete(id);
+            }
+        }
+        this.metadata.delete(id);
+        this.dependencies.delete(id);
+    }
+
+    expand(ids: string[]): ProjectionDependencyExpansion {
+        const expanded = new Set<string>();
+        let complete = true;
+        for (const rawId of ids) {
+            const id = normalizeProjectionKey(rawId);
+            if (!id) continue;
+            const deps = this.dependencies.get(id);
+            const meta = this.metadata.get(id);
+            if (!deps || !meta) {
+                expanded.add(id);
+                complete = false;
+                continue;
+            }
+            for (const dependency of deps) expanded.add(dependency);
+
+            if (meta.type === 'Episode') {
+                // Episode changes can alter Episode + Season + Series policy.
+                // Missing relationship metadata cannot safely degrade to self.
+                if (!meta.seriesId || !meta.relationKey
+                    || (this.seasonsByRelation.get(meta.relationKey)?.size || 0) === 0) {
+                    complete = false;
+                }
+            } else if (meta.type === 'Season') {
+                if (!meta.seriesId) complete = false;
+            } else if (meta.type !== 'Series' && meta.type !== 'Movie' && meta.type !== 'BoxSet') {
+                complete = false;
+            }
+        }
+        return { ids: [...expanded], complete };
+    }
+
+    private readType(entry: unknown): string {
+        if (!entry || typeof entry !== 'object') return '';
+        const type = (entry as { Type?: unknown }).Type;
+        return typeof type === 'string' ? type : '';
+    }
+
+    private readSeriesId(entry: unknown): string | null {
+        if (!entry || typeof entry !== 'object') return null;
+        return normalizeProjectionKey((entry as { SeriesId?: unknown }).SeriesId);
+    }
+
+    private readRelationKey(entry: unknown, seriesId: string): string | null {
+        if (!entry || typeof entry !== 'object') return null;
+        const rawSeasonNumber = (entry as { SeasonNumber?: unknown }).SeasonNumber;
+        if (rawSeasonNumber === null || rawSeasonNumber === undefined || rawSeasonNumber === '') return null;
+        const seasonNumber = Number(rawSeasonNumber);
+        return Number.isSafeInteger(seasonNumber) ? `${seriesId}:${seasonNumber}` : null;
+    }
+}
+
+const projectionDependencyIndex = new TagProjectionDependencyIndex();
 
 // ── State ──────────────────────────────────────────────────────────
 
@@ -50,6 +272,8 @@ type RendererConfig = {
     renderFromCache?: ((el: HTMLElement, itemId: string) => boolean) | null;
     renderFromServerCache?: ((el: HTMLElement, entry: any, itemId: string) => void) | null;
     onServerCacheRefresh?: ((updatedIds: string[] | null) => void) | null;
+    /** Remove this renderer's overlay + tagged marker from one card. */
+    invalidateCard?: ((el: HTMLElement) => void) | null;
     /** Whether Series/Season items need first episode data. */
     needsFirstEpisode?: boolean;
     /** Whether Season items need parent Series data. */
@@ -64,6 +288,7 @@ type RendererEntry = Required<Pick<RendererConfig, 'render' | 'isEnabled'>> & {
     renderFromCache: ((el: HTMLElement, itemId: string) => boolean) | null;
     renderFromServerCache: ((el: HTMLElement, entry: any, itemId: string) => void) | null;
     onServerCacheRefresh: ((updatedIds: string[] | null) => void) | null;
+    invalidateCard: ((el: HTMLElement) => void) | null;
     needsFirstEpisode: boolean;
     needsParentSeries: boolean;
     injectCss: (() => void) | null;
@@ -77,8 +302,26 @@ interface QueueEntry {
     itemType: string | null;
 }
 
+/** True only while a queued element/target still belongs to the captured item. */
+function queueEntryStillOwnsItem(entry: QueueEntry, itemId: string): boolean {
+    return document.contains(entry.el)
+        && entry.renderTarget.isConnected
+        && getItemId(entry.el) === itemId;
+}
+
 const renderers = new Map<string, RendererEntry>(); // name → { render, isEnabled, needsFirstEpisode, needsParentSeries }
 let processedCards = new WeakSet<Element>(); // let, not const — needs reassignment on reinit
+let renderedItemByElement = new WeakMap<Element, string>();
+const pendingProjectionIds = new Set<string>();
+// Batch-mode watched flips bypass every local/helper cache and must be satisfied
+// by a successful fresh /tag-data response before their cards can render again.
+const forceFreshProjectionIds = new Set<string>();
+// In local/batch mode, every item encountered in one privacy generation must
+// receive one successful live /tag-data response before cache reuse is allowed.
+let batchForceAllProjectionIds = false;
+const batchFreshProjectionIds = new Set<string>();
+let projectionRequestGeneration = 0;
+let projectionResetPending = JC.pluginConfig?.TagCacheServerMode === true;
 // PERF(R9): per-element failure counter — a card whose data fetch failed is
 // un-marked from processedCards (so later mutation/nav passes retry it) up to
 // this cap, then stays marked so an unreachable server isn't hammered forever.
@@ -153,6 +396,7 @@ function registerRenderer(name: string, config: RendererConfig): void {
         renderFromCache: config.renderFromCache || null,
         renderFromServerCache: config.renderFromServerCache || null,
         onServerCacheRefresh: config.onServerCacheRefresh || null,
+        invalidateCard: config.invalidateCard || null,
         isEnabled: config.isEnabled,
         needsFirstEpisode: config.needsFirstEpisode || false,
         needsParentSeries: config.needsParentSeries || false,
@@ -238,10 +482,13 @@ async function loadServerCache(): Promise<void> {
         console.log(`${logPrefix} Server cache mode disabled`);
         return;
     }
-    try {
-        const userId = ApiClient.getCurrentUserId();
-        if (!userId) return;
+    const requestedUserId = ApiClient.getCurrentUserId();
+    const requestedUserKey = normalizeProjectionKey(requestedUserId);
+    if (!requestedUserId || !requestedUserKey) return;
+    projectionResetPending = true;
+    const loadGeneration = ++serverCacheLoadGeneration;
 
+    try {
         // PERF(R7): js/plugin.js starts this fetch as soon as public config
         // lands (boot Stage 1) and parks the in-flight promise on
         // JC._tagCachePrefetch — consume it instead of starting a second
@@ -254,32 +501,105 @@ async function loadServerCache(): Promise<void> {
         if (prefetch) {
             JC._tagCachePrefetch = null;
             resp = await prefetch;
+            const prefetchedIdentity = readProjectionIdentity(resp);
+            if (!prefetchedIdentity || prefetchedIdentity.userId !== requestedUserKey) {
+                // A login switch can race the one-shot bootstrap prefetch. Never
+                // publish another account's projected cache into this session.
+                resp = null;
+            } else {
+                // The bootstrap prefetch begins before the enhanced bundle/live
+                // handlers finish loading. Validate its cursor cheaply before
+                // publication so a watched flip during bundle download cannot
+                // install a stale full snapshot.
+                try {
+                    const params = new URLSearchParams({
+                        projectionEpoch: prefetchedIdentity.epoch,
+                        projectionRevision: String(prefetchedIdentity.revision),
+                        projectionOnly: 'true',
+                    });
+                    const validation: any = await ApiClient.ajax({
+                        type: 'GET',
+                        url: ApiClient.getUrl(`/JellyfinCanopy/tag-cache/${requestedUserId}?${params.toString()}`),
+                        dataType: 'json',
+                    });
+                    const validatedIdentity = readProjectionIdentity(validation);
+                    if (decideProjectionResponse(prefetchedIdentity, validation, requestedUserId) !== 'apply'
+                        || !validatedIdentity
+                        || validatedIdentity.revision !== prefetchedIdentity.revision
+                        || normalizeIdList(validation?.projectionIds).length > 0) {
+                        resp = null;
+                    }
+                } catch {
+                    // Validation uncertainty cannot publish privacy-sensitive
+                    // prefetched bytes. Fall through to a fresh full snapshot.
+                    resp = null;
+                }
+            }
         }
         if (!resp) {
             resp = await ApiClient.ajax({
                 type: 'GET',
-                url: ApiClient.getUrl(`/JellyfinCanopy/tag-cache/${userId}`),
+                url: ApiClient.getUrl(`/JellyfinCanopy/tag-cache/${requestedUserId}`),
                 dataType: 'json'
             });
         }
 
-        if (resp && resp.items && resp.count > 0) {
-            serverCache = new Map(Object.entries(resp.items));
-            serverCacheVersion = resp.version;
-            serverCacheTimestamp = resp.timestamp;
-            console.log(`${logPrefix} Server cache loaded: ${serverCache.size} items (v${serverCacheVersion})`);
-        } else {
-            console.log(`${logPrefix} Server cache empty, using batch fallback`);
+        // A later load/reset or account switch owns the result now.
+        if (loadGeneration !== serverCacheLoadGeneration) return;
+        if (normalizeProjectionKey(ApiClient.getCurrentUserId()) !== requestedUserKey) return;
+
+        const identity = readProjectionIdentity(resp);
+        if (!identity || identity.userId !== requestedUserKey) {
+            console.warn(`${logPrefix} Server cache response lacked the expected per-user projection identity`);
+            return;
         }
+
+        const entries = new Map<string, any>();
+        if (resp?.items && typeof resp.items === 'object') {
+            for (const [rawId, entry] of Object.entries(resp.items)) {
+                const id = normalizeProjectionKey(rawId);
+                if (id) entries.set(id, entry);
+            }
+        }
+        // Drop every unscoped local/hot/DOM value before publishing the first
+        // owner-bound snapshot. Renderer isTagged() must not preserve pre-load
+        // or previous-account overlays over the authoritative projection.
+        clearRendererProjectionState(true);
+        processedCards = new WeakSet();
+        renderedItemByElement = new WeakMap();
+        projectionDependencyIndex.replaceAll(entries);
+        serverCache = entries; // an authoritative empty cache is still a loaded cache
+        serverCacheVersion = Number(resp?.version) || 0;
+        serverCacheTimestamp = Number(resp?.timestamp) || 0;
+        serverProjection = identity;
+        tagCacheOwnerUserId = identity.userId;
+        projectionResetPending = false;
+        pendingProjectionIds.clear();
+        forceFreshProjectionIds.clear();
+        console.log(
+            `${logPrefix} Server cache loaded: ${serverCache.size} items ` +
+            `(v${serverCacheVersion}, projection ${identity.revision})`,
+        );
     } catch (err) {
         console.warn(`${logPrefix} Failed to load server cache, using batch fallback:`, err);
     }
 }
 
 /**
- * Fetch incremental server cache updates since last load.
+ * Fetch incremental server cache updates since last load. A projection-only
+ * refresh asks the server journal for just watched/privacy-invalidated ids; it
+ * never walks or transfers the full shared cache during a playback event.
  */
-async function refreshServerCache(): Promise<void> {
+async function refreshServerCache(projectionOnly = false): Promise<void> {
+    if (!JC.pluginConfig?.TagCacheServerMode) return;
+    const userId = ApiClient.getCurrentUserId();
+    const userKey = normalizeProjectionKey(userId);
+    if (!userId || !userKey) return;
+
+    if (serverProjection && serverProjection.userId !== userKey) {
+        resetServerProjection(true);
+    }
+
     // If server cache was never loaded (e.g. cache was empty at startup),
     // retry the full load — the scheduled task may have built it since then
     if (!serverCache) {
@@ -291,47 +611,220 @@ async function refreshServerCache(): Promise<void> {
         }
         return;
     }
-    if (!serverCacheTimestamp) return;
+    if (!serverProjection) return;
+    // An empty/not-yet-built shared cache has no content timestamp. Navigation
+    // still has to validate the privacy cursor, but must not turn that into a
+    // full-cache request, so use the bounded journal-only shape in this case.
+    const requestProjectionOnly = projectionOnly || !serverCacheTimestamp;
+
+    const requestGeneration = projectionRequestGeneration;
+    const requestProjection = { ...serverProjection };
     try {
-        const userId = ApiClient.getCurrentUserId();
-        if (!userId) return;
+        const params = new URLSearchParams();
+        if (!requestProjectionOnly) params.set('since', String(serverCacheTimestamp));
+        params.set('projectionEpoch', requestProjection.epoch);
+        params.set('projectionRevision', String(requestProjection.revision));
+        if (requestProjectionOnly) params.set('projectionOnly', 'true');
 
         const resp: any = await ApiClient.ajax({
             type: 'GET',
-            url: ApiClient.getUrl(`/JellyfinCanopy/tag-cache/${userId}?since=${serverCacheTimestamp}`),
+            url: ApiClient.getUrl(`/JellyfinCanopy/tag-cache/${userId}?${params.toString()}`),
             dataType: 'json'
         });
 
-        if (resp && resp.items) {
-            const newEntries = Object.entries(resp.items);
-            if (newEntries.length > 0) {
-                for (const [id, entry] of newEntries) {
-                    serverCache.set(id, entry);
-                }
-                serverCacheTimestamp = resp.timestamp;
-                // Notify renderers to invalidate derived caches for updated items
-                for (const [, renderer] of renderers) {
-                    if (renderer.onServerCacheRefresh) {
-                        try { renderer.onServerCacheRefresh(newEntries.map(e => e[0])); } catch {}
-                    }
-                }
-                console.log(`${logPrefix} Server cache updated: +${newEntries.length} items`);
+        // A newer watch event, account switch, or reset supersedes this request.
+        if (requestGeneration !== projectionRequestGeneration) return;
+        if (normalizeProjectionKey(ApiClient.getCurrentUserId()) !== userKey) return;
+
+        const decision = decideProjectionResponse(serverProjection, resp, userId);
+        if (decision === 'ignore') {
+            const ignoredIdentity = readProjectionIdentity(resp);
+            // A valid delayed response is harmless because the current cursor is
+            // already newer. Malformed/other-user bytes cannot release a privacy
+            // gate and remain fail-closed.
+            if (ignoredIdentity
+                && ignoredIdentity.userId === userKey
+                && serverProjection.epoch === ignoredIdentity.epoch
+                && serverProjection.revision >= ignoredIdentity.revision) {
+                projectionResetPending = false;
+                runScan();
             }
-            // Full rebuild detected — reload everything
-            if (resp.version !== serverCacheVersion) {
-                console.log(`${logPrefix} Cache version changed, reloading full cache`);
-                await loadServerCache();
-                // Clear all derived caches on full rebuild
-                for (const [, renderer] of renderers) {
-                    if (renderer.onServerCacheRefresh) {
-                        try { renderer.onServerCacheRefresh(null); } catch {}
-                    }
-                }
+            return;
+        }
+        if (decision === 'reset') {
+            console.log(`${logPrefix} Projection epoch/journal reset, reloading one full snapshot`);
+            resetServerProjection(true);
+            await loadServerCache();
+            if (serverCache) {
+                processedCards = new WeakSet();
+                runScan();
+            }
+            return;
+        }
+
+        // A shared-cache removal/full rebuild still uses the existing version
+        // signal. Do this before mutating any projected rows.
+        if (Number(resp?.version) !== serverCacheVersion) {
+            console.log(`${logPrefix} Cache version changed, reloading full cache`);
+            resetServerProjection(true);
+            await loadServerCache();
+            if (serverCache) {
+                processedCards = new WeakSet();
+                runScan();
+            }
+            return;
+        }
+
+        const incomingIdentity = readProjectionIdentity(resp)!;
+        const projectionIds = normalizeIdList(resp?.projectionIds);
+        const newEntries: Array<[string, any]> = [];
+        if (resp?.items && typeof resp.items === 'object') {
+            for (const [rawId, entry] of Object.entries(resp.items)) {
+                const id = normalizeProjectionKey(rawId);
+                if (id) newEntries.push([id, entry]);
             }
         }
+
+        // projectionIds are authoritative invalidations/tombstones. Delete first,
+        // then merge only the rows the current per-user projection returned.
+        for (const id of projectionIds) {
+            serverCache.delete(id);
+            projectionDependencyIndex.remove(id);
+        }
+        for (const [id, entry] of newEntries) {
+            serverCache.set(id, entry);
+            projectionDependencyIndex.replace(id, entry);
+        }
+
+        const changedIds = new Set<string>(projectionIds);
+        for (const [id] of newEntries) changedIds.add(id);
+        // If a native push named an id but the journal returned no cache row
+        // (deleted/inaccessible), it remains an authoritative tombstone.
+        if (requestProjectionOnly) {
+            for (const id of pendingProjectionIds) changedIds.add(id);
+        }
+
+        serverProjection = incomingIdentity;
+        // A projection-only response carries the shared cache timestamp for
+        // context, but did not request/apply that shared content delta. Advancing
+        // the cursor here would make the next normal refresh skip unrelated
+        // library changes that landed between the two requests.
+        if (!requestProjectionOnly && Number.isFinite(Number(resp?.timestamp))) {
+            serverCacheTimestamp = Number(resp.timestamp);
+        }
+        pendingProjectionIds.clear();
+        projectionResetPending = false;
+
+        if (changedIds.size > 0) {
+            invalidateRenderedItems([...changedIds], false);
+        }
+        // Navigation cursor validation must release + rescan even when no ids
+        // changed; cards mounted while the gate was active are still unprocessed.
+        runScan();
+        console.log(
+            `${logPrefix} Server cache projection updated: ${newEntries.length} rows, ` +
+            `${projectionIds.length} invalidations (revision ${incomingIdentity.revision})`,
+        );
     } catch (err) {
+        // Fail closed: ids synchronously blanked for this request stay pending and
+        // cannot fall through to local/server caches. Navigation or the next push
+        // retries from the same cursor.
         console.warn(`${logPrefix} Failed to refresh server cache:`, err);
     }
+}
+
+function normalizeIdList(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    const ids = new Set<string>();
+    for (const raw of value) {
+        const id = normalizeProjectionKey(raw);
+        if (id) ids.add(id);
+    }
+    return [...ids];
+}
+
+/**
+ * Gate every mounted/new card while a bounded journal request resolves a push
+ * whose dependency closure is not present in the loaded tag-cache snapshot.
+ * The cache, cursor, and relationship index stay intact: non-taggable native
+ * events can therefore resolve with an empty O(journal) delta instead of forcing
+ * a full personalized cache download, while a failure remains globally blank.
+ */
+async function refreshUnknownServerProjection(ids: string[]): Promise<void> {
+    projectionRequestGeneration++;
+    batchGeneration++;
+    projectionResetPending = true;
+    for (const id of normalizeIdList(ids)) pendingProjectionIds.add(id);
+    for (const entry of requestQueue) processedCards.delete(entry.el);
+    requestQueue = [];
+    firstEpisodeCache.clear();
+    parentSeriesCache.clear();
+    clearRendererProjectionState(true);
+    processedCards = new WeakSet();
+    renderedItemByElement = new WeakMap();
+    await refreshServerCache(true);
+}
+
+/**
+ * Synchronous privacy barrier for UserDataChanged, followed by a bounded journal
+ * refresh. A valid other-user push is ignored; malformed current-user data forces
+ * a rare full reset rather than risking stale unstripped overlays.
+ */
+async function refreshServerProjection(data: unknown): Promise<void> {
+    const userId = ApiClient.getCurrentUserId();
+    const userKey = normalizeProjectionKey(userId);
+    if (!userId || !userKey) return;
+
+    const payload = data && typeof data === 'object'
+        ? data as { UserId?: unknown; userId?: unknown; UserDataList?: unknown; userDataList?: unknown }
+        : null;
+    const eventUser = normalizeProjectionKey(payload?.UserId ?? payload?.userId);
+    if (eventUser && eventUser !== userKey) return;
+    const serverMode = JC.pluginConfig?.TagCacheServerMode === true;
+    if (!serverMode && JC.pluginConfig?.SpoilerBlurEnabled !== true) {
+        // Watched state influences tag privacy only while Spoiler Guard is
+        // active. Avoid a full visible-card cache generation/flicker for
+        // ordinary native user-data events when both projection modes are off.
+        return;
+    }
+
+    const ids = extractUserDataChangedIds(data, userId);
+    if (ids.length === 0) {
+        // Missing ids mean we cannot identify a safe bounded subset. This is an
+        // exceptional compatibility path, not the normal playback path.
+        const visibleIds = collectVisibleProjectionIds();
+        if (!serverMode) {
+            resetServerProjection(true);
+            armBatchProjectionRefresh(visibleIds, userId);
+            return;
+        }
+        await refreshUnknownServerProjection([]);
+        return;
+    }
+
+    if (!serverMode) {
+        // Without the server journal the native payload cannot name the parent
+        // Season/Series closure. Refresh every mounted card and retire all local
+        // DTO/renderer values for this privacy generation; newly mounted cards
+        // are also forced once by batchForceAllProjectionIds.
+        const visibleIds = collectVisibleProjectionIds();
+        armBatchProjectionRefresh([...new Set([...ids, ...visibleIds])], userId);
+        return;
+    }
+
+    const expanded = projectionDependencyIndex.expand(ids);
+    if (!expanded.complete) {
+        // If the loaded cache lacks an Episode's Season/Series relationship,
+        // self-only invalidation would leave stale parent overlays visible. Gate
+        // globally until the bounded journal supplies the authoritative closure.
+        await refreshUnknownServerProjection(ids);
+        return;
+    }
+
+    projectionRequestGeneration++;
+    for (const id of expanded.ids) pendingProjectionIds.add(id);
+    invalidateRenderedItems(expanded.ids, true);
+    await refreshServerCache(true);
 }
 
 // ── Card Scanning ──────────────────────────────────────────────────
@@ -435,6 +928,146 @@ function resolveRenderTarget(el: HTMLElement): HTMLElement {
     return renderTarget;
 }
 
+/** Return an existing render target without creating a new tag host. */
+function existingRenderTarget(el: HTMLElement): HTMLElement {
+    const scalable = el.closest<HTMLElement>('.cardScalable');
+    return scalable?.querySelector<HTMLElement>('.jc-tag-host') || scalable || el;
+}
+
+/** Remove every renderer's overlay/marker from one card image. */
+function clearRenderedCard(el: HTMLElement): void {
+    const target = existingRenderTarget(el);
+    for (const [, renderer] of renderers) {
+        if (!renderer.invalidateCard) continue;
+        try { renderer.invalidateCard(target); } catch { /* fail-closed best effort continues */ }
+    }
+    processedCards.delete(el);
+    renderedItemByElement.delete(el);
+}
+
+/**
+ * Invalidate a bounded set across the projected map, renderer-derived caches,
+ * queued/in-flight tag data, and every matching visible duplicate card.
+ */
+function invalidateRenderedItems(ids: string[], evictServerRows: boolean): void {
+    const idSet = new Set(normalizeIdList(ids));
+    if (idSet.size === 0) return;
+
+    // Any pre-invalidation tag-data response is stale. Its generation checks
+    // unmark the captured cards rather than repainting them.
+    batchGeneration++;
+    requestQueue = requestQueue.filter((entry) => {
+        if (!idSet.has(entry.itemId)) return true;
+        processedCards.delete(entry.el);
+        return false;
+    });
+
+    if (evictServerRows && serverCache) {
+        for (const id of idSet) serverCache.delete(id);
+    }
+    for (const id of idSet) {
+        firstEpisodeCache.delete(id);
+        parentSeriesCache.delete(id);
+    }
+    const affected = [...idSet];
+    // The generic DTO helper is a final fallback when /tag-data fails. Retire
+    // its pre-flip rows too, including in-flight ownership, so a projection
+    // tombstone cannot fall through and repaint an old personalized DTO.
+    clearItemCache(ApiClient.getCurrentUserId(), affected);
+    for (const [, renderer] of renderers) {
+        if (!renderer.onServerCacheRefresh) continue;
+        try { renderer.onServerCacheRefresh(affected); } catch { /* continue clearing peers */ }
+    }
+
+    document.querySelectorAll<HTMLElement>('.cardImageContainer').forEach((el) => {
+        const currentItemId = getItemId(el);
+        const renderedItemId = renderedItemByElement.get(el);
+        if ((currentItemId && idSet.has(currentItemId))
+            || (renderedItemId && idSet.has(renderedItemId))) {
+            clearRenderedCard(el);
+        }
+    });
+}
+
+function clearRendererProjectionState(clearDom: boolean): void {
+    for (const [, renderer] of renderers) {
+        if (!renderer.onServerCacheRefresh) continue;
+        try { renderer.onServerCacheRefresh(null); } catch { /* clear peers even if one fails */ }
+    }
+    if (clearDom) {
+        document.querySelectorAll<HTMLElement>('.cardImageContainer').forEach(clearRenderedCard);
+    }
+}
+
+/** Start a new local privacy generation and retire every pre-generation source. */
+function beginBatchProjectionGeneration(userId: string): void {
+    batchGeneration++;
+    for (const entry of requestQueue) processedCards.delete(entry.el);
+    requestQueue = [];
+    firstEpisodeCache.clear();
+    parentSeriesCache.clear();
+    pendingProjectionIds.clear();
+    forceFreshProjectionIds.clear();
+    batchFreshProjectionIds.clear();
+    batchForceAllProjectionIds = true;
+    clearItemCache(userId);
+    clearRendererProjectionState(true);
+    processedCards = new WeakSet();
+    renderedItemByElement = new WeakMap();
+    projectionResetPending = false;
+}
+
+/** Current ids for every mounted card; resetServerProjection clears old recycled overlays. */
+function collectVisibleProjectionIds(): string[] {
+    const ids = new Set<string>();
+    document.querySelectorAll<HTMLElement>('.cardImageContainer').forEach((el) => {
+        const current = getItemId(el);
+        if (current) ids.add(current);
+    });
+    return [...ids];
+}
+
+/**
+ * Release a global batch-mode reset only into forced live tag-data requests.
+ * The helper DTO cache is user-scoped but otherwise survives renderer clears,
+ * so it must also be invalidated before any later fallback is allowed.
+ */
+function armBatchProjectionRefresh(ids: string[], userId: string): void {
+    beginBatchProjectionGeneration(userId);
+    for (const id of normalizeIdList(ids)) {
+        pendingProjectionIds.add(id);
+        forceFreshProjectionIds.add(id);
+    }
+    projectionResetPending = false;
+    runScan();
+}
+
+/** Clear all visible tag projections and all cache ownership/cursor state. */
+function resetServerProjection(clearDom: boolean): void {
+    serverCacheLoadGeneration++;
+    projectionRequestGeneration++;
+    batchGeneration++;
+    serverCache = null;
+    serverCacheVersion = 0;
+    serverCacheTimestamp = 0;
+    serverProjection = null;
+    tagCacheOwnerUserId = null;
+    projectionDependencyIndex.clear();
+    projectionResetPending = true;
+    pendingProjectionIds.clear();
+    forceFreshProjectionIds.clear();
+    batchForceAllProjectionIds = false;
+    batchFreshProjectionIds.clear();
+    for (const entry of requestQueue) processedCards.delete(entry.el);
+    requestQueue = [];
+    firstEpisodeCache.clear();
+    parentSeriesCache.clear();
+    clearItemCache();
+    clearRendererProjectionState(clearDom);
+    processedCards = new WeakSet();
+    renderedItemByElement = new WeakMap();
+}
+
 /**
  * Process a single card: skip checks, render-target resolution, cache render
  * (server cache first, then localStorage/hot cache), queueing misses for the
@@ -448,9 +1081,51 @@ function resolveRenderTarget(el: HTMLElement): HTMLElement {
  *   passes false — its tags are part of the card's first frame.
  */
 function processCard(el: HTMLElement, fadeIn: boolean): void {
-    if (processedCards.has(el)) return;
     // Skip elements no longer in the DOM (page changed)
     if (!document.contains(el)) return;
+
+    const itemId = getItemId(el);
+    if (!itemId) return;
+
+    const activeUserId = ApiClient.getCurrentUserId();
+    const activeUserKey = normalizeProjectionKey(activeUserId);
+    if (tagCacheOwnerUserId && tagCacheOwnerUserId !== activeUserKey) {
+        // Account switches can occur without a full document reload. Blank the
+        // prior owner's projection synchronously, including the transient logout
+        // state where Jellyfin reports no active user at all.
+        resetServerProjection(true);
+        if (!activeUserKey) return;
+        tagCacheOwnerUserId = activeUserKey;
+        if (JC.pluginConfig?.TagCacheServerMode) {
+            void loadServerCache().then(() => {
+                if (serverCache) runScan();
+            });
+            return;
+        }
+        batchForceAllProjectionIds = true;
+        batchFreshProjectionIds.clear();
+        clearItemCache(activeUserId);
+        projectionResetPending = false;
+    }
+    // No cache or overlay is safe to render outside a concrete user scope.
+    if (!activeUserKey) return;
+    if (!tagCacheOwnerUserId && activeUserKey) tagCacheOwnerUserId = activeUserKey;
+
+    // Virtualized/recycled card elements can survive while their data-id changes.
+    // A WeakSet alone would preserve the old item's overlays forever.
+    const renderedItemId = renderedItemByElement.get(el);
+    if (processedCards.has(el) && renderedItemId !== itemId) clearRenderedCard(el);
+    if (processedCards.has(el)) return;
+
+    const serverMode = JC.pluginConfig?.TagCacheServerMode === true;
+    const forceFresh = !serverMode
+        && (forceFreshProjectionIds.has(itemId)
+            || (batchForceAllProjectionIds && !batchFreshProjectionIds.has(itemId)));
+
+    // Server-cache mode cannot render until its projected replacement lands.
+    // Batch mode instead queues forced ids directly to the live tag-data endpoint,
+    // bypassing every cache while the same pending marker remains fail-closed.
+    if (projectionResetPending || (serverMode && pendingProjectionIds.has(itemId))) return;
 
     const card = el.closest('.card');
     if (card && card.classList.contains('jc-hidden')) return;
@@ -458,23 +1133,29 @@ function processCard(el: HTMLElement, fadeIn: boolean): void {
     // Skip contexts that should never have tags
     if (shouldSkipElement(el)) {
         processedCards.add(el);
+        renderedItemByElement.set(el, itemId);
         return;
     }
-
-    const itemId = getItemId(el);
-    if (!itemId) return;
 
     const itemType = getItemType(el);
     if (itemType && !MEDIA_TYPES.has(itemType)) {
         processedCards.add(el);
+        renderedItemByElement.set(el, itemId);
         return;
     }
 
+    if (forceFresh) {
+        pendingProjectionIds.add(itemId);
+        forceFreshProjectionIds.add(itemId);
+    }
+
     processedCards.add(el);
+    renderedItemByElement.set(el, itemId);
     const renderTarget = resolveRenderTarget(el);
 
-    // Try server cache first (all tag data pre-computed in one object)
-    const serverEntry = serverCache?.get(itemId);
+    // Try server cache first (all tag data pre-computed in one object). A watched
+    // flip in batch mode must never reuse this or any renderer-local cache.
+    const serverEntry = forceFresh ? undefined : serverCache?.get(itemId);
     if (serverEntry) {
         const renderAll = (): void => {
             for (const [, renderer] of renderers) {
@@ -486,6 +1167,11 @@ function processCard(el: HTMLElement, fadeIn: boolean): void {
         };
         if (fadeIn) withFadeIn(renderTarget, renderAll); else renderAll();
         return; // Fully rendered from server cache, skip queue
+    }
+
+    if (forceFresh) {
+        requestQueue.push({ el, renderTarget, itemId, itemType });
+        return;
     }
 
     // Fall back to localStorage/hot cache, then batch fetch for misses
@@ -564,7 +1250,11 @@ function runScan(): void {
     const elements = document.querySelectorAll<HTMLElement>('.cardImageContainer');
     const unprocessed: HTMLElement[] = [];
     for (const el of elements) {
-        if (!processedCards.has(el)) unprocessed.push(el);
+        const currentId = getItemId(el);
+        const renderedId = renderedItemByElement.get(el);
+        if (!processedCards.has(el) || (currentId !== null && currentId !== renderedId)) {
+            unprocessed.push(el);
+        }
     }
     if (unprocessed.length === 0) return;
 
@@ -659,7 +1349,8 @@ async function processQueue(): Promise<void> {
  */
 async function processBatch(batch: QueueEntry[], generation: number): Promise<void> {
     const userId = ApiClient.getCurrentUserId();
-    if (!userId) return;
+    const userKey = normalizeProjectionKey(userId);
+    if (!userId || !userKey) return;
 
     // Use arrays per ID to handle duplicate items (same movie in multiple rows)
     const elMap = new Map<string, QueueEntry[]>();
@@ -679,21 +1370,41 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
             dataType: 'json'
         });
 
-        const items: any[] = response?.Items || [];
+        if (!Array.isArray(response?.Items)
+            || response.Items.some((item: unknown) => {
+                if (!item || typeof item !== 'object') return true;
+                return !normalizeProjectionKey((item as { Id?: unknown }).Id);
+            })) {
+            throw new Error('Malformed tag-data response');
+        }
+        const items: any[] = response.Items;
 
         // Abort if navigation happened while we were waiting for the API response.
         // PERF(R9): un-mark the batch's cards first — if their elements survive
         // the navigation (cached legacy page re-show), a later pass must be
         // able to pick them up again instead of seeing a hollow "processed".
-        if (generation !== batchGeneration) {
+        if (generation !== batchGeneration
+            || normalizeProjectionKey(ApiClient.getCurrentUserId()) !== userKey) {
             for (const b of batch) processedCards.delete(b.el);
+            scheduleScan();
             return;
+        }
+
+        // A successful tag-data response is authoritative even when an id is
+        // absent (deleted/inaccessible/blank). Release only this accepted batch's
+        // forced privacy ids; a later watch event changes batchGeneration and is
+        // rejected above before these sets can be touched.
+        for (const id of ids) {
+            batchFreshProjectionIds.add(id);
+            forceFreshProjectionIds.delete(id);
+            pendingProjectionIds.delete(id);
         }
 
         // Build parent series lookup for rating fallback
         const parentSeriesNeeded = new Set<string>();
         for (const item of items) {
             if ((item.Type === 'Season' || item.Type === 'Episode') && item.SeriesId &&
+                item.RatingSuppressed !== true &&
                 !item.CommunityRating && !item.CriticRating) {
                 parentSeriesNeeded.add(item.SeriesId);
             }
@@ -733,8 +1444,12 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
             // meantime, un-mark instead of rendering into a stale page, so a
             // surviving card element (cached legacy re-show) gets retried rather
             // than staying marked-but-hollow.
-            if (generation !== batchGeneration) {
+            if (generation !== batchGeneration
+                || normalizeProjectionKey(ApiClient.getCurrentUserId()) !== userKey
+                || projectionResetPending
+                || pendingProjectionIds.has(itemId)) {
                 for (const entry of batchEntries) processedCards.delete(entry.el);
+                scheduleScan();
                 return;
             }
             if (!MEDIA_TYPES.has(item.Type)) return;
@@ -745,13 +1460,20 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
                 const parentId = item.SeriesId.toString().replace(/-/g, '').toLowerCase();
                 parentSeries = parentSeriesMap.get(parentId) || null;
                 if ((item.Type === 'Season' || item.Type === 'Episode') &&
+                    item.RatingSuppressed !== true &&
                     !item.CommunityRating && !item.CriticRating) {
                     ratingParentSeries = parentSeries;
                 }
             }
 
             // Render to ALL cards with this ID (same item can appear in multiple rows)
+            let recycled = false;
             for (const entry of batchEntries) {
+                if (!queueEntryStillOwnsItem(entry, itemId)) {
+                    processedCards.delete(entry.el);
+                    recycled = true;
+                    continue;
+                }
                 const { renderTarget } = entry;
                 const extras = { firstEpisode, parentSeries, ratingParentSeries, renderTarget };
                 // PERF(R7): batch-fetched tags land post-paint by definition — fade them in.
@@ -766,6 +1488,7 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
                     }
                 });
             }
+            if (recycled) scheduleScan();
         };
 
         // Check if ANY enabled renderer actually needs first-episode data
@@ -800,12 +1523,45 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
         for (const entry of batch) {
             const { el, renderTarget, itemId } = entry;
             try {
+                if (generation !== batchGeneration
+                    || normalizeProjectionKey(ApiClient.getCurrentUserId()) !== userKey
+                    || projectionResetPending
+                    || pendingProjectionIds.has(itemId)) {
+                    processedCards.delete(el);
+                    if (generation !== batchGeneration
+                        || normalizeProjectionKey(ApiClient.getCurrentUserId()) !== userKey) {
+                        scheduleScan();
+                    }
+                    continue;
+                }
+                if (!queueEntryStillOwnsItem(entry, itemId)) {
+                    processedCards.delete(el);
+                    scheduleScan();
+                    continue;
+                }
+                // Privacy-forced ids may only be satisfied by /tag-data. The
+                // generic helper carries its own short-lived DTO cache, so using
+                // it after a batch failure could replay the pre-flip projection.
+                if (forceFreshProjectionIds.has(itemId)) {
+                    processedCards.delete(el);
+                    continue;
+                }
                 const item: any = await getItemCached(itemId, { userId });
                 if (!item || !MEDIA_TYPES.has(item.Type)) continue;
 
                 const firstEpisode = (item.Type === 'Series' || item.Type === 'Season')
                     ? await getFirstEpisode(userId, item.Id) : null;
                 const extras = { firstEpisode, parentSeries: null, ratingParentSeries: null, renderTarget };
+
+                if (generation !== batchGeneration
+                    || normalizeProjectionKey(ApiClient.getCurrentUserId()) !== userKey
+                    || projectionResetPending
+                    || pendingProjectionIds.has(itemId)
+                    || !queueEntryStillOwnsItem(entry, itemId)) {
+                    processedCards.delete(el);
+                    scheduleScan();
+                    continue;
+                }
 
                 // PERF(R7): post-paint fallback render — fade late tags in.
                 withFadeIn(renderTarget, () => {
@@ -855,6 +1611,24 @@ function buildIndicatorOffsetCSS(): string {
  * Initialize the tag pipeline: register mutation observer, navigation handler, and inject base CSS.
  */
 function initialize(): void {
+    const activeUserId = ApiClient.getCurrentUserId();
+    const activeUserKey = normalizeProjectionKey(activeUserId);
+    const serverMode = JC.pluginConfig?.TagCacheServerMode === true;
+    tagCacheOwnerUserId = activeUserKey;
+    projectionResetPending = serverMode;
+
+    // Renderer caches predate per-user ownership. Before any observer can paint,
+    // discard unscoped values in server mode and whenever Spoiler Guard is active
+    // in batch mode; otherwise a previous login/legacy entry can flash sensitive
+    // ratings while the first authoritative request is still in flight.
+    if (serverMode) {
+        clearRendererProjectionState(true);
+        processedCards = new WeakSet();
+        renderedItemByElement = new WeakMap();
+    } else if (JC.pluginConfig?.SpoilerBlurEnabled === true) {
+        beginBatchProjectionGeneration(activeUserId);
+    }
+
     // Register as body mutation subscriber at priority 0 (after hidden-content and prefetch).
     // Only trigger scans when nodes were actually added to the DOM — ignore attribute
     // changes, text changes, and hover/focus effects which cause jank if we scan on each.
@@ -887,9 +1661,22 @@ function initialize(): void {
         for (const entry of requestQueue) processedCards.delete(entry.el);
         requestQueue = [];
         firstFetchAfterNav = true; // PERF(R7): fast-track the next batch fetch
-        // Pick up any new items added since last load
-        void refreshServerCache();
-        scheduleScan();
+        if (JC.pluginConfig?.TagCacheServerMode) {
+            // A cross-client watched flip may have been missed while this tab was
+            // backgrounded. Gate before the incoming page's mutation/pre-paint
+            // scan can reuse the old projected bytes; only cursor validation may
+            // release and rescan. A network failure intentionally stays blank.
+            projectionResetPending = true;
+            projectionRequestGeneration++;
+            document.querySelectorAll<HTMLElement>('.cardImageContainer').forEach(clearRenderedCard);
+            processedCards = new WeakSet();
+            void refreshServerCache();
+        } else if (JC.pluginConfig?.SpoilerBlurEnabled === true) {
+            beginBatchProjectionGeneration(ApiClient.getCurrentUserId());
+            scheduleScan();
+        } else {
+            scheduleScan();
+        }
     });
 
     // Inject CSS containment for all tag overlay containers.
@@ -982,18 +1769,12 @@ function initialize(): void {
  */
 async function invalidateServerCache(): Promise<void> {
     try {
-        serverCache = null;
-        serverCacheVersion = 0;
-        serverCacheTimestamp = 0;
-        processedCards = new WeakSet();
-        requestQueue = [];
-        batchGeneration++;
-        firstEpisodeCache.clear();
-        parentSeriesCache.clear();
-        for (const [, renderer] of renderers) {
-            if (renderer.onServerCacheRefresh) {
-                try { renderer.onServerCacheRefresh(null); } catch { /* renderer cache clear best-effort */ }
-            }
+        const userId = ApiClient.getCurrentUserId();
+        const visibleIds = collectVisibleProjectionIds();
+        resetServerProjection(true);
+        if (!JC.pluginConfig?.TagCacheServerMode) {
+            armBatchProjectionRefresh(visibleIds, userId);
+            return;
         }
         await loadServerCache();
         processedCards = new WeakSet();
@@ -1022,6 +1803,7 @@ const tagPipelineApi = {
     },
     scheduleScan,
     invalidateServerCache,
+    refreshServerProjection,
 };
 
 // JEGlobal types tagPipeline as the narrow TagPipelineLike consumer view; the

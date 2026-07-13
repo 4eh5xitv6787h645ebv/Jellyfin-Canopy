@@ -17,10 +17,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 /// </summary>
 public sealed class StubUserDataManager : IUserDataManager
 {
+    private EventHandler<UserDataSaveEventArgs>? _userDataSaved;
+
     /// <summary>When set, backs <see cref="GetUserData(User, BaseItem)"/>.</summary>
     public Func<User, BaseItem, UserItemData?>? GetUserDataHook { get; set; }
 
-    public event EventHandler<UserDataSaveEventArgs>? UserDataSaved { add { } remove { } }
+    public event EventHandler<UserDataSaveEventArgs>? UserDataSaved
+    {
+        add => _userDataSaved += value;
+        remove => _userDataSaved -= value;
+    }
+
+    /// <summary>Live subscriber count for idempotency/disposal assertions.</summary>
+    public int UserDataSavedSubscriberCount => _userDataSaved?.GetInvocationList().Length ?? 0;
+
+    /// <summary>Raise Jellyfin's authoritative post-save event.</summary>
+    public void RaiseUserDataSaved(
+        Guid userId,
+        BaseItem item,
+        UserDataSaveReason reason,
+        UserItemData? userData = null)
+    {
+        _userDataSaved?.Invoke(this, new UserDataSaveEventArgs
+        {
+            UserId = userId,
+            Item = item,
+            SaveReason = reason,
+            UserData = userData ?? new UserItemData { Key = item.Id.ToString("N") },
+            Keys = new List<string>()
+        });
+    }
 
     public UserItemData? GetUserData(User user, BaseItem item)
         => GetUserDataHook?.Invoke(user, item);

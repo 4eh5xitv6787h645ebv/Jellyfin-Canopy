@@ -101,7 +101,7 @@ function appendUserRatingChip(container: HTMLElement, rating: number | null): vo
  * @param item - Jellyfin item from tag pipeline batch response.
  * @param extras - Pipeline extras containing parentSeries.
  */
-function resolveTmdbKey(item: any, extras?: any): { tmdbKey: string; mediaType: string } | null {
+export function resolveTmdbKey(item: any, extras?: any): { tmdbKey: string; mediaType: string } | null {
     const type = item.Type || '';
     if (type === 'Movie') {
         const id = item.ProviderIds?.Tmdb || item.ProviderIds?.tmdb;

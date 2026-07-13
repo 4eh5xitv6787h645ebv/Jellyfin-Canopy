@@ -2,8 +2,8 @@
 // getHeaderRightContainer (PERF(R4) fix: offsetParent is a forced layout read and
 // used to be re-read on every observer tick; it must now be read at most once
 // per navigation).
-import { beforeEach, describe, expect, it } from 'vitest';
-import { getHeaderRightContainer } from './helpers';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearItemCache, getHeaderRightContainer, getItemCached } from './helpers';
 import { insertHeaderTrayButton, HeaderTrayOrder } from './header-tray';
 
 /** Builds a `.headerRight` whose offsetParent getter counts layout reads. */
@@ -65,6 +65,47 @@ describe('getHeaderRightContainer per-navigation cache', () => {
 
         // Found on the next probe without requiring a navigation in between.
         expect(getHeaderRightContainer()).toBe(header);
+    });
+});
+
+describe('privacy reset item-cache invalidation (BI-SEC-035)', () => {
+    it('drops only the selected user\'s cached native DTOs', async () => {
+        const getItem = vi.spyOn(ApiClient, 'getItem').mockImplementation(
+            (userId, itemId) => Promise.resolve({ userId, itemId }),
+        );
+        const itemId = 'privacy-reset-item';
+
+        await getItemCached(itemId, { userId: 'user-a' });
+        await getItemCached(itemId, { userId: 'user-b' });
+        expect(getItem).toHaveBeenCalledTimes(2);
+
+        clearItemCache('user-a');
+        await getItemCached(itemId, { userId: 'user-a' });
+        await getItemCached(itemId, { userId: 'user-b' });
+
+        expect(getItem).toHaveBeenCalledTimes(3);
+        getItem.mockRestore();
+    });
+
+    it('does not let a retired in-flight DTO overwrite the post-reset value', async () => {
+        let resolveStale!: (value: unknown) => void;
+        const stale = new Promise<unknown>((resolve) => { resolveStale = resolve; });
+        const getItem = vi.spyOn(ApiClient, 'getItem')
+            .mockImplementationOnce(() => stale)
+            .mockResolvedValueOnce({ projection: 'fresh' });
+        const itemId = 'in-flight-privacy-reset';
+
+        const oldRequest = getItemCached(itemId, { userId: 'race-user' });
+        clearItemCache('race-user', [itemId]);
+        const freshRequest = getItemCached(itemId, { userId: 'race-user' });
+        await expect(freshRequest).resolves.toEqual({ projection: 'fresh' });
+
+        resolveStale({ projection: 'stale' });
+        await expect(oldRequest).resolves.toEqual({ projection: 'stale' });
+        await expect(getItemCached(itemId, { userId: 'race-user' }))
+            .resolves.toEqual({ projection: 'fresh' });
+        expect(getItem).toHaveBeenCalledTimes(2);
+        getItem.mockRestore();
     });
 });
 

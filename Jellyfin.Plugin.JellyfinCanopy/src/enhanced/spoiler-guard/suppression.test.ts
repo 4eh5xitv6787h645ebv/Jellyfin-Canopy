@@ -49,6 +49,7 @@ describe('shouldSuppressRatingTag', () => {
         expect(shouldSuppressRatingTag({ Type: 'Series', Id: GUARDED }, ratingCfg({ spoilerBlurEnabled: false }))).toBe(false);
         expect(shouldSuppressRatingTag({ Type: 'Series', Id: GUARDED }, ratingCfg({ stripRatings: false }))).toBe(false);
         expect(shouldSuppressRatingTag({ Type: 'Series', Id: GUARDED }, ratingCfg({ hideRatings: false }))).toBe(false);
+        expect(shouldSuppressRatingTag({ Type: 'Season', SeriesId: GUARDED }, ratingCfg({ hideRatings: false }))).toBe(false);
     });
     it('fails CLOSED on a guardable surface while state is not authoritative', () => {
         expect(shouldSuppressRatingTag({ Type: 'Series', Id: GUARDED }, ratingCfg({ loadOk: false }))).toBe(true);

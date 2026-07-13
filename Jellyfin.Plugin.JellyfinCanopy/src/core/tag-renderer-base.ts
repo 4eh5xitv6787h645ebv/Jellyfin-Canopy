@@ -202,6 +202,26 @@ function createTag(name: string, spec: TagSpec): TagInstance {
     }
 
     /**
+     * Drop entries whose server-side per-user projection changed. This is
+     * required even in server mode because optional localStorage/hot fallback
+     * must never replay an older unstripped value while a replacement is pending.
+     */
+    function invalidateCachedEntries(updatedIds: string[] | null): void {
+        if (updatedIds === null) {
+            state.cache = {};
+            state.hot?.clear();
+        } else {
+            for (const id of updatedIds) {
+                delete state.cache[id];
+                state.hot?.delete(id);
+            }
+        }
+        if (spec.cache && state.localStorageEnabled && JC._cacheManager) {
+            JC._cacheManager.markDirty();
+        }
+    }
+
+    /**
      * Remove legacy cache keys from previous plugin versions and honor
      * server-triggered cache clears (ClearLocalStorageTimestamp).
      */
@@ -328,9 +348,15 @@ function createTag(name: string, spec: TagSpec): TagInstance {
             renderFromServerCache: p.renderFromServerCache
                 ? (el: HTMLElement, entry: unknown, itemId: string) => p.renderFromServerCache!(ctx, el, entry, itemId)
                 : undefined,
-            onServerCacheRefresh: p.onServerCacheRefresh
-                ? (updatedIds: string[] | null) => p.onServerCacheRefresh!(ctx, updatedIds)
-                : undefined,
+            onServerCacheRefresh: (updatedIds: string[] | null) => {
+                invalidateCachedEntries(updatedIds);
+                if (p.onServerCacheRefresh) p.onServerCacheRefresh(ctx, updatedIds);
+            },
+            invalidateCard: (el: HTMLElement) => {
+                ctx.removeExistingOverlay(el);
+                const card = el.closest<HTMLElement>('.card');
+                if (card) delete card.dataset[TAGGED_ATTR];
+            },
             isEnabled: () => !!JC.currentSettings?.[spec.settingKey],
             needsFirstEpisode: !!p.needsFirstEpisode,
             needsParentSeries: !!p.needsParentSeries,

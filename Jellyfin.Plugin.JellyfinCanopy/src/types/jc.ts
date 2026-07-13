@@ -475,11 +475,18 @@ export interface TagRendererApi {
 /** The unified tag pipeline (enhanced/tag-pipeline.js — legacy, loads after core). */
 export interface TagPipelineLike {
     registerRenderer(name: string, renderer: Record<string, unknown>): void;
+    /** Boot the shared observer/navigation/cache pipeline once renderers register. */
+    initialize?(): void;
     getRenderer?(name: string): { injectCss?: () => void } | undefined;
     clearProcessed?(): void;
     scheduleScan?(): void;
     /** Drop + reload the server tag cache and rescan (e.g. after a Spoiler Guard toggle). */
     invalidateServerCache?(): Promise<void>;
+    /**
+     * Synchronously blank watched/privacy-affected tags, then fetch their bounded
+     * per-user projection journal delta. Accepts native UserDataChanged.Data.
+     */
+    refreshServerProjection?(data: unknown): Promise<void>;
 }
 
 // ── live-update contracts ────────────────────────────────────────────────────

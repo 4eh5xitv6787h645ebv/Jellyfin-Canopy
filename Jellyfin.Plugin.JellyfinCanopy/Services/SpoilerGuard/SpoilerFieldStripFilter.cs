@@ -646,9 +646,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // Season DTOs leak Overview right next to a blurred Season
                 // poster. Strip them too — but mirror the image filter's
                 // "S1 always shows" + "any-played => pass-through" logic
-                // so the user has an entry point.
-                var sNum = item.IndexNumber.GetValueOrDefault(int.MaxValue);
-                if (sNum <= 1) return; // Season 0 (Specials) and Season 1 always pass.
+                // so the user has an entry point. Those exemptions apply only
+                // to non-rating metadata: the Season card may carry its guarded
+                // Series' fallback rating, so the shared rating-only projection
+                // still runs before an exempt Season returns.
+                var sNum = item.IndexNumber;
 
                 // UserData.UnplayedItemCount is the simplest "any watched?"
                 // signal for a Season DTO. > 0 AND total > unplayed = some
@@ -659,7 +661,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // helper that mirrors the image filter's logic
                 // (HasWatchedAnyEpisodeInSeason via library iteration).
                 bool seasonAnyWatched = false;
-                if (item.UserData != null
+                if (sNum.HasValue && sNum.Value > 1
+                    && item.UserData != null
                     && item.UserData.UnplayedItemCount.HasValue
                     && item.RecursiveItemCount.HasValue)
                 {
@@ -667,14 +670,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     var totalIndicator = item.RecursiveItemCount.Value;
                     if (totalIndicator > 0 && unplayed < totalIndicator) seasonAnyWatched = true;
                 }
-                else if (HasWatchedAnyEpisodeInSeasonServerSide(userId, item.Id))
+                else if (sNum.HasValue
+                    && sNum.Value > 1
+                    && HasWatchedAnyEpisodeInSeasonServerSide(userId, item.Id))
                 {
                     seasonAnyWatched = true;
                 }
-                // Mutate ImageTags BEFORE the watched-skip so the URL
-                // flips when the user starts the season.
-                MutateImageTagsForCacheBust(item, cfg, seasonAnyWatched, playbackPositionTicks: 0);
-                if (seasonAnyWatched) return;
+
+                var seasonDecision = TagCacheService.ResolveGuardedSeasonStripDecision(sNum, seasonAnyWatched);
+                if (seasonDecision == TagCacheService.TagStripDecision.SeasonRatingOnly)
+                {
+                    var projectedRatings = TagCacheService.ProjectGuardedSeasonRatings(
+                        item.CommunityRating,
+                        item.CriticRating,
+                        seasonDecision,
+                        ShouldStrip(cfg.SpoilerStripRatings, userState.Prefs?.HideRatings));
+                    item.CommunityRating = projectedRatings.CommunityRating;
+                    item.CriticRating = projectedRatings.CriticRating;
+
+                    // S0/S1 never transition through the any-watched boundary. Later
+                    // Seasons still need the native-image cache-bust to flip when the
+                    // first watched episode makes their non-rating metadata exempt.
+                    if (sNum.HasValue && sNum.Value > 1)
+                    {
+                        MutateImageTagsForCacheBust(item, cfg, watched: true, playbackPositionTicks: 0);
+                    }
+                    return;
+                }
+
+                // Mutate ImageTags before the full strip so the URL changes when a
+                // later watched-state update crosses the Season exemption boundary.
+                if (sNum.HasValue && sNum.Value > 1)
+                {
+                    MutateImageTagsForCacheBust(item, cfg, watched: false, playbackPositionTicks: 0);
+                }
                 ApplyStripping(item, userState, cfg, userId);
                 return;
             }
