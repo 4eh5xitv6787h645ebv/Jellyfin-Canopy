@@ -7,103 +7,46 @@
 
 import { JC } from '../../globals';
 import { toast } from '../../core/ui-kit';
-import { onViewPage } from '../../core/navigation';
 import { renderBookmarkItems } from './library-items';
 import { showDuplicatesSyncModal } from './library-modals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const logPrefix = '🪼 Jellyfin Canopy: Bookmarks Library:';
-let isRendering = false;
-let lastRenderTs = 0;
-let lastMountedContainer: HTMLElement | null = null;
 
-/**
- * Render when section exists or bookmarks updated
- */
-export function renderIfSectionExists(): void {
-  // Prevent re-entrant renders triggered by our own DOM mutations
-  if (isRendering) return;
-  const now = Date.now();
-  if (now - lastRenderTs < 150) return;
+// The container the bookmarks library renders into, set by the pages-framework
+// descriptor (bookmarks/page.ts) for the lifetime of one adoption and cleared
+// on drain. DOM-as-truth: a disconnected container makes every render a no-op
+// instead of painting into a detached tree. Replaces the old
+// '.sections.bookmarks' class scan that picked the LAST visible match — a
+// defect that mis-targeted stale/duplicate nodes.
+let activeContainer: HTMLElement | null = null;
 
-  const container = findActiveBookmarksContainer();
-  if (!container) {
-    lastMountedContainer = null;
-    return;
-  }
-
-  // Only render if container changed (new DOM node) or is empty
-  const shouldRender = container !== lastMountedContainer
-    || !container.hasChildNodes()
-    || (lastMountedContainer && !document.contains(lastMountedContainer));
-
-  if (shouldRender) {
-    revealSection(container);
-    isRendering = true;
-    void renderBookmarksLibrary(container).finally(() => {
-      isRendering = false;
-      lastRenderTs = Date.now();
-    });
-    lastMountedContainer = container;
-  }
+/** Set (or clear) the render target for the current page adoption. */
+export function setActiveContainer(container: HTMLElement | null): void {
+  activeContainer = container;
 }
 
-/**
- * Find the bookmarks container inside the active (non-hidden) home page.
- * Returns null if no visible container exists -- never falls back to a
- * stale DOM-cached copy.
- * @returns {HTMLElement|null}
- */
-function findActiveBookmarksContainer(): HTMLElement | null {
-  const all = document.querySelectorAll<HTMLElement>('.sections.bookmarks');
-  for (let i = all.length - 1; i >= 0; i--) {
-    const el = all[i];
-    // 1. Standard Jellyfin page structure
-    const page = el.closest('.page');
-    if (page && !page.classList.contains('hide')) return el;
-    // 2. Custom Tabs wraps content in .tabContent.is-active (no .page ancestor)
-    const tabContent = el.closest('.tabContent');
-    if (tabContent && tabContent.classList.contains('is-active')) return el;
-    // 3. Last resort: element is simply visible in the document
-    if (!page && !tabContent && el.offsetParent !== null) return el;
-  }
-  return null;
-}
+// Coalesce bursts of refresh requests (e.g. the module's own
+// 'jc-bookmarks-updated' event plus an explicit post-write refresh in the same
+// tick) into a single render.
+let renderQueued = false;
 
 /**
- * Bind to viewshow so CustomTabs triggers render
+ * Re-render the bookmarks library into the active container. No-op when the
+ * page is not adopted or its container has left the DOM. The single refresh
+ * entry point used by the 'jc-bookmarks-updated' event and every post-write
+ * refresh — no DOM scanning, no stale-container guard.
  */
-export function hookViewEvents(): void {
-  onViewPage((v, el, hash, itemPromise, rawEvent) => {
-    // Only real viewshow events carry the shown view element on
-    // e.detail.view; router-internal notifications (rawEvent == null) were
-    // never seen by the old document-level listener either.
-    const e = rawEvent;
-    if (!e) return;
-    if (isRendering) return;
-    // CustomTabs provides a view element on e.detail.view
-    const view: any = e.detail?.view || document;
-    const container = view.querySelector?.('.sections.bookmarks') || findActiveBookmarksContainer();
-    if (container) {
-      revealSection(container);
-      isRendering = true;
-      void renderBookmarksLibrary(container).finally(() => {
-        isRendering = false;
-        lastRenderTs = Date.now();
-      });
-      lastMountedContainer = container;
-    }
+export function renderActiveBookmarks(): void {
+  if (!activeContainer || !activeContainer.isConnected) return;
+  if (renderQueued) return;
+  renderQueued = true;
+  queueMicrotask(() => {
+    renderQueued = false;
+    const container = activeContainer;
+    if (container && container.isConnected) void renderBookmarksLibrary(container);
   });
-}
-
-/**
- * Remove hidden styles often set by CustomTabs placeholders
- */
-function revealSection(container: HTMLElement): void {
-  container.classList.remove('hide');
-  container.style.removeProperty('display');
-  container.style.removeProperty('visibility');
 }
 
 /**
@@ -222,7 +165,7 @@ export async function renderBookmarksLibrary(container: HTMLElement): Promise<vo
     try {
       const result = await JC.bookmarks!.cleanupOrphaned();
       toast(JC.t!('bookmark_cleanup_complete').replace('{count}', String(Number(result.cleaned) || 0)), 4000);
-      void renderBookmarksLibrary(container);
+      renderActiveBookmarks();
     } catch (error) {
       console.error('Cleanup failed:', error);
       toast(JC.t!('bookmark_cleanup_failed'), 3000);
@@ -244,7 +187,9 @@ export async function renderBookmarksLibrary(container: HTMLElement): Promise<vo
       (JC.userConfig as any).bookmark.bookmarks = {};
       await JC.saveUserSettings!('bookmark.json', (JC.userConfig as any).bookmark);
       toast(JC.t!('bookmark_deleted_all'), 3000);
-      void renderBookmarksLibrary(container);
+      // Direct store manipulation (no JC.bookmarks.* call) emits no update
+      // event, so refresh explicitly.
+      renderActiveBookmarks();
     } catch (error) {
       console.error('Delete failed:', error);
       toast(JC.t!('bookmark_delete_failed'), 3000);

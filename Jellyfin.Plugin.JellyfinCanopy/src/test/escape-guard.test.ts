@@ -183,8 +183,8 @@ const ALLOWLIST: AllowlistEntry[] = [
     {
         file: 'enhanced/bookmarks/library-items.ts',
         expr: 'key',
-        line: 119,
-        why: 'Object.entries key over bookmark groups (server item ids); used symmetrically as a class fragment (L119) and querySelector (L153) — escaping one side would desync them',
+        line: 128,
+        why: 'Object.entries key over bookmark groups (server item ids); used symmetrically as a class fragment (L128) and querySelector (L162) — escaping one side would desync them',
     },
     {
         file: 'enhanced/features/release-dates.ts',

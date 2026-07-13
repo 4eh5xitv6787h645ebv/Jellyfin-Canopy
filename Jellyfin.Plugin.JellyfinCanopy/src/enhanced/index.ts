@@ -59,14 +59,14 @@ import './settings-panel/hidden-content-tab';
 import './settings-panel/language';
 import './settings-panel/panel';
 import './bookmarks/bookmarks';
-// bookmarks-library modules — order matters: styles/page/render export the
-// bookmarksLibrary pieces the later files import; -init boots last.
+// bookmarks-library modules — styles/render export the pieces the later files
+// import; page.ts (loaded last) registers the pages-framework descriptor that
+// owns the page lifecycle (replacing the deleted library-page + library-init).
 import './bookmarks/library-styles';
-import './bookmarks/library-page';
 import './bookmarks/library-render';
 import './bookmarks/library-items';
 import './bookmarks/library-modals';
 import './bookmarks/library-replacements';
-import './bookmarks/library-init';
+import './bookmarks/page';
 import './osd-rating';
 import './pausescreen';

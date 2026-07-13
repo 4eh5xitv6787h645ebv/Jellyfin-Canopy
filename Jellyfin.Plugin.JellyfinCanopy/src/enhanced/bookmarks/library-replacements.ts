@@ -7,7 +7,7 @@
 import { JC } from '../../globals';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { getItemCached } from '../helpers';
-import { renderBookmarksLibrary } from './library-render';
+import { renderActiveBookmarks } from './library-render';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -219,23 +219,20 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
         name: fullItem.Name
       };
 
-      // Delete old bookmarks BEFORE syncing to prevent race condition with re-render
-      for (const bm of oldGroup.bookmarks) {
-        delete (JC.userConfig as any).bookmark.bookmarks[bm.id];
-      }
-
-      // Sync bookmarks to new item (no offset)
-      const synced = await JC.bookmarks!.syncBookmarks(oldGroup.bookmarks, newDetails, 0);
+      // DATA-SAFETY: write + verify the new copies FIRST, then delete the
+      // originals. syncBookmarks removes the originals (by id) only after the
+      // new copies are durably persisted, so a mid-flight failure keeps the
+      // originals intact (the old pre-delete lost data if syncing failed).
+      const oldIds = oldGroup.bookmarks.map((bm: any) => bm.id);
+      const synced = await JC.bookmarks!.syncBookmarks(oldGroup.bookmarks, newDetails, 0, oldIds);
 
       toast(JC.t!('bookmark_migrated').replace('{count}', String(synced.length)).replace('{name}', JC.escapeHtml(fullItem.Name)), 4000);
 
       closeDialog();
 
-      // Refresh the library view
-      const container = document.querySelector<HTMLElement>('.sections.bookmarks');
-      if (container) {
-        setTimeout(() => renderBookmarksLibrary(container), 500);
-      }
+      // Refresh the adopted host (syncBookmarks already resolved — no blind
+      // setTimeout needed).
+      renderActiveBookmarks();
     } catch (e) {
       console.error('Migration failed:', e);
       toast(JC.t!('bookmark_migration_failed'), 3000);
@@ -278,9 +275,16 @@ export async function findAllOrphanedAndOfferMigration(bookmarks: Record<string,
       await getItemCached(itemId, { userId });
       // Item exists, not orphaned
     } catch (e) {
-      // Item doesn't exist, it's orphaned
-      if (group.details.tmdbId || group.details.tvdbId) {
-        orphanedGroups.push(group);
+      // DATA-SAFETY: only an explicit 404 means the item is truly gone. A
+      // transient failure must not be treated as orphaned (which would offer a
+      // destructive migration); keep it and warn.
+      const status = (e as { status?: number } | null)?.status;
+      if (status === 404) {
+        if (group.details.tmdbId || group.details.tvdbId) {
+          orphanedGroups.push(group);
+        }
+      } else {
+        console.warn(`🪼 Jellyfin Canopy: Bookmarks Library: Item ${itemId} check failed (status=${status ?? 'n/a'}), not a 404 — not treating as orphaned:`, e);
       }
     }
   }

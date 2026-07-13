@@ -6,7 +6,7 @@
 
 import { JC } from '../../globals';
 import { escapeHtml, toast } from '../../core/ui-kit';
-import { formatTimestamp, renderBookmarksLibrary } from './library-render';
+import { formatTimestamp, renderActiveBookmarks } from './library-render';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -110,11 +110,9 @@ export function showOffsetAdjustmentModal(group: any): void {
         toast(message, 3000);
         closeDialog();
 
-        // Refresh the library view
-        const container = document.querySelector<HTMLElement>('.sections.bookmarks');
-        if (container) {
-          setTimeout(() => renderBookmarksLibrary(container), 300);
-        }
+        // Refresh the adopted host (the awaited updates already resolved — no
+        // blind setTimeout needed).
+        renderActiveBookmarks();
       } else {
         toast(JC.t!('bookmark_update_failed'), 3000);
         btn.disabled = false;
@@ -318,11 +316,9 @@ export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
 
         closeDialog();
 
-        // Refresh the library view
-        const container = document.querySelector<HTMLElement>('.sections.bookmarks');
-        if (container) {
-          setTimeout(() => renderBookmarksLibrary(container), 500);
-        }
+        // Refresh the adopted host (syncBookmarks already resolved — no blind
+        // setTimeout needed).
+        renderActiveBookmarks();
       } catch (e) {
         console.error('Merge failed:', e);
         toast(JC.t!('bookmark_merge_failed'), 3000);

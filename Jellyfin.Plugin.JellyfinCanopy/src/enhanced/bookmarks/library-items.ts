@@ -7,7 +7,7 @@
 import { JC } from '../../globals';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { getItemCached } from '../helpers';
-import { formatTimestamp, parseTimestampInput, renderBookmarksLibrary } from './library-render';
+import { formatTimestamp, parseTimestampInput, renderActiveBookmarks } from './library-render';
 import { findAndOfferReplacement } from './library-replacements';
 import { showOffsetAdjustmentModal } from './library-modals';
 
@@ -37,8 +37,17 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
         getItemCached(itemId, { userId })
           .then((item: any) => ({ key, group, item, orphaned: false }))
           .catch((err: unknown) => {
-            console.warn(`Failed to fetch item ${itemId}:`, err);
-            return { key, group, item: null, orphaned: true };
+            // DATA-SAFETY: only an explicit 404 means the item is truly gone —
+            // mark it orphaned (which surfaces destructive delete/replace UI).
+            // Any other failure (network blip, 5xx, timeout) is transient: keep
+            // the item un-orphaned so it is never mislabeled or offered for
+            // deletion; it still renders from the stored bookmark metadata.
+            const status = (err as { status?: number } | null)?.status;
+            const orphaned = status === 404;
+            if (!orphaned) {
+              console.warn(`Item ${itemId} fetch failed (status=${status ?? 'n/a'}), not a 404 — keeping, not orphaning:`, err);
+            }
+            return { key, group, item: null, orphaned };
           })
       );
     } else {
@@ -277,10 +286,7 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
             });
             if (ok) {
               toast(JC.t!('toast_bookmark_updated'), 2000);
-              const bookmarksSection = document.querySelector<HTMLElement>('.sections.bookmarks');
-              if (bookmarksSection) {
-                void renderBookmarksLibrary(bookmarksSection);
-              }
+              renderActiveBookmarks();
             } else {
               toast(JC.t!('toast_bookmark_save_failed'), 3000);
             }
@@ -299,11 +305,9 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
           await JC.bookmarks!.delete(bookmarkId);
           toast(JC.t!('toast_bookmark_deleted'), 2000);
 
-          // Re-render
-          const bookmarksSection = document.querySelector<HTMLElement>('.sections.bookmarks');
-          if (bookmarksSection) {
-            void renderBookmarksLibrary(bookmarksSection);
-          }
+          // Re-render into the adopted host (the delete already emitted
+          // 'jc-bookmarks-updated'; this coalesces with that refresh).
+          renderActiveBookmarks();
         })(); });
 
         // Timestamp click-to-play
