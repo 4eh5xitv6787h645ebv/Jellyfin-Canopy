@@ -94,9 +94,9 @@ Four new pages living right in Jellyfin's navigation, reorderable, native on des
 ### 🛠️ Admin superpowers
 
 - **A real settings app** — plugin settings organized into seven task-oriented areas with live search across every option, on desktop and phone.
-- **Session control** — see active streams from the header, and stop or message any session without opening the dashboard.
-- **Sonarr/Radarr in the item menu** — trigger a search, hand-pick a release (quality, size, seeders, rejection reasons — with one-tap Grab), or monitor/add items, for movies, series, seasons, and episodes.
-- **Layout enforcement** — default or force the modern Jellyfin layout across your users' devices.
+- **Session control** — see active streams from the header, and stop or message any remote-control-capable session without opening the dashboard.
+- **Sonarr/Radarr in the item menu** — trigger an automatic search on movies, series, seasons, or episodes; hand-pick a release (quality, size, seeders, rejection reasons — with one-tap Grab) for movies, seasons, and episodes; monitor/unmonitor and add missing movies or series with live download progress.
+- **Layout enforcement** — default or force the modern Jellyfin layout on your users' desktop and mobile web devices (TV-mode devices are deliberately exempt).
 - **Maintenance mode** — temporarily lock users out with a friendly banner while you work on the server.
 - **Custom branding** — your own logos, banners, login image, and favicon; plus a theme selector and deep CSS customization.
 
@@ -157,9 +157,9 @@ Four new pages living right in Jellyfin's navigation, reorderable, native on des
 > **Jellyfin 12 required.** On Jellyfin 10.11, use the original [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) instead.
 
 > [!TIP]
-> **Highly recommended:** install the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) to avoid permission issues on all installation types (Docker, Windows, Linux, etc.).
+> If you also use plugins that write to the web folder (such as [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) or [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)), or you've switched Canopy to its legacy on-disk injection fallback, the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) avoids the file-permission issues those setups can hit. Canopy's default request-time injection doesn't need it.
 
-Optional integrations — connect what you use, skip what you don't: **Seerr** (requests & discovery), **Sonarr / Radarr / Bazarr** (calendar, queue, item-menu search), a **media-segment provider** like Intro Skipper (auto-skip), and a free **TMDB API key** (Elsewhere, reviews & ratings).
+Optional integrations — connect what you use, skip what you don't: **Seerr** (requests & discovery), **Sonarr / Radarr / Bazarr** (calendar, queue, item-menu search), a **media-segment provider** like Intro Skipper (auto-skip), and a free **TMDB API key** (Elsewhere, TMDB reviews, release dates, richer cast info).
 
 → Step-by-step: [Getting Started](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/getting-started/)
 
@@ -220,7 +220,7 @@ Jellyfin Canopy is developed **entirely with AI** (agentic coding tools driving 
 
 - 🐛 [Report issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues)
 - 💡 [Suggest features](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions)
-- 🌍 Help translate — Canopy ships in 26 languages and every string is translatable
+- 🌍 Help translate — Canopy ships 26 synchronized language catalogs, and better translations are always welcome
 
 Developers: [CONTRIBUTING.md](CONTRIBUTING.md) has the workflow, quality gates, and the paved road for new features.
 
