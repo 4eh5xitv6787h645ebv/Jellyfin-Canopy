@@ -24,10 +24,14 @@ import type { CalendarEvent } from './data';
 
 const logPrefix = '🪼 Jellyfin Canopy: Calendar Page:';
 
-/**
- * Load all data
- */
-export async function loadAllData(): Promise<void> {
+// Coalescing gate: the fetch pipeline writes into shared module state, so
+// two overlapping loads could interleave and leave a stale writer last. One
+// load runs at a time; requests that arrive mid-flight collapse into a
+// single follow-up pass that reads the LATEST period/filter state.
+let loadInFlight: Promise<void> | null = null;
+let loadQueued = false;
+
+async function loadAllDataOnce(): Promise<void> {
     state.isLoading = true;
     renderPage();
 
@@ -47,6 +51,27 @@ export async function loadAllData(): Promise<void> {
 
     state.isLoading = false;
     renderPage();
+}
+
+/**
+ * Load all data (serialized: overlapping calls coalesce into one follow-up).
+ */
+export function loadAllData(): Promise<void> {
+    if (loadInFlight) {
+        loadQueued = true;
+        return loadInFlight;
+    }
+    loadInFlight = (async () => {
+        try {
+            do {
+                loadQueued = false;
+                await loadAllDataOnce();
+            } while (loadQueued);
+        } finally {
+            loadInFlight = null;
+        }
+    })();
+    return loadInFlight;
 }
 
 // Switch between month/week/agenda views

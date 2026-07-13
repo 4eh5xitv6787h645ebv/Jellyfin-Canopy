@@ -98,6 +98,13 @@ export interface NavigationApi {
     onNavigate(callback: NavigateCallback): () => void;
     offNavigate(callback: NavigateCallback): boolean;
     onViewPage(callback: ViewPageCallback, options?: ViewPageOptions): () => void;
+    /**
+     * Capture-phase 'viewbeforeshow' subscription: fires with the incoming
+     * view element BEFORE the router's own bubble-phase handling. This is the
+     * pages framework's adoption hook — the one place the plugin may react to
+     * a view element before it paints.
+     */
+    onViewBeforeShow(callback: (element: Element, event: Event) => void): () => void;
     getCurrentView(): string | null;
     getViewHandlerCount(): number;
     getNavCallbackCount(): number;

@@ -16,8 +16,7 @@ import './calendar/data';
 import './calendar/render-events';
 import './calendar/render-views';
 import './calendar/actions';
-import './calendar/init';
+import './calendar/page';
 import './requests/custom-tab';
-import './calendar/custom-tab';
 // Admin-only action-sheet Search / Interactive Search / Manage (Sonarr/Radarr).
 import './search';

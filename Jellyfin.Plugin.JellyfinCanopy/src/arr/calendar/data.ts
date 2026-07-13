@@ -88,7 +88,6 @@ export interface CalendarState {
     requestedError: boolean;
     locationSignature: string | null;
     locationUnsubscribe: (() => void) | null;
-    _customTabContainer: HTMLElement | null;
 }
 
 /** Per-instance error entry surfaced by the /arr/calendar envelope. */
@@ -165,7 +164,6 @@ export const state: CalendarState = {
     requestedError: false,
     locationSignature: null,
     locationUnsubscribe: null,
-    _customTabContainer: null,
 };
 
 // Status color mapping
