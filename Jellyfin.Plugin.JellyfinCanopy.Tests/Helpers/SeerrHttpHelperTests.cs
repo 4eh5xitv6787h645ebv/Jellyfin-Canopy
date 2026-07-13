@@ -1,6 +1,6 @@
 using System.Net;
 using System.Text;
-using Jellyfin.Plugin.JellyfinCanopy.Helpers.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers;

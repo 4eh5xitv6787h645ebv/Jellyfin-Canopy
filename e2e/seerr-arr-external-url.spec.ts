@@ -22,7 +22,7 @@ import { test, expect, loginAs, type Role } from './fixtures/auth';
 async function resolveSeerrBase(page: import('playwright/test').Page): Promise<string> {
     return page.evaluate(() => {
         const JC = (window as any).JellyfinCanopy;
-        return (JC?.jellyseerrAPI?.resolveJellyseerrBaseUrl?.() as string) || '';
+        return (JC?.seerrAPI?.resolveSeerrBaseUrl?.() as string) || '';
     });
 }
 
@@ -35,12 +35,12 @@ test.describe('Seerr/arr split internal/external URLs', () => {
                 const cfg = (window as any).JellyfinCanopy?.pluginConfig || {};
                 const JC = (window as any).JellyfinCanopy;
                 return {
-                    baseUrl: cfg.JellyseerrBaseUrl ?? null,
-                    resolved: (JC?.jellyseerrAPI?.resolveJellyseerrBaseUrl?.() as string) || '',
+                    baseUrl: cfg.SeerrBaseUrl ?? null,
+                    resolved: (JC?.seerrAPI?.resolveSeerrBaseUrl?.() as string) || '',
                 };
             });
 
-            // JellyseerrBaseUrl is the server-projected browser link base: external
+            // SeerrBaseUrl is the server-projected browser link base: external
             // URL when configured, else the first internal URL. On the seeded server
             // no external URL is set, so it must equal the resolved link base and be
             // an http(s) URL (or empty when Seerr is unconfigured) — never garbage.
@@ -56,14 +56,14 @@ test.describe('Seerr/arr split internal/external URLs', () => {
     test('[admin] a configured external URL becomes the browser link base', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
 
-        // The server projects the external URL into JellyseerrBaseUrl. Simulate that
+        // The server projects the external URL into SeerrBaseUrl. Simulate that
         // projection client-side and confirm the resolver honours it verbatim (no
         // mapping configured, so external wins).
         const resolved = await page.evaluate(() => {
             const JC = (window as any).JellyfinCanopy;
-            JC.pluginConfig.JellyseerrUrlMappings = '';
-            JC.pluginConfig.JellyseerrBaseUrl = 'https://requests.example.com';
-            return JC.jellyseerrAPI.resolveJellyseerrBaseUrl();
+            JC.pluginConfig.SeerrUrlMappings = '';
+            JC.pluginConfig.SeerrBaseUrl = 'https://requests.example.com';
+            return JC.seerrAPI.resolveSeerrBaseUrl();
         });
         expect(resolved).toBe('https://requests.example.com');
     });
@@ -75,9 +75,9 @@ test.describe('Seerr/arr split internal/external URLs', () => {
             const JC = (window as any).JellyfinCanopy;
             const origin = ((window as any).ApiClient?.serverAddress?.() as string) || window.location.origin;
             // External base set, but a mapping matches the current access URL — mapping wins.
-            JC.pluginConfig.JellyseerrBaseUrl = 'https://external.example.com';
-            JC.pluginConfig.JellyseerrUrlMappings = `${origin}|https://mapped.example.com`;
-            return JC.jellyseerrAPI.resolveJellyseerrBaseUrl();
+            JC.pluginConfig.SeerrBaseUrl = 'https://external.example.com';
+            JC.pluginConfig.SeerrUrlMappings = `${origin}|https://mapped.example.com`;
+            return JC.seerrAPI.resolveSeerrBaseUrl();
         });
         expect(resolved).toBe('https://mapped.example.com');
     });
@@ -114,7 +114,7 @@ test.describe('Seerr resilience: a bad/down Seerr never breaks the UI (591)', ()
             // abort (connection refused), half return a non-JSON login page with 502.
             // The client must survive both without throwing or spamming the console.
             let seerrCalls = 0;
-            await page.route('**/JellyfinCanopy/jellyseerr/**', async (route) => {
+            await page.route('**/JellyfinCanopy/seerr/**', async (route) => {
                 seerrCalls++;
                 if (seerrCalls % 2 === 0) {
                     await route.fulfill({
@@ -140,12 +140,12 @@ test.describe('Seerr resilience: a bad/down Seerr never breaks the UI (591)', ()
 
             // Seerr surfaces must be absent, never a broken/half-rendered section.
             const seerrResultsVisible = await page.evaluate(() =>
-                !!document.querySelector('.jellyseerr-results-section, #jellyseerrResults'));
+                !!document.querySelector('.seerr-results-section, #seerrResults'));
             expect(seerrResultsVisible, 'Seerr surfaces must stay absent when Seerr is down').toBe(false);
 
             // Only the deliberately-induced request failures may appear; anything else
             // is a real regression (an unhandled rejection / thrown boot error).
-            const induced = /jellyseerr|Bad Gateway|502|connectionrefused|Failed to (fetch|load)|net::ERR|Seerr/i;
+            const induced = /seerr|Bad Gateway|502|connectionrefused|Failed to (fetch|load)|net::ERR|Seerr/i;
             const unexpected = consoleErrors.real().filter((t) => !induced.test(t));
             expect(unexpected, 'no real console errors beyond the induced Seerr failures').toEqual([]);
         });

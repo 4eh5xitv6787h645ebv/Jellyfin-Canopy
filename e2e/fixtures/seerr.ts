@@ -1,10 +1,10 @@
 // Readiness probes for the Seerr / TMDB integration specs.
 //
 // The reproducible docker seed (e2e/docker/seed.sh) boots WITHOUT a TMDB key or
-// a Jellyseerr connection unless the optional TMDB_API_KEY / JELLYSEERR_* env
+// a Seerr connection unless the optional TMDB_API_KEY / SEERR_* env
 // vars are supplied at seed time. The parental / reviews / requests specs need
 // a live TMDB or Seerr backend, so they read the plugin's OWN public-config
-// (the TmdbEnabled / JellyseerrEnabled projections) to decide whether to run:
+// (the TmdbEnabled / SeerrEnabled projections) to decide whether to run:
 //   - a deliberately-bare env SKIPS cleanly instead of timing out on a
 //     precondition that can never be met, and
 //   - a configured CI/dev run RUNS the guard.
@@ -32,11 +32,11 @@ export async function tmdbReady(page: Page): Promise<boolean> {
 }
 
 /**
- * True when a Jellyseerr connection is configured (JellyseerrEnabled projected
+ * True when a Seerr connection is configured (SeerrEnabled projected
  * `true`), so the search / detail / request proxy works.
  */
 export async function seerrReady(page: Page): Promise<boolean> {
-    return publicConfigFlag(page, 'JellyseerrEnabled');
+    return publicConfigFlag(page, 'SeerrEnabled');
 }
 
 /**

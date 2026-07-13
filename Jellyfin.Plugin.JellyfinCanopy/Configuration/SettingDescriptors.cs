@@ -62,7 +62,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
     ///
     /// Ground rules:
     ///  - The exposure lists are WHITELISTS. A setting not registered as Public/Private/Both
-    ///    never reaches any client. Secrets (TMDB_API_KEY, JellyseerrApiKey, Sonarr/RadarrApiKey,
+    ///    never reaches any client. Secrets (TMDB_API_KEY, SeerrApiKey, Sonarr/RadarrApiKey,
     ///    per-instance ApiKey) must never get a Public/Private descriptor — only derived,
     ///    non-secret values (e.g. TmdbEnabled) may be projected.
     ///  - Entries with Neither exposure exist purely to declare a per-user pairing for admin
@@ -214,33 +214,33 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 Public("EnableTagsLocalStorageFallback", c => c.EnableTagsLocalStorageFallback),
 
                 // Seerr Search Settings
-                Public("JellyseerrEnabled", c => c.JellyseerrEnabled),
-                Public("JellyseerrShowSearchResults", c => c.JellyseerrShowSearchResults),
-                Public("JellyseerrShowReportButton", c => c.JellyseerrShowReportButton),
-                Public("JellyseerrShowIssueIndicator", c => c.JellyseerrShowIssueIndicator),
-                Public("JellyseerrEnable4KRequests", c => c.JellyseerrEnable4KRequests),
-                Public("JellyseerrEnable4KTvRequests", c => c.JellyseerrEnable4KTvRequests),
+                Public("SeerrEnabled", c => c.SeerrEnabled),
+                Public("SeerrShowSearchResults", c => c.SeerrShowSearchResults),
+                Public("SeerrShowReportButton", c => c.SeerrShowReportButton),
+                Public("SeerrShowIssueIndicator", c => c.SeerrShowIssueIndicator),
+                Public("SeerrEnable4KRequests", c => c.SeerrEnable4KRequests),
+                Public("SeerrEnable4KTvRequests", c => c.SeerrEnable4KTvRequests),
                 Public("ShowCollectionsInSearch", c => c.ShowCollectionsInSearch),
-                Public("JellyseerrShowAdvanced", c => c.JellyseerrShowAdvanced),
-                Public("JellyseerrShowQuotaInfo", c => c.JellyseerrShowQuotaInfo),
-                Public("ShowElsewhereOnJellyseerr", c => c.ShowElsewhereOnJellyseerr),
-                Public("JellyseerrUseMoreInfoModal", c => c.JellyseerrUseMoreInfoModal),
+                Public("SeerrShowAdvanced", c => c.SeerrShowAdvanced),
+                Public("SeerrShowQuotaInfo", c => c.SeerrShowQuotaInfo),
+                Public("ShowElsewhereOnSeerr", c => c.ShowElsewhereOnSeerr),
+                Public("SeerrUseMoreInfoModal", c => c.SeerrUseMoreInfoModal),
                 Public("AddRequestedMediaToWatchlist", c => c.AddRequestedMediaToWatchlist),
-                Public("SyncJellyseerrWatchlist", c => c.SyncJellyseerrWatchlist),
-                Public("JellyseerrAutoImportUsers", c => c.JellyseerrAutoImportUsers),
-                Public("JellyseerrShowSimilar", c => c.JellyseerrShowSimilar),
-                Public("JellyseerrShowRecommended", c => c.JellyseerrShowRecommended),
-                Public("JellyseerrShowRequestMoreOnSeries", c => c.JellyseerrShowRequestMoreOnSeries),
-                Public("JellyseerrShowNetworkDiscovery", c => c.JellyseerrShowNetworkDiscovery),
-                Public("JellyseerrShowGenreDiscovery", c => c.JellyseerrShowGenreDiscovery),
-                Public("JellyseerrShowTagDiscovery", c => c.JellyseerrShowTagDiscovery),
-                Public("JellyseerrShowPersonDiscovery", c => c.JellyseerrShowPersonDiscovery),
+                Public("SyncSeerrWatchlist", c => c.SyncSeerrWatchlist),
+                Public("SeerrAutoImportUsers", c => c.SeerrAutoImportUsers),
+                Public("SeerrShowSimilar", c => c.SeerrShowSimilar),
+                Public("SeerrShowRecommended", c => c.SeerrShowRecommended),
+                Public("SeerrShowRequestMoreOnSeries", c => c.SeerrShowRequestMoreOnSeries),
+                Public("SeerrShowNetworkDiscovery", c => c.SeerrShowNetworkDiscovery),
+                Public("SeerrShowGenreDiscovery", c => c.SeerrShowGenreDiscovery),
+                Public("SeerrShowTagDiscovery", c => c.SeerrShowTagDiscovery),
+                Public("SeerrShowPersonDiscovery", c => c.SeerrShowPersonDiscovery),
                 // Was missing from the hand-written projection: the configPage toggle saved it,
-                // but the client gate `pluginConfig.JellyseerrShowCollectionDiscovery !== false`
+                // but the client gate `pluginConfig.SeerrShowCollectionDiscovery !== false`
                 // never saw the key, so disabling collection discovery had no effect.
-                Public("JellyseerrShowCollectionDiscovery", c => c.JellyseerrShowCollectionDiscovery),
-                Public("JellyseerrExcludeLibraryItems", c => c.JellyseerrExcludeLibraryItems),
-                Public("JellyseerrExcludeBlocklistedItems", c => c.JellyseerrExcludeBlocklistedItems),
+                Public("SeerrShowCollectionDiscovery", c => c.SeerrShowCollectionDiscovery),
+                Public("SeerrExcludeLibraryItems", c => c.SeerrExcludeLibraryItems),
+                Public("SeerrExcludeBlocklistedItems", c => c.SeerrExcludeBlocklistedItems),
                 // Discovery & Trending — the client reads these to gate the feature and resolve the
                 // default row set (user customization overrides client-side).
                 Public("DiscoveryEnabled", c => c.DiscoveryEnabled),
@@ -251,7 +251,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 Public("DiscoveryRowTopRated", c => c.DiscoveryRowTopRated),
                 Public("DiscoveryRowWatchlist", c => c.DiscoveryRowWatchlist),
                 Public("DiscoveryGenreRows", c => c.DiscoveryGenreRows),
-                Public("JellyseerrDisableCache", c => c.JellyseerrDisableCache),
+                Public("SeerrDisableCache", c => c.SeerrDisableCache),
                 // The browser-facing Seerr link base. Prefers the explicit external/public URL
                 // when the admin has set one (well-formed http(s)); otherwise falls back to the
                 // first INTERNAL URL, exactly as before (zero behaviour change for single-URL
@@ -259,7 +259,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 // visitor gets nothing, so network topology never leaks pre-login. When an
                 // external URL IS configured, the internal URL is no longer emitted here, which
                 // also stops leaking the internal Seerr address to non-admin users.
-                PublicContextual("JellyseerrBaseUrl", ctx =>
+                PublicContextual("SeerrBaseUrl", ctx =>
                 {
                     if (!ctx.IsAuthenticated)
                     {
@@ -269,9 +269,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                     var firstInternalUrl = string.Empty;
                     try
                     {
-                        if (!string.IsNullOrWhiteSpace(ctx.Config.JellyseerrUrls))
+                        if (!string.IsNullOrWhiteSpace(ctx.Config.SeerrUrls))
                         {
-                            firstInternalUrl = ctx.Config.JellyseerrUrls
+                            firstInternalUrl = ctx.Config.SeerrUrls
                                 .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                                 .Select(u => u.Trim())
                                 .FirstOrDefault() ?? string.Empty;
@@ -279,11 +279,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                     }
                     catch { /* ignore */ }
 
-                    return Helpers.ServiceUrlResolver.ResolvePublicUrl(firstInternalUrl, ctx.Config.JellyseerrExternalUrl)
+                    return Helpers.ServiceUrlResolver.ResolvePublicUrl(firstInternalUrl, ctx.Config.SeerrExternalUrl)
                         ?? string.Empty;
                 }),
-                PublicContextual("JellyseerrUrlMappings", ctx =>
-                    ctx.IsAuthenticated ? (ctx.Config.JellyseerrUrlMappings ?? string.Empty) : string.Empty),
+                PublicContextual("SeerrUrlMappings", ctx =>
+                    ctx.IsAuthenticated ? (ctx.Config.SeerrUrlMappings ?? string.Empty) : string.Empty),
 
                 // Bookmarks Settings
                 Public("BookmarksEnabled", c => c.BookmarksEnabled),

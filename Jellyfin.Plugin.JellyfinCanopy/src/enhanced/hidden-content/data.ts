@@ -55,7 +55,7 @@ export interface HiddenContentSettings {
     filterContinueWatching: boolean;
     showHideConfirmation: boolean;
     showHideButtons: boolean;
-    showButtonJellyseerr: boolean;
+    showButtonSeerr: boolean;
     showButtonLibrary: boolean;
     showButtonDetails: boolean;
     showButtonCast: boolean;
@@ -105,7 +105,7 @@ export function getSettings(): HiddenContentSettings {
         filterContinueWatching: true,
         showHideConfirmation: true,
         showHideButtons: true,
-        showButtonJellyseerr: true,
+        showButtonSeerr: true,
         showButtonLibrary: false,
         showButtonDetails: true,
         showButtonCast: false,
@@ -446,12 +446,12 @@ export function getHiddenCount(): number {
 }
 
 /**
- * Filters Jellyseerr discovery/search results, removing hidden items by TMDB ID.
- * @param results Array of Jellyseerr result objects.
+ * Filters Seerr discovery/search results, removing hidden items by TMDB ID.
+ * @param results Array of Seerr result objects.
  * @param surface The surface name (e.g. 'discovery', 'search').
  * @returns Filtered array.
  */
-export function filterJellyseerrResults(results: any[], surface: string): any[] {
+export function filterSeerrResults(results: any[], surface: string): any[] {
     if (!shouldFilterSurface(surface)) return results;
     if (!Array.isArray(results)) return results;
     return results.filter((item) => {

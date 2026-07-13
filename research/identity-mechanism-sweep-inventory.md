@@ -773,7 +773,7 @@ Generated 2026-07-08 by the identity-mechanism-sweep workflow: 7 parallel ideati
 ## Plugin-served image proxy route with identity in the path (mostly dominated)
 *Lens:* ecosystem-prior-art · *Verdict:* **n/a** (feasibility ?/5, value ?/5)
 
-- **Mechanism:** Generalization of L2 / the Overseerr-Jellyseerr image-proxy pattern: serve images through a plugin route like /JellyfinCanopy/Images/{item}?u={signedMarker} and hand clients that full URL. Home Assistant/Nextcloud/CloudFront all do identity-in-the-URL this way.
+- **Mechanism:** Generalization of L2 / the Overseerr-Seerr image-proxy pattern: serve images through a plugin route like /JellyfinCanopy/Images/{item}?u={signedMarker} and hand clients that full URL. Home Assistant/Nextcloud/CloudFront all do identity-in-the-URL this way.
 - **Coverage:** Would cover any client — BUT only if the client actually requests THAT url. Jellyfin item images are client-CONSTRUCTED from itemId+tag, not taken from a URL field in the DTO, so clients won't hit a custom route unless the URL is one they build. That is exactly why L2 rides the ?tag= field instead of a new path.
 - **Trust tier:** authoritative in principle.
 - **Misattribution risk:** none (server controls the route).

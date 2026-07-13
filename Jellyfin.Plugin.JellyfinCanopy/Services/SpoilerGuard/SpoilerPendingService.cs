@@ -17,10 +17,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// TMDB→library lookup, the pending-entry cap, the display-name sanitizer and the
     /// RMW promote/record logic so BOTH the HTTP endpoint (SpoilerGuardController's
     /// POST/DELETE spoiler-blur/pending) AND the fire-and-forget Seerr auto-request
-    /// hook (JellyseerrProxyController) reuse one implementation.
+    /// hook (SeerrProxyController) reuse one implementation.
     ///
     /// Registered as a singleton. Deliberately depends only on the config store,
-    /// ILibraryManager and IUserManager — never on IJellyseerrClient — so it can be
+    /// ILibraryManager and IUserManager — never on ISeerrClient — so it can be
     /// consumed by the Seerr proxy controller without introducing a DI cycle.
     /// </summary>
     public sealed class SpoilerPendingService

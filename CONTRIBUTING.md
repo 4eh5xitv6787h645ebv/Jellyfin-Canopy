@@ -26,7 +26,7 @@ See the [Contributing Translations](https://4eh5xitv6787h645ebv.github.io/Jellyf
 
 The plugin is one C# project (server) plus one TypeScript module tree (client), bundled into a single client artifact:
 
-- `Jellyfin.Plugin.JellyfinCanopy/src/` — **the client.** TypeScript ES modules (strict mode, real imports), organized by area: `core/` (platform layer: navigation, lifecycle, dom-observer, ui-kit, api-client, live) whose modules `src/main.ts` imports individually, plus the feature areas `enhanced/`, `jellyseerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/` — each feature area has an `index.ts` barrel that `src/main.ts` imports; `scripts/build-bundle.js` (esbuild) produces `dist/jc.bundle.js`.
+- `Jellyfin.Plugin.JellyfinCanopy/src/` — **the client.** TypeScript ES modules (strict mode, real imports), organized by area: `core/` (platform layer: navigation, lifecycle, dom-observer, ui-kit, api-client, live) whose modules `src/main.ts` imports individually, plus the feature areas `enhanced/`, `seerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/` — each feature area has an `index.ts` barrel that `src/main.ts` imports; `scripts/build-bundle.js` (esbuild) produces `dist/jc.bundle.js`.
 - `Jellyfin.Plugin.JellyfinCanopy/Controllers/` — one small feature controller per HTTP surface, nearly all deriving from `JellyfinCanopyControllerBase` (the anonymous asset-serving `AssetsController` derives directly from `ControllerBase`).
 - `Jellyfin.Plugin.JellyfinCanopy/Configuration/` — `PluginConfiguration.cs` (admin settings), `SettingDescriptors.cs` (the settings registry — the single source of truth for what reaches clients), the admin config page.
 - `Jellyfin.Plugin.JellyfinCanopy.Tests/` — xUnit tests, including golden snapshots that pin the config payload contract.
@@ -40,7 +40,7 @@ See the [Project Structure](README.md#-project-structure) section in the README 
 Every feature is four small, declarative pieces. Start from the scaffolder:
 
 ```bash
-node scripts/new-feature.js my-feature            # --area arr|jellyseerr|... , --dry-run
+node scripts/new-feature.js my-feature            # --area arr|seerr|... , --dry-run
 ```
 
 It generates a typed client module, a controller, an e2e spec stub and a docs stub — every gap marked `TODO(my-feature)` — wires the module into its area barrel, and prints the remaining wiring checklist. What each piece looks like:

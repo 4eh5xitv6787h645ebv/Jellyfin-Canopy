@@ -30,7 +30,7 @@ async function ensureRequest(page: any, tmdbId: number): Promise<void> {
         try {
             await api.ajax({
                 type: 'POST',
-                url: api.getUrl('/JellyfinCanopy/jellyseerr/request'),
+                url: api.getUrl('/JellyfinCanopy/seerr/request'),
                 data: JSON.stringify({ mediaType: 'movie', mediaId: id }),
                 contentType: 'application/json',
                 dataType: 'json',
@@ -96,7 +96,7 @@ test.describe('in-app request approvals', () => {
         await loginAs(page, 'admin', consoleErrors);
         test.skip(
             !(await seerrReady(page)) || !(await tmdbReady(page)),
-            'Seerr/TMDB not configured — set JELLYSEERR_* and TMDB_API_KEY at seed time to run'
+            'Seerr/TMDB not configured — set SEERR_* and TMDB_API_KEY at seed time to run'
         );
 
         try {
@@ -147,7 +147,7 @@ test.describe('in-app request approvals', () => {
         await loginAs(page, 'user', consoleErrors);
         test.skip(
             !(await seerrReady(page)) || !(await tmdbReady(page)),
-            'Seerr/TMDB not configured — set JELLYSEERR_* and TMDB_API_KEY at seed time to run'
+            'Seerr/TMDB not configured — set SEERR_* and TMDB_API_KEY at seed time to run'
         );
 
         try {

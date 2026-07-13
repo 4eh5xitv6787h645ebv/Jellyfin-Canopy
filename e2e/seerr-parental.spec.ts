@@ -23,7 +23,7 @@ const QUERY = 'Deadpool';
 async function searchIds(page: any): Promise<{ movies: number[]; all: number[] }> {
     return page.evaluate(async (query: string) => {
         const api = (window as any).ApiClient;
-        const url = api.getUrl(`/JellyfinCanopy/jellyseerr/search?query=${encodeURIComponent(query)}&page=1&language=en`);
+        const url = api.getUrl(`/JellyfinCanopy/seerr/search?query=${encodeURIComponent(query)}&page=1&language=en`);
         const res = await api.getJSON(url);
         const results = (res.results || []) as any[];
         return {
@@ -53,7 +53,7 @@ async function postRequestStatus(page: any, mediaType: string, tmdbId: number): 
         try {
             await api.ajax({
                 type: 'POST',
-                url: api.getUrl('/JellyfinCanopy/jellyseerr/request'),
+                url: api.getUrl('/JellyfinCanopy/seerr/request'),
                 data: JSON.stringify({ mediaType: args.mediaType, mediaId: args.tmdbId }),
                 contentType: 'application/json',
                 dataType: 'json',
@@ -96,13 +96,13 @@ test.describe('seerr parental-rating filter', () => {
     test('restricted user is filtered server-side; admin and no-limit are not', async ({ page, consoleErrors }) => {
         // ── Admin: discover the restricted user and impose a PG-13 (13) limit ──
         await loginAs(page, 'admin', consoleErrors);
-        // The reproducible docker seed is bare: without a live Jellyseerr + TMDB
+        // The reproducible docker seed is bare: without a live Seerr + TMDB
         // backend the search returns nothing and this security guard can't run.
         // Skip cleanly rather than fail on an unmet precondition (set
-        // JELLYSEERR_* / TMDB_API_KEY at seed time to run).
+        // SEERR_* / TMDB_API_KEY at seed time to run).
         test.skip(
             !(await seerrReady(page)) || !(await tmdbReady(page)),
-            'Seerr/TMDB not configured — set JELLYSEERR_* and TMDB_API_KEY at seed time to run'
+            'Seerr/TMDB not configured — set SEERR_* and TMDB_API_KEY at seed time to run'
         );
         const restrictedUserId = await findRestrictedUserId(page, USERS.user.username);
 
@@ -116,7 +116,7 @@ test.describe('seerr parental-rating filter', () => {
 
             // Admin can also open any title's detail (no gate) — via both the Seerr
             // detail endpoint and the raw TMDB passthrough.
-            expect(await getStatus(page, `/JellyfinCanopy/jellyseerr/movie/${DEADPOOL_R}`),
+            expect(await getStatus(page, `/JellyfinCanopy/seerr/movie/${DEADPOOL_R}`),
                 'admin detail fetch is not gated').toBe(200);
             expect(await getStatus(page, `/JellyfinCanopy/tmdb/movie/${DEADPOOL_R}`),
                 'admin raw TMDB fetch is not gated').toBe(200);
@@ -140,7 +140,7 @@ test.describe('seerr parental-rating filter', () => {
 
             // The same restriction gates the detail endpoint and the request POST, so a
             // restricted user can neither open nor request a blocked title by tmdbId.
-            expect(await getStatus(page, `/JellyfinCanopy/jellyseerr/movie/${DEADPOOL_R}`),
+            expect(await getStatus(page, `/JellyfinCanopy/seerr/movie/${DEADPOOL_R}`),
                 'restricted user is blocked from a blocked title detail').toBe(403);
             expect(await getStatus(page, `/JellyfinCanopy/tmdb/movie/${DEADPOOL_R}`),
                 'restricted user is blocked from the raw TMDB detail too').toBe(403);

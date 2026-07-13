@@ -293,7 +293,7 @@ function findUnusedKeys() {
                 // Match feature_ and status_ keys used in dynamic translation patterns
                 // e.g., JC.t('feature_' + name) or JC.t(`feature_${name}`)
                 // Also catch literal strings like 'feature_auto_pause', 'status_enabled'
-                const dynamicMatches = content.matchAll(/['"`]((?:feature_|status_|jellyseerr_|elsewhere_)[a-z_]+)['"`]/g);
+                const dynamicMatches = content.matchAll(/['"`]((?:feature_|status_|seerr_|elsewhere_)[a-z_]+)['"`]/g);
                 for (const match of dynamicMatches) {
                     usedKeys.add(match[1]);
                 }
@@ -304,7 +304,7 @@ function findUnusedKeys() {
                 for (const match of templateMatches) {
                     // Mark keys with dynamic parts as used if they match known patterns
                     const prefix = match[1];
-                    if (prefix.match(/^(feature|status|jellyseerr|elsewhere|shortcut)_?$/)) {
+                    if (prefix.match(/^(feature|status|seerr|elsewhere|shortcut)_?$/)) {
                         // Find all keys in translations that start with this prefix
                         allKeys.forEach(key => {
                             if (key.startsWith(prefix)) {

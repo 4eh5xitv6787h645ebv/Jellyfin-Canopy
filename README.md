@@ -128,7 +128,7 @@ Four new pages living right in Jellyfin's navigation, reorderable, native on des
     <th>Ratings on posters</th>
   </tr>
   <tr>
-    <td><img src="docs/images/jellyseerr.png" width="400" /></td>
+    <td><img src="docs/images/seerr.png" width="400" /></td>
     <td><img src="docs/images/ratings.png" width="400" /></td>
   </tr>
   <tr>

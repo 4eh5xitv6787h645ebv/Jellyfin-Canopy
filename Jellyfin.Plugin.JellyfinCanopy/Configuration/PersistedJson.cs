@@ -133,6 +133,67 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         }
 
         /// <summary>
+        /// Pre-rename builds (≤ 2.0) persisted Seerr-related members under
+        /// "…Jellyseerr…" property names — PascalCase from the server writer,
+        /// camelCase from the raw client pass-through. Renames PROPERTY NAMES
+        /// only: values are user data and may legitimately contain the string
+        /// (e.g. a URL whose docker hostname is literally "jellyseerr"). When a
+        /// file somehow carries both spellings, the current name wins and the
+        /// legacy duplicate is dropped. Runs on the shared lenient read
+        /// pre-pass, so every user file self-heals on its next write.
+        /// </summary>
+        internal static JsonNode? AdoptLegacySeerrMemberNames(JsonNode? node)
+        {
+            switch (node)
+            {
+                case JsonObject obj:
+                    foreach (var key in obj.Select(kv => kv.Key).ToList())
+                    {
+                        var adopted = RenameLegacySeerrFragments(key);
+                        if (!string.Equals(adopted, key, StringComparison.Ordinal))
+                        {
+                            var value = obj[key];
+                            obj.Remove(key);
+                            if (!obj.ContainsKey(adopted))
+                            {
+                                obj[adopted] = value;
+                            }
+                        }
+                    }
+
+                    foreach (var kv in obj)
+                    {
+                        AdoptLegacySeerrMemberNames(kv.Value);
+                    }
+
+                    break;
+
+                case JsonArray arr:
+                    foreach (var element in arr)
+                    {
+                        AdoptLegacySeerrMemberNames(element);
+                    }
+
+                    break;
+            }
+
+            return node;
+        }
+
+        /// <summary>
+        /// "ShowButtonJellyseerr" → "ShowButtonSeerr", "showButtonJellyseerr" →
+        /// "showButtonSeerr": the replacement's casing follows the legacy
+        /// fragment's leading character so both writer conventions map onto
+        /// their exact current member names.
+        /// </summary>
+        private static string RenameLegacySeerrFragments(string name)
+            => System.Text.RegularExpressions.Regex.Replace(
+                name,
+                "jellyseerr",
+                match => char.IsUpper(match.Value[0]) ? "Seerr" : "seerr",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        /// <summary>
         /// Newtonsoft coerced non-string primitives into string properties
         /// (e.g. a legacy client payload stored <c>"TmdbId": 27205</c> as a number;
         /// the DTO property is string). Numbers keep their raw JSON text; booleans

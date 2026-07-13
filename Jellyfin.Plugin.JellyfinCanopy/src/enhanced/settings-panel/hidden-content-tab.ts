@@ -26,7 +26,7 @@ export function wireHiddenContentListeners(ctx: PanelContext): void {
     // ============================================================
     if ((JC as any).hiddenContent) {
         const hiddenButtonToggles = [
-            ['hiddenShowButtonJellyseerr', 'showButtonJellyseerr'],
+            ['hiddenShowButtonSeerr', 'showButtonSeerr'],
             ['hiddenShowButtonLibrary', 'showButtonLibrary'],
             ['hiddenShowButtonDetails', 'showButtonDetails'],
             ['hiddenShowButtonCast', 'showButtonCast']

@@ -26,14 +26,14 @@ using System.Text.Json.Nodes;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using MediaBrowser.Controller;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
-using Jellyfin.Plugin.JellyfinCanopy.Model.Jellyseerr;
-using Jellyfin.Plugin.JellyfinCanopy.Helpers.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model;
 using MediaBrowser.Controller.Persistence;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
 using Jellyfin.Plugin.JellyfinCanopy.Data;
-using Jellyfin.Plugin.JellyfinCanopy.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Microsoft.Extensions.Logging;
 

@@ -41,8 +41,8 @@ test.describe('requests page requirements gating', () => {
                 && document.getElementById('sonarrInstancesList')
                 && document.getElementById('radarrInstancesList')
                 && document.getElementById('addRadarrInstance')
-                && document.getElementById('jellyseerrUrls')
-                && document.getElementById('JellyseerrApiKey')
+                && document.getElementById('seerrUrls')
+                && document.getElementById('SeerrApiKey')
                 && document.getElementById('requestsPageRequirementsLine'));
         }, undefined, { timeout: 60_000 });
 
@@ -66,8 +66,8 @@ test.describe('requests page requirements gating', () => {
             });
 
             // 2. Clear Seerr connection fields.
-            setVal(document.getElementById('jellyseerrUrls') as HTMLTextAreaElement, '');
-            setVal(document.getElementById('JellyseerrApiKey') as HTMLInputElement, '');
+            setVal(document.getElementById('seerrUrls') as HTMLTextAreaElement, '');
+            setVal(document.getElementById('SeerrApiKey') as HTMLInputElement, '');
 
             // 3. Ensure exactly one enabled Radarr instance with URL + API key.
             let radarrCard = document.querySelector('#radarrInstancesList .arr-instance-card');
@@ -100,8 +100,8 @@ test.describe('requests page requirements gating', () => {
             const tmdb = document.getElementById('TMDB_API_KEY') as HTMLInputElement | null;
             return !!(tmdb && tmdb.value.trim().length > 0
                 && document.getElementById('requestsPageRequirementsLine')
-                && document.getElementById('jellyseerrUrls')
-                && document.getElementById('JellyseerrApiKey'));
+                && document.getElementById('seerrUrls')
+                && document.getElementById('SeerrApiKey'));
         }, undefined, { timeout: 60_000 });
 
         const state = await page.evaluate(() => {
@@ -119,8 +119,8 @@ test.describe('requests page requirements gating', () => {
                 setVal(card.querySelector('.arr-instance-url'), '');
                 setVal(card.querySelector('.arr-instance-apikey'), '');
             });
-            setVal(document.getElementById('jellyseerrUrls') as HTMLTextAreaElement, '');
-            setVal(document.getElementById('JellyseerrApiKey') as HTMLInputElement, '');
+            setVal(document.getElementById('seerrUrls') as HTMLTextAreaElement, '');
+            setVal(document.getElementById('SeerrApiKey') as HTMLInputElement, '');
 
             const line = document.getElementById('requestsPageRequirementsLine') as HTMLElement;
             const list = document.getElementById('requestsPageRequirementsList') as HTMLElement;

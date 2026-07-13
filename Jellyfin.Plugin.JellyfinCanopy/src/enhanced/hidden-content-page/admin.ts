@@ -435,9 +435,9 @@ export function openAdminAddModal(): void {
             userId: ApiClient.getCurrentUserId(), searchTerm: term, IncludeItemTypes: 'Movie,Series',
             Recursive: true, Limit: 24, Fields: 'ProviderIds', ImageTypeLimit: 1, EnableImageTypes: 'Primary',
         })).then((res: any) => (res && res.Items) || []).catch(() => []);
-        const jellyseerrAPI = (JC as any).jellyseerrAPI;
-        const seerrP = (jellyseerrAPI && jellyseerrAPI.search)
-            ? jellyseerrAPI.search(term).then((res: any) => (res && res.results) || []).catch(() => [])
+        const seerrAPI = (JC as any).seerrAPI;
+        const seerrP = (seerrAPI && seerrAPI.search)
+            ? seerrAPI.search(term).then((res: any) => (res && res.results) || []).catch(() => [])
             : Promise.resolve([]);
 
         const [libItems, seerrItems] = await Promise.all([libP, seerrP]);

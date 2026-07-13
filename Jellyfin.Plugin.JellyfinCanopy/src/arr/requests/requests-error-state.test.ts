@@ -29,7 +29,7 @@ describe('requests page error state', () => {
         toast = vi.fn();
         const JC = window.JellyfinCanopy as unknown as Record<string, unknown>;
         JC.core = { api: { plugin } };
-        JC.pluginConfig = { JellyseerrEnabled: true, ShowDownloadsInRequests: true };
+        JC.pluginConfig = { SeerrEnabled: true, ShowDownloadsInRequests: true };
         JC.t = (k: string) => k;
         JC.toast = toast;
         // Import AFTER JC.core.api is set — data.ts captures `JC.core.api` at eval.

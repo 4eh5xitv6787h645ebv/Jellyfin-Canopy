@@ -160,7 +160,7 @@ module.exports = [
         files: [
             'Jellyfin.Plugin.JellyfinCanopy/src/bootstrap/**/*.ts',
             'Jellyfin.Plugin.JellyfinCanopy/src/enhanced/**/*.ts',
-            'Jellyfin.Plugin.JellyfinCanopy/src/jellyseerr/**/*.ts',
+            'Jellyfin.Plugin.JellyfinCanopy/src/seerr/**/*.ts',
             'Jellyfin.Plugin.JellyfinCanopy/src/arr/**/*.ts',
             'Jellyfin.Plugin.JellyfinCanopy/src/tags/**/*.ts',
             'Jellyfin.Plugin.JellyfinCanopy/src/elsewhere/**/*.ts',

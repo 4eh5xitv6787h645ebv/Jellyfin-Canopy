@@ -293,7 +293,7 @@ function renderLegend(): string {
         return state.activeFilters.has(filterType) ? 'active' : 'inactive';
     };
 
-    const showRequestsFilter = !!JC.pluginConfig?.JellyseerrEnabled && !state.settings.forceOnlyRequested;
+    const showRequestsFilter = !!JC.pluginConfig?.SeerrEnabled && !state.settings.forceOnlyRequested;
     const requestsLabel = JC.t?.('requests_requests') || 'Requests';
     const requestsLegend = showRequestsFilter
         ? `<div class="jc-calendar-legend-item ${getItemClass('Requests')}" onclick="window.JellyfinCanopy.calendarPage.toggleFilter('Requests'); event.stopPropagation();">
@@ -351,7 +351,7 @@ function renderLegend(): string {
         </div>
         <div class="jc-calendar-legend-item ${getItemClass('Available')}" onclick="window.JellyfinCanopy.calendarPage.toggleFilter('Available'); event.stopPropagation();">
           <span class="material-symbols-rounded" style="color: #4caf50; font-size: 18px;">check_circle</span>
-          <span>${JC.t?.('jellyseerr_btn_available') || 'Available'}</span>
+          <span>${JC.t?.('seerr_btn_available') || 'Available'}</span>
         </div>
         ${requestsLegend}
         ${watchlistLegend}

@@ -1,7 +1,7 @@
 // src/discovery/data.ts
 //
 // Turns a DiscoveryRowSpec + media type into a fetch and returns a normalized results[] that the
-// existing Seerr card renderer (createCardsFragment → createJellyseerrCard) understands. Discovery
+// existing Seerr card renderer (createCardsFragment → createSeerrCard) understands. Discovery
 // is Seerr-backed: results ride the plugin's own proxy, so they carry per-user `mediaInfo`
 // (availability + request state + watchlist) and are parental-filtered + cached server side. A
 // TMDB-only fallback is intentionally NOT offered here — the raw TMDB passthrough is not parental-
@@ -13,7 +13,7 @@ import { JC } from '../globals';
 import type { DiscoveryRowSpec, DiscoveryMediaType } from './rows';
 
 function seerrEnabled(): boolean {
-    return JC.pluginConfig?.JellyseerrEnabled === true;
+    return JC.pluginConfig?.SeerrEnabled === true;
 }
 
 function region(): string {
@@ -49,7 +49,7 @@ export async function fetchRow(spec: DiscoveryRowSpec, mt: DiscoveryMediaType, s
     const path = seerrPath(spec, mt);
     if (!path) return [];
     try {
-        const data = await JC.core.api!.plugin(`/jellyseerr${path}`, { cacheKey: `jellyseerr:${path}`, signal }) as ResultsResponse | null;
+        const data = await JC.core.api!.plugin(`/seerr${path}`, { cacheKey: `seerr:${path}`, signal }) as ResultsResponse | null;
         const arr = data?.results;
         return Array.isArray(arr) ? arr : [];
     } catch (e) {

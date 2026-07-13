@@ -300,7 +300,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool FilterContinueWatching { get; set; } = true;
         public bool ShowHideButtons { get; set; } = true;
         public bool ShowHideConfirmation { get; set; } = true;
-        public bool ShowButtonJellyseerr { get; set; } = true;
+        public bool ShowButtonSeerr { get; set; } = true;
         public bool ShowButtonLibrary { get; set; } = false;
         public bool ShowButtonDetails { get; set; } = true;
         public bool ShowButtonCast { get; set; } = false;

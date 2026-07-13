@@ -78,7 +78,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
                 return;
             }
 
-            if (!IsFeatureEnabled(config) || !config.JellyseerrEnabled)
+            if (!IsFeatureEnabled(config) || !config.SeerrEnabled)
             {
                 _logger.LogInformation($"{LogPrefix} {DisabledMonitoringName} monitoring is disabled in configuration - not subscribing to playback events");
                 return;
@@ -98,13 +98,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
         }
 
         /// <summary>
-        /// Returns the plugin configuration when this watcher's feature (and Jellyseerr)
+        /// Returns the plugin configuration when this watcher's feature (and Seerr)
         /// is enabled, otherwise null. Event handlers use this as their fast-exit gate.
         /// </summary>
         protected PluginConfiguration? GetEnabledConfiguration()
         {
             var config = _configProvider.ConfigurationOrNull as PluginConfiguration;
-            if (config == null || !IsFeatureEnabled(config) || !config.JellyseerrEnabled)
+            if (config == null || !IsFeatureEnabled(config) || !config.SeerrEnabled)
             {
                 return null;
             }

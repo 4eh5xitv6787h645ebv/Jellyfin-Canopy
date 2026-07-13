@@ -106,7 +106,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         [InlineData("themes/ocean.css", AssetKind.Static)]
         [InlineData("flags/4x3/us.svg", AssetKind.Family)]
         [InlineData("flags/w20/de.png", AssetKind.Family)]
-        [InlineData("jellyseerr/poster-fallback.svg", AssetKind.Embedded)]
+        [InlineData("seerr/poster-fallback.svg", AssetKind.Embedded)]
         public void Resolve_ClassifiesKnownKeys(string key, AssetKind expected)
         {
             var service = CreateService(new RecordingHttpMessageHandler());
@@ -308,7 +308,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var service = CreateService(handler);
 
             Assert.Null(await service.EnsureCachedAsync(service.Resolve("../evil"), forceRefresh: false, CancellationToken.None));
-            Assert.Null(await service.EnsureCachedAsync(service.Resolve("jellyseerr/poster-fallback.svg"), forceRefresh: false, CancellationToken.None));
+            Assert.Null(await service.EnsureCachedAsync(service.Resolve("seerr/poster-fallback.svg"), forceRefresh: false, CancellationToken.None));
             Assert.Empty(handler.Requests);
         }
 
@@ -384,7 +384,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         public void OpenEmbeddedAsset_PosterFallback_IsPresentInAssembly()
         {
             var service = CreateService(new RecordingHttpMessageHandler());
-            var resolved = service.Resolve("jellyseerr/poster-fallback.svg");
+            var resolved = service.Resolve("seerr/poster-fallback.svg");
 
             using var stream = AssetCacheService.OpenEmbeddedAsset(resolved);
 

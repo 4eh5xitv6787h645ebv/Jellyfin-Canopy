@@ -26,10 +26,10 @@ const fs = require('fs');
 const path = require('path');
 
 const REPO_ROOT = path.join(__dirname, '..');
-const AREAS = ['enhanced', 'jellyseerr', 'arr', 'tags', 'elsewhere', 'extras', 'others'];
+const AREAS = ['enhanced', 'seerr', 'arr', 'tags', 'elsewhere', 'extras', 'others'];
 const DOCS_AREA = {
     enhanced: 'enhanced',
-    jellyseerr: 'seerr',
+    seerr: 'seerr',
     arr: 'arr',
     tags: 'enhanced',
     elsewhere: 'elsewhere',
@@ -218,7 +218,7 @@ function controller(name) {
     const title = titleCase(name);
     return `using System.Net.Http;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
-using Jellyfin.Plugin.JellyfinCanopy.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;

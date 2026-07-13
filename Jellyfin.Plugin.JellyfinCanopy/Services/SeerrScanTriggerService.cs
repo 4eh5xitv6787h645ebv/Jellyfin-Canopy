@@ -69,7 +69,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 if (_configProvider.ConfigurationOrNull is not PluginConfiguration config) return;
                 if (!config.TriggerSeerrScanOnItemAdded) return;
-                if (!config.JellyseerrEnabled) return;
+                if (!config.SeerrEnabled) return;
 
                 // Seerr's recently-added scan only inspects movies and series (and crawls
                 // their seasons/episodes itself). Filtering on the parent kinds avoids
@@ -131,8 +131,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     return results;
                 }
 
-                var apiKey = config.JellyseerrApiKey;
-                var urls = ParseUrls(config.JellyseerrUrls);
+                var apiKey = config.SeerrApiKey;
+                var urls = ParseUrls(config.SeerrUrls);
                 if (urls.Count == 0 || string.IsNullOrEmpty(apiKey))
                 {
                     _logger.LogWarning("[SeerrScan] Cannot dispatch: Seerr URL(s) or API key not configured");
@@ -173,13 +173,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var endpoint = $"{url.TrimEnd('/')}/api/v1/settings/jobs/{ScanJobId}/run";
             try
             {
-                var http = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+                var http = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
                 http.Timeout = TimeSpan.FromSeconds(15);
-                using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
+                using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                     HttpMethod.Post, endpoint, apiKey, bodyJson: "{}");
 
                 using var response = await http.SendAsync(request).ConfigureAwait(false);
-                var (json, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, endpoint).ConfigureAwait(false);
+                var (json, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, endpoint).ConfigureAwait(false);
                 return new DispatchResult
                 {
                     Url = url,

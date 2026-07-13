@@ -1,4 +1,4 @@
-using Jellyfin.Plugin.JellyfinCanopy.Helpers.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest;
 using Xunit;
 

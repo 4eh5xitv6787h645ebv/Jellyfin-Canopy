@@ -11,7 +11,7 @@ import type { Page } from 'playwright/test';
 async function discoveryAvailable(page: Page): Promise<boolean> {
     return page.evaluate(() => {
         const cfg = (window as unknown as { JellyfinCanopy?: { pluginConfig?: Record<string, unknown> } }).JellyfinCanopy?.pluginConfig || {};
-        return cfg.DiscoveryEnabled !== false && (cfg.JellyseerrEnabled === true || cfg.TmdbEnabled === true);
+        return cfg.DiscoveryEnabled !== false && (cfg.SeerrEnabled === true || cfg.TmdbEnabled === true);
     });
 }
 

@@ -1,4 +1,4 @@
-using Jellyfin.Plugin.JellyfinCanopy.Helpers.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
 {

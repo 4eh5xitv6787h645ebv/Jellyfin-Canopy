@@ -9,7 +9,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Arr
     /// <summary>
     /// Pure Sonarr/Radarr JSON → DTO mapping and request-body building for the Search feature.
     /// No HTTP, no config — everything here is deterministic and unit-testable in isolation
-    /// (the reusable-logic-in-Helpers convention, mirroring Helpers/Jellyseerr/*). All JSON reads
+    /// (the reusable-logic-in-Helpers convention, mirroring Helpers/Seerr/*). All JSON reads
     /// are defensive: a missing/wrong-typed field yields the type default, never an exception,
     /// because release payloads vary across indexers and arr versions.
     /// </summary>

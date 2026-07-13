@@ -42,11 +42,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // config XML lazily on first access, so adopting the legacy file here
             // means the first load already sees the migrated copy.
             MigrateLegacyElevateState(applicationPaths);
+            // After the file itself is adopted, rename any pre-rename "Jellyseerr"
+            // element names inside it — a ≤2.0 config would otherwise deserialize
+            // those settings to defaults. A failed migration arms the write
+            // suppressor below: saving the defaults-loaded configuration would
+            // permanently overwrite the legacy values the retry depends on.
+            _configWritesSuspendedByFailedMigration = !MigrateLegacySeerrElementNamesCore(ConfigurationFilePath, msg => _logger.LogInformation(msg), msg => _logger.LogError(msg));
             _logger.LogInformation($"{PluginName} v{Version} initialized. Plugin logs will be written to: {fileLogProvider.CurrentLogFilePath}");
             // Set the User-Agent used by every Seerr/TMDB outbound HTTP call.
             // Cloudflare's Browser Integrity Check / Bot Fight Mode flags
             // empty UA as bot.
-            Helpers.Jellyseerr.SeerrHttpHelper.UserAgent = $"JellyfinCanopy/{Version}";
+            Helpers.Seerr.SeerrHttpHelper.UserAgent = $"JellyfinCanopy/{Version}";
             CleanupOldScript();
             CheckPluginPages(applicationPaths, serverConfigurationManager, 1);
             BackfillMissingDefaultShortcuts();
@@ -129,6 +135,65 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             }
         }
 
+        // Pre-rename builds (≤ 2.0) persisted the Seerr settings under
+        // "Jellyseerr*" XML element names. XmlSerializer maps strictly by element
+        // name, so without this one-time rename those settings would silently
+        // deserialize to defaults after the upgrade. ONLY element names are
+        // rewritten — element VALUES are user data and legitimately contain the
+        // string (e.g. a Seerr instance whose docker hostname is "jellyseerr").
+        // Idempotent: once no element name carries the legacy fragment, nothing
+        // is written.
+        //
+        // Returns false ONLY when a legacy config exists but could not be
+        // migrated. The caller must then suppress every configuration write for
+        // this startup: the un-migrated settings load as defaults, and any save
+        // would persist those defaults under the new names — permanently
+        // destroying the legacy values the retry-next-startup promise depends on.
+        internal static bool MigrateLegacySeerrElementNamesCore(string configFilePath, Action<string> logInfo, Action<string> logError)
+        {
+            const string legacyFragment = "Jellyseerr";
+            try
+            {
+                if (!File.Exists(configFilePath))
+                {
+                    return true;
+                }
+
+                var document = System.Xml.Linq.XDocument.Load(configFilePath, System.Xml.Linq.LoadOptions.PreserveWhitespace);
+                var renamed = 0;
+                foreach (var element in document.Descendants())
+                {
+                    var localName = element.Name.LocalName;
+                    if (localName.Contains(legacyFragment, StringComparison.Ordinal))
+                    {
+                        element.Name = System.Xml.Linq.XName.Get(
+                            localName.Replace(legacyFragment, "Seerr", StringComparison.Ordinal),
+                            element.Name.NamespaceName);
+                        renamed++;
+                    }
+                }
+
+                if (renamed == 0)
+                {
+                    return true;
+                }
+
+                // Durable atomic publish (temp sibling + fsync + rename) via the
+                // shared owner, so a crash mid-migration can never leave a
+                // truncated or torn config at the authoritative path.
+                using var buffer = new MemoryStream();
+                document.Save(buffer);
+                AtomicFile.WriteAllBytes(configFilePath, buffer.ToArray());
+                logInfo($"Renamed {renamed} legacy Jellyseerr-era configuration elements to their Seerr names.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                logError($"Failed to rename legacy Jellyseerr-era configuration elements; configuration writes are suspended until the migration succeeds on a later startup: {ex.Message}");
+                return false;
+            }
+        }
+
         /// <summary>
         /// Server-side save hook. Jellyfin core routes admin config saves through
         /// <c>POST /Plugins/{id}/Configuration</c> → this method. We sanitise the optional
@@ -148,6 +213,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             base.UpdateConfiguration(configuration);
         }
 
+        // Armed when the legacy Jellyseerr-name migration failed: the loaded
+        // Configuration then holds defaults for every un-migrated setting, and
+        // persisting it (startup backfills, scheduled-task saves, admin saves,
+        // and BasePlugin.LoadConfiguration's own on-deserialization-failure
+        // save) would overwrite the legacy XML with those defaults — permanent
+        // data loss. Every write path ends in the TYPED SaveConfiguration
+        // virtual (the parameterless overload delegates to it), so guarding it
+        // here protects the file until a later startup migrates successfully.
+        private bool _configWritesSuspendedByFailedMigration;
+
+        public override void SaveConfiguration(PluginConfiguration config)
+        {
+            if (_configWritesSuspendedByFailedMigration)
+            {
+                _logger.LogError("Configuration save suppressed: the legacy Jellyseerr-name migration failed this startup, and saving now would overwrite the un-migrated settings with defaults. Fix the configuration file/permissions and restart Jellyfin; changes made this session are not persisted.");
+                return;
+            }
+
+            base.SaveConfiguration(config);
+        }
+
         private void SanitizeExternalUrlFields(PluginConfiguration config)
         {
             static void Sanitize(string? value, Action<string> assign, string field, ILogger<JellyfinCanopy> logger)
@@ -162,7 +248,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 assign(cleaned);
             }
 
-            Sanitize(config.JellyseerrExternalUrl, v => config.JellyseerrExternalUrl = v, nameof(config.JellyseerrExternalUrl), _logger);
+            Sanitize(config.SeerrExternalUrl, v => config.SeerrExternalUrl = v, nameof(config.SeerrExternalUrl), _logger);
             Sanitize(config.SonarrExternalUrl, v => config.SonarrExternalUrl = v, nameof(config.SonarrExternalUrl), _logger);
             Sanitize(config.RadarrExternalUrl, v => config.RadarrExternalUrl = v, nameof(config.RadarrExternalUrl), _logger);
             Sanitize(config.BazarrExternalUrl, v => config.BazarrExternalUrl = v, nameof(config.BazarrExternalUrl), _logger);

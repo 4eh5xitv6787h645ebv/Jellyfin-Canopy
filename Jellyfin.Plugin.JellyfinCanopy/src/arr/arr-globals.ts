@@ -46,7 +46,7 @@ export interface ArrPluginConfig extends PluginConfig {
     BazarrUrl?: string;
     BazarrExternalUrl?: string;
     BazarrUrlMappings?: string;
-    JellyseerrEnabled?: boolean;
+    SeerrEnabled?: boolean;
     ShowDownloadsInRequests?: boolean;
     DownloadsPageEnabled?: boolean;
     DownloadsPageShowIssues?: boolean;
@@ -132,7 +132,7 @@ export type ArrJE = Omit<
     JEGlobal,
     | 'pluginConfig' | 'currentSettings' | 'helpers' | 'themer' | 't'
     | 'currentUser' | 'loadSettings' | 'saveUserSettings' | 'icon' | 'IconName'
-    | 'hiddenContent' | 'nativeTabs' | 'jellyseerrIssueReporter'
+    | 'hiddenContent' | 'nativeTabs' | 'seerrIssueReporter'
 > & {
     pluginConfig: ArrPluginConfig;
     currentSettings?: ArrUserSettings;
@@ -161,8 +161,8 @@ export type ArrJE = Omit<
         register: (id: string, title: string, onMount: (panel: HTMLElement) => void, icon?: string) => void;
         unregister: (id: string) => void;
     };
-    /** Jellyseerr issue-report modal (js/jellyseerr/issue-reporter.js). */
-    jellyseerrIssueReporter?: {
+    /** Seerr issue-report modal (js/seerr/issue-reporter.js). */
+    seerrIssueReporter?: {
         showReportModal?: (tmdbId: string, title: string, mediaType: string, seasonNumber: unknown, episodeNumber: unknown) => void;
         [key: string]: unknown;
     };

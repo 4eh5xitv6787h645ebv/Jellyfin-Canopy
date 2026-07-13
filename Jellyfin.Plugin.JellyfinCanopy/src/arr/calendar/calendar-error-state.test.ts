@@ -19,7 +19,7 @@ describe('calendar page error state', () => {
         toast = vi.fn();
         const JC = window.JellyfinCanopy as unknown as Record<string, unknown>;
         JC.core = { api: { plugin } };
-        JC.pluginConfig = { JellyseerrEnabled: true, CalendarFilterByLibraryAccess: true };
+        JC.pluginConfig = { SeerrEnabled: true, CalendarFilterByLibraryAccess: true };
         JC.t = (k: string) => k;
         JC.toast = toast;
         data = await import('./data');

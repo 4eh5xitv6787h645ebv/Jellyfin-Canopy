@@ -49,7 +49,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         private static readonly HashSet<string> RequestParseFiles = new(StringComparer.Ordinal)
         {
             "WatchlistMonitor.cs",   // ParseRequestItemWithUser
-            "JellyseerrClient.cs",   // ParseRequestItem
+            "SeerrClient.cs",   // ParseRequestItem
         };
 
         [Fact]

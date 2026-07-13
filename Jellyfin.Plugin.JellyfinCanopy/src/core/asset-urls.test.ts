@@ -69,8 +69,8 @@ describe('assetUrl', () => {
 
     it('embedded assets stay on the local route even when the cache is disabled', () => {
         JC.pluginConfig.AssetCacheEnabled = false;
-        expect(assetUrl('jellyseerr/poster-fallback.svg'))
-            .toBe('http://jellyfin.test/JellyfinCanopy/assets/jellyseerr/poster-fallback.svg');
+        expect(assetUrl('seerr/poster-fallback.svg'))
+            .toBe('http://jellyfin.test/JellyfinCanopy/assets/seerr/poster-fallback.svg');
         expect(assetUrl('ratings/ratings.css'))
             .toBe('http://jellyfin.test/JellyfinCanopy/assets/ratings/ratings.css');
     });

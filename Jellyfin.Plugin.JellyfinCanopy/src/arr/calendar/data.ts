@@ -342,7 +342,7 @@ export async function fetchUserData(): Promise<void> {
 }
 
 async function fetchUserRequests(): Promise<void> {
-    if (!JC.pluginConfig?.JellyseerrEnabled) {
+    if (!JC.pluginConfig?.SeerrEnabled) {
         state.requestedItems = new Set();
         state.requestedLoaded = true;
         state.requestedLoading = false;

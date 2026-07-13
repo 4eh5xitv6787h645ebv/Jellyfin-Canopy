@@ -12,7 +12,7 @@ import { seerrReady } from './fixtures/seerr';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-const SEERR_OFF = 'Seerr not configured — set JELLYSEERR_* at seed time to run';
+const SEERR_OFF = 'Seerr not configured — set SEERR_* at seed time to run';
 
 interface UserStatus {
     active?: boolean;
@@ -27,7 +27,7 @@ interface UserStatus {
 async function fetchUserStatus(page: any): Promise<UserStatus> {
     return page.evaluate(async () => {
         const api = (window as any).ApiClient;
-        return api.getJSON(api.getUrl('/JellyfinCanopy/jellyseerr/user-status'));
+        return api.getJSON(api.getUrl('/JellyfinCanopy/seerr/user-status'));
     });
 }
 
@@ -35,10 +35,10 @@ async function fetchUserStatus(page: any): Promise<UserStatus> {
 async function gateWithAdminToggle(page: any, mediaType: 'movie' | 'tv', adminToggle: boolean): Promise<boolean> {
     return page.evaluate(async (args: { mediaType: string; adminToggle: boolean }) => {
         const jc = (window as any).JellyfinCanopy;
-        await jc.jellyseerrAPI.checkUserStatus(); // ensure capability is resolved
-        jc.pluginConfig.JellyseerrEnable4KRequests = args.adminToggle;
-        jc.pluginConfig.JellyseerrEnable4KTvRequests = args.adminToggle;
-        return jc.jellyseerrAPI.canRequest4k(args.mediaType) as boolean;
+        await jc.seerrAPI.checkUserStatus(); // ensure capability is resolved
+        jc.pluginConfig.SeerrEnable4KRequests = args.adminToggle;
+        jc.pluginConfig.SeerrEnable4KTvRequests = args.adminToggle;
+        return jc.seerrAPI.canRequest4k(args.mediaType) as boolean;
     }, { mediaType, adminToggle });
 }
 
@@ -52,8 +52,8 @@ for (const role of ['admin', 'user'] as Role[]) {
             const surface = await page.evaluate(() => {
                 const jc = (window as any).JellyfinCanopy;
                 return {
-                    hasGate: typeof jc?.jellyseerrAPI?.canRequest4k === 'function',
-                    hasCollectionModal: typeof jc?.jellyseerrUI?.showCollectionRequestModal === 'function',
+                    hasGate: typeof jc?.seerrAPI?.canRequest4k === 'function',
+                    hasCollectionModal: typeof jc?.seerrUI?.showCollectionRequestModal === 'function',
                 };
             });
             expect(surface.hasGate, 'canRequest4k gate exposed').toBe(true);

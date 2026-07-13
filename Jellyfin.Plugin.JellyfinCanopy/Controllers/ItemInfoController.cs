@@ -25,13 +25,13 @@ using Microsoft.AspNetCore.StaticFiles;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using MediaBrowser.Controller;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
-using Jellyfin.Plugin.JellyfinCanopy.Model.Jellyseerr;
-using Jellyfin.Plugin.JellyfinCanopy.Helpers.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
 using Jellyfin.Plugin.JellyfinCanopy.Data;
-using Jellyfin.Plugin.JellyfinCanopy.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Microsoft.Extensions.Logging;
 
@@ -385,12 +385,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         public async Task<IActionResult> ProxyAvatar([FromQuery] string path)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(path))
+            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(path))
             {
                 return NotFound();
             }
 
-            var jellyseerrUrl = config.JellyseerrUrls
+            var seerrUrl = config.SeerrUrls
                 .Split(new[] { '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries)[0]
                 .Trim().TrimEnd('/');
 
@@ -415,7 +415,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return BadRequest("Invalid avatar path");
             }
 
-            // SSRF guard: only allow known Jellyseerr avatar path prefixes.
+            // SSRF guard: only allow known Seerr avatar path prefixes.
             if (!avatarPath.StartsWith("/avatar/", StringComparison.OrdinalIgnoreCase)
                 && !avatarPath.StartsWith("/avatarproxy/", StringComparison.OrdinalIgnoreCase)
                 && !avatarPath.StartsWith("/api/v1/avatar/", StringComparison.OrdinalIgnoreCase))
@@ -429,7 +429,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // include the resolved Seerr URL in the cache key
                 // so that switching to a different Seerr instance with the same
                 // avatar path doesn't serve stale bytes from the old instance.
-                var cacheKey = $"{jellyseerrUrl}|{avatarPath}";
+                var cacheKey = $"{seerrUrl}|{avatarPath}";
 
                 // Check server-side cache first to avoid hitting upstream Seerr
                 // on every request. This is critical for large avatars (e.g., animated
@@ -451,14 +451,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     return File(cached.Content, cached.ContentType);
                 }
 
-                var client = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+                var client = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
                 client.Timeout = TimeSpan.FromSeconds(10);
 
-                using var avatarRequest = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, $"{jellyseerrUrl}{avatarPath}");
+                using var avatarRequest = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, $"{seerrUrl}{avatarPath}");
                 // explicit User-Agent + Accept so Cloudflare's bot
                 // mode doesn't return an HTML challenge page that we'd try to
                 // serve as an image.
-                avatarRequest.Headers.UserAgent.ParseAdd(Helpers.Jellyseerr.SeerrHttpHelper.UserAgent);
+                avatarRequest.Headers.UserAgent.ParseAdd(Helpers.Seerr.SeerrHttpHelper.UserAgent);
                 avatarRequest.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("image/*"));
                 var response = await client.SendAsync(avatarRequest);
                 if (!response.IsSuccessStatusCode)

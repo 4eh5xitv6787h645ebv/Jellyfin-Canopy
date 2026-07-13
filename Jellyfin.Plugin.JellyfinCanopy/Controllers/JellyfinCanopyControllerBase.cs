@@ -9,7 +9,7 @@ using Jellyfin.Data;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
-using Jellyfin.Plugin.JellyfinCanopy.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
@@ -19,7 +19,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     /// helpers (admin check, per-user resource authorization, current-user
     /// resolution), SSRF URL guard logging, and small shared utilities.
     /// The Seerr plumbing that used to live here (user resolution, proxy core,
-    /// watchlist helpers) is <see cref="IJellyseerrClient"/>; the Arr fetch
+    /// watchlist helpers) is <see cref="ISeerrClient"/>; the Arr fetch
     /// plumbing is <see cref="Services.Arr.ArrFetchService"/>.
     /// </summary>
     public abstract class JellyfinCanopyControllerBase : ControllerBase
@@ -115,10 +115,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         }
 
         /// <summary>
-        /// The acting caller for <see cref="IJellyseerrClient.ProxyRequestAsync"/>,
+        /// The acting caller for <see cref="ISeerrClient.ProxyRequestAsync"/>,
         /// resolved from the authenticated principal (never caller-controlled headers).
         /// </summary>
-        protected JellyseerrCaller SeerrCaller()
+        protected SeerrCaller SeerrCaller()
             => new(UserHelper.GetCurrentUserId(User)?.ToString(), IsAdminUser());
 
         protected Guid GetCurrentUserId()
@@ -201,7 +201,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 Enabled = src.HiddenContentDefaultEnabled,
                 ShowHideButtons = src.HiddenContentDefaultShowHideButtons,
                 ShowHideConfirmation = src.HiddenContentDefaultShowHideConfirmation,
-                ShowButtonJellyseerr = src.HiddenContentDefaultShowButtonJellyseerr,
+                ShowButtonSeerr = src.HiddenContentDefaultShowButtonSeerr,
                 ShowButtonLibrary = src.HiddenContentDefaultShowButtonLibrary,
                 ShowButtonDetails = src.HiddenContentDefaultShowButtonDetails,
                 ShowButtonCast = src.HiddenContentDefaultShowButtonCast,

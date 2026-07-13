@@ -50,7 +50,7 @@ import './core/live-update';
 // order. Areas own their own ordering without touching this file: main.ts
 // imports each barrel once.
 import './enhanced/index';
-import './jellyseerr/index';
+import './seerr/index';
 import './arr/index';
 import './tags/index';
 import './elsewhere/index';

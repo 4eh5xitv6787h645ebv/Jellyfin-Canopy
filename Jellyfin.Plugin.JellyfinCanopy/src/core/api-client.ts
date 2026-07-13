@@ -3,8 +3,8 @@
 // One fetch layer for every upstream the plugin talks to.
 //
 // The retry / dedup / concurrency / cache machinery here is the former
-// jellyseerr/request-manager.js, moved into core so it is available to all
-// modules (jellyseerr/request-manager.js now re-exports it as
+// seerr/request-manager.js, moved into core so it is available to all
+// modules (seerr/request-manager.js now re-exports it as
 // JC.requestManager — that surface is frozen). On top of it, JC.core.api
 // exposes a generalized fetch wrapper with the MediaBrowser auth headers
 // that ~35 call sites used to hand-build, plus per-request timeout support.
@@ -486,7 +486,7 @@ function authHeaders(): Record<string, string> {
 /**
  * Authenticated JSON fetch with retry, dedup, concurrency limiting,
  * caching and optional per-request timeout. Generalizes the former
- * jellyseerr/api.js managedFetch for all upstreams.
+ * seerr/api.js managedFetch for all upstreams.
  * @param url - Fully-qualified URL.
  * @returns Parsed JSON response ({} for empty bodies).
  */
@@ -592,7 +592,7 @@ function jf(path: string, options?: CoreFetchOptions): Promise<unknown> {
 
 /**
  * Fetch a plugin endpoint under /JellyfinCanopy/.
- * @param path - e.g. '/jellyseerr/search?query=...'
+ * @param path - e.g. '/seerr/search?query=...'
  */
 function pluginFetch(path: string, options?: CoreFetchOptions): Promise<unknown> {
     return jf(`/JellyfinCanopy${path}`, options);

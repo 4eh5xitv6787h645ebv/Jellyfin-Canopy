@@ -216,7 +216,7 @@ Discovery resolves a user's feed as **their customization → your admin default
 
 Connect a [Seerr](https://docs.seerr.dev/) instance and your users can search for, request and track new media without leaving Jellyfin. Seerr results appear alongside Jellyfin search results, detail pages gain request and issue-reporting actions, and a dedicated Requests page shows everything in flight.
 
-![Seerr search results inside Jellyfin](images/jellyseerr.png)
+![Seerr search results inside Jellyfin](images/seerr.png)
 
 !!! warning "Not affiliated with Seerr"
     This plugin is **not** affiliated with Seerr. Seerr is an independent project that the plugin integrates with. Please report any issues with this integration to the **Jellyfin Canopy** repository, not to the Seerr team.

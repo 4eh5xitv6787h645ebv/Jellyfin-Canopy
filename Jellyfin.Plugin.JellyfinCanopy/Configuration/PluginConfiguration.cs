@@ -135,35 +135,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             };
 
             // Seerr Search Settings
-            JellyseerrEnabled = false;
-            JellyseerrShowSearchResults = true;
-            JellyseerrShowReportButton = false;
-            JellyseerrShowIssueIndicator = false;
-            JellyseerrEnable4KRequests = false;
-            JellyseerrEnable4KTvRequests = false;
-            JellyseerrShowAdvanced = false;
-            JellyseerrShowQuotaInfo = true;
-            JellyseerrShowSimilar = true;
-            JellyseerrShowRecommended = true;
-            JellyseerrShowRequestMoreOnSeries = true;
-            JellyseerrShowNetworkDiscovery = true;
-            JellyseerrShowGenreDiscovery = true;
-            JellyseerrShowTagDiscovery = true;
-            JellyseerrShowPersonDiscovery = true;
-            JellyseerrShowCollectionDiscovery = true;
-            ShowElsewhereOnJellyseerr = false;
-            JellyseerrUseMoreInfoModal = false;
-            JellyseerrUrls = "";
-            JellyseerrExternalUrl = "";
-            JellyseerrApiKey = "";
-            JellyseerrUrlMappings = "";
+            SeerrEnabled = false;
+            SeerrShowSearchResults = true;
+            SeerrShowReportButton = false;
+            SeerrShowIssueIndicator = false;
+            SeerrEnable4KRequests = false;
+            SeerrEnable4KTvRequests = false;
+            SeerrShowAdvanced = false;
+            SeerrShowQuotaInfo = true;
+            SeerrShowSimilar = true;
+            SeerrShowRecommended = true;
+            SeerrShowRequestMoreOnSeries = true;
+            SeerrShowNetworkDiscovery = true;
+            SeerrShowGenreDiscovery = true;
+            SeerrShowTagDiscovery = true;
+            SeerrShowPersonDiscovery = true;
+            SeerrShowCollectionDiscovery = true;
+            ShowElsewhereOnSeerr = false;
+            SeerrUseMoreInfoModal = false;
+            SeerrUrls = "";
+            SeerrExternalUrl = "";
+            SeerrApiKey = "";
+            SeerrUrlMappings = "";
             ShowCollectionsInSearch = true;
-            JellyseerrDisableCache = false;
-            JellyseerrResponseCacheTtlMinutes = 10;
-            JellyseerrUserIdCacheTtlMinutes = 30;
-            JellyseerrRespectParentalRatings = true;
-            JellyseerrRespectBlockedTags = true;
-            JellyseerrParentalRatingCacheTtlMinutes = 1440;
+            SeerrDisableCache = false;
+            SeerrResponseCacheTtlMinutes = 10;
+            SeerrUserIdCacheTtlMinutes = 30;
+            SeerrRespectParentalRatings = true;
+            SeerrRespectBlockedTags = true;
+            SeerrParentalRatingCacheTtlMinutes = 1440;
             TriggerSeerrScanOnItemAdded = false;
             SeerrScanDebounceSeconds = 60;
 
@@ -225,7 +225,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
             // Watchlist Settings
             AddRequestedMediaToWatchlist = false;
-            SyncJellyseerrWatchlist = false;
+            SyncSeerrWatchlist = false;
             SyncJellyfinWatchlistToSeerr = false;
             PreventWatchlistReAddition = true;
             WatchlistMemoryRetentionDays = 365;
@@ -296,7 +296,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             HiddenContentDefaultEnabled = true;
             HiddenContentDefaultShowHideButtons = true;
             HiddenContentDefaultShowHideConfirmation = true;
-            HiddenContentDefaultShowButtonJellyseerr = true;
+            HiddenContentDefaultShowButtonSeerr = true;
             HiddenContentDefaultShowButtonLibrary = false;
             HiddenContentDefaultShowButtonDetails = true;
             HiddenContentDefaultShowButtonCast = false;
@@ -468,26 +468,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string DefaultLanguage { get; set; }
 
         // Seerr Search Settings
-        public bool JellyseerrEnabled { get; set; }
-        public bool JellyseerrShowSearchResults { get; set; }
-        public bool JellyseerrShowReportButton { get; set; }
-        public bool JellyseerrShowIssueIndicator { get; set; }
-        public bool JellyseerrEnable4KRequests { get; set; }
-        public bool JellyseerrEnable4KTvRequests { get; set; }
-        public bool JellyseerrShowAdvanced { get; set; }
-        public bool JellyseerrShowQuotaInfo { get; set; }
-        public bool JellyseerrShowSimilar { get; set; }
-        public bool JellyseerrShowRecommended { get; set; }
-        public bool JellyseerrShowRequestMoreOnSeries { get; set; }
-        public bool JellyseerrShowNetworkDiscovery { get; set; }
-        public bool JellyseerrShowGenreDiscovery { get; set; }
-        public bool JellyseerrShowTagDiscovery { get; set; }
-        public bool JellyseerrShowPersonDiscovery { get; set; }
-        public bool JellyseerrShowCollectionDiscovery { get; set; }
-        public bool JellyseerrExcludeLibraryItems { get; set; } = true;
-        public bool JellyseerrExcludeBlocklistedItems { get; set; } = false;
-        public bool ShowElsewhereOnJellyseerr { get; set; }
-        public bool JellyseerrUseMoreInfoModal { get; set; } = false;
+        public bool SeerrEnabled { get; set; }
+        public bool SeerrShowSearchResults { get; set; }
+        public bool SeerrShowReportButton { get; set; }
+        public bool SeerrShowIssueIndicator { get; set; }
+        public bool SeerrEnable4KRequests { get; set; }
+        public bool SeerrEnable4KTvRequests { get; set; }
+        public bool SeerrShowAdvanced { get; set; }
+        public bool SeerrShowQuotaInfo { get; set; }
+        public bool SeerrShowSimilar { get; set; }
+        public bool SeerrShowRecommended { get; set; }
+        public bool SeerrShowRequestMoreOnSeries { get; set; }
+        public bool SeerrShowNetworkDiscovery { get; set; }
+        public bool SeerrShowGenreDiscovery { get; set; }
+        public bool SeerrShowTagDiscovery { get; set; }
+        public bool SeerrShowPersonDiscovery { get; set; }
+        public bool SeerrShowCollectionDiscovery { get; set; }
+        public bool SeerrExcludeLibraryItems { get; set; } = true;
+        public bool SeerrExcludeBlocklistedItems { get; set; } = false;
+        public bool ShowElsewhereOnSeerr { get; set; }
+        public bool SeerrUseMoreInfoModal { get; set; } = false;
 
         // Discovery & Trending: admin master switches + which built-in rows are on by default.
         // Per-user customization overrides the row set client-side; these are the defaults.
@@ -499,48 +499,48 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool DiscoveryRowTopRated { get; set; } = true;
         public bool DiscoveryRowWatchlist { get; set; } = false;
         public bool DiscoveryGenreRows { get; set; } = true;
-        public string JellyseerrUrls { get; set; }
+        public string SeerrUrls { get; set; }
 
         /// <summary>
         /// Optional external/public Seerr URL used only for user-clickable "Open in Seerr" deep
-        /// links in the browser. Server-side fetches always use <see cref="JellyseerrUrls"/>
+        /// links in the browser. Server-side fetches always use <see cref="SeerrUrls"/>
         /// (the internal URL[s]). Empty = browser links fall back to the first internal URL, so
         /// existing setups are unchanged. When set, the internal Seerr URL is no longer projected
         /// to non-admin clients (the public link base becomes the external URL instead).
         /// </summary>
-        public string JellyseerrExternalUrl { get; set; }
-        public string JellyseerrApiKey { get; set; }
-        public string JellyseerrUrlMappings { get; set; }
+        public string SeerrExternalUrl { get; set; }
+        public string SeerrApiKey { get; set; }
+        public string SeerrUrlMappings { get; set; }
 
         // On-demand library sync: POST {seerrUrl}/api/v1/settings/jobs/jellyfin-recently-added-scan/run
         // when Jellyfin reports new items, debounced so a bulk import collapses to one call.
         public bool TriggerSeerrScanOnItemAdded { get; set; }
         public int SeerrScanDebounceSeconds { get; set; } = 60;
         public bool ShowCollectionsInSearch { get; set; }
-        public bool JellyseerrDisableCache { get; set; }
-        public int JellyseerrResponseCacheTtlMinutes { get; set; }
-        public int JellyseerrUserIdCacheTtlMinutes { get; set; }
+        public bool SeerrDisableCache { get; set; }
+        public int SeerrResponseCacheTtlMinutes { get; set; }
+        public int SeerrUserIdCacheTtlMinutes { get; set; }
 
         // When true, Seerr search/discover results are filtered server-side to
         // respect each Jellyfin user's own parental-rating limit
         // (MaxParentalRatingScore + block-unrated). Users with no limit set and
         // administrators are never filtered. Default true — it only ever hides
         // content from accounts that already have a Jellyfin rating restriction.
-        public bool JellyseerrRespectParentalRatings { get; set; }
+        public bool SeerrRespectParentalRatings { get; set; }
 
-        // Sub-toggle of JellyseerrRespectParentalRatings: when both are true,
+        // Sub-toggle of SeerrRespectParentalRatings: when both are true,
         // each user's Jellyfin tag-based parental controls (BlockedTags /
         // AllowedTags) are ALSO enforced on Seerr surfaces, matched against
         // TMDB keyword+genre names (keywords are the strings Jellyfin's own
         // TMDB provider imports as item Tags; genre names are a deliberate
         // intent extension). Default true; off reverts to rating-only gating.
-        public bool JellyseerrRespectBlockedTags { get; set; }
+        public bool SeerrRespectBlockedTags { get; set; }
 
         // How long a resolved TMDB certification -> parental score is cached
         // (user-independent). Certifications are effectively immutable metadata,
         // so this is deliberately long (default 24h) to keep the parental filter
-        // cheap. Independent of JellyseerrResponseCacheTtlMinutes.
-        public int JellyseerrParentalRatingCacheTtlMinutes { get; set; }
+        // cheap. Independent of SeerrResponseCacheTtlMinutes.
+        public int SeerrParentalRatingCacheTtlMinutes { get; set; }
 
         // Arr Links Settings
         public bool ArrLinksEnabled { get; set; }
@@ -635,14 +635,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
         // Watchlist Settings
         public bool AddRequestedMediaToWatchlist { get; set; }
-        public bool SyncJellyseerrWatchlist { get; set; }
+        public bool SyncSeerrWatchlist { get; set; }
         public bool SyncJellyfinWatchlistToSeerr { get; set; }
         public bool PreventWatchlistReAddition { get; set; }
         public int WatchlistMemoryRetentionDays { get; set; }
 
         // User Import Settings
-        public bool JellyseerrAutoImportUsers { get; set; }
-        public string JellyseerrImportBlockedUsers { get; set; } = string.Empty;
+        public bool SeerrAutoImportUsers { get; set; }
+        public string SeerrImportBlockedUsers { get; set; } = string.Empty;
 
         // Bookmarks Settings
         public bool BookmarksEnabled { get; set; }
@@ -762,7 +762,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool HiddenContentDefaultEnabled { get; set; }
         public bool HiddenContentDefaultShowHideButtons { get; set; }
         public bool HiddenContentDefaultShowHideConfirmation { get; set; }
-        public bool HiddenContentDefaultShowButtonJellyseerr { get; set; }
+        public bool HiddenContentDefaultShowButtonSeerr { get; set; }
         public bool HiddenContentDefaultShowButtonLibrary { get; set; }
         public bool HiddenContentDefaultShowButtonDetails { get; set; }
         public bool HiddenContentDefaultShowButtonCast { get; set; }

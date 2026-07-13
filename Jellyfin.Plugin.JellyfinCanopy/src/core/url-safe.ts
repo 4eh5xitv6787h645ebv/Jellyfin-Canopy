@@ -2,7 +2,7 @@
 //
 // The single client-side authority for "is this value safe to use as a browser
 // LINK BASE?" — shared by the arr link resolver (src/arr/url-resolve.ts) and the
-// Seerr link resolver (src/jellyseerr/api.ts). The server-side twin is
+// Seerr link resolver (src/seerr/api.ts). The server-side twin is
 // Helpers/ServiceUrlResolver.IsWellFormedHttpUrl; keep their rules in sync.
 
 /**

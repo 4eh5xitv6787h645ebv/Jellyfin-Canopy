@@ -50,7 +50,7 @@ function enabled(): boolean {
     if (JC.pluginConfig?.DiscoveryEnabled === false) return false;
     if (JC.pluginConfig?.DiscoveryLibraryTab === false) return false;
     // Discovery is Seerr-backed (parental-filtered + request-aware); it needs a Seerr connection.
-    return JC.pluginConfig?.JellyseerrEnabled === true;
+    return JC.pluginConfig?.SeerrEnabled === true;
 }
 
 function ensureCss(): void {

@@ -27,7 +27,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             string[] secretProperties =
             {
                 nameof(PluginConfiguration.TMDB_API_KEY),
-                nameof(PluginConfiguration.JellyseerrApiKey),
+                nameof(PluginConfiguration.SeerrApiKey),
                 nameof(PluginConfiguration.SonarrApiKey),
                 nameof(PluginConfiguration.RadarrApiKey),
             };

@@ -988,8 +988,8 @@
             // Stage 6: Initialize feature modules
             if (typeof JC.initializeCanopyScript === 'function') JC.initializeCanopyScript();
             if (typeof JC.initializeElsewhereScript === 'function' && JC.pluginConfig?.ElsewhereEnabled) JC.initializeElsewhereScript();
-            if (typeof JC.initializeJellyseerrScript === 'function' && JC.pluginConfig?.JellyseerrEnabled && JC.pluginConfig?.JellyseerrShowSearchResults !== false) JC.initializeJellyseerrScript();
-            if (typeof JC.jellyseerrIssueReporter?.initialize === 'function' && JC.pluginConfig?.JellyseerrEnabled && JC.pluginConfig?.JellyseerrShowReportButton) JC.jellyseerrIssueReporter.initialize();
+            if (typeof JC.initializeSeerrScript === 'function' && JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowSearchResults !== false) JC.initializeSeerrScript();
+            if (typeof JC.seerrIssueReporter?.initialize === 'function' && JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowReportButton) JC.seerrIssueReporter.initialize();
             if (typeof JC.initializePauseScreen === 'function') JC.initializePauseScreen();
             if (typeof JC.initializeBookmarks === 'function') JC.initializeBookmarks();
             if (typeof JC.initializeQualityTags === 'function' && JC.currentSettings?.qualityTagsEnabled) JC.initializeQualityTags();

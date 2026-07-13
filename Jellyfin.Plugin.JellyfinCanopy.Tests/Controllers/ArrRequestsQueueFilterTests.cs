@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Controllers;
-using Jellyfin.Plugin.JellyfinCanopy.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -82,13 +82,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var factory = new RecordingHttpClientFactory(handler);
             var provider = new FakePluginConfigProvider(new PluginConfiguration
             {
-                JellyseerrUrls = "http://seerr:5055",
-                JellyseerrApiKey = "key",
+                SeerrUrls = "http://seerr:5055",
+                SeerrApiKey = "key",
             });
 
-            var client = new JellyseerrClient(
+            var client = new SeerrClient(
                 factory,
-                NullLogger<JellyseerrClient>.Instance,
+                NullLogger<SeerrClient>.Instance,
                 userManager: null!,
                 new SeerrCache(provider),
                 provider,

@@ -112,7 +112,7 @@ export interface IssueItem {
     [key: string]: unknown;
 }
 
-/** Media details as returned by the jellyseerr tv/movie proxy endpoints. */
+/** Media details as returned by the seerr tv/movie proxy endpoints. */
 interface IssueMediaDetails {
     id?: number | string;
     tmdbId?: number | string;
@@ -469,8 +469,8 @@ async function fetchIssueMediaDetails(mediaType: string, tmdbId: number | string
     if (issueMediaCache.has(cacheKey)) return issueMediaCache.get(cacheKey) ?? null;
 
     const path = mediaType === 'tv'
-        ? `/JellyfinCanopy/jellyseerr/tv/${tmdbId}`
-        : `/JellyfinCanopy/jellyseerr/movie/${tmdbId}`;
+        ? `/JellyfinCanopy/seerr/tv/${tmdbId}`
+        : `/JellyfinCanopy/seerr/movie/${tmdbId}`;
 
     try {
         const data = await richApiClient.ajax({
@@ -488,10 +488,10 @@ async function fetchIssueMediaDetails(mediaType: string, tmdbId: number | string
 }
 
 /**
- * Fetch issues from Jellyseerr
+ * Fetch issues from Seerr
  */
 export async function fetchIssues(): Promise<unknown> {
-    if (!JC.pluginConfig?.JellyseerrEnabled || !JC.pluginConfig?.DownloadsPageShowIssues) {
+    if (!JC.pluginConfig?.SeerrEnabled || !JC.pluginConfig?.DownloadsPageShowIssues) {
         state.issues = [];
         state.issuesTotalPages = 1;
         state.issuesError = false;
@@ -503,7 +503,7 @@ export async function fetchIssues(): Promise<unknown> {
     try {
         const skip = (state.issuesPage - 1) * 20;
         const filter = state.issuesFilter || 'open';
-        const url = richApiClient.getUrl('/JellyfinCanopy/jellyseerr/issue', {
+        const url = richApiClient.getUrl('/JellyfinCanopy/seerr/issue', {
             take: 20,
             skip: skip,
             filter: filter,
@@ -546,7 +546,7 @@ export async function fetchIssues(): Promise<unknown> {
         if ((error as { status?: number } | null)?.status === 403) {
             state.issuesPermissionDenied = true;
             if (typeof JC?.toast === 'function') {
-                JC.toast(JC.t?.('jellyseerr_err_no_issue_view_permission') || 'No permission to view issues', 4000);
+                JC.toast(JC.t?.('seerr_err_no_issue_view_permission') || 'No permission to view issues', 4000);
             }
         }
         return null;

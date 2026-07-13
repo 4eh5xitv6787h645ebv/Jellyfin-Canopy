@@ -115,7 +115,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // Never fetched — an image-host URL is not a versioned artifact worth mirroring when a
             // native-looking placeholder can be guaranteed from the DLL itself.
             new EmbeddedAssetDescriptor(
-                "jellyseerr/poster-fallback.svg",
+                "seerr/poster-fallback.svg",
                 "Jellyfin.Plugin.JellyfinCanopy.Assets.poster-fallback.svg",
                 "image/svg+xml"),
             // Canopy brand mark: the product logo for plugin-owned UI (settings

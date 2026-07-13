@@ -154,16 +154,16 @@ export function renderPage(targetContainer?: HTMLElement): void {
     }
 
     // Requests Section
-    if (JC.pluginConfig?.JellyseerrEnabled) {
+    if (JC.pluginConfig?.SeerrEnabled) {
         html += `<div class="jc-downloads-section jc-requests-section">`;
         const labelRequests = (JC.t && JC.t('requests_requests')) || 'Requests';
         html += `<h2>${labelRequests}</h2>`;
 
         // Filter tabs
-        const labelAll = (JC.t && JC.t('jellyseerr_discover_all')) || 'All';
-        const labelPending = (JC.t && JC.t('jellyseerr_btn_pending')) || 'Pending Approval';
-        const labelProcessing = (JC.t && JC.t('jellyseerr_btn_processing')) || 'Processing';
-        const labelAvailable = (JC.t && JC.t('jellyseerr_btn_available')) || 'Available';
+        const labelAll = (JC.t && JC.t('seerr_discover_all')) || 'All';
+        const labelPending = (JC.t && JC.t('seerr_btn_pending')) || 'Pending Approval';
+        const labelProcessing = (JC.t && JC.t('seerr_btn_processing')) || 'Processing';
+        const labelAvailable = (JC.t && JC.t('seerr_btn_available')) || 'Available';
         const labelComingSoon = (JC.t && JC.t('requests_coming_soon')) || 'Coming Soon';
 
         html += `
@@ -229,13 +229,13 @@ export function renderPage(targetContainer?: HTMLElement): void {
         html += `</div>`;
     }
 
-    if (JC.pluginConfig?.JellyseerrEnabled && JC.pluginConfig?.DownloadsPageShowIssues) {
+    if (JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.DownloadsPageShowIssues) {
         html += `<div class="jc-downloads-section jc-issues-section">`;
-        const labelIssues = (JC.t && JC.t('jellyseerr_existing_issues')) || 'Issues';
+        const labelIssues = (JC.t && JC.t('seerr_existing_issues')) || 'Issues';
         html += `<h2>${labelIssues}</h2>`;
 
-        const labelOpen = (JC.t && JC.t('jellyseerr_issue_open')) || 'Open';
-        const labelResolved = (JC.t && JC.t('jellyseerr_issue_resolved')) || 'Resolved';
+        const labelOpen = (JC.t && JC.t('seerr_issue_open')) || 'Open';
+        const labelResolved = (JC.t && JC.t('seerr_issue_resolved')) || 'Resolved';
         html += `
         <div class="jc-issues-tabs">
           <button is="emby-button" type="button" class="jc-issues-tab emby-button ${state.issuesFilter === 'open' ? 'active' : ''}" onclick="window.JellyfinCanopy.downloadsPage.filterIssues('open')">${labelOpen}</button>
@@ -248,13 +248,13 @@ export function renderPage(targetContainer?: HTMLElement): void {
         } else if (state.issuesError) {
             html += `
           <div class="jc-empty-state">
-            <div>${JC.t?.('jellyseerr_load_issues_error') || 'Unable to load issues'}</div>
+            <div>${JC.t?.('seerr_load_issues_error') || 'Unable to load issues'}</div>
           </div>
         `;
         } else if (state.issues.length === 0) {
             html += `
           <div class="jc-empty-state">
-            <div>${JC.t?.('jellyseerr_no_issues_yet') || 'No issues found'}</div>
+            <div>${JC.t?.('seerr_no_issues_yet') || 'No issues found'}</div>
           </div>
         `;
         } else {
@@ -404,8 +404,8 @@ export function renderPage(targetContainer?: HTMLElement): void {
                 const tmdbId = viewIssueBtn.getAttribute('data-issue-tmdb-id');
                 const mediaType = viewIssueBtn.getAttribute('data-issue-media-type');
                 const title = viewIssueBtn.getAttribute('data-issue-title') || '';
-                if (tmdbId && mediaType && JC.jellyseerrIssueReporter?.showReportModal) {
-                    JC.jellyseerrIssueReporter.showReportModal(tmdbId, title, mediaType, null, null);
+                if (tmdbId && mediaType && JC.seerrIssueReporter?.showReportModal) {
+                    JC.seerrIssueReporter.showReportModal(tmdbId, title, mediaType, null, null);
                 }
                 return;
             }
