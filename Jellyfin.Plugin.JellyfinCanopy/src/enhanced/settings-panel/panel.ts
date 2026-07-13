@@ -33,12 +33,16 @@ export interface PanelContext {
     kbdBackground: string;
     presetBoxBackground: string;
     githubButtonBg: string;
-    releaseNotesBg: string;
-    checkUpdatesBorder: string;
     releaseNotesTextColor: string;
     logoUrl: string;
+    brandGradient: string;
     createToast?: (featureKey: string, isEnabled: boolean) => string;
 }
+
+// Canopy brand palette (docs/images + the branding kit are the source of truth).
+const CANOPY_ACCENT = '#00C4ED';
+const CANOPY_ACCENT_FILL = '#2584F4';
+const CANOPY_GRADIENT = 'linear-gradient(120deg, #00C4ED 0%, #2584F4 55%, #783FF2 100%)';
 
 /**
  * Toggles the main settings and help panel for the plugin.
@@ -94,14 +98,18 @@ JC.showEnhancedPanel = async () => {
     const panelBgColor = themeVars.panelBg;
     const headerFooterBg = themeVars.secondaryBg;
     const detailsBackground = themeVars.secondaryBg;
-    const primaryAccentColor = themeVars.primaryAccent;
-    const toggleAccentColor = primaryAccentColor;
+    // Canopy brand identity: the panel is plugin-owned UI, so its ACCENT is the
+    // constant Canopy brand (kit palette) — cyan for text/indicator roles on the
+    // dark panel, the deeper brand blue for filled controls (white-text
+    // contrast), and the signature gradient for the wordmark/active-tab/primary
+    // action. Surfaces stay theme-derived so the panel still sits naturally on
+    // the user's chosen Jellyfin theme.
+    const primaryAccentColor = CANOPY_ACCENT;
+    const toggleAccentColor = CANOPY_ACCENT_FILL;
     const kbdBackground = themeVars.altAccent;
     const presetBoxBackground = themeVars.altAccent;
     const panelBlurValue = themeVars.blur;
     const githubButtonBg = `rgba(102, 179, 255, 0.1)`;
-    const releaseNotesBg = primaryAccentColor;
-    const checkUpdatesBorder = `1px solid ${primaryAccentColor}`;
     const releaseNotesTextColor = themeVars.textColor;
     const logoUrl = themeVars.logo;
 
@@ -211,10 +219,9 @@ JC.showEnhancedPanel = async () => {
         kbdBackground,
         presetBoxBackground,
         githubButtonBg,
-        releaseNotesBg,
-        checkUpdatesBorder,
         releaseNotesTextColor,
-        logoUrl
+        logoUrl,
+        brandGradient: CANOPY_GRADIENT
     };
 
     help.innerHTML = buildPanelHtml(ctx);

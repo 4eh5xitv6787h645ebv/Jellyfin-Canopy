@@ -14,6 +14,31 @@
    acts as a secondary fallback for browser-level preferences.
    --------------------------------------------------------------------------- */
 #JellyfinCanopyPage {
+    /* Card surface: deep navy-tinted panel on dark (Canopy Night undertone),
+       paper on light — tokenized so every fieldset/panel shares it. */
+    --jc-card-bg: linear-gradient(160deg, rgba(12, 25, 67, 0.38) 0%, rgba(0, 6, 17, 0.92) 42%), rgba(16, 18, 24, 0.94);
+    /* ----- Canopy brand palette (12-brand-guides/palette.txt) -----
+       The brand accent is deliberately constant across Jellyfin themes —
+       the page carries the plugin's identity, not the host theme's. Only
+       its light/dark LEGIBILITY variant switches with the theme detector. */
+    --canopy-navy:   #0C1943;
+    --canopy-night:  #000611;
+    --canopy-cyan:   #00C4ED;
+    --canopy-aqua:   #08AEEE;
+    --canopy-blue:   #2584F4;
+    --canopy-indigo: #555CF2;
+    --canopy-violet: #783FF2;
+    /* Brand accent: cyan-leaning on dark surfaces. */
+    --jc-accent:        var(--canopy-cyan);
+    --jc-accent-strong: var(--canopy-blue);
+    /* Foreground for text sitting ON the accent fill (chips, badges). */
+    --jc-on-accent:     #04222f;
+    /* Signature gradient (mark, active tab, primary actions, hairlines). */
+    --jc-grad: linear-gradient(120deg, var(--canopy-cyan) 0%, var(--canopy-blue) 55%, var(--canopy-violet) 100%);
+    --jc-grad-soft: linear-gradient(120deg, rgba(0, 196, 237, 0.16) 0%, rgba(37, 132, 244, 0.10) 55%, rgba(120, 63, 242, 0.16) 100%);
+    /* Vertical rail variant for card/legend accents. */
+    --jc-grad-rail: linear-gradient(180deg, var(--canopy-cyan) 0%, var(--canopy-violet) 100%);
+
     /* Surface lift layers — slightly lighter than body bg */
     --jc-surface-1:      rgba(255, 255, 255, 0.03);
     --jc-surface-2:      rgba(255, 255, 255, 0.05);
@@ -39,13 +64,21 @@
     --jc-overlay-soft:   rgba(0, 0, 0, 0.12);
     --jc-overlay:        rgba(0, 0, 0, 0.28);
     --jc-overlay-hard:   rgba(0, 0, 0, 0.55);
-    /* Accent tints (already theme-adapting via --primary-accent-color) */
-    --jc-accent-tint-10: color-mix(in srgb, var(--primary-accent-color, #00a4dc) 10%, transparent);
-    --jc-accent-tint-20: color-mix(in srgb, var(--primary-accent-color, #00a4dc) 20%, transparent);
-    --jc-accent-border:  color-mix(in srgb, var(--primary-accent-color, #00a4dc) 40%, transparent);
+    /* Accent tints, derived from the Canopy brand accent */
+    --jc-accent-tint-10: color-mix(in srgb, var(--jc-accent) 10%, transparent);
+    --jc-accent-tint-20: color-mix(in srgb, var(--jc-accent) 20%, transparent);
+    --jc-accent-border:  color-mix(in srgb, var(--jc-accent) 40%, transparent);
 }
 
 #JellyfinCanopyPage.jc-light-theme {
+    --jc-card-bg: linear-gradient(160deg, rgba(12, 25, 67, 0.05) 0%, rgba(255, 255, 255, 0.9) 45%), rgba(247, 246, 243, 0.96);
+    /* Brand accent legibility variant: cyan washes out on white, so light
+       themes lean on the deeper Canopy blue for text/controls; the gradient
+       (decorative) is shared. */
+    --jc-accent:        #1668CC;
+    --jc-accent-strong: var(--canopy-indigo);
+    --jc-on-accent:     #ffffff;
+
     --jc-surface-1:      rgba(0, 0, 0, 0.025);
     --jc-surface-2:      rgba(0, 0, 0, 0.05);
     --jc-surface-3:      rgba(0, 0, 0, 0.08);
@@ -158,7 +191,7 @@
     background: var(--jc-overlay-hard);
     backdrop-filter: blur(14px) saturate(150%);
     -webkit-backdrop-filter: blur(14px) saturate(150%);
-    border-bottom: 1px solid color-mix(in srgb, var(--primary-accent-color, #00a4dc) 18%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--jc-accent) 18%, transparent);
     box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
 }
 
@@ -166,6 +199,7 @@
    Header & Search Bar
    --------------------------------------------------------------------------- */
 #JellyfinCanopyPage .sectionTitleContainer {
+    position: relative;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -175,10 +209,41 @@
     padding: 10px 0 10px 0;
     border-bottom: 1px solid var(--jc-border);
 }
+/* Signature gradient hairline under the brand row. */
+#JellyfinCanopyPage .sectionTitleContainer::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    background: var(--jc-grad);
+    opacity: 0.55;
+    pointer-events: none;
+}
 #JellyfinCanopyPage .sectionTitleContainer h2 {
     font-size: 1.8em;
     font-weight: 600;
     margin: 0;
+}
+/* Brand lockup: embedded Canopy mark + gradient wordmark. Explicit img
+   dimensions in the markup reserve the box before the SVG loads (no shift). */
+#JellyfinCanopyPage .jc-brand-lockup {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+#JellyfinCanopyPage .jc-brand-mark {
+    flex: none;
+    width: 30px;
+    height: 26px;
+}
+#JellyfinCanopyPage .jc-brand-name {
+    background: var(--jc-grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
 }
 .jc-header-title-row {
     display: flex;
@@ -209,7 +274,7 @@
     background: var(--jc-overlay);
     border: 1px solid var(--jc-border);
     border-radius: 20px;
-    color: #eee;
+    color: var(--jc-text-strong);
     font-size: 0.9em;
     outline: none;
     transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
@@ -222,8 +287,8 @@
 }
 #settingsSearchInput:focus {
     background: var(--jc-overlay-hard);
-    border-color: var(--primary-accent-color, #00a4dc);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-accent-color, #00a4dc) 20%, transparent);
+    border-color: var(--jc-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--jc-accent) 20%, transparent);
 }
 .jc-search-icon {
     position: absolute;
@@ -259,7 +324,7 @@
     transform: translateY(-50%);
     background: var(--jc-surface-3);
     border: none;
-    color: #fff;
+    color: var(--jc-text-strong);
     cursor: pointer;
     border-radius: 50%;
     width: 20px;
@@ -289,7 +354,7 @@
     vertical-align: middle;
     margin-right: 8px;
     opacity: 0.75;
-    color: var(--primary-accent-color, #00a4dc);
+    color: var(--jc-accent);
 }
 #JellyfinCanopyPage .sectionTitle .jc-legend-icon { vertical-align: -4px; }
 .jc-legend-icon-img {
@@ -331,12 +396,12 @@
     background: var(--jc-card-gradient-lift);
 }
 .jc-quick-action:focus-visible {
-    outline: 2px solid var(--primary-accent-color, #00a4dc);
+    outline: 2px solid var(--jc-accent);
     outline-offset: 2px;
 }
 .jc-quick-action-icon {
     font-size: 26px !important;
-    color: var(--primary-accent-color, #00a4dc);
+    color: var(--jc-accent);
     flex-shrink: 0;
 }
 .jc-quick-action-text {
@@ -361,7 +426,7 @@
     padding: 14px 16px;
     border: 1px dashed var(--jc-border);
     border-radius: 10px;
-    color: #888;
+    color: var(--jc-text-subtle);
     font-size: 0.9em;
     text-align: center;
 }
@@ -467,7 +532,7 @@
 .jc-optional-plugin-link:hover,
 .jc-optional-plugin-link:focus-visible {
     opacity: 1;
-    color: var(--primary-accent-color, #00a4dc);
+    color: var(--jc-accent);
     background: var(--jc-accent-tint-10);
     outline: none;
 }
@@ -601,7 +666,7 @@
     border: 1px solid var(--jc-border);
     border-radius: 30px;
     padding: 10px 20px;
-    color: #ccc;
+    color: var(--jc-text-muted);
     cursor: pointer;
     font-weight: 600;
     font-size: 0.9em;
@@ -639,12 +704,16 @@
     pointer-events: none;
 }
 #JellyfinCanopyPage .jellyfin-tab-button.active .jc-tab-icon { opacity: 1; }
-#JellyfinCanopyPage .jellyfin-tab-button:hover { background: var(--jc-surface-3); }
+#JellyfinCanopyPage .jellyfin-tab-button:hover {
+    background: var(--jc-surface-3);
+    border-color: var(--jc-accent-border);
+}
 #JellyfinCanopyPage .jellyfin-tab-button.active {
-    background: var(--primary-accent-color, #00a4dc);
-    border-color: var(--primary-accent-color, #00a4dc);
+    background: var(--jc-grad);
+    border-color: transparent;
     color: #fff !important;
-    box-shadow: 0 4px 12px color-mix(in srgb, var(--primary-accent-color, #00a4dc) 30%, transparent);
+    text-shadow: 0 1px 2px rgba(0, 6, 17, 0.35);
+    box-shadow: 0 4px 14px color-mix(in srgb, var(--canopy-blue) 35%, transparent);
 }
 
 #JellyfinCanopyPage .jellyfin-tab-content {
@@ -662,7 +731,7 @@
    Fieldsets (Cards)
    --------------------------------------------------------------------------- */
 #JellyfinCanopyForm fieldset {
-    background: rgba(22, 22, 22, 0.94);
+    background: var(--jc-card-bg, rgba(22, 22, 22, 0.94));
     border: 1px solid var(--jc-border);
     border-radius: 12px;
     padding: 0;
@@ -672,7 +741,8 @@
     transition: border-color 0.2s ease, box-shadow 0.25s ease;
 }
 #JellyfinCanopyForm fieldset:hover {
-    border-color: var(--jc-border);
+    border-color: var(--jc-accent-border);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22), 0 0 0 1px var(--jc-accent-tint-10);
 }
 /* Native <legend> has peculiar layout — it's positioned relative to the
    fieldset's top border and doesn't always respect width/display. The
@@ -684,13 +754,17 @@
     width: 100%;
     margin: 0;
     padding: 14px 22px;
-    background: var(--jc-legend-gradient);
+    /* Canopy rail: a 3px brand-gradient edge on the left of every card
+       header, layered over the existing legend sheen. */
+    background:
+        var(--jc-grad-rail) left / 3px 100% no-repeat,
+        var(--jc-legend-gradient);
     font-size: 1.05em;
     font-weight: 600;
     letter-spacing: 0.2px;
     border-bottom: 1px solid var(--jc-border);
     box-sizing: border-box;
-    color: #f5f5f5;
+    color: var(--jc-text-strong);
 }
 /* Keep the icon inline with the title on a row, now that the legend
    is a floated block (display:flex would override the float). */
@@ -749,9 +823,9 @@
 #JellyfinCanopyPage .configSection > .inputContainer:focus-within,
 #JellyfinCanopyPage .configSection > .checkboxContainer:focus-within,
 #JellyfinCanopyPage .configSection > .selectContainer:focus-within {
-    border-color: var(--primary-accent-color, #00a4dc);
+    border-color: var(--jc-accent);
     background: var(--jc-surface-2);
-    box-shadow: 0 0 0 1px var(--primary-accent-color, #00a4dc) inset;
+    box-shadow: 0 0 0 1px var(--jc-accent) inset;
 }
 
 /* Ensure inputs span fully where intended */
@@ -809,7 +883,7 @@
 #JellyfinCanopyPage .checkboxContainer label > span {
     font-size: 0.95em;
     font-weight: 500;
-    color: #e8e8e8;
+    color: var(--jc-text-strong);
     line-height: 1.35;
 }
 #JellyfinCanopyPage .inputContainer > label.inputLabel,
@@ -817,7 +891,7 @@
 #JellyfinCanopyPage .inputContainer > label.selectLabel,
 #JellyfinCanopyPage .selectContainer > label.inputLabel {
     font-weight: 500;
-    color: #d0d0d0;
+    color: var(--jc-text-muted);
     font-size: 0.9em;
 }
 
@@ -827,16 +901,16 @@
    checkboxContainer in HTML to opt in. */
 #JellyfinCanopyPage .configSection > .jc-main-feature {
     background: linear-gradient(90deg,
-        color-mix(in srgb, var(--primary-accent-color, #00a4dc) 14%, transparent) 0%,
-        color-mix(in srgb, var(--primary-accent-color, #00a4dc) 2%, transparent) 100%);
-    border-color: color-mix(in srgb, var(--primary-accent-color, #00a4dc) 22%, transparent);
-    border-left: 3px solid var(--primary-accent-color, #00a4dc);
+        color-mix(in srgb, var(--jc-accent) 14%, transparent) 0%,
+        color-mix(in srgb, var(--jc-accent) 2%, transparent) 100%);
+    border-color: color-mix(in srgb, var(--jc-accent) 22%, transparent);
+    border-left: 3px solid var(--jc-accent);
     margin-bottom: 12px !important;
 }
 #JellyfinCanopyPage .configSection > .jc-main-feature label > span {
     font-weight: 600;
     font-size: 1.02em;
-    color: #fff;
+    color: var(--jc-text-strong);
     letter-spacing: 0.1px;
 }
 
@@ -850,7 +924,7 @@
 }
 
 #JellyfinCanopyPage .fieldDescription {
-    color: #aaa;
+    color: var(--jc-text-muted);
     font-size: 0.85em;
     margin-top: 8px;
     line-height: 1.4;
@@ -913,16 +987,16 @@
     gap: 10px;
     list-style: none;
     user-select: none;
-    color: rgba(240, 240, 240, 0.82);
+    color: var(--jc-text-muted);
     transition: color 0.2s ease;
 }
 .jc-details-section[open] > summary,
 .jc-seerr-details[open] > summary {
-    color: #f5f5f5;
+    color: var(--jc-text-strong);
 }
 .jc-details-section > summary:hover,
 .jc-seerr-details > summary:hover {
-    color: #fff;
+    color: var(--jc-accent);
 }
 .jc-details-section > summary::-webkit-details-marker,
 .jc-seerr-details > summary::-webkit-details-marker {
@@ -942,7 +1016,7 @@
 .jc-details-section[open] > summary::after,
 .jc-seerr-details[open] > summary::after {
     transform: rotate(90deg);
-    color: var(--primary-accent-color, #00a4dc);
+    color: var(--jc-accent);
 }
 .jc-details-body {
     padding: 0 20px 20px 20px;
@@ -986,7 +1060,7 @@
     list-style: none;
     user-select: none;
     background: transparent;
-    color: rgba(240, 240, 240, 0.82);
+    color: var(--jc-text-muted);
 }
 .arr-instance-card > summary::-webkit-details-marker { display: none; }
 .arr-instance-card > summary::before {
@@ -1034,15 +1108,15 @@
     border-color: var(--jc-text-dim);
 }
 .arr-instance-enabled:checked {
-    background: color-mix(in srgb, var(--primary-accent-color, #00a4dc) 70%, transparent);
-    border-color: var(--primary-accent-color, #00a4dc);
+    background: color-mix(in srgb, var(--jc-accent) 70%, transparent);
+    border-color: var(--jc-accent);
 }
 .arr-instance-enabled:checked::before {
     left: 18px;
     background: #fff;
 }
 .arr-instance-enabled:focus-visible {
-    outline: 2px solid var(--primary-accent-color, #00a4dc);
+    outline: 2px solid var(--jc-accent);
     outline-offset: 2px;
 }
 .arr-instance-summary-name { flex: 1; font-weight: 600; }
@@ -1115,8 +1189,9 @@
     font-weight: 600;
     font-size: 1em;
     letter-spacing: 0.5px;
-    background: var(--primary-accent-color, #00a4dc);
+    background: var(--jc-grad);
     color: #fff;
+    text-shadow: 0 1px 2px rgba(0, 6, 17, 0.35);
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -1149,8 +1224,8 @@
 .jc-info-banner-row { display: flex; align-items: flex-start; gap: 15px; }
 
 .jc-info-banner, .jc-info-banner-inline, .jc-info-banner-inline-center, .jc-info-banner-compact, .jc-splash-info-banner {
-    background-color: color-mix(in srgb, var(--primary-accent-color, #00a4dc) 10%, transparent);
-    border-left-color: var(--primary-accent-color, #00a4dc);
+    background-color: color-mix(in srgb, var(--jc-accent) 10%, transparent);
+    border-left-color: var(--jc-accent);
 }
 .jc-note-banner, .jc-mobile-banner, .jc-dep-banner {
     background-color: rgba(255,193,7,0.1); border-left-color: #ffc107;
@@ -1162,7 +1237,7 @@
     background-color: rgba(155,89,182,0.15); border-left-color: #9b59b6;
 }
 
-.jc-info-icon, .jc-bottom-info-icon, .jc-info-icon-sm { color: var(--primary-accent-color, #00a4dc); font-size: 24px; flex-shrink: 0; margin-top: 2px; }
+.jc-info-icon, .jc-bottom-info-icon, .jc-info-icon-sm { color: var(--jc-accent); font-size: 24px; flex-shrink: 0; margin-top: 2px; }
 .jc-note-icon, .jc-mobile-icon, .jc-dep-banner-icon { color: #ffc107; font-size: 24px; flex-shrink: 0; margin-top: 2px; }
 .jc-danger-icon { color: #ff6b6b; font-size: 24px; flex-shrink: 0; margin-top: 2px; }
 .jc-purple-icon { color: #9b59b6; font-size: 24px; flex-shrink: 0; margin-top: 2px; }
@@ -1189,7 +1264,7 @@
 }
 .jc-search-match {
     background-color: rgba(255,200,0,0.35);
-    color: #fff;
+    color: var(--jc-text-strong);
     border-radius: 4px;
     padding: 0 3px;
     box-shadow: 0 0 0 1px rgba(255,200,0,0.25);
@@ -1209,7 +1284,7 @@
 .jc-search-tab-label {
     font-size: 1.4em;
     font-weight: 700;
-    color: var(--primary-accent-color, #00a4dc);
+    color: var(--jc-accent);
     margin-bottom: 1em;
     padding-bottom: 0.5em;
     border-bottom: 2px solid var(--jc-border);
@@ -1234,13 +1309,13 @@
     flex-direction: column;
     gap: 8px;
 }
-.jc-branding-label-bold { font-weight: bold; color: #fff; font-size: 1.05em; }
-.jc-branding-size-hint { font-size: 0.75em; color: #888; margin-bottom: 6px; }
-.jc-branding-label { color: #aaa; font-size: 0.85em; }
-.jc-branding-meta { font-size: 0.8em; color: #aaa; margin-bottom: 10px; }
+.jc-branding-label-bold { font-weight: bold; color: var(--jc-text-strong); font-size: 1.05em; }
+.jc-branding-size-hint { font-size: 0.75em; color: var(--jc-text-subtle); margin-bottom: 6px; }
+.jc-branding-label { color: var(--jc-text-muted); font-size: 0.85em; }
+.jc-branding-meta { font-size: 0.8em; color: var(--jc-text-muted); margin-bottom: 10px; }
 .jc-branding-dropzone {
     background: var(--jc-surface-1);
-    border: 2px dashed color-mix(in srgb, var(--primary-accent-color, #00a4dc) 50%, transparent);
+    border: 2px dashed color-mix(in srgb, var(--jc-accent) 50%, transparent);
     border-radius: 8px;
     padding: 20px;
     text-align: center;
@@ -1254,8 +1329,8 @@
     position: relative;
 }
 .jc-branding-dropzone:hover {
-    background: color-mix(in srgb, var(--primary-accent-color, #00a4dc) 5%, transparent);
-    border-color: var(--primary-accent-color, #00a4dc);
+    background: color-mix(in srgb, var(--jc-accent) 5%, transparent);
+    border-color: var(--jc-accent);
 }
 .jc-branding-file-input {
     position: absolute;
@@ -1287,12 +1362,23 @@
    Misc / Utility
    --------------------------------------------------------------------------- */
 .jc-help-link { border-radius: 20px; }
+/* Header actions: quiet ghost pills that answer with the brand accent. */
+#JellyfinCanopyPage .jc-help-link,
+#JellyfinCanopyPage .jc-desc-toggle {
+    border: 1px solid var(--jc-border);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+#JellyfinCanopyPage .jc-help-link:hover,
+#JellyfinCanopyPage .jc-desc-toggle:hover {
+    border-color: var(--jc-accent-border);
+    box-shadow: 0 0 0 2px var(--jc-accent-tint-10);
+}
 .jc-api-row { display: flex; align-items: center; gap: 12px; width: 100%; }
 .jc-api-row .jc-api-input { flex-grow: 1; width: auto; margin: 0; }
 .jc-textarea-tall { height: 120px !important; }
 .jc-textarea-medium { height: 90px !important; }
 .jc-textarea-large { height: 160px !important; }
-.jc-bold-link { font-weight: bold; color: #fff; text-decoration: underline; }
+.jc-bold-link { font-weight: bold; color: var(--jc-text-strong); text-decoration: underline; }
 .jc-kbd { background: var(--jc-surface-3); padding: 3px 6px; border-radius: 4px; font-family: monospace; }
 .jc-screenshot-img { max-width: 100%; border-radius: 8px; margin-top: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
 .jc-screenshot-img-sm { max-width: 60%; }
@@ -1322,7 +1408,7 @@
 
 .jc-apply-hint {
     text-align: center;
-    color: #888;
+    color: var(--jc-text-subtle);
     font-size: 0.85em;
     margin-top: 10px;
     grid-column: 1 / -1;
@@ -1365,7 +1451,7 @@
     justify-content: space-between;
     gap: 12px;
     padding: 8px 16px;
-    background: rgba(22, 22, 22, 0.94);
+    background: var(--jc-card-bg, rgba(22, 22, 22, 0.94));
     border-bottom: 1px solid var(--jc-border);
 }
 .jc-docs-title {
@@ -1374,14 +1460,14 @@
     gap: 8px;
     font-weight: 600;
     font-size: 1.05em;
-    color: var(--primary-accent-color, #00a4dc);
+    color: var(--jc-accent);
 }
 .jc-docs-title .jc-legend-icon { font-size: 20px !important; }
 .jc-docs-open-link {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    color: var(--primary-accent-color, #00a4dc);
+    color: var(--jc-accent);
     text-decoration: none;
     font-size: 0.9em;
     padding: 4px 8px;
@@ -1435,8 +1521,8 @@ body.jc-hide-descriptions .jc-tab-intro { display: none !important; }
     text-align: center;
 }
 .jc-desc-toggle[aria-pressed="true"] .jc-desc-toggle-state {
-    background: var(--primary-accent-color, #00a4dc);
-    color: #fff;
+    background: var(--jc-accent);
+    color: var(--jc-on-accent);
 }
 .jc-desc-toggle-off { opacity: 0.85; }
 .jc-desc-toggle-off:hover { opacity: 1; }
@@ -1459,14 +1545,14 @@ body.jc-hide-descriptions .jc-tab-intro { display: none !important; }
     border: none;
     border-radius: 50%;
     background: transparent;
-    color: var(--primary-accent-color, #00a4dc);
+    color: var(--jc-accent);
     cursor: pointer;
     opacity: 0.75;
     transition: opacity 0.15s ease, background 0.15s ease;
 }
 .jc-banner-trigger:hover { opacity: 1; }
 .jc-banner-trigger[aria-expanded="true"] {
-    background: color-mix(in srgb, var(--primary-accent-color, #00a4dc) 20%, transparent);
+    background: color-mix(in srgb, var(--jc-accent) 20%, transparent);
     opacity: 1;
 }
 .jc-banner-trigger .material-icons {
@@ -1623,8 +1709,8 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
     color: var(--jc-text-strong);
     margin-bottom: 12px;
     padding: 10px 14px;
-    background: color-mix(in srgb, var(--primary-accent-color, #00a4dc) 10%, transparent);
-    border-left: 3px solid var(--primary-accent-color, #00a4dc);
+    background: color-mix(in srgb, var(--jc-accent) 10%, transparent);
+    border-left: 3px solid var(--jc-accent);
     border-radius: 6px;
     line-height: 1.4;
 }
@@ -1647,7 +1733,7 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
 }
 .jc-audit-chip .material-icons { font-size: 14px !important; }
 .jc-audit-chip-warn     { background: rgba(229,160,13,0.18); color: #e5a00d; }
-.jc-audit-chip-unlinked { background: rgba(158,158,158,0.18); color: #bdbdbd; }
+.jc-audit-chip-unlinked { background: rgba(158,158,158,0.18); color: var(--jc-text-muted); }
 .jc-audit-chip-ok       { background: rgba(82,181,75,0.18); color: #52b54b; }
 
 .jc-audit-cards {
@@ -1667,7 +1753,7 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
     gap: 8px;
 }
 .jc-audit-card-warn     { border-left-color: #e5a00d; }
-.jc-audit-card-unlinked { border-left-color: #9e9e9e; }
+.jc-audit-card-unlinked { border-left-color: var(--jc-border-strong); }
 .jc-audit-card-header {
     display: flex;
     align-items: center;
@@ -1712,7 +1798,7 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
     color: #e5a00d;
     font-weight: 700;
 }
-.jc-audit-card-unlinked .jc-audit-card-issues li::before { color: #9e9e9e; }
+.jc-audit-card-unlinked .jc-audit-card-issues li::before { color: var(--jc-text-subtle); }
 
 .jc-audit-ok-section { margin-top: 6px; }
 .jc-audit-ok-section > summary {
@@ -1935,7 +2021,7 @@ body.jc-hide-descriptions .jc-timing-test-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    color: var(--primary-accent-color, #00a4dc);
+    color: var(--jc-accent);
 }
 .jc-preview-panel-body {
     line-height: 1.5;
@@ -1945,7 +2031,7 @@ body.jc-hide-descriptions .jc-timing-test-row {
 .jc-preview-panel-countdown {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     font-weight: 700;
-    color: var(--primary-accent-color, #00a4dc);
+    color: var(--jc-accent);
     white-space: nowrap;
 }
 .jc-preview-panel-actions {
@@ -1972,7 +2058,7 @@ body.jc-hide-descriptions .jc-timing-test-row {
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
     backdrop-filter: blur(30px);
     -webkit-backdrop-filter: blur(30px);
-    border: 1px solid var(--primary-accent-color, rgba(255, 255, 255, 0.1));
+    border: 1px solid var(--jc-accent, rgba(255, 255, 255, 0.1));
     max-width: clamp(280px, 80vw, 350px);
     transition: transform 0.3s ease-out;
     pointer-events: none;
