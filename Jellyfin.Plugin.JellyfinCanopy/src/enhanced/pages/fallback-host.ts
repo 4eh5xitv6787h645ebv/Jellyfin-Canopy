@@ -103,7 +103,7 @@ function adopt(descriptor: PageDescriptor, host: HTMLElement): void {
     if (adoption) drain('replaced');
 
     adoptionSeq += 1;
-    const handle = JC.core!.lifecycle!.register(`pages:${descriptor.id}:${adoptionSeq}`);
+    const handle = JC.core.lifecycle!.register(`pages:${descriptor.id}:${adoptionSeq}`);
     const controller = new AbortController();
     handle.onTeardown(() => { /* keep handle non-empty even for static pages */ });
 
@@ -140,8 +140,8 @@ function adopt(descriptor: PageDescriptor, host: HTMLElement): void {
 
     try {
         const result = descriptor.render({ host, handle, signal: controller.signal });
-        if (result && typeof (result as Promise<void>).catch === 'function') {
-            (result as Promise<void>).catch((err) => {
+        if (result && typeof result.catch === 'function') {
+            result.catch((err) => {
                 console.error(`${logPrefix} render error for '${descriptor.id}':`, err);
             });
         }

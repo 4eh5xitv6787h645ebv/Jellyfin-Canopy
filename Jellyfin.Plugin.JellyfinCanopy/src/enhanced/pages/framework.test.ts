@@ -64,9 +64,9 @@ describe('pages framework', () => {
         disposes = [];
         hides = [];
         (JC.pluginConfig as any).PagesOrder = '';
-        registerPage(makeDescriptor('alpha') as any);
-        registerPage(makeDescriptor('beta') as any);
-        registerPage(makeDescriptor('gated', () => false) as any);
+        registerPage(makeDescriptor('alpha'));
+        registerPage(makeDescriptor('beta'));
+        registerPage(makeDescriptor('gated', () => false));
         if (!wired) {
             wired = true;
             initFallbackHost();
@@ -194,7 +194,7 @@ describe('pages framework', () => {
     });
 
     it('renders the signed-out shell instead of content when no session exists', () => {
-        const original = window.ApiClient.getCurrentUserId;
+        const original = window.ApiClient.getCurrentUserId.bind(window.ApiClient);
         (window.ApiClient as any).getCurrentUserId = () => '';
         try {
             setHash('#/alpha');

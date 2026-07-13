@@ -54,7 +54,8 @@ export function pageAvailable(descriptor: PageDescriptor): boolean {
  * order — so a stale or partial value degrades to a complete, valid list.
  */
 export function orderedPages(): PageDescriptor[] {
-    const configured = String(JC.pluginConfig?.PagesOrder ?? '')
+    const rawOrder = JC.pluginConfig?.PagesOrder;
+    const configured = (typeof rawOrder === 'string' ? rawOrder : '')
         .split(',')
         .map((token) => token.trim())
         .filter(Boolean);
