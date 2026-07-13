@@ -1,0 +1,10 @@
+{
+  "autoSkip": {
+    "name": "JC Auto-Skip E2E Fixture",
+    "filePrefix": "JC Auto-Skip E2E Fixture",
+    "durationSeconds": 40,
+    "segmentStartSeconds": 2,
+    "segmentEndSeconds": 25,
+    "minimumMarginSeconds": 10
+  }
+}

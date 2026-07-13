@@ -7,12 +7,12 @@
 #   JF_BASE_URL=http://localhost:8100 npm run e2e
 #   docker compose -f e2e/docker/compose.yml down -v
 #
-# Image pin: 12.0-rc2 is the newest Jellyfin 12 image published; it reports
-# server version 12.0.0. Bump to the stable 12.0.0 tag once it exists.
+# The reproducible CI default remains pinned. Compatibility runs can override
+# it without editing source, for example JF_IMAGE=jellyfin/jellyfin:unstable.
 # (Do NOT use 12.0-rc1 — it hangs on the splash logo in headless Chromium.)
 services:
   jellyfin:
-    image: jellyfin/jellyfin:12.0-rc2
+    image: "${JF_IMAGE:-jellyfin/jellyfin:12.0-rc2}"
     container_name: jc-e2e-jellyfin
     # Run as the invoking user so seed.sh can clean config/cache without sudo.
     user: "${JF_UID:-1000}:${JF_GID:-1000}"
