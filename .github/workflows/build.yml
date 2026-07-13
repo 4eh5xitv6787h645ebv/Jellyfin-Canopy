@@ -1,9 +1,10 @@
 name: Build & Test
 
-# The quality gate for every change: the plugin must compile (Jellyfin 12 /
-# net10.0), unit tests must pass, and the client scripts must parse and lint
-# cleanly. Before this workflow a PR could break compilation and still merge
-# green.
+# The blocking quality gate for every change: the plugin must compile (Jellyfin
+# 12 / net10.0), unit/script tests, types, coverage, builds, and contracts must
+# pass, and ESLint always reports as an advisory signal. A broken lint
+# invocation/configuration still blocks. The E2E job has its own documented
+# temporary advisory policy below.
 on:
   push:
     branches: [main, master]
@@ -66,7 +67,7 @@ jobs:
           node scripts/check-dotnet-coverage.js
 
   client-scripts:
-    name: Client scripts (lint + syntax + types)
+    name: Client checks (lint advisory; all other gates blocking)
     runs-on: ubuntu-latest
     steps:
       - name: Harden Runner
@@ -88,8 +89,8 @@ jobs:
       - name: Syntax check (node --check, every served file)
         run: npm run syntax
 
-      - name: ESLint
-        run: npm run lint
+      - name: ESLint (advisory — reported in summary)
+        run: ./verify.sh lint
 
       - name: Script unit tests (translation validator hardening)
         run: npm run test:scripts

@@ -974,9 +974,12 @@ The project targets **Jellyfin 12 / net10.0 only** and builds with `TreatWarning
 
 ### Development tooling
 
-These are the commands and suites you will touch day to day:
+These are the commands and suites you will touch day to day. Run
+`./verify.sh lint` on its own line: it reports lint findings and warning-cap
+breaches as advisory while preserving tooling failures; every other command
+below remains blocking.
 
-- `npm run typecheck:src` / `npm run lint` / `npm run test:client` — strict type check, ESLint, and vitest unit tests for the `src/` tree (`test:client:coverage` adds the `src/core` line-coverage ratchet).
+- `npm run typecheck:src` / `./verify.sh lint` / `npm run test:client` — strict type check, advisory ESLint reporting, and vitest unit tests for the `src/` tree (`test:client:coverage` adds the `src/core` line-coverage ratchet). Use raw `npm run lint` only when you specifically need ESLint's unmodified exit code.
 - `npm run build:bundle` — the client bundle (also run automatically by the C# build); `npm run watch` rebuilds it (unminified) on every source change.
 - `npm run syntax` / `npm run typecheck` — `node --check` + opt-in `@ts-check` for the one remaining classic script (the loader).
 - `Jellyfin.Plugin.JellyfinCanopy.Tests/` — xUnit tests, including golden snapshots for the config payloads and on-disk user-file formats, plus a line-coverage ratchet (`scripts/check-dotnet-coverage.js`). Its `Configuration/` tests bridge the `SettingDescriptors` registry to both ends of the admin config page over one shared source parser (`ConfigPageSource.cs`, read by both directions so they can never drift): `ConfigControlCoverageTests` fails if any admin-settable descriptor backed by a real `PluginConfiguration` property has no config-page control (an admin default stuck at its hardcoded value), and `ClientConfigKeyLivenessTests` scans the shipped client source and fails if any `JC.pluginConfig.X` read is not a projected (`Public`/`Private`) descriptor key (a client knob that is always `undefined`).

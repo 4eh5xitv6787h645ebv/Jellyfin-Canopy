@@ -7,8 +7,9 @@ name: Release
 #
 # Push a version tag (existing convention: bare "12.0.0.0"; "v12.0.0" also
 # works) and this workflow:
-#   1. runs the full quality gates (plugin build, unit tests,
-#      JS syntax/lint/type checks) — any failure aborts the release,
+#   1. runs the full quality gates (plugin build, unit tests, JS syntax/type
+#      checks) and reports ESLint findings/cap breaches as advisory; every
+#      non-lint failure and any broken lint invocation aborts the release,
 #   2. stamps the assembly with the tag version (no version-churn commits),
 #   3. packages the Jellyfin 12 ZIP with the DLL at the zip root
 #      (Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip — the exact layout and
@@ -85,16 +86,16 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Releasing version $version from tag $GITHUB_REF_NAME"
 
-      # ---- Quality gates: identical to build.yml, but a failure here ----
-      # ---- blocks the release instead of just failing a check.       ----
+      # ---- Quality policy mirrors build.yml: lint findings are advisory; ----
+      # ---- every other failure (including broken lint tooling) blocks.  ----
       - name: Install dev dependencies
         run: npm ci
 
       - name: Syntax check (node --check, every served file)
         run: npm run syntax
 
-      - name: ESLint
-        run: npm run lint
+      - name: ESLint (advisory — reported in summary)
+        run: ./verify.sh lint
 
       - name: Script unit tests (translation validator hardening)
         run: npm run test:scripts

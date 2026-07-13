@@ -177,17 +177,20 @@ Beyond the per-feature unit tests, `npm run test:client` runs cross-cutting **gu
 
 ## 🧪 Testing
 
-### The gates (run these locally — CI enforces all of them)
+### Blocking gates and advisory signals
+
+The repository-owned lint verifier gives local checks, pre-commit, CI, and
+releases the same advisory boundary. Keep lint on its own line; every command
+after it is an ordinary blocking check.
 
 ```bash
 # One-time setup
 npm install
 
 # Client
+./verify.sh lint                # ESLint findings/cap breaches are advisory;
+                                # invocation/configuration failures still block
 npm run typecheck:src          # tsc --strict over the TypeScript module tree (src/)
-npm run lint                   # ESLint (errors gate CI; warning count is a ratchet
-                               # via --max-warnings — lower the cap in package.json
-                               # when you reduce warnings, never raise it)
 npm run test:client            # vitest unit tests for src/ modules
 npm run test:client:coverage   # + the src/core line-coverage ratchet
 npm run build:bundle           # esbuild bundle — fails on unreachable src/ modules
@@ -206,7 +209,7 @@ npm run e2e:headed             # watch it run
 
 Coverage thresholds are **ratchets**: they were set just below measured coverage when introduced (`vitest.config.ts` for `src/core`, `scripts/check-dotnet-coverage.js` for the plugin assembly). Raise them as you add tests; never lower them.
 
-The ESLint warning cap (`--max-warnings` in the `lint` script) is the same idea inverted: it is pinned at the current count of typed-lint `no-unsafe-*` warnings in the converted legacy feature areas (`src/core` and `src/types` treat those rules as errors). New code must not add warnings; when you type legacy shapes and the count drops, lower the cap to match — never raise it.
+The ESLint warning cap (`--max-warnings` in the raw `npm run lint` script) is the same idea inverted: it is pinned at the reviewed count of typed-lint `no-unsafe-*` warnings in the converted legacy feature areas (`src/core` and `src/types` treat those rules as errors). Findings and cap breaches stay visible in logs and summaries but are advisory for delivery; the cap remains a review ratchet and must never be raised to make a branch green. When you type legacy shapes and the count drops, lower the cap to match. ESLint configuration, invocation, or internal failures are tooling failures and remain blocking.
 
 ### E2E against a disposable server
 
