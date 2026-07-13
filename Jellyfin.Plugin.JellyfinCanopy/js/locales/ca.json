@@ -55,6 +55,8 @@
   "selection_excluded": "exclòs",
   "panel_version": "Versió {version}",
   "panel_shortcuts_tab": "Dreceres",
+  "panel_search_placeholder": "Cerca a la configuració…",
+  "panel_back": "Seccions",
   "panel_settings_tab": "Configuració",
   "panel_shortcuts_global": "Globals",
   "panel_shortcuts_player": "Reproductor",

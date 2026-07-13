@@ -127,8 +127,10 @@ JC.showEnhancedPanel = async () => {
         zIndex: 999999,
         fontSize: '14px',
         backdropFilter: `blur(${panelBlurValue})`,
+        width: 'min(1040px, 94vw)',
+        height: 'min(720px, 90vh)',
         minWidth: '350px',
-        maxWidth: '90vw',
+        maxWidth: '94vw',
         maxHeight: '90vh',
         boxShadow: '0 10px 30px rgba(0,0,0,0.7)',
         border: '1px solid rgba(255,255,255,0.1)',
@@ -231,47 +233,80 @@ JC.showEnhancedPanel = async () => {
     wireShortcutEditor(ctx);
     resetAutoCloseTimer();
 
-    // --- Tab Logic ---
-    const tabButtons = help.querySelectorAll<HTMLElement>('.tab-button');
-    const tabContents = help.querySelectorAll<HTMLElement>('.tab-content');
-    const tabsContainer = help.querySelector<HTMLElement>('.tabs');
+    // --- Section navigation (adaptive settings view) ---
+    // The nav rail is built FROM the panes, so nav and content can never
+    // drift: every .jc-pane's title becomes a nav item (icon included).
+    // Missing markup (as in the headless unit-test template stub) no-ops.
+    (function buildSectionNav() {
+        const navHost = help.querySelector<HTMLElement>('.jc-panel-nav-items');
+        const body = help.querySelector<HTMLElement>('.jc-panel-body');
+        const panes = Array.from(help.querySelectorAll<HTMLElement>('.jc-pane'));
+        if (!navHost || !body || panes.length === 0) return;
 
-    if (JC.pluginConfig.DisableAllShortcuts) {
-        // If shortcuts are disabled, hide the tab bar and show settings directly.
-        if (tabsContainer) {
-            tabsContainer.style.display = 'none';
-        }
-        const settingsContent = help.querySelector('#settings-content');
-        if (settingsContent) {
-            settingsContent.classList.add('active');
-        }
-    } else {
-        // --- Remember last opened tab ---
-        const lastTab = (JC.currentSettings as any).lastOpenedTab || 'shortcuts';
-        tabButtons.forEach(btn => btn.classList.remove('active'));
-        tabContents.forEach(content => content.classList.remove('active'));
-        const activeTabButton = help.querySelector(`.tab-button[data-tab="${lastTab}"]`);
-        if(activeTabButton) activeTabButton.classList.add('active');
-        const activeTabContent = help.querySelector(`#${lastTab}-content`);
-        if(activeTabContent) activeTabContent.classList.add('active');
+        const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        const items: HTMLButtonElement[] = [];
 
-        tabButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                const tab = button.dataset.tab;
-                tabButtons.forEach(btn => btn.classList.remove('active'));
-                button.classList.add('active');
-                tabContents.forEach(content => {
-                    content.classList.remove('active');
-                    if (content.id === `${tab}-content`) {
-                        content.classList.add('active');
-                    }
-                });
-                (JC.currentSettings as any).lastOpenedTab = tab;
+        const activate = (pane: HTMLElement, persist: boolean) => {
+            panes.forEach(p => p.classList.toggle('active', p === pane));
+            items.forEach(b => b.classList.toggle('active', b.dataset.tab === pane.dataset.pane));
+            body.classList.add('jc-pane-open');
+            if (persist) {
+                (JC.currentSettings as any).lastOpenedTab = pane.dataset.pane;
                 void JC.saveUserSettings!('settings.json', JC.currentSettings);
-                resetAutoCloseTimer();
-            });
+            }
+            resetAutoCloseTimer();
+        };
+
+        panes.forEach((pane, index) => {
+            const title = pane.querySelector<HTMLElement>('.jc-pane-title');
+            const label = (pane.dataset.paneLabel || title?.textContent || '').trim();
+            if (!pane.dataset.pane) pane.dataset.pane = slug(label) || `pane-${index}`;
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'tab-button';
+            button.dataset.tab = pane.dataset.pane;
+            // Title markup is template-authored (same document, already rendered),
+            // duplicated verbatim so the nav item carries the pane heading's icon;
+            // the fallback label is plain text.
+            if (title) {
+                button.innerHTML = title.innerHTML;
+            } else {
+                button.textContent = label;
+            }
+            button.addEventListener('click', () => activate(pane, true));
+            navHost.appendChild(button);
+            items.push(button);
         });
-    }
+
+        // Mobile back button returns to the section list.
+        help.querySelector('#jcPanelBack')?.addEventListener('click', () => {
+            body.classList.remove('jc-pane-open');
+            resetAutoCloseTimer();
+        });
+
+        // Search filters the section list by each pane's full text.
+        const search = help.querySelector<HTMLInputElement>('#jcPanelSearch');
+        search?.addEventListener('input', () => {
+            const query = search.value.trim().toLowerCase();
+            items.forEach((button) => {
+                const pane = panes.find(p => p.dataset.pane === button.dataset.tab);
+                const hit = !query || !!pane && (pane.textContent || '').toLowerCase().includes(query);
+                button.style.display = hit ? '' : 'none';
+            });
+            resetAutoCloseTimer();
+        });
+
+        // Initial view: desktop restores the last-open section; a phone-sized
+        // viewport starts on the section list (nothing pre-opened).
+        const lastTab = (JC.currentSettings as any).lastOpenedTab;
+        const initial = panes.find(p => p.dataset.pane === lastTab) || panes[0];
+        const isPhone = window.matchMedia('(max-width: 760px)').matches;
+        if (isPhone) {
+            panes.forEach(p => p.classList.remove('active'));
+        } else {
+            activate(initial, false);
+        }
+    })();
 
     // Autoscroll when details sections open
     const allDetails = help.querySelectorAll('details');

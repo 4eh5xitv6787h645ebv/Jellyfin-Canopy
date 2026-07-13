@@ -53,18 +53,18 @@ test.describe('non-admin session', () => {
         assertNoRuntimeErrors(consoleErrors);
     });
 
-    test('the enhanced panel opens with the settings tab and closes on Escape', async ({ page, consoleErrors }) => {
+    test('the enhanced panel opens with the section nav and closes on Escape', async ({ page, consoleErrors }) => {
         await loginAs(page, 'user', consoleErrors);
 
         await page.evaluate(() => { (window as any).JellyfinCanopy.showEnhancedPanel(); });
         const panel = page.locator('#jellyfin-canopy-panel');
         await expect(panel).toBeVisible({ timeout: 15_000 });
 
-        expect(await panel.locator('.tab-button').count()).toBeGreaterThanOrEqual(1);
-        const settingsTab = panel.locator('.tab-button[data-tab="settings"]');
-        await settingsTab.click();
-        await expect(settingsTab).toHaveClass(/active/);
-        await expect(panel.locator('#settings-content')).toBeVisible();
+        expect(await panel.locator('.tab-button').count()).toBeGreaterThanOrEqual(4);
+        const uiItem = panel.locator('.tab-button[data-tab="ui"]');
+        await uiItem.click();
+        await expect(uiItem).toHaveClass(/active/);
+        await expect(panel.locator('.jc-pane[data-pane="ui"]')).toBeVisible();
 
         await page.keyboard.press('Escape');
         await expect(panel).toBeHidden({ timeout: 10_000 });

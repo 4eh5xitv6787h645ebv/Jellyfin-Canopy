@@ -176,62 +176,126 @@
 #JellyfinCanopyPage[data-role="page"] > [data-role="content"] {
     overflow: visible;
 }
-.jc-sticky-header {
-    position: sticky;
-    top: 0;
-    z-index: 1010;
-    padding: 8px 8px 0 8px;
-    margin: -8px -8px 20px -8px;
-    /* Background/blur/shadow applied only when the form is actually
-       scrolled — at scrollTop=0 the header is transparent so the
-       Jellyfin top bar / user avatar underneath stays visible. */
-    transition: background-color 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+
+/* ---------------------------------------------------------------------------
+   Settings-app shell: a sticky section sidebar on the left (brand, search,
+   section nav, page actions) and the active section's pane on the right.
+   Collapses to an off-canvas drawer + floating toggle below 900px.
+   --------------------------------------------------------------------------- */
+.jc-shell {
+    display: grid;
+    grid-template-columns: 252px minmax(0, 1fr);
+    gap: 26px;
+    align-items: start;
 }
-.jc-sticky-header.jc-is-scrolled {
-    background: var(--jc-overlay-hard);
-    backdrop-filter: blur(14px) saturate(150%);
-    -webkit-backdrop-filter: blur(14px) saturate(150%);
-    border-bottom: 1px solid color-mix(in srgb, var(--jc-accent) 18%, transparent);
-    box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+.jc-sidebar {
+    position: sticky;
+    top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-height: calc(100vh - 24px);
+    padding: 16px 14px;
+    border: 1px solid var(--jc-border);
+    border-radius: 14px;
+    background: var(--jc-card-bg, rgba(22, 22, 22, 0.94));
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22);
+}
+.jc-main {
+    min-width: 0;
+}
+.jc-side-foot {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 12px;
+    border-top: 1px solid var(--jc-border);
+}
+
+/* Mobile drawer toggle: floating pill, hidden on desktop. */
+.jc-nav-toggle {
+    display: none;
+    position: fixed;
+    bottom: 30px;
+    left: 16px;
+    z-index: 2001;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border: none;
+    border-radius: 50px;
+    background: var(--jc-grad);
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0, 6, 17, 0.35);
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.jc-nav-scrim {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 2002;
+    background: rgba(0, 6, 17, 0.55);
+    opacity: 0;
+    transition: opacity 200ms ease;
+}
+
+@media (max-width: 900px) {
+    .jc-shell {
+        display: block;
+    }
+    .jc-nav-toggle {
+        display: inline-flex;
+    }
+    .jc-sidebar {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 2003;
+        width: min(320px, 85vw);
+        max-height: none;
+        border-radius: 0 14px 14px 0;
+        transform: translateX(-102%);
+        transition: transform 220ms ease;
+    }
+    .jc-shell.jc-nav-open .jc-sidebar {
+        transform: translateX(0);
+    }
+    .jc-shell.jc-nav-open .jc-nav-scrim {
+        display: block;
+        opacity: 1;
+    }
 }
 
 /* ---------------------------------------------------------------------------
    Header & Search Bar
    --------------------------------------------------------------------------- */
-#JellyfinCanopyPage .sectionTitleContainer {
+/* Brand lockup: embedded Canopy mark + gradient wordmark at the top of the
+   sidebar, with the signature gradient hairline underneath. Explicit img
+   dimensions in the markup reserve the box before the SVG loads (no shift). */
+#JellyfinCanopyPage .jc-brand-lockup {
     position: relative;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 15px;
-    margin-bottom: 0;
-    padding: 10px 0 10px 0;
-    border-bottom: 1px solid var(--jc-border);
+    gap: 10px;
+    margin: 0;
+    padding: 2px 4px 12px 4px;
+    font-size: 1.35em;
+    font-weight: 600;
 }
-/* Signature gradient hairline under the brand row. */
-#JellyfinCanopyPage .sectionTitleContainer::after {
+#JellyfinCanopyPage .jc-brand-lockup::after {
     content: "";
     position: absolute;
     left: 0;
     right: 0;
-    bottom: -1px;
+    bottom: 0;
     height: 2px;
     background: var(--jc-grad);
     opacity: 0.55;
     pointer-events: none;
-}
-#JellyfinCanopyPage .sectionTitleContainer h2 {
-    font-size: 1.8em;
-    font-weight: 600;
-    margin: 0;
-}
-/* Brand lockup: embedded Canopy mark + gradient wordmark. Explicit img
-   dimensions in the markup reserve the box before the SVG loads (no shift). */
-#JellyfinCanopyPage .jc-brand-lockup {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
 }
 #JellyfinCanopyPage .jc-brand-mark {
     flex: none;
@@ -245,16 +309,8 @@
     color: transparent;
     -webkit-text-fill-color: transparent;
 }
-.jc-header-title-row {
-    display: flex;
-    align-items: center;
-    gap: 15px;
-}
-
 #settingsSearchContainer {
-    min-width: 260px;
-    max-width: 350px;
-    flex: 1;
+    width: 100%;
 }
 #settingsSearchContainer > div {
     position: relative;
@@ -641,20 +697,22 @@
 /* ---------------------------------------------------------------------------
    Tab Navigation (sits inside .jc-sticky-header which handles pinning)
    --------------------------------------------------------------------------- */
+/* The section nav: same .jellyfin-tab-button[data-tab] contract the page
+   script drives, laid out as a vertical settings-app rail. */
 .jc-tab-bar {
     display: flex;
-    gap: 10px;
-    padding: 12px 0;
+    flex-direction: column;
+    gap: 3px;
+    padding: 0;
     margin: 0;
-    border-bottom: 1px solid var(--jc-border);
-    overflow-x: auto;
-    scrollbar-width: none;
-    cursor: grab;
+    border-bottom: 0;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
     user-select: none;
 }
-.jc-tab-bar::-webkit-scrollbar { display: none; }
 .jc-tab-bar.jc-dragging {
-    cursor: grabbing;
     scroll-behavior: auto;
 }
 #JellyfinCanopyPage .jc-tab-bar.jc-dragging .jellyfin-tab-button {
@@ -662,18 +720,21 @@
 }
 
 #JellyfinCanopyPage .jellyfin-tab-button {
-    background: var(--jc-surface-2);
-    border: 1px solid var(--jc-border);
-    border-radius: 30px;
-    padding: 10px 20px;
+    position: relative;
+    width: 100%;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 10px 12px;
     color: var(--jc-text-muted);
     cursor: pointer;
     font-weight: 600;
-    font-size: 0.9em;
+    font-size: 0.92em;
     display: flex;
     align-items: center;
     gap: 8px;
-    transition: all 0.2s ease;
+    text-align: left;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
     white-space: nowrap;
 }
 #JellyfinCanopyPage .jellyfin-tab-button h3 {
@@ -706,14 +767,26 @@
 #JellyfinCanopyPage .jellyfin-tab-button.active .jc-tab-icon { opacity: 1; }
 #JellyfinCanopyPage .jellyfin-tab-button:hover {
     background: var(--jc-surface-3);
-    border-color: var(--jc-accent-border);
+    color: var(--jc-text-strong);
 }
+/* Active section: brand-gradient rail + accent tint, settings-app style. */
 #JellyfinCanopyPage .jellyfin-tab-button.active {
-    background: var(--jc-grad);
-    border-color: transparent;
-    color: #fff !important;
-    text-shadow: 0 1px 2px rgba(0, 6, 17, 0.35);
-    box-shadow: 0 4px 14px color-mix(in srgb, var(--canopy-blue) 35%, transparent);
+    background: var(--jc-accent-tint-10);
+    border-color: var(--jc-accent-border);
+    color: var(--jc-text-strong) !important;
+}
+#JellyfinCanopyPage .jellyfin-tab-button.active::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 6px;
+    bottom: 6px;
+    width: 3px;
+    border-radius: 3px;
+    background: var(--jc-grad-rail);
+}
+#JellyfinCanopyPage .jellyfin-tab-button.active .jc-tab-icon {
+    color: var(--jc-accent);
 }
 
 #JellyfinCanopyPage .jellyfin-tab-content {
@@ -803,6 +876,37 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+}
+/* Settings-row layout on wide viewports: label (and its description) on the
+   left, the control right-aligned in its own column — the standard settings
+   pattern, denser and more scannable than stacked forms. Rows with textareas
+   or wide custom widgets keep the stacked layout. */
+@media (min-width: 1100px) {
+    #JellyfinCanopyPage .configSection > .inputContainer:not(:has(textarea, .jc-textarea-large)),
+    #JellyfinCanopyPage .configSection > .selectContainer:not(:has(textarea)) {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(200px, 300px);
+        grid-auto-flow: dense;
+        column-gap: 20px;
+        align-items: center;
+    }
+    #JellyfinCanopyPage .configSection > .inputContainer:not(:has(textarea, .jc-textarea-large)) > label,
+    #JellyfinCanopyPage .configSection > .selectContainer:not(:has(textarea)) > label {
+        grid-column: 1;
+    }
+    #JellyfinCanopyPage .configSection > .inputContainer:not(:has(textarea, .jc-textarea-large)) > .emby-input,
+    #JellyfinCanopyPage .configSection > .inputContainer:not(:has(textarea, .jc-textarea-large)) > .emby-select,
+    #JellyfinCanopyPage .configSection > .selectContainer:not(:has(textarea)) > .emby-select {
+        grid-column: 2;
+        grid-row: 1;
+        align-self: center;
+    }
+    #JellyfinCanopyPage .configSection > .inputContainer:not(:has(textarea, .jc-textarea-large)) > .fieldDescription,
+    #JellyfinCanopyPage .configSection > .inputContainer:not(:has(textarea, .jc-textarea-large)) > .jc-setting-description,
+    #JellyfinCanopyPage .configSection > .selectContainer:not(:has(textarea)) > .fieldDescription,
+    #JellyfinCanopyPage .configSection > .selectContainer:not(:has(textarea)) > .jc-setting-description {
+        grid-column: 1;
+    }
 }
 #JellyfinCanopyPage .configSection > .inputContainer,
 #JellyfinCanopyPage .configSection > .checkboxContainer,
@@ -1200,6 +1304,29 @@
 .jc-save-dock .jc-save-dock-btn:hover {
     transform: translateY(-2px);
     box-shadow: 0 6px 15px rgba(0,0,0,0.3);
+}
+/* Unsaved-changes state: the dock announces itself with a brand glow and an
+   "Unsaved changes" chip (visual only; the save flow is untouched). */
+.jc-save-dock.jc-dirty {
+    border-color: var(--jc-accent-border);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), 0 0 0 2px var(--jc-accent-tint-20);
+}
+.jc-save-dock::before {
+    content: "Unsaved changes";
+    display: none;
+    align-items: center;
+    margin-right: 12px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--jc-accent-tint-10);
+    border: 1px solid var(--jc-accent-border);
+    color: var(--jc-accent);
+    font-size: 0.78em;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.jc-save-dock.jc-dirty::before {
+    display: inline-flex;
 }
 .jc-save-dock-icon {
     font-size: 20px !important;

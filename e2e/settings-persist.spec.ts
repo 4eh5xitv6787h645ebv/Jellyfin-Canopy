@@ -80,14 +80,8 @@ test.describe('per-user settings persistence', () => {
             await page.evaluate(() => { (window as any).JellyfinCanopy.showEnhancedPanel(); });
             const panel = page.locator('#jellyfin-canopy-panel');
             await expect(panel).toBeVisible({ timeout: 15_000 });
-            await panel.locator('.tab-button[data-tab="settings"]').click();
-            // The pause-delay input lives inside a collapsed <details>
-            // ("Playback Settings") in the panel. Open it so the real control is
-            // visible before we drive it (matching what a user does).
-            await page.evaluate(() => {
-                document.getElementById('pauseScreenDelayInput')
-                    ?.closest('details')?.setAttribute('open', 'open');
-            });
+            // The pause-delay input lives in the Playback section pane.
+            await panel.locator('.tab-button[data-tab="playback"]').click();
             await expect(page.locator('#pauseScreenDelayInput')).toBeVisible({ timeout: 15_000 });
         };
 

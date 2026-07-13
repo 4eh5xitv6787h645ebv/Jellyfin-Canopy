@@ -55,6 +55,8 @@
   "selection_excluded": "vylúčené",
   "panel_version": "Verzia {version}",
   "panel_shortcuts_tab": "Skratky",
+  "panel_search_placeholder": "Hľadať v nastaveniach…",
+  "panel_back": "Sekcie",
   "panel_settings_tab": "Nastavenia",
   "panel_shortcuts_global": "Globálne",
   "panel_shortcuts_player": "Prehrávač",

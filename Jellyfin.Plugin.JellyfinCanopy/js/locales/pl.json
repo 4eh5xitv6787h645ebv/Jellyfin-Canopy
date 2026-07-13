@@ -55,6 +55,8 @@
   "selection_excluded": "wykluczone",
   "panel_version": "Wersja {version}",
   "panel_shortcuts_tab": "Skróty klawiszowe",
+  "panel_search_placeholder": "Szukaj w ustawieniach…",
+  "panel_back": "Sekcje",
   "panel_settings_tab": "Ustawienia",
   "panel_shortcuts_global": "Globalne",
   "panel_shortcuts_player": "Odtwarzacz",

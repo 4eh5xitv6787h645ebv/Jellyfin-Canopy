@@ -41,27 +41,24 @@
         }
     </style>
     <div data-role="content">
-        <div class="content-primary">
+        <div class="content-primary jc-shell">
 
-            <div class="jc-sticky-header">
-                <div class="sectionTitleContainer">
-                    <div class="jc-header-title-row">
-                        <h2 class="sectionTitle jc-brand-lockup"><img class="jc-brand-mark" src="../JellyfinCanopy/assets/branding/canopy-mark.svg" alt="" width="30" height="26"><span class="jc-brand-name">Jellyfin Canopy</span></h2>
-                        <a is="emby-linkbutton" class="raised raised-mini emby-button jc-help-link" target="_blank" href="https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy" title="Help" aria-label="Docs and Help">
-                            <span class="jc-help-link-label">Help</span>
-                        </a>
-                        <button id="toggleDescriptionsBtn" type="button" class="raised raised-mini emby-button jc-desc-toggle" title="Show or hide setting descriptions" aria-label="Show or hide setting descriptions" aria-pressed="true">
-                            <span class="jc-desc-toggle-label">Descriptions</span>
-                            <span class="jc-desc-toggle-state" aria-hidden="true">On</span>
-                        </button>
-                    </div>
-                    <div id="settingsSearchContainer">
-                        <div>
-                            <i class="material-icons jc-search-icon">search</i>
-                            <input id="settingsSearchInput" type="text" placeholder="Search settings..." />
-                            <span id="settingsSearchCount"></span>
-                            <button id="settingsSearchClear" type="button" title="Clear search">&#x2715;</button>
-                        </div>
+            <!-- Mobile-only: opens the section drawer. -->
+            <button id="jcNavToggle" type="button" class="jc-nav-toggle" aria-label="Open settings sections" aria-expanded="false" aria-controls="jcSidebar">
+                <i class="material-icons" aria-hidden="true">menu</i>
+                <span class="jc-nav-toggle-label">Sections</span>
+            </button>
+            <div class="jc-nav-scrim" id="jcNavScrim" aria-hidden="true"></div>
+
+            <!-- Settings-app sidebar: brand, search, section nav, page actions. -->
+            <aside class="jc-sidebar" id="jcSidebar" aria-label="Jellyfin Canopy settings sections">
+                <h2 class="sectionTitle jc-brand-lockup"><img class="jc-brand-mark" src="../JellyfinCanopy/assets/branding/canopy-mark.svg" alt="" width="30" height="26"><span class="jc-brand-name">Jellyfin Canopy</span></h2>
+                <div id="settingsSearchContainer">
+                    <div>
+                        <i class="material-icons jc-search-icon">search</i>
+                        <input id="settingsSearchInput" type="text" placeholder="Search settings..." />
+                        <span id="settingsSearchCount"></span>
+                        <button id="settingsSearchClear" type="button" title="Clear search">&#x2715;</button>
                     </div>
                 </div>
 
@@ -79,7 +76,19 @@
                     <button class="jellyfin-tab-button" data-tab="admin"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">admin_panel_settings</i>Admin</h3></button>
                     <button class="jellyfin-tab-button" data-tab="docs"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">menu_book</i>Docs</h3></button>
                 </div>
-            </div>
+
+                <div class="jc-side-foot">
+                    <a is="emby-linkbutton" class="raised raised-mini emby-button jc-help-link" target="_blank" href="https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy" title="Help" aria-label="Docs and Help">
+                        <span class="jc-help-link-label">Help</span>
+                    </a>
+                    <button id="toggleDescriptionsBtn" type="button" class="raised raised-mini emby-button jc-desc-toggle" title="Show or hide setting descriptions" aria-label="Show or hide setting descriptions" aria-pressed="true">
+                        <span class="jc-desc-toggle-label">Descriptions</span>
+                        <span class="jc-desc-toggle-state" aria-hidden="true">On</span>
+                    </button>
+                </div>
+            </aside>
+
+            <div class="jc-main">
 
             <div id="jc-probe-warning" class="jc-note-banner" style="display: none;" role="status" aria-live="polite">
                 <i class="material-icons jc-note-icon">warning_amber</i>
@@ -2461,6 +2470,7 @@
                     </button>
                 </div>
             </form>
+            </div>
         </div>
     </div>
 <script>

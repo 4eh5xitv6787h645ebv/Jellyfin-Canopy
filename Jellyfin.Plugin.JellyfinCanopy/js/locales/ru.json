@@ -55,6 +55,8 @@
   "selection_excluded": "исключено",
   "panel_version": "Версия {version}",
   "panel_shortcuts_tab": "Горячие клавиши",
+  "panel_search_placeholder": "Поиск по настройкам…",
+  "panel_back": "Разделы",
   "panel_settings_tab": "Настройки",
   "panel_shortcuts_global": "Глобальные",
   "panel_shortcuts_player": "Плеер",

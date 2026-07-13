@@ -117,6 +117,38 @@
                 }, true);
             })();
 
+            // Mobile section drawer: the sidebar slides in off-canvas below
+            // 900px. The toggle/scrim only exist in the new shell layout, so
+            // everything here no-ops gracefully if the markup changes.
+            (function wireSectionDrawer() {
+                const shell = document.querySelector('#JellyfinCanopyPage .jc-shell');
+                const toggle = document.getElementById('jcNavToggle');
+                const scrim = document.getElementById('jcNavScrim');
+                if (!shell || !toggle || !scrim) return;
+                const setOpen = (open) => {
+                    shell.classList.toggle('jc-nav-open', open);
+                    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                };
+                toggle.addEventListener('click', () => setOpen(!shell.classList.contains('jc-nav-open')));
+                scrim.addEventListener('click', () => setOpen(false));
+                // Selecting a section (or focusing search results) dismisses the drawer.
+                tabs.forEach((t) => t.addEventListener('click', () => setOpen(false)));
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape' && shell.classList.contains('jc-nav-open')) setOpen(false);
+                });
+            })();
+
+            // Dirty-state save bar: purely visual — flags the save dock when any
+            // form field changes, cleared again by the save flow's own click.
+            (function wireDirtyState() {
+                const dock = document.querySelector('.jc-save-dock');
+                if (!dock || !form) return;
+                const markDirty = () => dock.classList.add('jc-dirty');
+                form.addEventListener('input', markDirty, true);
+                form.addEventListener('change', markDirty, true);
+                dock.addEventListener('click', () => dock.classList.remove('jc-dirty'));
+            })();
+
             // Docs iframe URL — kept in JS rather than hardcoded in the
             // <iframe src> attribute so we can lazy-load on first Docs
             // activation (saves the GitHub Pages fetch for admins who

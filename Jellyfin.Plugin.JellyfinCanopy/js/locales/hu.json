@@ -55,6 +55,8 @@
   "selection_excluded": "kihagyva",
   "panel_version": "Verzió {version}",
   "panel_shortcuts_tab": "Gyorsbillentyűk",
+  "panel_search_placeholder": "Keresés a beállításokban…",
+  "panel_back": "Szakaszok",
   "panel_settings_tab": "Beállítások",
   "panel_shortcuts_global": "Globális",
   "panel_shortcuts_player": "Játékos",

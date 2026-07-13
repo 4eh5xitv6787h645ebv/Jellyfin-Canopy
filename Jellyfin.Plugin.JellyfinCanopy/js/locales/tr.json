@@ -55,6 +55,8 @@
   "selection_excluded": "hariç",
   "panel_version": "Sürüm {version}",
   "panel_shortcuts_tab": "Kısayollar",
+  "panel_search_placeholder": "Ayarlarda ara…",
+  "panel_back": "Bölümler",
   "panel_settings_tab": "Ayarlar",
   "panel_shortcuts_global": "Genel",
   "panel_shortcuts_player": "Oynatıcı",

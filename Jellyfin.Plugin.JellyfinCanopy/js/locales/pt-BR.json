@@ -55,6 +55,8 @@
   "selection_excluded": "excluído",
   "panel_version": "Versão {version}",
   "panel_shortcuts_tab": "Atalhos",
+  "panel_search_placeholder": "Pesquisar configurações…",
+  "panel_back": "Seções",
   "panel_settings_tab": "Configurações",
   "panel_shortcuts_global": "Global",
   "panel_shortcuts_player": "Player",
