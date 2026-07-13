@@ -86,13 +86,11 @@ export function buildPanelHtml(ctx: PanelContext): string {
                 #jellyfin-canopy-panel .jc-pane.active { display: block; }
                 #jellyfin-canopy-panel .jc-pane-title { display: flex; align-items: center; gap: 8px; margin: 14px 0 12px 0; font-size: 17px; font-weight: 700; color: #fff; font-family: inherit; }
                 #jellyfin-canopy-panel .jc-pane-back { display: none; align-items: center; gap: 6px; margin: 12px 0 0 0; padding: 6px 10px; border: none; border-radius: 8px; background: rgba(255,255,255,0.08); color: #fff; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; align-self: flex-start; }
-                /* Legacy hooks kept for tests/specs that toggle content visibility. */
-                #jellyfin-canopy-panel .tab-content { display: block; }
                 @media (max-width: 760px) {
                     #jellyfin-canopy-panel { top: 0 !important; left: 0 !important; transform: none !important; width: 100vw !important; max-width: 100vw !important; height: 100dvh !important; max-height: 100dvh !important; border-radius: 0 !important; }
                     #jellyfin-canopy-panel .jc-panel-body { display: block; position: relative; overflow: hidden; }
                     #jellyfin-canopy-panel .jc-panel-nav { position: absolute; inset: 0; border-right: none; z-index: 1; }
-                    #jellyfin-canopy-panel .jc-panel-main { position: absolute; inset: 0; z-index: 2; background: ${panelBgColor}; transform: translateX(102%); transition: transform 200ms ease; }
+                    #jellyfin-canopy-panel .jc-panel-main { position: absolute; inset: 0; z-index: 2; background: rgb(24, 24, 24); transform: translateX(102%); transition: transform 200ms ease; }
                     #jellyfin-canopy-panel .jc-panel-body.jc-pane-open .jc-panel-main { transform: translateX(0); }
                     #jellyfin-canopy-panel .jc-panel-body.jc-pane-open .jc-pane-back { display: inline-flex; }
                 }
