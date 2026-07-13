@@ -701,5 +701,6 @@
   "discovery_customize_move_down": "Lefelé",
   "discovery_customize_reset": "Alapértelmezettek visszaállítása",
   "discovery_customize_cancel": "Mégsem",
-  "discovery_customize_save": "Mentés"
+  "discovery_customize_save": "Mentés",
+  "pages_signin_required": "Jelentkezz be az oldal megtekintéséhez."
 }

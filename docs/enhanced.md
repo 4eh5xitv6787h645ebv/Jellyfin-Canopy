@@ -352,15 +352,7 @@ Bookmarks **sync across duplicate items** — copies of the same title that shar
 
 **Managing bookmarks:** a dedicated Bookmarks page collects every bookmark across your library, where you can view them all, **clean up orphaned** bookmarks, **detect and merge duplicates**, and **adjust time offsets** for synced bookmarks.
 
-The management page is surfaced through one of three integration methods, configured under the **Bookmarks** section of **Dashboard** → **Plugins** → **Jellyfin Canopy** → **Pages** tab:
-
-- a **native Home tab** (recommended on Jellyfin 12's experimental layout),
-- the **Plugin Pages** sidebar link (requires the Plugin Pages plugin), or
-- the **Custom Tabs** plugin.
-
-| Setting | Scope | Default | What it does |
-| --- | --- | --- | --- |
-| **Add the Custom Tabs entry for me** (`BookmarksAutoCreateCustomTab`) | Admin only | **off** | When routing Bookmarks through the Custom Tabs plugin, lets Jellyfin Canopy create the matching Custom Tabs entry on save (and remove it if you turn *Use Custom Tabs* off). Only appears once *Use Custom Tabs* is enabled, which requires the Custom Tabs plugin. |
+The management page is a real routed destination. Enable Bookmarks under the **Bookmarks** section of **Dashboard** → **Plugins** → **Jellyfin Canopy** → **Pages** tab, and Jellyfin Canopy adds its entry points automatically — a **Bookmarks** link in the **Jellyfin Canopy** section of the sidebar drawer (and the mobile drawer), plus a header-tray icon button and a user-preferences-menu link on the modern layout. Its position among the pages follows the admin **Pages order** setting on the **Pages** tab. You can also open it directly at `/web/index.html#/bookmarks` — browser back/forward, page refresh, and deep links all work.
 
 !!! note "No export/import"
 
@@ -388,7 +380,7 @@ Hide titles you never want to see — content you've finished, things that aren'
 
 Every action shows an undo toast, and you can always reverse it from the management panel.
 
-**The management panel** lists everything you've hidden. Open it from the Enhanced Panel → **Settings** → **Hidden Content**, from the sidebar navigation (if enabled), or from a custom tab (if configured). There you can view all hidden items, search them, unhide items individually or all at once, group by series/movies, and filter by scope.
+**The management panel** lists everything you've hidden. Open it from the Enhanced Panel → **Settings** → **Hidden Content**, or from the Hidden Content page's automatic entry points — the **Jellyfin Canopy** sidebar-drawer link, the modern-layout header-tray button, or the user-preferences-menu link. There you can view all hidden items, search them, unhide items individually or all at once, group by series/movies, and filter by scope.
 
 #### Configuring Hidden Content
 
@@ -397,12 +389,9 @@ The **server-wide enable** and the **integration method** are admin-only and liv
 **Admin (server-wide)** — **Dashboard** → **Plugins** → **Jellyfin Canopy** → **Pages** tab → **Hidden Content**:
 
 - Enable or disable the feature server-wide.
-- Choose the integration method for the management page: a native Home tab (recommended on the Jellyfin 12 experimental layout), **Plugin Pages** (requires the Plugin Pages plugin), or **Custom Tabs** (requires the Custom Tabs plugin).
 - Set the admin defaults for the per-user toggles below.
 
-!!! note "Plugin Pages and Custom Tabs need File Transformation"
-
-    The **Plugin Pages** and **Custom Tabs** integrations (offered here and for Bookmarks) are separate community plugins that rely on the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) to register their pages — install it first if you plan to use either. The native Home tab needs no extra plugins.
+When enabled, the Hidden Content management page is a routed destination reachable at `/web/index.html#/hidden-content`, with entry points added automatically on every layout (the **Jellyfin Canopy** sidebar-drawer link, the modern-layout header-tray button, and the user-preferences-menu link). Its position among the pages follows the admin **Pages order** setting.
 
 **Per-user** — Enhanced Panel (press `?`) → **Settings** → **Hidden Content**. Each toggle has a matching admin default:
 
@@ -421,10 +410,6 @@ The **server-wide enable** and the **integration method** are admin-only and liv
 - Filter recommendations
 - Filter requests page
 - **Hide Collections & Libraries (experimental)** — extends hiding beyond individual movies/series to whole My Media libraries, collections, and playlists. Off by default and discouraged for typical users (it can break browsing); the matching admin default is *"Allow hiding collections, libraries, and playlists (experimental)."*
-
-| Setting | Scope | Default | What it does |
-| --- | --- | --- | --- |
-| **Add the Custom Tabs entry for me** (`HiddenContentAutoCreateCustomTab`) | Admin only | **off** | When routing Hidden Content through Custom Tabs, lets the plugin create the matching Custom Tabs entry on save. Only appears once *Use Custom Tabs* is enabled. |
 
 !!! note "Home rows filter independently of Filter Library"
 

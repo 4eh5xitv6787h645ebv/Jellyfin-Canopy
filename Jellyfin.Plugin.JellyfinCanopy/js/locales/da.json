@@ -701,5 +701,6 @@
   "discovery_customize_move_down": "Flyt ned",
   "discovery_customize_reset": "Nulstil til standard",
   "discovery_customize_cancel": "Annuller",
-  "discovery_customize_save": "Gem"
+  "discovery_customize_save": "Gem",
+  "pages_signin_required": "Log ind for at se denne side."
 }

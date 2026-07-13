@@ -38,7 +38,10 @@ describe('calendar page error state', () => {
 
         data.state.isLoading = false;
         const container = document.createElement('div');
-        views.renderPage(container);
+        document.body.appendChild(container);
+        views.setActiveContainer(container);
+        views.renderPage();
+        views.setActiveContainer(null);
 
         expect(container.innerHTML).toContain('calendar_load_error');
         expect(container.innerHTML).not.toContain('calendar_no_releases');

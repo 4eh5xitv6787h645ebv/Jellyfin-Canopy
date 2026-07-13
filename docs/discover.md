@@ -450,18 +450,10 @@ The Requests page brings active downloads from Sonarr/Radarr together with Seerr
 3. Optionally check **Show Downloads in Requests Page** to display active \*arr downloads (enabled by default).
 4. Optionally check **Show Seerr Issues Section** to display Seerr issues.
 5. Optionally check **Enable In-App Request Approvals** to show Approve / Decline buttons on pending requests (enabled by default — see [In-app approvals](#in-app-request-approvals)).
-6. Choose an integration method:
-    - **Use Plugin Pages for Requests** — adds a sidebar link (requires the [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin).
-    - **Use Custom Tabs for Requests** — adds a custom tab (requires the [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin).
-    - **Add Requests as a native Home tab** — shows Requests as a native tab on the Home screen (experimental layout; no extra plugin required).
-7. Configure the polling settings (below).
-8. Click **Save**, and restart Jellyfin if you chose Plugin Pages.
+6. Configure the polling settings (below).
+7. Click **Save**.
 
-!!! note "Plugin Pages and Custom Tabs need File Transformation"
-
-    The **Plugin Pages** and **Custom Tabs** integrations are separate community plugins that rely on the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) to register their pages — install it first if you plan to use either. The native Home tab needs no extra plugins.
-
-Reach the page via the sidebar link (Plugin Pages), the custom tab (Custom Tabs), or directly at `/web/index.html#/downloads`.
+The Requests page is a routed destination with automatic entry points — a link in the **Jellyfin Canopy** sidebar-drawer section, plus a header-tray icon button and a user-preferences-menu link on the modern layout, ordered by the admin **Pages order** setting. Reach it directly at `/web/index.html#/downloads`; browser back/forward, refresh, and deep links all work. See [Sonarr & Radarr](sonarr-radarr.md) for the full Requests page details.
 
 #### What's on it
 

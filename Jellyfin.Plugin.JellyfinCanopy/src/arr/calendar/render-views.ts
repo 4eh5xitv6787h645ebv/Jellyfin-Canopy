@@ -199,7 +199,9 @@ function renderAgendaView(): string {
 }
 
 function renderDayView(): string {
-    const filteredEvents = filterEvents(state.events);
+    let filteredEvents = filterEvents(state.events);
+    // Hidden-content parity with the Month/Week/Agenda views.
+    if (JC.hiddenContent?.filterCalendarEvents) filteredEvents = JC.hiddenContent.filterCalendarEvents(filteredEvents);
     const groupedEvents = groupEventsByDate(filteredEvents);
     const current = new Date(state.currentDate);
     const dateKey = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`;
@@ -361,57 +363,25 @@ function renderLegend(): string {
     `;
 }
 
-// Create or get page container element
-export function createPageContainer(): HTMLElement {
-    let page = document.getElementById('jc-calendar-page');
-    if (!page) {
-        page = document.createElement('div');
-        page.id = 'jc-calendar-page';
-        page.className = 'page type-interior mainAnimatedPage hide';
-        page.setAttribute('data-title', 'Calendar');
-        page.setAttribute('data-backbutton', 'true');
-        page.setAttribute('data-url', '#/calendar');
-        page.setAttribute('data-type', 'custom');
-        page.innerHTML = `
-        <div data-role="content">
-          <div class="content-primary jc-calendar-page">
-            <div id="jc-calendar-container" class="jc-interior-page-top" style="padding-left: 0.5em; padding-right: 0.5em;"></div>
-          </div>
-        </div>
-      `;
+// The container the calendar renders into, set by the pages-framework
+// descriptor for the lifetime of one adoption and cleared on drain. The DOM
+// is the truth: a disconnected container makes every render a no-op instead
+// of painting into a detached tree.
+let activeContainer: HTMLElement | null = null;
 
-        const mainContent = document.querySelector('.mainAnimatedPages');
-        if (mainContent) {
-            mainContent.appendChild(page);
-        } else {
-            document.body.appendChild(page);
-        }
-    }
-
-    return page;
+/** Set (or clear) the render target for the current page adoption. */
+export function setActiveContainer(container: HTMLElement | null): void {
+    activeContainer = container;
 }
 
 /**
- * Render the full page.
- * @param targetContainer - Optional container to render into
- *   (used by custom-tab mode to avoid duplicate-ID conflicts).
+ * Render the full page into the active container (no-op when the page is
+ * not adopted or its container left the DOM).
  */
-export function renderPage(targetContainer?: HTMLElement): void {
+export function renderPage(): void {
     syncPageModeClasses();
-    let container: HTMLElement | null;
-    if (targetContainer) {
-        state._customTabContainer = targetContainer;
-        container = targetContainer;
-    } else if (state._customTabContainer && document.contains(state._customTabContainer)
-        && window.location.hash.indexOf('userpluginsettings') === -1) {
-        // Re-use stored custom tab container, but not on Plugin Pages route
-        container = state._customTabContainer;
-    } else {
-        state._customTabContainer = null;
-        const page = createPageContainer();
-        container = document.getElementById('jc-calendar-container');
-        if (!page || !container) return;
-    }
+    const container = activeContainer;
+    if (!container || !container.isConnected) return;
 
     if (typeof state.sidebarCollapsed !== 'boolean') {
         state.sidebarCollapsed = getDefaultSidebarCollapsed();

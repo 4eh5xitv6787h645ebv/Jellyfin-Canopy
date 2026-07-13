@@ -701,5 +701,6 @@
   "discovery_customize_move_down": "Flytta ned",
   "discovery_customize_reset": "Återställ standard",
   "discovery_customize_cancel": "Avbryt",
-  "discovery_customize_save": "Spara"
+  "discovery_customize_save": "Spara",
+  "pages_signin_required": "Logga in för att se den här sidan."
 }

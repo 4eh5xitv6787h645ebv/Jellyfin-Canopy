@@ -38,6 +38,9 @@ import './core/dom-observer';
 import './core/ui-kit';
 import './core/api-client';
 import './core/tag-renderer-base';
+// Pages framework: imported before the feature barrels so the early 404-mask
+// installs at parse time and the registry exists before descriptors register.
+import './enhanced/pages';
 // live builds on navigation + lifecycle (nav-surviving SDK subscription) and,
 // for config hot-reload, on api-client — so it imports after them. live-config
 // registers the config-changed reaction on the hub.

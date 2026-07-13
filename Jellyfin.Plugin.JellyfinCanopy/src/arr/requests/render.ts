@@ -25,29 +25,24 @@ import {
 
 const escapeHtml = JC.escapeHtml;
 
-/** Container element carrying the once-per-element delegated-listener flag. */
-type BindableContainer = HTMLElement & { _jeRequestsActionsBound?: boolean };
+// The container the requests page renders into, set by the pages-framework
+// descriptor (page.ts) for the lifetime of one adoption and cleared on drain.
+// The DOM is the truth: a disconnected container makes every render a no-op
+// instead of painting into a detached tree.
+let activeContainer: HTMLElement | null = null;
+
+/** Set (or clear) the render target for the current page adoption. */
+export function setActiveContainer(container: HTMLElement | null): void {
+    activeContainer = container;
+}
 
 /**
- * Render the full page.
- * @param targetContainer - Optional container to render into
- *   (used by custom-tab mode to avoid duplicate-ID conflicts).
+ * Render the full page into the active container (no-op when the page is not
+ * adopted or its container left the DOM).
  */
-export function renderPage(targetContainer?: HTMLElement): void {
-    let container: BindableContainer;
-    if (targetContainer) {
-        state._customTabContainer = targetContainer;
-        container = targetContainer;
-    } else if (state._customTabContainer && document.contains(state._customTabContainer)
-        && window.location.hash.indexOf('userpluginsettings') === -1) {
-        // Re-use stored custom tab container, but not on Plugin Pages route
-        container = state._customTabContainer;
-    } else {
-        state._customTabContainer = null;
-        const found = document.getElementById('jc-downloads-container');
-        if (!found) return;
-        container = found;
-    }
+export function renderPage(): void {
+    const container = activeContainer;
+    if (!container || !container.isConnected) return;
 
     let html = '';
 
@@ -354,103 +349,72 @@ export function renderPage(targetContainer?: HTMLElement): void {
         });
     }
 
-    // Add click handlers for cards and watch buttons.
-    // This delegated listener is attached to `container`, which persists across
-    // renders (see custom-tab reuse of state._customTabContainer and the
-    // container.innerHTML rebuild above). renderPage() runs on initial load, on
-    // every poll cycle, on tab switches and on search input, so binding here
-    // unconditionally stacks a new listener every render. A single Approve/Decline
-    // click would then fire once per accumulated listener, firing N approve POSTs
-    // (N duplicate Seerr "Request Approved" notifications) and ultimately failing
-    // the request. Bind exactly once per container element instead.
-    if (!container._jeRequestsActionsBound) {
-        container._jeRequestsActionsBound = true;
-        container.addEventListener('click', (e) => {
-            const target = e.target as Element | null;
-            const showItem = window.Emby?.Page?.showItem as ((id: string) => void) | undefined;
-
-            // Handle play/watch button clicks
-            const playBtn = target?.closest('.jc-request-watch-btn');
-            if (playBtn) {
-                e.preventDefault();
-                e.stopPropagation();
-                const mediaId = playBtn.getAttribute('data-media-id');
-                if (mediaId && showItem) {
-                    showItem(mediaId);
-                }
-                return;
-            }
-
-            const approveBtn = target?.closest<HTMLButtonElement>('.jc-request-approve-btn');
-            if (approveBtn) {
-                e.preventDefault();
-                e.stopPropagation();
-                void handleRequestAction(approveBtn, 'approve');
-                return;
-            }
-
-            const declineBtn = target?.closest<HTMLButtonElement>('.jc-request-decline-btn');
-            if (declineBtn) {
-                e.preventDefault();
-                e.stopPropagation();
-                void handleRequestAction(declineBtn, 'decline');
-                return;
-            }
-
-            const viewIssueBtn = target?.closest('.jc-issue-view-btn');
-            if (viewIssueBtn && !viewIssueBtn.classList.contains('is-disabled')) {
-                e.preventDefault();
-                e.stopPropagation();
-                const tmdbId = viewIssueBtn.getAttribute('data-issue-tmdb-id');
-                const mediaType = viewIssueBtn.getAttribute('data-issue-media-type');
-                const title = viewIssueBtn.getAttribute('data-issue-title') || '';
-                if (tmdbId && mediaType && JC.seerrIssueReporter?.showReportModal) {
-                    JC.seerrIssueReporter.showReportModal(tmdbId, title, mediaType, null, null);
-                }
-                return;
-            }
-
-            // Handle card clicks to navigate to item
-            const card = target?.closest('.jc-download-card, .jc-request-card, .jc-issue-card');
-            if (card) {
-                const mediaId = card.getAttribute('data-media-id');
-                if (mediaId && showItem) {
-                    showItem(mediaId);
-                }
-            }
-        });
-    }
+    // Delegated card-action clicks are NOT bound here. renderPage() runs on
+    // initial load, every poll cycle, tab switches and search input; binding a
+    // delegated approve/decline listener per render would stack listeners and
+    // fire N approve POSTs per click. The framework descriptor (page.ts) binds
+    // handleRequestsClick ONCE per adoption on the host instead — a single
+    // listener per adoption, drained on teardown (duplicate-POST fix preserved).
 }
 
 /**
- * Create the downloads page container with proper Jellyfin page structure
+ * Delegated click handler for the rendered cards and their actions (play/watch,
+ * approve, decline, view-issue, card→item navigation). Bound once per adoption
+ * on the page host by the framework descriptor (page.ts), so a single approve
+ * click fires exactly one POST. Framework single-binding replaces the former
+ * per-render container `_jeRequestsActionsBound` bind-once flag.
  */
-export function createPageContainer(): HTMLElement {
-    let page = document.getElementById('jc-downloads-page');
-    if (!page) {
-        page = document.createElement('div');
-        page.id = 'jc-downloads-page';
-        // Use Jellyfin's page classes for proper integration
-        page.className = 'page type-interior mainAnimatedPage hide';
-        // Data attributes for header/back button integration
-        page.setAttribute('data-title', JC.t?.('requests_requests') || 'Requests');
-        page.setAttribute('data-backbutton', 'true');
-        page.setAttribute('data-url', '#/downloads');
-        page.setAttribute('data-type', 'custom');
-        page.innerHTML = `
-        <div data-role="content">
-          <div class="content-primary jc-downloads-page">
-            <div id="jc-downloads-container" class="jc-interior-page-top"></div>
-          </div>
-        </div>
-      `;
+export function handleRequestsClick(e: Event): void {
+    const target = e.target as Element | null;
+    const showItem = window.Emby?.Page?.showItem as ((id: string) => void) | undefined;
 
-        const mainContent = document.querySelector('.mainAnimatedPages');
-        if (mainContent) {
-            mainContent.appendChild(page);
-        } else {
-            document.body.appendChild(page);
+    // Handle play/watch button clicks
+    const playBtn = target?.closest('.jc-request-watch-btn');
+    if (playBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const mediaId = playBtn.getAttribute('data-media-id');
+        if (mediaId && showItem) {
+            showItem(mediaId);
+        }
+        return;
+    }
+
+    const approveBtn = target?.closest<HTMLButtonElement>('.jc-request-approve-btn');
+    if (approveBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        void handleRequestAction(approveBtn, 'approve');
+        return;
+    }
+
+    const declineBtn = target?.closest<HTMLButtonElement>('.jc-request-decline-btn');
+    if (declineBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        void handleRequestAction(declineBtn, 'decline');
+        return;
+    }
+
+    const viewIssueBtn = target?.closest('.jc-issue-view-btn');
+    if (viewIssueBtn && !viewIssueBtn.classList.contains('is-disabled')) {
+        e.preventDefault();
+        e.stopPropagation();
+        const tmdbId = viewIssueBtn.getAttribute('data-issue-tmdb-id');
+        const mediaType = viewIssueBtn.getAttribute('data-issue-media-type');
+        const title = viewIssueBtn.getAttribute('data-issue-title') || '';
+        if (tmdbId && mediaType && JC.seerrIssueReporter?.showReportModal) {
+            JC.seerrIssueReporter.showReportModal(tmdbId, title, mediaType, null, null);
+        }
+        return;
+    }
+
+    // Handle card clicks to navigate to item
+    const card = target?.closest('.jc-download-card, .jc-request-card, .jc-issue-card');
+    if (card) {
+        const mediaId = card.getAttribute('data-media-id');
+        if (mediaId && showItem) {
+            showItem(mediaId);
         }
     }
-    return page;
 }

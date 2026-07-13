@@ -607,6 +607,38 @@
                     </div>
 
                     <fieldset>
+                        <legend class="sectionTitle">Page Order</legend>
+                        <div class="configSection">
+                            <details class="jc-details-section">
+                                <summary>Page order</summary>
+                                <div id="pagesOrderAdmin" class="jc-details-body">
+                                    <div class="fieldDescription jc-field-desc-sm">Set the order the Jellyfin Canopy pages appear in navigation. Use the <i class="material-icons jc-cat-arrow-icon" aria-hidden="true">arrow_upward</i> / <i class="material-icons jc-cat-arrow-icon" aria-hidden="true">arrow_downward</i> buttons to reorder.</div>
+                                    <div class="jc-quality-cat-admin-row jc-pages-order-row" data-page-id="calendar">
+                                        <div class="checkboxContainer"><span>Calendar</span></div>
+                                        <button type="button" class="raised raised-mini jc-page-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
+                                        <button type="button" class="raised raised-mini jc-page-down" aria-label="Move down"><i class="material-icons" aria-hidden="true">arrow_downward</i></button>
+                                    </div>
+                                    <div class="jc-quality-cat-admin-row jc-pages-order-row" data-page-id="downloads">
+                                        <div class="checkboxContainer"><span>Requests</span></div>
+                                        <button type="button" class="raised raised-mini jc-page-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
+                                        <button type="button" class="raised raised-mini jc-page-down" aria-label="Move down"><i class="material-icons" aria-hidden="true">arrow_downward</i></button>
+                                    </div>
+                                    <div class="jc-quality-cat-admin-row jc-pages-order-row" data-page-id="bookmarks">
+                                        <div class="checkboxContainer"><span>Bookmarks</span></div>
+                                        <button type="button" class="raised raised-mini jc-page-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
+                                        <button type="button" class="raised raised-mini jc-page-down" aria-label="Move down"><i class="material-icons" aria-hidden="true">arrow_downward</i></button>
+                                    </div>
+                                    <div class="jc-quality-cat-admin-row jc-pages-order-row" data-page-id="hidden-content">
+                                        <div class="checkboxContainer"><span>Hidden Content</span></div>
+                                        <button type="button" class="raised raised-mini jc-page-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
+                                        <button type="button" class="raised raised-mini jc-page-down" aria-label="Move down"><i class="material-icons" aria-hidden="true">arrow_downward</i></button>
+                                    </div>
+                                </div>
+                            </details>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
                         <legend class="sectionTitle">Bookmarks</legend>
                         <div class="configSection">
                             <div class="jc-info-banner-inline">
@@ -626,64 +658,6 @@
                             <div class="jc-setting-description" data-desc-for="bookmarksEnabled">
                                 <div class="fieldDescription jc-field-desc-lg">Save custom bookmarks/timestamps while watching videos to quickly jump back to your favorite scenes or moments.</div>
                             </div>
-
-                            <div class="checkboxContainer"><label><input id="bookmarksUseNativeTab" data-config-key="BookmarksUseNativeTab" is="emby-checkbox" type="checkbox"/><span>Add Bookmarks as a native Home tab</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="bookmarksUseNativeTab">
-                                <div class="fieldDescription jc-field-desc-xl">Adds Bookmarks as its own tab on the Home page, no external plugin needed.<br/><strong>Recommended on Jellyfin 12's experimental layout</strong> (the default).</div>
-                            </div>
-
-                            <div class="checkboxContainer"><label><input id="bookmarksUsePluginPages" data-config-key="BookmarksUsePluginPages" is="emby-checkbox" type="checkbox"/><span>Use Plugin Pages for Bookmarks Library</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="bookmarksUsePluginPages">
-                                <div class="fieldDescription jc-field-desc-xl">
-                                    Adds a "Bookmarks" link to the sidebar via <a class="sectionTitle" href="https://github.com/IAmParadox27/jellyfin-plugin-pages" target="_blank">Plugin Pages</a>.<br/>
-                                    <strong>Note:</strong> Jellyfin must be restarted after enabling this option for the first time for changes to take effect.
-                                    <span class="jc-installed-badge" data-plugin="pluginpages"><i class="material-icons" aria-hidden="true">check_circle</i>Plugin Pages detected</span>
-                                </div>
-                            </div>
-
-                            <div class="checkboxContainer"><label><input id="bookmarksUseCustomTabs" data-config-key="BookmarksUseCustomTabs" is="emby-checkbox" type="checkbox"/><span>Use Custom Tabs for Bookmarks</span></label></div>
-
-                            <div class="checkboxContainer jc-customtabs-automanage" data-gated-by="bookmarksUseCustomTabs,bookmarksEnabled">
-                                <label><input id="bookmarksAutoCreateCustomTab" data-config-key="BookmarksAutoCreateCustomTab" is="emby-checkbox" type="checkbox"/><span>Add the Custom Tabs entry for me</span></label>
-                            </div>
-                            <div class="jc-setting-description jc-customtabs-automanage" data-desc-for="bookmarksAutoCreateCustomTab" data-gated-by="bookmarksUseCustomTabs,bookmarksEnabled">
-                                <div class="fieldDescription jc-field-desc-md">
-                                    Jellyfin Canopy will create the matching Custom Tabs entry on save. Turning off "Use Custom Tabs for Bookmarks" removes the entry; turning it back on re-creates it. Leave unchecked to manage the Custom Tabs entry yourself.
-                                </div>
-                            </div>
-
-                            <div class="jc-setting-description" data-desc-for="bookmarksUseCustomTabs">
-                                <div class="jc-info-banner-inline">
-                                    <div class="jc-info-banner-row">
-                                        <i class="material-icons jc-info-icon">info</i>
-                                        <div>
-                                            <h4 class="jc-custom-tabs-h4">
-                                                Embed Bookmarks in Custom Tabs:
-                                                <span class="jc-installed-badge" data-plugin="customtabs"><i class="material-icons" aria-hidden="true">check_circle</i>Custom Tabs detected</span>
-                                            </h4>
-                                            <p class="fieldDescription jc-custom-tabs-p">Display the Bookmarks library in a Custom Tabs tab instead of the sidebar link.</p>
-                                            <p class="fieldDescription jc-custom-tabs-p-mt jc-needs-customtabs">You need the <a class="sectionTitle" href="https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs" target="_blank">Custom Tabs</a> plugin.</p>
-                                            <ol class="fieldDescription jc-custom-tabs-ol">
-                                                <li class="jc-custom-tabs-li jc-needs-customtabs">Install the <strong>Custom Tabs</strong> plugin and all its prerequisites.</li>
-                                                <li class="jc-custom-tabs-li">Navigate to Dashboard &gt; Plugins &gt; Custom Tabs and add a new tab.</li>
-                                                <li class="jc-custom-tabs-li">Add "Display Text" according to your preference (e.g., "Bookmarks").</li>
-                                                <li class="jc-custom-tabs-li">Copy the code below and paste it into the 'HTML Content' field.</li>
-                                            </ol>
-                                            <div class="jc-copy-code-wrapper">
-                                                <button class="jc-copy-html-btn raised raised-mini emby-button" data-copy-text='&lt;div class="sections bookmarks"&gt;&lt;/div&gt;' type="button">
-                                                    <i class="material-icons jc-copy-icon">content_copy</i>
-                                                    <span class="copy-btn-text jc-copy-btn-text">Copy</span>
-                                                </button>
-                                                <pre class="jc-code-pre"><code>&lt;div class="sections bookmarks"&gt;&lt;/div&gt;</code></pre>
-                                            </div>
-                                            <div class="fieldDescription jc-field-desc-mt">
-                                                Already have Custom Tabs installed?
-                                                <a class="sectionTitle jc-custom-tabs-link" href="/web/#/configurationpage?name=Custom%20Tabs">Click here to configure it.</a>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
                         </div>
                     </fieldset>
 
@@ -701,64 +675,6 @@
                             <div class="checkboxContainer jc-main-feature"><label><input id="hiddenContentEnabled" data-config-key="HiddenContentEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Hidden Content</span></label></div>
                             <div class="jc-setting-description" data-desc-for="hiddenContentEnabled">
                                 <div class="fieldDescription jc-field-desc-xl">Enable or disable the Hidden Content feature server-wide. When disabled, hide buttons, filtering, sidebar navigation, and settings panel options are all removed. User data is preserved and restored when re-enabled.</div>
-                            </div>
-
-                            <div class="checkboxContainer"><label><input id="hiddenContentUseNativeTab" data-config-key="HiddenContentUseNativeTab" is="emby-checkbox" type="checkbox"/><span>Add Hidden Content as a native Home tab</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="hiddenContentUseNativeTab">
-                                <div class="fieldDescription jc-field-desc-xl">Adds Hidden Content as its own tab on the Home page, no external plugin needed.<br/><strong>Recommended on Jellyfin 12's experimental layout</strong> (the default).</div>
-                            </div>
-
-                            <div class="checkboxContainer"><label><input id="hiddenContentUsePluginPages" data-config-key="HiddenContentUsePluginPages" is="emby-checkbox" type="checkbox"/><span>Use Plugin Pages for Hidden Content</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="hiddenContentUsePluginPages">
-                                <div class="fieldDescription jc-field-desc-xl">
-                                    Replaces the default Hidden Content page with a <a class="sectionTitle" href="https://github.com/IAmParadox27/jellyfin-plugin-pages" target="_blank">Plugin Pages</a> implementation.<br/>
-                                    <strong>Note:</strong> Jellyfin must be restarted after enabling this option for the first time for changes to take effect.
-                                    <span class="jc-installed-badge" data-plugin="pluginpages"><i class="material-icons" aria-hidden="true">check_circle</i>Plugin Pages detected</span>
-                                </div>
-                            </div>
-
-                            <div class="checkboxContainer"><label><input id="hiddenContentUseCustomTabs" data-config-key="HiddenContentUseCustomTabs" is="emby-checkbox" type="checkbox"/><span>Use Custom Tabs for Hidden Content</span></label></div>
-
-                            <div class="checkboxContainer jc-customtabs-automanage" data-gated-by="hiddenContentUseCustomTabs,hiddenContentEnabled">
-                                <label><input id="hiddenContentAutoCreateCustomTab" data-config-key="HiddenContentAutoCreateCustomTab" is="emby-checkbox" type="checkbox"/><span>Add the Custom Tabs entry for me</span></label>
-                            </div>
-                            <div class="jc-setting-description jc-customtabs-automanage" data-desc-for="hiddenContentAutoCreateCustomTab" data-gated-by="hiddenContentUseCustomTabs,hiddenContentEnabled">
-                                <div class="fieldDescription jc-field-desc-md">
-                                    Jellyfin Canopy will create the matching Custom Tabs entry on save. Turning off "Use Custom Tabs for Hidden Content" removes the entry; turning it back on re-creates it. Leave unchecked to manage the Custom Tabs entry yourself.
-                                </div>
-                            </div>
-
-                            <div class="jc-setting-description" data-desc-for="hiddenContentUseCustomTabs">
-                                <div class="jc-info-banner-inline">
-                                    <div class="jc-info-banner-row">
-                                        <i class="material-icons jc-info-icon">info</i>
-                                        <div>
-                                            <h4 class="jc-custom-tabs-h4">
-                                                Embed Hidden Content in Custom Tabs:
-                                                <span class="jc-installed-badge" data-plugin="customtabs"><i class="material-icons" aria-hidden="true">check_circle</i>Custom Tabs detected</span>
-                                            </h4>
-                                            <p class="fieldDescription jc-custom-tabs-p">Display the Hidden Content page in a Custom Tabs tab instead of the sidebar link.</p>
-                                            <p class="fieldDescription jc-custom-tabs-p-mt jc-needs-customtabs">You need the <a class="sectionTitle" href="https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs" target="_blank">Custom Tabs</a> plugin.</p>
-                                            <ol class="fieldDescription jc-custom-tabs-ol">
-                                                <li class="jc-custom-tabs-li jc-needs-customtabs">Install the <strong>Custom Tabs</strong> plugin and all its prerequisites.</li>
-                                                <li class="jc-custom-tabs-li">Navigate to Dashboard &gt; Plugins &gt; Custom Tabs and add a new tab.</li>
-                                                <li class="jc-custom-tabs-li">Add "Display Text" according to your preference (e.g., "Hidden Content").</li>
-                                                <li class="jc-custom-tabs-li">Copy the code below and paste it into the 'HTML Content' field.</li>
-                                            </ol>
-                                            <div class="jc-copy-code-wrapper">
-                                                <button class="jc-copy-html-btn raised raised-mini emby-button" data-copy-text='&lt;div class="jellyfincanopy hidden-content"&gt;&lt;/div&gt;' type="button">
-                                                    <i class="material-icons jc-copy-icon">content_copy</i>
-                                                    <span class="copy-btn-text jc-copy-btn-text">Copy</span>
-                                                </button>
-                                                <pre class="jc-code-pre"><code>&lt;div class="jellyfincanopy hidden-content"&gt;&lt;/div&gt;</code></pre>
-                                            </div>
-                                            <div class="fieldDescription jc-field-desc-mt">
-                                                Already have Custom Tabs installed?
-                                                <a class="sectionTitle jc-custom-tabs-link" href="/web/#/configurationpage?name=Custom%20Tabs">Click here to configure it.</a>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
 
                             <details class="jc-details-section" data-gated-by="hiddenContentEnabled">
@@ -1063,58 +979,6 @@
                             <div class="jc-setting-description" data-desc-for="requestApprovalsEnabled">
                                 <div class="fieldDescription jc-field-desc-xl">Shows Approve / Decline buttons on pending Seerr requests in the Requests page. Only users who can approve in Seerr (Jellyfin admins, or Seerr users with the Manage Requests permission) ever see the buttons; the action is proxied to Seerr with the plugin's admin API key.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="downloadsUseNativeTab" data-config-key="DownloadsUseNativeTab" is="emby-checkbox" type="checkbox"/><span>Add Requests as a native Home tab</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="downloadsUseNativeTab">
-                                <div class="fieldDescription jc-field-desc-xl">Adds Requests as its own tab on the Home page, no external plugin needed.<br/><strong>Recommended on Jellyfin 12's experimental layout</strong> (the default).</div>
-                            </div>
-                            <div class="checkboxContainer"><label><input id="downloadsUsePluginPages" data-config-key="DownloadsUsePluginPages" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Use Plugin Pages for Requests</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="downloadsUsePluginPages">
-                                <div class="fieldDescription jc-field-desc-xl">Replaces the default Requests page with a <a class="sectionTitle" href="https://github.com/IAmParadox27/jellyfin-plugin-pages" target="_blank">Plugin Pages</a> implementation.<br/><strong>Note:</strong> Jellyfin must be restarted after enabling this option for the first time for changes to take effect.<span class="jc-installed-badge" data-plugin="pluginpages"><i class="material-icons" aria-hidden="true">check_circle</i>Plugin Pages detected</span></div>
-                            </div>
-
-                            <div class="checkboxContainer"><label><input id="downloadsUseCustomTabs" data-config-key="DownloadsUseCustomTabs" is="emby-checkbox" type="checkbox"/><span>Use Custom Tabs for Requests</span></label></div>
-
-                            <div class="checkboxContainer jc-customtabs-automanage" data-gated-by="downloadsUseCustomTabs,downloadsPageEnabled">
-                                <label><input id="downloadsAutoCreateCustomTab" data-config-key="DownloadsAutoCreateCustomTab" is="emby-checkbox" type="checkbox"/><span>Add the Custom Tabs entry for me</span></label>
-                            </div>
-                            <div class="jc-setting-description jc-customtabs-automanage" data-desc-for="downloadsAutoCreateCustomTab" data-gated-by="downloadsUseCustomTabs,downloadsPageEnabled">
-                                <div class="fieldDescription jc-field-desc-md">
-                                    Jellyfin Canopy will create the matching Custom Tabs entry on save. Turning off "Use Custom Tabs for Requests" removes the entry; turning it back on re-creates it. Leave unchecked to manage the Custom Tabs entry yourself.
-                                </div>
-                            </div>
-
-                            <div class="jc-setting-description" data-desc-for="downloadsUseCustomTabs">
-                                <div class="jc-info-banner-inline">
-                                    <div class="jc-info-banner-row">
-                                        <i class="material-icons jc-info-icon">info</i>
-                                        <div>
-                                            <h4 class="jc-custom-tabs-h4">
-                                                Embed Requests in Custom Tabs:
-                                                <span class="jc-installed-badge" data-plugin="customtabs"><i class="material-icons" aria-hidden="true">check_circle</i>Custom Tabs detected</span>
-                                            </h4>
-                                            <p class="fieldDescription jc-custom-tabs-p">Display the Requests page in a Custom Tabs tab instead of the sidebar link.</p>
-                                            <p class="fieldDescription jc-custom-tabs-p-mt jc-needs-customtabs">You need the <a class="sectionTitle" href="https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs" target="_blank">Custom Tabs</a> plugin.</p>
-                                            <ol class="fieldDescription jc-custom-tabs-ol">
-                                                <li class="jc-custom-tabs-li jc-needs-customtabs">Install the <strong>Custom Tabs</strong> plugin and all its prerequisites.</li>
-                                                <li class="jc-custom-tabs-li">Navigate to Dashboard &gt; Plugins &gt; Custom Tabs and add a new tab.</li>
-                                                <li class="jc-custom-tabs-li">Add "Display Text" according to your preference (e.g., "Requests")</li>
-                                                <li class="jc-custom-tabs-li">Copy the code below and paste it into the 'HTML Content' field.</li>
-                                            </ol>
-                                            <div class="jc-copy-code-wrapper">
-                                                <button class="jc-copy-html-btn raised raised-mini emby-button" data-copy-text='&lt;div class="jellyfincanopy requests"&gt;&lt;/div&gt;' type="button">
-                                                    <i class="material-icons jc-copy-icon">content_copy</i>
-                                                    <span class="copy-btn-text jc-copy-btn-text">Copy</span>
-                                                </button>
-                                                <pre class="jc-code-pre"><code>&lt;div class="jellyfincanopy requests"&gt;&lt;/div&gt;</code></pre>
-                                            </div>
-                                            <div class="fieldDescription jc-field-desc-mt">
-                                                Already have Custom Tabs installed?
-                                                <a class="sectionTitle jc-custom-tabs-link" href="/web/#/configurationpage?name=Custom%20Tabs">Click here to configure it.</a>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
 
                             <div class="checkboxContainer"><label><input id="downloadsPagePollingEnabled" data-config-key="DownloadsPagePollingEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable Auto-Refresh</span></label></div>
                             <div class="jc-setting-description" data-desc-for="downloadsPagePollingEnabled">
@@ -1147,63 +1011,6 @@
                             <div class="checkboxContainer jc-main-feature"><label><input id="calendarPageEnabled" data-config-key="CalendarPageEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable Calendar Page</span></label></div>
                             <div class="jc-setting-description" data-desc-for="calendarPageEnabled">
                                 <div class="fieldDescription jc-field-desc-xl">Adds a "Calendar" link to the navigation showing upcoming releases from Sonarr/Radarr.</div>
-                            </div>
-                            <div class="checkboxContainer"><label><input id="calendarUseNativeTab" data-config-key="CalendarUseNativeTab" is="emby-checkbox" type="checkbox"/><span>Add Calendar as a native Home tab</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="calendarUseNativeTab">
-                                <div class="fieldDescription jc-field-desc-xl">Adds Calendar as its own tab on the Home page, no external plugin needed.<br/><strong>Recommended on Jellyfin 12's experimental layout</strong> (the default).</div>
-                            </div>
-
-                            <div class="checkboxContainer"><label><input id="calendarUsePluginPages" data-config-key="CalendarUsePluginPages" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Use Plugin Pages</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="calendarUsePluginPages">
-                                <div class="fieldDescription jc-field-desc-xl">
-                                    Replaces the default Calendar page with a <a class="sectionTitle" href="https://github.com/IAmParadox27/jellyfin-plugin-pages" target="_blank">Plugin Pages</a> implementation.<br/>
-                                    <strong>Note:</strong> Jellyfin must be restarted after enabling this option for the first time for changes to take effect.
-                                    <span class="jc-installed-badge" data-plugin="pluginpages"><i class="material-icons" aria-hidden="true">check_circle</i>Plugin Pages detected</span>
-                                </div>
-                            </div>
-
-                            <div class="checkboxContainer"><label><input id="calendarUseCustomTabs" data-config-key="CalendarUseCustomTabs" is="emby-checkbox" type="checkbox"/><span>Use Custom Tabs</span></label></div>
-
-                            <div class="checkboxContainer jc-customtabs-automanage" data-gated-by="calendarUseCustomTabs,calendarPageEnabled">
-                                <label><input id="calendarAutoCreateCustomTab" data-config-key="CalendarAutoCreateCustomTab" is="emby-checkbox" type="checkbox"/><span>Add the Custom Tabs entry for me</span></label>
-                            </div>
-                            <div class="jc-setting-description jc-customtabs-automanage" data-desc-for="calendarAutoCreateCustomTab" data-gated-by="calendarUseCustomTabs,calendarPageEnabled">
-                                <div class="fieldDescription jc-field-desc-md">
-                                    Jellyfin Canopy will create the matching Custom Tabs entry on save. Turning off "Use Custom Tabs" removes the entry; turning it back on re-creates it. Leave unchecked to manage the Custom Tabs entry yourself.
-                                </div>
-                            </div>
-
-                            <div class="jc-setting-description" data-desc-for="calendarUseCustomTabs">
-                                <div class="jc-info-banner-inline">
-                                    <div class="jc-info-banner-row">
-                                        <i class="material-icons jc-info-icon">info</i>
-                                        <div>
-                                            <h4 class="jc-custom-tabs-h4">
-                                                Embed Calendar in Custom Tabs:
-                                                <span class="jc-installed-badge" data-plugin="customtabs"><i class="material-icons" aria-hidden="true">check_circle</i>Custom Tabs detected</span>
-                                            </h4>
-                                            <p class="fieldDescription jc-custom-tabs-p">Display the Calendar page in a Custom Tabs tab instead of the sidebar link.</p>
-                                            <p class="fieldDescription jc-custom-tabs-p-mt jc-needs-customtabs">You need the <a class="sectionTitle" href="https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs" target="_blank">Custom Tabs</a> plugin.</p>
-                                            <ol class="fieldDescription jc-custom-tabs-ol">
-                                                <li class="jc-custom-tabs-li jc-needs-customtabs">Install the <strong>Custom Tabs</strong> plugin and all its prerequisites.</li>
-                                                <li class="jc-custom-tabs-li">Navigate to Dashboard &gt; Plugins &gt; Custom Tabs and add a new tab.</li>
-                                                <li class="jc-custom-tabs-li">Add "Display Text" according to your preference (e.g., "Calendar").</li>
-                                                <li class="jc-custom-tabs-li">Copy the code below and paste it into the 'HTML Content' field.</li>
-                                            </ol>
-                                            <div class="jc-copy-code-wrapper">
-                                                <button class="jc-copy-html-btn raised raised-mini emby-button" data-copy-text='&lt;div class="jellyfincanopy calendar"&gt;&lt;/div&gt;' type="button">
-                                                    <i class="material-icons jc-copy-icon">content_copy</i>
-                                                    <span class="copy-btn-text jc-copy-btn-text">Copy</span>
-                                                </button>
-                                                <pre class="jc-code-pre"><code>&lt;div class="jellyfincanopy calendar"&gt;&lt;/div&gt;</code></pre>
-                                            </div>
-                                            <div class="fieldDescription jc-field-desc-mt">
-                                                Already have Custom Tabs installed?
-                                                <a class="sectionTitle jc-custom-tabs-link" href="/web/#/configurationpage?name=Custom%20Tabs">Click here to configure it.</a>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
 
                             <div class="inputContainer">

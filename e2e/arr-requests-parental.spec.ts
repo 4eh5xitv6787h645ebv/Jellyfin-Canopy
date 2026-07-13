@@ -66,7 +66,7 @@ async function renderedRequestTitles(page: any): Promise<string[]> {
     // Wait for the page container, then for the requests section to SETTLE:
     // either it rendered cards or an empty/error state (loadAllData resolved) —
     // never assert while it still shows the `.jc-loading` placeholder.
-    await page.waitForSelector('#jc-downloads-page:not(.hide)', { timeout: 30_000 });
+    await page.waitForSelector('#jc-downloads-container', { state: 'visible', timeout: 30_000 });
     await page.waitForFunction(() => {
         const section = document.querySelector('.jc-requests-section');
         if (!section) return false;

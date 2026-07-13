@@ -27,7 +27,10 @@ export interface BookmarksApi {
     showModal(mode?: string, existingBookmark?: any): Promise<void> | void;
     updateMarkers(): Promise<void> | void;
     formatTimestamp(seconds: number): string;
-    syncBookmarks(oldBookmarks: any[], newItemDetails: any, timeOffset?: number): Promise<any[]>;
+    // `removeOldIds` migrates (deletes the originals) rather than merely
+    // duplicating — the originals are removed only after the new copies are
+    // written AND verified on disk (see syncBookmarks in bookmarks.ts).
+    syncBookmarks(oldBookmarks: any[], newItemDetails: any, timeOffset?: number, removeOldIds?: string[]): Promise<any[]>;
     cleanupOrphaned(): Promise<{ cleaned: number; errors: number }>;
 }
 
@@ -46,5 +49,7 @@ declare module '../../types/jc' {
         initializeBookmarks?: () => void;
         /** enhanced/bookmarks: tears down the bookmarks OSD listeners/observers. */
         cleanupBookmarks?: () => void;
+        /** enhanced/bookmarks/page: the frozen bookmarks-page facade. */
+        bookmarksPage?: import('./page').BookmarksPageApi;
     }
 }

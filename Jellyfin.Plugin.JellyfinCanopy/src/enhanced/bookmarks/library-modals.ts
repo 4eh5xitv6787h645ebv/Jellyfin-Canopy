@@ -5,8 +5,9 @@
 // (Converted from js/enhanced/bookmarks-library-modals.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
+import { currentPageHandle } from '../pages/fallback-host';
 import { escapeHtml, toast } from '../../core/ui-kit';
-import { formatTimestamp, renderBookmarksLibrary } from './library-render';
+import { formatTimestamp, renderActiveBookmarks } from './library-render';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -75,6 +76,8 @@ export function showOffsetAdjustmentModal(group: any): void {
     modal.style.opacity = '0';
     setTimeout(() => modal.remove(), 200);
   };
+  // Body-level modal: the page's dispose bag closes it on drain.
+  currentPageHandle()?.track(closeDialog);
 
   modal.querySelector('.jc-bm-library-modal-close')?.addEventListener('click', closeDialog);
   modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);
@@ -110,11 +113,9 @@ export function showOffsetAdjustmentModal(group: any): void {
         toast(message, 3000);
         closeDialog();
 
-        // Refresh the library view
-        const container = document.querySelector<HTMLElement>('.sections.bookmarks');
-        if (container) {
-          setTimeout(() => renderBookmarksLibrary(container), 300);
-        }
+        // Refresh the adopted host (the awaited updates already resolved — no
+        // blind setTimeout needed).
+        renderActiveBookmarks();
       } else {
         toast(JC.t!('bookmark_update_failed'), 3000);
         btn.disabled = false;
@@ -250,6 +251,8 @@ export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
     modal.style.opacity = '0';
     setTimeout(() => modal.remove(), 200);
   };
+  // Body-level modal: the page's dispose bag closes it on drain.
+  currentPageHandle()?.track(closeDialog);
 
   modal.querySelector('.jc-bm-library-modal-close')?.addEventListener('click', closeDialog);
   modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);
@@ -318,11 +321,9 @@ export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
 
         closeDialog();
 
-        // Refresh the library view
-        const container = document.querySelector<HTMLElement>('.sections.bookmarks');
-        if (container) {
-          setTimeout(() => renderBookmarksLibrary(container), 500);
-        }
+        // Refresh the adopted host (syncBookmarks already resolved — no blind
+        // setTimeout needed).
+        renderActiveBookmarks();
       } catch (e) {
         console.error('Merge failed:', e);
         toast(JC.t!('bookmark_merge_failed'), 3000);

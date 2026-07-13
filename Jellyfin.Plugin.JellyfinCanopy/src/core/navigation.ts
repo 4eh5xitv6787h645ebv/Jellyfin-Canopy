@@ -170,6 +170,39 @@ export function offNavigate(callback: NavigateCallback): boolean {
     return navCallbacks.delete(callback);
 }
 
+// ── Pre-show view events (capture-phase viewbeforeshow) ──────────────────
+
+type ViewBeforeShowCallback = (element: Element, event: Event) => void;
+
+const viewBeforeShowCallbacks = new Set<ViewBeforeShowCallback>();
+
+/**
+ * Subscribe to capture-phase 'viewbeforeshow' with the incoming view element.
+ * Fires before the router's bubble-phase handling (and, for React-hosted
+ * views, synchronously inside their mount effect) — the only supported hook
+ * for reacting to a view element before it paints. Same error isolation as
+ * every other fan-out in this module.
+ * @returns Unsubscribe function.
+ */
+export function onViewBeforeShow(callback: ViewBeforeShowCallback): () => void {
+    viewBeforeShowCallbacks.add(callback);
+    return () => {
+        viewBeforeShowCallbacks.delete(callback);
+    };
+}
+
+function dispatchViewBeforeShow(event: Event): void {
+    const element = event.target;
+    if (!(element instanceof Element)) return;
+    for (const callback of viewBeforeShowCallbacks) {
+        try {
+            callback(element, event);
+        } catch (err) {
+            console.error(`${logPrefix} Error in onViewBeforeShow callback:`, err);
+        }
+    }
+}
+
 // ── View events (viewshow / Emby.Page.onViewShow) ────────────────────────
 
 interface ViewHandlerConfig {
@@ -381,6 +414,10 @@ function initialize(): void {
         }, 0);
     }, true);
 
+    // Pre-show hook for subscribers that must act before the view paints
+    // (page adoption). Capture phase so it precedes every bubble listener.
+    document.addEventListener('viewbeforeshow', dispatchViewBeforeShow, true);
+
     // Fallback for hosts where Emby.Page never appears: drive view
     // handlers straight from the DOM event. Silent while the hook is
     // installed — the router already forwards those into the hook.
@@ -418,6 +455,7 @@ const navigation: NavigationApi = {
     onNavigate,
     offNavigate,
     onViewPage,
+    onViewBeforeShow,
     getCurrentView,
     /** @returns Number of registered onViewPage handlers. */
     getViewHandlerCount: () => viewHandlers.length,

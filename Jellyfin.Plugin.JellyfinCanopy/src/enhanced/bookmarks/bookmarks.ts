@@ -304,13 +304,26 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
   }
 
   /**
-   * Sync bookmarks from old item ID to new item ID
-   * Creates duplicates with new item ID, keeps old ones
+   * Sync bookmarks from old item ID to new item ID.
+   *
+   * Creates duplicate copies under the new item ID. When `removeOldIds` is
+   * supplied (a migration — replace rather than merge) the originals are
+   * deleted, but ONLY after the new copies are written AND verified on disk.
+   *
+   * DATA-SAFETY ordering (a mid-flight failure must never lose bookmarks):
+   *   1. write the new copies into memory,
+   *   2. persist + verify them; on failure roll back the new copies and throw
+   *      (the originals were never touched),
+   *   3. only THEN delete the originals and persist that deletion; on failure
+   *      restore the originals in memory so state matches disk (new copies PLUS
+   *      originals — duplicates the user can retry, never data loss).
    */
-  async function syncBookmarks(oldBookmarks: any[], newItemDetails: any, timeOffset = 0): Promise<any[]> {
+  async function syncBookmarks(oldBookmarks: any[], newItemDetails: any, timeOffset = 0, removeOldIds?: string[]): Promise<any[]> {
     const synced: any[] = [];
     const now = new Date().toISOString();
+    const store = (JC.userConfig as any).bookmark.bookmarks;
 
+    // 1. Write the new copies into memory.
     for (const oldBookmark of oldBookmarks) {
       const newBookmarkId = generateBookmarkId();
       const newTimestamp = Math.max(0, oldBookmark.timestamp + timeOffset);
@@ -328,21 +341,44 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
         syncedFrom: oldBookmark.itemId // Track where it came from
       };
 
-      (JC.userConfig as any).bookmark.bookmarks[newBookmarkId] = newBookmark;
+      store[newBookmarkId] = newBookmark;
       synced.push({ id: newBookmarkId, ...newBookmark });
     }
 
+    // 2. Persist + verify the new copies BEFORE removing any originals.
     try {
       await JC.saveUserSettings!('bookmark.json', (JC.userConfig as any).bookmark);
       console.log(`${logPrefix} Synced ${synced.length} bookmarks to new item ID`);
-      emitBookmarksUpdated('sync');
-      return synced;
     } catch (e) {
       console.error(`${logPrefix} Failed to sync bookmarks:`, e);
-      // Rollback
-      synced.forEach(bm => delete (JC.userConfig as any).bookmark.bookmarks[bm.id]);
+      // Roll back the new copies we added; the originals were never touched.
+      synced.forEach(bm => delete store[bm.id]);
       throw e;
     }
+
+    // 3. New copies are durable — now (and only now) remove the originals.
+    if (removeOldIds && removeOldIds.length) {
+      const removed: Record<string, any> = {};
+      for (const id of removeOldIds) {
+        if (store[id]) {
+          removed[id] = store[id];
+          delete store[id];
+        }
+      }
+      try {
+        await JC.saveUserSettings!('bookmark.json', (JC.userConfig as any).bookmark);
+      } catch (e) {
+        console.error(`${logPrefix} Synced new copies but could not persist removal of originals:`, e);
+        // Restore the originals in memory so state matches disk (new copies +
+        // originals). At worst duplicates remain — never data loss.
+        Object.assign(store, removed);
+        emitBookmarksUpdated('sync');
+        throw e;
+      }
+    }
+
+    emitBookmarksUpdated('sync');
+    return synced;
   }
 
   /**
@@ -370,16 +406,24 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
         await getItemCached(itemId, { userId });
         // Item exists, keep bookmarks
       } catch (e) {
-        // Item doesn't exist, mark bookmarks for deletion
-        for (const [bookmarkId, bookmark] of Object.entries<any>(allBookmarks)) {
-          if (bookmark?.itemId === itemId) {
-            toDelete.push(bookmarkId);
+        // DATA-SAFETY: only an EXPLICIT 404 (item confirmed gone) may delete a
+        // bookmark. A network blip, 5xx, timeout or any other failure must NOT
+        // destroy data — keep the bookmark and surface a warning instead.
+        const status = (e as { status?: number } | null)?.status;
+        if (status === 404) {
+          for (const [bookmarkId, bookmark] of Object.entries<any>(allBookmarks)) {
+            if (bookmark?.itemId === itemId) {
+              toDelete.push(bookmarkId);
+            }
           }
+        } else {
+          errors++;
+          console.warn(`${logPrefix} Keeping bookmarks for ${itemId}; existence check failed (status=${status ?? 'n/a'}), not a 404:`, e);
         }
       }
     }
 
-    // Delete orphaned bookmarks
+    // Delete orphaned bookmarks (confirmed 404s only)
     for (const bookmarkId of toDelete) {
       try {
         await deleteBookmark(bookmarkId);
@@ -389,7 +433,7 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
       }
     }
 
-    console.log(`${logPrefix} Cleanup: ${cleaned} orphaned bookmarks removed, ${errors} errors`);
+    console.log(`${logPrefix} Cleanup: ${cleaned} orphaned bookmarks removed, ${errors} kept/failed (non-404 or delete error)`);
     return { cleaned, errors };
   }
 

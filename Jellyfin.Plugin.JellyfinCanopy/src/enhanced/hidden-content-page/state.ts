@@ -8,6 +8,7 @@
 // detection that every other hidden-content-page-* module reads.
 
 import { JC } from '../../globals';
+import { currentPageHandle } from '../pages/fallback-host';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -18,14 +19,8 @@ export interface AdminUser {
 }
 
 export interface HiddenContentPageState {
-    pageVisible: boolean;
-    previousPage: HTMLElement | null;
     searchQuery: string;
     scopedOnly: boolean;
-    locationSignature: string | null;
-    locationTimer: number | null;
-    _customTabContainer: HTMLElement | null;
-    _customTabMode?: boolean;
     // Admin cross-user view: an admin can view another user's hidden content
     // read-only via a toolbar dropdown. All of these stay inert/empty for non-admins.
     adminIsAdmin: boolean | null;
@@ -40,23 +35,13 @@ export interface HiddenContentPageState {
     adminLoadToken: number;
 }
 
-export const sidebar = document.querySelector('.mainDrawer-scrollContainer');
-export const pluginPagesExists = !!sidebar?.querySelector(
-    'a[is="emby-linkbutton"][data-itemid="Jellyfin.Plugin.JellyfinCanopy.HiddenContentPage"]'
-);
-
 // ============================================================
 // State
 // ============================================================
 
 export const state: HiddenContentPageState = {
-    pageVisible: false,
-    previousPage: null,
     searchQuery: '',
     scopedOnly: false,
-    locationSignature: null,
-    locationTimer: null,
-    _customTabContainer: null,
     // Admin cross-user view: an admin can view another user's hidden content
     // read-only via a toolbar dropdown. All of these stay inert/empty for non-admins.
     adminIsAdmin: null,          // tri-state: null = not yet resolved, then true/false (false only when authoritative)
@@ -151,4 +136,7 @@ export function showUnhideConfirmation(message: string, onConfirm: () => void, i
     document.addEventListener('keydown', escHandler);
 
     document.body.appendChild(overlay);
+    // Body-level overlay: navigating away must never strand it — the page's
+    // dispose bag closes it on drain (closeDialog is idempotent).
+    currentPageHandle()?.track(closeDialog);
 }

@@ -57,16 +57,6 @@ const CONSOLE_NOISE: RegExp[] = [
 //   - /JellyfinCanopy/admin/ : RequiresElevation endpoints a non-admin
 //                                 session legitimately hits and degrades on
 //                                 (bare 403 — docs/v12-platform.md §5)
-//   - /Plugins (bare list)     : the core Jellyfin plugin-list endpoint JC
-//                                 probes at boot (js/plugin.js) to detect the
-//                                 Custom Tabs / Plugin Pages delivery plugins.
-//                                 It is admin-gated, so a non-admin session gets
-//                                 a 403 that JC catches and degrades on (leaves
-//                                 the delivery flags as reported). Same
-//                                 authz-degrade shape as /JellyfinCanopy/admin/.
-//                                 Scoped to the bare list — /Plugins/{id}/… is
-//                                 NOT matched, so a broken per-plugin call still
-//                                 surfaces.
 // Config-page-only chrome noise (admin dashboard branding previews, the admin's
 // absent avatar, jellyfin-web's own dashboard pageerror) is NOT listed here — it
 // is scoped locally in settings-persist.spec.ts (the only spec that enters the
@@ -76,7 +66,6 @@ const ALLOWED_4XX_URL: RegExp[] = [
     /favicon/i,
     /cast_sender|gstatic\.com\/cast/i,
     /\/JellyfinCanopy\/admin\//i,
-    /\/Plugins(\?|$)/i,
 ];
 
 /** A response whose HTTP status was an error (>= 400). */

@@ -701,5 +701,6 @@
   "discovery_customize_move_down": "Omlaag verplaatsen",
   "discovery_customize_reset": "Standaardwaarden herstellen",
   "discovery_customize_cancel": "Annuleren",
-  "discovery_customize_save": "Opslaan"
+  "discovery_customize_save": "Opslaan",
+  "pages_signin_required": "Meld je aan om deze pagina te bekijken."
 }

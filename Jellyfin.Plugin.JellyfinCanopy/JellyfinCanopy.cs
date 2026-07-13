@@ -13,12 +13,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System;
 using System.Text.RegularExpressions;
-using Microsoft.Extensions.Logging;
-using MediaBrowser.Controller.Configuration;
 using System.Text.Json.Nodes;
-using MediaBrowser.Common.Net;
-using System.Reflection;
-using System.Runtime.Loader;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy
 {
@@ -33,7 +29,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
         private const string LegacyPluginName = "Jellyfin Elevate";
         private const string LegacyAssemblyName = "Jellyfin.Plugin.JellyfinElevate";
 
-        public JellyfinCanopy(IApplicationPaths applicationPaths, IServerConfigurationManager serverConfigurationManager, IXmlSerializer xmlSerializer, ILogger<JellyfinCanopy> logger, Logging.JellyfinCanopyFileLoggerProvider fileLogProvider) : base(applicationPaths, xmlSerializer)
+        public JellyfinCanopy(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer, ILogger<JellyfinCanopy> logger, Logging.JellyfinCanopyFileLoggerProvider fileLogProvider) : base(applicationPaths, xmlSerializer)
         {
             Instance = this;
             _applicationPaths = applicationPaths;
@@ -54,7 +50,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // empty UA as bot.
             Helpers.Seerr.SeerrHttpHelper.UserAgent = $"JellyfinCanopy/{Version}";
             CleanupOldScript();
-            CheckPluginPages(applicationPaths, serverConfigurationManager, 1);
+            CleanupManagedCustomTabs(applicationPaths);
             BackfillMissingDefaultShortcuts();
         }
 
@@ -464,200 +460,183 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 _logger.LogError($"Error during cleanup of old script from index.html: {ex.Message}");
             }
         }
-        private void CheckPluginPages(IApplicationPaths applicationPaths, IServerConfigurationManager serverConfigurationManager, int pluginPageConfigVersion)
+        // One-time startup cleanup for the retired Custom-Tabs delivery mode. Until
+        // the 2.x pages-framework rework, Jellyfin Canopy could push a home-page tab
+        // into the external Custom Tabs plugin for each of its pages (Bookmarks,
+        // Requests, Calendar, Hidden Content). That delivery mode is gone and the
+        // config-page.js sync that managed those entries was deleted, so this removes
+        // the entries the sync left behind — otherwise an upgraded user is stranded
+        // with tabs that open to empty/broken content. Follows the rebrand-migration
+        // pattern: static core, idempotent (only writes when a Canopy-owned entry is
+        // present, so it is effectively a one-shot), atomic temp+rename write, and any
+        // failure degrades with a log without ever blocking startup.
+        private void CleanupManagedCustomTabs(IApplicationPaths applicationPaths)
+        {
+            // The Custom Tabs plugin (IAmParadox27, GUID fbacd0b6-…) stores its config
+            // as a standard Jellyfin BasePluginConfiguration — an XML file next to the
+            // plugin config, NOT a JSON file. Canopy's entries were written through the
+            // plugin's HTTP config endpoint, so on disk they live inside this XML.
+            var customTabsConfigPath = Path.Combine(
+                applicationPaths.PluginConfigurationsPath,
+                "Jellyfin.Plugin.CustomTabs.xml");
+            var ownedFlags = new HashSet<string>(StringComparer.Ordinal);
+            if (Configuration.BookmarksCustomTabJeOwned) ownedFlags.Add("BookmarksCustomTabJeOwned");
+            if (Configuration.DownloadsCustomTabJeOwned) ownedFlags.Add("DownloadsCustomTabJeOwned");
+            if (Configuration.CalendarCustomTabJeOwned) ownedFlags.Add("CalendarCustomTabJeOwned");
+            if (Configuration.HiddenContentCustomTabJeOwned) ownedFlags.Add("HiddenContentCustomTabJeOwned");
+            var cleanupSucceeded = CleanupManagedCustomTabsCore(
+                customTabsConfigPath,
+                ownedFlags,
+                msg => _logger.LogInformation(msg),
+                msg => _logger.LogError(msg));
+            if (cleanupSucceeded && ownedFlags.Count > 0)
+            {
+                // The ownership state has served its purpose; clear it so this
+                // migration never re-fires. (Persisted via the normal save path,
+                // which the failed-seerr-migration suppressor may veto — in that
+                // case the flags simply survive to the next startup.)
+                Configuration.BookmarksCustomTabJeOwned = false;
+                Configuration.DownloadsCustomTabJeOwned = false;
+                Configuration.CalendarCustomTabJeOwned = false;
+                Configuration.HiddenContentCustomTabJeOwned = false;
+                SaveConfiguration(Configuration);
+            }
+
+            // The retired PluginPages integration wrote page entries into THAT
+            // plugin's config.json; remove the Canopy/Elevate-namespaced ones.
+            var pluginPagesConfigPath = Path.Combine(
+                applicationPaths.PluginConfigurationsPath,
+                "Jellyfin.Plugin.PluginPages",
+                "config.json");
+            CleanupRetiredPluginPagesCore(
+                pluginPagesConfigPath,
+                msg => _logger.LogInformation(msg),
+                msg => _logger.LogError(msg));
+        }
+
+        // Marker → the legacy per-page ownership flag that recorded whether CANOPY
+        // created the tab. An admin following the old manual instructions could have
+        // pasted the SAME current-name marker by hand (JeOwned=false) — those tabs are
+        // the admin's and stay (dead, but theirs to delete). Legacy "jellyfinelevate"
+        // markers are removed unconditionally: only pre-2.0 builds wrote them and the
+        // rename-era migrations already treat that identity as fully Canopy-owned.
+        private static readonly Dictionary<string, string?> CustomTabMarkerOwnershipFlag = new(StringComparer.Ordinal)
+        {
+            ["<div class=\"sections bookmarks\"></div>"] = "BookmarksCustomTabJeOwned",
+            ["<div class=\"jellyfincanopy hidden-content\"></div>"] = "HiddenContentCustomTabJeOwned",
+            ["<div class=\"jellyfinelevate hidden-content\"></div>"] = null,
+            ["<div class=\"jellyfincanopy requests\"></div>"] = "DownloadsCustomTabJeOwned",
+            ["<div class=\"jellyfinelevate requests\"></div>"] = null,
+            ["<div class=\"jellyfincanopy calendar\"></div>"] = "CalendarCustomTabJeOwned",
+            ["<div class=\"jellyfinelevate calendar\"></div>"] = null,
+        };
+
+        // Static core, unit-testable against plain temp files. Removes the Custom Tabs
+        // entries CANOPY created (per the *CustomTabJeOwned ownership flags, persisted
+        // as hidden migration state on PluginConfiguration until this succeeds) plus
+        // all legacy-Elevate markers, in place. Admin-created tabs that merely reuse a
+        // current marker are preserved. Returns true on success OR a clean no-op;
+        // false only when a present file could not be processed (the caller then
+        // KEEPS the ownership flags so the cleanup retries next startup).
+        internal static bool CleanupManagedCustomTabsCore(string customTabsConfigPath, IReadOnlySet<string> ownedFlags, Action<string> logInfo, Action<string> logError)
         {
             try
             {
-            string pluginPagesConfig = Path.Combine(applicationPaths.PluginConfigurationsPath, "Jellyfin.Plugin.PluginPages", "config.json");
-
-            JsonObject config = new JsonObject();
-            if (!File.Exists(pluginPagesConfig))
-            {
-                FileInfo info = new FileInfo(pluginPagesConfig);
-                info.Directory?.Create();
-            }
-            else
-            {
-                // AsObject() throws on a non-object root, like JObject.Parse did —
-                // the outer catch turns either into a logged error, never a rewrite.
-                // ParseOptions keeps Newtonsoft's tolerance for comments/trailing
-                // commas: this file may be hand-edited or written by other tools,
-                // and JObject.Parse accepted both.
-                config = JsonNode.Parse(
-                    File.ReadAllText(pluginPagesConfig),
-                    documentOptions: PersistedJson.ParseOptions)!.AsObject();
-            }
-
-            // Baseline serialization of what we read, so we only rewrite the file
-            // when JC actually changes the pages array (avoids per-boot phantom churn).
-            string originalJson = config.ToJsonString(PersistedJson.WriteOptions);
-
-            if (!config.ContainsKey("pages"))
-            {
-                config.Add("pages", new JsonArray());
-            }
-
-            var namespaceName = typeof(JellyfinCanopy).Namespace;
-            var pages = config["pages"]!.AsArray();
-
-            // Rebrand migration: entries registered by pre-2.0 "Jellyfin Elevate"
-            // builds point at /JellyfinElevate/* URLs that no longer resolve, and
-            // would duplicate the Canopy entries added below. Remove them once.
-            for (int i = pages.Count - 1; i >= 0; i--)
-            {
-                var pageId = (string?)pages[i]?["Id"];
-                if (pageId != null && pageId.StartsWith(LegacyAssemblyName, StringComparison.Ordinal))
+                if (!File.Exists(customTabsConfigPath))
                 {
-                    pages.RemoveAt(i);
+                    return true;
                 }
-            }
 
-            JsonObject? hssPageConfig = pages.FirstOrDefault(x =>
-                (string?)x?["Id"] == namespaceName) as JsonObject;
+                var document = System.Xml.Linq.XDocument.Load(customTabsConfigPath, System.Xml.Linq.LoadOptions.PreserveWhitespace);
 
-            if (hssPageConfig != null)
-            {
-                if (((int?)hssPageConfig["Version"] ?? 0) < pluginPageConfigVersion)
+                // <PluginConfiguration><Tabs><TabConfig><ContentHtml>…</ContentHtml>…
+                // Match by the ContentHtml element (XDocument decodes the escaped markup
+                // back to the raw marker string) and remove its owning tab element.
+                var removableTabs = document.Descendants()
+                    .Where(e => string.Equals(e.Name.LocalName, "ContentHtml", StringComparison.Ordinal)
+                        && CustomTabMarkerOwnershipFlag.TryGetValue(e.Value, out var flag)
+                        && (flag == null || ownedFlags.Contains(flag)))
+                    .Select(e => e.Parent)
+                    .Where(parent => parent != null)
+                    .Distinct()
+                    .ToList();
+
+                if (removableTabs.Count == 0)
                 {
-                    pages.Remove(hssPageConfig);
+                    return true;
                 }
-            }
 
-            Assembly? pluginPagesAssembly = AssemblyLoadContext.All.SelectMany(x => x.Assemblies).FirstOrDefault(x => x.FullName?.Contains("Jellyfin.Plugin.PluginPages") ?? false);
-
-            Version earliestVersionWithSubUrls = new Version("2.4.1.0");
-            bool supportsSubUrls = pluginPagesAssembly != null && pluginPagesAssembly.GetName().Version >= earliestVersionWithSubUrls;
-
-            string rootUrl = serverConfigurationManager.GetNetworkConfiguration().BaseUrl.TrimStart('/').Trim();
-            if (!string.IsNullOrEmpty(rootUrl))
-            {
-                rootUrl = $"/{rootUrl}";
-            }
-
-            var pluginConfig = Configuration;
-
-            bool calendarExists = pages
-                .Any(x => (string?)x?["Id"] == $"{namespaceName}.CalendarPage");
-
-            bool downloadsExists = pages
-                .Any(x => (string?)x?["Id"] == $"{namespaceName}.DownloadsPage");
-
-            bool bookmarksExists = pages
-                .Any(x => (string?)x?["Id"] == $"{namespaceName}.BookmarksPage");
-
-            bool hiddenContentExists = pages
-                .Any(x => (string?)x?["Id"] == $"{namespaceName}.HiddenContentPage");
-
-            // Only add calendar page if it's enabled and using plugin pages
-            if (!calendarExists && pluginConfig.CalendarPageEnabled && pluginConfig.CalendarUsePluginPages)
-            {
-                pages.Add(new JsonObject
+                foreach (var tab in removableTabs)
                 {
-                    { "Id", $"{namespaceName}.CalendarPage" },
-                    { "Url", $"{(supportsSubUrls ? "" : rootUrl)}/JellyfinCanopy/calendarPage" },
-                    { "DisplayText", "Calendar" },
-                    { "Icon", "calendar_today" },
-                    { "Version", pluginPageConfigVersion }
-                });
-            }
-            // Remove calendar page if it exists but is now disabled or not using plugin pages
-            else if (calendarExists && (!pluginConfig.CalendarPageEnabled || !pluginConfig.CalendarUsePluginPages))
-            {
-                var calendarPage = pages
-                    .FirstOrDefault(x => (string?)x?["Id"] == $"{namespaceName}.CalendarPage");
-                if (calendarPage != null)
-                {
-                    pages.Remove(calendarPage);
+                    var name = tab!.Elements().FirstOrDefault(e => string.Equals(e.Name.LocalName, "Name", StringComparison.Ordinal))?.Value ?? "(unnamed)";
+                    logInfo($"Removing the Canopy-created Custom Tabs entry '{name}' (retired delivery mode).");
+                    tab.Remove();
                 }
-            }
 
-            // Only add downloads page if it's enabled and using plugin pages
-            if (!downloadsExists && pluginConfig.DownloadsPageEnabled && pluginConfig.DownloadsUsePluginPages)
-            {
-                pages.Add(new JsonObject
-                {
-                    { "Id", $"{namespaceName}.DownloadsPage" },
-                    { "Url", $"{(supportsSubUrls ? "" : rootUrl)}/JellyfinCanopy/downloadsPage" },
-                    { "DisplayText", "Requests" },
-                    { "Icon", "download" },
-                    { "Version", pluginPageConfigVersion }
-                });
-            }
-            // Remove downloads page if it exists but is now disabled or not using plugin pages
-            else if (downloadsExists && (!pluginConfig.DownloadsPageEnabled || !pluginConfig.DownloadsUsePluginPages))
-            {
-                var downloadsPage = pages
-                    .FirstOrDefault(x => (string?)x?["Id"] == $"{namespaceName}.DownloadsPage");
-                if (downloadsPage != null)
-                {
-                    pages.Remove(downloadsPage);
-                }
-            }
-
-            // Only add bookmarks page if it's enabled and using plugin pages
-            if (!bookmarksExists && pluginConfig.BookmarksEnabled && pluginConfig.BookmarksUsePluginPages)
-            {
-                pages.Add(new JsonObject
-                {
-                    { "Id", $"{namespaceName}.BookmarksPage" },
-                    { "Url", $"{(supportsSubUrls ? "" : rootUrl)}/JellyfinCanopy/bookmarksPage" },
-                    { "DisplayText", "Bookmarks" },
-                    { "Icon", "bookmark" },
-                    { "Version", pluginPageConfigVersion }
-                });
-            }
-            // Remove bookmarks page if it exists but is now disabled or not using plugin pages
-            else if (bookmarksExists && (!pluginConfig.BookmarksEnabled || !pluginConfig.BookmarksUsePluginPages))
-            {
-                var bookmarksPage = pages
-                    .FirstOrDefault(x => (string?)x?["Id"] == $"{namespaceName}.BookmarksPage");
-                if (bookmarksPage != null)
-                {
-                    pages.Remove(bookmarksPage);
-                }
-            }
-
-            // Only add hidden content page if it's enabled and using plugin pages
-            if (!hiddenContentExists && pluginConfig.HiddenContentEnabled && pluginConfig.HiddenContentUsePluginPages)
-            {
-                pages.Add(new JsonObject
-                {
-                    { "Id", $"{namespaceName}.HiddenContentPage" },
-                    { "Url", $"{(supportsSubUrls ? "" : rootUrl)}/JellyfinCanopy/hiddenContentPage" },
-                    { "DisplayText", "Hidden Content" },
-                    { "Icon", "visibility_off" },
-                    { "Version", pluginPageConfigVersion }
-                });
-            }
-            // Remove hidden content page if it exists but is now disabled or not using plugin pages
-            else if (hiddenContentExists && (!pluginConfig.HiddenContentEnabled || !pluginConfig.HiddenContentUsePluginPages))
-            {
-                var hiddenContentPage = pages
-                    .FirstOrDefault(x => (string?)x?["Id"] == $"{namespaceName}.HiddenContentPage");
-                if (hiddenContentPage != null)
-                {
-                    pages.Remove(hiddenContentPage);
-                }
-            }
-
-            // PluginPages' config.json is admin-visible on disk: keep the same
-            // human-readable shape JObject.ToString(Formatting.Indented) produced
-            // (2-space indent, raw non-ASCII) via the shared persistence options.
-            // Atomic + write-only-when-changed: we cannot share a lock with the PluginPages
-            // plugin, so this closes torn-write corruption and minimizes the race window,
-            // not the cross-process race itself. The dirty-check also stops the phantom
-            // per-boot rewrite (and comment-strip) when the pages array is unchanged.
-            string newJson = config.ToJsonString(PersistedJson.WriteOptions);
-            if (!string.Equals(newJson, originalJson, StringComparison.Ordinal))
-            {
-                AtomicFile.WriteAllText(pluginPagesConfig, newJson);
-            }
+                using var buffer = new MemoryStream();
+                document.Save(buffer);
+                AtomicFile.WriteAllBytes(customTabsConfigPath, buffer.ToArray());
+                logInfo($"Removed {removableTabs.Count} Jellyfin Canopy-owned Custom Tabs entr{(removableTabs.Count == 1 ? "y" : "ies")} left by the retired Custom-Tabs delivery mode.");
+                return true;
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error while updating Plugin Pages configuration: {ex.Message}");
+                logError($"Failed to clean up legacy Jellyfin Canopy Custom Tabs entries; leaving the Custom Tabs configuration untouched (will retry next startup): {ex.Message}");
+                return false;
             }
         }
+
+        // Removes the page entries the retired PluginPages integration wrote into that
+        // external plugin's config.json. Every entry is namespace-attributable (its Id
+        // is Canopy's — or pre-2.0 Elevate's — assembly namespace), so removal needs no
+        // ownership state. Same idempotence/failure contract as the Custom Tabs core.
+        internal static bool CleanupRetiredPluginPagesCore(string pluginPagesConfigPath, Action<string> logInfo, Action<string> logError)
+        {
+            try
+            {
+                if (!File.Exists(pluginPagesConfigPath))
+                {
+                    return true;
+                }
+
+                var root = JsonNode.Parse(File.ReadAllText(pluginPagesConfigPath));
+                if (root?["Pages"] is not JsonArray pages)
+                {
+                    return true;
+                }
+
+                var namespaceName = typeof(JellyfinCanopy).Namespace!;
+                var removed = 0;
+                for (var i = pages.Count - 1; i >= 0; i--)
+                {
+                    var id = (string?)pages[i]?["Id"];
+                    if (id != null
+                        && (string.Equals(id, namespaceName, StringComparison.Ordinal)
+                            || id.StartsWith(namespaceName + ".", StringComparison.Ordinal)
+                            || string.Equals(id, LegacyAssemblyName, StringComparison.Ordinal)
+                            || id.StartsWith(LegacyAssemblyName + ".", StringComparison.Ordinal)))
+                    {
+                        pages.RemoveAt(i);
+                        removed++;
+                    }
+                }
+
+                if (removed == 0)
+                {
+                    return true;
+                }
+
+                AtomicFile.WriteAllText(pluginPagesConfigPath, root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+                logInfo($"Removed {removed} retired Jellyfin Canopy page entr{(removed == 1 ? "y" : "ies")} from the Plugin Pages configuration.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                logError($"Failed to clean up retired Jellyfin Canopy Plugin Pages entries; leaving that configuration untouched (will retry next startup): {ex.Message}");
+                return false;
+            }
+        }
+
         private void UpdateIndexHtml(bool inject)
         {
             try
@@ -716,29 +695,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                     // MenuIcon was previously ignored - jellyfin-web hardcoded <Folder /> regardless of
                     // this value. Jellyfin 12 reads it https://github.com/jellyfin/jellyfin-web/commit/ca55f7998bb774b3c05af3ae410b1b24f72805a5
                     MenuIcon = "tune"
-                }
-            };
-        }
-
-        public IEnumerable<PluginPageInfo> GetViews()
-        {
-            return new[]
-            {
-                new PluginPageInfo {
-                    Name = "calendarPage",
-                    EmbeddedResourcePath = $"{GetType().Namespace}.PluginPages.CalendarPage.html"
-                },
-                new PluginPageInfo {
-                    Name = "downloadsPage",
-                    EmbeddedResourcePath = $"{GetType().Namespace}.PluginPages.DownloadsPage.html"
-                },
-                new PluginPageInfo {
-                    Name = "bookmarksPage",
-                    EmbeddedResourcePath = $"{GetType().Namespace}.PluginPages.BookmarksPage.html"
-                },
-                new PluginPageInfo {
-                    Name = "hiddenContentPage",
-                    EmbeddedResourcePath = $"{GetType().Namespace}.PluginPages.HiddenContentPage.html"
                 }
             };
         }

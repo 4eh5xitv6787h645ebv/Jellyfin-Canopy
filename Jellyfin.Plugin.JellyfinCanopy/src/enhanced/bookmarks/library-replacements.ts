@@ -5,9 +5,10 @@
 // (Converted from js/enhanced/bookmarks-library-replacements.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
+import { currentPageHandle } from '../pages/fallback-host';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { getItemCached } from '../helpers';
-import { renderBookmarksLibrary } from './library-render';
+import { renderActiveBookmarks } from './library-render';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -102,6 +103,10 @@ export async function findAndOfferReplacement(group: any, triggerBtn: HTMLButton
  * Show modal to select replacement item and migrate bookmarks
  */
 function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): void {
+  // These modals are reached from awaited flows (library search, orphan
+  // scan): the page can drain mid-await. A modal with no live adoption to
+  // own its teardown must not appear over the destination view.
+  if (!currentPageHandle()) return;
   const apiClient: any = window.ApiClient || (window as any).ConnectionManager?.currentApiClient();
   if (!apiClient) return;
 
@@ -169,6 +174,8 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
     modal.style.opacity = '0';
     setTimeout(() => modal.remove(), 200);
   };
+  // Body-level modal: the page's dispose bag closes it on drain.
+  currentPageHandle()?.track(closeDialog);
 
   modal.querySelector('.jc-bm-library-modal-close')?.addEventListener('click', closeDialog);
   modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);
@@ -219,23 +226,20 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
         name: fullItem.Name
       };
 
-      // Delete old bookmarks BEFORE syncing to prevent race condition with re-render
-      for (const bm of oldGroup.bookmarks) {
-        delete (JC.userConfig as any).bookmark.bookmarks[bm.id];
-      }
-
-      // Sync bookmarks to new item (no offset)
-      const synced = await JC.bookmarks!.syncBookmarks(oldGroup.bookmarks, newDetails, 0);
+      // DATA-SAFETY: write + verify the new copies FIRST, then delete the
+      // originals. syncBookmarks removes the originals (by id) only after the
+      // new copies are durably persisted, so a mid-flight failure keeps the
+      // originals intact (the old pre-delete lost data if syncing failed).
+      const oldIds = oldGroup.bookmarks.map((bm: any) => bm.id);
+      const synced = await JC.bookmarks!.syncBookmarks(oldGroup.bookmarks, newDetails, 0, oldIds);
 
       toast(JC.t!('bookmark_migrated').replace('{count}', String(synced.length)).replace('{name}', JC.escapeHtml(fullItem.Name)), 4000);
 
       closeDialog();
 
-      // Refresh the library view
-      const container = document.querySelector<HTMLElement>('.sections.bookmarks');
-      if (container) {
-        setTimeout(() => renderBookmarksLibrary(container), 500);
-      }
+      // Refresh the adopted host (syncBookmarks already resolved — no blind
+      // setTimeout needed).
+      renderActiveBookmarks();
     } catch (e) {
       console.error('Migration failed:', e);
       toast(JC.t!('bookmark_migration_failed'), 3000);
@@ -278,9 +282,16 @@ export async function findAllOrphanedAndOfferMigration(bookmarks: Record<string,
       await getItemCached(itemId, { userId });
       // Item exists, not orphaned
     } catch (e) {
-      // Item doesn't exist, it's orphaned
-      if (group.details.tmdbId || group.details.tvdbId) {
-        orphanedGroups.push(group);
+      // DATA-SAFETY: only an explicit 404 means the item is truly gone. A
+      // transient failure must not be treated as orphaned (which would offer a
+      // destructive migration); keep it and warn.
+      const status = (e as { status?: number } | null)?.status;
+      if (status === 404) {
+        if (group.details.tmdbId || group.details.tvdbId) {
+          orphanedGroups.push(group);
+        }
+      } else {
+        console.warn(`🪼 Jellyfin Canopy: Bookmarks Library: Item ${itemId} check failed (status=${status ?? 'n/a'}), not a 404 — not treating as orphaned:`, e);
       }
     }
   }
@@ -316,6 +327,8 @@ export async function findAllOrphanedAndOfferMigration(bookmarks: Record<string,
  * Show summary of all orphaned items with replacements
  */
 function showOrphanedSummaryModal(replacementResults: any[]): void {
+  // Same delayed-flow guard as showReplacementSelectionModal.
+  if (!currentPageHandle()) return;
   const modal = document.createElement('div');
   modal.className = 'jc-bm-library-modal-overlay';
   modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s;';
@@ -365,6 +378,8 @@ function showOrphanedSummaryModal(replacementResults: any[]): void {
     modal.style.opacity = '0';
     setTimeout(() => modal.remove(), 200);
   };
+  // Body-level modal: the page's dispose bag closes it on drain.
+  currentPageHandle()?.track(closeDialog);
 
   modal.querySelector('.jc-bm-library-modal-close')?.addEventListener('click', closeDialog);
   modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);

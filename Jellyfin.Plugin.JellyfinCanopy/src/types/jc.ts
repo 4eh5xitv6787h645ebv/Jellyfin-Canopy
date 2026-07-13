@@ -98,6 +98,13 @@ export interface NavigationApi {
     onNavigate(callback: NavigateCallback): () => void;
     offNavigate(callback: NavigateCallback): boolean;
     onViewPage(callback: ViewPageCallback, options?: ViewPageOptions): () => void;
+    /**
+     * Capture-phase 'viewbeforeshow' subscription: fires with the incoming
+     * view element BEFORE the router's own bubble-phase handling. This is the
+     * pages framework's adoption hook — the one place the plugin may react to
+     * a view element before it paints.
+     */
+    onViewBeforeShow(callback: (element: Element, event: Event) => void): () => void;
     getCurrentView(): string | null;
     getViewHandlerCount(): number;
     getNavCallbackCount(): number;
@@ -572,12 +579,6 @@ export interface JEGlobal extends JellyfinCanopyPublicApi {
      * back to its own fetch when absent. Resolves null on fetch failure.
      */
     _tagCachePrefetch?: Promise<unknown> | null;
-    /**
-     * Delivery-plugin (Custom Tabs / Plugin Pages) install state cached by
-     * js/plugin.js at boot; consumed by src/core/delivery-flags.ts to re-zero the
-     * stale `*UseCustomTabs`/`*UsePluginPages` flags after every live-config merge.
-     */
-    _deliveryPluginsInstalled?: { customTabs: boolean; pluginPages: boolean };
     CONFIG?: { TOAST_DURATION?: number; [key: string]: unknown };
     themer?: {
         getThemeVariables?: () => { secondaryBg?: string; primaryAccent?: string; blur?: string };

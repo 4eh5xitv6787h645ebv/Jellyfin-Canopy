@@ -701,5 +701,6 @@
   "discovery_customize_move_down": "下移",
   "discovery_customize_reset": "恢复默认",
   "discovery_customize_cancel": "取消",
-  "discovery_customize_save": "储存"
+  "discovery_customize_save": "储存",
+  "pages_signin_required": "登录以查看此页面。"
 }

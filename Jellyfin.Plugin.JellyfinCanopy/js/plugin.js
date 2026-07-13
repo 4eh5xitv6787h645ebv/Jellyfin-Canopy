@@ -759,13 +759,6 @@
             // Fire-and-forget alongside the fetch wave; result available as JC.currentUser
             ApiClient.getCurrentUser().then(u => { JC.currentUser = u; }).catch(() => {});
 
-            const pluginsListPromise = ApiClient.ajax({
-                type: 'GET', url: ApiClient.getUrl('/Plugins'), dataType: 'json'
-            }).catch(e => {
-                console.warn('🪼 Jellyfin Canopy: Could not verify installed plugins:', e);
-                return null;
-            });
-
             const fetchPromises = [
                 ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${userId}/settings.json?_=${Date.now()}`), dataType: 'json' })
                          .then(data => ({ name: 'settings', status: 'fulfilled', value: data }))
@@ -818,34 +811,6 @@
                     url: ApiClient.getUrl(`/JellyfinCanopy/tag-cache/${userId}`),
                     dataType: 'json'
                 }).catch(() => null);
-            }
-
-            // Clear stale UseCustomTabs / UsePluginPages config flags when those
-            // plugins are not installed.  Settings persist after uninstall, which
-            // causes sidebar injection to be skipped even though the delivery
-            // plugin is no longer present.
-            const installedPlugins = await pluginsListPromise;
-            if (Array.isArray(installedPlugins)) {
-                const hasCustomTabs = installedPlugins.some(p => p.Name === 'Custom Tabs');
-                const hasPluginPages = installedPlugins.some(p => p.Name === 'Plugin Pages');
-                // Cache for the bundle side (src/core/delivery-flags.ts) so the live-config
-                // hot-reload can re-apply this same sanitization; the inline zeroing below
-                // stays because it runs before the bundle is guaranteed loaded.
-                JC._deliveryPluginsInstalled = { customTabs: hasCustomTabs, pluginPages: hasPluginPages };
-                if (!hasCustomTabs) {
-                    JC.pluginConfig.BookmarksUseCustomTabs = false;
-                    JC.pluginConfig.CalendarUseCustomTabs = false;
-                    JC.pluginConfig.HiddenContentUseCustomTabs = false;
-                    JC.pluginConfig.DownloadsUseCustomTabs = false;
-                }
-                if (!hasPluginPages) {
-                    JC.pluginConfig.BookmarksUsePluginPages = false;
-                    JC.pluginConfig.HiddenContentUsePluginPages = false;
-                    JC.pluginConfig.DownloadsUsePluginPages = false;
-                    JC.pluginConfig.CalendarUsePluginPages = false;
-                }
-            } else if (installedPlugins !== null) {
-                console.warn('🪼 Jellyfin Canopy: Could not verify installed plugins: unexpected /Plugins response');
             }
 
             // Check if server has triggered a translation cache clear
@@ -1023,14 +988,11 @@
             if (JC.pluginConfig?.ActiveStreamsEnabled && typeof JC.activeStreams?.initialize === 'function') {
                 JC.activeStreams.initialize();
             }
-            if (JC.pluginConfig?.DownloadsPageEnabled && typeof JC.initializeDownloadsPage === 'function') {
-                JC.initializeDownloadsPage();
-            }
-            if (JC.pluginConfig?.CalendarPageEnabled && typeof JC.initializeCalendarPage === 'function') {
-                JC.initializeCalendarPage();
-            }
-            if (JC.pluginConfig?.HiddenContentEnabled && typeof JC.initializeHiddenContentPage === 'function') {
-                JC.initializeHiddenContentPage();
+            // Pages framework: one init wires the fallback-host hooks, the
+            // entry points, and the cold-start (deep-link) adoption for ALL
+            // pages — per-page availability is gated live inside the registry.
+            if (typeof JC.initializePagesFramework === 'function') {
+                JC.initializePagesFramework();
             }
 
             console.log('🪼 Jellyfin Canopy: All components initialized successfully.');

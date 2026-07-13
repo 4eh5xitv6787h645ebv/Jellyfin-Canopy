@@ -24,10 +24,20 @@ import type { CalendarEvent } from './data';
 
 const logPrefix = '🪼 Jellyfin Canopy: Calendar Page:';
 
-/**
- * Load all data
- */
-export async function loadAllData(): Promise<void> {
+// Coalescing gate: the fetch pipeline writes into shared module state, so
+// two overlapping loads could interleave and leave a stale writer last. One
+// load runs at a time; requests that arrive mid-flight collapse into a
+// single follow-up pass that reads the LATEST period/filter state.
+let loadInFlight: Promise<void> | null = null;
+let loadQueued = false;
+// The CURRENT adoption's abort signal: fetches that complete after the page
+// drained must not commit state or toast. Only the latest adoption matters.
+let activeSignal: AbortSignal | null = null;
+
+async function loadAllDataOnce(): Promise<void> {
+    // Capture THIS run's signal: a new adoption replaces activeSignal, and
+    // the old run must keep honoring its own (aborted) one.
+    const runSignal = activeSignal;
     state.isLoading = true;
     renderPage();
 
@@ -35,18 +45,44 @@ export async function loadAllData(): Promise<void> {
     state.rangeStart = start;
     state.rangeEnd = end;
 
-    // First fetch calendar events
-    await fetchCalendarEvents(start, end);
+    // First fetch calendar events (the signal aborts the request itself on
+    // drain; the helpers publish nothing once aborted)
+    await fetchCalendarEvents(start, end, runSignal ?? undefined);
+    if (runSignal?.aborted) return;
 
     // Then fetch user data for those specific events
-    await fetchUserData();
+    await fetchUserData(runSignal ?? undefined);
+    if (runSignal?.aborted) return;
 
     if (state.activeFilters.has('Requests') || state.settings.forceOnlyRequested) {
-        await ensureRequestData();
+        await ensureRequestData(runSignal ?? undefined);
+        if (runSignal?.aborted) return;
     }
 
     state.isLoading = false;
     renderPage();
+}
+
+/**
+ * Load all data (serialized: overlapping calls coalesce into one follow-up).
+ */
+export function loadAllData(signal?: AbortSignal): Promise<void> {
+    if (signal) activeSignal = signal;
+    if (loadInFlight) {
+        loadQueued = true;
+        return loadInFlight;
+    }
+    loadInFlight = (async () => {
+        try {
+            do {
+                loadQueued = false;
+                await loadAllDataOnce();
+            } while (loadQueued);
+        } finally {
+            loadInFlight = null;
+        }
+    })();
+    return loadInFlight;
 }
 
 // Switch between month/week/agenda views

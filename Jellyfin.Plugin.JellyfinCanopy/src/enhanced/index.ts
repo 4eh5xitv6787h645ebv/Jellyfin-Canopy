@@ -33,16 +33,14 @@ import './hidden-content/filter';
 import './hidden-content/buttons';
 import './hidden-content/init';
 // hidden-content-page modules — order matters: -state owns the shared page
-// state the later files import; -init exposes the frozen JC.hiddenContentPage /
-// JC.initializeHiddenContentPage last.
+// state the later files import; -page registers the pages-framework descriptor
+// and exposes the frozen JC.hiddenContentPage facade last.
 import './hidden-content-page/state';
 import './hidden-content-page/styles';
 import './hidden-content-page/admin';
 import './hidden-content-page/cards';
 import './hidden-content-page/render';
-import './hidden-content-page/nav';
-import './hidden-content-page/init';
-import './hidden-content-page/custom-tab';
+import './hidden-content-page/page';
 import './subtitles';
 import './themer';
 // spoiler-guard — loads after tag-pipeline (uses invalidateServerCache) and
@@ -61,14 +59,14 @@ import './settings-panel/hidden-content-tab';
 import './settings-panel/language';
 import './settings-panel/panel';
 import './bookmarks/bookmarks';
-// bookmarks-library modules — order matters: styles/page/render export the
-// bookmarksLibrary pieces the later files import; -init boots last.
+// bookmarks-library modules — styles/render export the pieces the later files
+// import; page.ts (loaded last) registers the pages-framework descriptor that
+// owns the page lifecycle (replacing the deleted library-page + library-init).
 import './bookmarks/library-styles';
-import './bookmarks/library-page';
 import './bookmarks/library-render';
 import './bookmarks/library-items';
 import './bookmarks/library-modals';
 import './bookmarks/library-replacements';
-import './bookmarks/library-init';
+import './bookmarks/page';
 import './osd-rating';
 import './pausescreen';

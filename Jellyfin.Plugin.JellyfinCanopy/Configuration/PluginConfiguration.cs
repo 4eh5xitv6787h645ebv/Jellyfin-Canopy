@@ -230,13 +230,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             PreventWatchlistReAddition = true;
             WatchlistMemoryRetentionDays = 365;
 
+            // Pages framework: admin order of the framework pages (CSV of page ids).
+            // Unknown ids are ignored and missing ids appended by the client registry,
+            // so a stale value always degrades to a complete, valid ordering.
+            PagesOrder = "calendar,downloads,bookmarks,hidden-content";
+
             // Bookmarks Settings
             BookmarksEnabled = true;
-            BookmarksUsePluginPages = false;
-            BookmarksUseCustomTabs = false;
-            BookmarksUseNativeTab = false;
-            BookmarksAutoCreateCustomTab = false;
-            BookmarksCustomTabJeOwned = false;
 
             // Icon Settings
             UseIcons = true;
@@ -254,11 +254,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
             // Requests Page Settings (Sonarr/Radarr Queue Monitoring)
             DownloadsPageEnabled = false;
-            DownloadsUsePluginPages = false;
-            DownloadsUseCustomTabs = false;
-            DownloadsUseNativeTab = false;
-            DownloadsAutoCreateCustomTab = false;
-            DownloadsCustomTabJeOwned = false;
             DownloadsPagePollingEnabled = true;
             DownloadsPollIntervalSeconds = 30;
             DownloadsPageShowIssues = false;
@@ -268,11 +263,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
             // Calendar Page Settings (Sonarr/Radarr Releases)
             CalendarPageEnabled = false;
-            CalendarUsePluginPages = false;
-            CalendarUseCustomTabs = false;
-            CalendarUseNativeTab = false;
-            CalendarAutoCreateCustomTab = false;
-            CalendarCustomTabJeOwned = false;
             CalendarFirstDayOfWeek = "Monday";
             CalendarTimeFormat = "5pm/5:30pm";
             CalendarHighlightFavorites = false;
@@ -283,11 +273,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
             // Hidden Content Settings
             HiddenContentEnabled = false;
-            HiddenContentUsePluginPages = false;
-            HiddenContentUseCustomTabs = false;
-            HiddenContentUseNativeTab = false;
-            HiddenContentAutoCreateCustomTab = false;
-            HiddenContentCustomTabJeOwned = false;
             // Admin cross-user view + management; on by default, admins can disable below.
             HiddenContentAdmin = true;
 
@@ -644,34 +629,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool SeerrAutoImportUsers { get; set; }
         public string SeerrImportBlockedUsers { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Admin-configured order of the pages-framework pages, a CSV of page ids
+        /// (default "calendar,downloads,bookmarks,hidden-content"). The client
+        /// registry (src/enhanced/pages/registry.ts) reads it, ignoring unknown ids
+        /// and appending any missing ones, so a stale value always degrades to a
+        /// complete, valid ordering. Public so entry points can read it pre-render.
+        /// </summary>
+        public string PagesOrder { get; set; } = "calendar,downloads,bookmarks,hidden-content";
+
+        // ── Hidden migration state (no descriptor, no admin UI) ──────────────
+        // Whether CANOPY created the (retired) Custom-Tabs delivery entry for
+        // each page. Serialized so the one-time startup cleanup survives config
+        // saves until it actually succeeds against the external plugin's file;
+        // cleared (and persisted) only after a successful cleanup.
+        public bool BookmarksCustomTabJeOwned { get; set; }
+
+        public bool DownloadsCustomTabJeOwned { get; set; }
+
+        public bool CalendarCustomTabJeOwned { get; set; }
+
+        public bool HiddenContentCustomTabJeOwned { get; set; }
+
         // Bookmarks Settings
         public bool BookmarksEnabled { get; set; }
-        public bool BookmarksUsePluginPages { get; set; }
-        public bool BookmarksUseCustomTabs { get; set; }
-        /// <summary>
-        /// Shows Bookmarks as a self-contained tab on the Home page, created and
-        /// managed entirely by Jellyfin Canopy's own injected script (see
-        /// js/enhanced/native-tabs.js) -- no external Custom Tabs plugin required.
-        /// Recommended on Jellyfin 12's experimental layout (the default there),
-        /// where the legacy Custom-Tabs/Plugin-Pages integration points are hidden.
-        /// </summary>
-        public bool BookmarksUseNativeTab { get; set; }
-        /// <summary>
-        /// When true (and the Custom Tabs plugin is detected with a recognized
-        /// config schema), Jellyfin Canopy will manage the corresponding
-        /// Custom Tabs entry: creating it when <see cref="BookmarksUseCustomTabs"/>
-        /// is enabled and removing it when disabled. The toggle in the UI is
-        /// only shown when both conditions hold; it is silently ignored otherwise.
-        /// </summary>
-        public bool BookmarksAutoCreateCustomTab { get; set; }
-
-        /// <summary>
-        /// True if Jellyfin Canopy created the corresponding Custom Tabs entry
-        /// (set when sync ADDs an entry; cleared when sync REMOVES one). Sync uses
-        /// this flag to ensure it never deletes a Custom Tabs entry the admin
-        /// created manually. Hidden field — no UI; managed entirely by saveConfig.
-        /// </summary>
-        public bool BookmarksCustomTabJeOwned { get; set; }
 
         // Icon Settings
         public bool UseIcons { get; set; }
@@ -689,18 +670,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
         // Requests Page Settings (Sonarr/Radarr Queue Monitoring)
         public bool DownloadsPageEnabled { get; set; }
-        public bool DownloadsUsePluginPages { get; set; }
-        public bool DownloadsUseCustomTabs { get; set; }
-        /// <summary>
-        /// Shows Requests as a self-contained tab on the Home page, created and
-        /// managed entirely by Jellyfin Canopy's own injected script (see
-        /// js/enhanced/native-tabs.js) -- no external Custom Tabs plugin required.
-        /// Recommended on Jellyfin 12's experimental layout (the default there),
-        /// where the legacy Custom-Tabs/Plugin-Pages integration points are hidden.
-        /// </summary>
-        public bool DownloadsUseNativeTab { get; set; }
-        public bool DownloadsAutoCreateCustomTab { get; set; }
-        public bool DownloadsCustomTabJeOwned { get; set; }
         public bool DownloadsPagePollingEnabled { get; set; }
         public int DownloadsPollIntervalSeconds { get; set; }
         public bool DownloadsPageShowIssues { get; set; }
@@ -720,18 +689,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
         // Calendar Page Settings (Sonarr/Radarr Releases)
         public bool CalendarPageEnabled { get; set; }
-        public bool CalendarUseCustomTabs { get; set; }
-        public bool CalendarUsePluginPages { get; set; }
-        /// <summary>
-        /// Shows Calendar as a self-contained tab on the Home page, created and
-        /// managed entirely by Jellyfin Canopy's own injected script (see
-        /// js/enhanced/native-tabs.js) -- no external Custom Tabs plugin required.
-        /// Recommended on Jellyfin 12's experimental layout (the default there),
-        /// where the legacy Custom-Tabs/Plugin-Pages integration points are hidden.
-        /// </summary>
-        public bool CalendarUseNativeTab { get; set; }
-        public bool CalendarAutoCreateCustomTab { get; set; }
-        public bool CalendarCustomTabJeOwned { get; set; }
         public string CalendarFirstDayOfWeek { get; set; }
         public string CalendarTimeFormat { get; set; }
         public bool CalendarHighlightFavorites { get; set; }
@@ -742,18 +699,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
         // Hidden Content Settings
         public bool HiddenContentEnabled { get; set; }
-        public bool HiddenContentUsePluginPages { get; set; }
-        public bool HiddenContentUseCustomTabs { get; set; }
-        /// <summary>
-        /// Shows Hidden Content as a self-contained tab on the Home page, created
-        /// and managed entirely by Jellyfin Canopy's own injected script (see
-        /// js/enhanced/native-tabs.js) -- no external Custom Tabs plugin required.
-        /// Recommended on Jellyfin 12's experimental layout (the default there),
-        /// where the legacy Custom-Tabs/Plugin-Pages integration points are hidden.
-        /// </summary>
-        public bool HiddenContentUseNativeTab { get; set; }
-        public bool HiddenContentAutoCreateCustomTab { get; set; }
-        public bool HiddenContentCustomTabJeOwned { get; set; }
 
         // Admin cross-user hidden-content view + management
         public bool HiddenContentAdmin { get; set; }

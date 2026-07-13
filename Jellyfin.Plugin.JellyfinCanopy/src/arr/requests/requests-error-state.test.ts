@@ -47,7 +47,10 @@ describe('requests page error state', () => {
 
         data.state.isLoading = false;
         const container = document.createElement('div');
-        render.renderPage(container);
+        document.body.appendChild(container);
+        render.setActiveContainer(container);
+        render.renderPage();
+        render.setActiveContainer(null);
 
         expect(container.innerHTML).toContain('requests_load_error');
         expect(container.innerHTML).not.toContain('requests_no_requests_found');
@@ -63,7 +66,10 @@ describe('requests page error state', () => {
 
         data.state.isLoading = false;
         const container = document.createElement('div');
-        render.renderPage(container);
+        document.body.appendChild(container);
+        render.setActiveContainer(container);
+        render.renderPage();
+        render.setActiveContainer(null);
 
         expect(container.innerHTML).toContain('requests_no_requests_found');
         expect(container.innerHTML).not.toContain('requests_load_error');

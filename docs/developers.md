@@ -84,7 +84,7 @@ The v12-only target lets the plugin delete a stack of 10.11 shims and use the su
 - **`IUserManager.GetUsers()`** is the only stable member on 12 (no `Users` property). The reflection shim is unnecessary.
 - **Provider lookups** go through `InternalItemsQuery.HasAnyProviderIds` (`Dictionary<string,string[]>`) plus the singular `HasAnyProviderId`. `ILibraryManager` + `HasAnyProviderIds` **is** the supported endgame; the raw-EF 10.11 batch path is gone.
 - **Media Segments**: contribute via `IMediaSegmentProvider` (Name / GetMediaSegments / Supports / CleanupExtractedData), consume via the injectable `IMediaSegmentManager`; REST is read-only `GET /MediaSegments/{itemId}` (`[Authorize]`). `MediaSegmentType {Unknown, Commercial, Preview, Recap, Outro, Intro}`.
-- **Plugin pages**: `IHasWebPages`/`PluginPageInfo` are unchanged; `GET /web/ConfigurationPages` is `RequiresElevation`, `GET /web/ConfigurationPage?name=` has **no auth attribute**. v12 web honors `PluginPageInfo.MenuIcon`. There is no first-class API for main-nav pages, so the `CheckPluginPages` third-party mechanism **stays (conditional)**.
+- **Plugin pages**: `IHasWebPages`/`PluginPageInfo` are unchanged; `GET /web/ConfigurationPages` is `RequiresElevation`, `GET /web/ConfigurationPage?name=` has **no auth attribute**. v12 web honors `PluginPageInfo.MenuIcon`. There is no first-class API for main-nav pages — Canopy's pages are routed guests of the web client's 404 fallback view (`src/enhanced/pages/`), and the former `CheckPluginPages` third-party mechanism is **removed** (Plugin Pages does not support Jellyfin 12).
 - **Session messaging** (`ISessionManager`): `SendGeneralCommand`, `SendMessageCommand` (toast), `SendMessageToAdminSessions<T>`, `SendMessageToUserSessions<T>(userIds, SessionMessageType, data)`, `SendMessageToUserDeviceSessions<T>`. `SessionMessageType` is a **closed enum** — plugins cannot add types, but they **can** push `LibraryChanged`/`UserDataChanged`-shaped payloads the client already consumes natively. Wire envelope: `{"MessageId","Data","MessageType"}`.
     - `LibraryChanged` is emitted per-user, batched over `LibraryUpdateDuration`; payload `LibraryUpdateInfo {FoldersAddedTo, FoldersRemovedFrom, ItemsAdded, ItemsRemoved, ItemsUpdated, CollectionFolders}`.
     - `UserDataChanged` is batched at 500 ms; payload `{UserId, UserDataList: UserItemDataDto[]}` (includes parent aggregates).
@@ -846,7 +846,6 @@ Jellyfin.Plugin.JellyfinCanopy/
     │   ├── tag-renderer-base.ts  # Factory owning the shared tag-module plumbing
     │   ├── bounded-cache.ts # Size-capped, lazily-TTL-swept LRU — the one item-cache primitive
     │   ├── config-resolve.ts # PascalCase admin-config → camelCase view (admin-default resolution)
-    │   ├── delivery-flags.ts # Zeroes stale Custom-Tabs/Plugin-Pages flags when those plugins are gone
     │   ├── fetch-error.ts   # Classifies a failed fetch so callers show an error state, not empty
     │   ├── css-safe.ts      # isCssColor / cssColorOr — the CSS-context escape sink (see Client security)
     │   ├── modal-a11y.ts    # Shared modal focus-trap + global-shortcut suppression for JC overlays
@@ -862,7 +861,7 @@ Jellyfin.Plugin.JellyfinCanopy/
     │   ├── settings-panel/  # Split settings-panel modules (entry points, styles, panel, sections)
     │   ├── bookmarks/       # Bookmarks + the bookmarks library page (library-*.ts)
     │   ├── hidden-content/  # Hidden-content engine (data, save, filter, dialogs, panel, buttons)
-    │   ├── hidden-content-page/  # Hidden-content admin page (state, render, cards, nav, custom tab)
+    │   ├── hidden-content-page/  # Hidden-content management page (state, render, cards, admin)
     │   └── spoiler-guard/   # Spoiler Guard client: detail/movie/collection toggle button, Seerr
     │                        # discovery toggle, per-user state + overrides, settings-panel tab,
     │                        # disable-confirm dialog/snooze, soft image-refresh on toggle, and the
@@ -877,8 +876,8 @@ Jellyfin.Plugin.JellyfinCanopy/
     │                        # quota, results, request/season modals + internal.ts shared state)
     ├── arr/                 # Sonarr/Radarr integration. Flat singles: arr-links, arr-tag-links,
     │   │                    # arr-globals
-    │   ├── calendar/        # Calendar page (styles, data, render-*, actions, init, event-date) + custom-tab.ts
-    │   └── requests/        # Requests page (styles, data, render-*, actions, init) + custom-tab.ts
+    │   ├── calendar/        # Calendar page (styles, data, render-*, actions, init, event-date)
+    │   └── requests/        # Requests page (styles, data, render-*, actions, init)
     ├── tags/                # Tag renderer specs over core/tag-renderer-base + enhanced/tag-pipeline
     ├── elsewhere/           # Streaming-availability + reviews
     ├── extras/              # Active streams, colored ratings/icons, theme selector, plugin icons

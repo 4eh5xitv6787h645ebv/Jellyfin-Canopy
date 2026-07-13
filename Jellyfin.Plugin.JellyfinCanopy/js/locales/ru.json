@@ -701,5 +701,6 @@
   "discovery_customize_move_down": "Переместить вниз",
   "discovery_customize_reset": "Сбросить по умолчанию",
   "discovery_customize_cancel": "Отмена",
-  "discovery_customize_save": "Сохранить"
+  "discovery_customize_save": "Сохранить",
+  "pages_signin_required": "Войдите, чтобы просмотреть эту страницу."
 }

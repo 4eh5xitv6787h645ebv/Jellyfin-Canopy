@@ -9,6 +9,7 @@ import { JC } from '../../globals';
 import { onBodyMutation } from '../../core/dom-observer';
 import { onNavigate, onViewPage } from '../../core/navigation';
 import { getSidebarContainer } from '../helpers';
+import { ensureCanopySection, insertSectionEntry } from '../pages/entry-points';
 
 /**
  * Helper function to determine if the current page is the video player.
@@ -30,21 +31,9 @@ JC.isDetailsPage = () => window.location.hash.includes('/details?id=');
  */
 JC.addPluginMenuButton = () => {
     const addMenuButton = (sidebar: HTMLElement) => {
-        let jellyfinCanopySection = sidebar.querySelector<HTMLElement>('.jellyfinCanopySection');
-
-        if (!jellyfinCanopySection) {
-            jellyfinCanopySection = document.createElement('div');
-            jellyfinCanopySection.className = 'jellyfinCanopySection';
-            jellyfinCanopySection.innerHTML = '<h3 class="sidebarHeader">Jellyfin Canopy</h3>';
-
-            // Insert just above Media section
-            const mediaSection = sidebar.querySelector('.libraryMenuOptions');
-            if (mediaSection) {
-                sidebar.insertBefore(jellyfinCanopySection, mediaSection);
-            } else {
-                sidebar.appendChild(jellyfinCanopySection);
-            }
-        }
+        // pages/entry-points.ts is the single owner of the drawer section;
+        // the panel link registers through it, pinned after the page entries.
+        const jellyfinCanopySection = ensureCanopySection(sidebar);
 
         if (!jellyfinCanopySection.querySelector('#jellyfinCanopySettingsLink')) {
             const jellyfinCanopyLink = document.createElement('a');
@@ -62,7 +51,7 @@ JC.addPluginMenuButton = () => {
                 void JC.showEnhancedPanel!();
             });
 
-            jellyfinCanopySection.appendChild(jellyfinCanopyLink);
+            insertSectionEntry(jellyfinCanopySection, jellyfinCanopyLink, true);
         }
     };
 

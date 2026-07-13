@@ -10,14 +10,12 @@ import './requests/render-helpers';
 import './requests/render-cards';
 import './requests/render';
 import './requests/actions';
-import './requests/init';
+import './requests/page';
 import './calendar/styles';
 import './calendar/data';
 import './calendar/render-events';
 import './calendar/render-views';
 import './calendar/actions';
-import './calendar/init';
-import './requests/custom-tab';
-import './calendar/custom-tab';
+import './calendar/page';
 // Admin-only action-sheet Search / Interactive Search / Manage (Sonarr/Radarr).
 import './search';

@@ -154,18 +154,10 @@ export interface RequestsPageState {
     issuesFilter: string;
     issuesPermissionDenied?: boolean;
     isLoading: boolean;
-    pollTimer: ReturnType<typeof setInterval> | null;
-    pageVisible: boolean;
-    previousPage: Element | null;
-    locationSignature: string | null;
-    locationUnsubscribe: (() => void) | null;
     downloadsActiveTab: string;
     downloadsSearchQuery: string;
     downloadsSearchVisible: boolean;
     searchDebounceTimer: ReturnType<typeof setTimeout> | null;
-    _customTabContainer: HTMLElement | null;
-    _customTabMode?: boolean;
-    _pluginPageVisible?: boolean;
 }
 
 // State management
@@ -183,16 +175,10 @@ export const state: RequestsPageState = {
     issuesError: false,
     issuesFilter: 'open',
     isLoading: false,
-    pollTimer: null,
-    pageVisible: false,
-    previousPage: null,
-    locationSignature: null,
-    locationUnsubscribe: null,
     downloadsActiveTab: 'all',
     downloadsSearchQuery: '',
     downloadsSearchVisible: false,
     searchDebounceTimer: null,
-    _customTabContainer: null,
 };
 
 const issueMediaCache = new Map<string, IssueMediaDetails | null>();
@@ -332,15 +318,17 @@ export function hydrateAvatarImages(container: HTMLElement): void {
 /**
  * Fetch download queue from backend
  */
-async function fetchDownloads(): Promise<unknown> {
+async function fetchDownloads(signal?: AbortSignal): Promise<unknown> {
     try {
-        const data = await api.plugin('/arr/queue') as { items?: DownloadItem[]; errors?: ArrErrorEntry[] };
+        const data = await api.plugin('/arr/queue', { signal }) as { items?: DownloadItem[]; errors?: ArrErrorEntry[] };
         state.downloads = data.items || [];
         // Surface per-instance queue errors so a 401 / timeout / SSRF-reject on one
         // instance doesn't silently produce a "looks empty" downloads page.
         surfaceDownloadsErrors(data.errors);
         return data;
     } catch (error) {
+        // Teardown, not failure: the adoption drained and aborted the request.
+        if (signal?.aborted) return null;
         console.error(`${logPrefix} Failed to fetch downloads:`, error);
         state.downloads = [];
         // A total failure (the whole /arr/queue request rejected) has no
@@ -393,7 +381,7 @@ function surfaceDownloadsErrors(errors: ArrErrorEntry[] | undefined): void {
 /**
  * Fetch requests from backend
  */
-export async function fetchRequests(): Promise<unknown> {
+export async function fetchRequests(signal?: AbortSignal): Promise<unknown> {
     try {
         const skip = (state.requestsPage - 1) * 20;
         const filter = state.requestsFilter !== 'all' ? state.requestsFilter : '';
@@ -404,7 +392,7 @@ export async function fetchRequests(): Promise<unknown> {
             filter: filter,
         });
 
-        const data = await api.plugin(`/arr/requests?${query.toString()}`) as {
+        const data = await api.plugin(`/arr/requests?${query.toString()}`, { signal }) as {
             requests?: RequestItem[];
             totalPages?: number;
             canApproveRequests?: boolean;
@@ -417,6 +405,7 @@ export async function fetchRequests(): Promise<unknown> {
 
         return data;
     } catch (error) {
+        if (signal?.aborted) return null;
         console.error(`${logPrefix} Failed to fetch requests:`, error);
         state.requests = [];
         // Distinguish a backend failure (e.g. the requests proxy's 502 when
@@ -490,7 +479,7 @@ async function fetchIssueMediaDetails(mediaType: string, tmdbId: number | string
 /**
  * Fetch issues from Seerr
  */
-export async function fetchIssues(): Promise<unknown> {
+export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
     if (!JC.pluginConfig?.SeerrEnabled || !JC.pluginConfig?.DownloadsPageShowIssues) {
         state.issues = [];
         state.issuesTotalPages = 1;
@@ -533,11 +522,15 @@ export async function fetchIssues(): Promise<unknown> {
             );
         }
 
+        // richApiClient.ajax has no abort plumbing; the drain contract is
+        // still honored by refusing to publish anything post-abort.
+        if (signal?.aborted) return null;
         state.issues = issues;
         state.issuesTotalPages = data?.pageInfo?.pages || data?.totalPages || 1;
         state.issuesError = false;
         return data;
     } catch (error) {
+        if (signal?.aborted) return null;
         console.error(`${logPrefix} Failed to fetch issues:`, error);
         state.issues = [];
         state.issuesTotalPages = 1;
@@ -553,17 +546,52 @@ export async function fetchIssues(): Promise<unknown> {
     }
 }
 
-/**
- * Load all data
- */
-export async function loadAllData(): Promise<void> {
+// Coalescing gate: the fetch pipeline writes into shared module state, so two
+// overlapping loads (initial adopt + a poll tick, a live nudge landing mid-load)
+// could interleave and leave a stale writer last. One load runs at a time;
+// requests that arrive mid-flight collapse into a single follow-up pass that
+// reads the LATEST filter/page state.
+let loadInFlight: Promise<void> | null = null;
+let loadQueued = false;
+// The CURRENT adoption's abort signal: fetches completing after the page
+// drained must not commit loading state (renderPage already no-ops on a
+// disconnected container). Only the latest adoption's signal matters.
+let activeSignal: AbortSignal | null = null;
+
+async function loadAllDataOnce(): Promise<void> {
+    // Capture THIS run's signal: a new adoption replaces activeSignal, and
+    // the old run must keep honoring its own (aborted) one.
+    const runSignal = activeSignal;
     state.isLoading = true;
     renderPage();
 
-    await Promise.all([fetchDownloads(), fetchRequests(), fetchIssues()]);
+    await Promise.all([fetchDownloads(runSignal ?? undefined), fetchRequests(runSignal ?? undefined), fetchIssues(runSignal ?? undefined)]);
+    if (runSignal?.aborted) return;
 
     state.isLoading = false;
     renderPage();
+}
+
+/**
+ * Load all data (serialized: overlapping calls coalesce into one follow-up).
+ */
+export function loadAllData(signal?: AbortSignal): Promise<void> {
+    if (signal) activeSignal = signal;
+    if (loadInFlight) {
+        loadQueued = true;
+        return loadInFlight;
+    }
+    loadInFlight = (async () => {
+        try {
+            do {
+                loadQueued = false;
+                await loadAllDataOnce();
+            } while (loadQueued);
+        } finally {
+            loadInFlight = null;
+        }
+    })();
+    return loadInFlight;
 }
 
 export async function handleRequestAction(btn: HTMLButtonElement, action: 'approve' | 'decline'): Promise<void> {

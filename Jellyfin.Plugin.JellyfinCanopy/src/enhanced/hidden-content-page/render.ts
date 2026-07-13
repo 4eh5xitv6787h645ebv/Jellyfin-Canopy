@@ -15,9 +15,6 @@ import {
     openAdminAddModal
 } from './admin';
 import { createGroupCard, createSection } from './cards';
-// Cross-module reference (defined in hidden-content-page/nav.ts). ES-module
-// cyclic edge — only ever invoked at call time, never during module evaluation.
-import { createPageContainer } from './nav';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -241,27 +238,25 @@ function renderCastSection(castActors: any[], container: HTMLElement): void {
     container.appendChild(createSection('hidden_content_group_cast', grid));
 }
 
+// The container the hidden-content page renders into, set by the pages-
+// framework descriptor for the lifetime of one adoption and cleared on drain.
+// The DOM is the truth: a disconnected container makes every render a no-op
+// instead of painting into a detached tree.
+let activeContainer: HTMLElement | null = null;
+
+/** Set (or clear) the render target for the current page adoption. */
+export function setActiveContainer(container: HTMLElement | null): void {
+    activeContainer = container;
+}
+
 /**
- * Renders the full management page with grouped display.
- * Called on page show and whenever hidden content changes.
- * @param targetContainer Optional container to render into
- *   (used by custom-tab mode to avoid duplicate-ID conflicts).
+ * Renders the full management page with grouped display into the active
+ * container (no-op when the page is not adopted or its container left the
+ * DOM). Called on adoption and whenever hidden content changes.
  */
-export function renderPage(targetContainer?: HTMLElement): void {
-    let container: HTMLElement | null;
-    if (targetContainer) {
-        state._customTabContainer = targetContainer;
-        container = targetContainer;
-    } else if (state._customTabContainer && document.contains(state._customTabContainer)
-        && window.location.hash.indexOf('userpluginsettings') === -1) {
-        // Re-use stored custom tab container, but not on Plugin Pages route
-        container = state._customTabContainer;
-    } else {
-        state._customTabContainer = null;
-        const page = createPageContainer();
-        container = document.getElementById("jc-hidden-content-container");
-        if (!page || !container) return;
-    }
+export function renderPage(): void {
+    const container = activeContainer;
+    if (!container || !container.isConnected) return;
 
     // Publish theme colours so the admin controls follow the active theme (Purple Haze, etc.).
     applyAdminThemeVars(container);
