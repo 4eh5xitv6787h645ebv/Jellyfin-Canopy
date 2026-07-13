@@ -739,6 +739,7 @@
 }
 #JellyfinCanopyPage .jellyfin-tab-button h3 {
     margin: 0;
+    width: 100%;
     font-size: 1em;
     font-weight: inherit;
     pointer-events: none;
@@ -787,6 +788,17 @@
 }
 #JellyfinCanopyPage .jellyfin-tab-button.active .jc-tab-icon {
     color: var(--jc-accent);
+}
+/* Per-section match count shown on nav items while searching. */
+#JellyfinCanopyPage .jc-nav-count {
+    margin-left: auto;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--jc-accent-tint-20);
+    border: 1px solid var(--jc-accent-border);
+    color: var(--jc-accent);
+    font-size: 0.78em;
+    font-weight: 700;
 }
 
 #JellyfinCanopyPage .jellyfin-tab-content {

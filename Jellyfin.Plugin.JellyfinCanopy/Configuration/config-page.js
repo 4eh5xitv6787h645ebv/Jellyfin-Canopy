@@ -138,15 +138,15 @@
                 });
             })();
 
-            // Dirty-state save bar: purely visual — flags the save dock when any
-            // form field changes, cleared again by the save flow's own click.
+            // Dirty-state save bar: flags the save dock when any form field
+            // changes. Cleared ONLY by saveConfig's confirmed-success path —
+            // a failed save must keep announcing the unsaved state.
             (function wireDirtyState() {
                 const dock = document.querySelector('.jc-save-dock');
                 if (!dock || !form) return;
                 const markDirty = () => dock.classList.add('jc-dirty');
                 form.addEventListener('input', markDirty, true);
                 form.addEventListener('change', markDirty, true);
-                dock.addEventListener('click', () => dock.classList.remove('jc-dirty'));
             })();
 
             // Docs iframe URL — kept in JS rather than hardcoded in the
@@ -258,7 +258,18 @@
             tabs.forEach(tab => {
                 tab.addEventListener('click', () => {
                     const tabId = tab.dataset.tab;
-                    activateTab(tabId);
+                    if (isSearchMode) {
+                        // Jump from search results into the section: leave search
+                        // mode, open the section, and scroll to its first match.
+                        const target = document.querySelector('#' + tabId + ' > fieldset:not(.jc-search-hidden)');
+                        clearTimeout(searchDebounce);
+                        searchInput.value = '';
+                        exitSearchMode();
+                        activateTab(tabId);
+                        if (target) setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+                    } else {
+                        activateTab(tabId);
+                    }
                     // Store active tab in sessionStorage to persist across refreshes
                     try {
                         sessionStorage.setItem('jellyfinCanopyActiveTab', tabId);
@@ -520,7 +531,6 @@
                 form.querySelectorAll('details').forEach(d => {
                     savedDetailsStates.set(d, d.open);
                 });
-                if (tabButtonsContainer) tabButtonsContainer.style.display = 'none';
                 tabContents.forEach(tc => {
                     const btn = document.querySelector('.jellyfin-tab-button[data-tab="' + tc.id + '"]');
                     // btn.textContent would include Material Icons font
@@ -551,7 +561,8 @@
                 form.querySelectorAll('.jc-tab-name-match').forEach(tc => tc.classList.remove('jc-tab-name-match'));
                 clearHighlights();
                 form.querySelectorAll('.jc-search-tab-label').forEach(el => el.remove());
-                if (tabButtonsContainer) tabButtonsContainer.style.display = '';
+                document.querySelectorAll('.jellyfin-tab-button').forEach(btn => { btn.style.display = ''; });
+                document.querySelectorAll('.jc-nav-count').forEach(el => el.remove());
                 // Clear inline display from every tab content. performSearch sets
                 // `style.display = 'block'|'none'` per tab; without this reset the
                 // inline value wins over `.jellyfin-tab-content.active { display: grid }`,
@@ -641,6 +652,26 @@
                     });
 
                     tabContent.style.display = tabHasMatch ? 'block' : 'none';
+
+                    // The sidebar nav stays usable during search: zero-match
+                    // sections are hidden, matching ones show a count badge and
+                    // (via the tab click handler) jump straight to the section.
+                    const navBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + tabContent.id + '"]');
+                    if (navBtn) {
+                        navBtn.style.display = tabHasMatch ? '' : 'none';
+                        let badge = navBtn.querySelector('.jc-nav-count');
+                        if (tabHasMatch) {
+                            const count = tabContent.querySelectorAll(':scope > fieldset:not(.jc-search-hidden)').length;
+                            if (!badge) {
+                                badge = document.createElement('span');
+                                badge.className = 'jc-nav-count';
+                                navBtn.querySelector('h3')?.appendChild(badge);
+                            }
+                            badge.textContent = String(count);
+                        } else if (badge) {
+                            badge.remove();
+                        }
+                    }
 
                     // Rank tab-contents whose tab button's label itself
                     // contains the query above tabs that matched only by
@@ -2527,6 +2558,8 @@
                 }
 
                 Dashboard.processPluginConfigurationUpdateResult(result);
+                // The save (and any maintenance-mode follow-up) succeeded: the form is clean.
+                document.querySelector('.jc-save-dock')?.classList.remove('jc-dirty');
                 if (syncResult && syncResult.ok === false) {
                     try {
                         Dashboard.alert({
