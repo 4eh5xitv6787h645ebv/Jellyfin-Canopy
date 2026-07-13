@@ -80,15 +80,27 @@ interface RatingCacheEntry {
     sgSeriesId?: string | null;
     /** Spoiler-Guard: whether the user had played the cached item. */
     sgPlayed?: boolean;
-    // User-rating fields stashed by render(). Left UNPOPULATED by getCachedEntry
-    // (the user-rating branch in renderFromCache stays inert, matching current
-    // behavior); typed here only so that branch continues to compile.
+    // User-rating fields stashed by render() so cache-only cards can rebuild the
+    // same TMDB key without fetching the full item/parent DTO again.
     tmdbId?: string | null;
     seriesTmdbId?: string | null;
     tmdbMediaType?: string;
     seasonNumber?: number | null;
     episodeNumber?: number | null;
     parentSeasonNumber?: number | null;
+}
+
+/** Rating-related subset of a server TagCacheEntry. */
+interface ServerCacheRatingEntry {
+    Type?: string;
+    SeriesId?: string | null;
+    CommunityRating?: number | string | null;
+    CriticRating?: number | null;
+    RatingSuppressed?: boolean;
+    TmdbId?: string | null;
+    SeriesTmdbId?: string | null;
+    SeasonNumber?: number | null;
+    EpisodeNumber?: number | null;
 }
 
 /**
@@ -98,7 +110,7 @@ interface RatingCacheEntry {
  * @returns Cached rating or null.
  */
 function getCachedEntry(ctx: TagRendererContext, itemId: string): RatingCacheEntry | null {
-    const entry = (ctx.getPersistent(itemId) ?? ctx.hot?.get(itemId)) as any;
+    const entry: unknown = ctx.getPersistent(itemId) ?? ctx.hot?.get(itemId);
     if (!entry) return null;
     // Spoiler Guard: entries cached BEFORE the guard fields existed (legacy
     // string/number shorthand, or objects without sgType) carry no suppression
@@ -111,19 +123,24 @@ function getCachedEntry(ctx: TagRendererContext, itemId: string): RatingCacheEnt
         return guardOn ? null : { tmdb: String(entry), critic: null };
     }
     if (typeof entry === 'object') {
-        if (guardOn && typeof entry.sgType !== 'string') return null;
-        // Expose tmdb/critic PLUS the Spoiler-Guard fields (sgType/sgSeriesId/
-        // sgPlayed) stashed by render(). Without them, renderFromCache's
+        const cached = entry as Partial<RatingCacheEntry>;
+        if (guardOn && typeof cached.sgType !== 'string') return null;
+        // Expose ratings, personal-review identity, PLUS the Spoiler-Guard fields
+        // stashed by render(). Without them, renderFromCache's
         // suppression re-check saw Type=undefined and never suppressed, so a
-        // rating cached BEFORE the show was guarded replayed forever. (The
-        // tmdbId/seriesTmdbId user-rating fields stay intentionally unexposed —
-        // that branch's re-enable is out of scope for this fix.)
+        // rating cached BEFORE the show was guarded replayed forever.
         return {
-            tmdb: entry.tmdb ?? null,
-            critic: entry.critic ?? null,
-            sgType: entry.sgType,
-            sgSeriesId: entry.sgSeriesId ?? null,
-            sgPlayed: entry.sgPlayed === true,
+            tmdb: cached.tmdb ?? null,
+            critic: cached.critic ?? null,
+            sgType: cached.sgType,
+            sgSeriesId: cached.sgSeriesId ?? null,
+            sgPlayed: cached.sgPlayed === true,
+            tmdbId: cached.tmdbId ?? null,
+            seriesTmdbId: cached.seriesTmdbId ?? null,
+            tmdbMediaType: cached.tmdbMediaType,
+            seasonNumber: cached.seasonNumber ?? null,
+            episodeNumber: cached.episodeNumber ?? null,
+            parentSeasonNumber: cached.parentSeasonNumber ?? null,
         };
     }
     return null;
@@ -138,6 +155,55 @@ function getCachedEntry(ctx: TagRendererContext, itemId: string): RatingCacheEnt
 function setCachedEntry(ctx: TagRendererContext, itemId: string, rating: unknown): void {
     ctx.setPersistent(itemId, rating);
     ctx.hot?.set(itemId, rating);
+}
+
+/** Keep the personal/user-review chip when public ratings are suppressed. */
+function appendServerCacheUserRating(el: HTMLElement, entry: ServerCacheRatingEntry): void {
+    if (typeof JC.appendUserRatingToContainer !== 'function') return;
+    if (!entry.TmdbId && !entry.SeriesTmdbId) return;
+    const syntheticItem = {
+        Type: entry.Type,
+        ProviderIds: entry.TmdbId ? { Tmdb: entry.TmdbId } : {},
+        IndexNumber: entry.SeasonNumber,
+        ParentIndexNumber: entry.SeasonNumber,
+        // For Episode, SeasonNumber is ParentIndexNumber and EpisodeNumber is IndexNumber.
+        ...(entry.Type === 'Episode'
+            ? { ParentIndexNumber: entry.SeasonNumber, IndexNumber: entry.EpisodeNumber }
+            : {}),
+    };
+    const extras = entry.SeriesTmdbId
+        ? { parentSeries: { ProviderIds: { Tmdb: entry.SeriesTmdbId } } }
+        : null;
+    void JC.appendUserRatingToContainer(el, syntheticItem, extras);
+}
+
+/** Rebuild the real user-review resolver shape from a renderer-local cache row. */
+function appendCachedUserRating(el: HTMLElement, entry: RatingCacheEntry): boolean {
+    if (typeof JC.appendUserRatingToContainer !== 'function') return false;
+    if (!entry.tmdbId && !entry.seriesTmdbId) return false;
+
+    let type = entry.sgType;
+    if (!type) type = entry.tmdbMediaType === 'tv' ? 'Series' : 'Movie';
+    const syntheticItem: {
+        Type: string;
+        ProviderIds: { Tmdb?: string };
+        IndexNumber?: number | null;
+        ParentIndexNumber?: number | null;
+    } = {
+        Type: type,
+        ProviderIds: entry.tmdbId ? { Tmdb: entry.tmdbId } : {},
+    };
+    if (type === 'Episode') {
+        syntheticItem.IndexNumber = entry.episodeNumber;
+        syntheticItem.ParentIndexNumber = entry.parentSeasonNumber;
+    } else if (type === 'Season') {
+        syntheticItem.IndexNumber = entry.seasonNumber;
+    }
+    const extras = entry.seriesTmdbId
+        ? { parentSeries: { ProviderIds: { Tmdb: entry.seriesTmdbId } } }
+        : null;
+    void JC.appendUserRatingToContainer(el, syntheticItem, extras);
+    return true;
 }
 
 /**
@@ -284,6 +350,19 @@ const spec: TagSpec = {
 
             const itemId = item.Id;
 
+            // The live tag-data endpoint marks guarded exempt Seasons explicitly:
+            // their own ratings are null but SeriesId must remain available to the
+            // genre/review paths. Treat the marker as authoritative before every
+            // hot-cache or parent-Series fallback so neither can reintroduce the
+            // hidden series rating.
+            if (item.RatingSuppressed === true) {
+                ctx.markTagged(el);
+                if (typeof JC.appendUserRatingToContainer === 'function') {
+                    void JC.appendUserRatingToContainer(el, item, extras);
+                }
+                return;
+            }
+
             // Spoiler Guard: suppress the rating tag for guarded
             // series/seasons/unwatched-episodes. Checked BEFORE the hot-cache
             // path so a rating cached before the show was guarded can't replay
@@ -357,56 +436,38 @@ const spec: TagSpec = {
             // replay onto the card. Keep the user rating.
             if (shouldSuppressRatingTag({ Type: cached.sgType, Id: itemId, SeriesId: cached.sgSeriesId, UserData: { Played: cached.sgPlayed } })) {
                 ctx.markTagged(el);
-                if (typeof JC.appendUserRatingToContainer === 'function' && (cached.tmdbId || cached.seriesTmdbId)) {
-                    void JC.appendUserRatingToContainer(el, { Type: cached.sgType, ProviderIds: cached.tmdbId ? { Tmdb: cached.tmdbId } : {}, SeriesProviderIds: cached.seriesTmdbId ? { Tmdb: cached.seriesTmdbId } : {} });
-                }
+                appendCachedUserRating(el, cached);
                 return true;
             }
             if (cached.tmdb || cached.critic !== null) {
                 applyRatingTag(ctx, el, cached);
             }
-            if (typeof JC.appendUserRatingToContainer === 'function' && (cached.tmdbId || cached.seriesTmdbId)) {
-                const syntheticItem: any = {
-                    Type: cached.tmdbMediaType === 'tv' ? 'Series' : 'Movie',
-                    ProviderIds: cached.tmdbId ? { Tmdb: cached.tmdbId } : {},
-                    SeriesProviderIds: cached.seriesTmdbId ? { Tmdb: cached.seriesTmdbId } : {},
-                    IndexNumber: cached.seasonNumber,
-                    ParentIndexNumber: cached.parentSeasonNumber,
-                };
-                // Refine Type for Season/Episode based on available data
-                if (cached.seriesTmdbId && cached.episodeNumber != null) {
-                    syntheticItem.Type = 'Episode';
-                    syntheticItem.IndexNumber = cached.episodeNumber;
-                    syntheticItem.ParentIndexNumber = cached.parentSeasonNumber;
-                } else if (cached.seriesTmdbId && cached.seasonNumber != null) {
-                    syntheticItem.Type = 'Season';
-                    syntheticItem.IndexNumber = cached.seasonNumber;
-                }
-                void JC.appendUserRatingToContainer(el, syntheticItem);
-            }
-            return !!(cached.tmdb || cached.critic !== null);
+            const appendedUserRating = appendCachedUserRating(el, cached);
+            return !!(cached.tmdb || cached.critic !== null || appendedUserRating);
         },
-        renderFromServerCache(ctx, el, entry: any, itemId: string) {
+        renderFromServerCache(ctx, el, rawEntry: unknown, itemId: string) {
+            const entry = rawEntry as ServerCacheRatingEntry;
             if (ctx.isTagged(el)) return;
             if (ctx.shouldIgnore(el)) return;
-            // Spoiler Guard, server-cache path. The server tag-cache entry carries
-            // no Jellyfin Id / SeriesId / Played fields, only the map-key itemId
-            // (4th arg) identifies the item. So:
-            //   • Series → guard by its own id (itemId).
-            //   • Movie  → guard directly by its own id (itemId).
-            //   • Season / Episode → the parent series id isn't in the entry, so
-            //     the series guard can't be resolved here. Those rely on the
-            //     watched-aware server-side rating strip: a guarded unwatched
-            //     item arrives with null ratings and renders nothing (naturally
-            //     suppressed), while a WATCHED episode keeps its rating.
-            // Fails closed for Series/Movie while state isn't authoritative.
-            if ((entry.Type === 'Series' || entry.Type === 'Movie')
-                && shouldSuppressRatingTag({ Type: entry.Type, Id: itemId })) {
+            // Defense in depth for a stale/non-null projected row. TagCacheEntry
+            // carries SeriesId for Seasons, so client policy can suppress their
+            // series-fallback rating even before the watched revision replacement
+            // lands. Episodes deliberately rely on the server's played-aware strip:
+            // the cache entry has no Played bit, and treating all as unwatched would
+            // hide ratings from legitimately watched episodes.
+            const guardableEntry = entry.Type === 'Season'
+                ? { Type: entry.Type, Id: itemId, SeriesId: entry.SeriesId }
+                : (entry.Type === 'Series' || entry.Type === 'Movie')
+                    ? { Type: entry.Type, Id: itemId }
+                    : null;
+            if (entry.RatingSuppressed === true
+                || (guardableEntry && shouldSuppressRatingTag(guardableEntry))) {
                 ctx.markTagged(el);
+                appendServerCacheUserRating(el, entry);
                 return;
             }
             const tmdb = entry.CommunityRating != null
-                ? parseFloat(entry.CommunityRating).toFixed(1)
+                ? parseFloat(String(entry.CommunityRating)).toFixed(1)
                 : null;
             const critic = entry.CriticRating != null
                 ? normalizeCriticPercent(entry.CriticRating)
@@ -414,22 +475,7 @@ const spec: TagSpec = {
             if (tmdb || critic !== null) {
                 applyRatingTag(ctx, el, { tmdb, critic });
             }
-            if (typeof JC.appendUserRatingToContainer === 'function') {
-                // Build a synthetic item so resolveTmdbKey can derive the correct key
-                // for Movie/Series (TmdbId) and Season/Episode (SeriesTmdbId + numbers)
-                const syntheticItem = {
-                    Type: entry.Type,
-                    ProviderIds: entry.TmdbId ? { Tmdb: entry.TmdbId } : {},
-                    SeriesProviderIds: entry.SeriesTmdbId ? { Tmdb: entry.SeriesTmdbId } : {},
-                    IndexNumber: entry.SeasonNumber,
-                    ParentIndexNumber: entry.SeasonNumber,
-                    // For Episode, SeasonNumber is ParentIndexNumber and EpisodeNumber is IndexNumber
-                    ...(entry.Type === 'Episode' ? { ParentIndexNumber: entry.SeasonNumber, IndexNumber: entry.EpisodeNumber } : {})
-                };
-                if (entry.TmdbId || entry.SeriesTmdbId) {
-                    void JC.appendUserRatingToContainer(el, syntheticItem, null);
-                }
-            }
+            appendServerCacheUserRating(el, entry);
         },
     },
 };

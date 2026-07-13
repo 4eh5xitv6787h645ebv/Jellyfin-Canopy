@@ -32,6 +32,20 @@ let refreshSeq = 0;
 let lastPublicKeys: string[] = [];
 let lastPrivateKeys: string[] = [];
 
+const TAG_PROJECTION_POLICY_KEYS = [
+    'TagCacheServerMode',
+    'SpoilerBlurEnabled',
+    'SpoilerStripTags',
+    'SpoilerStripRatings',
+    'SpoilerReplaceTitle',
+    'SpoilerStripOverview',
+] as const;
+
+/** Stable snapshot of admin fields that change tag-cache privacy projection. */
+function tagProjectionPolicyFingerprint(): string {
+    return JSON.stringify(TAG_PROJECTION_POLICY_KEYS.map((key) => JC.pluginConfig?.[key]));
+}
+
 /** Prune keys that the previous payload from this source owned but the new one dropped. */
 function prunePayloadKeys(previousKeys: string[], next: object): void {
     const config = JC.pluginConfig as Record<string, unknown>;
@@ -101,6 +115,7 @@ async function refreshPluginConfig(): Promise<void> {
 
 on(LIVE.CONFIG_CHANGED, () => {
     void (async () => {
+        const previousTagPolicy = tagProjectionPolicyFingerprint();
         await refreshPluginConfig();
 
         // Let unmigrated modules and any feature reinit hooks react to the fresh
@@ -109,9 +124,16 @@ on(LIVE.CONFIG_CHANGED, () => {
             window.dispatchEvent(new CustomEvent('jc:config-changed'));
         } catch { /* CustomEvent unsupported — ignore */ }
 
-        // Tag pipeline: re-scan visible cards so tag-related toggles apply live.
+        // Policy changes alter the actual per-user cache bytes, so a rescan of
+        // already-processed cards is insufficient. Unrelated config changes retain
+        // the cheap scan path.
         try {
-            JC.tagPipeline?.scheduleScan?.();
+            if (previousTagPolicy !== tagProjectionPolicyFingerprint()
+                && JC.tagPipeline?.invalidateServerCache) {
+                await JC.tagPipeline.invalidateServerCache();
+            } else {
+                JC.tagPipeline?.scheduleScan?.();
+            }
         } catch { /* pipeline not loaded — ignore */ }
 
         console.log(`${logPrefix} plugin config hot-reloaded from server push`);

@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const setUserPrefs = vi.fn((_next?: unknown) => Promise.resolve({}));
+const invalidateServerCache = vi.fn(() => Promise.resolve());
 let loadOkValue = true;
 
 vi.mock('./state', () => ({
@@ -29,7 +30,12 @@ async function flush(): Promise<void> { await Promise.resolve(); await Promise.r
 describe('spoiler-guard settings-tab save-guard', () => {
     beforeEach(() => {
         (JC.pluginConfig as Record<string, unknown>).SpoilerBlurEnabled = true;
+        JC.tagPipeline = {
+            registerRenderer: vi.fn(),
+            invalidateServerCache,
+        };
         setUserPrefs.mockClear();
+        invalidateServerCache.mockClear();
         loadOkValue = true;
     });
     afterEach(() => { document.body.innerHTML = ''; });
@@ -43,6 +49,7 @@ describe('spoiler-guard settings-tab save-guard', () => {
         await flush();
         expect(setUserPrefs).toHaveBeenCalledTimes(1);
         expect(setUserPrefs).toHaveBeenCalledWith({ HideRatings: false });
+        expect(invalidateServerCache).toHaveBeenCalledTimes(1);
     });
 
     it('REFUSES to save and reverts the checkbox when load failed (loadOk=false)', async () => {

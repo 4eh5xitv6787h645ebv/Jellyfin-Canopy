@@ -105,12 +105,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // Test seams for the user-access cache invalidation contract (Tests has InternalsVisibleTo).
         internal int UserAccessCacheCount => _userAccessCache.Count;
 
-        internal void SeedUserAccessCacheForTest(string userKey)
-            => _userAccessCache[userKey] = (new HashSet<string>(), DateTime.UtcNow);
+        internal void SeedUserAccessCacheForTest(string userKey, params string[] itemIds)
+            => _userAccessCache[userKey] = (
+                new HashSet<string>(itemIds, StringComparer.Ordinal),
+                DateTime.UtcNow);
 
         internal void FlushPendingForTest() => FlushPending();
 
         internal bool ContainsKeyForTest(string key) => _cache.ContainsKey(key);
+
+        internal void SeedEntryForTest(string key, TagCacheEntry entry) => _cache[key] = entry;
+
+        // Deterministic controller-cursor race seams. A test captures the reader's
+        // dictionary, then swaps the live cache/cursor exactly where a reconcile can.
+        internal Action? OnAfterUserCacheSnapshotForTest;
+
+        internal void SwapCacheAndCursorForTest(
+            IReadOnlyDictionary<string, TagCacheEntry> entries,
+            long version,
+            long lastModified)
+        {
+            _cache = new ConcurrentDictionary<string, TagCacheEntry>(entries, StringComparer.Ordinal);
+            Interlocked.Exchange(ref _version, version);
+            Interlocked.Exchange(ref _lastModified, lastModified);
+        }
 
         // Read the live cache entry for a key (or null). Lets reconcile tests assert reference
         // identity (proving an unchanged item was reused, not re-probed) and timestamp retention.
@@ -596,6 +614,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             // Capture local reference for thread safety (cache reference may be swapped)
             var cache = _cache;
+            OnAfterUserCacheSnapshotForTest?.Invoke();
             var userKey = user.Id.ToString("N");
 
             // Check user access cache
@@ -628,6 +647,51 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return result;
         }
 
+        /// <summary>
+        /// Select a small, server-generated set of cache entries for one user without
+        /// enumerating the shared cache or materialising the user's full accessible-id
+        /// set. Missing and inaccessible ids are intentionally omitted; the controller
+        /// still returns them in <c>projectionIds</c> as deletion/access tombstones.
+        /// </summary>
+        internal Dictionary<string, TagCacheEntry> GetCacheEntriesForUserByIds(
+            JUser user,
+            IEnumerable<string> itemIds)
+        {
+            ArgumentNullException.ThrowIfNull(user);
+            ArgumentNullException.ThrowIfNull(itemIds);
+
+            // Capture the current dictionary once. A full reconcile may atomically
+            // replace _cache while this request runs, but it never mutates this
+            // captured dictionary after the swap.
+            var cache = _cache;
+            var result = new Dictionary<string, TagCacheEntry>(StringComparer.Ordinal);
+            foreach (var itemId in itemIds)
+            {
+                if (!Guid.TryParseExact(itemId, "N", out var id))
+                {
+                    continue;
+                }
+
+                var key = id.ToString("N");
+                if (result.ContainsKey(key) || !cache.TryGetValue(key, out var entry))
+                {
+                    continue;
+                }
+
+                // This overload performs Jellyfin's per-user access validation. It
+                // is O(number of projection changes), unlike GetCacheForUser's full
+                // GetItemIds query + shared-cache scan.
+                if (_libraryManager.GetItemById<BaseItem>(id, user) == null)
+                {
+                    continue;
+                }
+
+                result[key] = entry;
+            }
+
+            return result;
+        }
+
         // ── Spoiler Guard per-user tag-strip (F3) ────────────────────────────
         //
         // The JC tag pipeline reads the server cache BEFORE it fetches per-batch
@@ -650,6 +714,55 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             SeasonRatingOnly,
             /// <summary>Guarded + unwatched → full strip per the enabled toggles.</summary>
             Strip,
+        }
+
+        /// <summary>
+        /// The rating projection shared by every guarded-Season response surface.
+        /// <see cref="Suppressed"/> is deliberately independent from whether either
+        /// source rating was populated: clients must not fall back to the parent
+        /// Series when policy says ratings are hidden and the Season itself happens
+        /// to carry null ratings.
+        /// </summary>
+        internal readonly record struct GuardedSeasonRatingProjection(
+            float? CommunityRating,
+            float? CriticRating,
+            bool Suppressed);
+
+        /// <summary>
+        /// Canonical guarded-Season decision. Season 0/1 and a later Season with at
+        /// least one watched episode keep their non-rating metadata, but ratings stay
+        /// hidden because the Season card can carry the guarded Series fallback.
+        /// Missing season numbering fails closed to the full configured strip.
+        /// </summary>
+        internal static TagStripDecision ResolveGuardedSeasonStripDecision(
+            int? seasonIndexNumber,
+            bool seasonAnyWatched)
+        {
+            if (!seasonIndexNumber.HasValue)
+            {
+                return TagStripDecision.Strip;
+            }
+
+            return seasonIndexNumber.Value <= 1 || seasonAnyWatched
+                ? TagStripDecision.SeasonRatingOnly
+                : TagStripDecision.Strip;
+        }
+
+        /// <summary>
+        /// Apply the rating part of a guarded-Season decision without touching any
+        /// non-rating fields. Used by the tag cache, tag-data endpoint and native DTO
+        /// filter so their exemption behavior cannot drift again.
+        /// </summary>
+        internal static GuardedSeasonRatingProjection ProjectGuardedSeasonRatings(
+            float? communityRating,
+            float? criticRating,
+            TagStripDecision decision,
+            bool stripRatings)
+        {
+            var suppressed = stripRatings && decision != TagStripDecision.Keep;
+            return suppressed
+                ? new GuardedSeasonRatingProjection(null, null, Suppressed: true)
+                : new GuardedSeasonRatingProjection(communityRating, criticRating, Suppressed: false);
         }
 
         /// <summary>
@@ -721,14 +834,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 else if (isSeason)
                 {
                     var sNum = seasonIndexNumber(entryGuid);
-                    if (sNum.HasValue)
-                    {
-                        // S0/S1 posters always pass (their existence isn't a spoiler),
-                        // as do seasons with any watched episode — "exempt".
-                        var exempt = sNum.Value <= 1 || seasonAnyWatched(entryGuid);
-                        if (exempt) return TagStripDecision.SeasonRatingOnly;
-                    }
-                    // sNum == null (id isn't a resolvable Season) falls through to Strip.
+                    // S0/S1 posters always pass (their existence isn't a spoiler),
+                    // as do seasons with any watched episode — "exempt". Avoid the
+                    // episode walk for S0/S1, and fail closed when the Season cannot
+                    // be resolved to an index number.
+                    var anyWatched = sNum.HasValue
+                        && sNum.Value > 1
+                        && seasonAnyWatched(entryGuid);
+                    return ResolveGuardedSeasonStripDecision(sNum, anyWatched);
                 }
             }
             else
@@ -763,11 +876,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // series everywhere else). Strip just the rating so it can't surface
                 // via the server tag cache. Nothing to do when ratings aren't being
                 // stripped or the entry has no rating — serve the shared instance.
-                if (stripRatings && (entry.CommunityRating != null || entry.CriticRating != null))
+                var projected = ProjectGuardedSeasonRatings(
+                    entry.CommunityRating,
+                    entry.CriticRating,
+                    decision,
+                    stripRatings);
+                if (projected.Suppressed && (entry.CommunityRating != null || entry.CriticRating != null))
                 {
                     var seasonStripped = entry.Clone();
-                    seasonStripped.CommunityRating = null;
-                    seasonStripped.CriticRating = null;
+                    seasonStripped.CommunityRating = projected.CommunityRating;
+                    seasonStripped.CriticRating = projected.CriticRating;
                     return seasonStripped;
                 }
                 return entry;

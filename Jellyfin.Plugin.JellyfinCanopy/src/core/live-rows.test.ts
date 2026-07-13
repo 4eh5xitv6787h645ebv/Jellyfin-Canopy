@@ -7,11 +7,13 @@ import './live-rows'; // registers the handlers at import
 
 describe('live rows → tag rescan', () => {
     let scheduleScan: ReturnType<typeof vi.fn>;
+    let refreshServerProjection: ReturnType<typeof vi.fn>;
 
     beforeEach(() => {
         vi.useFakeTimers();
         scheduleScan = vi.fn();
-        JC.tagPipeline = { scheduleScan } as unknown as NonNullable<typeof JC.tagPipeline>;
+        refreshServerProjection = vi.fn().mockResolvedValue(undefined);
+        JC.tagPipeline = { scheduleScan, refreshServerProjection } as unknown as NonNullable<typeof JC.tagPipeline>;
     });
 
     afterEach(() => {
@@ -30,7 +32,13 @@ describe('live rows → tag rescan', () => {
     });
 
     it('UserDataChanged also triggers a rescan', () => {
-        emit(LIVE.USER_DATA_CHANGED, { UserId: 'u1', UserDataList: [] });
+        const data = { UserId: 'u1', UserDataList: [{ ItemId: 'episode-1' }] };
+        emit(LIVE.USER_DATA_CHANGED, data);
+
+        // Privacy invalidation is dispatched synchronously; the ordinary scan
+        // remains coalesced so it cannot delay the fail-closed barrier.
+        expect(refreshServerProjection).toHaveBeenCalledWith(data);
+        expect(scheduleScan).not.toHaveBeenCalled();
         vi.advanceTimersByTime(300);
         expect(scheduleScan).toHaveBeenCalledTimes(1);
     });

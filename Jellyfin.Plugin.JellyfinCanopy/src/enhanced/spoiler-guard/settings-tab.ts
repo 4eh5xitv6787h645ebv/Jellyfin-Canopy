@@ -51,6 +51,13 @@ export function wireSpoilerGuardListeners(resetAutoCloseTimer: () => void): void
                 current[k] = changedBox.checked ? null : false;
             }
             await setUserPrefs(current);
+            // The server cache is a projection of these per-user preferences.
+            // A rescan cannot restore ratings/tags stripped from its existing
+            // bytes (or remove already-rendered values in the reverse direction),
+            // so rebuild the authoritative projection after any policy override.
+            if (k !== 'SkipDisableConfirm') {
+                await JC.tagPipeline?.invalidateServerCache?.();
+            }
         } catch (err) {
             console.error(`${logPrefix} saveSbPrefs failed:`, err);
             // Revert the box the user clicked so they see the change didn't stick.

@@ -11,8 +11,9 @@
 // lifecycle-tracked handle. Same outcome (image-only refresh, never a reload),
 // no global prototype patching. We deliberately do NOT trigger a full page
 // reload here: a watched flip can fire from many contexts (auto-mark on playback
-// end, batch-mark, cross-client sync) and a reload mid-flow is jarring. DOM text
-// (overview/titles/ratings) refreshes on the user's next navigation.
+// end, batch-mark, cross-client sync) and a reload mid-flow is jarring. Tag
+// overlays are refreshed independently by core/live-rows → tag-pipeline's
+// bounded per-user projection journal; this module owns image URLs only.
 
 import { register } from '../../core/lifecycle';
 import { on, LIVE } from '../../core/live';
