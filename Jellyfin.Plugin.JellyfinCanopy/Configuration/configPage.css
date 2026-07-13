@@ -2063,7 +2063,9 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
         font-size: 0.85em;
     }
     #settingsSearchContainer {
-        flex: 1 1 100%;
+        /* In the sidebar column, growing would swallow the nav's space —
+           the search stays content-height on every viewport. */
+        flex: 0 0 auto;
         max-width: 100%;
     }
 }

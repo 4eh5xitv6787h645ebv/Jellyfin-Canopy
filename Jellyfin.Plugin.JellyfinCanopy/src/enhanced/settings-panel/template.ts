@@ -641,6 +641,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                         </div>
                     </section>
                 </div>
+                </div>
             </div>
             <div class="panel-footer" style="padding: 16px 20px; border-top: 1px solid rgba(255,255,255,0.1); background: ${headerFooterBg}; display: flex; justify-content: space-between; align-items: center;">
                 <div class="close-helptext" style="font-size:12px; color:rgba(255,255,255,0.5);">${JC.t!('panel_footer_close')}</div>
