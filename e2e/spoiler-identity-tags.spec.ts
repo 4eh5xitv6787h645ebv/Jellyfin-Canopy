@@ -17,11 +17,17 @@
 import { test, expect } from './fixtures/auth';
 import { USERS } from './fixtures/auth';
 import { authenticate, api, authHeader, type Session } from './fixtures/api';
+import { createGuardRestorePlan } from '../scripts/e2e/spoiler-guard-restore';
 
 const BASE = process.env.JF_BASE_URL || 'http://localhost:8099';
 
 // SpoilerIdentityService.MarkerSentinel + MarkerHexLength on the server.
 const MARKER = /-jeu[0-9a-f]{12}$/;
+
+/** Normalize a Jellyfin id to the form used by the guard-state response. */
+function norm(id: string): string {
+    return id.replace(/-/g, '').toLowerCase();
+}
 
 interface Target {
     seriesId: string;
@@ -50,6 +56,23 @@ async function primaryTagFor(session: Session, episodeId: string): Promise<strin
     const tag = dto?.ImageTags?.Primary;
     expect(tag, 'target episode lost its Primary image tag').toBeTruthy();
     return tag as string;
+}
+
+/** Whether one user's exact target series is currently guarded. */
+async function seriesIsGuarded(session: Session, seriesId: string): Promise<boolean> {
+    const state = await api<{ Series?: Record<string, unknown> }>(
+        BASE,
+        '/JellyfinCanopy/spoiler-blur/series',
+        session.token
+    );
+    return Object.keys(state?.Series ?? {}).some((id) => norm(id) === norm(seriesId));
+}
+
+/** Set the target series guard and surface any non-success response. */
+async function setSeriesGuard(session: Session, seriesId: string, guarded: boolean): Promise<void> {
+    await api(BASE, `/JellyfinCanopy/spoiler-blur/series/${seriesId}`, session.token, {
+        method: guarded ? 'POST' : 'DELETE',
+    });
 }
 
 test.describe('spoiler guard identity tags (reverse-proxy-safe attribution)', () => {
@@ -114,11 +137,13 @@ test.describe('spoiler guard identity tags (reverse-proxy-safe attribution)', ()
         test.skip(!enabled, 'SpoilerBlurEnabled is off on the target server');
         test.skip(!target, 'no unwatched episode with a Primary image found');
 
-        // Guard the series for the ADMIN only (POST enables, DELETE disables).
-        await api(BASE, `/JellyfinCanopy/spoiler-blur/series/${target!.seriesId}`, admin.token, {
-            method: 'POST',
-        });
+        const plan = createGuardRestorePlan(
+            await seriesIsGuarded(admin, target!.seriesId),
+            true
+        );
         try {
+            // Guard the series for the ADMIN only (POST enables, DELETE disables).
+            await setSeriesGuard(admin, target!.seriesId, plan.requiredGuarded);
             // Tags must be re-read AFTER guarding: the strip filter adds its
             // sb- cache-bust prefix for the guarding user.
             const adminTag = await primaryTagFor(admin, target!.episodeId);
@@ -148,9 +173,7 @@ test.describe('spoiler guard identity tags (reverse-proxy-safe attribution)', ()
                 true
             );
         } finally {
-            await api(BASE, `/JellyfinCanopy/spoiler-blur/series/${target!.seriesId}`, admin.token, {
-                method: 'DELETE',
-            }).catch(() => undefined);
+            await setSeriesGuard(admin, target!.seriesId, plan.restoreGuarded);
         }
     });
 

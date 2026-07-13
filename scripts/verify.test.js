@@ -169,7 +169,7 @@ test('a non-lint failure propagates and prevents the next workflow-like gate', (
 test('CI and release share the verifier while every non-lint workflow gate stays blocking', () => {
     const build = fs.readFileSync(path.join(ROOT, '.github/workflows/build.yml'), 'utf8');
     const release = fs.readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8');
-    const client = build.slice(build.indexOf('  client-scripts:'), build.indexOf('  e2e:'));
+    const client = build.slice(build.indexOf('  client-scripts:'), build.indexOf('  e2e_shard:'));
 
     for (const [name, source] of [['build client job', client], ['release workflow', release]]) {
         assert.match(source, /name: ESLint \(advisory — reported in summary\)/, `${name} lacks the advisory step name`);

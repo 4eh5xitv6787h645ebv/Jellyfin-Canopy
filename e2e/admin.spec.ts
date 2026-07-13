@@ -7,6 +7,7 @@
 // the codes and the empty-body shape.
 import { test, expect, loginAs, USERS, assertNoRuntimeErrors } from './fixtures/auth';
 import { apiRaw, authenticate } from './fixtures/api';
+import { isKnownHiddenContentHostNoise } from '../scripts/e2e/jellyfin-host-noise';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -115,13 +116,13 @@ test.describe('admin authorization', () => {
         expect(state.adminFilter).toBe(false);
         expect(state.stuckSpinners).toBe(0);
 
-        // Jellyfin web's own hashed host chunk can emit this exact pageerror
-        // while mounting a full standalone page. The retained CI trace for
-        // #195 attributes it to /web/49275.*.chunk.js, and the same narrow host
-        // noise is already scoped in pages-lifecycle and settings-persist.
+        // Jellyfin web's own hashed host chunks can emit two proven errors
+        // while replacing Home with a full standalone page. Retained CI traces
+        // attribute them to /web chunks (#195/#198); the predicate requires the
+        // exact scroll message or the exact Home signature plus both host URLs.
         // Keep every other console error and every unexpected plugin 4xx fatal.
         const pluginErrors = consoleErrors.real().filter(
-            (text) => text !== 'pageerror: t.scrollHandler is not a function'
+            (text) => !isKnownHiddenContentHostNoise(text)
         );
         expect(pluginErrors, 'unexpected Canopy console errors').toEqual([]);
         expect(

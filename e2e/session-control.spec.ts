@@ -12,18 +12,20 @@
 // unit tests; here we drive the endpoints directly to assert their effect and
 // the admin/non-admin gate.
 import { test, expect, loginAs, assertNoRuntimeErrors, USERS } from './fixtures/auth';
-import { api, apiRaw, authenticate, PLUGIN_ID } from './fixtures/api';
+import { api, apiRaw, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 
-async function enableActiveStreams(baseURL: string): Promise<void> {
-    const admin = await authenticate(baseURL, USERS.admin.username, USERS.admin.password);
-    const config = await api<Record<string, unknown>>(baseURL, CONFIG_PATH, admin.token);
+async function writePluginConfig(
+    baseURL: string,
+    admin: Session,
+    config: Record<string, unknown>
+): Promise<void> {
     await api(baseURL, CONFIG_PATH, admin.token, {
         method: 'POST',
-        body: JSON.stringify({ ...config, ActiveStreamsEnabled: true, ActiveStreamsAllUsers: false }),
+        body: JSON.stringify(config),
     });
 }
 
@@ -61,14 +63,38 @@ async function startUserPlayback(baseURL: string): Promise<string> {
 }
 
 test.describe('session control', () => {
+    let admin: Session | undefined;
+    let originalConfig: Record<string, unknown> | undefined;
+
+    test.beforeAll(async ({ baseURL }) => {
+        // Capture before the first mutation. Playwright re-runs beforeAll /
+        // afterAll when a retry gets a fresh worker, so every worker restores
+        // the exact configuration it found rather than a hand-picked subset.
+        admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
+        const config = await api<Record<string, unknown>>(baseURL!, CONFIG_PATH, admin.token);
+        expect(config, 'plugin configuration must be readable').toBeTruthy();
+        originalConfig = config!;
+
+        await writePluginConfig(baseURL!, admin, {
+            ...originalConfig,
+            ActiveStreamsEnabled: true,
+            ActiveStreamsAllUsers: false,
+        });
+    });
+
+    test.afterAll(async ({ baseURL }) => {
+        // If setup reached the mutation, both values are present. Do not hide a
+        // failed restore: a cleanup error must fail the file instead of leaking
+        // state silently into the next spec on this shard.
+        if (!admin || !originalConfig) return;
+        await writePluginConfig(baseURL!, admin, originalConfig);
+    });
+
     test('admin sees the live session and can stop / message it', async ({ page, consoleErrors, baseURL }) => {
-        await enableActiveStreams(baseURL!);
         const itemName = await startUserPlayback(baseURL!);
 
-        const admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
-
         // The plugin surface reports the session with the fields the client needs.
-        const sessions = await api<Array<any>>(baseURL!, '/JellyfinCanopy/active-streams/sessions', admin.token);
+        const sessions = await api<Array<any>>(baseURL!, '/JellyfinCanopy/active-streams/sessions', admin!.token);
         const target = (sessions || []).find((s) => s?.NowPlayingItem?.Name === itemName);
         expect(target, 'admin session list includes the played item').toBeTruthy();
         expect(typeof target.Id).toBe('string');
@@ -98,13 +124,13 @@ test.describe('session control', () => {
         // claim on-screen delivery here. Real client rendering of the core
         // message dialog is out of scope for this fixture; the per-card compose /
         // send UI is covered by the unit tests.
-        const msg = await apiRaw(baseURL!, `/JellyfinCanopy/active-streams/sessions/${target.Id}/message`, admin.token, {
+        const msg = await apiRaw(baseURL!, `/JellyfinCanopy/active-streams/sessions/${target.Id}/message`, admin!.token, {
             method: 'POST',
             body: JSON.stringify({ text: 'Please pause your stream', timeoutMs: 5000 }),
         });
         expect(msg.status, 'admin message endpoint accepts the request → 200').toBe(200);
 
-        const stop = await apiRaw(baseURL!, `/JellyfinCanopy/active-streams/sessions/${target.Id}/stop`, admin.token, {
+        const stop = await apiRaw(baseURL!, `/JellyfinCanopy/active-streams/sessions/${target.Id}/stop`, admin!.token, {
             method: 'POST',
         });
         expect(stop.status, 'admin stop → 200').toBe(200);
@@ -119,8 +145,6 @@ test.describe('session control', () => {
     });
 
     test('non-admin gets no session surface and is forbidden from controls', async ({ page, consoleErrors, baseURL }) => {
-        await enableActiveStreams(baseURL!); // enabled, but AllUsers off
-
         // No widget for a non-admin when "show to non-admins" is off.
         await loginAs(page, 'user', consoleErrors);
         await page.waitForFunction(
@@ -131,12 +155,16 @@ test.describe('session control', () => {
         await expect(page.locator('#jc-active-streams')).toHaveCount(0);
 
         // Every session-control endpoint is forbidden for a non-admin token.
-        const user = await authenticate(baseURL!, USERS.user.username, USERS.user.password);
-        const list = await apiRaw(baseURL!, '/JellyfinCanopy/active-streams/sessions', user.token);
+        // Reuse the browser's authenticated token instead of issuing another
+        // AuthenticateByName on fixtures/api's shared REST device id. Besides
+        // avoiding login churn, this keeps the admin cleanup session intact.
+        const userToken = await page.evaluate(() => (window as any).ApiClient?.accessToken?.() as string | undefined);
+        expect(userToken, 'the signed-in non-admin session exposes an access token').toBeTruthy();
+        const list = await apiRaw(baseURL!, '/JellyfinCanopy/active-streams/sessions', userToken);
         expect(list.status, 'non-admin sessions list → 403').toBe(403);
-        const stop = await apiRaw(baseURL!, '/JellyfinCanopy/active-streams/sessions/anything/stop', user.token, { method: 'POST' });
+        const stop = await apiRaw(baseURL!, '/JellyfinCanopy/active-streams/sessions/anything/stop', userToken, { method: 'POST' });
         expect(stop.status, 'non-admin stop → 403').toBe(403);
-        const msg = await apiRaw(baseURL!, '/JellyfinCanopy/active-streams/sessions/anything/message', user.token, {
+        const msg = await apiRaw(baseURL!, '/JellyfinCanopy/active-streams/sessions/anything/message', userToken, {
             method: 'POST',
             body: JSON.stringify({ text: 'x' }),
         });

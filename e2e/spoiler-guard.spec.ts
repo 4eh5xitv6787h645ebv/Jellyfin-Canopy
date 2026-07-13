@@ -19,10 +19,11 @@
 //      override checkbox persists through GET /spoiler-blur/user-prefs
 //
 // Every test asserts a clean console/net and restores ALL state it changes
-// (guard off, prefs back) in a finally block, even on failure.
+// (guard to its prior value, prefs back) in a finally block, even on failure.
 import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
-import { authenticate, api, apiRaw, type Session } from './fixtures/api';
+import { authenticate, api, type Session } from './fixtures/api';
 import type { Page } from 'playwright/test';
+import { createGuardRestorePlan } from '../scripts/e2e/spoiler-guard-restore';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -134,7 +135,7 @@ async function pickTarget(user: Session): Promise<Target | null> {
 
 /** Set (POST) or clear (DELETE) the series guard for a user, server-side. */
 async function setSeriesGuard(user: Session, seriesId: string, on: boolean): Promise<void> {
-    await apiRaw(
+    await api(
         BASE,
         `/JellyfinCanopy/spoiler-blur/series/${norm(seriesId)}`,
         user.token,
@@ -231,9 +232,13 @@ test.describe('Spoiler Guard', () => {
         test.skip(!target, 'no series with an unwatched episode available on the target server');
         const t = target!;
 
-        // Start from a known-OFF baseline before boot so the client caches "off".
-        await setSeriesGuard(user, t.seriesId, false);
+        const plan = createGuardRestorePlan(
+            (await guardedSeriesIds(user)).has(norm(t.seriesId)),
+            false
+        );
         try {
+            // Start from a known-OFF baseline before boot so the client caches "off".
+            await setSeriesGuard(user, t.seriesId, plan.requiredGuarded);
             await loginAs(page, 'user', consoleErrors);
             await openDetailWithButton(page, t.seriesId);
 
@@ -272,7 +277,7 @@ test.describe('Spoiler Guard', () => {
 
             assertNoSpoilerRuntimeErrors(consoleErrors);
         } finally {
-            await setSeriesGuard(user, t.seriesId, false);
+            await setSeriesGuard(user, t.seriesId, plan.restoreGuarded);
         }
     });
 
@@ -281,9 +286,13 @@ test.describe('Spoiler Guard', () => {
         test.skip(!target, 'no series with an unwatched episode available on the target server');
         const t = target!;
 
-        // Enable server-side BEFORE boot so the button loads in the ON state.
-        await setSeriesGuard(user, t.seriesId, true);
+        const plan = createGuardRestorePlan(
+            (await guardedSeriesIds(user)).has(norm(t.seriesId)),
+            true
+        );
         try {
+            // Enable server-side BEFORE boot so the button loads in the ON state.
+            await setSeriesGuard(user, t.seriesId, plan.requiredGuarded);
             await loginAs(page, 'user', consoleErrors);
             await openDetailWithButton(page, t.seriesId);
 
@@ -312,7 +321,7 @@ test.describe('Spoiler Guard', () => {
 
             assertNoSpoilerRuntimeErrors(consoleErrors);
         } finally {
-            await setSeriesGuard(user, t.seriesId, false);
+            await setSeriesGuard(user, t.seriesId, plan.restoreGuarded);
         }
     });
 
@@ -325,9 +334,13 @@ test.describe('Spoiler Guard', () => {
         const adminReal = (await listEpisodes(admin, t.seriesId)).find((e) => e.id === t.unwatched.id);
         expect(adminReal, 'admin can see the target episode').toBeTruthy();
 
-        // Guard the series for the NON-admin only.
-        await setSeriesGuard(user, t.seriesId, true);
+        const plan = createGuardRestorePlan(
+            (await guardedSeriesIds(user)).has(norm(t.seriesId)),
+            true
+        );
         try {
+            // Guard the series for the NON-admin only.
+            await setSeriesGuard(user, t.seriesId, plan.requiredGuarded);
             // Boot a clean non-admin session purely to prove no console/net errors
             // while the user is guarded (the isolation itself is asserted via API).
             await loginAs(page, 'user', consoleErrors);
@@ -346,7 +359,7 @@ test.describe('Spoiler Guard', () => {
 
             assertNoRuntimeErrors(consoleErrors);
         } finally {
-            await setSeriesGuard(user, t.seriesId, false);
+            await setSeriesGuard(user, t.seriesId, plan.restoreGuarded);
         }
     });
 
