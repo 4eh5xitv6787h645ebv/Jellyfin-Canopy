@@ -989,6 +989,53 @@ below remains blocking.
 - `node scripts/new-feature.js <name>` — the paved-road scaffolder: generates a typed client module, a controller, an e2e spec stub, and a docs stub, wired into the area barrel (see `CONTRIBUTING.md`).
 - `scripts/release/` — release packaging + manifest generation/validation (see `RELEASING.md`).
 
+### Local sharded E2E
+
+`npm run e2e:local` is the opt-in fast path for running the complete dockerized
+Jellyfin 12 inventory on a Linux workstation. It builds the Release plugin once
+and fans the suite out through Playwright's native file sharding. The default is
+four independent servers with one serial browser worker and a 2-CPU Docker quota
+per server:
+
+```bash
+npm run e2e:local
+npm run e2e:local -- --shards 6
+npm run e2e:local -- --shards 4 --cpus-per-server 4  # exploratory, not parity
+```
+
+Keep 2 CPUs per server for evidence comparable with the official E2E profile.
+That quota is a ceiling, not a reservation: the four-shard default permits up to
+eight Jellyfin CPU threads, while the build, Chromium processes, and host Docker
+work consume resources outside those server quotas. The runner warns when its
+CPU plan exceeds detected logical CPUs, when current `MemAvailable` is below its
+per-shard guideline, or when the host is already using swap. Counts above four
+are deliberately explicit; reduce the count if memory pressure causes swapping.
+
+Every shard receives a random Compose project, loopback-only dynamic port,
+marker-owned state tree, and Playwright output directory. Cleanup targets those
+exact projects and reports teardown failure as a run failure; it never prunes or
+name-matches unrelated containers. The runner is Linux-only and depends on a
+host `ffmpeg` plus GNU `setsid` and `timeout` for bounded process-group shutdown.
+Each encoder is limited to two threads so media generation cannot silently use
+every host CPU outside the Jellyfin container quotas.
+
+For the single-server seed, non-loopback publication is intentionally noisy
+and exceptional. It requires `JF_BIND_ADDRESS=<numeric-ip>`,
+`JF_ALLOW_NON_LOOPBACK=true`, and nondefault values for both seeded usernames
+and passwords. Do not publish the documented test credentials outside the
+host.
+
+TMDB and Seerr variables are scrubbed for the default hermetic run. The
+`--allow-external-integrations` flag forwards them deliberately, but parallel
+shards can then rate-limit or mutate the same external service and the result is
+not parity evidence. Per-run output is retained beneath
+`e2e/test-results/local-<run-id>/`. The runner disables Playwright tracing (a
+trace can contain login arguments and tokens) and removes any retained file
+that contains one of its random passwords. Random usernames are redacted in
+text diagnostics; matching binary artifacts are removed. Other diagnostic data
+may still be sensitive, so keep artifacts local and do not upload or share them
+without inspection and redaction.
+
 ---
 
 ## Performance trace capture
@@ -1005,7 +1052,7 @@ The highest-value scenario is **`details-to-details`**: hopping from one item de
 
     ```bash
     dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release
-    bash e2e/docker/seed.sh            # → http://localhost:8100 (admin jc_arradmin)
+    bash e2e/docker/seed.sh            # → http://127.0.0.1:8100 (admin jc_arradmin)
     # …run captures…
     docker compose -f e2e/docker/compose.yml down -v
     ```
@@ -1019,7 +1066,7 @@ The highest-value scenario is **`details-to-details`**: hopping from one item de
 ### Running
 
 ```bash
-# All scenarios, defaults (JF_BASE_URL or http://localhost:8100):
+# All scenarios, defaults (JF_BASE_URL or http://127.0.0.1:8100):
 npm run perf:trace
 
 # A subset (positional scenario names):
@@ -1040,7 +1087,7 @@ Value-taking flags (`--out`, `--latency`, `--cpu`, `--download`, `--base`, `--us
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--base <url>` | `JF_BASE_URL` or `http://localhost:8100` | server under test |
+| `--base <url>` | `JF_BASE_URL` or `http://127.0.0.1:8100` | server under test |
 | `--user` / `--pass` | see [Environment](#environment) | login credentials |
 | `--out <dir>` | `e2e/perf/traces` | output directory |
 | `--cpu <N>` | `1` | CPU throttle rate (`Emulation.setCPUThrottlingRate`) |
@@ -1057,7 +1104,7 @@ Matches `e2e/fixtures/auth.ts` and `e2e/docker/seed.sh`:
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `JF_BASE_URL` | `http://localhost:8100` | server under test |
+| `JF_BASE_URL` | `http://127.0.0.1:8100` | server under test |
 | `JC_TRACE_USER` → `JF_ADMIN_USER` → `jc_arradmin` | | login user (first set wins) |
 | `JC_TRACE_PASS` → `JF_ADMIN_PASS` → `Test669Pw!x` | | login password |
 

@@ -22,6 +22,7 @@ test('E2E uses four native file shards with one fresh serial server each', () =>
 
     assert.match(shard, /strategy:\n\s+fail-fast: false\n\s+max-parallel: 4/);
     assert.match(shard, /matrix:\n\s+shard: \[1, 2, 3, 4\]/);
+    assert.match(shard, /JF_BASE_URL: http:\/\/127\.0\.0\.1:8100/);
     assert.match(shard, /id: seed\n\s+run: bash e2e\/docker\/seed\.sh/);
     assert.match(
         shard,
@@ -29,6 +30,11 @@ test('E2E uses four native file shards with one fresh serial server each', () =>
     );
     assert.doesNotMatch(shard, /npm run e2e[^\n]*(--grep|\.spec\.ts)/);
     assert.match(shard, /name: Tear down\n\s+if: always\(\)/);
+    assert.match(
+        shard,
+        /name: Server logs on failure[\s\S]*docker compose -f e2e\/docker\/compose\.yml logs --no-color --tail 200 jellyfin/
+    );
+    assert.doesNotMatch(shard, /docker logs jc-e2e-jellyfin/);
 
     assert.match(playwrightConfig, /workers:\s*1/);
     assert.match(playwrightConfig, /fullyParallel:\s*false/);
