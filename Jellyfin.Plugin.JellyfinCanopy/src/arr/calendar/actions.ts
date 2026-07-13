@@ -35,6 +35,9 @@ let loadQueued = false;
 let activeSignal: AbortSignal | null = null;
 
 async function loadAllDataOnce(): Promise<void> {
+    // Capture THIS run's signal: a new adoption replaces activeSignal, and
+    // the old run must keep honoring its own (aborted) one.
+    const runSignal = activeSignal;
     state.isLoading = true;
     renderPage();
 
@@ -44,15 +47,15 @@ async function loadAllDataOnce(): Promise<void> {
 
     // First fetch calendar events
     await fetchCalendarEvents(start, end);
-    if (activeSignal?.aborted) return;
+    if (runSignal?.aborted) return;
 
     // Then fetch user data for those specific events
     await fetchUserData();
-    if (activeSignal?.aborted) return;
+    if (runSignal?.aborted) return;
 
     if (state.activeFilters.has('Requests') || state.settings.forceOnlyRequested) {
         await ensureRequestData();
-        if (activeSignal?.aborted) return;
+        if (runSignal?.aborted) return;
     }
 
     state.isLoading = false;

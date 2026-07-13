@@ -611,7 +611,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                     if (id != null
                         && (string.Equals(id, namespaceName, StringComparison.Ordinal)
                             || id.StartsWith(namespaceName + ".", StringComparison.Ordinal)
-                            || id.StartsWith(LegacyAssemblyName, StringComparison.Ordinal)))
+                            || string.Equals(id, LegacyAssemblyName, StringComparison.Ordinal)
+                            || id.StartsWith(LegacyAssemblyName + ".", StringComparison.Ordinal)))
                     {
                         pages.RemoveAt(i);
                         removed++;

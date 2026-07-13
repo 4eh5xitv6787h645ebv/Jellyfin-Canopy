@@ -552,11 +552,14 @@ let loadQueued = false;
 let activeSignal: AbortSignal | null = null;
 
 async function loadAllDataOnce(): Promise<void> {
+    // Capture THIS run's signal: a new adoption replaces activeSignal, and
+    // the old run must keep honoring its own (aborted) one.
+    const runSignal = activeSignal;
     state.isLoading = true;
     renderPage();
 
     await Promise.all([fetchDownloads(), fetchRequests(), fetchIssues()]);
-    if (activeSignal?.aborted) return;
+    if (runSignal?.aborted) return;
 
     state.isLoading = false;
     renderPage();

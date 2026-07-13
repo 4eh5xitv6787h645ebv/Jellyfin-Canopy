@@ -103,6 +103,10 @@ export async function findAndOfferReplacement(group: any, triggerBtn: HTMLButton
  * Show modal to select replacement item and migrate bookmarks
  */
 function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): void {
+  // These modals are reached from awaited flows (library search, orphan
+  // scan): the page can drain mid-await. A modal with no live adoption to
+  // own its teardown must not appear over the destination view.
+  if (!currentPageHandle()) return;
   const apiClient: any = window.ApiClient || (window as any).ConnectionManager?.currentApiClient();
   if (!apiClient) return;
 
@@ -323,6 +327,8 @@ export async function findAllOrphanedAndOfferMigration(bookmarks: Record<string,
  * Show summary of all orphaned items with replacements
  */
 function showOrphanedSummaryModal(replacementResults: any[]): void {
+  // Same delayed-flow guard as showReplacementSelectionModal.
+  if (!currentPageHandle()) return;
   const modal = document.createElement('div');
   modal.className = 'jc-bm-library-modal-overlay';
   modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s;';
