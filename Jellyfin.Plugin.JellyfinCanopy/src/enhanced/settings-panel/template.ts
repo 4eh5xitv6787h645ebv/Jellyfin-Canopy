@@ -69,28 +69,47 @@ export function buildPanelHtml(ctx: PanelContext): string {
 
     return `
             <style>
-                #jellyfin-canopy-panel .tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); }
-                #jellyfin-canopy-panel .tab-button { font-family: inherit; flex: 1; padding: 14px; text-align: center; cursor: pointer; border: none; color: rgba(255,255,255,0.6); font-size: 15px; font-weight: 600; transition: all 0.2s; border-bottom: 2px solid transparent; background: ${panelBgColor}; position: relative; }
-                #jellyfin-canopy-panel .tab-button:hover { background: ${panelBgColor}; color: #fff; }
-                #jellyfin-canopy-panel .tab-button.active { color: #fff; background: ${headerFooterBg}; }
-                /* Canopy signature: gradient underline on the active tab. */
-                #jellyfin-canopy-panel .tab-button.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -2px; height: 2px; background: ${brandGradient}; }
-                #jellyfin-canopy-panel .tab-content { display: none; }
-                #jellyfin-canopy-panel .tab-content.active { display: block; }
+                /* Adaptive settings view: section nav on the left, one pane at a
+                   time on the right; below 760px the nav is the first screen and
+                   panes slide in with a back button. */
+                #jellyfin-canopy-panel .jc-panel-body { display: grid; grid-template-columns: 230px minmax(0, 1fr); flex: 1; min-height: 0; background: ${panelBgColor}; }
+                #jellyfin-canopy-panel .jc-panel-nav { display: flex; flex-direction: column; gap: 10px; padding: 14px 12px; border-right: 1px solid rgba(255,255,255,0.08); background: rgba(0,0,0,0.18); overflow-y: auto; }
+                #jellyfin-canopy-panel .jc-panel-nav-items { display: flex; flex-direction: column; gap: 3px; }
+                #jellyfin-canopy-panel .jc-panel-search { width: 100%; box-sizing: border-box; padding: 9px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #fff; font-family: inherit; font-size: 13px; outline: none; }
+                #jellyfin-canopy-panel .jc-panel-search:focus { border-color: ${primaryAccentColor}; }
+                #jellyfin-canopy-panel .tab-button { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; border: none; border-radius: 8px; background: transparent; color: rgba(255,255,255,0.65); font-family: inherit; font-size: 14px; font-weight: 600; text-align: left; cursor: pointer; transition: background-color 0.15s, color 0.15s; }
+                #jellyfin-canopy-panel .tab-button:hover { background: rgba(255,255,255,0.06); color: #fff; }
+                #jellyfin-canopy-panel .tab-button.active { background: rgba(255,255,255,0.08); color: #fff; }
+                #jellyfin-canopy-panel .tab-button.active::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px; border-radius: 3px; background: ${brandGradient}; }
+                #jellyfin-canopy-panel .jc-panel-main { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; padding: 4px 20px 20px 20px; }
+                #jellyfin-canopy-panel .jc-pane { display: none; }
+                #jellyfin-canopy-panel .jc-pane.active { display: block; }
+                #jellyfin-canopy-panel .jc-pane-title { display: flex; align-items: center; gap: 8px; margin: 14px 0 12px 0; font-size: 17px; font-weight: 700; color: #fff; font-family: inherit; }
+                #jellyfin-canopy-panel .jc-pane-back { display: none; align-items: center; gap: 6px; margin: 12px 0 0 0; padding: 6px 10px; border: none; border-radius: 8px; background: rgba(255,255,255,0.08); color: #fff; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; align-self: flex-start; }
+                @media (max-width: 760px) {
+                    #jellyfin-canopy-panel { top: 0 !important; left: 0 !important; transform: none !important; width: 100vw !important; max-width: 100vw !important; height: 100dvh !important; max-height: 100dvh !important; border-radius: 0 !important; border: none !important; box-sizing: border-box !important; }
+                    #jellyfin-canopy-panel .jc-panel-body { display: block; position: relative; overflow: hidden; }
+                    #jellyfin-canopy-panel .jc-panel-nav { position: absolute; inset: 0; border-right: none; z-index: 1; }
+                    #jellyfin-canopy-panel .jc-panel-main { position: absolute; inset: 0; z-index: 2; background: rgb(24, 24, 24); transform: translateX(102%); transition: transform 200ms ease; }
+                    #jellyfin-canopy-panel .jc-panel-body.jc-pane-open .jc-panel-main { transform: translateX(0); }
+                    #jellyfin-canopy-panel .jc-panel-body.jc-pane-open .jc-pane-back { display: inline-flex; }
+                }
                 @keyframes shake { 10%, 90% { transform: translateX(-1px); } 20%, 80% { transform: translateX(2px); } 30%, 50%, 70% { transform: translateX(-4px); } 40%, 60% { transform: translateX(4px); } }
                 .shake-error { animation: shake 0.5s ease-in-out; }
             </style>
-            <div style="padding: 18px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); background: ${headerFooterBg};">
-                <div style="font-size: 24px; font-weight: 700; margin-bottom: 8px; text-align: center;"><img src="${escapeHtml(assetUrl('branding/canopy-mark.svg'))}" alt="" width="28" height="24" style="vertical-align: -4px; margin-right: 8px;"><span style="background: ${brandGradient}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Jellyfin Canopy</span></div>
-                <div style="text-align: center; font-size: 12px; color: rgba(255,255,255,0.8);">${escapeHtml(JC.t!('panel_version', { version: JC.pluginVersion }))}</div>
+            <div class="jc-panel-header" style="padding: 14px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); background: ${headerFooterBg}; display: flex; align-items: baseline; gap: 10px; cursor: grab;">
+                <div style="font-size: 20px; font-weight: 700;"><img src="${escapeHtml(assetUrl('branding/canopy-mark.svg'))}" alt="" width="24" height="21" style="vertical-align: -3px; margin-right: 8px;"><span style="background: ${brandGradient}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Jellyfin Canopy</span></div>
+                <div style="font-size: 12px; color: rgba(255,255,255,0.7);">${escapeHtml(JC.t!('panel_version', { version: JC.pluginVersion }))}</div>
             </div>
-            <div class="tabs">
-                ${!JC.pluginConfig.DisableAllShortcuts ? `<button class="tab-button" data-tab="shortcuts">${JC.t!('panel_shortcuts_tab')}</button>` : ''}
-                <button class="tab-button" data-tab="settings">${JC.t!('panel_settings_tab')}</button>
-            </div>
-            <div class="panel-main-content" style="padding: 0 20px; flex: 1; overflow-y: auto; position: relative; background: ${panelBgColor};">
+            <div class="jc-panel-body">
+                <nav class="jc-panel-nav" aria-label="${escapeHtml(JC.t!('panel_settings_tab'))}">
+                    <input id="jcPanelSearch" class="jc-panel-search" type="text" placeholder="${escapeHtml(JC.t!('panel_search_placeholder'))}" />
+                    <div class="jc-panel-nav-items"></div>
+                </nav>
+                <div class="jc-panel-main">
+                <button id="jcPanelBack" class="jc-pane-back" type="button"><span class="material-icons" style="font-size:16px;" aria-hidden="true">arrow_back</span>${escapeHtml(JC.t!('panel_back'))}</button>
                  ${!JC.pluginConfig.DisableAllShortcuts ? `
-                 <div id="shortcuts-content" class="tab-content" style="padding-top: 20px; padding-bottom: 20px;">
+                 <div id="shortcuts-content" class="tab-content jc-pane" data-pane="shortcuts" data-pane-label="${escapeHtml(JC.t!('panel_shortcuts_tab'))}" style="padding-top: 4px; padding-bottom: 20px;">
                  <div class="shortcuts-container" style="display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 24px;">
                         <div style="flex: 1; min-width: 400px;">
                             <h3 style="margin: 0 0 12px 0; font-size: 18px; color: ${primaryAccentColor}; font-family: inherit;">${JC.t!('panel_shortcuts_global')}</h3>
@@ -133,9 +152,9 @@ export function buildPanelHtml(ctx: PanelContext): string {
                     ${JC.t!('panel_shortcuts_footer')}
                     </div>
                 </div>` : ''}
-                <div id="settings-content" class="tab-content" style="padding-top: 20px; padding-bottom: 20px; width: 50vw;">
-                    <details style="margin-bottom: 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: ${detailsBackground};">
-                        <summary style="padding: 16px; font-weight: 600; color: ${primaryAccentColor}; cursor: pointer; user-select: none; font-family: inherit;">${JC.icon!(JC.IconName!.PLAYBACK)} ${JC.t!('panel_settings_playback')}</summary>
+                <div id="settings-content" style="display: contents;">
+                    <section class="jc-pane" data-pane="playback">
+                        <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.PLAYBACK)} ${JC.t!('panel_settings_playback')}</h3>
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
@@ -172,9 +191,9 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 </div>
                             </div>
                         </div>
-                    </details>
-                    <details style="margin-bottom: 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: ${detailsBackground};">
-                        <summary style="padding: 16px; font-weight: 600; color: ${primaryAccentColor}; cursor: pointer; user-select: none; font-family: inherit;">${JC.icon!(JC.IconName!.SKIP)} ${JC.t!('panel_settings_auto_skip')}</summary>
+                    </section>
+                    <section class="jc-pane" data-pane="auto-skip">
+                        <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.SKIP)} ${JC.t!('panel_settings_auto_skip')}</h3>
                         <div style="font-size:12px; color:rgba(255,255,255,0.6); margin-left: 18px; margin-bottom: 10px;">${JC.t!('panel_settings_auto_skip_depends')}</div>
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
@@ -190,9 +209,9 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 </label>
                             </div>
                         </div>
-                    </details>
-                    <details style="margin-bottom: 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: ${detailsBackground};">
-                        <summary style="padding: 16px; font-weight: 600; color: ${primaryAccentColor}; cursor: pointer; user-select: none; font-family: inherit;">${JC.icon!(JC.IconName!.SUBTITLES)} ${JC.t!('panel_settings_subtitles')}</summary>
+                    </section>
+                    <section class="jc-pane" data-pane="subtitles">
+                        <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.SUBTITLES)} ${JC.t!('panel_settings_subtitles')}</h3>
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
@@ -242,9 +261,9 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 <div style="margin-top:6px; font-size:11px; color:rgba(255,255,255,0.4); text-align:center;">${JC.t!('panel_settings_subtitles_position_note') || 'Requires Jellyfin subtitle style set to <b>Custom</b> in Subtitle settings'}</div>
                             </div>
                         </div>
-                    </details>
-                    <details style="margin-bottom: 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: ${detailsBackground};">
-                        <summary style="padding: 16px; font-weight: 600; color: ${primaryAccentColor}; cursor: pointer; user-select: none; font-family: inherit;">${JC.icon!(JC.IconName!.RANDOM)} ${JC.t!('panel_settings_random_button')}</summary>
+                    </section>
+                    <section class="jc-pane" data-pane="random-button">
+                        <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.RANDOM)} ${JC.t!('panel_settings_random_button')}</h3>
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom:16px; padding:12px; background:${presetBoxBackground}; border-radius:6px; border-left:3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;"><input type="checkbox" id="randomButtonToggle" ${JC.currentSettings!.randomButtonEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;"><div><div style="font-weight:500;">${JC.t!('panel_settings_random_button_enable')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_random_button_enable_desc')}</div></div></label>
@@ -257,9 +276,9 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;"><input type="checkbox" id="randomIncludeShows" ${JC.currentSettings!.randomIncludeShows ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;"><span>${JC.t!('panel_settings_random_button_shows')}</span></label>
                             </div>
                         </div>
-                    </details>
-                    <details style="margin-bottom: 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: ${detailsBackground};">
-                        <summary style="padding: 16px; font-weight: 600; color: ${primaryAccentColor}; cursor: pointer; user-select: none; font-family: inherit;">${JC.icon!(JC.IconName!.UI)} ${JC.t!('panel_settings_ui')}</summary>
+                    </section>
+                    <section class="jc-pane" data-pane="ui">
+                        <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.UI)} ${JC.t!('panel_settings_ui')}</h3>
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
@@ -423,10 +442,10 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 </label>
                             </div>
                         </div>
-                    </details>
+                    </section>
                     ${/* Hidden Content settings — only rendered when the module is initialized (controlled by HiddenContentEnabled config) */ ''}
-                    ${(JC as any).hiddenContent ? `<details style="margin-bottom: 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: ${detailsBackground};">
-                        <summary style="padding: 16px; font-weight: 600; color: ${primaryAccentColor}; cursor: pointer; user-select: none; font-family: inherit;">${JC.icon!(JC.IconName!.EYE)} ${JC.t!('hidden_content_settings_title')}</summary>
+                    ${(JC as any).hiddenContent ? `<section class="jc-pane" data-pane="hidden-content">
+                        <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.EYE)} ${JC.t!('hidden_content_settings_title')}</h3>
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom: 12px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
@@ -545,7 +564,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 <div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:8px;">${JC.t!('hidden_content_manage_desc')}</div>
                             </div>
                         </div>
-                    </details>` : ''}
+                    </section>` : ''}
                     ${/* Spoiler Guard user-side override panel — only rendered when the admin master switch is on. */ ''}
                     ${JC.pluginConfig?.SpoilerBlurEnabled === true && JC.spoilerGuard ? (() => {
                         const sbPrefs = JC.spoilerGuard.getUserPrefs ? JC.spoilerGuard.getUserPrefs() : {};
@@ -578,8 +597,8 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 </label>
                             </div>` : '';
                         return `
-                        <details style="margin-bottom: 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: ${detailsBackground};">
-                            <summary style="padding: 16px; font-weight: 600; color: ${primaryAccentColor}; cursor: pointer; user-select: none; font-family: inherit;">${JC.icon!(JC.IconName!.MASK)} ${JC.t!('panel_settings_spoiler_guard')}</summary>
+                        <section class="jc-pane" data-pane="spoiler-guard">
+                            <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.MASK)} ${JC.t!('panel_settings_spoiler_guard')}</h3>
                             <div style="padding: 0 16px 16px 16px;">
                                 <div style="font-weight:500; font-size:13px; color:rgba(255,255,255,0.7); margin-bottom:8px; padding-left:4px;">${JC.t!('panel_settings_spoiler_guard_overrides_section')}</div>
                                 ${row('sbPrefHideOverview',  'HideEpisodeDescriptions', 'panel_settings_spoiler_guard_override_overview',  'panel_settings_spoiler_guard_override_overview_desc',  adminOn.overview)}
@@ -598,10 +617,10 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                     </label>
                                 </div>
                             </div>
-                        </details>`;
+                        </section>`;
                     })() : ''}
-                    <details style="margin-bottom: 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: ${detailsBackground};">
-                        <summary style="padding: 16px; font-weight: 600; color: ${primaryAccentColor}; cursor: pointer; user-select: none; font-family: inherit;">${JC.icon!(JC.IconName!.LANGUAGE)} ${JC.t!('panel_settings_language')}</summary>
+                    <section class="jc-pane" data-pane="language">
+                        <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.LANGUAGE)} ${JC.t!('panel_settings_language')}</h3>
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom: 16px;">
                                 <div style="font-weight: 600; margin-bottom: 8px;">${JC.t!('panel_settings_language_display')}</div>
@@ -618,16 +637,29 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 <div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:8px;">${JC.t!('panel_settings_language_clear_cache_desc')}</div>
                             </div>
                         </div>
-                    </details>
+                    </section>
+                    <section class="jc-pane" data-pane="about">
+                        <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.QUESTION)} ${JC.t!('panel_about_title')}</h3>
+                        <div style="padding: 4px 0 16px 0; display: flex; flex-direction: column; gap: 14px;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <img src="${escapeHtml(assetUrl('branding/canopy-mark.svg'))}" alt="" width="34" height="29">
+                                <div>
+                                    <div style="font-weight: 700; font-size: 16px;">Jellyfin Canopy</div>
+                                    <div style="font-size: 12px; color: rgba(255,255,255,0.7);">${escapeHtml(JC.t!('panel_version', { version: JC.pluginVersion }))}</div>
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                                <button id="releaseNotesBtn" style="font-family:inherit; background:${brandGradient}; color:#fff; text-shadow:0 1px 2px rgba(0,6,17,0.35); border:none; padding:8px 14px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; transition:opacity 0.2s; display:flex; align-items:center; gap:6px;" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">${JC.t!('panel_footer_release_notes')}</button>
+                                <a href="https://github.com/${GITHUB_REPO}/" target="_blank" style="color:${primaryAccentColor}; text-decoration:none; display:flex; align-items:center; gap:6px; font-size:13px; padding:8px 12px; border-radius:8px; background:${githubButtonBg}; transition:background 0.2s;" onmouseover="this.style.background='rgba(102, 179, 255, 0.2)'" onmouseout="this.style.background='${githubButtonBg}'"><svg height="13" viewBox="0 0 24 24" width="13" fill="currentColor"><path d="M12 1C5.923 1 1 5.923 1 12c0 4.867 3.149 8.979 7.521 10.436.55.096.756-.233.756-.522 0-.262-.013-1.128-.013-2.049-2.764.509-3.479-.674-3.699-1.292-.124-.317-.66-1.293-1.127-1.554-.385-.207-.936-.715-.014-.729.866-.014 1.485.797 1.691 1.128.99 1.663 2.571 1.196 3.204.907.096-.715.385-1.196.701-1.471-2.448-.275-5.005-1.224-5.005-5.432 0-1.196.426-2.186 1.128-2.956-.111-.275-.496-1.402.11-2.915 0 0 .921-.288 3.024 1.128a10.193 10.193 0 0 1 2.75-.371c.936 0 1.871.123 2.75.371 2.104-1.43 3.025-1.128 3.025-1.128.605 1.513.221 2.64.111 2.915.701.77 1.127 1.747 1.127 2.956 0 4.222-2.571 5.157-5.019 5.432.399.344.743 1.004.743 2.035 0 1.471-.014 2.654-.014 3.025 0 .289.206.632.756.522C19.851 20.979 23 16.854 23 12c0-6.077-4.922-11-11-11Z"></path></svg> ${JC.t!('panel_footer_contribute')}</a>
+                            </div>
+                            ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" class="footer-logo" alt="Theme Logo" style="height: 40px; align-self: flex-start;">` : ''}
+                        </div>
+                    </section>
+                </div>
                 </div>
             </div>
-            <div class="panel-footer" style="padding: 16px 20px; border-top: 1px solid rgba(255,255,255,0.1); background: ${headerFooterBg}; display: flex; justify-content: space-between; align-items: center;">
+            <div class="panel-footer" style="padding: 10px 20px; border-top: 1px solid rgba(255,255,255,0.1); background: ${headerFooterBg}; display: flex; justify-content: center; align-items: center;">
                 <div class="close-helptext" style="font-size:12px; color:rgba(255,255,255,0.5);">${JC.t!('panel_footer_close')}</div>
-                ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" class="footer-logo" alt="Theme Logo" style="height: 40px;">` : ''}
-                <div class="footer-buttons" style="display:flex; gap:12px; align-items:center;">
-                    <button id="releaseNotesBtn" style="font-family:inherit; background:${brandGradient}; color:#fff; text-shadow:0 1px 2px rgba(0,6,17,0.35); border:none; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; transition:opacity 0.2s; display:flex; align-items:center; gap:6px;" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">${JC.t!('panel_footer_release_notes')}</button>
-                    <a href="https://github.com/${GITHUB_REPO}/" target="_blank" style="color:${primaryAccentColor}; text-decoration:none; display:flex; align-items:center; gap:6px; font-size:12px; padding:4px 8px; border-radius:4px; background:${githubButtonBg}; transition:background 0.2s;" onmouseover="this.style.background='rgba(102, 179, 255, 0.2)'" onmouseout="this.style.background='${githubButtonBg}'"><svg height="12" viewBox="0 0 24 24" width="12" fill="currentColor"><path d="M12 1C5.923 1 1 5.923 1 12c0 4.867 3.149 8.979 7.521 10.436.55.096.756-.233.756-.522 0-.262-.013-1.128-.013-2.049-2.764.509-3.479-.674-3.699-1.292-.124-.317-.66-1.293-1.127-1.554-.385-.207-.936-.715-.014-.729.866-.014 1.485.797 1.691 1.128.99 1.663 2.571 1.196 3.204.907.096-.715.385-1.196.701-1.471-2.448-.275-5.005-1.224-5.005-5.432 0-1.196.426-2.186 1.128-2.956-.111-.275-.496-1.402.11-2.915 0 0 .921-.288 3.024 1.128a10.193 10.193 0 0 1 2.75-.371c.936 0 1.871.123 2.75.371 2.104-1.43 3.025-1.128 3.025-1.128.605 1.513.221 2.64.111 2.915.701.77 1.127 1.747 1.127 2.956 0 4.222-2.571 5.157-5.019 5.432.399.344.743 1.004.743 2.035 0 1.471-.014 2.654-.014 3.025 0 .289.206.632.756.522C19.851 20.979 23 16.854 23 12c0-6.077-4.922-11-11-11Z"></path></svg> ${JC.t!('panel_footer_contribute')}</a>
-                </div>
             </div>
             <button id="closeSettingsPanel" style="position:absolute; top:24px; right:24px; background:rgba(255,255,255,0.1); border:none; color:#fff; font-size:16px; cursor:pointer; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">×</button>
         `;

@@ -358,13 +358,13 @@ test.describe('Spoiler Guard', () => {
         try {
             await loginAs(page, 'user', consoleErrors);
 
-            // Open the panel → settings tab → the Spoiler Guard override <details>.
+            // Open the panel → the Spoiler Guard section pane.
             await page.evaluate(() => {
                 (window as any).JellyfinCanopy.showEnhancedPanel();
             });
             const panel = page.locator('#jellyfin-canopy-panel');
             await expect(panel).toBeVisible({ timeout: 15_000 });
-            await panel.locator('.tab-button[data-tab="settings"]').click();
+            await panel.locator('.tab-button[data-tab="spoiler-guard"]').click();
 
             // The section's checkboxes carry ids prefixed "sbPref" and a data-pref.
             const overrideBox = panel.locator('#sbPrefHideOverview');
@@ -374,10 +374,7 @@ test.describe('Spoiler Guard', () => {
                 'the Spoiler Guard override section rendered its checkboxes'
             ).toBeGreaterThanOrEqual(2);
 
-            // Open the collapsed <details> so the control is interactable/visible.
-            await page.evaluate(() => {
-                document.getElementById('sbPrefHideOverview')?.closest('details')?.setAttribute('open', 'open');
-            });
+            // The active Spoiler Guard pane shows the control directly.
             await expect(overrideBox).toBeVisible({ timeout: 10_000 });
 
             // Default = checked (inherit admin). Unchecking opts the user OUT

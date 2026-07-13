@@ -117,6 +117,137 @@
                 }, true);
             })();
 
+            // Mobile section drawer: the sidebar slides in off-canvas below
+            // 900px. The toggle/scrim only exist in the new shell layout, so
+            // everything here no-ops gracefully if the markup changes.
+            (function wireSectionDrawer() {
+                const shell = document.querySelector('#JellyfinCanopyPage .jc-shell');
+                const toggle = document.getElementById('jcNavToggle');
+                const scrim = document.getElementById('jcNavScrim');
+                const sidebar = shell?.querySelector('.jc-sidebar');
+                const main = shell?.querySelector('.jc-main');
+                if (!shell || !toggle || !scrim || !sidebar || !main) return;
+                const drawerMedia = window.matchMedia('(max-width: 900px)');
+                const setOpen = (open) => {
+                    const wasOpen = shell.classList.contains('jc-nav-open');
+                    shell.classList.toggle('jc-nav-open', open);
+                    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                    // Off-canvas focus ownership (drawer mode only): while the
+                    // drawer overlays the page, the covered main column must not
+                    // hold focus or be reachable; while it is closed off-canvas,
+                    // the sidebar must not be tabbable behind the viewport edge.
+                    if (drawerMedia.matches) {
+                        main.inert = open;
+                        sidebar.inert = !open;
+                        if (open) {
+                            sidebar.querySelector('#settingsSearchInput, .jc-group-btn')?.focus();
+                        } else if (wasOpen) {
+                            toggle.focus();
+                        }
+                    }
+                };
+                const syncLayoutMode = () => {
+                    if (drawerMedia.matches) {
+                        sidebar.inert = !shell.classList.contains('jc-nav-open');
+                        main.inert = shell.classList.contains('jc-nav-open');
+                    } else {
+                        // Desktop rail: both columns are visible and interactive.
+                        sidebar.inert = false;
+                        main.inert = false;
+                        shell.classList.remove('jc-nav-open');
+                        toggle.setAttribute('aria-expanded', 'false');
+                    }
+                };
+                drawerMedia.addEventListener('change', syncLayoutMode);
+                syncLayoutMode();
+                toggle.addEventListener('click', () => setOpen(!shell.classList.contains('jc-nav-open')));
+                scrim.addEventListener('click', () => setOpen(false));
+                // Selecting a section (or focusing search results) dismisses the drawer.
+                tabs.forEach((t) => t.addEventListener('click', () => setOpen(false)));
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape' && shell.classList.contains('jc-nav-open')) setOpen(false);
+                });
+            })();
+
+            // Grouped shell (handoff IA): the rail chooses a product area; its
+            // member sections render as a segmented control in the page header.
+            let jcSyncGroupForTab = null;
+            (function wireGroupShell() {
+                const GROUPS = {
+                    'command-center': { title: 'Command Center', purpose: 'Service health, feature status and quick actions at a glance.' },
+                    'experience':     { title: 'Experience', purpose: 'How Jellyfin looks, plays and handles for every user.' },
+                    'pages':          { title: 'Pages', purpose: 'The Calendar, Requests, Bookmarks and Hidden Content pages.' },
+                    'discovery':      { title: 'Discovery & Community', purpose: 'Trending, reviews, release dates and streaming availability.' },
+                    'connections':    { title: 'Connections & Automation', purpose: 'Seerr, Sonarr, Radarr, Bazarr and their sync rules.' },
+                    'governance':     { title: 'Governance', purpose: 'Spoiler policy, user defaults, permissions and maintenance.' },
+                    'system':         { title: 'System', purpose: 'Assets, diagnostics, developer settings and documentation.' },
+                };
+                const railBtns = Array.from(document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn'));
+                const strip = document.getElementById('jcSectionStrip');
+                const store = document.querySelector('#JellyfinCanopyPage .jc-section-strip-store');
+                const titleEl = document.getElementById('jcPageTitle');
+                const purposeEl = document.getElementById('jcPagePurpose');
+                if (!railBtns.length || !strip || !store) return;
+                // Relocate the section buttons from the hidden store into the strip.
+                Array.from(store.querySelectorAll('.jellyfin-tab-button')).forEach(b => strip.appendChild(b));
+                store.remove();
+
+                const setGroup = (groupId, activateFirst) => {
+                    const meta = GROUPS[groupId];
+                    if (!meta) return;
+                    railBtns.forEach(b => b.classList.toggle('active', b.dataset.group === groupId));
+                    let first = null;
+                    let firstVisible = null;
+                    let members = 0;
+                    strip.querySelectorAll('.jellyfin-tab-button').forEach(b => {
+                        const mine = b.dataset.group === groupId;
+                        b.classList.toggle('jc-in-group', mine);
+                        if (mine) {
+                            members++;
+                            if (!first) first = b;
+                            // During search zero-match sections are display:none —
+                            // a group click must land on the first MATCHING one.
+                            if (!firstVisible && b.style.display !== 'none') firstVisible = b;
+                        }
+                    });
+                    strip.classList.toggle('jc-strip-single', members < 2);
+                    if (titleEl) titleEl.textContent = meta.title;
+                    if (purposeEl) purposeEl.textContent = meta.purpose;
+                    if (activateFirst) {
+                        const target = firstVisible || first;
+                        if (target) target.click();
+                    }
+                };
+                railBtns.forEach(b => b.addEventListener('click', () => setGroup(b.dataset.group, true)));
+                jcSyncGroupForTab = (tabId) => {
+                    const btn = strip.querySelector('.jellyfin-tab-button[data-tab="' + tabId + '"]');
+                    if (btn && btn.dataset.group) setGroup(btn.dataset.group, false);
+                };
+            })();
+
+            // Dirty-state owner: every configuration mutation — native input
+            // events AND programmatic ones (shortcut removal, instance removal,
+            // category reorder) — funnels through jcMarkConfigDirty, which also
+            // bumps a revision. saveConfig captures the revision at snapshot
+            // time and clears the flag only when no further mutation landed
+            // while the save was in flight.
+            let jcDirtyRevision = 0;
+            function jcMarkConfigDirty() {
+                jcDirtyRevision++;
+                document.querySelector('.jc-save-dock')?.classList.add('jc-dirty');
+            }
+            function jcDirtyRevisionNow() { return jcDirtyRevision; }
+            function jcClearDirtyIfUnchanged(revision) {
+                if (jcDirtyRevision === revision) {
+                    document.querySelector('.jc-save-dock')?.classList.remove('jc-dirty');
+                }
+            }
+            (function wireDirtyState() {
+                if (!form) return;
+                form.addEventListener('input', jcMarkConfigDirty, true);
+                form.addEventListener('change', jcMarkConfigDirty, true);
+            })();
+
             // Docs iframe URL — kept in JS rather than hardcoded in the
             // <iframe src> attribute so we can lazy-load on first Docs
             // activation (saves the GitHub Pages fetch for admins who
@@ -149,18 +280,11 @@
                     _jeTabScroll[_jePrevTabId] = _jeGetScrollTop();
                 }
                 tabs.forEach(t => {
-                    const isActive = t.dataset.tab === tabId;
-                    if (isActive) {
-                        t.classList.add('active');
-                        // Override with the live accent color — CSS fallback covers initial render
-                        t.style.color = 'var(--primary-accent-color, #fff)';
-                        t.style.borderBottomColor = 'var(--primary-accent-color, #fff)';
-                    } else {
-                        t.classList.remove('active');
-                        t.style.color = '';
-                        t.style.borderBottomColor = '';
-                    }
+                    t.classList.toggle('active', t.dataset.tab === tabId);
                 });
+                // Keep the group rail + header in step with the active section
+                // regardless of which path activated it (click, restore, search).
+                if (typeof jcSyncGroupForTab === 'function') jcSyncGroupForTab(tabId);
                 tabContents.forEach(content => {
                     const isActive = content.id === tabId;
                     content.classList.toggle('active', isActive);
@@ -226,7 +350,18 @@
             tabs.forEach(tab => {
                 tab.addEventListener('click', () => {
                     const tabId = tab.dataset.tab;
-                    activateTab(tabId);
+                    if (isSearchMode) {
+                        // Jump from search results into the section: leave search
+                        // mode, open the section, and scroll to its first match.
+                        const target = document.querySelector('#' + tabId + ' > fieldset:not(.jc-search-hidden)');
+                        clearTimeout(searchDebounce);
+                        searchInput.value = '';
+                        exitSearchMode();
+                        activateTab(tabId);
+                        if (target) setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+                    } else {
+                        activateTab(tabId);
+                    }
                     // Store active tab in sessionStorage to persist across refreshes
                     try {
                         sessionStorage.setItem('jellyfinCanopyActiveTab', tabId);
@@ -488,7 +623,6 @@
                 form.querySelectorAll('details').forEach(d => {
                     savedDetailsStates.set(d, d.open);
                 });
-                if (tabButtonsContainer) tabButtonsContainer.style.display = 'none';
                 tabContents.forEach(tc => {
                     const btn = document.querySelector('.jellyfin-tab-button[data-tab="' + tc.id + '"]');
                     // btn.textContent would include Material Icons font
@@ -519,7 +653,9 @@
                 form.querySelectorAll('.jc-tab-name-match').forEach(tc => tc.classList.remove('jc-tab-name-match'));
                 clearHighlights();
                 form.querySelectorAll('.jc-search-tab-label').forEach(el => el.remove());
-                if (tabButtonsContainer) tabButtonsContainer.style.display = '';
+                document.querySelectorAll('.jellyfin-tab-button').forEach(btn => { btn.style.display = ''; btn.classList.remove('jc-search-reveal'); });
+                document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn').forEach(btn => { btn.style.display = ''; });
+                document.querySelectorAll('.jc-nav-count').forEach(el => el.remove());
                 // Clear inline display from every tab content. performSearch sets
                 // `style.display = 'block'|'none'` per tab; without this reset the
                 // inline value wins over `.jellyfin-tab-content.active { display: grid }`,
@@ -578,6 +714,7 @@
 
                 clearHighlights();
                 let sectionCount = 0;
+                const groupMatchCounts = new Map();
 
                 tabContents.forEach(tabContent => {
                     let tabHasMatch = false;
@@ -610,6 +747,29 @@
 
                     tabContent.style.display = tabHasMatch ? 'block' : 'none';
 
+                    // The shell nav stays usable during search: matching sections
+                    // get a count badge (and stay clickable to jump), zero-match
+                    // sections are revealed-off; the rail aggregates per group.
+                    const navBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + tabContent.id + '"]');
+                    if (navBtn) {
+                        navBtn.style.display = tabHasMatch ? '' : 'none';
+                        navBtn.classList.toggle('jc-search-reveal', tabHasMatch);
+                        let badge = navBtn.querySelector('.jc-nav-count');
+                        if (tabHasMatch) {
+                            const count = tabContent.querySelectorAll(':scope > fieldset:not(.jc-search-hidden)').length;
+                            if (!badge) {
+                                badge = document.createElement('span');
+                                badge.className = 'jc-nav-count';
+                                navBtn.querySelector('h3')?.appendChild(badge);
+                            }
+                            badge.textContent = String(count);
+                            const group = navBtn.dataset.group;
+                            if (group) groupMatchCounts.set(group, (groupMatchCounts.get(group) || 0) + count);
+                        } else if (badge) {
+                            badge.remove();
+                        }
+                    }
+
                     // Rank tab-contents whose tab button's label itself
                     // contains the query above tabs that matched only by
                     // buried content. Searching "elsewhere" now surfaces
@@ -625,6 +785,23 @@
                         tabLabel = clone.textContent.trim().toLowerCase();
                     }
                     tabContent.classList.toggle('jc-tab-name-match', tabHasMatch && tabLabel.includes(query));
+                });
+
+                // Rail groups: badge aggregate counts, dim zero-match groups.
+                document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn').forEach(gb => {
+                    const count = groupMatchCounts.get(gb.dataset.group) || 0;
+                    gb.style.display = count > 0 ? '' : 'none';
+                    let badge = gb.querySelector('.jc-nav-count');
+                    if (count > 0) {
+                        if (!badge) {
+                            badge = document.createElement('span');
+                            badge.className = 'jc-nav-count';
+                            gb.appendChild(badge);
+                        }
+                        badge.textContent = String(count);
+                    } else if (badge) {
+                        badge.remove();
+                    }
                 });
 
                 allMatches = Array.from(form.querySelectorAll('.jc-search-match'));
@@ -706,6 +883,7 @@
                 removeBtn.style.marginLeft = '1em';
                 removeBtn.addEventListener('click', () => {
                     shortcutOverrides.splice(index, 1);
+                    jcMarkConfigDirty();
                     renderOverrides();
                     populateAddShortcutDropdown();
                 });
@@ -1576,6 +1754,7 @@
                 Dashboard.confirm('Remove "' + instName + '" from the instance list? The change takes effect when you click Save. If you leave the page without saving, the instance is kept.\n\nTip: If you just want to stop using it temporarily, uncheck Enabled instead — that preserves the URL and API key.', 'Remove Instance', function(confirmed) {
                     if (confirmed) {
                         card.remove();
+                        jcMarkConfigDirty();
                         updateAllDependencies();
                     }
                 });
@@ -1953,6 +2132,7 @@
                     parent.insertBefore(sibling, row);
                 }
                 refreshQualityCatAdminArrows(parent);
+                jcMarkConfigDirty();
             });
         })();
 
@@ -2442,6 +2622,8 @@
 
             try {
                 const config = await buildConfigFromForm();
+                // Everything mutated up to this snapshot is in `config`.
+                const dirtyRevisionAtSnapshot = jcDirtyRevisionNow();
                 const result = await ApiClient.updatePluginConfiguration(pluginId, config);
                 // After JC config is persisted, sync any managed Custom Tabs entries.
                 // We surface non-OK results to the admin via Dashboard.alert so a
@@ -2495,6 +2677,8 @@
                 }
 
                 Dashboard.processPluginConfigurationUpdateResult(result);
+                // Clean only if nothing was edited while the save was in flight.
+                jcClearDirtyIfUnchanged(dirtyRevisionAtSnapshot);
                 if (syncResult && syncResult.ok === false) {
                     try {
                         Dashboard.alert({

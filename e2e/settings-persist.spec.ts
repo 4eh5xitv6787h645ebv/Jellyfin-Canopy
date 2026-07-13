@@ -80,14 +80,8 @@ test.describe('per-user settings persistence', () => {
             await page.evaluate(() => { (window as any).JellyfinCanopy.showEnhancedPanel(); });
             const panel = page.locator('#jellyfin-canopy-panel');
             await expect(panel).toBeVisible({ timeout: 15_000 });
-            await panel.locator('.tab-button[data-tab="settings"]').click();
-            // The pause-delay input lives inside a collapsed <details>
-            // ("Playback Settings") in the panel. Open it so the real control is
-            // visible before we drive it (matching what a user does).
-            await page.evaluate(() => {
-                document.getElementById('pauseScreenDelayInput')
-                    ?.closest('details')?.setAttribute('open', 'open');
-            });
+            // The pause-delay input lives in the Playback section pane.
+            await panel.locator('.tab-button[data-tab="playback"]').click();
             await expect(page.locator('#pauseScreenDelayInput')).toBeVisible({ timeout: 15_000 });
         };
 
@@ -145,7 +139,10 @@ test.describe('per-user settings persistence', () => {
         // (not visible) purely as a "config-page.js finished injecting" signal.
         await page.waitForSelector('#addRadarrInstance', { state: 'attached', timeout: 60_000 })
             .catch(() => { /* older layout */ });
-        await page.waitForSelector('.jellyfin-tab-button[data-tab="playback"]', { timeout: 60_000 });
+        // Grouped shell: open the Experience area, then its Playback section.
+        await page.waitForSelector('.jc-group-btn[data-group="experience"]', { timeout: 60_000 });
+        await page.click('.jc-group-btn[data-group="experience"]');
+        await page.waitForSelector('.jellyfin-tab-button[data-tab="playback"]', { timeout: 30_000 });
         await page.click('.jellyfin-tab-button[data-tab="playback"]');
         await page.waitForSelector('#pauseScreenDelaySeconds', { state: 'visible', timeout: 60_000 });
 

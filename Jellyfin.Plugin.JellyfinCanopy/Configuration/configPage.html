@@ -6,10 +6,18 @@
 <body style="background: black;">
 <div class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-checkbox,emby-select" data-role="page" id="JellyfinCanopyPage">
     <script>
-        var link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = ApiClient.getUrl('/JellyfinCanopy/Configuration/configPage.css');
-        document.head.appendChild(link);
+        // The stylesheet is served with a one-year immutable cache policy, so its
+        // URL must carry the same baked per-build cache key the config-page.js
+        // bootstrap uses — otherwise an upgrade pairs new HTML with stale CSS.
+        (function () {
+            var pluginScript = document.querySelector('script[plugin="Jellyfin Canopy"]');
+            var cacheKey = (pluginScript && pluginScript.getAttribute('version')) || '';
+            var link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = ApiClient.getUrl('/JellyfinCanopy/Configuration/configPage.css')
+                + (cacheKey ? ('?v=' + encodeURIComponent(cacheKey)) : '');
+            document.head.appendChild(link);
+        })();
     </script>
     <style>
         /* PERF: no remote assets — the local asset cache is tried first (relative
@@ -41,45 +49,80 @@
         }
     </style>
     <div data-role="content">
-        <div class="content-primary">
+        <div class="content-primary jc-shell">
 
-            <div class="jc-sticky-header">
-                <div class="sectionTitleContainer">
-                    <div class="jc-header-title-row">
-                        <h2 class="sectionTitle jc-brand-lockup"><img class="jc-brand-mark" src="../JellyfinCanopy/assets/branding/canopy-mark.svg" alt="" width="30" height="26"><span class="jc-brand-name">Jellyfin Canopy</span></h2>
-                        <a is="emby-linkbutton" class="raised raised-mini emby-button jc-help-link" target="_blank" href="https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy" title="Help" aria-label="Docs and Help">
-                            <span class="jc-help-link-label">Help</span>
-                        </a>
-                        <button id="toggleDescriptionsBtn" type="button" class="raised raised-mini emby-button jc-desc-toggle" title="Show or hide setting descriptions" aria-label="Show or hide setting descriptions" aria-pressed="true">
-                            <span class="jc-desc-toggle-label">Descriptions</span>
-                            <span class="jc-desc-toggle-state" aria-hidden="true">On</span>
-                        </button>
-                    </div>
-                    <div id="settingsSearchContainer">
-                        <div>
-                            <i class="material-icons jc-search-icon">search</i>
-                            <input id="settingsSearchInput" type="text" placeholder="Search settings..." />
-                            <span id="settingsSearchCount"></span>
-                            <button id="settingsSearchClear" type="button" title="Clear search">&#x2715;</button>
-                        </div>
+            <!-- Mobile-only: opens the section drawer. -->
+            <button id="jcNavToggle" type="button" class="jc-nav-toggle" aria-label="Open settings sections" aria-expanded="false" aria-controls="jcSidebar">
+                <i class="material-icons" aria-hidden="true">menu</i>
+                <span class="jc-nav-toggle-label">Sections</span>
+            </button>
+            <div class="jc-nav-scrim" id="jcNavScrim" aria-hidden="true"></div>
+
+            <!-- Settings-app sidebar: brand, search, section nav, page actions. -->
+            <aside class="jc-sidebar" id="jcSidebar" aria-label="Jellyfin Canopy settings sections">
+                <h2 class="sectionTitle jc-brand-lockup"><img class="jc-brand-mark" src="../JellyfinCanopy/assets/branding/canopy-mark.svg" alt="" width="30" height="26"><span class="jc-brand-name">Jellyfin Canopy</span></h2>
+                <div id="settingsSearchContainer">
+                    <div>
+                        <i class="material-icons jc-search-icon">search</i>
+                        <input id="settingsSearchInput" type="text" placeholder="Search settings..." />
+                        <span id="settingsSearchCount"></span>
+                        <button id="settingsSearchClear" type="button" title="Clear search">&#x2715;</button>
                     </div>
                 </div>
 
-                <div class="jc-tab-bar">
-                <button class="jellyfin-tab-button active" data-tab="overview"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">dashboard</i>Overview</h3></button>
-                <button class="jellyfin-tab-button" data-tab="display"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">palette</i>Display</h3></button>
-                <button class="jellyfin-tab-button" data-tab="playback"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">play_circle</i>Playback</h3></button>
-                <button class="jellyfin-tab-button" data-tab="pages"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">view_list</i>Pages</h3></button>
-                <button class="jellyfin-tab-button" data-tab="seerr"><h3><img src="../JellyfinCanopy/assets/icons/seerr.svg" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/gh/selfhst/icons/svg/seerr.svg';" alt="" class="jc-tab-icon-img">Seerr</h3></button>
-                <button class="jellyfin-tab-button" data-tab="arr"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">dns</i>*arr</h3></button>
-                <button class="jellyfin-tab-button" data-tab="elsewhere"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">travel_explore</i>Elsewhere</h3></button>
-                <button class="jellyfin-tab-button" data-tab="discovery"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">explore</i>Discovery</h3></button>
-                <button class="jellyfin-tab-button" data-tab="extras"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">auto_awesome</i>Extras</h3></button>
-                    <button class="jellyfin-tab-button" data-tab="keyboard"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">keyboard</i>Keyboard</h3></button>
-                    <button class="jellyfin-tab-button" data-tab="admin"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">admin_panel_settings</i>Admin</h3></button>
-                    <button class="jellyfin-tab-button" data-tab="docs"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">menu_book</i>Docs</h3></button>
+                <!-- Grouped rail (handoff IA): seven product areas. Each group
+                     activates its first member section; the members render as a
+                     compact segmented control in the page header. -->
+                <div class="jc-tab-bar" role="navigation" aria-label="Product areas">
+                    <button type="button" class="jc-group-btn active" data-group="command-center"><i class="material-icons jc-tab-icon" aria-hidden="true">space_dashboard</i>Command Center</button>
+                    <button type="button" class="jc-group-btn" data-group="experience"><i class="material-icons jc-tab-icon" aria-hidden="true">auto_awesome</i>Experience</button>
+                    <button type="button" class="jc-group-btn" data-group="pages"><i class="material-icons jc-tab-icon" aria-hidden="true">view_list</i>Pages</button>
+                    <button type="button" class="jc-group-btn" data-group="discovery"><i class="material-icons jc-tab-icon" aria-hidden="true">explore</i>Discovery &amp; Community</button>
+                    <button type="button" class="jc-group-btn" data-group="connections"><i class="material-icons jc-tab-icon" aria-hidden="true">hub</i>Connections &amp; Automation</button>
+                    <button type="button" class="jc-group-btn" data-group="governance"><i class="material-icons jc-tab-icon" aria-hidden="true">admin_panel_settings</i>Governance</button>
+                    <button type="button" class="jc-group-btn" data-group="system"><i class="material-icons jc-tab-icon" aria-hidden="true">settings_suggest</i>System</button>
                 </div>
-            </div>
+
+                <!-- The per-section buttons keep their .jellyfin-tab-button[data-tab]
+                     contract (page script, search badges, e2e); the shell relocates
+                     them into the active group's segmented control. -->
+                <div class="jc-section-strip-store" hidden>
+                <button class="jellyfin-tab-button active" data-tab="overview" data-group="command-center"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">dashboard</i>Overview</h3></button>
+                <button class="jellyfin-tab-button" data-tab="display" data-group="experience"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">palette</i>Visuals &amp; Metadata</h3></button>
+                <button class="jellyfin-tab-button" data-tab="playback" data-group="experience"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">play_circle</i>Playback &amp; Subtitles</h3></button>
+                <button class="jellyfin-tab-button" data-tab="keyboard" data-group="experience"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">keyboard</i>Navigation &amp; Shortcuts</h3></button>
+                <button class="jellyfin-tab-button" data-tab="extras" data-group="experience"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">auto_awesome</i>Advanced UI</h3></button>
+                <button class="jellyfin-tab-button" data-tab="pages" data-group="pages"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">view_list</i>Page Settings</h3></button>
+                <button class="jellyfin-tab-button" data-tab="discovery" data-group="discovery"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">explore</i>Discovery Feed</h3></button>
+                <button class="jellyfin-tab-button" data-tab="elsewhere" data-group="discovery"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">travel_explore</i>Streaming Availability</h3></button>
+                <button class="jellyfin-tab-button" data-tab="seerr" data-group="connections"><h3><img src="../JellyfinCanopy/assets/icons/seerr.svg" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/gh/selfhst/icons/svg/seerr.svg';" alt="" class="jc-tab-icon-img">Seerr</h3></button>
+                <button class="jellyfin-tab-button" data-tab="arr" data-group="connections"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">dns</i>Media Managers</h3></button>
+                <button class="jellyfin-tab-button" data-tab="admin" data-group="governance"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">admin_panel_settings</i>Server Controls</h3></button>
+                <button class="jellyfin-tab-button" data-tab="docs" data-group="system"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">menu_book</i>Help &amp; Docs</h3></button>
+                </div>
+
+                <div class="jc-side-foot">
+                    <a is="emby-linkbutton" class="raised raised-mini emby-button jc-help-link" target="_blank" href="https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy" title="Help" aria-label="Docs and Help">
+                        <span class="jc-help-link-label">Help</span>
+                    </a>
+                    <button id="toggleDescriptionsBtn" type="button" class="raised raised-mini emby-button jc-desc-toggle" title="Show or hide setting descriptions" aria-label="Show or hide setting descriptions" aria-pressed="true">
+                        <span class="jc-desc-toggle-label">Descriptions</span>
+                        <span class="jc-desc-toggle-state" aria-hidden="true">On</span>
+                    </button>
+                </div>
+            </aside>
+
+            <div class="jc-main">
+
+            <!-- Page header: the active group's title, purpose line, and its
+                 member sections as a compact segmented control. -->
+            <header class="jc-page-header">
+                <div class="jc-page-header-text">
+                    <h2 id="jcPageTitle" class="jc-page-title">Command Center</h2>
+                    <p id="jcPagePurpose" class="jc-page-purpose">Service health, feature status and quick actions at a glance.</p>
+                </div>
+                <div id="jcSectionStrip" class="jc-section-strip" role="tablist" aria-label="Sections in this area"></div>
+            </header>
 
             <div id="jc-probe-warning" class="jc-note-banner" style="display: none;" role="status" aria-live="polite">
                 <i class="material-icons jc-note-icon">warning_amber</i>
@@ -2461,6 +2504,7 @@
                     </button>
                 </div>
             </form>
+            </div>
         </div>
     </div>
 <script>
