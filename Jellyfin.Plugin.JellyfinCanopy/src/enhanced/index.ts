@@ -33,16 +33,14 @@ import './hidden-content/filter';
 import './hidden-content/buttons';
 import './hidden-content/init';
 // hidden-content-page modules — order matters: -state owns the shared page
-// state the later files import; -init exposes the frozen JC.hiddenContentPage /
-// JC.initializeHiddenContentPage last.
+// state the later files import; -page registers the pages-framework descriptor
+// and exposes the frozen JC.hiddenContentPage facade last.
 import './hidden-content-page/state';
 import './hidden-content-page/styles';
 import './hidden-content-page/admin';
 import './hidden-content-page/cards';
 import './hidden-content-page/render';
-import './hidden-content-page/nav';
-import './hidden-content-page/init';
-import './hidden-content-page/custom-tab';
+import './hidden-content-page/page';
 import './subtitles';
 import './themer';
 // spoiler-guard — loads after tag-pipeline (uses invalidateServerCache) and

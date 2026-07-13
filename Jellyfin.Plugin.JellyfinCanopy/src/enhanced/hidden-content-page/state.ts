@@ -18,14 +18,8 @@ export interface AdminUser {
 }
 
 export interface HiddenContentPageState {
-    pageVisible: boolean;
-    previousPage: HTMLElement | null;
     searchQuery: string;
     scopedOnly: boolean;
-    locationSignature: string | null;
-    locationTimer: number | null;
-    _customTabContainer: HTMLElement | null;
-    _customTabMode?: boolean;
     // Admin cross-user view: an admin can view another user's hidden content
     // read-only via a toolbar dropdown. All of these stay inert/empty for non-admins.
     adminIsAdmin: boolean | null;
@@ -40,23 +34,13 @@ export interface HiddenContentPageState {
     adminLoadToken: number;
 }
 
-export const sidebar = document.querySelector('.mainDrawer-scrollContainer');
-export const pluginPagesExists = !!sidebar?.querySelector(
-    'a[is="emby-linkbutton"][data-itemid="Jellyfin.Plugin.JellyfinCanopy.HiddenContentPage"]'
-);
-
 // ============================================================
 // State
 // ============================================================
 
 export const state: HiddenContentPageState = {
-    pageVisible: false,
-    previousPage: null,
     searchQuery: '',
     scopedOnly: false,
-    locationSignature: null,
-    locationTimer: null,
-    _customTabContainer: null,
     // Admin cross-user view: an admin can view another user's hidden content
     // read-only via a toolbar dropdown. All of these stay inert/empty for non-admins.
     adminIsAdmin: null,          // tri-state: null = not yet resolved, then true/false (false only when authoritative)
