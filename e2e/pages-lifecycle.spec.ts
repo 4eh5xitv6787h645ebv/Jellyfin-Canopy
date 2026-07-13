@@ -7,15 +7,20 @@ import { test, expect, loginAs } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// jellyfin-web's OWN home bundle has a rare remount race ("[Home] failed to
-// get tab controller … reading 'querySelector'" from hometab.*.chunk.js) that
-// can fire when home re-renders immediately after a view swap under heavy
-// host load. It is not plugin code (10 standalone fast round-trips never
-// reproduce it; the admin variant of the same flow passes in-suite) — filter
-// exactly that message, nothing else.
-const HOME_CHUNK_RACE = /\[Home\] failed to get tab controller/;
+// jellyfin-web's OWN bundles emit two documented noise classes this spec can
+// encounter and must not fail on (neither is plugin code):
+//  - "[Home] failed to get tab controller … reading 'querySelector'"
+//    (hometab.*.chunk.js): a rare home remount race after fast view swaps
+//    under heavy host load — 10 standalone fast round-trips never reproduce
+//    it and the admin variant of the same flow passes in-suite.
+//  - "t.scrollHandler is not a function": a pageerror from jellyfin-web's own
+//    bundles on full page loads (this spec's deep-link/refresh path) — the
+//    same noise settings-persist.spec.ts already classifies; JC's only scroll
+//    feature uses `_scrollHandler` and runs only on Seerr discovery pages.
+// Filtered by exact message, nothing else.
+const KNOWN_WEB_NOISE = /\[Home\] failed to get tab controller|scrollHandler is not a function/;
 function realErrors(consoleErrors: any): string[] {
-    return consoleErrors.real().filter((t: string) => !HOME_CHUNK_RACE.test(t));
+    return consoleErrors.real().filter((t: string) => !KNOWN_WEB_NOISE.test(t));
 }
 
 const PAGES = [
