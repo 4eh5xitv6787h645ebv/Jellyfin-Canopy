@@ -40,9 +40,9 @@ export interface PanelContext {
 }
 
 // Canopy brand palette (docs/images + the branding kit are the source of truth).
-const CANOPY_ACCENT = '#00C4ED';
-const CANOPY_ACCENT_FILL = '#2584F4';
-const CANOPY_GRADIENT = 'linear-gradient(120deg, #00C4ED 0%, #2584F4 55%, #783FF2 100%)';
+const CANOPY_ACCENT = '#00D4FF';
+const CANOPY_ACCENT_FILL = '#2F80FF';
+const CANOPY_GRADIENT = 'linear-gradient(135deg, #00D4FF 0%, #2F80FF 52%, #7B4CFF 100%)';
 
 /**
  * Toggles the main settings and help panel for the plugin.
