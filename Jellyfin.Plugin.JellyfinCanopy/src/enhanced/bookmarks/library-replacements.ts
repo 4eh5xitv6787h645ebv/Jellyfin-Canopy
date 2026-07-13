@@ -175,7 +175,7 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
     setTimeout(() => modal.remove(), 200);
   };
   // Body-level modal: the page's dispose bag closes it on drain.
-  currentPageHandle()?.onTeardown(closeDialog);
+  currentPageHandle()?.track(closeDialog);
 
   modal.querySelector('.jc-bm-library-modal-close')?.addEventListener('click', closeDialog);
   modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);
@@ -379,7 +379,7 @@ function showOrphanedSummaryModal(replacementResults: any[]): void {
     setTimeout(() => modal.remove(), 200);
   };
   // Body-level modal: the page's dispose bag closes it on drain.
-  currentPageHandle()?.onTeardown(closeDialog);
+  currentPageHandle()?.track(closeDialog);
 
   modal.querySelector('.jc-bm-library-modal-close')?.addEventListener('click', closeDialog);
   modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);

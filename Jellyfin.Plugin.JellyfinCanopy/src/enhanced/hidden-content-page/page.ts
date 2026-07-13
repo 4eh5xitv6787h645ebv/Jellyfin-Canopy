@@ -38,7 +38,7 @@ function render({ host, handle }: PageContext): void {
     host.appendChild(content);
 
     setActiveContainer(container);
-    handle.onTeardown(() => setActiveContainer(null));
+    handle.track(() => setActiveContainer(null));
 
     // Repaint on the user's own hidden-content changes. Registered through the
     // per-adoption dispose bag so it drains with the page — no permanent window

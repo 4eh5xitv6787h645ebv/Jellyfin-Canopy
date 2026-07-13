@@ -36,7 +36,15 @@ interface Adoption {
 
 let adoption: Adoption | null = null;
 let draining = false;
-let adoptionSeq = 0;
+
+// ONE stable registry handle for every adoption. Handles (and their
+// persistent onTeardown hooks) live in the lifecycle registry forever, so a
+// per-adoption name would leak a handle + its closures on every open. All
+// per-adoption cleanup goes through the ONE-SHOT track()/addListener()
+// surface, which teardown() drains and clears.
+function pagesHandle(): import('../../types/jc').LifecycleHandle {
+    return JC.core.lifecycle!.register('pages-host');
+}
 
 /** Current adopted page id, DOM-validated — null when nothing is truly open. */
 export function adoptedPageId(): string | null {
@@ -102,10 +110,8 @@ function renderSignedOutShell(host: HTMLElement, descriptor: PageDescriptor): vo
 function adopt(descriptor: PageDescriptor, host: HTMLElement): void {
     if (adoption) drain('replaced');
 
-    adoptionSeq += 1;
-    const handle = JC.core.lifecycle!.register(`pages:${descriptor.id}:${adoptionSeq}`);
+    const handle = pagesHandle();
     const controller = new AbortController();
-    handle.onTeardown(() => { /* keep handle non-empty even for static pages */ });
 
     // Brand the routed element before the native pageshow handler runs: it
     // reads data-title for the header + document title (replacing the stock
@@ -133,6 +139,13 @@ function adopt(descriptor: PageDescriptor, host: HTMLElement): void {
 
     document.documentElement.removeAttribute(PAGE_NAV_ATTR);
     clearEarlyMask();
+
+    // The native pageshow scroll-to-top only runs for freshly shown views;
+    // an in-place page→page swap reuses the element and would inherit the
+    // previous page's scroll position. Reset the document scroll owner on
+    // every adoption (probe: both layouts scroll at document level here).
+    const scroller = document.scrollingElement || document.documentElement;
+    scroller.scrollTop = 0;
 
     if (!window.ApiClient?.getCurrentUserId?.()) {
         renderSignedOutShell(host, descriptor);

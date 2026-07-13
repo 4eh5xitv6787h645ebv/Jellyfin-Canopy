@@ -479,11 +479,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             var customTabsConfigPath = Path.Combine(
                 applicationPaths.PluginConfigurationsPath,
                 "Jellyfin.Plugin.CustomTabs.xml");
-            CleanupManagedCustomTabsCore(
+            var ownedFlags = new HashSet<string>(StringComparer.Ordinal);
+            if (Configuration.BookmarksCustomTabJeOwned) ownedFlags.Add("BookmarksCustomTabJeOwned");
+            if (Configuration.DownloadsCustomTabJeOwned) ownedFlags.Add("DownloadsCustomTabJeOwned");
+            if (Configuration.CalendarCustomTabJeOwned) ownedFlags.Add("CalendarCustomTabJeOwned");
+            if (Configuration.HiddenContentCustomTabJeOwned) ownedFlags.Add("HiddenContentCustomTabJeOwned");
+            var cleanupSucceeded = CleanupManagedCustomTabsCore(
                 customTabsConfigPath,
-                ConfigurationFilePath,
+                ownedFlags,
                 msg => _logger.LogInformation(msg),
                 msg => _logger.LogError(msg));
+            if (cleanupSucceeded && ownedFlags.Count > 0)
+            {
+                // The ownership state has served its purpose; clear it so this
+                // migration never re-fires. (Persisted via the normal save path,
+                // which the failed-seerr-migration suppressor may veto — in that
+                // case the flags simply survive to the next startup.)
+                Configuration.BookmarksCustomTabJeOwned = false;
+                Configuration.DownloadsCustomTabJeOwned = false;
+                Configuration.CalendarCustomTabJeOwned = false;
+                Configuration.HiddenContentCustomTabJeOwned = false;
+                SaveConfiguration(Configuration);
+            }
 
             // The retired PluginPages integration wrote page entries into THAT
             // plugin's config.json; remove the Canopy/Elevate-namespaced ones.
@@ -515,34 +532,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy
         };
 
         // Static core, unit-testable against plain temp files. Removes the Custom Tabs
-        // entries CANOPY created (per the retired *CustomTabJeOwned ownership flags,
-        // read from the raw legacy elements still present in Canopy's own config XML)
-        // plus all legacy-Elevate markers, in place. Admin-created tabs that merely
-        // reuse a current marker are preserved. Returns true on success OR a clean
-        // no-op; false only when a present file could not be processed.
-        internal static bool CleanupManagedCustomTabsCore(string customTabsConfigPath, string canopyConfigPath, Action<string> logInfo, Action<string> logError)
+        // entries CANOPY created (per the *CustomTabJeOwned ownership flags, persisted
+        // as hidden migration state on PluginConfiguration until this succeeds) plus
+        // all legacy-Elevate markers, in place. Admin-created tabs that merely reuse a
+        // current marker are preserved. Returns true on success OR a clean no-op;
+        // false only when a present file could not be processed (the caller then
+        // KEEPS the ownership flags so the cleanup retries next startup).
+        internal static bool CleanupManagedCustomTabsCore(string customTabsConfigPath, IReadOnlySet<string> ownedFlags, Action<string> logInfo, Action<string> logError)
         {
             try
             {
                 if (!File.Exists(customTabsConfigPath))
                 {
                     return true;
-                }
-
-                // The deleted flags survive as ignored elements in the config XML —
-                // exactly the migration state the ownership decision needs.
-                var ownedFlags = new HashSet<string>(StringComparer.Ordinal);
-                if (File.Exists(canopyConfigPath))
-                {
-                    var canopyConfig = System.Xml.Linq.XDocument.Load(canopyConfigPath);
-                    foreach (var element in canopyConfig.Descendants())
-                    {
-                        if (element.Name.LocalName.EndsWith("CustomTabJeOwned", StringComparison.Ordinal)
-                            && string.Equals(element.Value.Trim(), "true", StringComparison.OrdinalIgnoreCase))
-                        {
-                            ownedFlags.Add(element.Name.LocalName);
-                        }
-                    }
                 }
 
                 var document = System.Xml.Linq.XDocument.Load(customTabsConfigPath, System.Xml.Linq.LoadOptions.PreserveWhitespace);

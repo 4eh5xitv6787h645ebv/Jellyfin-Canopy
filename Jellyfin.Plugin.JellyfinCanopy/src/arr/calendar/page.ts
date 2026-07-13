@@ -41,7 +41,7 @@ function render({ host, handle, signal }: PageContext): void {
     host.appendChild(content);
 
     setActiveContainer(container);
-    handle.onTeardown(() => setActiveContainer(null));
+    handle.track(() => setActiveContainer(null));
     // Delegated content clicks (event cards, sidebar toggle, display-mode
     // buttons) — scoped to the adopted host and drained with it, replacing
     // the old permanent document-level listener.

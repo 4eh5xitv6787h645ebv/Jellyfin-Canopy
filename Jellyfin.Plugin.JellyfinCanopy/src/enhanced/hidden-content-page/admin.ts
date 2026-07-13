@@ -479,6 +479,6 @@ export function openAdminAddModal(): void {
     document.body.appendChild(overlay);
     // Body-level overlay with a scroll lock: register on the page's dispose
     // bag so a drain (navigation) closes it and restores the scroll owners.
-    currentPageHandle()?.onTeardown(close);
+    currentPageHandle()?.track(close);
     searchInput.focus();
 }

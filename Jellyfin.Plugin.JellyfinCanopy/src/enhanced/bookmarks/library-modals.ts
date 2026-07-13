@@ -77,7 +77,7 @@ export function showOffsetAdjustmentModal(group: any): void {
     setTimeout(() => modal.remove(), 200);
   };
   // Body-level modal: the page's dispose bag closes it on drain.
-  currentPageHandle()?.onTeardown(closeDialog);
+  currentPageHandle()?.track(closeDialog);
 
   modal.querySelector('.jc-bm-library-modal-close')?.addEventListener('click', closeDialog);
   modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);
@@ -252,7 +252,7 @@ export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
     setTimeout(() => modal.remove(), 200);
   };
   // Body-level modal: the page's dispose bag closes it on drain.
-  currentPageHandle()?.onTeardown(closeDialog);
+  currentPageHandle()?.track(closeDialog);
 
   modal.querySelector('.jc-bm-library-modal-close')?.addEventListener('click', closeDialog);
   modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);

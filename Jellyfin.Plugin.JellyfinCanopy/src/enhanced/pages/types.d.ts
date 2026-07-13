@@ -14,9 +14,12 @@ export interface PageContext {
     /** The adopted routed element the page renders into. */
     host: HTMLElement;
     /**
-     * Per-adoption dispose bag. Every listener, observer, timer, poll and
-     * fetch-abort the page creates MUST be registered through it; the
-     * framework drains it when the page leaves.
+     * Per-adoption dispose bag (a SHARED stable lifecycle handle). Every
+     * listener, observer, timer, poll, fetch-abort and cleanup closure the
+     * page creates MUST go through the ONE-SHOT track()/addListener()
+     * surface — the framework drains it when the page leaves. NEVER use
+     * onTeardown here: its hooks are persistent (re-fire on every later
+     * drain) and would leak each adoption's closures.
      */
     handle: LifecycleHandle;
     /** AbortSignal tied to this adoption; aborted on drain. */

@@ -34,17 +34,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
         }
 
         private string ConfigPath => Path.Combine(_dir, "Jellyfin.Plugin.CustomTabs.xml");
-        private string CanopyConfigPath => Path.Combine(_dir, "Jellyfin.Plugin.JellyfinCanopy.xml");
 
-        private bool Cleanup() => JellyfinCanopy.CleanupManagedCustomTabsCore(ConfigPath, CanopyConfigPath, _ => { }, _ => { });
+        private readonly HashSet<string> _ownedFlags = new(StringComparer.Ordinal);
 
-        /// <summary>Write Canopy's own config carrying the legacy ownership flags.</summary>
+        private bool Cleanup() => JellyfinCanopy.CleanupManagedCustomTabsCore(ConfigPath, _ownedFlags, _ => { }, _ => { });
+
+        /// <summary>Arm the ownership flags the caller reads off PluginConfiguration.</summary>
         private void WriteCanopyConfig(params string[] ownedFlagNames)
-            => File.WriteAllText(CanopyConfigPath,
-                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<PluginConfiguration>\n"
-                + string.Concat(ownedFlagNames.Select(name => $"  <{name}>true</{name}>\n"))
-                + "  <CalendarUseCustomTabs>true</CalendarUseCustomTabs>\n"
-                + "</PluginConfiguration>\n");
+        {
+            foreach (var name in ownedFlagNames) _ownedFlags.Add(name);
+        }
 
         // A tab element for the fixture. ContentHtml is XML-escaped exactly the way
         // Jellyfin's XmlSerializer writes a TabConfig.ContentHtml string.

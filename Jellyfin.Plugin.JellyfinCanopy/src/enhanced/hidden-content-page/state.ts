@@ -138,5 +138,5 @@ export function showUnhideConfirmation(message: string, onConfirm: () => void, i
     document.body.appendChild(overlay);
     // Body-level overlay: navigating away must never strand it — the page's
     // dispose bag closes it on drain (closeDialog is idempotent).
-    currentPageHandle()?.onTeardown(closeDialog);
+    currentPageHandle()?.track(closeDialog);
 }

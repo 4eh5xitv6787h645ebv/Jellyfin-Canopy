@@ -29,7 +29,7 @@ function makeDescriptor(id: string, enabled: () => boolean = () => true) {
             marker.className = `jc-test-${id}`;
             marker.textContent = `${id} content`;
             host.appendChild(marker);
-            handle.onTeardown(() => disposes.push(id));
+            handle.track(() => disposes.push(id));
         },
         onHide() { hides.push(id); }
     };

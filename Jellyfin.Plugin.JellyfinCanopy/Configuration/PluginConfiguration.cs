@@ -638,6 +638,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         /// </summary>
         public string PagesOrder { get; set; } = "calendar,downloads,bookmarks,hidden-content";
 
+        // ── Hidden migration state (no descriptor, no admin UI) ──────────────
+        // Whether CANOPY created the (retired) Custom-Tabs delivery entry for
+        // each page. Serialized so the one-time startup cleanup survives config
+        // saves until it actually succeeds against the external plugin's file;
+        // cleared (and persisted) only after a successful cleanup.
+        public bool BookmarksCustomTabJeOwned { get; set; }
+
+        public bool DownloadsCustomTabJeOwned { get; set; }
+
+        public bool CalendarCustomTabJeOwned { get; set; }
+
+        public bool HiddenContentCustomTabJeOwned { get; set; }
+
         // Bookmarks Settings
         public bool BookmarksEnabled { get; set; }
 

@@ -51,7 +51,7 @@ function setupLiveNudge(handle: LifecycleHandle): void {
     });
 
     handle.track(unsub);
-    handle.onTeardown(() => {
+    handle.track(() => {
         if (nudgeTimer) {
             clearTimeout(nudgeTimer);
             nudgeTimer = null;
@@ -98,7 +98,7 @@ function render({ host, handle, signal }: PageContext): void {
     host.appendChild(content);
 
     setActiveContainer(container);
-    handle.onTeardown(() => setActiveContainer(null));
+    handle.track(() => setActiveContainer(null));
 
     // Delegated card-action clicks (approve / decline / watch / view-issue /
     // card→item) — bound ONCE per adoption on the adopted host and drained with

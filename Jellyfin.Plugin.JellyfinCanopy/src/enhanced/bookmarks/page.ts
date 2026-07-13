@@ -37,7 +37,7 @@ function render({ host, handle }: PageContext): void {
     // DOM-as-truth render target for this adoption; cleared on drain so any
     // later refresh into a detached container is a no-op.
     setActiveContainer(container);
-    handle.onTeardown(() => setActiveContainer(null));
+    handle.track(() => setActiveContainer(null));
 
     // The module's own change event (dispatched on `document` by the bookmarks
     // core on every add/update/delete/sync) now simply re-renders into the
