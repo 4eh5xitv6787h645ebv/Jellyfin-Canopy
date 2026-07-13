@@ -12,6 +12,7 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Arr;
 using Microsoft.Extensions.Logging;
@@ -25,17 +26,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<ArrTagsSyncTask> _logger;
         private readonly IPluginConfigProvider _configProvider;
+        private readonly Func<BaseItem, ItemUpdateType, CancellationToken, Task> _updateItem;
 
         public ArrTagsSyncTask(
             ILibraryManager libraryManager,
             IHttpClientFactory httpClientFactory,
             ILogger<ArrTagsSyncTask> logger,
             IPluginConfigProvider configProvider)
+            : this(
+                libraryManager,
+                httpClientFactory,
+                logger,
+                configProvider,
+                static (item, updateType, cancellationToken) =>
+                    item.UpdateToRepositoryAsync(updateType, cancellationToken))
+        {
+        }
+
+        /// <summary>Test seam for observing repository writes without a live Jellyfin repository.</summary>
+        internal ArrTagsSyncTask(
+            ILibraryManager libraryManager,
+            IHttpClientFactory httpClientFactory,
+            ILogger<ArrTagsSyncTask> logger,
+            IPluginConfigProvider configProvider,
+            Func<BaseItem, ItemUpdateType, CancellationToken, Task> updateItem)
         {
             _libraryManager = libraryManager;
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _configProvider = configProvider;
+            _updateItem = updateItem;
         }
 
         public string Name => "Sync Tags from *arr to Jellyfin";
@@ -63,93 +83,152 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 return;
             }
 
+            using var cancellationRegistration = cancellationToken.Register(
+                () => _logger.LogInformation(
+                    "Arr Tags Sync cancellation requested; no incomplete snapshot will be published."));
+
             _logger.LogInformation("Starting Arr Tags Sync task...");
             progress?.Report(0);
 
             var arrTagService = new ArrTagService(_httpClientFactory, _logger);
 
             var radarrTags = new Dictionary<int, List<string>>();
+            var radarrSnapshotComplete = false;
             // Sonarr tags keyed BOTH by TVDB id (canonical) and IMDb id (fallback) so a
             // TVDB-scraped library (series without an IMDb id) still syncs.
             var sonarrTagsByTvdb = new Dictionary<int, List<string>>();
             var sonarrTagsByImdb = new Dictionary<string, List<string>>();
+            var sonarrSnapshotComplete = false;
 
             // Fetch tags from all configured Radarr instances
-            if (config.IsRadarrInstancesCorrupt())
+            var radarrConfigCorrupt = config.IsRadarrInstancesCorrupt();
+            var radarrConfigHasInvalidEnabledRows = !radarrConfigCorrupt
+                && config.HasInvalidEnabledRadarrInstances();
+            if (radarrConfigCorrupt)
             {
-                _logger.LogError("RadarrInstances config is corrupt JSON — no Radarr tags will sync this run. "
-                    + "Admin must open the Arr Links config page and reset the corrupt value.");
+                _logger.LogError("RadarrInstances config is corrupt JSON — preserving existing Radarr-owned tags. "
+                    + "Admin must open the Arr Links config page and reset the corrupt value before sync can resume.");
             }
-            var radarrInstances = config.GetEnabledRadarrInstances();
+            else if (radarrConfigHasInvalidEnabledRows)
+            {
+                _logger.LogError(
+                    "RadarrInstances contains an enabled row without a usable URL/API key — "
+                    + "preserving existing Radarr-owned tags until the row is fixed or disabled.");
+            }
+            var allAuthoritativeRadarr = radarrConfigCorrupt
+                ? new List<ArrInstance>()
+                : config.GetRadarrInstancesForAuthoritativeSnapshot();
+            var radarrInstances = allAuthoritativeRadarr.Where(i => i.Enabled).ToList();
             if (radarrInstances.Count > 0)
             {
+                radarrSnapshotComplete = !radarrConfigHasInvalidEnabledRows;
                 foreach (var instance in radarrInstances)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     try
                     {
                         _logger.LogInformation($"Fetching tags from Radarr instance: {instance.Name}");
-                        var instanceTags = await arrTagService.GetMovieTagsByTmdbId(instance.Url, instance.ApiKey, cancellationToken);
-                        _logger.LogInformation($"Fetched {instanceTags.Count} movie tag mappings from {instance.Name}");
-                        MergeTagMap(radarrTags, instanceTags);
+                        var result = await arrTagService.GetMovieTagsByTmdbId(instance.Url, instance.ApiKey, cancellationToken);
+                        if (!result.IsComplete)
+                        {
+                            radarrSnapshotComplete = false;
+                            _logger.LogWarning(
+                                $"Radarr tag snapshot from {instance.Name} is incomplete ({result.FailureReason}); "
+                                + "existing movie tags will be preserved.");
+                            continue;
+                        }
+
+                        _logger.LogInformation($"Fetched {result.Value.Count} movie tag mappings from {instance.Name}");
+                        MergeTagMap(radarrTags, result.Value);
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
                     {
+                        radarrSnapshotComplete = false;
                         _logger.LogError($"Failed to sync tags from Radarr instance {instance.Name}: {ex.Message}");
                     }
                 }
             }
             else
             {
-                var allRadarr = config.GetRadarrInstances();
-                if (allRadarr.Count > 0)
-                    _logger.LogInformation($"All {allRadarr.Count} Radarr instances are disabled — skipping Radarr sync");
+                if (allAuthoritativeRadarr.Count > 0)
+                    _logger.LogInformation($"All {allAuthoritativeRadarr.Count} Radarr instances are disabled — skipping Radarr sync");
                 else
-                    _logger.LogInformation("No Radarr instances configured, skipping Radarr sync");
+                    _logger.LogInformation("No usable enabled Radarr sources configured, skipping Radarr sync");
             }
 
             progress?.Report(25);
             cancellationToken.ThrowIfCancellationRequested();
 
             // Fetch tags from all configured Sonarr instances
-            if (config.IsSonarrInstancesCorrupt())
+            var sonarrConfigCorrupt = config.IsSonarrInstancesCorrupt();
+            var sonarrConfigHasInvalidEnabledRows = !sonarrConfigCorrupt
+                && config.HasInvalidEnabledSonarrInstances();
+            if (sonarrConfigCorrupt)
             {
-                _logger.LogError("SonarrInstances config is corrupt JSON — no Sonarr tags will sync this run. "
-                    + "Admin must open the Arr Links config page and reset the corrupt value.");
+                _logger.LogError("SonarrInstances config is corrupt JSON — preserving existing Sonarr-owned tags. "
+                    + "Admin must open the Arr Links config page and reset the corrupt value before sync can resume.");
             }
-            var sonarrInstances = config.GetEnabledSonarrInstances();
+            else if (sonarrConfigHasInvalidEnabledRows)
+            {
+                _logger.LogError(
+                    "SonarrInstances contains an enabled row without a usable URL/API key — "
+                    + "preserving existing Sonarr-owned tags until the row is fixed or disabled.");
+            }
+            var allAuthoritativeSonarr = sonarrConfigCorrupt
+                ? new List<ArrInstance>()
+                : config.GetSonarrInstancesForAuthoritativeSnapshot();
+            var sonarrInstances = allAuthoritativeSonarr.Where(i => i.Enabled).ToList();
             if (sonarrInstances.Count > 0)
             {
+                sonarrSnapshotComplete = !sonarrConfigHasInvalidEnabledRows;
                 foreach (var instance in sonarrInstances)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     try
                     {
                         _logger.LogInformation($"Fetching tags from Sonarr instance: {instance.Name}");
-                        var instanceMaps = await arrTagService.GetSeriesTagsAsync(instance.Url, instance.ApiKey, cancellationToken);
-                        _logger.LogInformation($"Fetched {instanceMaps.ByTvdbId.Count} series tag mappings by TVDB, {instanceMaps.ByImdbId.Count} by IMDb from {instance.Name}");
-                        MergeTagMap(sonarrTagsByTvdb, instanceMaps.ByTvdbId);
-                        MergeTagMap(sonarrTagsByImdb, instanceMaps.ByImdbId);
+                        var result = await arrTagService.GetSeriesTagsAsync(instance.Url, instance.ApiKey, cancellationToken);
+                        if (!result.IsComplete)
+                        {
+                            sonarrSnapshotComplete = false;
+                            _logger.LogWarning(
+                                $"Sonarr tag snapshot from {instance.Name} is incomplete ({result.FailureReason}); "
+                                + "existing series tags will be preserved.");
+                            continue;
+                        }
+
+                        _logger.LogInformation($"Fetched {result.Value.ByTvdbId.Count} series tag mappings by TVDB, {result.Value.ByImdbId.Count} by IMDb from {instance.Name}");
+                        MergeTagMap(sonarrTagsByTvdb, result.Value.ByTvdbId);
+                        MergeTagMap(sonarrTagsByImdb, result.Value.ByImdbId);
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
                     {
+                        sonarrSnapshotComplete = false;
                         _logger.LogError($"Failed to sync tags from Sonarr instance {instance.Name}: {ex.Message}");
                     }
                 }
             }
             else
             {
-                var allSonarr = config.GetSonarrInstances();
-                if (allSonarr.Count > 0)
-                    _logger.LogInformation($"All {allSonarr.Count} Sonarr instances are disabled — skipping Sonarr sync");
+                if (allAuthoritativeSonarr.Count > 0)
+                    _logger.LogInformation($"All {allAuthoritativeSonarr.Count} Sonarr instances are disabled — skipping Sonarr sync");
                 else
-                    _logger.LogInformation("No Sonarr instances configured, skipping Sonarr sync");
+                    _logger.LogInformation("No usable enabled Sonarr sources configured, skipping Sonarr sync");
             }
 
             progress?.Report(50);
             cancellationToken.ThrowIfCancellationRequested();
+
+            if (!radarrSnapshotComplete && !sonarrSnapshotComplete)
+            {
+                _logger.LogWarning(
+                    "Arr Tags Sync did not receive any complete authoritative snapshot; "
+                    + "existing Arr-owned tags were preserved and no library metadata was written.");
+                progress?.Report(100);
+                return;
+            }
 
             // Get all movies and series from Jellyfin
             var allItems = _libraryManager.GetItemList(new InternalItemsQuery
@@ -158,6 +237,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 IsVirtualItem = false,
                 Recursive = true
             }).ToList();
+            cancellationToken.ThrowIfCancellationRequested();
 
             _logger.LogInformation($"Found {allItems.Count} items in Jellyfin library");
 
@@ -170,14 +250,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             bool clearOldTags = config.ArrTagsClearOldTags;
 
             // Parse sync filter - if empty, sync all tags
-            var syncFilterTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (!string.IsNullOrWhiteSpace(config.ArrTagsSyncFilter))
+            var syncFilterTags = ParseSyncFilter(config.ArrTagsSyncFilter);
+            if (syncFilterTags.Count > 0)
             {
-                var filterParts = config.ArrTagsSyncFilter.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
-                foreach (var part in filterParts)
-                {
-                    syncFilterTags.Add(part.Trim());
-                }
                 _logger.LogInformation($"Filtering tags to sync: {string.Join(", ", syncFilterTags)}");
             }
 
@@ -186,13 +261,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 cancellationToken.ThrowIfCancellationRequested();
 
                 List<string>? tagsToAdd = null;
+                var itemSnapshotComplete = false;
+                var itemHasUsableProviderId = false;
 
                 // Check if it's a movie
                 if (item is Movie movie)
                 {
+                    itemSnapshotComplete = radarrSnapshotComplete;
                     var tmdbId = movie.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Tmdb);
-                    if (!string.IsNullOrWhiteSpace(tmdbId) && int.TryParse(tmdbId, out var tmdbIdInt))
+                    if (!string.IsNullOrWhiteSpace(tmdbId)
+                        && int.TryParse(tmdbId, out var tmdbIdInt)
+                        && tmdbIdInt > 0)
                     {
+                        itemHasUsableProviderId = true;
                         if (radarrTags.TryGetValue(tmdbIdInt, out var tags))
                         {
                             tagsToAdd = tags;
@@ -202,71 +283,62 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 // Check if it's a series — prefer TVDB (Sonarr's canonical id), fall back to IMDb.
                 else if (item is Series series)
                 {
+                    itemSnapshotComplete = sonarrSnapshotComplete;
                     var tvdbId = series.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Tvdb);
                     if (!string.IsNullOrWhiteSpace(tvdbId)
                         && int.TryParse(tvdbId, out var tvdbIdInt)
-                        && sonarrTagsByTvdb.TryGetValue(tvdbIdInt, out var tvdbTags))
+                        && tvdbIdInt > 0)
                     {
-                        tagsToAdd = tvdbTags;
-                    }
-                    else
-                    {
-                        var imdbId = series.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Imdb);
-                        if (!string.IsNullOrWhiteSpace(imdbId)
-                            && sonarrTagsByImdb.TryGetValue(imdbId, out var imdbTags))
+                        itemHasUsableProviderId = true;
+                        if (sonarrTagsByTvdb.TryGetValue(tvdbIdInt, out var tvdbTags))
                         {
-                            tagsToAdd = imdbTags;
+                            tagsToAdd = tvdbTags;
                         }
                     }
+
+                    if (tagsToAdd == null)
+                    {
+                        var imdbId = series.GetProviderId(MediaBrowser.Model.Entities.MetadataProvider.Imdb);
+                        if (!string.IsNullOrWhiteSpace(imdbId))
+                        {
+                            if (sonarrTagsByImdb.TryGetValue(imdbId, out var imdbTags))
+                            {
+                                // IMDb is a matching fallback, not authoritative absence: Sonarr
+                                // may legitimately omit IMDb while TVDB remains canonical. A local
+                                // IMDb-only item is safe to reconcile only when it actually matched.
+                                itemHasUsableProviderId = true;
+                                tagsToAdd = imdbTags;
+                            }
+                        }
+                    }
+                }
+
+                if (!itemSnapshotComplete || !itemHasUsableProviderId)
+                {
+                    ReportItemProgress();
+                    continue;
                 }
 
                 var existingTags = item.Tags?.ToList() ?? new List<string>();
-                var modified = false;
-
-                // Clear old tags with the prefix if enabled
-                if (clearOldTags)
-                {
-                    var tagsToRemove = existingTags
-                        .Where(t => t.StartsWith(tagPrefix, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
-
-                    if (tagsToRemove.Count > 0)
-                    {
-                        foreach (var tag in tagsToRemove)
-                        {
-                            existingTags.Remove(tag);
-                        }
-                        modified = true;
-                    }
-                }
-
-                // Add new tags if found
-                if (tagsToAdd != null && tagsToAdd.Count > 0)
-                {
-                    foreach (var tag in tagsToAdd)
-                    {
-                        // Apply sync filter - skip tags not in filter (if filter is set)
-                        if (syncFilterTags.Count > 0 && !syncFilterTags.Contains(tag))
-                        {
-                            continue;
-                        }
-
-                        var formattedTag = $"{tagPrefix}{tag}";
-
-                        // Only add if not already present
-                        if (!existingTags.Contains(formattedTag, StringComparer.OrdinalIgnoreCase))
-                        {
-                            existingTags.Add(formattedTag);
-                            modified = true;
-                        }
-                    }
-                }
+                var desiredTags = BuildDesiredTags(existingTags, tagsToAdd, tagPrefix, clearOldTags, syncFilterTags);
 
                 // Update item if modified
-                if (modified)
+                if (!TagCollectionsEqual(existingTags, desiredTags))
                 {
-                    item.Tags = existingTags.ToArray();
-                    await item.UpdateToRepositoryAsync(ItemUpdateType.MetadataEdit, cancellationToken);
+                    var previousTags = item.Tags;
+                    item.Tags = desiredTags.ToArray();
+                    try
+                    {
+                        await _updateItem(item, ItemUpdateType.MetadataEdit, cancellationToken);
+                    }
+                    catch
+                    {
+                        // A failed repository write must not leave the live in-memory item looking
+                        // as if destructive reconciliation succeeded.
+                        item.Tags = previousTags;
+                        throw;
+                    }
+
                     updatedCount++;
                     updatedItemNames.Add(item.Name);
                     
@@ -278,9 +350,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                     }
                 }
 
-                processedItems++;
-                var currentProgress = 50 + (int)((double)processedItems / totalItems * 50);
-                progress?.Report(currentProgress);
+                ReportItemProgress();
             }
 
             // Log any remaining updated items
@@ -298,7 +368,91 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
             _logger.LogInformation($"Arr Tags Sync completed. Updated {updatedCount} items out of {totalItems}");
             progress?.Report(100);
+
+            void ReportItemProgress()
+            {
+                processedItems++;
+                var currentProgress = totalItems == 0
+                    ? 100
+                    : 50 + (int)((double)processedItems / totalItems * 50);
+                progress?.Report(currentProgress);
+            }
         }
+
+        /// <summary>
+        /// Parses the admin-documented one-tag-per-line format while retaining the legacy comma
+        /// and semicolon separators. Empty/whitespace-only entries never become filter values.
+        /// </summary>
+        internal static HashSet<string> ParseSyncFilter(string? configuredFilter)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(configuredFilter))
+            {
+                return result;
+            }
+
+            var parts = configuredFilter.Split(
+                new[] { ',', ';', '\r', '\n' },
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var part in parts)
+            {
+                if (part.Length > 0)
+                {
+                    result.Add(part);
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Builds the authoritative final tag collection without mutating the live item. Owned
+        /// tags are cleared only after every configured source for that media type completed; the
+        /// caller enforces that completeness gate before invoking this helper.
+        /// </summary>
+        internal static List<string> BuildDesiredTags(
+            IReadOnlyList<string> existingTags,
+            IReadOnlyList<string>? tagsToAdd,
+            string tagPrefix,
+            bool clearOldTags,
+            IReadOnlySet<string> syncFilterTags)
+        {
+            var desiredTags = clearOldTags
+                ? existingTags
+                    .Where(t => !t.StartsWith(tagPrefix, StringComparison.OrdinalIgnoreCase))
+                    .ToList()
+                : existingTags.ToList();
+
+            if (tagsToAdd == null)
+            {
+                return desiredTags;
+            }
+
+            foreach (var tag in tagsToAdd)
+            {
+                if (syncFilterTags.Count > 0 && !syncFilterTags.Contains(tag))
+                {
+                    continue;
+                }
+
+                var formattedTag = $"{tagPrefix}{tag}";
+                if (!desiredTags.Contains(formattedTag, StringComparer.OrdinalIgnoreCase))
+                {
+                    desiredTags.Add(formattedTag);
+                }
+            }
+
+            return desiredTags;
+        }
+
+        /// <summary>Order-insensitive, case-insensitive comparison that preserves multiplicity.</summary>
+        internal static bool TagCollectionsEqual(IReadOnlyList<string> left, IReadOnlyList<string> right)
+            => left.Count == right.Count
+                && left
+                    .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
+                    .SequenceEqual(
+                        right.OrderBy(t => t, StringComparer.OrdinalIgnoreCase),
+                        StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// Resolves the tag prefix, defaulting only an empty/absent admin value so the write side

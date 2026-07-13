@@ -122,6 +122,62 @@ public class PluginConfigurationArrInstancesTests
     }
 
     [Fact]
+    public void InvalidEnabledRows_AreReportedSeparatelyFromFilteredValidRows()
+    {
+        var config = NewConfig();
+        config.RadarrInstances = """
+            [
+                {"Name":"Good","Url":"http://radarr:7878","ApiKey":"key","Enabled":true},
+                {"Name":"Broken","Url":"","ApiKey":"missing-url","Enabled":true},
+                {"Name":"Disabled broken","Url":"","ApiKey":"","Enabled":false}
+            ]
+            """;
+
+        Assert.Single(config.GetEnabledRadarrInstances());
+        Assert.True(config.HasInvalidEnabledRadarrInstances());
+        Assert.False(config.IsRadarrInstancesCorrupt());
+    }
+
+    [Fact]
+    public void InvalidDisabledRows_DoNotMakeAuthoritativeSourceSetIncomplete()
+    {
+        var config = NewConfig();
+        config.SonarrInstances =
+            """[{"Name":"Disabled broken","Url":"","ApiKey":"","Enabled":false}]""";
+
+        Assert.False(config.HasInvalidEnabledSonarrInstances());
+        Assert.False(config.IsSonarrInstancesCorrupt());
+    }
+
+    [Fact]
+    public void AuthoritativeSnapshot_DoesNotReviveLegacySourceBehindStoredDisabledRows()
+    {
+        var config = NewConfig();
+        config.RadarrInstances =
+            """[{"Name":"Disabled broken","Url":"","ApiKey":"","Enabled":false}]""";
+        config.RadarrUrl = "http://legacy:7878";
+        config.RadarrApiKey = "legacy-key";
+
+        // General config migration behavior remains backward-compatible, while a destructive
+        // snapshot honors the explicit modern source set and sees no enabled sources.
+        Assert.Single(config.GetEnabledRadarrInstances());
+        Assert.Empty(config.GetEnabledRadarrInstancesForAuthoritativeSnapshot());
+    }
+
+    [Fact]
+    public void TopLevelNullInstanceJson_IsCorruptAndCannotReviveLegacySource()
+    {
+        var config = NewConfig();
+        config.SonarrInstances = "null";
+        config.SonarrUrl = "http://legacy:8989";
+        config.SonarrApiKey = "legacy-key";
+
+        Assert.True(config.IsSonarrInstancesCorrupt());
+        Assert.Empty(config.GetEnabledSonarrInstancesForAuthoritativeSnapshot());
+        Assert.Empty(config.GetSonarrInstances());
+    }
+
+    [Fact]
     public void GetRadarrInstances_MirrorsSonarrSemantics()
     {
         var config = NewConfig();
