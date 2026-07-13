@@ -3,4 +3,6 @@ playwright-report/
 docker/media/
 docker/config/
 docker/cache/
+docker/seed-result.json
+docker/seed-result.json.tmp
 perf/traces/
