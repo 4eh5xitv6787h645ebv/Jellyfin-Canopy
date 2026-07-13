@@ -31,6 +31,8 @@
     /* Brand accent: cyan-leaning on dark surfaces. */
     --jc-accent:        var(--canopy-cyan);
     --jc-accent-strong: var(--canopy-blue);
+    /* Foreground for text sitting ON the accent fill (chips, badges). */
+    --jc-on-accent:     #04222f;
     /* Signature gradient (mark, active tab, primary actions, hairlines). */
     --jc-grad: linear-gradient(120deg, var(--canopy-cyan) 0%, var(--canopy-blue) 55%, var(--canopy-violet) 100%);
     --jc-grad-soft: linear-gradient(120deg, rgba(0, 196, 237, 0.16) 0%, rgba(37, 132, 244, 0.10) 55%, rgba(120, 63, 242, 0.16) 100%);
@@ -75,6 +77,7 @@
        (decorative) is shared. */
     --jc-accent:        #1668CC;
     --jc-accent-strong: var(--canopy-indigo);
+    --jc-on-accent:     #ffffff;
 
     --jc-surface-1:      rgba(0, 0, 0, 0.025);
     --jc-surface-2:      rgba(0, 0, 0, 0.05);
@@ -271,7 +274,7 @@
     background: var(--jc-overlay);
     border: 1px solid var(--jc-border);
     border-radius: 20px;
-    color: #eee;
+    color: var(--jc-text-strong);
     font-size: 0.9em;
     outline: none;
     transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
@@ -321,7 +324,7 @@
     transform: translateY(-50%);
     background: var(--jc-surface-3);
     border: none;
-    color: #fff;
+    color: var(--jc-text-strong);
     cursor: pointer;
     border-radius: 50%;
     width: 20px;
@@ -663,7 +666,7 @@
     border: 1px solid var(--jc-border);
     border-radius: 30px;
     padding: 10px 20px;
-    color: #ccc;
+    color: var(--jc-text-muted);
     cursor: pointer;
     font-weight: 600;
     font-size: 0.9em;
@@ -761,7 +764,7 @@
     letter-spacing: 0.2px;
     border-bottom: 1px solid var(--jc-border);
     box-sizing: border-box;
-    color: #f5f5f5;
+    color: var(--jc-text-strong);
 }
 /* Keep the icon inline with the title on a row, now that the legend
    is a floated block (display:flex would override the float). */
@@ -880,7 +883,7 @@
 #JellyfinCanopyPage .checkboxContainer label > span {
     font-size: 0.95em;
     font-weight: 500;
-    color: #e8e8e8;
+    color: var(--jc-text-strong);
     line-height: 1.35;
 }
 #JellyfinCanopyPage .inputContainer > label.inputLabel,
@@ -888,7 +891,7 @@
 #JellyfinCanopyPage .inputContainer > label.selectLabel,
 #JellyfinCanopyPage .selectContainer > label.inputLabel {
     font-weight: 500;
-    color: #d0d0d0;
+    color: var(--jc-text-muted);
     font-size: 0.9em;
 }
 
@@ -907,7 +910,7 @@
 #JellyfinCanopyPage .configSection > .jc-main-feature label > span {
     font-weight: 600;
     font-size: 1.02em;
-    color: #fff;
+    color: var(--jc-text-strong);
     letter-spacing: 0.1px;
 }
 
@@ -989,11 +992,11 @@
 }
 .jc-details-section[open] > summary,
 .jc-seerr-details[open] > summary {
-    color: #f5f5f5;
+    color: var(--jc-text-strong);
 }
 .jc-details-section > summary:hover,
 .jc-seerr-details > summary:hover {
-    color: #fff;
+    color: var(--jc-accent);
 }
 .jc-details-section > summary::-webkit-details-marker,
 .jc-seerr-details > summary::-webkit-details-marker {
@@ -1261,7 +1264,7 @@
 }
 .jc-search-match {
     background-color: rgba(255,200,0,0.35);
-    color: #fff;
+    color: var(--jc-text-strong);
     border-radius: 4px;
     padding: 0 3px;
     box-shadow: 0 0 0 1px rgba(255,200,0,0.25);
@@ -1306,7 +1309,7 @@
     flex-direction: column;
     gap: 8px;
 }
-.jc-branding-label-bold { font-weight: bold; color: #fff; font-size: 1.05em; }
+.jc-branding-label-bold { font-weight: bold; color: var(--jc-text-strong); font-size: 1.05em; }
 .jc-branding-size-hint { font-size: 0.75em; color: #888; margin-bottom: 6px; }
 .jc-branding-label { color: #aaa; font-size: 0.85em; }
 .jc-branding-meta { font-size: 0.8em; color: #aaa; margin-bottom: 10px; }
@@ -1375,7 +1378,7 @@
 .jc-textarea-tall { height: 120px !important; }
 .jc-textarea-medium { height: 90px !important; }
 .jc-textarea-large { height: 160px !important; }
-.jc-bold-link { font-weight: bold; color: #fff; text-decoration: underline; }
+.jc-bold-link { font-weight: bold; color: var(--jc-text-strong); text-decoration: underline; }
 .jc-kbd { background: var(--jc-surface-3); padding: 3px 6px; border-radius: 4px; font-family: monospace; }
 .jc-screenshot-img { max-width: 100%; border-radius: 8px; margin-top: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
 .jc-screenshot-img-sm { max-width: 60%; }
@@ -1519,7 +1522,7 @@ body.jc-hide-descriptions .jc-tab-intro { display: none !important; }
 }
 .jc-desc-toggle[aria-pressed="true"] .jc-desc-toggle-state {
     background: var(--jc-accent);
-    color: #fff;
+    color: var(--jc-on-accent);
 }
 .jc-desc-toggle-off { opacity: 0.85; }
 .jc-desc-toggle-off:hover { opacity: 1; }
