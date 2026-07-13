@@ -892,10 +892,88 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             return r == InstanceParseResult.Corrupt;
         }
 
+        /// <summary>
+        /// True when a non-disabled Sonarr row was discarded because it is null or lacks a URL
+        /// or API key. Fan-out readers may still use the valid rows, but destructive snapshot
+        /// consumers must not call that filtered subset authoritative.
+        /// </summary>
+        internal bool HasInvalidEnabledSonarrInstances()
+        {
+            _ = TryDeserializeInstances(SonarrInstances, out _, out var hasInvalidEnabledRows);
+            return hasInvalidEnabledRows;
+        }
+
+        /// <summary>Radarr counterpart to <see cref="HasInvalidEnabledSonarrInstances"/>.</summary>
+        internal bool HasInvalidEnabledRadarrInstances()
+        {
+            _ = TryDeserializeInstances(RadarrInstances, out _, out var hasInvalidEnabledRows);
+            return hasInvalidEnabledRows;
+        }
+
+        /// <summary>
+        /// Gets enabled Sonarr sources for a destructive snapshot. Unlike the general migration
+        /// helper, a nonempty modern array that filters to zero rows does not revive legacy fields;
+        /// those stored rows mean the admin supplied a modern source set, even when every row is
+        /// disabled or invalid.
+        /// </summary>
+        internal List<ArrInstance> GetEnabledSonarrInstancesForAuthoritativeSnapshot()
+            => GetSonarrInstancesForAuthoritativeSnapshot().Where(i => i.Enabled).ToList();
+
+        /// <summary>Radarr counterpart to <see cref="GetEnabledSonarrInstancesForAuthoritativeSnapshot"/>.</summary>
+        internal List<ArrInstance> GetEnabledRadarrInstancesForAuthoritativeSnapshot()
+            => GetRadarrInstancesForAuthoritativeSnapshot().Where(i => i.Enabled).ToList();
+
+        /// <summary>All usable Sonarr rows belonging to the authoritative source set.</summary>
+        internal List<ArrInstance> GetSonarrInstancesForAuthoritativeSnapshot()
+            => GetInstancesForAuthoritativeSnapshot(
+                SonarrInstances,
+                GetSonarrInstances);
+
+        /// <summary>All usable Radarr rows belonging to the authoritative source set.</summary>
+        internal List<ArrInstance> GetRadarrInstancesForAuthoritativeSnapshot()
+            => GetInstancesForAuthoritativeSnapshot(
+                RadarrInstances,
+                GetRadarrInstances);
+
+        private static List<ArrInstance> GetInstancesForAuthoritativeSnapshot(
+            string? storedJson,
+            Func<List<ArrInstance>> getWithLegacyFallback)
+        {
+            var parsed = TryDeserializeInstances(
+                storedJson,
+                out var parseResult,
+                out _,
+                out var hadStoredRows);
+
+            if (parseResult == InstanceParseResult.Corrupt)
+            {
+                return new List<ArrInstance>();
+            }
+
+            return hadStoredRows
+                ? parsed
+                : getWithLegacyFallback();
+        }
+
         private enum InstanceParseResult { ExplicitlyEmpty, Parsed, Corrupt }
 
         private static List<ArrInstance> TryDeserializeInstances(string? json, out InstanceParseResult result)
+            => TryDeserializeInstances(json, out result, out _);
+
+        private static List<ArrInstance> TryDeserializeInstances(
+            string? json,
+            out InstanceParseResult result,
+            out bool hasInvalidEnabledRows)
+            => TryDeserializeInstances(json, out result, out hasInvalidEnabledRows, out _);
+
+        private static List<ArrInstance> TryDeserializeInstances(
+            string? json,
+            out InstanceParseResult result,
+            out bool hasInvalidEnabledRows,
+            out bool hadStoredRows)
         {
+            hasInvalidEnabledRows = false;
+            hadStoredRows = false;
             if (string.IsNullOrWhiteSpace(json))
             {
                 result = InstanceParseResult.ExplicitlyEmpty;
@@ -909,7 +987,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
             try
             {
-                var instances = JsonSerializer.Deserialize<List<ArrInstance>>(json) ?? new List<ArrInstance>();
+                var instances = JsonSerializer.Deserialize<List<ArrInstance>>(json);
+                if (instances == null)
+                {
+                    result = InstanceParseResult.Corrupt;
+                    return new List<ArrInstance>();
+                }
+
+                hadStoredRows = instances.Count > 0;
+                hasInvalidEnabledRows = instances.Any(i => i == null
+                    || (i.Enabled
+                        && (string.IsNullOrWhiteSpace(i.Url) || string.IsNullOrWhiteSpace(i.ApiKey))));
                 // Drop null entries AND entries with empty URL or API key. System.Text.Json happily
                 // accepts `[null]` as a one-element list containing null (verified empirically);
                 // without this guard the predicate below dereferences the null and throws NRE,

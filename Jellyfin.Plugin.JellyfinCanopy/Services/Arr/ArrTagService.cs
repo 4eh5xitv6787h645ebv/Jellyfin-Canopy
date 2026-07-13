@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -33,16 +34,53 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
         public string? ImdbId { get; set; }
 
         [JsonPropertyName("tags")]
-        public List<int> Tags { get; set; } = new List<int>();
+        [JsonRequired]
+        public List<int>? Tags { get; set; }
     }
 
     public class ArrTag
     {
         [JsonPropertyName("id")]
+        [JsonRequired]
         public int Id { get; set; }
 
         [JsonPropertyName("label")]
-        public string Label { get; set; } = string.Empty;
+        [JsonRequired]
+        public string? Label { get; set; }
+    }
+
+    /// <summary>
+    /// A snapshot whose completeness is explicit. A failed snapshot carries an empty value
+    /// supplied by the caller so consumers cannot accidentally treat partial data as complete.
+    /// </summary>
+    /// <typeparam name="T">The snapshot value type.</typeparam>
+    public sealed class ArrSnapshotResult<T>
+    {
+        private ArrSnapshotResult(bool isComplete, T value, string? failureReason)
+        {
+            IsComplete = isComplete;
+            Value = value;
+            FailureReason = failureReason;
+        }
+
+        public bool IsComplete { get; }
+
+        public T Value { get; }
+
+        public string? FailureReason { get; }
+
+        public static ArrSnapshotResult<T> Complete(T value)
+            => new ArrSnapshotResult<T>(true, value, null);
+
+        public static ArrSnapshotResult<T> Failed(T empty, string failureReason)
+        {
+            if (string.IsNullOrWhiteSpace(failureReason))
+            {
+                throw new ArgumentException("A failure reason is required.", nameof(failureReason));
+            }
+
+            return new ArrSnapshotResult<T>(false, empty, failureReason);
+        }
     }
 
     /// <summary>
@@ -66,82 +104,121 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
         /// id) and by IMDb id (fallback). Keying by IMDb alone silently synced nothing for
         /// TVDB-scraped libraries (series without an IMDb id); TVDB is the reliable key.
         /// </summary>
-        public async Task<SeriesTagMaps> GetSeriesTagsAsync(string sonarrUrl, string apiKey, CancellationToken ct = default)
+        public async Task<ArrSnapshotResult<SeriesTagMaps>> GetSeriesTagsAsync(
+            string sonarrUrl,
+            string apiKey,
+            CancellationToken ct = default)
         {
             var byTvdbId = new Dictionary<int, List<string>>();
             var byImdbId = new Dictionary<string, List<string>>();
+            var empty = new SeriesTagMaps(byTvdbId, byImdbId);
 
             var fetched = await FetchTagsAndItemsAsync(ArrType.Sonarr, sonarrUrl, apiKey, ct).ConfigureAwait(false);
-            if (fetched == null)
+            if (!fetched.IsComplete)
             {
-                return new SeriesTagMaps(byTvdbId, byImdbId);
+                return ArrSnapshotResult<SeriesTagMaps>.Failed(
+                    empty,
+                    fetched.FailureReason ?? "Sonarr snapshot fetch failed.");
             }
 
-            var (items, tagLabels) = fetched.Value;
-            foreach (var item in items)
+            try
             {
-                if (item.Tags.Count == 0)
+                foreach (var item in fetched.Value.Items)
                 {
-                    continue;
-                }
+                    ct.ThrowIfCancellationRequested();
+                    if (item.Tags == null || item.Tags.Count == 0)
+                    {
+                        continue;
+                    }
 
-                var itemTags = ResolveLabels(item, tagLabels);
-                if (itemTags.Count == 0)
-                {
-                    continue;
-                }
+                    var itemTags = ResolveLabels(item, fetched.Value.TagLabels);
+                    if (itemTags.Count == 0)
+                    {
+                        continue;
+                    }
 
-                // Separate list copies per map so a later per-instance merge can't mutate
-                // the other map's value through a shared reference.
-                if (item.TvdbId > 0)
-                {
-                    byTvdbId[item.TvdbId] = new List<string>(itemTags);
-                }
+                    // Separate list copies per map so a later per-instance merge can't mutate
+                    // the other map's value through a shared reference.
+                    if (item.TvdbId > 0)
+                    {
+                        MergeTagLabels(byTvdbId, item.TvdbId, itemTags);
+                    }
 
-                if (!string.IsNullOrEmpty(item.ImdbId))
-                {
-                    byImdbId[item.ImdbId] = new List<string>(itemTags);
+                    if (!string.IsNullOrWhiteSpace(item.ImdbId))
+                    {
+                        MergeTagLabels(byImdbId, item.ImdbId, itemTags);
+                    }
                 }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error mapping Sonarr tag snapshot");
+                return ArrSnapshotResult<SeriesTagMaps>.Failed(
+                    new SeriesTagMaps(new Dictionary<int, List<string>>(), new Dictionary<string, List<string>>()),
+                    "Unexpected error while mapping Sonarr tag snapshot.");
             }
 
             _logger.LogInformation($"Mapped Sonarr tags for {byTvdbId.Count} series by TVDB, {byImdbId.Count} by IMDb");
-            return new SeriesTagMaps(byTvdbId, byImdbId);
+            return ArrSnapshotResult<SeriesTagMaps>.Complete(empty);
         }
 
         /// <summary>Radarr: tag labels keyed by movie TmdbId.</summary>
-        public async Task<Dictionary<int, List<string>>> GetMovieTagsByTmdbId(string radarrUrl, string apiKey, CancellationToken ct = default)
+        public async Task<ArrSnapshotResult<Dictionary<int, List<string>>>> GetMovieTagsByTmdbId(
+            string radarrUrl,
+            string apiKey,
+            CancellationToken ct = default)
         {
             var result = new Dictionary<int, List<string>>();
 
             var fetched = await FetchTagsAndItemsAsync(ArrType.Radarr, radarrUrl, apiKey, ct).ConfigureAwait(false);
-            if (fetched == null)
+            if (!fetched.IsComplete)
             {
-                return result;
+                return ArrSnapshotResult<Dictionary<int, List<string>>>.Failed(
+                    result,
+                    fetched.FailureReason ?? "Radarr snapshot fetch failed.");
             }
 
-            var (items, tagLabels) = fetched.Value;
-            foreach (var item in items)
+            try
             {
-                if (item.TmdbId > 0 && item.Tags.Count > 0)
+                foreach (var item in fetched.Value.Items)
                 {
-                    var itemTags = ResolveLabels(item, tagLabels);
-                    if (itemTags.Count > 0)
+                    ct.ThrowIfCancellationRequested();
+                    if (item.TmdbId > 0 && item.Tags != null && item.Tags.Count > 0)
                     {
-                        result[item.TmdbId] = itemTags;
+                        var itemTags = ResolveLabels(item, fetched.Value.TagLabels);
+                        if (itemTags.Count > 0)
+                        {
+                            MergeTagLabels(result, item.TmdbId, itemTags);
+                        }
                     }
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error mapping Radarr tag snapshot");
+                return ArrSnapshotResult<Dictionary<int, List<string>>>.Failed(
+                    new Dictionary<int, List<string>>(),
+                    "Unexpected error while mapping Radarr tag snapshot.");
+            }
 
             _logger.LogInformation($"Mapped tags for {result.Count} movies");
-            return result;
+            return ArrSnapshotResult<Dictionary<int, List<string>>>.Complete(result);
         }
 
         /// <summary>
         /// Fetches the tag label map and the full media list from one *arr instance in a
-        /// single tag + media round-trip. Returns null when the SSRF guard blocks the URL
-        /// or any fetch/parse step fails (all logged); callers degrade to empty maps.
+        /// single tag + media round-trip. Failures are returned explicitly so callers cannot
+        /// confuse an unavailable or malformed upstream with a valid empty collection.
         /// </summary>
-        private async Task<(List<ArrMediaItem> Items, Dictionary<int, string> TagLabels)?> FetchTagsAndItemsAsync(
+        private async Task<ArrSnapshotResult<FetchedArrSnapshot>> FetchTagsAndItemsAsync(
             ArrType arrType,
             string baseUrl,
             string apiKey,
@@ -153,10 +230,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
 
             // SSRF guard: reject before any outbound request so scheduled-task callers
             // cannot be pointed at metadata/loopback targets via instance URL.
-            if (!Jellyfin.Plugin.JellyfinCanopy.Helpers.ArrUrlGuard.IsAllowedUrl(baseUrl))
+            if (!await Jellyfin.Plugin.JellyfinCanopy.Helpers.ArrUrlGuard
+                .IsAllowedUrlAsync(baseUrl, ct)
+                .ConfigureAwait(false))
             {
                 _logger.LogError($"Refusing to fetch {serviceName} tags — URL rejected by SSRF guard: {baseUrl}");
-                return null;
+                return FetchFailed($"{serviceName} URL was rejected by the SSRF guard.");
             }
 
             try
@@ -170,17 +249,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 _logger.LogInformation($"Fetching {serviceName} tags from {baseUrl}");
                 var tagsUrl = $"{baseUrl.TrimEnd('/')}/api/v3/tag";
                 using var tagsRequest = Helpers.PluginHttpClients.BuildArrRequest(HttpMethod.Get, tagsUrl, apiKey);
-                var tagsResponse = await httpClient.SendAsync(tagsRequest, ct);
+                using var tagsResponse = await httpClient.SendAsync(tagsRequest, ct).ConfigureAwait(false);
 
-                if (!tagsResponse.IsSuccessStatusCode)
+                // Only a complete 200 response can be deletion authority. In particular, a 206
+                // array may be syntactically valid while omitting tags outside the returned range.
+                if (tagsResponse.StatusCode != HttpStatusCode.OK)
                 {
                     _logger.LogError($"Failed to fetch {serviceName} tags. Status: {tagsResponse.StatusCode}");
-                    return null;
+                    return FetchFailed($"{serviceName} tag request returned HTTP {(int)tagsResponse.StatusCode}.");
                 }
 
-                var tagsContent = await tagsResponse.Content.ReadAsStringAsync(ct);
-                var tags = JsonSerializer.Deserialize<List<ArrTag>>(tagsContent) ?? new List<ArrTag>();
-                var tagDictionary = tags.ToDictionary(t => t.Id, t => t.Label);
+                var tagsContent = await tagsResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                var tags = DeserializeCollection<ArrTag>(tagsContent);
+                if (tags.Any(tag => tag.Id <= 0 || string.IsNullOrWhiteSpace(tag.Label))
+                    || tags.Select(tag => tag.Id).Distinct().Count() != tags.Count)
+                {
+                    throw new ArrSnapshotValidationException(
+                        "tag entries require unique positive ids and non-blank labels.");
+                }
+
+                var tagDictionary = tags.ToDictionary(t => t.Id, t => t.Label!);
 
                 _logger.LogInformation($"Found {tags.Count} tags in {serviceName}");
 
@@ -188,20 +276,50 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 _logger.LogInformation($"Fetching {serviceName} {itemNoun} from {baseUrl}");
                 var mediaUrl = $"{baseUrl.TrimEnd('/')}/api/v3/{mediaEndpoint}";
                 using var mediaRequest = Helpers.PluginHttpClients.BuildArrRequest(HttpMethod.Get, mediaUrl, apiKey);
-                var mediaResponse = await httpClient.SendAsync(mediaRequest, ct);
+                using var mediaResponse = await httpClient.SendAsync(mediaRequest, ct).ConfigureAwait(false);
 
-                if (!mediaResponse.IsSuccessStatusCode)
+                if (mediaResponse.StatusCode != HttpStatusCode.OK)
                 {
                     _logger.LogError($"Failed to fetch {serviceName} {itemNoun}. Status: {mediaResponse.StatusCode}");
-                    return null;
+                    return FetchFailed($"{serviceName} {itemNoun} request returned HTTP {(int)mediaResponse.StatusCode}.");
                 }
 
-                var mediaContent = await mediaResponse.Content.ReadAsStringAsync(ct);
-                var allItems = JsonSerializer.Deserialize<List<ArrMediaItem>>(mediaContent) ?? new List<ArrMediaItem>();
+                var mediaContent = await mediaResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                var allItems = DeserializeCollection<ArrMediaItem>(mediaContent);
+                if (allItems.Any(item => item.Tags == null))
+                {
+                    throw new ArrSnapshotValidationException(
+                        "media entries require a non-null tags collection.");
+                }
+
+                // A media response that references an id absent from the tag response is not
+                // a coherent snapshot (for example, the two endpoint reads raced a deletion).
+                // Treat it as incomplete instead of silently dropping the unresolved tag and
+                // authorizing Jellyfin metadata deletion from a partial projection.
+                if (allItems.Any(item => item.Tags!.Any(tagId => !tagDictionary.ContainsKey(tagId))))
+                {
+                    throw new ArrSnapshotValidationException(
+                        "media entries referenced an unknown tag id.");
+                }
+
+                if (arrType == ArrType.Radarr
+                    && allItems.Any(item => item.TmdbId <= 0))
+                {
+                    throw new ArrSnapshotValidationException(
+                        "movie entries require a positive TMDB id.");
+                }
+
+                if (arrType == ArrType.Sonarr
+                    && allItems.Any(item => item.TvdbId <= 0))
+                {
+                    throw new ArrSnapshotValidationException(
+                        "series entries require a positive TVDB id.");
+                }
 
                 _logger.LogInformation($"Found {allItems.Count} {itemNoun} in {serviceName}");
 
-                return (allItems, tagDictionary);
+                return ArrSnapshotResult<FetchedArrSnapshot>.Complete(
+                    new FetchedArrSnapshot(allItems, tagDictionary));
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -212,28 +330,52 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             catch (HttpRequestException ex)
             {
                 _logger.LogError($"Network error fetching {serviceName} tags: {ex.Message}");
+                return FetchFailed($"{serviceName} request failed.");
             }
             catch (TaskCanceledException ex)
             {
                 _logger.LogError($"Timeout fetching {serviceName} tags: {ex.Message}");
+                return FetchFailed($"{serviceName} request timed out.");
+            }
+            catch (ArrSnapshotValidationException ex)
+            {
+                _logger.LogError($"Inconsistent {serviceName} tag snapshot: {ex.Message}");
+                return FetchFailed($"{serviceName} snapshot was inconsistent: {ex.Message}");
             }
             catch (JsonException ex)
             {
-                _logger.LogError($"Invalid JSON from {serviceName} tags endpoint: {ex.Message}");
+                _logger.LogError($"Invalid JSON in {serviceName} tag snapshot response: {ex.Message}");
+                return FetchFailed($"{serviceName} returned malformed JSON.");
             }
             catch (Exception ex)
             {
                 _logger.LogError($"Unexpected error fetching {serviceName} tags: {ex.Message}");
+                return FetchFailed($"Unexpected error while fetching {serviceName} tag snapshot.");
+            }
+        }
+
+        private static List<T> DeserializeCollection<T>(string content)
+            where T : class
+        {
+            var values = JsonSerializer.Deserialize<List<T>>(content);
+            if (values == null || values.Any(value => value == null))
+            {
+                throw new JsonException("Expected a JSON array containing non-null objects.");
             }
 
-            return null;
+            return values;
         }
+
+        private static ArrSnapshotResult<FetchedArrSnapshot> FetchFailed(string failureReason)
+            => ArrSnapshotResult<FetchedArrSnapshot>.Failed(
+                new FetchedArrSnapshot(new List<ArrMediaItem>(), new Dictionary<int, string>()),
+                failureReason);
 
         /// <summary>Resolves an item's tag ids to their labels via the fetched label map.</summary>
         private static List<string> ResolveLabels(ArrMediaItem item, Dictionary<int, string> tagLabels)
         {
             var itemTags = new List<string>();
-            foreach (var tagId in item.Tags)
+            foreach (var tagId in item.Tags ?? throw new JsonException("Arr media tags were unavailable."))
             {
                 if (tagLabels.TryGetValue(tagId, out var tagLabel))
                 {
@@ -242,6 +384,44 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             }
 
             return itemTags;
+        }
+
+        /// <summary>
+        /// Conservatively unions labels when one response repeats a provider identity. Arr should
+        /// normally enforce uniqueness, but unioning keeps either entry from becoming accidental
+        /// deletion authority while still yielding a usable snapshot.
+        /// </summary>
+        private static void MergeTagLabels<TKey>(
+            Dictionary<TKey, List<string>> destination,
+            TKey key,
+            IReadOnlyList<string> labels)
+            where TKey : notnull
+        {
+            if (!destination.TryGetValue(key, out var merged))
+            {
+                destination[key] = new List<string>(labels);
+                return;
+            }
+
+            foreach (var label in labels)
+            {
+                if (!merged.Contains(label, StringComparer.OrdinalIgnoreCase))
+                {
+                    merged.Add(label);
+                }
+            }
+        }
+
+        private sealed record FetchedArrSnapshot(
+            List<ArrMediaItem> Items,
+            Dictionary<int, string> TagLabels);
+
+        private sealed class ArrSnapshotValidationException : Exception
+        {
+            public ArrSnapshotValidationException(string message)
+                : base(message)
+            {
+            }
         }
     }
 

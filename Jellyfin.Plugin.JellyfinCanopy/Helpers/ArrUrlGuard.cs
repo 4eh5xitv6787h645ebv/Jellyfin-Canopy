@@ -92,6 +92,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
 
         public static async Task<bool> IsAllowedUrlAsync(string? url, CancellationToken ct = default)
         {
+            ct.ThrowIfCancellationRequested();
             var sync = TrySyncChecks(url, out var host);
             if (sync.HasValue) return sync.Value;
 
