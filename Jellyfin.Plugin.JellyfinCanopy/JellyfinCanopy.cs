@@ -215,13 +215,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy
 
         // Armed when the legacy Jellyseerr-name migration failed: the loaded
         // Configuration then holds defaults for every un-migrated setting, and
-        // persisting it (startup backfills, scheduled-task saves, admin saves)
-        // would overwrite the legacy XML with those defaults — permanent data
-        // loss. All plugin config writes funnel through SaveConfiguration, so
-        // suppressing here protects the file until a later startup migrates it.
+        // persisting it (startup backfills, scheduled-task saves, admin saves,
+        // and BasePlugin.LoadConfiguration's own on-deserialization-failure
+        // save) would overwrite the legacy XML with those defaults — permanent
+        // data loss. Every write path ends in the TYPED SaveConfiguration
+        // virtual (the parameterless overload delegates to it), so guarding it
+        // here protects the file until a later startup migrates successfully.
         private bool _configWritesSuspendedByFailedMigration;
 
-        public override void SaveConfiguration()
+        public override void SaveConfiguration(PluginConfiguration config)
         {
             if (_configWritesSuspendedByFailedMigration)
             {
@@ -229,7 +231,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 return;
             }
 
-            base.SaveConfiguration();
+            base.SaveConfiguration(config);
         }
 
         private void SanitizeExternalUrlFields(PluginConfiguration config)
