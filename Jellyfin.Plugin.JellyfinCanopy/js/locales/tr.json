@@ -701,5 +701,6 @@
   "discovery_customize_move_down": "Aşağı taşı",
   "discovery_customize_reset": "Varsayılanlara sıfırla",
   "discovery_customize_cancel": "İptal",
-  "discovery_customize_save": "Kaydet"
+  "discovery_customize_save": "Kaydet",
+  "pages_signin_required": "Bu sayfayı görüntülemek için oturum açın."
 }

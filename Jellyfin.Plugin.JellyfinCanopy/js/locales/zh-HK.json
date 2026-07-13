@@ -701,5 +701,6 @@
   "discovery_customize_move_down": "下移",
   "discovery_customize_reset": "重設為預設值",
   "discovery_customize_cancel": "取消",
-  "discovery_customize_save": "儲存"
+  "discovery_customize_save": "儲存",
+  "pages_signin_required": "登入以查看此頁面。"
 }

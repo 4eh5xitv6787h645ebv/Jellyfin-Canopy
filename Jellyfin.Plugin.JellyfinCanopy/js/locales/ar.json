@@ -701,5 +701,6 @@
   "discovery_customize_move_down": "نقل لأسفل",
   "discovery_customize_reset": "إعادة التعيين إلى الافتراضي",
   "discovery_customize_cancel": "إلغاء",
-  "discovery_customize_save": "حفظ"
+  "discovery_customize_save": "حفظ",
+  "pages_signin_required": "سجّل الدخول لعرض هذه الصفحة."
 }

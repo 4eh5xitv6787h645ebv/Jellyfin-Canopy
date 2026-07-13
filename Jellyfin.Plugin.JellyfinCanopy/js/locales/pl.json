@@ -701,5 +701,6 @@
   "discovery_customize_move_down": "Przesuń w dół",
   "discovery_customize_reset": "Przywróć domyślne",
   "discovery_customize_cancel": "Anuluj",
-  "discovery_customize_save": "Zapisz"
+  "discovery_customize_save": "Zapisz",
+  "pages_signin_required": "Zaloguj się, aby wyświetlić tę stronę."
 }

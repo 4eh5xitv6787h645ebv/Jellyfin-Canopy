@@ -19,7 +19,6 @@
 
 import { JC } from '../globals';
 import { LIVE, on } from './live';
-import { applyDeliveryFlagSanitization } from './delivery-flags';
 import type { PluginConfig } from '../types/jc';
 
 const logPrefix = '🪼 Jellyfin Canopy: Live Config:';
@@ -75,7 +74,6 @@ async function refreshPluginConfig(): Promise<void> {
             // their pre-uninstall `true`. Deferring the sanitize to the end of the
             // refresh leaves a /private-config round-trip window where a drawer
             // rebuild would observe them true and skip re-injecting the nav item.
-            applyDeliveryFlagSanitization();
         }
     } catch (err) {
         console.error(`${logPrefix} failed to refetch public-config:`, err);
@@ -99,7 +97,6 @@ async function refreshPluginConfig(): Promise<void> {
     // (INIT-1) Re-force stale UseCustomTabs/UsePluginPages flags back to false for
     // any delivery plugin that is not installed — the raw server payload we just
     // merged still stores the pre-uninstall `true`.
-    applyDeliveryFlagSanitization();
 }
 
 on(LIVE.CONFIG_CHANGED, () => {

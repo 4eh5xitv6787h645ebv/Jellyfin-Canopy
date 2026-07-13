@@ -701,5 +701,6 @@
   "discovery_customize_move_down": "Nach unten",
   "discovery_customize_reset": "Auf Standard zurücksetzen",
   "discovery_customize_cancel": "Abbrechen",
-  "discovery_customize_save": "Speichern"
+  "discovery_customize_save": "Speichern",
+  "pages_signin_required": "Melde dich an, um diese Seite zu sehen."
 }

@@ -701,5 +701,6 @@
   "discovery_customize_move_down": "Премести надолу",
   "discovery_customize_reset": "Връщане към стандартните",
   "discovery_customize_cancel": "Отказ",
-  "discovery_customize_save": "Запазване"
+  "discovery_customize_save": "Запазване",
+  "pages_signin_required": "Влезте, за да видите тази страница."
 }

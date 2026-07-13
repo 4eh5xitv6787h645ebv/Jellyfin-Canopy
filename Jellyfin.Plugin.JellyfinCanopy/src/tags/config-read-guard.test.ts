@@ -25,15 +25,10 @@ const SNAPSHOTS_DIR = SRC_ROOT.replace(
 
 // Keys the client legitimately reads off JC.pluginConfig that are synthesized or
 // force-mutated on the client rather than being plain descriptor projections:
-// js/plugin.js zeroes the delivery-plugin flags after load when Custom Tabs /
-// Plugin Pages are not installed (src/core/delivery-flags.ts) and stamps the
-// translation-cache timestamp. Allowed even if a future descriptor refactor
-// stops projecting them — this guard tracks the phantom-read class, not churn.
+// js/plugin.js stamps the translation-cache timestamp. Allowed even if a future
+// descriptor refactor stops projecting them — this guard tracks the
+// phantom-read class, not churn.
 const CLIENT_SYNTHESIZED_KEYS = new Set<string>([
-    'BookmarksUseCustomTabs', 'CalendarUseCustomTabs',
-    'HiddenContentUseCustomTabs', 'DownloadsUseCustomTabs',
-    'BookmarksUsePluginPages', 'HiddenContentUsePluginPages',
-    'DownloadsUsePluginPages', 'CalendarUsePluginPages',
     'ClearTranslationCacheTimestamp', 'Shortcuts',
 ]);
 

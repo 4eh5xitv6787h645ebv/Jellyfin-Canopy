@@ -47,6 +47,10 @@ declare module '../types/jc' {
         /** Translation lookup — returns the key itself when no translation exists. */
         t?: (key: string, params?: Record<string, unknown>) => string;
 
+        /** Pages framework init (js/plugin.js Stage 6) — wires the fallback
+         * host, entry points, and cold-start deep-link adoption. Idempotent. */
+        initializePagesFramework?: () => void;
+
         // enhanced/config
         state?: EnhancedState;
         userConfig?: {

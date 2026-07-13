@@ -701,5 +701,6 @@
   "discovery_customize_move_down": "Mover para baixo",
   "discovery_customize_reset": "Restaurar padrões",
   "discovery_customize_cancel": "Cancelar",
-  "discovery_customize_save": "Salvar"
+  "discovery_customize_save": "Salvar",
+  "pages_signin_required": "Entre para ver esta página."
 }
