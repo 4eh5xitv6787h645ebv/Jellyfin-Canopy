@@ -1089,24 +1089,16 @@
         // disabled, we additionally record it in `_jeDisabledPlugins` so the
         // Optional Dependencies card can surface "Installed (disabled)"
         // instead of the blunt "Not installed".
-        var hasPluginPages = null;
-        var hasCustomTabs = null;
         var hasIntroSkipper = null;
         var hasInPlayerEpisodePreview = null;
         var hasFileTransformation = null;
         var hasKefinTweaks = null;
         var _jeDisabledPlugins = {}; // key -> true when installed but Status !== 'Active'
-        // Tri-state compat probe result for Custom Tabs:
-        //   null           — not yet probed (or Custom Tabs not installed)
-        //   'ok'           — /Plugins/.../Configuration returned the expected shape
-        //   'incompatible' — config read but shape doesn't match { Tabs:[{Title,ContentHtml}] }
-        //   'probe-failed' — HTTP/JSON/auth error reading the config
-        var customTabsCompatState = null;
 
         /**
-         * Checks installed plugins (Plugin Pages, Custom Tabs, etc.) and updates
-         * dependency state for Plugin Pages / Custom Tabs dependent settings.
-         * Called during loadConfig() on page load.
+         * Checks installed optional integration plugins (File Transformation, Intro
+         * Skipper, In-Player Episode Preview, KefinTweaks) and updates the Optional
+         * Dependencies dashboard. Called during loadConfig() on page load.
          */
         function checkInstalledPlugins() {
             ApiClient.ajax({
@@ -1155,8 +1147,6 @@
                     return active;
                 }
                 hasFileTransformation = probe('fileTransformation', ['File Transformation']);
-                hasPluginPages        = probe('pluginPages',        ['Plugin Pages']);
-                hasCustomTabs         = probe('customTabs',         ['Custom Tabs']);
                 hasIntroSkipper       = probe('introSkipper',       ['Intro Skipper', 'SkipIntro']);
                 hasInPlayerEpisodePreview = probe('inPlayerEpisodePreview', ['In Player Episode Preview', 'In-Player Episode Preview', 'InPlayerEpisodePreview']);
 
@@ -1180,28 +1170,15 @@
                 // Toggle body classes so descriptions hide install-only content
                 // (e.g., "Install the Custom Tabs plugin...") and surface a positive
                 // "detected" badge when an integration plugin is already present.
-                document.body.classList.toggle('jc-has-customtabs',        hasCustomTabs         === true);
-                document.body.classList.toggle('jc-has-pluginpages',       hasPluginPages        === true);
                 document.body.classList.toggle('jc-has-introskipper',      hasIntroSkipper       === true);
                 document.body.classList.toggle('jc-has-inplayerepisodepreview', hasInPlayerEpisodePreview === true);
                 document.body.classList.toggle('jc-has-kefintweaks',       hasKefinTweaks        === true);
-
-                // If Custom Tabs is present, probe its config to decide whether the
-                // schema matches what we know how to write. Only on success do we
-                // reveal the "Add the Custom Tabs entry for me" toggles.
-                if (hasCustomTabs === true) {
-                    customTabsCompatState = null; // re-probing
-                    checkCustomTabsConfigCompat();
-                } else {
-                    document.body.classList.remove('jc-has-customtabs-compat');
-                    customTabsCompatState = null;
-                }
 
                 // Re-run dependencies now that plugin info is available
                 updateAllDependencies();
             }).catch(function(err) {
                 // Plugin list request failed (network, auth expiry, server offline, ...).
-                // Leave hasPluginPages/hasIntroSkipper at null so individual deps show
+                // Leave hasIntroSkipper at null so individual deps show
                 // "unknown" rather than incorrectly disabling toggles. Still refresh
                 // the dashboard so cards don't sit stuck on "Checking..." forever.
                 console.warn('[JC] plugin detection failed; resetting detection state to avoid stale UI:', err);
@@ -1209,14 +1186,11 @@
                 // the visible "couldn't reach /Plugins" warning. Body classes,
                 // module flags, and dep gates all flip back to "unknown" so the
                 // UI is internally consistent after a failed retry.
-                hasPluginPages = null;
-                hasCustomTabs = null;
                 hasIntroSkipper = null;
                 hasInPlayerEpisodePreview = null;
                 hasFileTransformation = null;
                 hasKefinTweaks = null;
-                customTabsCompatState = null;
-                document.body.classList.remove('jc-has-customtabs', 'jc-has-pluginpages', 'jc-has-introskipper', 'jc-has-inplayerepisodepreview', 'jc-has-customtabs-compat', 'jc-has-kefintweaks');
+                document.body.classList.remove('jc-has-introskipper', 'jc-has-inplayerepisodepreview', 'jc-has-kefintweaks');
                 setProbeWarning('plugins', "Couldn't reach the Jellyfin /Plugins endpoint to verify which integrations are installed (auth expiry, network, or server issue). Dependency hints and \"plugin detected\" badges are now hidden until you retry.");
                 try { updateAllDependencies(); } catch (e) {
                     console.warn('[JC] updateAllDependencies threw during plugin-detect fallback:', e);
@@ -1235,69 +1209,9 @@
                 probeRetry.dataset.jcWired = '1';
                 probeRetry.onclick = function() {
                     setProbeWarning('plugins', null);
-                    setProbeWarning('customtabs', null);
                     checkInstalledPlugins();
                 };
             }
-        }
-
-        // ---------------------------------------------------------------------
-        // Custom Tabs auto-management
-        //
-        // The Custom Tabs plugin (https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)
-        // stores its tab list at /Plugins/{guid}/Configuration as
-        // `{ "Tabs": [{ "Title": "...", "ContentHtml": "..." }, ...] }`.
-        // We can manage individual entries on the user's behalf, but only when
-        // the schema we observe matches that shape exactly. If the schema has
-        // changed in a future release, every code path here bails out silently
-        // and the related UI ("Add the Custom Tabs entry for me" toggles) stays
-        // hidden — the user falls back to manual setup with no error noise.
-        // ---------------------------------------------------------------------
-        var CUSTOM_TABS_PLUGIN_ID = 'fbacd0b6fd464a05b0a42045d6a135b0';
-
-        // Per managed Custom Tabs entry: which JC config flags drive it
-        // (parent + auto-create), what Title to write, and the exact
-        // ContentHtml snippet that JC's matching front-end module looks for.
-        // ContentHtml strings are the SOURCE OF TRUTH for "this tab is ours" —
-        // the sync logic identifies our entries by exact-string match.
-        // `masterKey` is the top-level feature toggle (Enable Bookmarks / Enable
-        // Hidden Content / Enable Requests Page / Enable Calendar Page). Sync
-        // requires ALL THREE — masterKey, parentKey, autoKey — to be true for
-        // the entry to exist. Without masterKey in the predicate, disabling the
-        // master feature would leave an orphan Custom Tabs entry that opens to
-        // broken/empty content (the JC module behind it is off).
-        // `legacyHtml` is the marker the SAME entry carried before the 2.0
-        // rebrand (Elevate builds): the sync below rewrites a matching tab's
-        // ContentHtml in place so upgrades keep their tab (title, position)
-        // instead of stranding a dead entry and adding a duplicate.
-        var CUSTOM_TAB_MANAGED_ENTRIES = [
-            { masterKey: 'BookmarksEnabled',      parentKey: 'BookmarksUseCustomTabs',     autoKey: 'BookmarksAutoCreateCustomTab',     ownedKey: 'BookmarksCustomTabJeOwned',     title: 'Bookmarks',      html: '<div class="sections bookmarks"></div>' },
-            { masterKey: 'HiddenContentEnabled',  parentKey: 'HiddenContentUseCustomTabs', autoKey: 'HiddenContentAutoCreateCustomTab', ownedKey: 'HiddenContentCustomTabJeOwned', title: 'Hidden Content', html: '<div class="jellyfincanopy hidden-content"></div>', legacyHtml: '<div class="jellyfinelevate hidden-content"></div>' },
-            { masterKey: 'DownloadsPageEnabled',  parentKey: 'DownloadsUseCustomTabs',     autoKey: 'DownloadsAutoCreateCustomTab',     ownedKey: 'DownloadsCustomTabJeOwned',     title: 'Requests',       html: '<div class="jellyfincanopy requests"></div>', legacyHtml: '<div class="jellyfinelevate requests"></div>' },
-            { masterKey: 'CalendarPageEnabled',   parentKey: 'CalendarUseCustomTabs',      autoKey: 'CalendarAutoCreateCustomTab',      ownedKey: 'CalendarCustomTabJeOwned',      title: 'Calendar',       html: '<div class="jellyfincanopy calendar"></div>', legacyHtml: '<div class="jellyfinelevate calendar"></div>' }
-        ];
-
-        function isCustomTabsConfigShapeOk(cfg) {
-            if (!cfg || typeof cfg !== 'object') {
-                console.warn('[JC] Custom Tabs compat: config is not an object:', cfg);
-                return false;
-            }
-            if (!Array.isArray(cfg.Tabs)) {
-                console.warn('[JC] Custom Tabs compat: cfg.Tabs is not an array. Keys present:', Object.keys(cfg));
-                return false;
-            }
-            for (var i = 0; i < cfg.Tabs.length; i++) {
-                var t = cfg.Tabs[i];
-                if (!t || typeof t !== 'object') {
-                    console.warn('[JC] Custom Tabs compat: tab[' + i + '] is not an object:', t);
-                    return false;
-                }
-                if (typeof t.Title !== 'string' || typeof t.ContentHtml !== 'string') {
-                    console.warn('[JC] Custom Tabs compat: tab[' + i + '] missing expected fields. Got keys:', Object.keys(t));
-                    return false;
-                }
-            }
-            return true;
         }
 
         // Surfaces a single probe-failure banner above the form. Multiple probes
@@ -1319,172 +1233,6 @@
                 msgEl.textContent = ' — ' + keys.map(function(k) { return _jeProbeWarnings[k]; }).join(' / ');
                 banner.style.display = '';
             }
-        }
-
-        function checkCustomTabsConfigCompat() {
-            ApiClient.ajax({
-                type: 'GET',
-                url: ApiClient.getUrl('/Plugins/' + CUSTOM_TABS_PLUGIN_ID + '/Configuration'),
-                dataType: 'json'
-            }).then(function(cfg) {
-                var ok = isCustomTabsConfigShapeOk(cfg);
-                document.body.classList.toggle('jc-has-customtabs-compat', ok);
-                customTabsCompatState = ok ? 'ok' : 'incompatible';
-                if (!ok) {
-                    console.warn('[JC] Custom Tabs config schema not recognized; auto-manage toggles hidden.');
-                    setProbeWarning('customtabs', "Custom Tabs config has an unrecognized shape. Auto-create toggles disabled until Jellyfin Canopy supports the new schema.");
-                } else {
-                    setProbeWarning('customtabs', null);
-                }
-                try { renderOptionalPluginsDashboard(); } catch (e) {
-                    console.warn('[JC] renderOptionalPluginsDashboard threw from checkCustomTabsConfigCompat (then):', e);
-                }
-            }).catch(function(err) {
-                document.body.classList.remove('jc-has-customtabs-compat');
-                customTabsCompatState = 'probe-failed';
-                console.warn('[JC] Custom Tabs config probe failed; auto-manage toggles hidden:', err);
-                setProbeWarning('customtabs', "Couldn't read Custom Tabs config (check Jellyfin logs). Auto-create toggles disabled until the probe succeeds.");
-                try { renderOptionalPluginsDashboard(); } catch (e) {
-                    console.warn('[JC] renderOptionalPluginsDashboard threw from checkCustomTabsConfigCompat (catch):', e);
-                }
-            });
-        }
-
-        /**
-         * Plan + apply Custom Tabs sync for every managed entry.
-         *
-         * Returns a promise resolving to `{ ok, status, detail, ownedUpdates }`:
-         *  - `ok: true` → sync ran cleanly (or was a clean no-op)
-         *  - `ok: false` → something failed; `detail` describes it (admin-visible)
-         *  - `status: 'noop' | 'ok' | 'skipped' | 'failed'`
-         *  - `ownedUpdates: [{ ownedKey, value }]` — *JC-side* flag updates the caller
-         *    must persist alongside the rest of the JC config so future syncs know
-         *    which entries we created vs. which the admin added manually.
-         *
-         * Sync rules per managed entry (uses `ownedKey` to gate destructive deletes):
-         *  - shouldExist (auto+parent both on) AND no matching CT entry → ADD; owned=true
-         *  - shouldExist AND a matching CT entry exists → leave entry alone; preserve owned
-         *  - !shouldExist AND a matching CT entry exists AND we own it → REMOVE; owned=false
-         *  - !shouldExist AND a matching CT entry exists but we don't own it → leave it
-         *    (it's the admin's manually-created tab); owned stays false
-         *  - !shouldExist AND no matching entry → no-op; owned=false
-         *
-         * The single GET → mutate → single POST sequence avoids the race where
-         * multiple per-entry round-trips would clobber each other.
-         */
-        function syncAllManagedCustomTabs(savedConfig) {
-            if (!document.body.classList.contains('jc-has-customtabs-compat')) {
-                // Bail early. If the admin has auto-create intent stored but we
-                // can't act on it (plugin missing / compat probe failed), return
-                // ok:false so the save-flow alert gate fires — otherwise the
-                // green "Saved!" toast masks the dropped intent.
-                // Mirror `shouldExist`: intent requires all three flags —
-                // master + parent + auto. A disabled-at-master feature with
-                // auto+parent still checked wouldn't have a real sync action
-                // anyway, so shouldn't trigger the cosmetic "saved but CT
-                // dropped your auto-create" alert.
-                var anyIntent = CUSTOM_TAB_MANAGED_ENTRIES.some(function(e) {
-                    return savedConfig[e.autoKey] === true
-                        && savedConfig[e.parentKey] === true
-                        && savedConfig[e.masterKey] === true;
-                });
-                return Promise.resolve({
-                    ok: !anyIntent, // only "skipped cleanly" when there was nothing to do
-                    status: 'skipped',
-                    detail: anyIntent
-                        ? 'Custom Tabs is not detected (or its config schema is unrecognized). Auto-create was requested but skipped — toggle a Custom Tabs setting to retry the probe.'
-                        : 'Custom Tabs not detected; nothing to sync.',
-                    ownedUpdates: []
-                });
-            }
-            return ApiClient.ajax({
-                type: 'GET',
-                url: ApiClient.getUrl('/Plugins/' + CUSTOM_TABS_PLUGIN_ID + '/Configuration'),
-                dataType: 'json'
-            }).then(function(cfg) {
-                if (!isCustomTabsConfigShapeOk(cfg)) {
-                    return {
-                        ok: false,
-                        status: 'failed',
-                        detail: 'Custom Tabs configuration shape no longer matches what Jellyfin Canopy knows how to write — auto-manage skipped to avoid corrupting it.',
-                        ownedUpdates: []
-                    };
-                }
-                var changed = false;
-                var ownedUpdates = [];
-                CUSTOM_TAB_MANAGED_ENTRIES.forEach(function(entry) {
-                    // ALL three gates must be on: the master feature, the
-                    // Use-Custom-Tabs child toggle, and the Auto-Create
-                    // opt-in. Missing the master-flag check here meant
-                    // disabling the top-level feature still left an orphan
-                    // CT entry that opened to broken content.
-                    var shouldExist =
-                        savedConfig[entry.autoKey] === true &&
-                        savedConfig[entry.parentKey] === true &&
-                        savedConfig[entry.masterKey] === true;
-                    var isOwned = savedConfig[entry.ownedKey] === true;
-                    var idx = -1;
-                    var legacyIdx = -1;
-                    for (var i = 0; i < cfg.Tabs.length; i++) {
-                        if (cfg.Tabs[i].ContentHtml === entry.html) { idx = i; break; }
-                        if (legacyIdx === -1 && entry.legacyHtml && cfg.Tabs[i].ContentHtml === entry.legacyHtml) { legacyIdx = i; }
-                    }
-                    // Rebrand adoption: a tab still carrying this entry's pre-2.0
-                    // Elevate marker can only have been written for this plugin.
-                    // Rewrite the marker in place (title and position survive, no
-                    // duplicate is added); ownership stays whatever the persisted
-                    // owned flag says, exactly as for an exact-match entry.
-                    if (idx === -1 && legacyIdx !== -1) {
-                        cfg.Tabs[legacyIdx].ContentHtml = entry.html;
-                        idx = legacyIdx;
-                        changed = true;
-                    }
-                    if (shouldExist && idx === -1) {
-                        cfg.Tabs.push({ Title: entry.title, ContentHtml: entry.html });
-                        changed = true;
-                        ownedUpdates.push({ ownedKey: entry.ownedKey, value: true });
-                    } else if (shouldExist /* && idx !== -1 */) {
-                        // Entry already exists — preserve current owned flag. Do NOT
-                        // claim ownership of an existing entry that we didn't add,
-                        // so that the admin can manage it manually if they later
-                        // turn auto-create off.
-                        ownedUpdates.push({ ownedKey: entry.ownedKey, value: isOwned });
-                    } else if (!shouldExist && idx !== -1 && isOwned) {
-                        // We created this; safe to remove.
-                        cfg.Tabs.splice(idx, 1);
-                        changed = true;
-                        ownedUpdates.push({ ownedKey: entry.ownedKey, value: false });
-                    } else {
-                        // !shouldExist + (no entry, OR entry but not ours) → leave alone.
-                        ownedUpdates.push({ ownedKey: entry.ownedKey, value: false });
-                    }
-                });
-                if (!changed) {
-                    return { ok: true, status: 'noop', detail: 'Custom Tabs already in sync.', ownedUpdates: ownedUpdates };
-                }
-                return ApiClient.ajax({
-                    type: 'POST',
-                    url: ApiClient.getUrl('/Plugins/' + CUSTOM_TABS_PLUGIN_ID + '/Configuration'),
-                    contentType: 'application/json',
-                    data: JSON.stringify(cfg)
-                }).then(function() {
-                    return { ok: true, status: 'ok', detail: 'Custom Tabs updated.', ownedUpdates: ownedUpdates };
-                }).catch(function(err) {
-                    return {
-                        ok: false,
-                        status: 'failed',
-                        detail: 'Custom Tabs update failed: ' + ((err && err.message) || 'see console'),
-                        ownedUpdates: []  // do NOT persist owned flags if the POST didn't land
-                    };
-                });
-            }).catch(function(err) {
-                return {
-                    ok: false,
-                    status: 'failed',
-                    detail: 'Could not read Custom Tabs configuration: ' + ((err && err.message) || 'see console'),
-                    ownedUpdates: []
-                };
-            });
         }
 
         // Auto Movie Request - Quality Profile Mode helpers
@@ -2054,13 +1802,6 @@
 
         // ==================== End Multi-Instance Arr Management ====================
 
-        // Cache of the four "JC owns this Custom Tabs entry" booleans from the
-        // most recently loaded config. Sync uses these to decide whether a
-        // matching CT entry was created by JC (safe to delete) or by the admin
-        // (must not touch). saveConfig writes the updated values back as part
-        // of its single config write.
-        var _jeCustomTabOwnedCache = Object.create(null);
-
         // Tracks whether the most recent `renderQualityCatOrderAdmin` call ran
         // to completion. If false at save time, we skip writing positional
         // *Order values back to config so a render failure can't clobber the
@@ -2132,6 +1873,90 @@
                     parent.insertBefore(sibling, row);
                 }
                 refreshQualityCatAdminArrows(parent);
+                jcMarkConfigDirty();
+            });
+        })();
+
+        // Tracks whether the most recent `renderPagesOrderAdmin` call ran to
+        // completion. If false at save time, we skip writing PagesOrder back to
+        // config so a render failure can't clobber the saved order.
+        var _pagesOrderRenderOK = false;
+
+        // Reorders the admin page-order rows to match the saved PagesOrder CSV.
+        // Rows whose page id isn't listed in the CSV are appended LAST, preserving
+        // their default DOM order. CSV ids that match no row are naturally ignored.
+        function renderPagesOrderAdmin(config) {
+            _pagesOrderRenderOK = false;
+            try {
+                var container = document.getElementById('pagesOrderAdmin');
+                if (!container) return;
+                var rows = Array.from(container.querySelectorAll('.jc-pages-order-row'));
+                var defaultIdx = new Map();
+                rows.forEach(function (row, i) { defaultIdx.set(row, i); });
+                var order = String(config.PagesOrder || '')
+                    .split(',')
+                    .map(function (s) { return s.trim(); })
+                    .filter(Boolean);
+                rows.sort(function (a, b) {
+                    var aIdx = order.indexOf(a.dataset.pageId);
+                    var bIdx = order.indexOf(b.dataset.pageId);
+                    // Missing ids sort after present ones; ties (both present or
+                    // both missing) keep default DOM order.
+                    if (aIdx === -1) aIdx = Number.MAX_SAFE_INTEGER;
+                    if (bIdx === -1) bIdx = Number.MAX_SAFE_INTEGER;
+                    if (aIdx !== bIdx) return aIdx - bIdx;
+                    return defaultIdx.get(a) - defaultIdx.get(b);
+                });
+                rows.forEach(function (row) { container.appendChild(row); });
+                refreshPagesOrderArrows(container);
+                _pagesOrderRenderOK = true;
+            } catch (err) {
+                console.error('Jellyfin Canopy: renderPagesOrderAdmin failed; will skip PagesOrder save', err);
+            }
+        }
+
+        // Updates the disabled/opacity styling on the page-order up/down buttons so
+        // the top row can't go up and the bottom row can't go down.
+        function refreshPagesOrderArrows(container) {
+            var rows = container.querySelectorAll('.jc-pages-order-row');
+            rows.forEach(function (row, idx) {
+                var up = row.querySelector('.jc-page-up');
+                var down = row.querySelector('.jc-page-down');
+                var first = idx === 0;
+                var last = idx === rows.length - 1;
+                if (up) {
+                    up.disabled = first;
+                    up.style.opacity = first ? '0.4' : '1';
+                    up.style.cursor = first ? 'not-allowed' : 'pointer';
+                }
+                if (down) {
+                    down.disabled = last;
+                    down.style.opacity = last ? '0.4' : '1';
+                    down.style.cursor = last ? 'not-allowed' : 'pointer';
+                }
+            });
+        }
+
+        // Wire up/down arrow clicks for the admin page-order list.
+        // Uses event delegation on the container so this only registers once.
+        (function () {
+            document.addEventListener('click', function (e) {
+                var btn = e.target.closest && e.target.closest('#pagesOrderAdmin .jc-page-up, #pagesOrderAdmin .jc-page-down');
+                if (!btn || btn.disabled) return;
+                e.preventDefault();
+                var row = btn.closest('.jc-pages-order-row');
+                if (!row) return;
+                var parent = row.parentNode;
+                if (!parent) return;
+                var isUp = btn.classList.contains('jc-page-up');
+                var sibling = isUp ? row.previousElementSibling : row.nextElementSibling;
+                if (!sibling || !sibling.classList.contains('jc-pages-order-row')) return;
+                if (isUp) {
+                    parent.insertBefore(row, sibling);
+                } else {
+                    parent.insertBefore(sibling, row);
+                }
+                refreshPagesOrderArrows(parent);
                 jcMarkConfigDirty();
             });
         })();
@@ -2243,9 +2068,6 @@
             Dashboard.showLoadingMsg();
             checkInstalledPlugins();
             ApiClient.getPluginConfiguration(pluginId).then((config) => {
-                CUSTOM_TAB_MANAGED_ENTRIES.forEach(function(entry) {
-                    _jeCustomTabOwnedCache[entry.ownedKey] = config[entry.ownedKey] === true;
-                });
                 const savedShortcuts = (config.Shortcuts && config.Shortcuts.length > 0) ? config.Shortcuts : defaultShortcuts;
                 shortcutOverrides = savedShortcuts.filter(saved => {
                     const def = defaultShortcuts.find(d => d.Name === saved.Name);
@@ -2296,6 +2118,7 @@
                 // Restore stack order: rows are visually reordered to match
                 // current saved order values (ties broken by default order).
                 if (typeof renderQualityCatOrderAdmin === 'function') renderQualityCatOrderAdmin(config);
+                if (typeof renderPagesOrderAdmin === 'function') renderPagesOrderAdmin(config);
 
                 // Not bound: the save side is conditional on TagCacheServerMode.
                 document.querySelector('#enableTagsLocalStorageFallback').checked = config.EnableTagsLocalStorageFallback === true;
@@ -2401,6 +2224,13 @@
                     const orderKey = row.dataset.orderKey;
                     if (orderKey) config[orderKey] = idx + 1;
                 });
+            }
+
+            // Persist page order from the reorder control (validated: only the known page
+            // ids, in current DOM order). Skipped if the load-time render failed.
+            if (_pagesOrderRenderOK) {
+                var pageOrderRows = document.querySelectorAll('#pagesOrderAdmin .jc-pages-order-row');
+                config.PagesOrder = Array.from(pageOrderRows).map(function (r) { return r.dataset.pageId; }).filter(Boolean).join(',');
             }
 
             config.EnableTagsLocalStorageFallback = config.TagCacheServerMode
@@ -2514,93 +2344,8 @@
                 config.ShowArrLinksAsText = false;
             }
 
-            // Carry the cached "JC owns this Custom Tabs entry" flags through any
-            // round-trip; sync may overwrite specific keys after computing actions.
-            CUSTOM_TAB_MANAGED_ENTRIES.forEach(function(entry) {
-                config[entry.ownedKey] = _jeCustomTabOwnedCache[entry.ownedKey] === true;
-            });
 
             return config;
-        }
-
-        /**
-         * Run sync, then if any owned-flag updates were produced, persist them
-         * back to JC config in a second write so future saves see the new state.
-         * Returns the (possibly downgraded) sync result so the caller can surface
-         * any failure to the admin.
-         *
-         * Cache discipline: `_jeCustomTabOwnedCache` is mutated ONLY after the
-         * server confirms the owned-flag write. On failure we re-read the live
-         * config and restore the cache to ground truth — otherwise a partial
-         * write would leave the in-memory cache disagreeing with what the next
-         * page-load will see, causing JC to silently orphan its own tabs on
-         * future cleanup. The downgraded result tells `saveConfig` to surface
-         * the partial-success to the admin.
-         */
-        async function runCustomTabsSync(config) {
-            const syncResult = await syncAllManagedCustomTabs(config);
-            if (!syncResult || !Array.isArray(syncResult.ownedUpdates) || syncResult.ownedUpdates.length === 0) {
-                return syncResult;
-            }
-            // Detect changes against the cache, but DO NOT mutate the cache yet.
-            const pendingUpdates = syncResult.ownedUpdates.filter(function(u) {
-                return _jeCustomTabOwnedCache[u.ownedKey] !== u.value;
-            });
-            if (pendingUpdates.length === 0) {
-                return syncResult;
-            }
-            // Narrow second-write: fetch the latest config from the server first,
-            // then apply ONLY the owned-flag delta. This minimizes the race window
-            // where an interleaving save (double-click, "Apply to all users", or
-            // a concurrent admin in another browser tab) would otherwise be lost
-            // if we replayed the form's stale snapshot on top. Any unrelated
-            // fields the other save wrote are preserved because we only mutate
-            // the `*CustomTabJeOwned` keys on the fresh copy.
-            let fresh;
-            try {
-                fresh = await ApiClient.getPluginConfiguration(pluginId);
-            } catch (fetchErr) {
-                console.error('[JC] Could not re-fetch config for owned-flag persist:', fetchErr);
-                fresh = null;
-            }
-            const target = fresh || config; // fall back to form state if fetch fails
-            pendingUpdates.forEach(function(u) { target[u.ownedKey] = u.value; });
-            try {
-                await ApiClient.updatePluginConfiguration(pluginId, target);
-                // Server confirmed — commit cache.
-                pendingUpdates.forEach(function(u) {
-                    _jeCustomTabOwnedCache[u.ownedKey] = u.value;
-                });
-                return syncResult;
-            } catch (persistErr) {
-                console.error('[JC] Failed to persist Custom Tabs owned-flag updates:', persistErr);
-                // Roll cache back to ground truth so the next save's plan
-                // computes against the actual server state, not a poisoned cache.
-                try {
-                    const fresh = await ApiClient.getPluginConfiguration(pluginId);
-                    CUSTOM_TAB_MANAGED_ENTRIES.forEach(function(entry) {
-                        _jeCustomTabOwnedCache[entry.ownedKey] = fresh[entry.ownedKey] === true;
-                    });
-                } catch (reloadErr) {
-                    console.error('[JC] Cache rollback after owned-flag persist failure also failed:', reloadErr);
-                }
-                // Downgrade the result so saveConfig's check surfaces the partial.
-                // The recovery message has to be specific because the trivial "re-save"
-                // path does not actually repair the state: post-rollback the cache and
-                // server agree on owned=false, the CT entry exists, and the next sync's
-                // shouldExist+entry-exists branch will preserve owned=false (no second
-                // write fires). Real recovery is to delete the CT entry from the
-                // Custom Tabs plugin UI and then re-save here so the next sync ADDs
-                // a fresh entry and stamps it owned=true.
-                return Object.assign({}, syncResult, {
-                    ok: false,
-                    status: 'partial',
-                    detail: (syncResult.detail ? syncResult.detail + ' — ' : '') +
-                            "Custom Tabs has the new entry, but Jellyfin Canopy could not save its ownership record. " +
-                            "JC will not be able to clean this entry up on a later toggle change. " +
-                            "To restore JC management: open the Custom Tabs plugin, delete the JC-managed entry there, then save this page again — JC will recreate it and record ownership properly."
-                });
-            }
         }
 
         // Re-entrancy guard. `Dashboard.showLoadingMsg()` provides only a visual
@@ -2625,10 +2370,6 @@
                 // Everything mutated up to this snapshot is in `config`.
                 const dirtyRevisionAtSnapshot = jcDirtyRevisionNow();
                 const result = await ApiClient.updatePluginConfiguration(pluginId, config);
-                // After JC config is persisted, sync any managed Custom Tabs entries.
-                // We surface non-OK results to the admin via Dashboard.alert so a
-                // partial failure doesn't hide behind the green "saved" toast.
-                const syncResult = await runCustomTabsSync(config);
 
                 // Apply maintenance mode: enable/disable users to match the toggle
                 try {
@@ -2679,15 +2420,6 @@
                 Dashboard.processPluginConfigurationUpdateResult(result);
                 // Clean only if nothing was edited while the save was in flight.
                 jcClearDirtyIfUnchanged(dirtyRevisionAtSnapshot);
-                if (syncResult && syncResult.ok === false) {
-                    try {
-                        Dashboard.alert({
-                            title: 'Custom Tabs sync issue',
-                            message: 'Your Jellyfin Canopy settings were saved, but the Custom Tabs entry could not be updated.\n\n' +
-                                     (syncResult.detail || 'See browser console for details.')
-                        });
-                    } catch (alertErr) { console.warn('[JC] Dashboard.alert threw:', alertErr); }
-                }
             } catch (saveErr) {
                 Dashboard.hideLoadingMsg();
                 console.error('[JC] saveConfig failed:', saveErr);
@@ -2713,10 +2445,6 @@
                     const config = await buildConfigFromForm();
                     await ApiClient.updatePluginConfiguration(pluginId, config);
 
-                    // Sync managed Custom Tabs entries — same flow as a normal save,
-                    // so "Apply to all users" doesn't silently skip the side-effect.
-                    const syncResult = await runCustomTabsSync(config);
-
                     // Then reset all user settings to match the saved config
                     await ApiClient.ajax({
                         type: 'POST',
@@ -2726,9 +2454,6 @@
 
                     Dashboard.hideLoadingMsg();
                     let msg = 'Configuration saved and applied to all users successfully!\n\nSettings will take effect after users refresh their browsers.';
-                    if (syncResult && syncResult.ok === false) {
-                        msg += '\n\n(Custom Tabs sync did not complete: ' + (syncResult.detail || 'see console') + ')';
-                    }
                     Dashboard.alert({ title: 'Success', message: msg });
                 } catch (e) {
                     Dashboard.hideLoadingMsg();
@@ -3350,15 +3075,7 @@
             { id: 'showElsewhereOnSeerr', checkFn: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
             { id: 'autoMovieRequestEnabled',   checkFn: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
             { id: 'autoSkipIntro',                 checkFn: function() { return hasIntroSkipper !== false; }, hint: 'Install Intro Skipper plugin to enable', icon: 'extension' },
-            { id: 'autoSkipOutro',                 checkFn: function() { return hasIntroSkipper !== false; }, hint: 'Install Intro Skipper plugin to enable', icon: 'extension' },
-            { id: 'bookmarksUsePluginPages',       checkFn: function() { return hasPluginPages !== false; }, hint: 'Install Plugin Pages plugin to enable', icon: 'extension' },
-            { id: 'hiddenContentUsePluginPages',   checkFn: function() { return hasPluginPages !== false; }, hint: 'Install Plugin Pages plugin to enable', icon: 'extension' },
-            { id: 'downloadsUsePluginPages',       checkFn: function() { return hasPluginPages !== false; }, hint: 'Install Plugin Pages plugin to enable', icon: 'extension' },
-            { id: 'calendarUsePluginPages',        checkFn: function() { return hasPluginPages !== false; }, hint: 'Install Plugin Pages plugin to enable', icon: 'extension' },
-            { id: 'bookmarksUseCustomTabs',        checkFn: function() { return hasCustomTabs !== false; }, hint: 'Install Custom Tabs plugin to enable', icon: 'extension' },
-            { id: 'hiddenContentUseCustomTabs',    checkFn: function() { return hasCustomTabs !== false; }, hint: 'Install Custom Tabs plugin to enable', icon: 'extension' },
-            { id: 'downloadsUseCustomTabs',        checkFn: function() { return hasCustomTabs !== false; }, hint: 'Install Custom Tabs plugin to enable', icon: 'extension' },
-            { id: 'calendarUseCustomTabs',         checkFn: function() { return hasCustomTabs !== false; }, hint: 'Install Custom Tabs plugin to enable', icon: 'extension' }
+            { id: 'autoSkipOutro',                 checkFn: function() { return hasIntroSkipper !== false; }, hint: 'Install Intro Skipper plugin to enable', icon: 'extension' }
         ];
 
         /**
@@ -3557,19 +3274,19 @@
             { parent: 'enableCustomSplashScreen', label: 'Enable Custom Splash Screen', children: ['splashScreenImageUrl'] },
             { parent: 'seerrShowSearchResults', label: 'Show Seerr Results in Search', children: ['showCollectionsInSearch'] },
             { parent: 'seerrShowReportButton', label: 'Show Report Issue button', children: ['seerrShowIssueIndicator'] },
-            { parent: 'downloadsPageEnabled', label: 'Enable Requests Page', children: ['showDownloadsInRequests', 'downloadsPageShowIssues', 'downloadsUsePluginPages', 'downloadsUseNativeTab', 'downloadsUseCustomTabs', 'downloadsPagePollingEnabled'] },
+            { parent: 'downloadsPageEnabled', label: 'Enable Requests Page', children: ['showDownloadsInRequests', 'downloadsPageShowIssues', 'downloadsPagePollingEnabled'] },
             { parent: 'showDownloadsInRequests', label: 'Show Downloads in Requests Page', children: ['downloadsFilterByUserRequests'] },
             { parent: 'downloadsPagePollingEnabled', label: 'Enable Auto-Refresh', children: ['downloadsPollIntervalSeconds'] },
             { parent: 'arrLinksEnabled', label: 'Enable *arr Links', children: ['showArrLinksAsText', 'arrLinksShowStatusSingle'] },
             { parent: 'arrTagsSyncEnabled', label: 'Enable *arr Tags Sync', children: ['arrTagsPrefix', 'arrTagsClearOldTags', 'arrTagsShowAsLinks', 'arrTagsSyncFilter'] },
             { parent: 'arrTagsShowAsLinks', label: 'Show synced tags as links', children: ['arrTagsLinksFilter', 'arrTagsLinksHideFilter'] },
-            { parent: 'calendarPageEnabled', label: 'Enable Calendar Page', children: ['calendarUsePluginPages', 'calendarUseNativeTab', 'calendarUseCustomTabs', 'calendarFirstDayOfWeek', 'calendarTimeFormat', 'calendarHighlightFavorites', 'calendarHighlightWatchedSeries', 'calendarFilterByLibraryAccess', 'calendarShowOnlyRequested', 'calendarForceOnlyRequested'] },
+            { parent: 'calendarPageEnabled', label: 'Enable Calendar Page', children: ['calendarFirstDayOfWeek', 'calendarTimeFormat', 'calendarHighlightFavorites', 'calendarHighlightWatchedSeries', 'calendarFilterByLibraryAccess', 'calendarShowOnlyRequested', 'calendarForceOnlyRequested'] },
             { parent: 'autoMovieRequestEnabled', label: 'Enable Automatic Movie Requests', children: ['autoMovieRequestTriggerOnStart', 'autoMovieRequestTriggerOnMinutesWatched', 'autoMovieRequestMinutesWatched', 'autoMovieRequestCheckReleaseDate', 'autoMovieRequestQualityMode', 'autoMovieRequestFallbackOn4k'] },
             { parent: 'autoSeasonRequestEnabled', label: 'Enable Automatic Season Requests', children: ['autoSeasonRequestRequireAllWatched', 'autoSeasonRequestThresholdValue'] },
             { parent: 'preventWatchlistReAddition', label: 'Prevent re-adding removed items', children: ['watchlistMemoryRetentionDays'] },
             { parent: 'triggerSeerrScanOnItemAdded', label: 'Trigger Seerr scan on item added', children: ['seerrScanDebounceSeconds'] },
-            { parent: 'bookmarksEnabled', label: 'Enable Bookmarks', children: ['bookmarksUsePluginPages', 'bookmarksUseNativeTab', 'bookmarksUseCustomTabs'] },
-            { parent: 'hiddenContentEnabled', label: 'Enable Hidden Content', children: ['hiddenContentUsePluginPages', 'hiddenContentUseNativeTab', 'hiddenContentUseCustomTabs'] }
+            { parent: 'bookmarksEnabled', label: 'Enable Bookmarks', children: [] },
+            { parent: 'hiddenContentEnabled', label: 'Enable Hidden Content', children: [] }
         ];
 
         /**
@@ -3861,8 +3578,6 @@
          */
         var OPTIONAL_PLUGINS = [
             { key: 'fileTransformation', name: 'File Transformation', icon: 'transform',       url: 'https://github.com/IAmParadox27/jellyfin-plugin-file-transformation', purpose: 'Required by Custom Tabs, Plugin Pages, and other plugins that modify the web client.', getFlag: function(){ return hasFileTransformation; } },
-            { key: 'pluginPages',        name: 'Plugin Pages',        icon: 'view_list',       url: 'https://github.com/IAmParadox27/jellyfin-plugin-pages',               purpose: 'Sidebar pages for Bookmarks, Hidden Content, Requests, Calendar.',                   getFlag: function(){ return hasPluginPages; } },
-            { key: 'customTabs',         name: 'Custom Tabs',         icon: 'tab',             url: 'https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs',         purpose: 'Home-page tab entries for Bookmarks, Hidden Content, Requests, Calendar.',          getFlag: function(){ return hasCustomTabs; } },
             { key: 'introSkipper',       name: 'Intro Skipper',       icon: 'skip_next',       url: 'https://github.com/intro-skipper/intro-skipper',                      purpose: 'Source of timestamps for Auto-skip Intro / Auto-skip Outro.',                        getFlag: function(){ return hasIntroSkipper; } },
             { key: 'inPlayerEpisodePreview', name: 'In-Player Episode Preview', icon: 'movie_filter', url: 'https://github.com/Namo2/InPlayerEpisodePreview',            purpose: 'Enables the in-player Episode Preview keyboard shortcut.',                           getFlag: function(){ return hasInPlayerEpisodePreview; } },
             { key: 'kefinTweaks',        name: 'KefinTweaks',         icon: 'bookmark_border', url: 'https://github.com/ranaldsgift/KefinTweaks',                          purpose: 'Renders the Watchlist UI in Jellyfin. Required to view watchlisted items from the Seerr Watchlist features. Installs as a web-mod (not a normal plugin), detected via its injected scripts.', getFlag: function(){ return hasKefinTweaks; } }
@@ -3886,21 +3601,6 @@
                     statusText = 'Installed but disabled in Dashboard > Plugins';
                 }
 
-                // Only surface a compat warning for Custom Tabs when we've
-                // actually completed the probe — not while it's still pending
-                // (customTabsCompatState === null). This avoids a transient
-                // "incompatible" flash during the initial load.
-                if (dep.key === 'customTabs' && flag === true) {
-                    if (customTabsCompatState === 'incompatible') {
-                        state = 'warn';
-                        statusText = 'Installed — config shape not recognized (auto-create disabled)';
-                    } else if (customTabsCompatState === 'probe-failed') {
-                        state = 'warn';
-                        statusText = "Installed — couldn't read config (auto-create disabled)";
-                    } else if (customTabsCompatState === null) {
-                        statusText = 'Installed — checking config…';
-                    }
-                }
                 var card = document.createElement('div');
                 card.className = 'jc-optional-plugin-card jc-state-' + state;
                 var icon = document.createElement('i');
@@ -4010,20 +3710,8 @@
             feat('Tab-switch actions', tabSwitch, 'playback', 'Auto-pause / resume / PiP');
 
             // Pages
-            var bookmarksWarn = bool('bookmarksEnabled') && (
-                (bool('bookmarksUsePluginPages') && hasPluginPages !== true) ||
-                (bool('bookmarksUseCustomTabs')  && hasCustomTabs  !== true)
-            );
-            feat('Bookmarks', bool('bookmarksEnabled'), 'pages',
-                bookmarksWarn ? 'Missing required integration plugin' : 'Enabled',
-                bookmarksWarn);
-            var hcWarn = bool('hiddenContentEnabled') && (
-                (bool('hiddenContentUsePluginPages') && hasPluginPages !== true) ||
-                (bool('hiddenContentUseCustomTabs')  && hasCustomTabs  !== true)
-            );
-            feat('Hidden Content', bool('hiddenContentEnabled'), 'pages',
-                hcWarn ? 'Missing required integration plugin' : 'Enabled',
-                hcWarn);
+            feat('Bookmarks', bool('bookmarksEnabled'), 'pages', 'Enabled');
+            feat('Hidden Content', bool('hiddenContentEnabled'), 'pages', 'Enabled');
             var reqWarn = bool('downloadsPageEnabled') && !seerrConfigured() && !anyArrConfigured();
             feat('Requests Page', bool('downloadsPageEnabled'), 'pages',
                 reqWarn ? 'Enabled but neither Seerr nor *arr is configured' : 'Enabled',
@@ -4147,9 +3835,7 @@
                 var parentAttr = el.getAttribute('data-gated-by');
                 if (!parentAttr) return;
                 // Allow comma-separated IDs: ALL listed parents must be checked
-                // for the gated element to show. Used by Custom Tabs auto-manage
-                // toggles which depend on BOTH `*UseCustomTabs` AND the master
-                // `*Enabled` toggle for the feature.
+                // for the gated element to show.
                 var parentIds = parentAttr.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
                 var allOn = true;
                 var anyRise = false;
@@ -5786,8 +5472,7 @@
                 //   data-banner-anchor="legend"       → force fieldset legend
                 //   data-banner-anchor="#elementId"   → force arbitrary element
                 // Used for banners that live inside one setting's description
-                // wrapper but are semantically about the whole fieldset (e.g.
-                // "How to Use Bookmarks:" under bookmarksUseCustomTabs).
+                // wrapper but are semantically about the whole fieldset.
                 var override = banner.getAttribute('data-banner-anchor');
                 if (override === 'legend') {
                     var fsOverride = banner.closest('fieldset');

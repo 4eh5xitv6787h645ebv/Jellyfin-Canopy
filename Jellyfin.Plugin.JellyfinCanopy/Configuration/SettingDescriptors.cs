@@ -285,11 +285,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 PublicContextual("SeerrUrlMappings", ctx =>
                     ctx.IsAuthenticated ? (ctx.Config.SeerrUrlMappings ?? string.Empty) : string.Empty),
 
+                // Pages framework: admin order of the four framework pages. Public so
+                // the client entry points / registry can order them before render
+                // (src/enhanced/pages/registry.ts reads JC.pluginConfig.PagesOrder).
+                Public("PagesOrder", c => c.PagesOrder),
+
                 // Bookmarks Settings
                 Public("BookmarksEnabled", c => c.BookmarksEnabled),
-                Public("BookmarksUsePluginPages", c => c.BookmarksUsePluginPages),
-                Public("BookmarksUseCustomTabs", c => c.BookmarksUseCustomTabs),
-                Public("BookmarksUseNativeTab", c => c.BookmarksUseNativeTab),
 
                 // Arr Links Settings
                 Public("ArrLinksEnabled", c => c.ArrLinksEnabled),
@@ -331,9 +333,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 Public("DownloadsPageEnabled", c => c.DownloadsPageEnabled),
                 Public("DownloadsPageShowIssues", c => c.DownloadsPageShowIssues),
                 Public("ShowDownloadsInRequests", c => c.ShowDownloadsInRequests),
-                Public("DownloadsUsePluginPages", c => c.DownloadsUsePluginPages),
-                Public("DownloadsUseCustomTabs", c => c.DownloadsUseCustomTabs),
-                Public("DownloadsUseNativeTab", c => c.DownloadsUseNativeTab),
                 Public("DownloadsPagePollingEnabled", c => c.DownloadsPagePollingEnabled),
                 Public("DownloadsPollIntervalSeconds", c => c.DownloadsPollIntervalSeconds),
                 Public("DownloadsFilterByUserRequests", c => c.DownloadsFilterByUserRequests),
@@ -341,9 +340,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
                 // Calendar Page Settings
                 Public("CalendarPageEnabled", c => c.CalendarPageEnabled),
-                Public("CalendarUseCustomTabs", c => c.CalendarUseCustomTabs),
-                Public("CalendarUsePluginPages", c => c.CalendarUsePluginPages),
-                Public("CalendarUseNativeTab", c => c.CalendarUseNativeTab),
                 Public("CalendarFirstDayOfWeek", c => c.CalendarFirstDayOfWeek),
                 Public("CalendarTimeFormat", c => c.CalendarTimeFormat),
                 Public("CalendarHighlightFavorites", c => c.CalendarHighlightFavorites),
@@ -354,9 +350,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
                 // Hidden Content Settings
                 Public("HiddenContentEnabled", c => c.HiddenContentEnabled),
-                Public("HiddenContentUsePluginPages", c => c.HiddenContentUsePluginPages),
-                Public("HiddenContentUseCustomTabs", c => c.HiddenContentUseCustomTabs),
-                Public("HiddenContentUseNativeTab", c => c.HiddenContentUseNativeTab),
                 Public("HiddenContentAdmin", c => c.HiddenContentAdmin),
 
                 // Spoiler Guard Settings. Only the keys the client scripts need
