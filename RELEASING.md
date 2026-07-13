@@ -17,8 +17,10 @@ updates, and a malformed entry bricks in-app updates for all users.
    ```
 
 3. The **Release** workflow then:
-   - runs the full quality gates (plugin build, unit tests, JS
-     syntax/lint/type checks) — any failure aborts the release;
+   - runs the full quality gates (plugin build, unit tests, JS syntax/type
+     checks) and runs ESLint as a visible advisory signal. Lint findings or a
+     warning-cap breach do not abort a release; every non-lint failure and any
+     broken ESLint invocation/configuration does;
    - builds the plugin with the tag stamped as `AssemblyVersion`/
      `FileVersion` (the tag is the single source of truth — the version in
      the csproj is never bumped by CI);

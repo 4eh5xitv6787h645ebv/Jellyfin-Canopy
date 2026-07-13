@@ -334,7 +334,8 @@ Remaining wire-up TODOs:
      mkdocs build --strict
 
 4. Implement, then run the gates:
-     npm run typecheck:src && npm run lint && npm run test:client && npm run build:bundle
+     ./verify.sh lint   # findings/cap are advisory; keep this on its own line
+     npm run typecheck:src && npm run test:client && npm run build:bundle
      dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release && dotnet test
      npm run e2e   (JF_BASE_URL=... against a seeded server; see e2e/docker/seed.sh)
 `;

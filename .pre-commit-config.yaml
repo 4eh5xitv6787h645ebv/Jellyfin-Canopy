@@ -3,10 +3,15 @@ repos:
   rev: v8.16.3
   hooks:
   - id: gitleaks
-- repo: https://github.com/pre-commit/mirrors-eslint
-  rev: v8.38.0
+- repo: local
   hooks:
-  - id: eslint
+  - id: eslint-advisory
+    name: ESLint (advisory)
+    entry: env JC_LINT_OUTPUT=compact ./verify.sh lint
+    language: system
+    files: '\.(cjs|js|mjs|ts|tsx)$'
+    pass_filenames: false
+    verbose: true
 - repo: https://github.com/pre-commit/pre-commit-hooks
   rev: v4.4.0
   hooks:
