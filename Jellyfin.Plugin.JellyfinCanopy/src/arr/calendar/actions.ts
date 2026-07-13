@@ -30,6 +30,9 @@ const logPrefix = '🪼 Jellyfin Canopy: Calendar Page:';
 // single follow-up pass that reads the LATEST period/filter state.
 let loadInFlight: Promise<void> | null = null;
 let loadQueued = false;
+// The CURRENT adoption's abort signal: fetches that complete after the page
+// drained must not commit state or toast. Only the latest adoption matters.
+let activeSignal: AbortSignal | null = null;
 
 async function loadAllDataOnce(): Promise<void> {
     state.isLoading = true;
@@ -41,12 +44,15 @@ async function loadAllDataOnce(): Promise<void> {
 
     // First fetch calendar events
     await fetchCalendarEvents(start, end);
+    if (activeSignal?.aborted) return;
 
     // Then fetch user data for those specific events
     await fetchUserData();
+    if (activeSignal?.aborted) return;
 
     if (state.activeFilters.has('Requests') || state.settings.forceOnlyRequested) {
         await ensureRequestData();
+        if (activeSignal?.aborted) return;
     }
 
     state.isLoading = false;
@@ -56,7 +62,8 @@ async function loadAllDataOnce(): Promise<void> {
 /**
  * Load all data (serialized: overlapping calls coalesce into one follow-up).
  */
-export function loadAllData(): Promise<void> {
+export function loadAllData(signal?: AbortSignal): Promise<void> {
+    if (signal) activeSignal = signal;
     if (loadInFlight) {
         loadQueued = true;
         return loadInFlight;

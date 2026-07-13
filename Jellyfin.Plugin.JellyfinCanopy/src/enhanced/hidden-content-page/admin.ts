@@ -6,6 +6,7 @@
 // identical; the JC.internals.hiddenContentPage bag is now real module exports.)
 
 import { JC } from '../../globals';
+import { currentPageHandle } from '../pages/fallback-host';
 import { state, POSTER_MAX_WIDTH } from './state';
 import { isCssColor } from '../../core/css-safe';
 // Cross-module reference (defined in hidden-content-page/render.ts). ES-module
@@ -476,5 +477,8 @@ export function openAdminAddModal(): void {
     document.body.style.overflow = 'hidden';
     document.documentElement.style.overflow = 'hidden';
     document.body.appendChild(overlay);
+    // Body-level overlay with a scroll lock: register on the page's dispose
+    // bag so a drain (navigation) closes it and restores the scroll owners.
+    currentPageHandle()?.onTeardown(close);
     searchInput.focus();
 }

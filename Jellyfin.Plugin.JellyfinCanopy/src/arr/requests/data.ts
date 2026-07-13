@@ -546,12 +546,17 @@ export async function fetchIssues(): Promise<unknown> {
 // reads the LATEST filter/page state.
 let loadInFlight: Promise<void> | null = null;
 let loadQueued = false;
+// The CURRENT adoption's abort signal: fetches completing after the page
+// drained must not commit loading state (renderPage already no-ops on a
+// disconnected container). Only the latest adoption's signal matters.
+let activeSignal: AbortSignal | null = null;
 
 async function loadAllDataOnce(): Promise<void> {
     state.isLoading = true;
     renderPage();
 
     await Promise.all([fetchDownloads(), fetchRequests(), fetchIssues()]);
+    if (activeSignal?.aborted) return;
 
     state.isLoading = false;
     renderPage();
@@ -560,7 +565,8 @@ async function loadAllDataOnce(): Promise<void> {
 /**
  * Load all data (serialized: overlapping calls coalesce into one follow-up).
  */
-export function loadAllData(): Promise<void> {
+export function loadAllData(signal?: AbortSignal): Promise<void> {
+    if (signal) activeSignal = signal;
     if (loadInFlight) {
         loadQueued = true;
         return loadInFlight;

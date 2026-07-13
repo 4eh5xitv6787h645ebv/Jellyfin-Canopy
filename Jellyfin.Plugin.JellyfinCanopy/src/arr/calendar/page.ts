@@ -23,7 +23,7 @@ import {
 } from './actions';
 import type { PageContext } from '../../enhanced/pages/types';
 
-function render({ host, handle }: PageContext): void {
+function render({ host, handle, signal }: PageContext): void {
     injectStyles();
     loadSettings();
 
@@ -47,7 +47,7 @@ function render({ host, handle }: PageContext): void {
     // the old permanent document-level listener.
     handle.addListener(host, 'click', handleEventClick as EventListener);
 
-    void loadAllData();
+    void loadAllData(signal);
 }
 
 registerPage({

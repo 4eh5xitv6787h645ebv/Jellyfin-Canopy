@@ -8,6 +8,7 @@
 // detection that every other hidden-content-page-* module reads.
 
 import { JC } from '../../globals';
+import { currentPageHandle } from '../pages/fallback-host';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -135,4 +136,7 @@ export function showUnhideConfirmation(message: string, onConfirm: () => void, i
     document.addEventListener('keydown', escHandler);
 
     document.body.appendChild(overlay);
+    // Body-level overlay: navigating away must never strand it — the page's
+    // dispose bag closes it on drain (closeDialog is idempotent).
+    currentPageHandle()?.onTeardown(closeDialog);
 }

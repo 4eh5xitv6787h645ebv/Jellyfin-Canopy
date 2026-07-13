@@ -13,6 +13,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System;
 using System.Text.RegularExpressions;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy
@@ -480,31 +481,46 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 "Jellyfin.Plugin.CustomTabs.xml");
             CleanupManagedCustomTabsCore(
                 customTabsConfigPath,
+                ConfigurationFilePath,
+                msg => _logger.LogInformation(msg),
+                msg => _logger.LogError(msg));
+
+            // The retired PluginPages integration wrote page entries into THAT
+            // plugin's config.json; remove the Canopy/Elevate-namespaced ones.
+            var pluginPagesConfigPath = Path.Combine(
+                applicationPaths.PluginConfigurationsPath,
+                "Jellyfin.Plugin.PluginPages",
+                "config.json");
+            CleanupRetiredPluginPagesCore(
+                pluginPagesConfigPath,
                 msg => _logger.LogInformation(msg),
                 msg => _logger.LogError(msg));
         }
 
-        // The exact ContentHtml markers the deleted config-page.js sync wrote for
-        // Canopy-owned Custom Tabs entries — the current "jellyfincanopy" / brand-free
-        // markers PLUS the pre-2.0 "jellyfinelevate" markers the sync also adopted. A
-        // tab is Canopy's iff its ContentHtml is one of these exact strings; anything
-        // else (an admin's hand-made tab) is left untouched.
-        internal static readonly string[] CanopyCustomTabMarkers =
+        // Marker → the legacy per-page ownership flag that recorded whether CANOPY
+        // created the tab. An admin following the old manual instructions could have
+        // pasted the SAME current-name marker by hand (JeOwned=false) — those tabs are
+        // the admin's and stay (dead, but theirs to delete). Legacy "jellyfinelevate"
+        // markers are removed unconditionally: only pre-2.0 builds wrote them and the
+        // rename-era migrations already treat that identity as fully Canopy-owned.
+        private static readonly Dictionary<string, string?> CustomTabMarkerOwnershipFlag = new(StringComparer.Ordinal)
         {
-            "<div class=\"sections bookmarks\"></div>",
-            "<div class=\"jellyfincanopy hidden-content\"></div>",
-            "<div class=\"jellyfinelevate hidden-content\"></div>",
-            "<div class=\"jellyfincanopy requests\"></div>",
-            "<div class=\"jellyfinelevate requests\"></div>",
-            "<div class=\"jellyfincanopy calendar\"></div>",
-            "<div class=\"jellyfinelevate calendar\"></div>",
+            ["<div class=\"sections bookmarks\"></div>"] = "BookmarksCustomTabJeOwned",
+            ["<div class=\"jellyfincanopy hidden-content\"></div>"] = "HiddenContentCustomTabJeOwned",
+            ["<div class=\"jellyfinelevate hidden-content\"></div>"] = null,
+            ["<div class=\"jellyfincanopy requests\"></div>"] = "DownloadsCustomTabJeOwned",
+            ["<div class=\"jellyfinelevate requests\"></div>"] = null,
+            ["<div class=\"jellyfincanopy calendar\"></div>"] = "CalendarCustomTabJeOwned",
+            ["<div class=\"jellyfinelevate calendar\"></div>"] = null,
         };
 
-        // Static core, unit-testable against plain temp files. Removes every Custom Tabs
-        // entry whose ContentHtml is a Canopy marker from the plugin's XML config, in
-        // place. Returns true on success OR a clean no-op (missing file, nothing to
-        // remove); returns false only when a present file could not be processed.
-        internal static bool CleanupManagedCustomTabsCore(string customTabsConfigPath, Action<string> logInfo, Action<string> logError)
+        // Static core, unit-testable against plain temp files. Removes the Custom Tabs
+        // entries CANOPY created (per the retired *CustomTabJeOwned ownership flags,
+        // read from the raw legacy elements still present in Canopy's own config XML)
+        // plus all legacy-Elevate markers, in place. Admin-created tabs that merely
+        // reuse a current marker are preserved. Returns true on success OR a clean
+        // no-op; false only when a present file could not be processed.
+        internal static bool CleanupManagedCustomTabsCore(string customTabsConfigPath, string canopyConfigPath, Action<string> logInfo, Action<string> logError)
         {
             try
             {
@@ -513,38 +529,107 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                     return true;
                 }
 
+                // The deleted flags survive as ignored elements in the config XML —
+                // exactly the migration state the ownership decision needs.
+                var ownedFlags = new HashSet<string>(StringComparer.Ordinal);
+                if (File.Exists(canopyConfigPath))
+                {
+                    var canopyConfig = System.Xml.Linq.XDocument.Load(canopyConfigPath);
+                    foreach (var element in canopyConfig.Descendants())
+                    {
+                        if (element.Name.LocalName.EndsWith("CustomTabJeOwned", StringComparison.Ordinal)
+                            && string.Equals(element.Value.Trim(), "true", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ownedFlags.Add(element.Name.LocalName);
+                        }
+                    }
+                }
+
                 var document = System.Xml.Linq.XDocument.Load(customTabsConfigPath, System.Xml.Linq.LoadOptions.PreserveWhitespace);
 
                 // <PluginConfiguration><Tabs><TabConfig><ContentHtml>…</ContentHtml>…
                 // Match by the ContentHtml element (XDocument decodes the escaped markup
                 // back to the raw marker string) and remove its owning tab element.
-                var ownedTabs = document.Descendants()
+                var removableTabs = document.Descendants()
                     .Where(e => string.Equals(e.Name.LocalName, "ContentHtml", StringComparison.Ordinal)
-                        && System.Array.IndexOf(CanopyCustomTabMarkers, e.Value) >= 0)
+                        && CustomTabMarkerOwnershipFlag.TryGetValue(e.Value, out var flag)
+                        && (flag == null || ownedFlags.Contains(flag)))
                     .Select(e => e.Parent)
                     .Where(parent => parent != null)
                     .Distinct()
                     .ToList();
 
-                if (ownedTabs.Count == 0)
+                if (removableTabs.Count == 0)
                 {
                     return true;
                 }
 
-                foreach (var tab in ownedTabs)
+                foreach (var tab in removableTabs)
                 {
-                    tab!.Remove();
+                    var name = tab!.Elements().FirstOrDefault(e => string.Equals(e.Name.LocalName, "Name", StringComparison.Ordinal))?.Value ?? "(unnamed)";
+                    logInfo($"Removing the Canopy-created Custom Tabs entry '{name}' (retired delivery mode).");
+                    tab.Remove();
                 }
 
                 using var buffer = new MemoryStream();
                 document.Save(buffer);
                 AtomicFile.WriteAllBytes(customTabsConfigPath, buffer.ToArray());
-                logInfo($"Removed {ownedTabs.Count} Jellyfin Canopy-owned Custom Tabs entr{(ownedTabs.Count == 1 ? "y" : "ies")} left by the retired Custom-Tabs delivery mode.");
+                logInfo($"Removed {removableTabs.Count} Jellyfin Canopy-owned Custom Tabs entr{(removableTabs.Count == 1 ? "y" : "ies")} left by the retired Custom-Tabs delivery mode.");
                 return true;
             }
             catch (Exception ex)
             {
                 logError($"Failed to clean up legacy Jellyfin Canopy Custom Tabs entries; leaving the Custom Tabs configuration untouched (will retry next startup): {ex.Message}");
+                return false;
+            }
+        }
+
+        // Removes the page entries the retired PluginPages integration wrote into that
+        // external plugin's config.json. Every entry is namespace-attributable (its Id
+        // is Canopy's — or pre-2.0 Elevate's — assembly namespace), so removal needs no
+        // ownership state. Same idempotence/failure contract as the Custom Tabs core.
+        internal static bool CleanupRetiredPluginPagesCore(string pluginPagesConfigPath, Action<string> logInfo, Action<string> logError)
+        {
+            try
+            {
+                if (!File.Exists(pluginPagesConfigPath))
+                {
+                    return true;
+                }
+
+                var root = JsonNode.Parse(File.ReadAllText(pluginPagesConfigPath));
+                if (root?["Pages"] is not JsonArray pages)
+                {
+                    return true;
+                }
+
+                var namespaceName = typeof(JellyfinCanopy).Namespace!;
+                var removed = 0;
+                for (var i = pages.Count - 1; i >= 0; i--)
+                {
+                    var id = (string?)pages[i]?["Id"];
+                    if (id != null
+                        && (string.Equals(id, namespaceName, StringComparison.Ordinal)
+                            || id.StartsWith(namespaceName + ".", StringComparison.Ordinal)
+                            || id.StartsWith(LegacyAssemblyName, StringComparison.Ordinal)))
+                    {
+                        pages.RemoveAt(i);
+                        removed++;
+                    }
+                }
+
+                if (removed == 0)
+                {
+                    return true;
+                }
+
+                AtomicFile.WriteAllText(pluginPagesConfigPath, root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+                logInfo($"Removed {removed} retired Jellyfin Canopy page entr{(removed == 1 ? "y" : "ies")} from the Plugin Pages configuration.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                logError($"Failed to clean up retired Jellyfin Canopy Plugin Pages entries; leaving that configuration untouched (will retry next startup): {ex.Message}");
                 return false;
             }
         }

@@ -122,10 +122,11 @@ function adopt(descriptor: PageDescriptor, host: HTMLElement): void {
 
     adoption = { descriptor, host, handle, controller, disconnectObserver };
 
-    // The router's own title write lands after viewbeforeshow; re-assert on
-    // the next frame in case no native pageshow handler picked up data-title.
+    // The router's own title write lands after viewbeforeshow, and a
+    // page→page hash swap fires no pageshow at all — assert the title on the
+    // next frame unconditionally while this adoption is still current.
     requestAnimationFrame(() => {
-        if (adoption?.descriptor === descriptor && document.title.toLowerCase().includes('not found')) {
+        if (adoption?.descriptor === descriptor) {
             document.title = title;
         }
     });
@@ -148,6 +149,15 @@ function adopt(descriptor: PageDescriptor, host: HTMLElement): void {
     } catch (err) {
         console.error(`${logPrefix} render error for '${descriptor.id}':`, err);
     }
+}
+
+/**
+ * The live adoption's dispose bag, DOM-validated — page-owned overlays that
+ * must append to document.body (dialogs, pickers) register their close
+ * function here so navigating away can never strand them over another view.
+ */
+export function currentPageHandle(): import('../../types/jc').LifecycleHandle | null {
+    return adoptedPageId() !== null ? adoption!.handle : null;
 }
 
 /** Re-render the currently adopted page in place (entry-point re-click). */

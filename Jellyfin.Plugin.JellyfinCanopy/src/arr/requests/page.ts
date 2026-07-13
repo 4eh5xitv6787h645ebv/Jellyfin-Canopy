@@ -83,7 +83,7 @@ function startPolling(handle: LifecycleHandle): void {
     }, intervalMs));
 }
 
-function render({ host, handle }: PageContext): void {
+function render({ host, handle, signal }: PageContext): void {
     injectStyles();
 
     const content = document.createElement('div');
@@ -111,7 +111,7 @@ function render({ host, handle }: PageContext): void {
 
     // Fresh load + poll on EVERY adoption (no isLoading gate — the old
     // showPage gate suppressed the refetch AND the poll start on reopen).
-    void loadAllData();
+    void loadAllData(signal);
     startPolling(handle);
 }
 
