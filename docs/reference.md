@@ -384,16 +384,18 @@ To override the automatic theming or customize the panel further, use the select
         background: rgba(0, 0, 0, 0.3) !important;
     }
 
-    /* --- Section Headers & <details> Summary --- */
+    /* --- Section Headers --- */
     #jellyfin-canopy-panel h3,
-    #jellyfin-canopy-panel details summary {
+    #jellyfin-canopy-panel .jc-pane-title {
         color: #00a4dc !important;
     }
 
-    /* --- Collapsible <details> Sections --- */
-    #jellyfin-canopy-panel details {
-        background-color: rgba(0, 0, 0, 0.2) !important;
-        border: 1px solid rgba(125, 150, 175, 0.2) !important;
+    /* --- Section Nav & Panes --- */
+    #jellyfin-canopy-panel .tab-button.active {
+        background-color: rgba(0, 164, 220, 0.12) !important;
+    }
+    #jellyfin-canopy-panel .jc-pane {
+        background-color: transparent !important;
     }
 
     /* --- Keyboard Key Styling (<kbd>) --- */

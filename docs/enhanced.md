@@ -15,12 +15,12 @@ The Enhanced Panel is your control center. It's where you turn features on and o
 - Press `?` anywhere in the web client.
 - Click **Jellyfin Canopy** in the sidebar.
 
-![Enhanced panel — Settings tab overview](images/enhanced-panel-settings.png)
+![Enhanced panel — settings sections](images/enhanced-panel-settings.png)
 
-The panel has two tabs:
+The panel is a settings view with a section list on the left (full-screen with tap-through sections on phones) and a search box that filters the sections:
 
 - **Shortcuts** — customize the keyboard shortcuts (see [Advanced keyboard shortcuts](#advanced-keyboard-shortcuts)).
-- **Settings** — enable or disable features and adjust positions, sizes, colors, and modes.
+- **Playback, Auto-Skip, Subtitles, Random Button, UI, Hidden Content, Spoiler Guard, Language** — enable or disable features and adjust positions, sizes, colors, and modes, one section at a time.
 
 Toggling a feature applies **immediately** — no restart, no page reload. The toggles you'll find here include Quality Tags, Genre Tags, Language Tags, Rating Tags, People Tags, Pause Screen, Auto-skip Intros, Auto-skip Outros, Auto Picture-in-Picture, Show Watch Progress, Show File Sizes, Show Audio Languages, and more.
 
