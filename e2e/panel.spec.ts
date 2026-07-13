@@ -34,6 +34,15 @@ test.describe('panel', () => {
         await expect(panel.locator('.jc-pane[data-pane="subtitles"]')).toBeVisible();
         await expect(playbackPane).toBeHidden();
 
+        // The About section exists, activates, and shows version + actions.
+        const aboutItem = panel.locator('.tab-button[data-tab="about"]');
+        await expect(aboutItem).toBeVisible();
+        await aboutItem.click();
+        const aboutPane = panel.locator('.jc-pane[data-pane="about"]');
+        await expect(aboutPane).toBeVisible();
+        await expect(aboutPane).toContainText(/Version/i);
+        await expect(aboutPane.locator('#releaseNotesBtn')).toBeVisible();
+
         // The section search filters the nav.
         await panel.locator('#jcPanelSearch').fill('subtitle');
         await expect(subtitlesItem).toBeVisible();
