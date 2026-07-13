@@ -426,7 +426,7 @@
     padding: 14px 16px;
     border: 1px dashed var(--jc-border);
     border-radius: 10px;
-    color: #888;
+    color: var(--jc-text-subtle);
     font-size: 0.9em;
     text-align: center;
 }
@@ -924,7 +924,7 @@
 }
 
 #JellyfinCanopyPage .fieldDescription {
-    color: #aaa;
+    color: var(--jc-text-muted);
     font-size: 0.85em;
     margin-top: 8px;
     line-height: 1.4;
@@ -987,7 +987,7 @@
     gap: 10px;
     list-style: none;
     user-select: none;
-    color: rgba(240, 240, 240, 0.82);
+    color: var(--jc-text-muted);
     transition: color 0.2s ease;
 }
 .jc-details-section[open] > summary,
@@ -1060,7 +1060,7 @@
     list-style: none;
     user-select: none;
     background: transparent;
-    color: rgba(240, 240, 240, 0.82);
+    color: var(--jc-text-muted);
 }
 .arr-instance-card > summary::-webkit-details-marker { display: none; }
 .arr-instance-card > summary::before {
@@ -1310,9 +1310,9 @@
     gap: 8px;
 }
 .jc-branding-label-bold { font-weight: bold; color: var(--jc-text-strong); font-size: 1.05em; }
-.jc-branding-size-hint { font-size: 0.75em; color: #888; margin-bottom: 6px; }
-.jc-branding-label { color: #aaa; font-size: 0.85em; }
-.jc-branding-meta { font-size: 0.8em; color: #aaa; margin-bottom: 10px; }
+.jc-branding-size-hint { font-size: 0.75em; color: var(--jc-text-subtle); margin-bottom: 6px; }
+.jc-branding-label { color: var(--jc-text-muted); font-size: 0.85em; }
+.jc-branding-meta { font-size: 0.8em; color: var(--jc-text-muted); margin-bottom: 10px; }
 .jc-branding-dropzone {
     background: var(--jc-surface-1);
     border: 2px dashed color-mix(in srgb, var(--jc-accent) 50%, transparent);
@@ -1408,7 +1408,7 @@
 
 .jc-apply-hint {
     text-align: center;
-    color: #888;
+    color: var(--jc-text-subtle);
     font-size: 0.85em;
     margin-top: 10px;
     grid-column: 1 / -1;

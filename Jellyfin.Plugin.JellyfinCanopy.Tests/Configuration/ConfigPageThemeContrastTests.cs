@@ -14,8 +14,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
     /// </summary>
     public class ConfigPageThemeContrastTests
     {
+        // Literal light AND mid-gray foregrounds: hex shorthands/full forms from
+        // #888 up, plus any rgba() whose channels are all ≥ 200 — both families
+        // vanish on the light card surface (and mid-grays fail on both themes).
         private static readonly Regex LightForeground = new(
-            @"color:\s*#(?:fff(?:fff)?|f5f5f5|e8e8e8|e0e0e0|eee(?:eee)?|d0d0d0|ddd|ccc(?:ccc)?)\b",
+            @"(?<!background-)color:\s*(?:#(?:fff(?:fff)?|f5f5f5|e8e8e8|e0e0e0|eee(?:eee)?|d0d0d0|ddd(?:ddd)?|ccc(?:ccc)?|bbb(?:bbb)?|aaa(?:aaa)?|999(?:999)?|888(?:888)?)\b|rgba?\(\s*2[0-9]{2}\s*,\s*2[0-9]{2}\s*,\s*2[0-9]{2})",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         // Selectors whose background is hard-pinned dark in the same sheet,
