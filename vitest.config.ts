@@ -18,6 +18,11 @@ export default defineConfig({
         environment: 'jsdom',
         setupFiles: ['./Jellyfin.Plugin.JellyfinCanopy/src/test/setup.ts'],
         include: ['Jellyfin.Plugin.JellyfinCanopy/src/**/*.test.ts'],
+        // Tests complete in well under a second in isolation; the default 5s
+        // cap only ever fires as a false positive when the host (or a shared
+        // CI runner) is under heavy load and 80+ jsdom workers contend for
+        // CPU. 15s still fails genuine hangs, without failing on contention.
+        testTimeout: 15_000,
         coverage: {
             provider: 'v8',
             include: ['Jellyfin.Plugin.JellyfinCanopy/src/core/**'],
