@@ -5,12 +5,29 @@
 // a valid non-admin token -> bare 403 with an EMPTY body; missing/garbage
 // token -> 401. Client code branches on status alone, so the specs pin both
 // the codes and the empty-body shape.
-import { test, expect, loginAs, USERS, assertNoRuntimeErrors } from './fixtures/auth';
+import { test, expect, loginAs, USERS, type ConsoleErrors } from './fixtures/auth';
 import { apiRaw, authenticate } from './fixtures/api';
+import { isKnownHiddenContentHostNoise } from '../scripts/e2e/jellyfin-host-noise';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const ADMIN_ENDPOINT = '/JellyfinCanopy/admin/hidden-content-users';
+
+/**
+ * Entering the standalone Hidden Content page can trip two exact Jellyfin-web
+ * host races for either role. The predicate stays narrow, and plugin 4xx
+ * responses remain unfiltered.
+ */
+function assertNoHiddenContentRuntimeErrors(consoleErrors: ConsoleErrors): void {
+    const pluginErrors = consoleErrors.real().filter(
+        (text) => !isKnownHiddenContentHostNoise(text)
+    );
+    expect(pluginErrors, 'unexpected Canopy console errors').toEqual([]);
+    expect(
+        consoleErrors.unexpected4xx(),
+        'unexpected 4xx responses from plugin endpoints'
+    ).toEqual([]);
+}
 
 test.describe('admin authorization', () => {
     test('authz matrix: 200 admin / 403 empty non-admin / 401 anonymous', async ({ baseURL }) => {
@@ -79,7 +96,7 @@ test.describe('admin authorization', () => {
             // "View own" + at least the seeded user.
             expect(optionCount).toBeGreaterThan(1);
 
-            assertNoRuntimeErrors(consoleErrors);
+            assertNoHiddenContentRuntimeErrors(consoleErrors);
         } finally {
             // Leave the user's hidden-content store as found.
             await apiRaw(
@@ -115,18 +132,6 @@ test.describe('admin authorization', () => {
         expect(state.adminFilter).toBe(false);
         expect(state.stuckSpinners).toBe(0);
 
-        // Jellyfin web's own hashed host chunk can emit this exact pageerror
-        // while mounting a full standalone page. The retained CI trace for
-        // #195 attributes it to /web/49275.*.chunk.js, and the same narrow host
-        // noise is already scoped in pages-lifecycle and settings-persist.
-        // Keep every other console error and every unexpected plugin 4xx fatal.
-        const pluginErrors = consoleErrors.real().filter(
-            (text) => text !== 'pageerror: t.scrollHandler is not a function'
-        );
-        expect(pluginErrors, 'unexpected Canopy console errors').toEqual([]);
-        expect(
-            consoleErrors.unexpected4xx(),
-            'unexpected 4xx responses from plugin endpoints'
-        ).toEqual([]);
+        assertNoHiddenContentRuntimeErrors(consoleErrors);
     });
 });

@@ -6,6 +6,15 @@
 // reload so the app boots authenticated, then wait for the plugin's
 // window.JellyfinCanopy.initialized === true flag.
 import { test as base, expect, type Page } from 'playwright/test';
+import {
+    CURRENT_USER_TIMEOUT_MS,
+    FAST_BOUNCE_TIMEOUT_MS,
+    PLUGIN_INIT_TIMEOUT_MS,
+    waitForSessionDecision,
+    type AuthSessionDecision,
+    type AuthSessionPhase,
+    type AuthSessionSnapshot,
+} from '../../scripts/e2e/auth-session-state';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -145,78 +154,53 @@ export function assertNoRuntimeErrors(consoleErrors: ConsoleErrors): void {
     ).toEqual([]);
 }
 
-/** True when the stored credentials carry a signed-in server session. */
-async function hasStoredSession(page: Page): Promise<boolean> {
+/** Read only session metadata; access tokens never leave the browser. */
+async function readAuthSession(page: Page): Promise<AuthSessionSnapshot> {
     return page.evaluate(() => {
+        let credentialsMalformed = false;
+        let storedSessions: Array<{ userId: string; hasToken: boolean }> = [];
         try {
             const raw = window.localStorage.getItem('jellyfin_credentials');
             const credentials = raw ? JSON.parse(raw) : null;
-            return !!credentials?.Servers?.some((server: any) => server.AccessToken && server.UserId);
+            storedSessions = Array.isArray(credentials?.Servers)
+                ? credentials.Servers.map((server: any) => ({
+                    userId: String(server?.UserId || '').trim(),
+                    hasToken: !!server?.AccessToken,
+                }))
+                : [];
         } catch {
-            return false;
+            credentialsMalformed = true;
         }
+        return {
+            route: window.location.hash || window.location.pathname,
+            currentUserId: String((window as any).ApiClient?.getCurrentUserId?.() || '').trim(),
+            pluginInitialized: (window as any).JellyfinCanopy?.initialized === true,
+            storedSessions,
+            credentialsMalformed,
+        };
     });
 }
 
-/** One full login attempt. Returns false when the boot bounced to sign-in. */
-async function attemptLogin(
+type LoginPhase = AuthSessionPhase | 'home-route';
+
+interface LoginAttemptResult {
+    ok: boolean;
+    phase: LoginPhase;
+    diagnostic: string;
+}
+
+function failedDecision(decision: AuthSessionDecision, timedOut = false): LoginAttemptResult {
+    return {
+        ok: false,
+        phase: decision.phase,
+        diagnostic: `${timedOut ? 'timed out: ' : ''}${decision.diagnostic}`,
+    };
+}
+
+async function finishAuthenticatedLogin(
     page: Page,
-    username: string,
-    password: string,
-    consoleErrors?: ConsoleErrors
-): Promise<boolean> {
-    await page.goto('/web/', { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(
-        () => typeof (window as any).ApiClient?.authenticateUserByName === 'function',
-        undefined,
-        { timeout: 60_000 }
-    );
-    await page.evaluate(async (credentials) => {
-        await (window as any).ApiClient.authenticateUserByName(credentials.username, credentials.password);
-    }, { username, password });
-
-    // authenticateUserByName resolves BEFORE the credential store finishes
-    // persisting the session — reloading immediately races it. Wait for the
-    // stored token first.
-    await page.waitForFunction(() => {
-        try {
-            const raw = window.localStorage.getItem('jellyfin_credentials');
-            const credentials = raw ? JSON.parse(raw) : null;
-            return !!credentials?.Servers?.some((server: any) => server.AccessToken && server.UserId);
-        } catch {
-            return false;
-        }
-    }, undefined, { timeout: 30_000 });
-
-    await page.reload({ waitUntil: 'domcontentloaded' });
-
-    // Everything before this point is boot noise from the unauthenticated app.
-    consoleErrors?.reset();
-
-    // The stored session intermittently gets clobbered across the reload
-    // (the app boots back to "Please sign in" and the plugin, unable to load
-    // user settings, never initializes). Detect that early and let the caller
-    // retry the whole attempt instead of timing out.
-    const initialized = await page
-        .waitForFunction(
-            () => (window as any).JellyfinCanopy?.initialized === true,
-            undefined,
-            { timeout: 60_000 }
-        )
-        .then(() => true, () => false);
-    if (!initialized || !(await hasStoredSession(page))) return false;
-
-    // JC initializes on the sign-in page too — prove this is an authenticated
-    // session, not a raced login bounced back to "Please sign in".
-    const authenticated = await page
-        .waitForFunction(
-            () => !!(window as any).ApiClient?.getCurrentUserId?.(),
-            undefined,
-            { timeout: 15_000 }
-        )
-        .then(() => true, () => false);
-    if (!authenticated) return false;
-
+    expectedUserId: string
+): Promise<LoginAttemptResult> {
     // The reload can restore onto the /login route it was on when we
     // authenticated (the session is valid — the app just kept the URL).
     // Route to home explicitly so every spec starts from the same place.
@@ -226,13 +210,146 @@ async function attemptLogin(
     if (onAuthPage) {
         await showRoute(page, '/home');
     }
-    return page
+
+    const homeReached = await page
         .waitForFunction(
             (expected) => window.location.hash.includes(expected),
             '/home',
             { timeout: 30_000 }
         )
         .then(() => true, () => false);
+    if (!homeReached) {
+        return {
+            ok: false,
+            phase: 'home-route',
+            diagnostic: `authenticated as ${expectedUserId}, but Jellyfin did not reach /home `
+                + `(route=${await page.evaluate(() => window.location.hash || window.location.pathname)})`,
+        };
+    }
+    return {
+        ok: true,
+        phase: 'home-route',
+        diagnostic: `authenticated as ${expectedUserId} and reached /home`,
+    };
+}
+
+/** One full login attempt with phase-specific bounce diagnostics. */
+async function attemptLogin(
+    page: Page,
+    username: string,
+    password: string,
+    consoleErrors?: ConsoleErrors
+): Promise<LoginAttemptResult> {
+    await page.goto('/web/', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(
+        () => typeof (window as any).ApiClient?.authenticateUserByName === 'function',
+        undefined,
+        { timeout: 60_000 }
+    );
+    const expectedUserId = await page.evaluate(async (credentials) => {
+        const apiClient = (window as any).ApiClient;
+        const authenticationResult = await apiClient.authenticateUserByName(
+            credentials.username,
+            credentials.password
+        );
+        // Jellyfin returns AuthenticationResult.User.Id. Keep the ApiClient
+        // fallback for web-client builds that resolve without returning the
+        // result object, but never infer identity from the requested role.
+        return String(
+            authenticationResult?.User?.Id
+            || authenticationResult?.UserId
+            || apiClient.getCurrentUserId?.()
+            || ''
+        ).trim();
+    }, { username, password });
+    if (!expectedUserId) {
+        throw new Error(`authenticateUserByName(${username}) did not expose an authenticated user ID`);
+    }
+
+    // authenticateUserByName resolves BEFORE the credential store finishes
+    // persisting the session — reloading immediately races it. Wait for the
+    // token belonging to the exact authenticated user first.
+    await page.waitForFunction((expected) => {
+        try {
+            const raw = window.localStorage.getItem('jellyfin_credentials');
+            const credentials = raw ? JSON.parse(raw) : null;
+            return !!credentials?.Servers?.some(
+                (server: any) => server.AccessToken && String(server.UserId || '') === expected
+            );
+        } catch {
+            return false;
+        }
+    }, expectedUserId, { timeout: 30_000 });
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+
+    // Everything before this point is boot noise from the unauthenticated app.
+    consoleErrors?.reset();
+
+    // Fast path: a login/selectserver route with no persisted token and no
+    // current user is a definite bounce. A matching stored token stays pending
+    // here, so a genuinely slow authenticated plugin boot is never retried.
+    const fastDecision = await waitForSessionDecision(
+        () => readAuthSession(page),
+        expectedUserId,
+        {
+            timeoutMs: FAST_BOUNCE_TIMEOUT_MS,
+            stopOnPendingPhases: ['current-user'],
+        }
+    );
+    if (fastDecision.outcome === 'authenticated') {
+        return finishAuthenticatedLogin(page, expectedUserId);
+    }
+    if (fastDecision.outcome !== 'pending') {
+        return failedDecision(fastDecision);
+    }
+
+    let currentUserDecision = fastDecision;
+    if (fastDecision.phase !== 'current-user') {
+        // Keep the established full 60-second plugin allowance after the fast
+        // probe. The poll still exits immediately if the session later becomes
+        // a definite bounce, stale credentials, or the wrong user.
+        const pluginDecision = await waitForSessionDecision(
+            () => readAuthSession(page),
+            expectedUserId,
+            {
+                timeoutMs: PLUGIN_INIT_TIMEOUT_MS,
+                stopOnPendingPhases: ['current-user'],
+            }
+        );
+        if (pluginDecision.outcome === 'authenticated') {
+            return finishAuthenticatedLogin(page, expectedUserId);
+        }
+        if (pluginDecision.outcome !== 'pending') {
+            return failedDecision(pluginDecision);
+        }
+        if (pluginDecision.timedOut) {
+            return failedDecision({
+                ...pluginDecision,
+                phase: pluginDecision.phase === 'post-reload-session'
+                    ? 'post-reload-session'
+                    : 'plugin-init',
+            }, true);
+        }
+        currentUserDecision = pluginDecision;
+    }
+
+    // JC can initialize just before ApiClient exposes the current user. Keep
+    // the previous independent 15-second allowance, and require the exact ID
+    // returned by authenticateUserByName rather than accepting any user.
+    if (currentUserDecision.phase === 'current-user') {
+        const authenticatedDecision = await waitForSessionDecision(
+            () => readAuthSession(page),
+            expectedUserId,
+            { timeoutMs: CURRENT_USER_TIMEOUT_MS }
+        );
+        if (authenticatedDecision.outcome === 'authenticated') {
+            return finishAuthenticatedLogin(page, expectedUserId);
+        }
+        return failedDecision(authenticatedDecision, authenticatedDecision.timedOut);
+    }
+
+    return failedDecision(currentUserDecision, currentUserDecision.timedOut);
 }
 
 /**
@@ -243,11 +360,22 @@ async function attemptLogin(
 export async function loginAs(page: Page, role: Role, consoleErrors?: ConsoleErrors): Promise<void> {
     const { username, password } = USERS[role];
     const maxAttempts = 3;
+    let lastFailure: LoginAttemptResult | undefined;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        if (await attemptLogin(page, username, password, consoleErrors)) return;
-        console.log(`loginAs(${role}): attempt ${attempt}/${maxAttempts} bounced to sign-in, retrying`);
+        const result = await attemptLogin(page, username, password, consoleErrors);
+        if (result.ok) return;
+        lastFailure = result;
+        const retry = attempt < maxAttempts ? '; retrying' : '';
+        console.log(
+            `loginAs(${role}): attempt ${attempt}/${maxAttempts} `
+            + `[${result.phase}] ${result.diagnostic}${retry}`
+        );
     }
-    throw new Error(`loginAs(${role}): failed after ${maxAttempts} attempts`);
+    throw new Error(
+        `loginAs(${role}): failed after ${maxAttempts} attempts `
+        + `[${lastFailure?.phase || 'post-reload-session'}] `
+        + `${lastFailure?.diagnostic || 'unknown login failure'}`
+    );
 }
 
 /**
