@@ -215,7 +215,7 @@ function toLocalDayKey(date: Date): string {
 /**
  * Fetch calendar events from backend
  */
-export async function fetchCalendarEvents(startDate: Date, endDate: Date): Promise<unknown> {
+export async function fetchCalendarEvents(startDate: Date, endDate: Date, signal?: AbortSignal): Promise<unknown> {
     try {
         const query = new URLSearchParams({
             start: startDate.toISOString(),
@@ -228,7 +228,7 @@ export async function fetchCalendarEvents(startDate: Date, endDate: Date): Promi
             startDay: toLocalDayKey(startDate),
             endDay: toLocalDayKey(endDate),
         });
-        const data = await api.plugin(`/arr/calendar?${query.toString()}`) as { events?: CalendarEvent[]; errors?: CalendarErrorEntry[] };
+        const data = await api.plugin(`/arr/calendar?${query.toString()}`, { signal }) as { events?: CalendarEvent[]; errors?: CalendarErrorEntry[] };
         state.events = (data.events || []).filter((evt) => evt && evt.releaseDate);
         state.eventsError = false;
         // Surface per-instance errors from the backend envelope so a misconfigured or
@@ -236,6 +236,9 @@ export async function fetchCalendarEvents(startDate: Date, endDate: Date): Promi
         surfaceCalendarErrors(data.errors);
         return data;
     } catch (error) {
+        // Teardown, not failure: the adoption drained and aborted the request.
+        // No state writes, no toast — the next adoption loads fresh.
+        if (signal?.aborted) return null;
         console.error(`${logPrefix} Failed to fetch calendar events:`, error);
         state.events = [];
         // A total failure has no per-instance errors[] envelope to surface, so
@@ -294,7 +297,7 @@ function surfaceCalendarErrors(errors: CalendarErrorEntry[] | undefined): void {
  * Fetch user data (favorite/watched status) for calendar events
  * Uses POST endpoint to only check specific calendar events, not entire library
  */
-export async function fetchUserData(): Promise<void> {
+export async function fetchUserData(signal?: AbortSignal): Promise<void> {
     if (!state.settings.highlightFavorites && !state.settings.highlightWatchedSeries) {
         state.userDataMap = new Map();
         return;
@@ -323,6 +326,7 @@ export async function fetchUserData(): Promise<void> {
         const data = await api.plugin('/arr/calendar/user-data', {
             method: 'POST',
             body: { events: eventsToCheck },
+            signal,
         }) as { results?: { id: string; isFavorite?: boolean; isWatched?: boolean }[] };
 
         // Build Map for O(1) lookup by event ID
@@ -339,7 +343,7 @@ export async function fetchUserData(): Promise<void> {
     }
 }
 
-async function fetchUserRequests(): Promise<void> {
+async function fetchUserRequests(signal?: AbortSignal): Promise<void> {
     if (!JC.pluginConfig?.SeerrEnabled) {
         state.requestedItems = new Set();
         state.requestedLoaded = true;
@@ -363,7 +367,7 @@ async function fetchUserRequests(): Promise<void> {
                 userOnly: 'true',
             });
 
-            const data = await api.plugin(`/arr/requests?${query.toString()}`) as {
+            const data = await api.plugin(`/arr/requests?${query.toString()}`, { signal }) as {
                 totalPages?: number;
                 requests?: { tmdbId?: number | string; type?: string }[];
             };
@@ -378,6 +382,7 @@ async function fetchUserRequests(): Promise<void> {
             page += 1;
         }
     } catch (error) {
+        if (signal?.aborted) return;
         console.warn(`${logPrefix} Failed to fetch user requests:`, error);
         // A mid-loop throw would otherwise under-populate the Requests filter
         // silently (requestedLoaded still flips true in finally). Flag it +
@@ -396,9 +401,9 @@ async function fetchUserRequests(): Promise<void> {
     }
 }
 
-export async function ensureRequestData(): Promise<void> {
+export async function ensureRequestData(signal?: AbortSignal): Promise<void> {
     if (state.requestedLoading || state.requestedLoaded) return;
-    await fetchUserRequests();
+    await fetchUserRequests(signal);
 }
 
 /**

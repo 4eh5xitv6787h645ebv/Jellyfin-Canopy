@@ -318,15 +318,18 @@ export function hydrateAvatarImages(container: HTMLElement): void {
 /**
  * Fetch download queue from backend
  */
-async function fetchDownloads(): Promise<unknown> {
+async function fetchDownloads(signal?: AbortSignal): Promise<unknown> {
     try {
-        const data = await api.plugin('/arr/queue') as { items?: DownloadItem[]; errors?: ArrErrorEntry[] };
+        const data = await api.plugin('/arr/queue', { signal }) as { items?: DownloadItem[]; errors?: ArrErrorEntry[] };
         state.downloads = data.items || [];
         // Surface per-instance queue errors so a 401 / timeout / SSRF-reject on one
         // instance doesn't silently produce a "looks empty" downloads page.
         surfaceDownloadsErrors(data.errors);
         return data;
     } catch (error) {
+        if (signal?.aborted) return null;
+        // Teardown, not failure: the adoption drained and aborted the request.
+        if (signal?.aborted) return null;
         console.error(`${logPrefix} Failed to fetch downloads:`, error);
         state.downloads = [];
         // A total failure (the whole /arr/queue request rejected) has no
@@ -379,7 +382,7 @@ function surfaceDownloadsErrors(errors: ArrErrorEntry[] | undefined): void {
 /**
  * Fetch requests from backend
  */
-export async function fetchRequests(): Promise<unknown> {
+export async function fetchRequests(signal?: AbortSignal): Promise<unknown> {
     try {
         const skip = (state.requestsPage - 1) * 20;
         const filter = state.requestsFilter !== 'all' ? state.requestsFilter : '';
@@ -390,7 +393,7 @@ export async function fetchRequests(): Promise<unknown> {
             filter: filter,
         });
 
-        const data = await api.plugin(`/arr/requests?${query.toString()}`) as {
+        const data = await api.plugin(`/arr/requests?${query.toString()}`, { signal }) as {
             requests?: RequestItem[];
             totalPages?: number;
             canApproveRequests?: boolean;
@@ -476,7 +479,7 @@ async function fetchIssueMediaDetails(mediaType: string, tmdbId: number | string
 /**
  * Fetch issues from Seerr
  */
-export async function fetchIssues(): Promise<unknown> {
+export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
     if (!JC.pluginConfig?.SeerrEnabled || !JC.pluginConfig?.DownloadsPageShowIssues) {
         state.issues = [];
         state.issuesTotalPages = 1;
@@ -519,11 +522,15 @@ export async function fetchIssues(): Promise<unknown> {
             );
         }
 
+        // richApiClient.ajax has no abort plumbing; the drain contract is
+        // still honored by refusing to publish anything post-abort.
+        if (signal?.aborted) return null;
         state.issues = issues;
         state.issuesTotalPages = data?.pageInfo?.pages || data?.totalPages || 1;
         state.issuesError = false;
         return data;
     } catch (error) {
+        if (signal?.aborted) return null;
         console.error(`${logPrefix} Failed to fetch issues:`, error);
         state.issues = [];
         state.issuesTotalPages = 1;
@@ -558,7 +565,7 @@ async function loadAllDataOnce(): Promise<void> {
     state.isLoading = true;
     renderPage();
 
-    await Promise.all([fetchDownloads(), fetchRequests(), fetchIssues()]);
+    await Promise.all([fetchDownloads(runSignal ?? undefined), fetchRequests(runSignal ?? undefined), fetchIssues(runSignal ?? undefined)]);
     if (runSignal?.aborted) return;
 
     state.isLoading = false;

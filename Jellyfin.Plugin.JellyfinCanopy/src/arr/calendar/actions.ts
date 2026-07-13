@@ -45,16 +45,17 @@ async function loadAllDataOnce(): Promise<void> {
     state.rangeStart = start;
     state.rangeEnd = end;
 
-    // First fetch calendar events
-    await fetchCalendarEvents(start, end);
+    // First fetch calendar events (the signal aborts the request itself on
+    // drain; the helpers publish nothing once aborted)
+    await fetchCalendarEvents(start, end, runSignal ?? undefined);
     if (runSignal?.aborted) return;
 
     // Then fetch user data for those specific events
-    await fetchUserData();
+    await fetchUserData(runSignal ?? undefined);
     if (runSignal?.aborted) return;
 
     if (state.activeFilters.has('Requests') || state.settings.forceOnlyRequested) {
-        await ensureRequestData();
+        await ensureRequestData(runSignal ?? undefined);
         if (runSignal?.aborted) return;
     }
 
