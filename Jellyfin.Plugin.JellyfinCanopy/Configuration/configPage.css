@@ -218,7 +218,9 @@
     border-top: 1px solid var(--jc-border);
 }
 
-/* Mobile drawer toggle: floating pill, hidden on desktop. */
+/* Mobile drawer toggle: floating pill, hidden on desktop. Pinned to the
+   dark surface palette in BOTH themes: the small white label needs a solid
+   dark backing — the brand gradient's cyan end fails contrast under it. */
 .jc-nav-toggle {
     display: none;
     position: fixed;
@@ -228,11 +230,10 @@
     align-items: center;
     gap: 8px;
     padding: 10px 16px;
-    border: none;
+    border: 1px solid #263047;
     border-radius: 50px;
-    background: var(--jc-grad);
+    background: #0F1421;
     color: #fff;
-    text-shadow: 0 1px 2px rgba(0, 6, 17, 0.35);
     font-weight: 600;
     cursor: pointer;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);

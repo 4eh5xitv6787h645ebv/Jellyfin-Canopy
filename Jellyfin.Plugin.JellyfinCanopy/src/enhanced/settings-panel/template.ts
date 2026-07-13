@@ -97,7 +97,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                 @keyframes shake { 10%, 90% { transform: translateX(-1px); } 20%, 80% { transform: translateX(2px); } 30%, 50%, 70% { transform: translateX(-4px); } 40%, 60% { transform: translateX(4px); } }
                 .shake-error { animation: shake 0.5s ease-in-out; }
             </style>
-            <div style="padding: 14px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); background: ${headerFooterBg}; display: flex; align-items: baseline; gap: 10px;">
+            <div class="jc-panel-header" style="padding: 14px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); background: ${headerFooterBg}; display: flex; align-items: baseline; gap: 10px; cursor: grab;">
                 <div style="font-size: 20px; font-weight: 700;"><img src="${escapeHtml(assetUrl('branding/canopy-mark.svg'))}" alt="" width="24" height="21" style="vertical-align: -3px; margin-right: 8px;"><span style="background: ${brandGradient}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Jellyfin Canopy</span></div>
                 <div style="font-size: 12px; color: rgba(255,255,255,0.7);">${escapeHtml(JC.t!('panel_version', { version: JC.pluginVersion }))}</div>
             </div>

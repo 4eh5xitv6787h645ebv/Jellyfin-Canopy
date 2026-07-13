@@ -20,19 +20,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             @"(?<!background-|-left-|-right-|-top-|-bottom-|border-|outline-)color:\s*(?<value>#[0-9a-fA-F]{3,8}|rgba?\([^)]+\))",
             RegexOptions.Compiled);
 
-        // Selectors whose background is hard-pinned dark in the same sheet,
-        // independent of the theme class.
+        // Selectors whose dark backing the block parser below cannot verify
+        // (gradients, scrims over images, or backing declared in a different
+        // block). A rule that pins its OWN background to a literal solid dark
+        // color needs no entry here — HasVerifiedDarkBackground proves it.
         private static readonly Regex AlwaysDarkContext = new(
             string.Join("|", new[]
             {
                 @"\.jellyfin-tab-button\.active",   // brand gradient fill
                 @"\.jc-save-dock-btn",              // brand gradient fill
-                @"\.jc-nav-toggle",                 // brand gradient fill (mobile drawer pill)
                 @"\.jc-branding-delete",            // white glyph on a dark scrim OVER a user image (theme-independent)
-                @"\.jc-preview-panel-card",         // background: rgb(24, 24, 24)
+                @"\.jc-preview-panel-card",         // background: rgb(24, 24, 24), bright text in descendant blocks
                 @"\.jc-preview-toast",              // dark gradient toast
                 @"\.jc-update-toast",               // dark gradient toast
             }),
+            RegexOptions.Compiled);
+
+        private static readonly Regex SolidBackgroundDeclaration = new(
+            @"background(?:-color)?:\s*(?<value>#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b|rgb\([^)]+\))",
             RegexOptions.Compiled);
 
         [Fact]
@@ -61,7 +66,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
                 }
 
                 var selector = block.Groups["selector"].Value.Trim();
-                if (!AlwaysDarkContext.IsMatch(selector))
+                if (!AlwaysDarkContext.IsMatch(selector) && !HasVerifiedDarkBackground(body))
                 {
                     offenders.Add(selector.Replace('\n', ' '));
                 }
@@ -71,6 +76,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
                 offenders.Count == 0,
                 "these selectors paint a literal neutral-bright foreground on a theme-flipping surface — use var(--jc-text-strong)/var(--jc-text-muted)/var(--jc-on-accent) instead:\n"
                 + string.Join("\n", offenders));
+        }
+
+        /// <summary>
+        /// True when the block pins its own background to a literal, opaque,
+        /// dark color (simple luminance below 0.2 — comfortably darker than
+        /// white text needs). Gradients, tokens, and alpha colors never
+        /// qualify, so reverting such a surface to the brand gradient makes
+        /// its bright foreground an offender again.
+        /// </summary>
+        private static bool HasVerifiedDarkBackground(string body)
+        {
+            foreach (Match declaration in SolidBackgroundDeclaration.Matches(body))
+            {
+                if (TryParseColor(declaration.Groups["value"].Value, out var r, out var g, out var b)
+                    && ((0.2126 * r) + (0.7152 * g) + (0.0722 * b)) / 255.0 < 0.2)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static bool TryParseColor(string value, out int r, out int g, out int b)

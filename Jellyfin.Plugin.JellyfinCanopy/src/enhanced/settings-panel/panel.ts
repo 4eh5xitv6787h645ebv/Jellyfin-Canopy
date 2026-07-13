@@ -135,7 +135,6 @@ JC.showEnhancedPanel = async () => {
         boxShadow: '0 10px 30px rgba(0,0,0,0.7)',
         border: '1px solid rgba(255,255,255,0.1)',
         overflow: 'hidden',
-        cursor: 'grab',
         display: 'flex',
         fontFamily: 'inherit',
         flexDirection: 'column'
@@ -175,7 +174,12 @@ JC.showEnhancedPanel = async () => {
     };
 
     const handleMouseDown = (e: MouseEvent) => {
-        if ((e.target as HTMLElement).closest('.preset-box, button, a, details, input')) return;
+        // Drag only from the header bar: the panes host interactive surfaces
+        // (subtitle position grid, selects, sliders) that must own their own
+        // pointer gestures — a blanket panel-drag stole them once the old
+        // <details> exclusion stopped matching the pane markup.
+        if (!(e.target as HTMLElement).closest('.jc-panel-header')) return;
+        if ((e.target as HTMLElement).closest('.preset-box, button, a, input, select')) return;
         isDragging = true;
         offset = { x: e.clientX - help.getBoundingClientRect().left, y: e.clientY - help.getBoundingClientRect().top };
         help.style.cursor = 'grabbing';
@@ -246,10 +250,37 @@ JC.showEnhancedPanel = async () => {
         const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
         const items: HTMLButtonElement[] = [];
 
+        // Phone-mode focus ownership: the list and the detail pane are stacked
+        // layers, so exactly one of them may own focus at a time. `inert`
+        // removes the hidden layer from the tab order and the a11y tree;
+        // desktop shows both columns side by side, so neither is inert there.
+        const navColumn = help.querySelector<HTMLElement>('.jc-panel-nav');
+        const mainColumn = help.querySelector<HTMLElement>('.jc-panel-main');
+        const phoneMedia = window.matchMedia('(max-width: 760px)');
+        const syncLayerFocus = (moveFocus: boolean) => {
+            if (!navColumn || !mainColumn) return;
+            if (phoneMedia.matches) {
+                const detailOpen = body.classList.contains('jc-pane-open');
+                navColumn.inert = detailOpen;
+                mainColumn.inert = !detailOpen;
+                if (moveFocus) {
+                    const target = detailOpen
+                        ? help.querySelector<HTMLElement>('#jcPanelBack')
+                        : (items.find(b => b.classList.contains('active')) || items[0]);
+                    target?.focus();
+                }
+            } else {
+                navColumn.inert = false;
+                mainColumn.inert = false;
+            }
+        };
+        phoneMedia.addEventListener('change', () => syncLayerFocus(false));
+
         const activate = (pane: HTMLElement, persist: boolean) => {
             panes.forEach(p => p.classList.toggle('active', p === pane));
             items.forEach(b => b.classList.toggle('active', b.dataset.tab === pane.dataset.pane));
             body.classList.add('jc-pane-open');
+            syncLayerFocus(persist);
             if (persist) {
                 (JC.currentSettings as any).lastOpenedTab = pane.dataset.pane;
                 void JC.saveUserSettings!('settings.json', JC.currentSettings);
@@ -281,6 +312,7 @@ JC.showEnhancedPanel = async () => {
         // Mobile back button returns to the section list.
         help.querySelector('#jcPanelBack')?.addEventListener('click', () => {
             body.classList.remove('jc-pane-open');
+            syncLayerFocus(true);
             resetAutoCloseTimer();
         });
 
@@ -300,9 +332,9 @@ JC.showEnhancedPanel = async () => {
         // viewport starts on the section list (nothing pre-opened).
         const lastTab = (JC.currentSettings as any).lastOpenedTab;
         const initial = panes.find(p => p.dataset.pane === lastTab) || panes[0];
-        const isPhone = window.matchMedia('(max-width: 760px)').matches;
-        if (isPhone) {
+        if (phoneMedia.matches) {
             panes.forEach(p => p.classList.remove('active'));
+            syncLayerFocus(false);
         } else {
             activate(initial, false);
         }

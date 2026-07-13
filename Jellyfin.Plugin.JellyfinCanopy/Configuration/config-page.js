@@ -124,11 +124,42 @@
                 const shell = document.querySelector('#JellyfinCanopyPage .jc-shell');
                 const toggle = document.getElementById('jcNavToggle');
                 const scrim = document.getElementById('jcNavScrim');
-                if (!shell || !toggle || !scrim) return;
+                const sidebar = shell?.querySelector('.jc-sidebar');
+                const main = shell?.querySelector('.jc-main');
+                if (!shell || !toggle || !scrim || !sidebar || !main) return;
+                const drawerMedia = window.matchMedia('(max-width: 900px)');
                 const setOpen = (open) => {
+                    const wasOpen = shell.classList.contains('jc-nav-open');
                     shell.classList.toggle('jc-nav-open', open);
                     toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                    // Off-canvas focus ownership (drawer mode only): while the
+                    // drawer overlays the page, the covered main column must not
+                    // hold focus or be reachable; while it is closed off-canvas,
+                    // the sidebar must not be tabbable behind the viewport edge.
+                    if (drawerMedia.matches) {
+                        main.inert = open;
+                        sidebar.inert = !open;
+                        if (open) {
+                            sidebar.querySelector('#settingsSearchInput, .jc-group-btn')?.focus();
+                        } else if (wasOpen) {
+                            toggle.focus();
+                        }
+                    }
                 };
+                const syncLayoutMode = () => {
+                    if (drawerMedia.matches) {
+                        sidebar.inert = !shell.classList.contains('jc-nav-open');
+                        main.inert = shell.classList.contains('jc-nav-open');
+                    } else {
+                        // Desktop rail: both columns are visible and interactive.
+                        sidebar.inert = false;
+                        main.inert = false;
+                        shell.classList.remove('jc-nav-open');
+                        toggle.setAttribute('aria-expanded', 'false');
+                    }
+                };
+                drawerMedia.addEventListener('change', syncLayoutMode);
+                syncLayoutMode();
                 toggle.addEventListener('click', () => setOpen(!shell.classList.contains('jc-nav-open')));
                 scrim.addEventListener('click', () => setOpen(false));
                 // Selecting a section (or focusing search results) dismisses the drawer.
@@ -194,15 +225,27 @@
                 };
             })();
 
-            // Dirty-state save bar: flags the save dock when any form field
-            // changes. Cleared ONLY by saveConfig's confirmed-success path —
-            // a failed save must keep announcing the unsaved state.
+            // Dirty-state owner: every configuration mutation — native input
+            // events AND programmatic ones (shortcut removal, instance removal,
+            // category reorder) — funnels through jcMarkConfigDirty, which also
+            // bumps a revision. saveConfig captures the revision at snapshot
+            // time and clears the flag only when no further mutation landed
+            // while the save was in flight.
+            let jcDirtyRevision = 0;
+            function jcMarkConfigDirty() {
+                jcDirtyRevision++;
+                document.querySelector('.jc-save-dock')?.classList.add('jc-dirty');
+            }
+            function jcDirtyRevisionNow() { return jcDirtyRevision; }
+            function jcClearDirtyIfUnchanged(revision) {
+                if (jcDirtyRevision === revision) {
+                    document.querySelector('.jc-save-dock')?.classList.remove('jc-dirty');
+                }
+            }
             (function wireDirtyState() {
-                const dock = document.querySelector('.jc-save-dock');
-                if (!dock || !form) return;
-                const markDirty = () => dock.classList.add('jc-dirty');
-                form.addEventListener('input', markDirty, true);
-                form.addEventListener('change', markDirty, true);
+                if (!form) return;
+                form.addEventListener('input', jcMarkConfigDirty, true);
+                form.addEventListener('change', jcMarkConfigDirty, true);
             })();
 
             // Docs iframe URL — kept in JS rather than hardcoded in the
@@ -840,6 +883,7 @@
                 removeBtn.style.marginLeft = '1em';
                 removeBtn.addEventListener('click', () => {
                     shortcutOverrides.splice(index, 1);
+                    jcMarkConfigDirty();
                     renderOverrides();
                     populateAddShortcutDropdown();
                 });
@@ -1710,6 +1754,7 @@
                 Dashboard.confirm('Remove "' + instName + '" from the instance list? The change takes effect when you click Save. If you leave the page without saving, the instance is kept.\n\nTip: If you just want to stop using it temporarily, uncheck Enabled instead — that preserves the URL and API key.', 'Remove Instance', function(confirmed) {
                     if (confirmed) {
                         card.remove();
+                        jcMarkConfigDirty();
                         updateAllDependencies();
                     }
                 });
@@ -2087,6 +2132,7 @@
                     parent.insertBefore(sibling, row);
                 }
                 refreshQualityCatAdminArrows(parent);
+                jcMarkConfigDirty();
             });
         })();
 
@@ -2576,6 +2622,8 @@
 
             try {
                 const config = await buildConfigFromForm();
+                // Everything mutated up to this snapshot is in `config`.
+                const dirtyRevisionAtSnapshot = jcDirtyRevisionNow();
                 const result = await ApiClient.updatePluginConfiguration(pluginId, config);
                 // After JC config is persisted, sync any managed Custom Tabs entries.
                 // We surface non-OK results to the admin via Dashboard.alert so a
@@ -2629,8 +2677,8 @@
                 }
 
                 Dashboard.processPluginConfigurationUpdateResult(result);
-                // The save (and any maintenance-mode follow-up) succeeded: the form is clean.
-                document.querySelector('.jc-save-dock')?.classList.remove('jc-dirty');
+                // Clean only if nothing was edited while the save was in flight.
+                jcClearDirtyIfUnchanged(dirtyRevisionAtSnapshot);
                 if (syncResult && syncResult.ok === false) {
                     try {
                         Dashboard.alert({

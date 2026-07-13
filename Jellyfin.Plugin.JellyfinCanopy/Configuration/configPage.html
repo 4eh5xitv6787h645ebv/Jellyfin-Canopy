@@ -6,10 +6,18 @@
 <body style="background: black;">
 <div class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-checkbox,emby-select" data-role="page" id="JellyfinCanopyPage">
     <script>
-        var link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = ApiClient.getUrl('/JellyfinCanopy/Configuration/configPage.css');
-        document.head.appendChild(link);
+        // The stylesheet is served with a one-year immutable cache policy, so its
+        // URL must carry the same baked per-build cache key the config-page.js
+        // bootstrap uses — otherwise an upgrade pairs new HTML with stale CSS.
+        (function () {
+            var pluginScript = document.querySelector('script[plugin="Jellyfin Canopy"]');
+            var cacheKey = (pluginScript && pluginScript.getAttribute('version')) || '';
+            var link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = ApiClient.getUrl('/JellyfinCanopy/Configuration/configPage.css')
+                + (cacheKey ? ('?v=' + encodeURIComponent(cacheKey)) : '');
+            document.head.appendChild(link);
+        })();
     </script>
     <style>
         /* PERF: no remote assets — the local asset cache is tried first (relative
