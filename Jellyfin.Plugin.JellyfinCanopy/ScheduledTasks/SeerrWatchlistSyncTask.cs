@@ -49,7 +49,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
         public string Name => "Sync Watchlist from Seerr to Jellyfin";
 
-        public string Key => "JellyfinCanopySeerrWatchlistSync";
+        // Persisted scheduler identity: Jellyfin keys trigger customizations by
+        // this opaque string, so it stays frozen at its pre-rename value — a
+        // renamed key would silently reset every admin-customized schedule.
+        public string Key => "JellyfinCanopyJellyseerrWatchlistSync";
 
         public string Description => "Syncs items from each user's Seerr watchlist to their Jellyfin watchlist.\n\nConfigure the task triggers to run this task periodically for automatic syncing.";
 

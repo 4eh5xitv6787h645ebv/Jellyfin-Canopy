@@ -37,7 +37,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
         public string Name => "Import Jellyfin Users to Seerr";
 
-        public string Key => "JellyfinCanopySeerrUserImport";
+        // Persisted scheduler identity: Jellyfin keys trigger customizations by
+        // this opaque string, so it stays frozen at its pre-rename value — a
+        // renamed key would silently reset every admin-customized schedule.
+        public string Key => "JellyfinCanopyJellyseerrUserImport";
 
         public string Description => "Imports all Jellyfin users into Seerr so they can use Seerr Search without needing to visit the Seerr UI.\n\nAlready imported users are automatically skipped. Configure the task triggers to run this task periodically.";
 

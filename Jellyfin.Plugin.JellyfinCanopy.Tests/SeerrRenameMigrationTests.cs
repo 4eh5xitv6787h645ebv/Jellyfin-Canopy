@@ -31,7 +31,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests
 
         private string ConfigPath => Path.Combine(_dir, "Jellyfin.Plugin.JellyfinCanopy.xml");
 
-        private void Migrate() => JellyfinCanopy.MigrateLegacySeerrElementNamesCore(ConfigPath, _ => { }, _ => { });
+        private bool Migrate() => JellyfinCanopy.MigrateLegacySeerrElementNamesCore(ConfigPath, _ => { }, _ => { });
 
         [Fact]
         public void RenamesLegacyElementNamesAndKeepsValues()
@@ -47,7 +47,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests
                 </PluginConfiguration>
                 """.TrimStart());
 
-            Migrate();
+            Assert.True(Migrate());
 
             var migrated = File.ReadAllText(ConfigPath);
             Assert.Contains("<SeerrEnabled>true</SeerrEnabled>", migrated);
@@ -72,7 +72,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests
             File.WriteAllText(ConfigPath, current);
             var before = File.GetLastWriteTimeUtc(ConfigPath);
 
-            Migrate();
+            Assert.True(Migrate());
 
             // No rename happened, so the file was not rewritten at all.
             Assert.Equal(current, File.ReadAllText(ConfigPath));
@@ -82,15 +82,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests
         [Fact]
         public void MissingConfigIsANoOp()
         {
-            Migrate();
+            Assert.True(Migrate());
             Assert.False(File.Exists(ConfigPath));
         }
 
         [Fact]
-        public void MalformedConfigIsLeftUntouched()
+        public void MalformedConfigIsLeftUntouchedAndReportsFailureSoWritesGetSuppressed()
         {
             File.WriteAllText(ConfigPath, "<PluginConfiguration><JellyseerrEnabled>");
-            Migrate();
+
+            // False = the caller must suppress configuration writes this startup;
+            // a save would replace the still-legacy file with loaded defaults.
+            Assert.False(Migrate());
             Assert.Equal("<PluginConfiguration><JellyseerrEnabled>", File.ReadAllText(ConfigPath));
         }
 
