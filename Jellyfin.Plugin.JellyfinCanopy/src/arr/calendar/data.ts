@@ -70,7 +70,6 @@ export interface CalendarState {
     events: CalendarEvent[];
     eventsError: boolean;
     isLoading: boolean;
-    pageVisible: boolean;
     previousPage: Element | null;
     currentDate: Date;
     viewMode: string;
@@ -138,7 +137,6 @@ export const state: CalendarState = {
     events: [],
     eventsError: false,
     isLoading: false,
-    pageVisible: false,
     previousPage: null,
     currentDate: new Date(),
     viewMode: getDefaultViewMode(),
@@ -338,7 +336,9 @@ export async function fetchUserData(signal?: AbortSignal): Promise<void> {
             });
         });
     } catch {
-        // Silently handle error - highlighting is optional
+        // Teardown leaves the map alone; a real error clears it (highlighting
+        // is optional either way).
+        if (signal?.aborted) return;
         state.userDataMap = new Map();
     }
 }
@@ -392,11 +392,15 @@ async function fetchUserRequests(signal?: AbortSignal): Promise<void> {
             JC.toast('⚠ ' + esc(describeFetchError(error, JC.t?.('calendar_load_error') || 'Unable to load calendar')));
         }
     } finally {
-        state.requestedItems = requested;
-        state.requestedLoaded = true;
-        state.requestedLoading = false;
-        if (state.pageVisible) {
+        if (!signal?.aborted) {
+            state.requestedItems = requested;
+            state.requestedLoaded = true;
+            state.requestedLoading = false;
             renderPage();
+        } else {
+            // Teardown: publish nothing; release the loading latch so the
+            // next adoption's ensureRequestData can run afresh.
+            state.requestedLoading = false;
         }
     }
 }

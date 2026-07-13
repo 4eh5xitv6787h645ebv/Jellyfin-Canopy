@@ -327,7 +327,6 @@ async function fetchDownloads(signal?: AbortSignal): Promise<unknown> {
         surfaceDownloadsErrors(data.errors);
         return data;
     } catch (error) {
-        if (signal?.aborted) return null;
         // Teardown, not failure: the adoption drained and aborted the request.
         if (signal?.aborted) return null;
         console.error(`${logPrefix} Failed to fetch downloads:`, error);
@@ -406,6 +405,7 @@ export async function fetchRequests(signal?: AbortSignal): Promise<unknown> {
 
         return data;
     } catch (error) {
+        if (signal?.aborted) return null;
         console.error(`${logPrefix} Failed to fetch requests:`, error);
         state.requests = [];
         // Distinguish a backend failure (e.g. the requests proxy's 502 when
