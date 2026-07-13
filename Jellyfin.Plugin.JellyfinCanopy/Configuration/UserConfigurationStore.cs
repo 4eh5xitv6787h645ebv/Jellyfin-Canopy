@@ -190,7 +190,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         private static T? TryDeserializeStripped<T>(string json)
         {
             var node = JsonNode.Parse(json, documentOptions: PersistedJson.ParseOptions);
-            return PersistedJson.StripNullMembers(node) is JsonNode stripped
+            // Legacy-name adoption runs on the same pre-pass so every read path
+            // (lenient GET, typed policy read, strict RMW) sees current member
+            // names, and the RMW rewrite self-heals the file on disk.
+            return PersistedJson.StripNullMembers(PersistedJson.AdoptLegacySeerrMemberNames(node)) is JsonNode stripped
                 ? stripped.Deserialize<T>(PersistedJson.ReadOptions)
                 : default;
         }
