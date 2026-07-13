@@ -702,8 +702,7 @@
 /* ---------------------------------------------------------------------------
    Tab Navigation (sits inside .jc-sticky-header which handles pinning)
    --------------------------------------------------------------------------- */
-/* The section nav: same .jellyfin-tab-button[data-tab] contract the page
-   script drives, laid out as a vertical settings-app rail. */
+/* Grouped rail (handoff IA): seven product areas in the sidebar. */
 .jc-tab-bar {
     display: flex;
     flex-direction: column;
@@ -720,27 +719,109 @@
 .jc-tab-bar.jc-dragging {
     scroll-behavior: auto;
 }
-#JellyfinCanopyPage .jc-tab-bar.jc-dragging .jellyfin-tab-button {
-    pointer-events: none;
-}
-
-#JellyfinCanopyPage .jellyfin-tab-button {
+#JellyfinCanopyPage .jc-group-btn {
     position: relative;
     width: 100%;
     background: transparent;
     border: 1px solid transparent;
     border-radius: 10px;
-    padding: 10px 12px;
+    padding: 11px 12px;
     color: var(--jc-text-muted);
     cursor: pointer;
+    font-family: inherit;
     font-weight: 600;
     font-size: 0.92em;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
     text-align: left;
     transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
     white-space: nowrap;
+}
+#JellyfinCanopyPage .jc-group-btn:hover {
+    background: var(--jc-surface-3);
+    color: var(--jc-text-strong);
+}
+#JellyfinCanopyPage .jc-group-btn.active {
+    background: var(--jc-accent-tint-10);
+    border-color: var(--jc-accent-border);
+    color: var(--jc-text-strong);
+}
+#JellyfinCanopyPage .jc-group-btn.active::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 6px;
+    bottom: 6px;
+    width: 3px;
+    border-radius: 3px;
+    background: var(--jc-grad-rail);
+}
+#JellyfinCanopyPage .jc-group-btn.active .jc-tab-icon {
+    color: var(--jc-accent);
+}
+#JellyfinCanopyPage .jc-group-btn .jc-nav-count {
+    margin-left: auto;
+}
+
+/* Page header: active group title + purpose, and its sections as a
+   compact segmented control (never a second full-width bar). */
+.jc-page-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px 18px;
+    margin: 4px 0 18px 0;
+}
+.jc-page-title {
+    margin: 0;
+    font-size: 1.65em;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--jc-text-strong);
+}
+.jc-page-purpose {
+    margin: 4px 0 0 0;
+    font-size: 0.92em;
+    color: var(--jc-text-muted);
+}
+.jc-section-strip {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--jc-border);
+    border-radius: 999px;
+    background: var(--jc-surface-1);
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.jc-section-strip.jc-strip-single {
+    display: none;
+}
+
+/* Section buttons: same .jellyfin-tab-button[data-tab] contract, rendered
+   as segments of the active group's control. */
+#JellyfinCanopyPage .jellyfin-tab-button {
+    display: none;
+    background: transparent;
+    border: none;
+    border-radius: 999px;
+    padding: 7px 14px;
+    color: var(--jc-text-muted);
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 600;
+    font-size: 0.88em;
+    align-items: center;
+    gap: 7px;
+    white-space: nowrap;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+#JellyfinCanopyPage .jellyfin-tab-button.jc-in-group,
+#JellyfinCanopyPage .jellyfin-tab-button.jc-search-reveal {
+    display: inline-flex;
 }
 #JellyfinCanopyPage .jellyfin-tab-button h3 {
     margin: 0;
@@ -775,24 +856,11 @@
     background: var(--jc-surface-3);
     color: var(--jc-text-strong);
 }
-/* Active section: brand-gradient rail + accent tint, settings-app style. */
+/* Active section segment: gradient fill, the signature moment. */
 #JellyfinCanopyPage .jellyfin-tab-button.active {
-    background: var(--jc-accent-tint-10);
-    border-color: var(--jc-accent-border);
-    color: var(--jc-text-strong) !important;
-}
-#JellyfinCanopyPage .jellyfin-tab-button.active::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 6px;
-    bottom: 6px;
-    width: 3px;
-    border-radius: 3px;
-    background: var(--jc-grad-rail);
-}
-#JellyfinCanopyPage .jellyfin-tab-button.active .jc-tab-icon {
-    color: var(--jc-accent);
+    background: var(--jc-grad);
+    color: #fff !important;
+    text-shadow: 0 1px 2px rgba(0, 6, 17, 0.35);
 }
 /* Per-section match count shown on nav items while searching. */
 #JellyfinCanopyPage .jc-nav-count {

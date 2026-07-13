@@ -138,6 +138,52 @@
                 });
             })();
 
+            // Grouped shell (handoff IA): the rail chooses a product area; its
+            // member sections render as a segmented control in the page header.
+            let jcSyncGroupForTab = null;
+            (function wireGroupShell() {
+                const GROUPS = {
+                    'command-center': { title: 'Command Center', purpose: 'Service health, feature status and quick actions at a glance.' },
+                    'experience':     { title: 'Experience', purpose: 'How Jellyfin looks, plays and handles for every user.' },
+                    'pages':          { title: 'Pages', purpose: 'The Calendar, Requests, Bookmarks and Hidden Content pages.' },
+                    'discovery':      { title: 'Discovery & Community', purpose: 'Trending, reviews, release dates and streaming availability.' },
+                    'connections':    { title: 'Connections & Automation', purpose: 'Seerr, Sonarr, Radarr, Bazarr and their sync rules.' },
+                    'governance':     { title: 'Governance', purpose: 'Spoiler policy, user defaults, permissions and maintenance.' },
+                    'system':         { title: 'System', purpose: 'Assets, diagnostics, developer settings and documentation.' },
+                };
+                const railBtns = Array.from(document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn'));
+                const strip = document.getElementById('jcSectionStrip');
+                const store = document.querySelector('#JellyfinCanopyPage .jc-section-strip-store');
+                const titleEl = document.getElementById('jcPageTitle');
+                const purposeEl = document.getElementById('jcPagePurpose');
+                if (!railBtns.length || !strip || !store) return;
+                // Relocate the section buttons from the hidden store into the strip.
+                Array.from(store.querySelectorAll('.jellyfin-tab-button')).forEach(b => strip.appendChild(b));
+                store.remove();
+
+                const setGroup = (groupId, activateFirst) => {
+                    const meta = GROUPS[groupId];
+                    if (!meta) return;
+                    railBtns.forEach(b => b.classList.toggle('active', b.dataset.group === groupId));
+                    let first = null;
+                    let members = 0;
+                    strip.querySelectorAll('.jellyfin-tab-button').forEach(b => {
+                        const mine = b.dataset.group === groupId;
+                        b.classList.toggle('jc-in-group', mine);
+                        if (mine) { members++; if (!first) first = b; }
+                    });
+                    strip.classList.toggle('jc-strip-single', members < 2);
+                    if (titleEl) titleEl.textContent = meta.title;
+                    if (purposeEl) purposeEl.textContent = meta.purpose;
+                    if (activateFirst && first) first.click();
+                };
+                railBtns.forEach(b => b.addEventListener('click', () => setGroup(b.dataset.group, true)));
+                jcSyncGroupForTab = (tabId) => {
+                    const btn = strip.querySelector('.jellyfin-tab-button[data-tab="' + tabId + '"]');
+                    if (btn && btn.dataset.group) setGroup(btn.dataset.group, false);
+                };
+            })();
+
             // Dirty-state save bar: flags the save dock when any form field
             // changes. Cleared ONLY by saveConfig's confirmed-success path —
             // a failed save must keep announcing the unsaved state.
@@ -181,18 +227,11 @@
                     _jeTabScroll[_jePrevTabId] = _jeGetScrollTop();
                 }
                 tabs.forEach(t => {
-                    const isActive = t.dataset.tab === tabId;
-                    if (isActive) {
-                        t.classList.add('active');
-                        // Override with the live accent color — CSS fallback covers initial render
-                        t.style.color = 'var(--primary-accent-color, #fff)';
-                        t.style.borderBottomColor = 'var(--primary-accent-color, #fff)';
-                    } else {
-                        t.classList.remove('active');
-                        t.style.color = '';
-                        t.style.borderBottomColor = '';
-                    }
+                    t.classList.toggle('active', t.dataset.tab === tabId);
                 });
+                // Keep the group rail + header in step with the active section
+                // regardless of which path activated it (click, restore, search).
+                if (typeof jcSyncGroupForTab === 'function') jcSyncGroupForTab(tabId);
                 tabContents.forEach(content => {
                     const isActive = content.id === tabId;
                     content.classList.toggle('active', isActive);
@@ -561,7 +600,8 @@
                 form.querySelectorAll('.jc-tab-name-match').forEach(tc => tc.classList.remove('jc-tab-name-match'));
                 clearHighlights();
                 form.querySelectorAll('.jc-search-tab-label').forEach(el => el.remove());
-                document.querySelectorAll('.jellyfin-tab-button').forEach(btn => { btn.style.display = ''; });
+                document.querySelectorAll('.jellyfin-tab-button').forEach(btn => { btn.style.display = ''; btn.classList.remove('jc-search-reveal'); });
+                document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn').forEach(btn => { btn.style.display = ''; });
                 document.querySelectorAll('.jc-nav-count').forEach(el => el.remove());
                 // Clear inline display from every tab content. performSearch sets
                 // `style.display = 'block'|'none'` per tab; without this reset the
@@ -621,6 +661,7 @@
 
                 clearHighlights();
                 let sectionCount = 0;
+                const groupMatchCounts = new Map();
 
                 tabContents.forEach(tabContent => {
                     let tabHasMatch = false;
@@ -653,12 +694,13 @@
 
                     tabContent.style.display = tabHasMatch ? 'block' : 'none';
 
-                    // The sidebar nav stays usable during search: zero-match
-                    // sections are hidden, matching ones show a count badge and
-                    // (via the tab click handler) jump straight to the section.
+                    // The shell nav stays usable during search: matching sections
+                    // get a count badge (and stay clickable to jump), zero-match
+                    // sections are revealed-off; the rail aggregates per group.
                     const navBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + tabContent.id + '"]');
                     if (navBtn) {
                         navBtn.style.display = tabHasMatch ? '' : 'none';
+                        navBtn.classList.toggle('jc-search-reveal', tabHasMatch);
                         let badge = navBtn.querySelector('.jc-nav-count');
                         if (tabHasMatch) {
                             const count = tabContent.querySelectorAll(':scope > fieldset:not(.jc-search-hidden)').length;
@@ -668,6 +710,8 @@
                                 navBtn.querySelector('h3')?.appendChild(badge);
                             }
                             badge.textContent = String(count);
+                            const group = navBtn.dataset.group;
+                            if (group) groupMatchCounts.set(group, (groupMatchCounts.get(group) || 0) + count);
                         } else if (badge) {
                             badge.remove();
                         }
@@ -688,6 +732,23 @@
                         tabLabel = clone.textContent.trim().toLowerCase();
                     }
                     tabContent.classList.toggle('jc-tab-name-match', tabHasMatch && tabLabel.includes(query));
+                });
+
+                // Rail groups: badge aggregate counts, dim zero-match groups.
+                document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn').forEach(gb => {
+                    const count = groupMatchCounts.get(gb.dataset.group) || 0;
+                    gb.style.display = count > 0 ? '' : 'none';
+                    let badge = gb.querySelector('.jc-nav-count');
+                    if (count > 0) {
+                        if (!badge) {
+                            badge = document.createElement('span');
+                            badge.className = 'jc-nav-count';
+                            gb.appendChild(badge);
+                        }
+                        badge.textContent = String(count);
+                    } else if (badge) {
+                        badge.remove();
+                    }
                 });
 
                 allMatches = Array.from(form.querySelectorAll('.jc-search-match'));
