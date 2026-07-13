@@ -166,16 +166,26 @@
                     if (!meta) return;
                     railBtns.forEach(b => b.classList.toggle('active', b.dataset.group === groupId));
                     let first = null;
+                    let firstVisible = null;
                     let members = 0;
                     strip.querySelectorAll('.jellyfin-tab-button').forEach(b => {
                         const mine = b.dataset.group === groupId;
                         b.classList.toggle('jc-in-group', mine);
-                        if (mine) { members++; if (!first) first = b; }
+                        if (mine) {
+                            members++;
+                            if (!first) first = b;
+                            // During search zero-match sections are display:none —
+                            // a group click must land on the first MATCHING one.
+                            if (!firstVisible && b.style.display !== 'none') firstVisible = b;
+                        }
                     });
                     strip.classList.toggle('jc-strip-single', members < 2);
                     if (titleEl) titleEl.textContent = meta.title;
                     if (purposeEl) purposeEl.textContent = meta.purpose;
-                    if (activateFirst && first) first.click();
+                    if (activateFirst) {
+                        const target = firstVisible || first;
+                        if (target) target.click();
+                    }
                 };
                 railBtns.forEach(b => b.addEventListener('click', () => setGroup(b.dataset.group, true)));
                 jcSyncGroupForTab = (tabId) => {
