@@ -263,14 +263,15 @@ The Calendar page collects upcoming releases from all your enabled Sonarr and Ra
 
 1. Go to **Dashboard → Plugins → Jellyfin Canopy** and open the **Pages** tab.
 2. Check **"Enable Calendar Page"**.
-3. Choose how it's surfaced:
-    - **Add Calendar as a native Home tab** — adds Calendar as its own tab on the Home page, no external plugin needed (recommended on Jellyfin 12's experimental layout, which is the default).
-    - **Use Plugin Pages** — adds a sidebar link (requires the [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) plugin).
-    - **Use Custom Tabs** — adds a custom tab (requires the [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) plugin).
-4. Configure the settings below and click **Save**.
-5. If you chose Plugin Pages, restart Jellyfin for the sidebar link to appear.
+3. Configure the settings below and click **Save**.
 
-You can also reach it directly at `/web/index.html#/calendar`.
+**Where it appears.** Calendar is a real page with its own route, so there's no delivery method to choose — Jellyfin Canopy adds its entry points automatically on every layout. The legacy layout gets a **Calendar** link in the **Jellyfin Canopy** section of the sidebar drawer (and in the mobile drawer); the modern layout gets an icon button in the header tray and a link in the user-preferences menu. Because it's a genuine router destination, you can open it directly at `/web/index.html#/calendar`, and browser back/forward, page refresh, and deep links all work.
+
+The order of the page entries in every menu follows the admin **Pages order** setting on the **Pages** tab. Reorder the four pages there — the default order is **Calendar, Requests, Bookmarks, Hidden Content** — using the up/down controls in its **Page order** area.
+
+!!! note "Upgrading from an earlier version"
+
+    Older releases let you pick a delivery method for each page — Plugin Pages, Custom Tabs, or a native Home tab. Those options have been removed: the pages are now ordinary routed destinations with automatic entry points, so no delivery method is needed. Any delivery-mode selections you had are retired automatically on upgrade, and any entries Jellyfin Canopy created in the Custom Tabs plugin are cleaned up from its configuration on first startup.
 
 ### Calendar settings
 
@@ -302,14 +303,9 @@ The Requests page shows the active download queue from Sonarr and Radarr in one 
 
 1. Go to **Dashboard → Plugins → Jellyfin Canopy** and open the **Pages** tab.
 2. Check **"Enable Requests Page"** (under the "Requests Page" section).
-3. Choose how it's surfaced — **Native Home Tab**, **Plugin Pages**, or **Custom Tabs**. The Native Home Tab adds Requests as its own tab on the Home page and needs no external plugin (recommended on Jellyfin 12's experimental layout).
-4. Click **Save**, and restart Jellyfin if you chose Plugin Pages.
+3. Click **Save**.
 
-!!! note "Plugin Pages and Custom Tabs need File Transformation"
-
-    The **Plugin Pages** and **Custom Tabs** integrations are separate community plugins that rely on the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) to register their pages — install it first if you plan to use either. The Native Home Tab needs no extra plugins.
-
-Direct URL: `/web/index.html#/downloads`.
+**Where it appears.** Like the Calendar page, Requests is a routed destination with automatic entry points — there's no delivery method to configure. Its link and header-tray button appear on every layout (in the **Jellyfin Canopy** drawer section, the modern-layout header tray, and the user-preferences menu), positioned by the admin **Pages order** setting. Open it directly at `/web/index.html#/downloads`; browser back/forward, refresh, and deep links all work.
 
 !!! note "One page, two sources"
 
@@ -322,9 +318,6 @@ Found on the **Pages** tab under "Requests Page".
 | Setting | Default | What it does |
 |---|---|---|
 | **Enable Requests Page** | — | Enables the dedicated page showing active downloads from Sonarr/Radarr. |
-| **Add Requests as a native Home tab** | — | Adds Requests as its own tab on the Home page, no external plugin needed (recommended on Jellyfin 12's experimental layout). |
-| **Use Plugin Pages for Requests** | — | Adds a sidebar link (requires [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)). |
-| **Use Custom Tabs for Requests** | — | Adds a custom tab (requires [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)). |
 | **Enable Auto-Refresh** | — | Automatically refreshes download status. |
 | **Poll Interval (seconds)** | 30 | How often to refresh, in seconds. Range 30–300. |
 | **Filter Downloads by User Requests** | On | When on, non-admin users only see downloads for content they requested; when off, all authenticated users see the entire download queue, including items requested by others. |

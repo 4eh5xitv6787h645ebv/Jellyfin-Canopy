@@ -68,8 +68,8 @@ Jellyfin Canopy cooperates with a handful of other plugins and services. Some co
 
 - **[Seerr](https://github.com/seerr-team/seerr)** — the media-request management system. Canopy provides deep Seerr integration; see [Discover & Request](discover.md).
 - **[File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation)** — safe file modifications for plugins. Highly recommended for a Jellyfin Canopy install; [Getting Started](getting-started.md) covers it.
-- **[Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)** — adds custom pages to the Jellyfin sidebar. Canopy can optionally use it to host its Calendar, Requests, Bookmarks, and Hidden Content pages when the corresponding `*UsePluginPages` options are enabled. By default, Canopy renders these pages natively, so Plugin Pages is not required.
-- **[Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)** — custom navigation tabs for Jellyfin. Jellyfin Canopy features can be embedded in custom tabs.
+- **[Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages)** — adds custom pages to the Jellyfin sidebar. Jellyfin Canopy no longer uses it: its Calendar, Requests, Bookmarks, and Hidden Content pages are rendered natively as routed destinations, and Plugin Pages does not support Jellyfin 12.
+- **[Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)** — custom navigation tabs for Jellyfin. Jellyfin Canopy no longer uses it; any Custom Tabs entries earlier versions created are cleaned up automatically on upgrade.
 - **[Kefin Tweaks](https://github.com/ranaldsgift/KefinTweaks)** — watchlist and additional tweaks that complement Canopy.
 
 ## Get involved

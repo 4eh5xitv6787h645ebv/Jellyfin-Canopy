@@ -846,7 +846,6 @@ Jellyfin.Plugin.JellyfinCanopy/
     │   ├── tag-renderer-base.ts  # Factory owning the shared tag-module plumbing
     │   ├── bounded-cache.ts # Size-capped, lazily-TTL-swept LRU — the one item-cache primitive
     │   ├── config-resolve.ts # PascalCase admin-config → camelCase view (admin-default resolution)
-    │   ├── delivery-flags.ts # Zeroes stale Custom-Tabs/Plugin-Pages flags when those plugins are gone
     │   ├── fetch-error.ts   # Classifies a failed fetch so callers show an error state, not empty
     │   ├── css-safe.ts      # isCssColor / cssColorOr — the CSS-context escape sink (see Client security)
     │   ├── modal-a11y.ts    # Shared modal focus-trap + global-shortcut suppression for JC overlays
@@ -862,7 +861,7 @@ Jellyfin.Plugin.JellyfinCanopy/
     │   ├── settings-panel/  # Split settings-panel modules (entry points, styles, panel, sections)
     │   ├── bookmarks/       # Bookmarks + the bookmarks library page (library-*.ts)
     │   ├── hidden-content/  # Hidden-content engine (data, save, filter, dialogs, panel, buttons)
-    │   ├── hidden-content-page/  # Hidden-content admin page (state, render, cards, nav, custom tab)
+    │   ├── hidden-content-page/  # Hidden-content management page (state, render, cards, admin)
     │   └── spoiler-guard/   # Spoiler Guard client: detail/movie/collection toggle button, Seerr
     │                        # discovery toggle, per-user state + overrides, settings-panel tab,
     │                        # disable-confirm dialog/snooze, soft image-refresh on toggle, and the
@@ -877,8 +876,8 @@ Jellyfin.Plugin.JellyfinCanopy/
     │                        # quota, results, request/season modals + internal.ts shared state)
     ├── arr/                 # Sonarr/Radarr integration. Flat singles: arr-links, arr-tag-links,
     │   │                    # arr-globals
-    │   ├── calendar/        # Calendar page (styles, data, render-*, actions, init, event-date) + custom-tab.ts
-    │   └── requests/        # Requests page (styles, data, render-*, actions, init) + custom-tab.ts
+    │   ├── calendar/        # Calendar page (styles, data, render-*, actions, init, event-date)
+    │   └── requests/        # Requests page (styles, data, render-*, actions, init)
     ├── tags/                # Tag renderer specs over core/tag-renderer-base + enhanced/tag-pipeline
     ├── elsewhere/           # Streaming-availability + reviews
     ├── extras/              # Active streams, colored ratings/icons, theme selector, plugin icons
