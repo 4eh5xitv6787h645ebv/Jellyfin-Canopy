@@ -217,12 +217,44 @@ No dev server handy? The compose stack seeds a throwaway Jellyfin 12 with the fr
 
 ```bash
 dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release
-bash e2e/docker/seed.sh                        # boots + seeds on port 8100
-JF_BASE_URL=http://localhost:8100 npm run e2e
+bash e2e/docker/seed.sh                        # boots + seeds on loopback port 8100
+JF_BASE_URL=http://127.0.0.1:8100 npm run e2e
 docker compose -f e2e/docker/compose.yml down -v
 ```
 
 CI runs the same stack on every PR (advisory while the infrastructure earns trust).
+
+For a faster whole-suite run on a Linux development machine, use the opt-in
+local sharding runner:
+
+```bash
+npm run e2e:local                         # 4 isolated servers, 2 CPUs each
+npm run e2e:local -- --shards 6           # explicit higher parallelism
+```
+
+The runner builds the plugin once, starts one fresh Jellyfin server per native
+Playwright file shard, and keeps each server serial internally. The default
+2-CPU server quota is the official parity profile; changing it with
+`--cpus-per-server` is exploratory evidence. Four servers can use up to eight
+server CPU threads in addition to the browser and build processes, so increase
+the shard count only when current memory and CPU headroom allow it.
+
+Each server uses a random loopback port and per-run credentials. TMDB/Seerr
+environment variables are removed by default; forwarding them with
+`--allow-external-integrations` makes the run non-hermetic and can collide with
+shared external state. Results are retained under
+`e2e/test-results/local-<run-id>/`. Local sharding disables Playwright traces
+because they capture authentication arguments, deletes any retained file that
+contains a runner password, and redacts random usernames from text diagnostics.
+Still treat the directory as sensitive local-only data and do not upload or
+share it unredacted. The runner requires Linux, host `ffmpeg`, and GNU
+`setsid`/`timeout`; it tears down only its exact generated Compose projects.
+
+The single-server seed is loopback-only too. Exposing it beyond the host is a
+security-sensitive exception: it requires both `JF_BIND_ADDRESS=<numeric-ip>`
+and `JF_ALLOW_NON_LOOPBACK=true`, plus four nondefault `JF_ADMIN_USER`,
+`JF_ADMIN_PASS`, `JF_USER_NAME`, and `JF_USER_PASS` values. Never expose the
+documented test credentials to a LAN or public interface.
 
 ### Docs
 

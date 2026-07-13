@@ -16,6 +16,7 @@
     "validate-translations": "node scripts/validate-translations.js validate",
     "test:scripts": "node --test \"scripts/**/*.test.js\"",
     "e2e": "playwright test --config e2e/playwright.config.ts",
+    "e2e:local": "bash scripts/e2e/run-local-shards.sh",
     "e2e:headed": "playwright test --config e2e/playwright.config.ts --headed",
     "perf:trace": "node e2e/perf/capture-traces.js"
   },

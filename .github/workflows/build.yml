@@ -142,7 +142,7 @@ jobs:
         shard: [1, 2, 3, 4]
     env:
       JF_PORT: "8100"
-      JF_BASE_URL: http://localhost:8100
+      JF_BASE_URL: http://127.0.0.1:8100
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
@@ -190,7 +190,7 @@ jobs:
 
       - name: Server logs on failure
         if: always() && (steps.seed.outcome != 'success' || steps.playwright.outcome != 'success')
-        run: docker logs jc-e2e-jellyfin --tail 200 || true
+        run: docker compose -f e2e/docker/compose.yml logs --no-color --tail 200 jellyfin || true
 
       - name: Upload traces and screenshots on failure
         if: always() && steps.playwright.outcome != 'success'

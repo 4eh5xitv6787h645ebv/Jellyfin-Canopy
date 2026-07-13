@@ -1,27 +1,46 @@
 # Throwaway Jellyfin 12 for the E2E suite (CI and local dry-runs).
 #
-# Everything lives under e2e/docker/{config,cache,media} (gitignored) and is
-# (re)created by seed.sh — never point these volumes at a real server's state.
+# By default everything lives under e2e/docker/{config,cache,media} (gitignored)
+# and is (re)created by seed.sh. The local shard runner supplies distinct
+# runner-owned bind paths — never point these volumes at a real server's state.
 #
 #   bash e2e/docker/seed.sh          # build dirs, start, wizard, users, library
-#   JF_BASE_URL=http://localhost:8100 npm run e2e
+#   JF_BASE_URL=http://127.0.0.1:8100 npm run e2e
 #   docker compose -f e2e/docker/compose.yml down -v
 #
 # The reproducible CI default remains pinned. Compatibility runs can override
 # it without editing source, for example JF_IMAGE=jellyfin/jellyfin:unstable.
 # (Do NOT use 12.0-rc1 — it hangs on the splash logo in headless Chromium.)
+# Preserve Compose's historical project name for the documented single-server
+# flow so an upgrade can tear down an older disposable stack before resetting
+# its bind-mounted state. The local shard runner always supplies a random name.
+name: "${JF_E2E_PROJECT:-docker}"
+
 services:
   jellyfin:
     image: "${JF_IMAGE:-jellyfin/jellyfin:12.0-rc2}"
-    container_name: jc-e2e-jellyfin
     # Run as the invoking user so seed.sh can clean config/cache without sudo.
     user: "${JF_UID:-1000}:${JF_GID:-1000}"
+    # Keep parity with the two-core Actions-sized environment by default. A
+    # local orchestrator can run several isolated two-core servers instead of
+    # letting one mutable server consume the whole host.
+    cpus: "${JF_CPUS:-2}"
     ports:
-      - "${JF_PORT:-8100}:8096"
+      - target: 8096
+        published: "${JF_PORT:-8100}"
+        host_ip: "${JF_BIND_ADDRESS:-127.0.0.1}"
+        protocol: tcp
     volumes:
-      - ./config:/config
-      - ./cache:/cache
-      - ./media:/media:ro
+      - type: bind
+        source: "${JF_CONFIG_DIR:-./config}"
+        target: /config
+      - type: bind
+        source: "${JF_CACHE_DIR:-./cache}"
+        target: /cache
+      - type: bind
+        source: "${JF_MEDIA_DIR:-./media}"
+        target: /media
+        read_only: true
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8096/health"]
       interval: 5s

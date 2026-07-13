@@ -14,9 +14,12 @@
 // (favorites, plugin config) and every spec restores what it touches.
 import { defineConfig } from 'playwright/test';
 
+const outputDir = process.env.JF_E2E_OUTPUT_DIR?.trim() || `${__dirname}/test-results`;
+const trace = process.env.JF_E2E_TRACE === 'off' ? 'off' : 'retain-on-failure';
+
 export default defineConfig({
     testDir: __dirname,
-    outputDir: `${__dirname}/test-results`,
+    outputDir,
     timeout: 180_000,
     expect: { timeout: 30_000 },
     retries: 1,
@@ -27,6 +30,6 @@ export default defineConfig({
         baseURL: process.env.JF_BASE_URL || 'http://localhost:8099',
         viewport: { width: 1440, height: 900 },
         screenshot: 'only-on-failure',
-        trace: 'retain-on-failure',
+        trace,
     },
 });

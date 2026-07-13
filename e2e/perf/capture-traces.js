@@ -28,7 +28,7 @@
  *
  * Usage (needs a resolvable `playwright` — the e2e suite's NODE_PATH convention):
  *   NODE_PATH=/path/with/playwright node e2e/perf/capture-traces.js \
- *     [scenario ...] [--base http://localhost:8100] \
+ *     [scenario ...] [--base http://127.0.0.1:8100] \
  *     [--user jc_arradmin --pass '...'] [--out e2e/perf/traces] \
  *     [--cpu 4] [--latency 300] [--download 1500] [--headed] [--list]
  *
@@ -38,7 +38,7 @@
  *   npm run perf:trace -- --list                            # list scenarios
  *
  * Env (matches e2e/fixtures/auth.ts + e2e/docker/seed.sh):
- *   JF_BASE_URL   server under test        (default http://localhost:8100)
+ *   JF_BASE_URL   server under test        (default http://127.0.0.1:8100)
  *   JC_TRACE_USER / JC_TRACE_PASS          trace login (falls back to the e2e
  *   JF_ADMIN_USER / JF_ADMIN_PASS          suite's admin env, then jc_arradmin)
  *
@@ -70,7 +70,7 @@ try {
 
 function parseArgs(argv) {
     const args = {
-        base: process.env.JF_BASE_URL || 'http://localhost:8100',
+        base: process.env.JF_BASE_URL || 'http://127.0.0.1:8100',
         user: process.env.JC_TRACE_USER || process.env.JF_ADMIN_USER || 'jc_arradmin',
         pass: process.env.JC_TRACE_PASS || process.env.JF_ADMIN_PASS || 'Test669Pw!x',
         out: path.join(__dirname, 'traces'),
