@@ -6,20 +6,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
     /// <summary>
     /// Theme-contrast guard for the config page stylesheet. The Canopy card
     /// surface flips light/dark with the page's theme detector, so any rule
-    /// that paints a near-white FOREGROUND with a literal hex goes unreadable
-    /// the moment its background flips light. Every theme-flipping surface
-    /// must use the --jc-text-*/--jc-on-accent tokens; literal light
-    /// foregrounds are only legal on surfaces this sheet pins dark forever
-    /// (brand-gradient fills, the intentionally-dark preview/toast overlays).
+    /// that paints a NEUTRAL bright foreground (white or gray, carrying no
+    /// hue) with a literal value goes unreadable the moment its background
+    /// flips light. Every theme-flipping neutral foreground must use the
+    /// --jc-text-*/--jc-on-accent tokens. Hue-carrying status colors (the
+    /// green/amber/red state accents) are exempt: they are semantic, sit on
+    /// tinted chips/rails, and read on both themes. Literal neutral brights
+    /// stay legal only on surfaces this sheet pins dark forever.
     /// </summary>
     public class ConfigPageThemeContrastTests
     {
-        // Literal light AND mid-gray foregrounds: hex shorthands/full forms from
-        // #888 up, plus any rgba() whose channels are all ≥ 200 — both families
-        // vanish on the light card surface (and mid-grays fail on both themes).
-        private static readonly Regex LightForeground = new(
-            @"(?<!background-)color:\s*(?:#(?:fff(?:fff)?|f5f5f5|e8e8e8|e0e0e0|eee(?:eee)?|d0d0d0|ddd(?:ddd)?|ccc(?:ccc)?|bbb(?:bbb)?|aaa(?:aaa)?|999(?:999)?|888(?:888)?)\b|rgba?\(\s*2[0-9]{2}\s*,\s*2[0-9]{2}\s*,\s*2[0-9]{2})",
-            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex ForegroundDeclaration = new(
+            @"(?<!background-|-left-|-right-|-top-|-bottom-|border-|outline-)color:\s*(?<value>#[0-9a-fA-F]{3,8}|rgba?\([^)]+\))",
+            RegexOptions.Compiled);
 
         // Selectors whose background is hard-pinned dark in the same sheet,
         // independent of the theme class.
@@ -36,16 +35,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             RegexOptions.Compiled);
 
         [Fact]
-        public void LightLiteralForegroundsOnlyAppearOnAlwaysDarkSurfaces()
+        public void NeutralBrightLiteralForegroundsOnlyAppearOnAlwaysDarkSurfaces()
         {
             var css = File.ReadAllText(Path.Combine(ConfigurationDirectory(), "configPage.css"));
 
-            // Walk rule blocks: selector text is everything between '}' and '{'.
             var offenders = new List<string>();
             foreach (Match block in Regex.Matches(css, @"(?<selector>[^{}]+)\{(?<body>[^{}]*)\}"))
             {
                 var body = block.Groups["body"].Value;
-                if (!LightForeground.IsMatch(body))
+                var flagged = false;
+                foreach (Match declaration in ForegroundDeclaration.Matches(body))
+                {
+                    if (TryParseColor(declaration.Groups["value"].Value, out var r, out var g, out var b)
+                        && IsNeutralBright(r, g, b))
+                    {
+                        flagged = true;
+                        break;
+                    }
+                }
+
+                if (!flagged)
                 {
                     continue;
                 }
@@ -59,8 +68,57 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
 
             Assert.True(
                 offenders.Count == 0,
-                "these selectors paint a literal light foreground on a theme-flipping surface — use var(--jc-text-strong)/var(--jc-text-muted)/var(--jc-on-accent) instead:\n"
+                "these selectors paint a literal neutral-bright foreground on a theme-flipping surface — use var(--jc-text-strong)/var(--jc-text-muted)/var(--jc-on-accent) instead:\n"
                 + string.Join("\n", offenders));
+        }
+
+        private static bool TryParseColor(string value, out int r, out int g, out int b)
+        {
+            r = g = b = 0;
+            if (value.StartsWith('#'))
+            {
+                var hex = value[1..];
+                if (hex.Length == 3 || hex.Length == 4)
+                {
+                    r = Convert.ToInt32(new string(hex[0], 2), 16);
+                    g = Convert.ToInt32(new string(hex[1], 2), 16);
+                    b = Convert.ToInt32(new string(hex[2], 2), 16);
+                    return true;
+                }
+
+                if (hex.Length == 6 || hex.Length == 8)
+                {
+                    r = Convert.ToInt32(hex[..2], 16);
+                    g = Convert.ToInt32(hex[2..4], 16);
+                    b = Convert.ToInt32(hex[4..6], 16);
+                    return true;
+                }
+
+                return false;
+            }
+
+            var channels = Regex.Matches(value, @"[\d.]+");
+            if (channels.Count < 3)
+            {
+                return false;
+            }
+
+            r = (int)double.Parse(channels[0].Value);
+            g = (int)double.Parse(channels[1].Value);
+            b = (int)double.Parse(channels[2].Value);
+            return true;
+        }
+
+        /// <summary>
+        /// Bright (relative luminance > 0.45) AND essentially hueless
+        /// (max−min channel spread below 60): whites and grays that vanish on
+        /// the light card surface. Saturated status hues pass.
+        /// </summary>
+        private static bool IsNeutralBright(int r, int g, int b)
+        {
+            var luminance = ((0.2126 * r) + (0.7152 * g) + (0.0722 * b)) / 255.0;
+            var spread = Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b));
+            return luminance > 0.45 && spread < 60;
         }
 
         private static string ConfigurationDirectory()

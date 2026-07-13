@@ -1733,7 +1733,7 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
 }
 .jc-audit-chip .material-icons { font-size: 14px !important; }
 .jc-audit-chip-warn     { background: rgba(229,160,13,0.18); color: #e5a00d; }
-.jc-audit-chip-unlinked { background: rgba(158,158,158,0.18); color: #bdbdbd; }
+.jc-audit-chip-unlinked { background: rgba(158,158,158,0.18); color: var(--jc-text-muted); }
 .jc-audit-chip-ok       { background: rgba(82,181,75,0.18); color: #52b54b; }
 
 .jc-audit-cards {
@@ -1753,7 +1753,7 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
     gap: 8px;
 }
 .jc-audit-card-warn     { border-left-color: #e5a00d; }
-.jc-audit-card-unlinked { border-left-color: #9e9e9e; }
+.jc-audit-card-unlinked { border-left-color: var(--jc-border-strong); }
 .jc-audit-card-header {
     display: flex;
     align-items: center;
@@ -1798,7 +1798,7 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
     color: #e5a00d;
     font-weight: 700;
 }
-.jc-audit-card-unlinked .jc-audit-card-issues li::before { color: #9e9e9e; }
+.jc-audit-card-unlinked .jc-audit-card-issues li::before { color: var(--jc-text-subtle); }
 
 .jc-audit-ok-section { margin-top: 6px; }
 .jc-audit-ok-section > summary {
