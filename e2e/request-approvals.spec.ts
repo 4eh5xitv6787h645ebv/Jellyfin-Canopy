@@ -61,7 +61,7 @@ async function openRequestsPage(page: any): Promise<void> {
     await page.evaluate(() => {
         (window as any).JellyfinCanopy.downloadsPage.showPage();
     });
-    await page.waitForSelector('#jc-downloads-page:not(.hide)', { timeout: 30_000 });
+    await page.waitForSelector('#jc-downloads-container', { state: 'visible', timeout: 30_000 });
     await page.waitForFunction(() => {
         const section = document.querySelector('.jc-requests-section');
         if (!section) return false;
