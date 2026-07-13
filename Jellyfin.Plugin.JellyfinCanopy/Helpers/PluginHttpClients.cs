@@ -5,7 +5,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
     /// <summary>
     /// Named <see cref="IHttpClientFactory"/> clients for the plugin's non-Seerr
     /// upstreams, registered in <c>PluginServiceRegistrator</c>. (The Seerr client
-    /// lives in <see cref="Jellyseerr.SeerrHttpHelper"/> because it carries
+    /// lives in <see cref="Seerr.SeerrHttpHelper"/> because it carries
     /// Seerr-specific handler behavior — AllowAutoRedirect=false.)
     ///
     /// Hygiene rules enforced here:

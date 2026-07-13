@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Arr;
-using Jellyfin.Plugin.JellyfinCanopy.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using MediaBrowser.Common.Api;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;

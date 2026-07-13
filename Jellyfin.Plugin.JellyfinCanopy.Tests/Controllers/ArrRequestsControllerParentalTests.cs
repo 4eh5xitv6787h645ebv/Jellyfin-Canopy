@@ -11,9 +11,9 @@ using Jellyfin.Data.Events;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Controllers;
-using Jellyfin.Plugin.JellyfinCanopy.Model.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Arr;
-using Jellyfin.Plugin.JellyfinCanopy.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Configuration;
@@ -51,7 +51,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         // handler that answers the request list plus the two cert fixtures.
         private static ArrRequestsController BuildController(
             string requestListJson,
-            JellyseerrPermission callerPermissions,
+            SeerrPermission callerPermissions,
             out RecordingHttpMessageHandler handler)
         {
             handler = new RecordingHttpMessageHandler();
@@ -63,10 +63,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             var provider = new FakePluginConfigProvider(new PluginConfiguration
             {
-                JellyseerrEnabled = true,
-                JellyseerrRespectParentalRatings = true,
-                JellyseerrUrls = "http://seerr:5055",
-                JellyseerrApiKey = "key",
+                SeerrEnabled = true,
+                SeerrRespectParentalRatings = true,
+                SeerrUrls = "http://seerr:5055",
+                SeerrApiKey = "key",
                 DEFAULT_REGION = "US",
                 TMDB_API_KEY = string.Empty, // force the filter's cert lookup through Seerr (same handler)
             });
@@ -87,7 +87,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 seerrCache,
                 provider);
 
-            var jellyseerrClient = new FakeJellyseerrClient(new JellyseerrUser
+            var seerrClient = new FakeSeerrClient(new SeerrUser
             {
                 Id = CallerSeerrId,
                 Permissions = callerPermissions,
@@ -99,7 +99,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 userManager,
                 seerrCache,
                 provider,
-                jellyseerrClient,
+                seerrClient,
                 new ArrFetchService(factory, NullLogger<ArrFetchService>.Instance),
                 parentalFilter);
 
@@ -132,7 +132,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 { ""id"": 2, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 200, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""results"": 2 } }";
 
-            var controller = BuildController(list, JellyseerrPermission.REQUEST_VIEW, out _);
+            var controller = BuildController(list, SeerrPermission.REQUEST_VIEW, out _);
 
             var tmdbIds = RequestTmdbIds(await controller.GetRequests());
 
@@ -150,7 +150,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""results"": 1 } }";
 
-            var controller = BuildController(list, JellyseerrPermission.NONE, out _);
+            var controller = BuildController(list, SeerrPermission.NONE, out _);
 
             var tmdbIds = RequestTmdbIds(await controller.GetRequests());
 
@@ -175,10 +175,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             var provider = new FakePluginConfigProvider(new PluginConfiguration
             {
-                JellyseerrEnabled = true,
-                JellyseerrRespectParentalRatings = true,
-                JellyseerrUrls = "http://seerr:5055",
-                JellyseerrApiKey = "key",
+                SeerrEnabled = true,
+                SeerrRespectParentalRatings = true,
+                SeerrUrls = "http://seerr:5055",
+                SeerrApiKey = "key",
                 DEFAULT_REGION = "US",
                 TMDB_API_KEY = string.Empty,
             });
@@ -189,11 +189,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var seerrCache = new SeerrCache(provider);
             var parentalFilter = new SeerrParentalFilter(
                 factory, NullLogger<SeerrParentalFilter>.Instance, userManager, new FakeLocalization(), seerrCache, provider);
-            var jellyseerrClient = new FakeJellyseerrClient(new JellyseerrUser { Id = CallerSeerrId, Permissions = JellyseerrPermission.REQUEST_VIEW });
+            var seerrClient = new FakeSeerrClient(new SeerrUser { Id = CallerSeerrId, Permissions = SeerrPermission.REQUEST_VIEW });
 
             var controller = new ArrRequestsController(
                 factory, NullLogger<ArrRequestsController>.Instance, userManager, seerrCache, provider,
-                jellyseerrClient, new ArrFetchService(factory, NullLogger<ArrFetchService>.Instance), parentalFilter);
+                seerrClient, new ArrFetchService(factory, NullLogger<ArrFetchService>.Instance), parentalFilter);
             var identity = new ClaimsIdentity(new[] { new Claim("Jellyfin-UserId", CallerGuid) }, "TestAuth");
             controller.ControllerContext = new ControllerContext
             {
@@ -208,16 +208,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
         // ── Minimal fakes ────────────────────────────────────────────────────
 
-        private sealed class FakeJellyseerrClient : IJellyseerrClient
+        private sealed class FakeSeerrClient : ISeerrClient
         {
-            private readonly JellyseerrUser _user;
+            private readonly SeerrUser _user;
 
-            public FakeJellyseerrClient(JellyseerrUser user) => _user = user;
+            public FakeSeerrClient(SeerrUser user) => _user = user;
 
-            public Task<JellyseerrUser?> GetJellyseerrUser(string jellyfinUserId, bool bypassCache = false, bool allowAutoImport = true)
-                => Task.FromResult<JellyseerrUser?>(_user);
+            public Task<SeerrUser?> GetSeerrUser(string jellyfinUserId, bool bypassCache = false, bool allowAutoImport = true)
+                => Task.FromResult<SeerrUser?>(_user);
 
-            public Task<string?> GetJellyseerrUserId(string jellyfinUserId, bool allowAutoImport = true)
+            public Task<string?> GetSeerrUserId(string jellyfinUserId, bool allowAutoImport = true)
                 => throw new NotImplementedException();
 
             public bool IsImportBlocked(string jellyfinUserId, PluginConfiguration config)
@@ -230,13 +230,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             public void EvictMediaDetailCache(int tmdbId, string mediaType) { }
 
-            public Task<IActionResult> ProxyRequestAsync(string apiPath, HttpMethod method, string? content, JellyseerrCaller caller)
+            public Task<IActionResult> ProxyRequestAsync(string apiPath, HttpMethod method, string? content, SeerrCaller caller)
                 => throw new NotImplementedException();
 
-            public Task<List<WatchlistItem>?> GetWatchlistForUser(string jellyseerrUserId)
+            public Task<List<WatchlistItem>?> GetWatchlistForUser(string seerrUserId)
                 => throw new NotImplementedException();
 
-            public Task<List<WatchlistItem>?> GetRequestsForUser(string jellyseerrUserId)
+            public Task<List<WatchlistItem>?> GetRequestsForUser(string seerrUserId)
                 => throw new NotImplementedException();
         }
 

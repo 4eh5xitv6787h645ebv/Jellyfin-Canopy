@@ -131,7 +131,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _configManager = configManager;
             _configProvider = configProvider;
             // Reused for the F5 user-scoped TMDB duplicate lookup. Depends only
-            // on the config/library/user managers (never IJellyseerrClient nor
+            // on the config/library/user managers (never ISeerrClient nor
             // this promoter), so injecting it here introduces no DI cycle.
             _pendingService = pendingService;
             _logger = logger;

@@ -17,7 +17,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
     public sealed class MonitorIdempotencyTests
     {
         private static PluginConfiguration WatchlistEnabled() =>
-            new() { AddRequestedMediaToWatchlist = true, JellyseerrEnabled = true };
+            new() { AddRequestedMediaToWatchlist = true, SeerrEnabled = true };
 
         [Fact]
         public void WatchlistMonitor_Initialize_Twice_SubscribesOnce()
@@ -49,7 +49,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 null!,
                 null!,
                 NullLogger<AutoMovieRequestMonitor>.Instance,
-                new FakePluginConfigProvider(new PluginConfiguration { AutoMovieRequestEnabled = true, JellyseerrEnabled = true }));
+                new FakePluginConfigProvider(new PluginConfiguration { AutoMovieRequestEnabled = true, SeerrEnabled = true }));
 
             monitor.Initialize();
             monitor.Initialize();
@@ -67,7 +67,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 null!,
                 null!,
                 NullLogger<AutoSeasonRequestMonitor>.Instance,
-                new FakePluginConfigProvider(new PluginConfiguration { AutoSeasonRequestEnabled = true, JellyseerrEnabled = true }));
+                new FakePluginConfigProvider(new PluginConfiguration { AutoSeasonRequestEnabled = true, SeerrEnabled = true }));
 
             monitor.Initialize();
             monitor.Initialize();

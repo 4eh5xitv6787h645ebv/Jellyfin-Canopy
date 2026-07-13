@@ -14,7 +14,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         [Fact]
         public void BuildRequestsProxyPath_EscapesFilter_PreventingQueryParamSmuggling()
         {
-            var path = JellyseerrProxyController.BuildRequestsProxyPath(500, 0, "all&requestedBy=x");
+            var path = SeerrProxyController.BuildRequestsProxyPath(500, 0, "all&requestedBy=x");
 
             // The & and = inside the filter value are percent-encoded, so they stay part of the
             // filter value instead of becoming new upstream query parameters.
@@ -25,7 +25,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         [Fact]
         public void BuildRequestsProxyPath_PassesThroughOrdinaryFilter()
         {
-            var path = JellyseerrProxyController.BuildRequestsProxyPath(20, 40, "all");
+            var path = SeerrProxyController.BuildRequestsProxyPath(20, 40, "all");
 
             Assert.Equal("/api/v1/request?take=20&skip=40&filter=all", path);
         }

@@ -41,7 +41,7 @@ export const ASSET_CDN_URLS = Object.freeze({
  * mirroring, and no network is ever involved for these.
  */
 export const EMBEDDED_ASSET_KEYS = Object.freeze([
-    'jellyseerr/poster-fallback.svg',
+    'seerr/poster-fallback.svg',
     'ratings/ratings.css',
     'branding/canopy-mark.svg',
 ] as const);

@@ -10,7 +10,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
     ///
     /// The plugin keeps two roles for every service URL:
     ///  - <b>Internal URL</b> — how the <i>Jellyfin server</i> reaches the service (LAN / docker
-    ///    network). Every server-side fetch (<c>JellyseerrClient</c>, <c>ArrFetchService</c>, …)
+    ///    network). Every server-side fetch (<c>SeerrClient</c>, <c>ArrFetchService</c>, …)
     ///    uses this and this only. It may point at an address a browser can never reach.
     ///  - <b>External / public URL</b> — how a <i>user's browser</i> reaches the service, used only
     ///    for user-clickable "Open in Seerr / Sonarr / Radarr" deep links.

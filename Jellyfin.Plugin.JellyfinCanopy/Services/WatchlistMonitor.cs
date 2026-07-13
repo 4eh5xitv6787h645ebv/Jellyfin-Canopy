@@ -16,7 +16,7 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.JellyfinCanopy.Services
 {
     // Monitors library additions to automatically add requested media to user watchlists.
-    // Queries Jellyseerr API directly to check if added items were requested by users.
+    // Queries Seerr API directly to check if added items were requested by users.
     public class WatchlistMonitor : IDisposable
     {
         private readonly ILibraryManager _libraryManager;
@@ -71,7 +71,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
-            if (!config.AddRequestedMediaToWatchlist || !config.JellyseerrEnabled)
+            if (!config.AddRequestedMediaToWatchlist || !config.SeerrEnabled)
             {
                 _logger.LogInformation("[Watchlist] Watchlist monitoring is disabled in configuration - not subscribing to library events");
                 return;
@@ -98,7 +98,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         // PERF(S1): ItemAdded/ItemUpdated fire synchronously on Jellyfin's library-scan thread. Do only
         // the cheap Movie/Series reject here, then run the Seerr request lookup + per-user watchlist
-        // writes off-thread. (Awaiting ProcessItemForWatchlist is NOT enough: GetAllJellyseerrRequests
+        // writes off-thread. (Awaiting ProcessItemForWatchlist is NOT enough: GetAllSeerrRequests
         // returns synchronously on a cache hit, so the continuation would run on the scan thread.)
         // See docs/advanced/performance-rules.md (S1).
         private void ScheduleWatchlistCheck(ItemChangeEventArgs e, string eventType)
@@ -109,7 +109,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         }
 
 
-        // Process an item from library events to check if it matches any Jellyseerr requests.
+        // Process an item from library events to check if it matches any Seerr requests.
         private async Task ProcessItemForWatchlist(ItemChangeEventArgs e, string eventType)
         {
             try
@@ -137,9 +137,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     return;
                 }
 
-                if (!config.JellyseerrEnabled)
+                if (!config.SeerrEnabled)
                 {
-                    _logger.LogDebug("[Watchlist] JellyseerrEnabled is disabled");
+                    _logger.LogDebug("[Watchlist] SeerrEnabled is disabled");
                     return;
                 }
 
@@ -166,18 +166,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var mediaType = itemKind == BaseItemKind.Movie ? "movie" : "tv";
                 // _logger.LogInformation($"[Watchlist] New {mediaType} added to library: '{e.Item.Name}' (TMDB: {tmdbId})");
 
-                // Query Jellyseerr for ALL requests in a single API call
-                var jellyseerrUrl = config.JellyseerrUrls?.Split(new[] { '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim().TrimEnd('/');
-                if (string.IsNullOrEmpty(jellyseerrUrl) || string.IsNullOrEmpty(config.JellyseerrApiKey))
+                // Query Seerr for ALL requests in a single API call
+                var seerrUrl = config.SeerrUrls?.Split(new[] { '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim().TrimEnd('/');
+                if (string.IsNullOrEmpty(seerrUrl) || string.IsNullOrEmpty(config.SeerrApiKey))
                 {
-                    _logger.LogWarning("[Watchlist] Jellyseerr URL or API key not configured");
+                    _logger.LogWarning("[Watchlist] Seerr URL or API key not configured");
                     return;
                 }
 
-                var httpClient = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+                var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
                 // Fetch all requests at once (no X-Api-User header = all requests)
-                var allRequests = await GetAllJellyseerrRequests(httpClient, jellyseerrUrl, config.JellyseerrApiKey);
+                var allRequests = await GetAllSeerrRequests(httpClient, seerrUrl, config.SeerrApiKey);
                 if (allRequests == null || allRequests.Count == 0)
                 {
                     return;
@@ -198,8 +198,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // filter out users in the import
                 // blocklist so a blocked user's existing requests don't keep
                 // syncing to their Jellyfin watchlist (defeats admin intent).
-                var blockedIds = Helpers.Jellyseerr.JellyseerrUserImportHelper
-                    .GetBlockedUserIds(config.JellyseerrImportBlockedUsers);
+                var blockedIds = Helpers.Seerr.SeerrUserImportHelper
+                    .GetBlockedUserIds(config.SeerrImportBlockedUsers);
 
                 var requesterIds = matchingRequests
                     .Select(request => NormalizeUserId(request.RequestedByJellyfinUserId))
@@ -293,10 +293,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
         }
 
-        // Get ALL requests from Jellyseerr in a single API call
-        private async Task<List<RequestItemWithUser>?> GetAllJellyseerrRequests(HttpClient httpClient, string jellyseerrUrl, string apiKey)
+        // Get ALL requests from Seerr in a single API call
+        private async Task<List<RequestItemWithUser>?> GetAllSeerrRequests(HttpClient httpClient, string seerrUrl, string apiKey)
         {
-            var cacheKey = jellyseerrUrl.TrimEnd('/');
+            var cacheKey = seerrUrl.TrimEnd('/');
             var cacheTtl = GetRequestsCacheTtl();
 
             lock (_requestsCacheLock)
@@ -314,13 +314,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 {
                     var requestUri = $"{cacheKey}/api/v1/request?take=1000&skip=0&sort=added&filter=all";
 
-                    using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
+                    using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                         HttpMethod.Get, requestUri, apiKey);
                     using var response = await httpClient.SendAsync(request);
-                    var (content, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+                    var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
                     if (error != null)
                     {
-                        _logger.LogWarning($"[Watchlist] Failed to fetch requests from Jellyseerr: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                        _logger.LogWarning($"[Watchlist] Failed to fetch requests from Seerr: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
                         return null;
                     }
 
@@ -440,14 +440,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             GC.SuppressFinalize(this);
         }
 
-        // Model for Jellyseerr request items
+        // Model for Seerr request items
         private class RequestItem
         {
             public int TmdbId { get; set; }
             public string MediaType { get; set; } = string.Empty;
         }
 
-        // Model for Jellyseerr request items with requesting user
+        // Model for Seerr request items with requesting user
         private class RequestItemWithUser
         {
             public int TmdbId { get; set; }

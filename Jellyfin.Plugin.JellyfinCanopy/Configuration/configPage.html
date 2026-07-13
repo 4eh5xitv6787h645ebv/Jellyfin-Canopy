@@ -788,8 +788,8 @@
                                         <div class="fieldDescription">When on, clicking Hide asks "are you sure?" first. Turn off for one-click hiding. Items can always be brought back from the Hidden Content page.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowButtonJellyseerr" data-config-key="HiddenContentDefaultShowButtonJellyseerr" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "Hide" button on Seerr search results</span></label></div>
-                                    <div class="jc-setting-description" data-desc-for="hiddenContentDefaultShowButtonJellyseerr">
+                                    <div class="checkboxContainer"><label><input id="hiddenContentDefaultShowButtonSeerr" data-config-key="HiddenContentDefaultShowButtonSeerr" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "Hide" button on Seerr search results</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="hiddenContentDefaultShowButtonSeerr">
                                         <div class="fieldDescription">Adds a Hide button to Seerr search and discover results, so users can hide a movie or show even before it's been added to their library.</div>
                                     </div>
 
@@ -1255,46 +1255,46 @@
                         <legend class="sectionTitle">Seerr Connection Setup</legend>
                         <div class="configSection">
                             <div class="checkboxContainer jc-main-feature">
-                                <label><input id="jellyseerrEnabled" data-config-key="JellyseerrEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Seerr integration</span></label>
+                                <label><input id="seerrEnabled" data-config-key="SeerrEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Seerr integration</span></label>
                             </div>
-                            <div class="jc-setting-description" data-desc-for="jellyseerrEnabled">
+                            <div class="jc-setting-description" data-desc-for="seerrEnabled">
                                 <div class="fieldDescription jc-field-desc-xl">Enables all Seerr-powered features for this server: Seerr search results, request buttons, the Requests page, auto-requests, and user import. Required for any Seerr feature to work.</div>
                             </div>
 
                             <div class="inputContainer">
-                                <label class="inputLabel" for="jellyseerrUrls">Seerr URL(s) <span style="font-size:0.8em; opacity:0.6;">(One per line)</span></label>
-                                <textarea class="emby-textarea emby-input jc-textarea-medium" id="jellyseerrUrls" name="jellyseerrUrls" placeholder="http://192.168.1.10:5055&#10;https://jellyseerr.example.com"></textarea>
+                                <label class="inputLabel" for="seerrUrls">Seerr URL(s) <span style="font-size:0.8em; opacity:0.6;">(One per line)</span></label>
+                                <textarea class="emby-textarea emby-input jc-textarea-medium" id="seerrUrls" name="seerrUrls" placeholder="http://192.168.1.10:5055&#10;https://seerr.example.com"></textarea>
                             </div>
-                                <div class="jc-setting-description" data-desc-for="jellyseerrUrls">
+                                <div class="jc-setting-description" data-desc-for="seerrUrls">
                                     <div class="fieldDescription">Internal URL(s) the Jellyfin server uses to reach Seerr, one per line. The script uses the first one that connects successfully. If Seerr sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here and set the External URL below for user-facing links.</div>
                                 </div>
                             <div class="inputContainer">
-                                <label class="inputLabel" for="jellyseerrExternalUrl">Seerr External URL <span style="font-size:0.8em; opacity:0.6;">(optional)</span></label>
-                                <input id="jellyseerrExternalUrl" is="emby-input" name="jellyseerrExternalUrl" type="text" placeholder="e.g., https://requests.example.com"/>
+                                <label class="inputLabel" for="seerrExternalUrl">Seerr External URL <span style="font-size:0.8em; opacity:0.6;">(optional)</span></label>
+                                <input id="seerrExternalUrl" is="emby-input" name="seerrExternalUrl" type="text" placeholder="e.g., https://requests.example.com"/>
                             </div>
-                                <div class="jc-setting-description" data-desc-for="jellyseerrExternalUrl">
+                                <div class="jc-setting-description" data-desc-for="seerrExternalUrl">
                                     <div class="fieldDescription">Public URL a user's browser opens for "Open in Seerr" links. Leave blank to reuse the internal URL above (unchanged behaviour). Use this when the server reaches Seerr on a LAN/docker address that browsers can't. Advanced per-access-URL routing is still available via URL Mappings below (mappings take priority).</div>
                                 </div>
                             <div class="inputContainer">
-                                <label class="inputLabel" for="JellyseerrApiKey">Seerr API Key</label>
+                                <label class="inputLabel" for="SeerrApiKey">Seerr API Key</label>
                                 <div class="jc-api-row">
-                                    <input id="JellyseerrApiKey" is="emby-input" name="JellyseerrApiKey" type="text" autocomplete="off" class="jc-api-input"/>
-                                    <span id="jellyseerrStatusIndicator" class="material-icons"></span>
-                                    <button is="emby-button" type="button" id="testJellyseerrBtn" class="emby-button raised button-submit">Test</button>
+                                    <input id="SeerrApiKey" is="emby-input" name="SeerrApiKey" type="text" autocomplete="off" class="jc-api-input"/>
+                                    <span id="seerrStatusIndicator" class="material-icons"></span>
+                                    <button is="emby-button" type="button" id="testSeerrBtn" class="emby-button raised button-submit">Test</button>
                                 </div>
                             </div>
-                                    <div class="jc-setting-description" data-desc-for="JellyseerrApiKey">
+                                    <div class="jc-setting-description" data-desc-for="SeerrApiKey">
                                         <div class="fieldDescription">API key from Seerr. (Settings &gt; General Settings &gt;  API Key)</div>
                                     </div>
                             <div class="inputContainer">
-                                <label class="inputLabel" for="jellyseerr_TMDB_API_KEY">TMDB API Key</label>
+                                <label class="inputLabel" for="seerr_TMDB_API_KEY">TMDB API Key</label>
                                 <div class="jc-api-row">
-                                    <input id="jellyseerr_TMDB_API_KEY" is="emby-input" name="TMDB_API_KEY" type="text" autocomplete="off" class="jc-api-input"/>
-                                    <span id="jellyseerrTmdbStatusIndicator" class="material-icons"></span>
+                                    <input id="seerr_TMDB_API_KEY" is="emby-input" name="TMDB_API_KEY" type="text" autocomplete="off" class="jc-api-input"/>
+                                    <span id="seerrTmdbStatusIndicator" class="material-icons"></span>
                                     <button is="emby-button" type="button" class="testTmdbBtn emby-button raised button-submit">Test</button>
                                 </div>
                             </div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerr_TMDB_API_KEY">
+                                    <div class="jc-setting-description" data-desc-for="seerr_TMDB_API_KEY">
                                         <div class="fieldDescription">Your API key from The Movie DB (TMDB). <a class="sectionTitle" href="https://www.themoviedb.org/settings/api" target="_blank">How to?</a><br/>TMDB API key for automatic movie collection requests and Seerr Collection Results. Shared with Elsewhere Settings</div>
                                     </div>
 
@@ -1302,10 +1302,10 @@
                                 <summary>Advanced URL Mappings</summary>
                                 <div class="jc-details-body">
                                     <div class="inputContainer">
-                                        <label class="inputLabel jc-seerr-label" for="jellyseerrUrlMappings">Seerr URL Mappings</label>
-                                        <textarea class="emby-textarea emby-input jc-textarea-medium" id="jellyseerrUrlMappings" name="jellyseerrUrlMappings" placeholder="https://jellyfin.mydomain.com|https://jellyseerr.mydomain.com"></textarea>
+                                        <label class="inputLabel jc-seerr-label" for="seerrUrlMappings">Seerr URL Mappings</label>
+                                        <textarea class="emby-textarea emby-input jc-textarea-medium" id="seerrUrlMappings" name="seerrUrlMappings" placeholder="https://jellyfin.mydomain.com|https://seerr.mydomain.com"></textarea>
                                     </div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerrUrlMappings">
+                                    <div class="jc-setting-description" data-desc-for="seerrUrlMappings">
                                         <div class="fieldDescription">
                                             Map your Jellyfin URLs to specific Seerr URLs for displaying links to users. Users will get the appropriate Seerr link when using "Link result titles to Seerr instead of TMDB", based on what link they use to access Jellyfin.<br/>
                                             Format: <code>JellyfinURL|SeerrURL</code>, one mapping per line.<br/>
@@ -1315,9 +1315,9 @@
                                             <i class="material-icons jc-info-icon-sm">info</i>
                                             <div>
                                                 <strong>URL Mapping Examples:</strong><br/>
-                                                • Remote access: <code>https://jellyfin.mydomain.com|https://jellyseerr.mydomain.com</code><br/>
+                                                • Remote access: <code>https://jellyfin.mydomain.com|https://seerr.mydomain.com</code><br/>
                                                 • Local access: <code>http://192.168.1.10:8096|http://192.168.1.10:5055</code><br/>
-                                                • With base URL: <code>https://example.com/jellyfin|https://example.com/jellyseerr</code>
+                                                • With base URL: <code>https://example.com/jellyfin|https://example.com/seerr</code>
                                             </div>
                                         </div>
                                         <div class="jc-mobile-banner">
@@ -1351,28 +1351,28 @@
                     <fieldset>
                         <legend class="sectionTitle">Search &amp; Requests</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="jellyseerrShowSearchResults" data-config-key="JellyseerrShowSearchResults" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Seerr Results in Search</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="jellyseerrShowSearchResults">
+                            <div class="checkboxContainer"><label><input id="seerrShowSearchResults" data-config-key="SeerrShowSearchResults" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Seerr Results in Search</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="seerrShowSearchResults">
                                 <div class="fieldDescription jc-field-desc-xl">Enhance Jellyfin search by showing results from Seerr.<br/>This allows users to discover and request missing movies and shows directly from Jellyfin.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="showCollectionsInSearch" data-config-key="ShowCollectionsInSearch" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Collections in Seerr Results</span></label></div>
                             <div class="jc-setting-description" data-desc-for="showCollectionsInSearch">
                                 <div class="fieldDescription jc-field-desc-xl">Display TMDB collections (e.g., Harry Potter, Marvel Cinematic Universe) in Seerr search results with an option to request the entire collection at once.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="jellyseerrEnable4kRequests" data-config-key="JellyseerrEnable4KRequests" is="emby-checkbox" type="checkbox"/><span>Enable 4K Requests</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="jellyseerrEnable4kRequests">
+                            <div class="checkboxContainer"><label><input id="seerrEnable4kRequests" data-config-key="SeerrEnable4KRequests" is="emby-checkbox" type="checkbox"/><span>Enable 4K Requests</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="seerrEnable4kRequests">
                                 <div class="fieldDescription jc-field-desc-xl">When enabled, movie request buttons include a dropdown to request a 4K version.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="jellyseerrEnable4kTvRequests" data-config-key="JellyseerrEnable4KTvRequests" is="emby-checkbox" type="checkbox"/><span>Enable 4K TV Requests</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="jellyseerrEnable4kTvRequests">
+                            <div class="checkboxContainer"><label><input id="seerrEnable4kTvRequests" data-config-key="SeerrEnable4KTvRequests" is="emby-checkbox" type="checkbox"/><span>Enable 4K TV Requests</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="seerrEnable4kTvRequests">
                                 <div class="fieldDescription jc-field-desc-xl">When enabled, TV request buttons include a dropdown that opens the season request modal in 4K mode.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="jellyseerrShowAdvanced" data-config-key="JellyseerrShowAdvanced" is="emby-checkbox" type="checkbox"/><span>Show advanced request options</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="jellyseerrShowAdvanced">
+                            <div class="checkboxContainer"><label><input id="seerrShowAdvanced" data-config-key="SeerrShowAdvanced" is="emby-checkbox" type="checkbox"/><span>Show advanced request options</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="seerrShowAdvanced">
                                 <div class="fieldDescription jc-field-desc-xl">Enable this if you want users to be able to choose between Servers, Quality and Paths while requesting. <br/> Note: This will disregard any Override Rules set in Seerr.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="jellyseerrShowQuotaInfo" data-config-key="JellyseerrShowQuotaInfo" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show request quota info</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="jellyseerrShowQuotaInfo">
+                            <div class="checkboxContainer"><label><input id="seerrShowQuotaInfo" data-config-key="SeerrShowQuotaInfo" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show request quota info</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="seerrShowQuotaInfo">
                                 <div class="fieldDescription jc-field-desc-xl">When enabled, request modals display a chip showing the user's request usage and when their next slot frees up. Quota errors get a detailed dialog instead of a vanishing toast.</div>
                             </div>
                         </div>
@@ -1381,53 +1381,53 @@
                     <fieldset>
                         <legend class="sectionTitle">Discovery &amp; UI Extras</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="jellyseerrUseMoreInfoModal" data-config-key="JellyseerrUseMoreInfoModal" is="emby-checkbox" type="checkbox"/><span>Open results in "More Info" modal</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="jellyseerrUseMoreInfoModal">
+                            <div class="checkboxContainer"><label><input id="seerrUseMoreInfoModal" data-config-key="SeerrUseMoreInfoModal" is="emby-checkbox" type="checkbox"/><span>Open results in "More Info" modal</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="seerrUseMoreInfoModal">
                                 <div class="fieldDescription jc-field-desc-xl">When enabled, clicking a Seerr result title or poster opens an in-app More Info modal.<br/>When disabled, clicking will open the item in Seerr.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="jellyseerrShowReportButton" data-config-key="JellyseerrShowReportButton" is="emby-checkbox" type="checkbox"/><span>Show "Report Issue" button on items</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="jellyseerrShowReportButton">
+                            <div class="checkboxContainer"><label><input id="seerrShowReportButton" data-config-key="SeerrShowReportButton" is="emby-checkbox" type="checkbox"/><span>Show "Report Issue" button on items</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="seerrShowReportButton">
                                 <div class="fieldDescription jc-field-desc-xl">When enabled, a small report icon will be added to item action icons allowing users to report playback/content issues to Seerr.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="jellyseerrShowIssueIndicator" data-config-key="JellyseerrShowIssueIndicator" is="emby-checkbox" type="checkbox"/><span>Show open issue indicator</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="jellyseerrShowIssueIndicator">
+                            <div class="checkboxContainer"><label><input id="seerrShowIssueIndicator" data-config-key="SeerrShowIssueIndicator" is="emby-checkbox" type="checkbox"/><span>Show open issue indicator</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="seerrShowIssueIndicator">
                                 <div class="fieldDescription jc-field-desc-xl">When enabled, the report issue button turns orange and shows a count badge if the item has open issues in Seerr.</div>
                             </div>
-                            <div class="checkboxContainer"><label><input id="showElsewhereOnJellyseerr" data-config-key="ShowElsewhereOnJellyseerr" is="emby-checkbox" type="checkbox"/><span>Show Streaming Providers on Posters</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="showElsewhereOnJellyseerr">
+                            <div class="checkboxContainer"><label><input id="showElsewhereOnSeerr" data-config-key="ShowElsewhereOnSeerr" is="emby-checkbox" type="checkbox"/><span>Show Streaming Providers on Posters</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="showElsewhereOnSeerr">
                                 <div class="fieldDescription jc-field-desc-xl">Displays icons of available streaming services (from your default region) on Seerr Posters.<br/><br/><b>Requires TMDB API Key to be configured in Elsewhere Settings</b></div>
                             </div>
 
                             <details class="jc-details-section">
                                 <summary>Item Pages Discovery</summary>
                                 <div class="jc-details-body">
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowSimilar" data-config-key="JellyseerrShowSimilar" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show similar items</span></label></div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerrShowSimilar">
+                                    <div class="checkboxContainer"><label><input id="seerrShowSimilar" data-config-key="SeerrShowSimilar" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show similar items</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="seerrShowSimilar">
                                         <div class="fieldDescription jc-field-desc-xl">Displays similar movies/shows from Seerr on item details pages. Limited to 20 items.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowRecommended" data-config-key="JellyseerrShowRecommended" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show recommended items</span></label></div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerrShowRecommended">
+                                    <div class="checkboxContainer"><label><input id="seerrShowRecommended" data-config-key="SeerrShowRecommended" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show recommended items</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="seerrShowRecommended">
                                         <div class="fieldDescription jc-field-desc-xl">Displays recommended movies/shows from Seerr on item details pages. Limited to 20 items.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowRequestMoreOnSeries" data-config-key="JellyseerrShowRequestMoreOnSeries" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "Request More" button on Series</span></label></div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerrShowRequestMoreOnSeries">
+                                    <div class="checkboxContainer"><label><input id="seerrShowRequestMoreOnSeries" data-config-key="SeerrShowRequestMoreOnSeries" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "Request More" button on Series</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="seerrShowRequestMoreOnSeries">
                                         <div class="fieldDescription jc-field-desc-xl">Adds a "Request More" button beside the Seasons section heading on Series detail pages when the show has unrequested seasons in Seerr. Lets users request additional seasons without going through the search bar.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrExcludeLibraryItems" data-config-key="JellyseerrExcludeLibraryItems" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Exclude items already in library</span></label></div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerrExcludeLibraryItems">
+                                    <div class="checkboxContainer"><label><input id="seerrExcludeLibraryItems" data-config-key="SeerrExcludeLibraryItems" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Exclude items already in library</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="seerrExcludeLibraryItems">
                                         <div class="fieldDescription jc-field-desc-xl">Hide similar/recommended items that already exist in your Jellyfin library from the results.<br/>If disabled, the items that are available link to the media item in the library.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrExcludeBlocklistedItems" data-config-key="JellyseerrExcludeBlocklistedItems" is="emby-checkbox" type="checkbox"/><span>Exclude blocklisted items</span></label></div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerrExcludeBlocklistedItems">
+                                    <div class="checkboxContainer"><label><input id="seerrExcludeBlocklistedItems" data-config-key="SeerrExcludeBlocklistedItems" is="emby-checkbox" type="checkbox"/><span>Exclude blocklisted items</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="seerrExcludeBlocklistedItems">
                                         <div class="fieldDescription jc-field-desc-xl">When enabled, items marked as blocklisted in Seerr will not appear in similar/recommended suggestions.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrRespectParentalRatings" data-config-key="JellyseerrRespectParentalRatings" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Respect parental ratings</span></label></div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerrRespectParentalRatings">
+                                    <div class="checkboxContainer"><label><input id="seerrRespectParentalRatings" data-config-key="SeerrRespectParentalRatings" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Respect parental ratings</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="seerrRespectParentalRatings">
                                         <div class="fieldDescription jc-field-desc-xl">Hide Seerr search &amp; discovery results a user could not watch once requested, using that user's own Jellyfin content-rating limit (Maximum Parental Rating) and blocked-unrated settings. Only affects accounts that already have a rating restriction set in Jellyfin; administrators and users with no limit see everything. Default: on.</div>
                                     </div>
 
-                                    <div class="checkboxContainer"><label><input id="jellyseerrRespectBlockedTags" data-config-key="JellyseerrRespectBlockedTags" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Respect blocked / allowed tags</span></label></div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerrRespectBlockedTags">
+                                    <div class="checkboxContainer"><label><input id="seerrRespectBlockedTags" data-config-key="SeerrRespectBlockedTags" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Respect blocked / allowed tags</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="seerrRespectBlockedTags">
                                         <div class="fieldDescription jc-field-desc-xl">Also enforce each user's Jellyfin tag-based parental controls (Block items with tags / Allow only items with tags) on Seerr results, details and requests. Titles are matched by their TMDB keywords and genres — keywords are the same strings Jellyfin imports as library Tags, so a tag like "horror" blocks the same content Jellyfin itself would hide once imported (plus the matching genre). Requires "Respect parental ratings" to be on. Default: on.</div>
                                     </div>
                                 </div>
@@ -1436,24 +1436,24 @@
                             <details class="jc-details-section">
                                 <summary>"More" Discovery</summary>
                                 <div class="jc-details-body">
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowNetworkDiscovery" data-config-key="JellyseerrShowNetworkDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More from Network"</span></label></div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerrShowNetworkDiscovery">
+                                    <div class="checkboxContainer"><label><input id="seerrShowNetworkDiscovery" data-config-key="SeerrShowNetworkDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More from Network"</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="seerrShowNetworkDiscovery">
                                         <div class="fieldDescription jc-field-desc-md">When viewing a network page (e.g., Netflix, HBO), displays additional content from that network available in Seerr.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowGenreDiscovery" data-config-key="JellyseerrShowGenreDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More Genre"</span></label></div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerrShowGenreDiscovery">
+                                    <div class="checkboxContainer"><label><input id="seerrShowGenreDiscovery" data-config-key="SeerrShowGenreDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More Genre"</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="seerrShowGenreDiscovery">
                                         <div class="fieldDescription jc-field-desc-md">When viewing a genre page (e.g., Action, Comedy), displays additional content in that genre from Seerr.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowTagDiscovery" data-config-key="JellyseerrShowTagDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More Tag"</span></label></div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerrShowTagDiscovery">
+                                    <div class="checkboxContainer"><label><input id="seerrShowTagDiscovery" data-config-key="SeerrShowTagDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More Tag"</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="seerrShowTagDiscovery">
                                         <div class="fieldDescription jc-field-desc-md">When viewing a tag page (e.g., cooking, superhero), displays additional content with that keyword from Seerr.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowPersonDiscovery" data-config-key="JellyseerrShowPersonDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More from Actor"</span></label></div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerrShowPersonDiscovery">
+                                    <div class="checkboxContainer"><label><input id="seerrShowPersonDiscovery" data-config-key="SeerrShowPersonDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More from Actor"</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="seerrShowPersonDiscovery">
                                         <div class="fieldDescription jc-field-desc-md">When viewing an actor/person page, displays their filmography from Seerr including content not in your library.</div>
                                     </div>
-                                    <div class="checkboxContainer"><label><input id="jellyseerrShowCollectionDiscovery" data-config-key="JellyseerrShowCollectionDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show missing collection movies</span></label></div>
-                                    <div class="jc-setting-description" data-desc-for="jellyseerrShowCollectionDiscovery">
+                                    <div class="checkboxContainer"><label><input id="seerrShowCollectionDiscovery" data-config-key="SeerrShowCollectionDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show missing collection movies</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="seerrShowCollectionDiscovery">
                                         <div class="fieldDescription jc-field-desc-xl">When viewing a collection/BoxSet page, shows movies from the collection that are not yet in your library with request buttons.</div>
                                     </div>
                                 </div>
@@ -1630,8 +1630,8 @@
                                 </div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="syncJellyseerrWatchlist" data-config-key="SyncJellyseerrWatchlist" is="emby-checkbox" type="checkbox"/><span>Sync Seerr Watchlist → Jellyfin</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="syncJellyseerrWatchlist">
+                            <div class="checkboxContainer"><label><input id="syncSeerrWatchlist" data-config-key="SyncSeerrWatchlist" is="emby-checkbox" type="checkbox"/><span>Sync Seerr Watchlist → Jellyfin</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="syncSeerrWatchlist">
                                 <div class="fieldDescription jc-field-desc-xl">
                                     When enabled, items from each user's Seerr watchlist will be automatically synced to their Jellyfin watchlist.<br/><br/>
                                     Configure how often the sync should run in Jellyfin Dashboard &gt; Scheduled Tasks &gt; "Sync Watchlist from Seerr to Jellyfin".<br/><br/>
@@ -1678,8 +1678,8 @@
                     <fieldset>
                         <legend class="sectionTitle">Users</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="jellyseerrAutoImportUsers" data-config-key="JellyseerrAutoImportUsers" is="emby-checkbox" type="checkbox"/><span>Auto import Jellyfin users to Seerr</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="jellyseerrAutoImportUsers">
+                            <div class="checkboxContainer"><label><input id="seerrAutoImportUsers" data-config-key="SeerrAutoImportUsers" is="emby-checkbox" type="checkbox"/><span>Auto import Jellyfin users to Seerr</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="seerrAutoImportUsers">
                                 <div class="fieldDescription jc-field-desc-xl">
                                     Automatically import Jellyfin users into Seerr so they can use Seerr Search without needing to visit Seerr directly. New users are imported the first time they use Seerr Search; a scheduled task also bulk-imports periodically. Already-imported users are skipped.<br/><br/>
                                     Configure the bulk import frequency in Jellyfin Dashboard &gt; Scheduled Tasks &gt; "Import Jellyfin Users to Seerr".
@@ -1698,9 +1698,9 @@
                                     <div id="blockedUsersScrollHint" style="display: none;">▼ scroll for more</div>
                                 </div>
                             </details>
-                            <input id="jellyseerrImportBlockedUsers" type="hidden" value=""/>
+                            <input id="seerrImportBlockedUsers" type="hidden" value=""/>
 
-                            <button id="btnImportJellyseerrUsers" is="emby-button" type="button" class="raised button-submit emby-button" style="width: fit-content;">Import Users Now</button>
+                            <button id="btnImportSeerrUsers" is="emby-button" type="button" class="raised button-submit emby-button" style="width: fit-content;">Import Users Now</button>
                             <div id="importUsersResult" style="display: none; margin-top:10px;"></div>
                         </div>
                     </fieldset>
@@ -1723,29 +1723,29 @@
                     <fieldset>
                         <legend class="sectionTitle">Debug</legend>
                         <div class="configSection">
-                            <div class="checkboxContainer"><label><input id="jellyseerrDisableCache" data-config-key="JellyseerrDisableCache" is="emby-checkbox" type="checkbox"/><span>Disable server-side response cache</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="jellyseerrDisableCache">
+                            <div class="checkboxContainer"><label><input id="seerrDisableCache" data-config-key="SeerrDisableCache" is="emby-checkbox" type="checkbox"/><span>Disable server-side response cache</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="seerrDisableCache">
                                 <div class="fieldDescription jc-field-desc-xl">When enabled, all Seerr proxy requests bypass the server-side cache and are fetched fresh from Seerr every time. This is useful for testing but will increase load on your Seerr instance. <b>Not recommended for normal use.</b></div>
                             </div>
                             <div class="inputContainer">
-                                <label class="inputLabel" for="jellyseerrResponseCacheTtlMinutes">Response Cache TTL (min)</label>
-                                <input id="jellyseerrResponseCacheTtlMinutes" data-config-key="JellyseerrResponseCacheTtlMinutes" data-config-int="" data-config-fallback="10" is="emby-input" type="number" min="1" value="10"/>
+                                <label class="inputLabel" for="seerrResponseCacheTtlMinutes">Response Cache TTL (min)</label>
+                                <input id="seerrResponseCacheTtlMinutes" data-config-key="SeerrResponseCacheTtlMinutes" data-config-int="" data-config-fallback="10" is="emby-input" type="number" min="1" value="10"/>
                             </div>
-                                <div class="jc-setting-description" data-desc-for="jellyseerrResponseCacheTtlMinutes">
+                                <div class="jc-setting-description" data-desc-for="seerrResponseCacheTtlMinutes">
                                     <div class="fieldDescription">How long Seerr API responses (search, discovery, recommendations) are cached. Default: 10 minutes.</div>
                                 </div>
                             <div class="inputContainer">
-                                <label class="inputLabel" for="jellyseerrParentalRatingCacheTtlMinutes">Parental Rating Cache TTL (min)</label>
-                                <input id="jellyseerrParentalRatingCacheTtlMinutes" data-config-key="JellyseerrParentalRatingCacheTtlMinutes" data-config-int="" data-config-fallback="1440" is="emby-input" type="number" min="1" value="1440"/>
+                                <label class="inputLabel" for="seerrParentalRatingCacheTtlMinutes">Parental Rating Cache TTL (min)</label>
+                                <input id="seerrParentalRatingCacheTtlMinutes" data-config-key="SeerrParentalRatingCacheTtlMinutes" data-config-int="" data-config-fallback="1440" is="emby-input" type="number" min="1" value="1440"/>
                             </div>
-                                <div class="jc-setting-description" data-desc-for="jellyseerrParentalRatingCacheTtlMinutes">
+                                <div class="jc-setting-description" data-desc-for="seerrParentalRatingCacheTtlMinutes">
                                     <div class="fieldDescription">How long a title's resolved content rating is cached for the "Respect parental ratings" filter. Certifications rarely change, so this is long by default (1440 minutes = 24 hours).</div>
                                 </div>
                             <div class="inputContainer">
-                                <label class="inputLabel" for="jellyseerrUserIdCacheTtlMinutes">User ID Cache TTL (min)</label>
-                                <input id="jellyseerrUserIdCacheTtlMinutes" data-config-key="JellyseerrUserIdCacheTtlMinutes" data-config-int="" data-config-fallback="30" is="emby-input" type="number" min="1" value="30"/>
+                                <label class="inputLabel" for="seerrUserIdCacheTtlMinutes">User ID Cache TTL (min)</label>
+                                <input id="seerrUserIdCacheTtlMinutes" data-config-key="SeerrUserIdCacheTtlMinutes" data-config-int="" data-config-fallback="30" is="emby-input" type="number" min="1" value="30"/>
                             </div>
-                                <div class="jc-setting-description" data-desc-for="jellyseerrUserIdCacheTtlMinutes">
+                                <div class="jc-setting-description" data-desc-for="seerrUserIdCacheTtlMinutes">
                                     <div class="fieldDescription">How long the Jellyfin → Seerr user ID mapping is cached. Default: 30 minutes.</div>
                                 </div>
                         </div>

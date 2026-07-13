@@ -119,7 +119,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
         /// <summary>
         /// Locked read-modify-write of a user's processed-watchlist file. All mutators
-        /// (WatchlistMonitor + JellyseerrWatchlistSyncTask) MUST go through this so
+        /// (WatchlistMonitor + SeerrWatchlistSyncTask) MUST go through this so
         /// concurrent event/scheduled writers cannot lose each other's markers. The
         /// mutator returns the number of changes; a return of 0 skips the save.
         /// Strict-read semantics apply (a corrupt file backs up + throws), so callers

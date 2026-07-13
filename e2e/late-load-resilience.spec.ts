@@ -116,7 +116,7 @@ test.describe('late-load resilience (R9)', () => {
         // reload (the viewshow listener was never registered).
         let blockStatus = true;
         let blockedCount = 0;
-        await page.route('**/JellyfinCanopy/jellyseerr/status', (route) => {
+        await page.route('**/JellyfinCanopy/seerr/status', (route) => {
             if (blockStatus) {
                 blockedCount++;
                 return route.abort('failed');
@@ -128,7 +128,7 @@ test.describe('late-load resilience (R9)', () => {
 
         const enabled = await page.evaluate(() => {
             const config = (window as any).JellyfinCanopy?.pluginConfig;
-            return config?.JellyseerrEnabled === true && config?.JellyseerrShowReportButton === true;
+            return config?.SeerrEnabled === true && config?.SeerrShowReportButton === true;
         });
         test.skip(!enabled, 'Seerr report button disabled on this server');
         expect(blockedCount, 'boot never hit the status endpoint — test is vacuous').toBeGreaterThan(0);
@@ -140,13 +140,13 @@ test.describe('late-load resilience (R9)', () => {
         await showRoute(page, `/details?id=${movieId}`);
 
         const reportButton = page.locator(
-            '.page:not(.hide) .jellyseerr-report-issue-icon, .page:not(.hide) .jellyseerr-report-unavailable-icon'
+            '.page:not(.hide) .seerr-report-issue-icon, .page:not(.hide) .seerr-report-unavailable-icon'
         );
         await expect(reportButton.first()).toBeVisible({ timeout: 60_000 });
 
         assertOnlyInducedErrors(
             consoleErrors.real(),
-            /jellyseerr\/status|net::ERR_FAILED|Failed to load resource|status probe failed|Could not verify Jellyseerr status/i
+            /seerr\/status|net::ERR_FAILED|Failed to load resource|status probe failed|Could not verify Seerr status/i
         );
     });
 });

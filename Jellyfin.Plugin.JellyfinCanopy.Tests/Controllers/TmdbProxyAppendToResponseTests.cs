@@ -10,8 +10,8 @@ using Jellyfin.Data.Events;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Controllers;
-using Jellyfin.Plugin.JellyfinCanopy.Model.Jellyseerr;
-using Jellyfin.Plugin.JellyfinCanopy.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Configuration;
@@ -43,7 +43,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         private const string Movie100ReleaseDates =
             @"{ ""results"": [ { ""iso_3166_1"": ""US"", ""release_dates"": [ { ""type"": 3, ""certification"": ""PG-13"" } ] } ] }";
 
-        private static JellyseerrProxyController BuildController(bool ratingLimited, string queryString)
+        private static SeerrProxyController BuildController(bool ratingLimited, string queryString)
         {
             var handler = new RecordingHttpMessageHandler();
             // Cert lookup for the allowed parent title (so the gate would otherwise pass it).
@@ -54,10 +54,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             var provider = new FakePluginConfigProvider(new PluginConfiguration
             {
-                JellyseerrEnabled = true,
-                JellyseerrRespectParentalRatings = true,
-                JellyseerrUrls = "http://seerr:5055",
-                JellyseerrApiKey = "key",
+                SeerrEnabled = true,
+                SeerrRespectParentalRatings = true,
+                SeerrUrls = "http://seerr:5055",
+                SeerrApiKey = "key",
                 DEFAULT_REGION = "US",
                 TMDB_API_KEY = "tmdbkey", // required, else ProxyTmdbRequest short-circuits 503
             });
@@ -80,13 +80,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 userManager,
                 NullLogger<SpoilerPendingService>.Instance);
 
-            var controller = new JellyseerrProxyController(
+            var controller = new SeerrProxyController(
                 factory,
-                NullLogger<JellyseerrProxyController>.Instance,
+                NullLogger<SeerrProxyController>.Instance,
                 userManager,
                 seerrCache,
                 provider,
-                new UnusedJellyseerrClient(),
+                new UnusedSeerrClient(),
                 parentalFilter,
                 spoilerPending);
 
@@ -122,11 +122,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
         // ── Minimal fakes ────────────────────────────────────────────────────
 
-        private sealed class UnusedJellyseerrClient : IJellyseerrClient
+        private sealed class UnusedSeerrClient : ISeerrClient
         {
-            public Task<JellyseerrUser?> GetJellyseerrUser(string jellyfinUserId, bool bypassCache = false, bool allowAutoImport = true) => throw new NotImplementedException();
+            public Task<SeerrUser?> GetSeerrUser(string jellyfinUserId, bool bypassCache = false, bool allowAutoImport = true) => throw new NotImplementedException();
 
-            public Task<string?> GetJellyseerrUserId(string jellyfinUserId, bool allowAutoImport = true) => throw new NotImplementedException();
+            public Task<string?> GetSeerrUserId(string jellyfinUserId, bool allowAutoImport = true) => throw new NotImplementedException();
 
             public bool IsImportBlocked(string jellyfinUserId, PluginConfiguration config) => throw new NotImplementedException();
 
@@ -135,11 +135,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             public Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(string jellyfinUserId, bool isAdmin = false) => throw new NotImplementedException();
             public void EvictMediaDetailCache(int tmdbId, string mediaType) { }
 
-            public Task<IActionResult> ProxyRequestAsync(string apiPath, HttpMethod method, string? content, JellyseerrCaller caller) => throw new NotImplementedException();
+            public Task<IActionResult> ProxyRequestAsync(string apiPath, HttpMethod method, string? content, SeerrCaller caller) => throw new NotImplementedException();
 
-            public Task<List<WatchlistItem>?> GetWatchlistForUser(string jellyseerrUserId) => throw new NotImplementedException();
+            public Task<List<WatchlistItem>?> GetWatchlistForUser(string seerrUserId) => throw new NotImplementedException();
 
-            public Task<List<WatchlistItem>?> GetRequestsForUser(string jellyseerrUserId) => throw new NotImplementedException();
+            public Task<List<WatchlistItem>?> GetRequestsForUser(string seerrUserId) => throw new NotImplementedException();
         }
 
         private sealed class ScoreLocalization : ILocalizationManager

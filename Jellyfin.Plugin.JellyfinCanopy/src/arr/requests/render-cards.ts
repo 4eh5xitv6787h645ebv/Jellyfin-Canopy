@@ -88,7 +88,7 @@ export function renderRequestCard(item: RequestItem): string {
 
     let watchButton = '';
     if (item.jellyfinMediaId && (item.mediaStatus === 'Available' || item.mediaStatus === 'Partially Available')) {
-        const playLabel = JC.t?.('jellyseerr_btn_available') || 'Available';
+        const playLabel = JC.t?.('seerr_btn_available') || 'Available';
         const playIcon = '<span class="material-icons">play_arrow</span>';
         watchButton = `<button class="jc-request-watch-btn" title="${escapeHtml(playLabel)}" aria-label="${escapeHtml(playLabel)}" data-media-id="${escapeHtml(item.jellyfinMediaId)}">${playIcon}</button>`;
     }
@@ -150,18 +150,18 @@ export function renderRequestCard(item: RequestItem): string {
 
 function getIssueTypeLabel(issueType: number | undefined): string {
     const labels: Record<number, string> = {
-        1: JC.t?.('jellyseerr_report_issue_type_video') || 'Video',
-        2: JC.t?.('jellyseerr_report_issue_type_audio') || 'Audio',
-        3: JC.t?.('jellyseerr_report_issue_type_subtitles') || 'Subtitles',
-        4: JC.t?.('jellyseerr_report_issue_type_other') || 'Other',
+        1: JC.t?.('seerr_report_issue_type_video') || 'Video',
+        2: JC.t?.('seerr_report_issue_type_audio') || 'Audio',
+        3: JC.t?.('seerr_report_issue_type_subtitles') || 'Subtitles',
+        4: JC.t?.('seerr_report_issue_type_other') || 'Other',
     };
     return labels[issueType as number] || labels[4];
 }
 
 function getIssueStatusLabel(status: number | string | undefined): { label: string; className: string } {
     const normalized = String(status || '').toLowerCase();
-    const labelResolved = JC.t?.('jellyseerr_issue_resolved') || 'Resolved';
-    const labelOpen = JC.t?.('jellyseerr_issue_open') || 'Open';
+    const labelResolved = JC.t?.('seerr_issue_resolved') || 'Resolved';
+    const labelOpen = JC.t?.('seerr_issue_open') || 'Open';
     if (normalized === '2' || normalized === 'resolved') {
         return { label: labelResolved, className: 'jc-issue-status-resolved' };
     }

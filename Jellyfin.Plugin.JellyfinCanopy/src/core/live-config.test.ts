@@ -16,7 +16,7 @@ describe('config hot-reload reaction', () => {
         (JC.pluginConfig as Record<string, unknown>).StaleKept = true;
 
         const plugin = vi.fn((path: string) => {
-            if (path.startsWith('/public-config')) return Promise.resolve({ JellyseerrEnabled: true, NewToggle: 1 });
+            if (path.startsWith('/public-config')) return Promise.resolve({ SeerrEnabled: true, NewToggle: 1 });
             if (path.startsWith('/private-config')) return Promise.resolve({ SecretUrl: 'http://x' });
             return Promise.resolve({});
         });
@@ -28,7 +28,7 @@ describe('config hot-reload reaction', () => {
         emit(LIVE.CONFIG_CHANGED, { JellyfinCanopy: 'config-changed', Version: '9.9.9.0' });
 
         await vi.waitFor(() => {
-            expect(JC.pluginConfig.JellyseerrEnabled).toBe(true);
+            expect(JC.pluginConfig.SeerrEnabled).toBe(true);
         });
 
         // public + private both merged...

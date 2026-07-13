@@ -469,8 +469,8 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 <div style="font-weight:500; font-size:13px; color:rgba(255,255,255,0.7); margin-bottom:8px; padding-left:4px;">${JC.t!('hidden_content_button_section_title')}</div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenShowButtonJellyseerr" ${(JC as any).hiddenContent?.getSettings()?.showButtonJellyseerr !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
-                                        <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_show_button_jellyseerr')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_show_button_jellyseerr_desc')}</div></div>
+                                        <input type="checkbox" id="hiddenShowButtonSeerr" ${(JC as any).hiddenContent?.getSettings()?.showButtonSeerr !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_show_button_seerr')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_show_button_seerr_desc')}</div></div>
                                     </label>
                                 </div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">

@@ -63,21 +63,21 @@ function createGroupPoster(group: any, tmdbId: string): HTMLElement {
             // eslint-disable-next-line @typescript-eslint/no-this-alias -- nested error handlers reference the outer <img>; verbatim from the legacy code
             const self = this;
             // Signal the card that Jellyfin item is gone
-            if (hasTmdbId && (JC as any).jellyseerrMoreInfo) {
+            if (hasTmdbId && (JC as any).seerrMoreInfo) {
                 posterLink.dataset.jellyfinRemoved = '1';
             }
             // Item removed from Jellyfin — fall back to TMDB poster
             if (hasTmdbId && fallbackPosterPath) {
                 self.src = `https://image.tmdb.org/t/p/w${POSTER_MAX_WIDTH}${fallbackPosterPath}`;
                 self.onerror = function (this: HTMLImageElement) { this.style.display = 'none'; };
-            } else if (hasTmdbId && (JC as any).jellyseerrAPI) {
-                // No posterPath stored — fetch it from Jellyseerr
+            } else if (hasTmdbId && (JC as any).seerrAPI) {
+                // No posterPath stored — fetch it from Seerr
                 self.onerror = function (this: HTMLImageElement) { this.style.display = 'none'; };
                 const mainItem = group.items[0];
                 const mediaType = (mainItem && mainItem.type === 'Series') ? 'tv' : 'movie';
                 const fetchFn = mediaType === 'tv'
-                    ? (JC as any).jellyseerrAPI.fetchTvShowDetails
-                    : (JC as any).jellyseerrAPI.fetchMovieDetails;
+                    ? (JC as any).seerrAPI.fetchTvShowDetails
+                    : (JC as any).seerrAPI.fetchMovieDetails;
                 fetchFn(parseInt(tmdbId, 10)).then(function (details: any) {
                     const path = details && (details.posterPath || details.poster_path);
                     if (path) {
@@ -86,12 +86,12 @@ function createGroupPoster(group: any, tmdbId: string): HTMLElement {
                         self.style.display = 'none';
                     }
                 }).catch(function () { self.style.display = 'none'; });
-            } else if (group.seriesName && (JC as any).jellyseerrAPI && (JC as any).jellyseerrMoreInfo) {
+            } else if (group.seriesName && (JC as any).seerrAPI && (JC as any).seerrMoreInfo) {
                 // No TMDB id stored (e.g. an episode hidden from Next Up) and the Jellyfin media is gone.
                 // Resolve the show via a Seerr search by name so the card can still open the more-info
                 // modal — instead of leaving a blank poster and a dead "#/details" link.
                 self.style.display = 'none';
-                (JC as any).jellyseerrAPI.search(group.seriesName).then(function (res: any) {
+                (JC as any).seerrAPI.search(group.seriesName).then(function (res: any) {
                     const results = (res && res.results) || [];
                     const hit = results.find(function (r: any) { return r.mediaType === 'tv'; }) || results[0];
                     if (hit && hit.id) {
@@ -354,25 +354,25 @@ export function createGroupCard(group: any): HTMLElement {
     // Jellyfin id) or its Jellyfin media has been deleted. The TMDB id is either stored on the item,
     // or — for an orphan episode whose show is gone — resolved at render time by createGroupPoster
     // and stashed on the poster link's dataset.
-    if ((JC as any).jellyseerrMoreInfo) {
+    if ((JC as any).seerrMoreInfo) {
         const posterLink = card.querySelector<HTMLElement>('.jc-hidden-group-poster-link');
         const baseMediaType = mainItem.type === 'Series' ? 'tv' : 'movie';
-        const openJellyseerr = (e?: Event): void => {
+        const openSeerr = (e?: Event): void => {
             const id = tmdbId || (posterLink && posterLink.dataset.resolvedTmdbId);
             if (!id) return;
             const mediaType = tmdbId ? baseMediaType : (posterLink!.dataset.resolvedMediaType || 'tv');
             if (e) e.preventDefault();
-            (JC as any).jellyseerrMoreInfo.open(parseInt(id, 10), mediaType);
+            (JC as any).seerrMoreInfo.open(parseInt(id, 10), mediaType);
         };
         if (posterLink) {
             if (hasTmdbId && !hasJellyfinId) {
                 // No Jellyfin page at all → always open Seerr.
-                posterLink.addEventListener('click', openJellyseerr);
-                if (nameEl) nameEl.addEventListener('click', openJellyseerr);
+                posterLink.addEventListener('click', openSeerr);
+                if (nameEl) nameEl.addEventListener('click', openSeerr);
             } else {
                 // Has a Jellyfin page (or an orphan episode) → divert to Seerr only once the Jellyfin
                 // media is gone (createGroupPoster sets data-jellyfin-removed on image failure).
-                const guarded = (e: Event): void => { if (posterLink.dataset.jellyfinRemoved === '1') openJellyseerr(e); };
+                const guarded = (e: Event): void => { if (posterLink.dataset.jellyfinRemoved === '1') openSeerr(e); };
                 posterLink.addEventListener('click', guarded);
                 if (nameEl) nameEl.addEventListener('click', guarded);
             }

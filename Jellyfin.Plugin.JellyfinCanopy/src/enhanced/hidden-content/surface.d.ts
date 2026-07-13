@@ -21,7 +21,7 @@ declare module '../../types/jc' {
         updateSettings(partial: Record<string, unknown>): void;
         getAllHiddenItems(): HiddenItem[];
         getHiddenCount(): number;
-        filterJellyseerrResults(results: unknown[], surface: string): unknown[];
+        filterSeerrResults(results: unknown[], surface: string): unknown[];
         filterCalendarEvents(events: unknown[]): unknown[];
         filterRequestItems(items: unknown[]): unknown[];
         filterNativeCards(): void;

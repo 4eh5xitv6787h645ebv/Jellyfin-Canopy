@@ -67,7 +67,7 @@ async function ensureRenderableBoxSet(page: any): Promise<BoxSetFixture> {
         /** A TMDB collection has "missing" parts when any part isn't available (status 5). */
         const collectionHasMissing = async (collectionId: string | number): Promise<boolean> => {
             try {
-                const c = await api.getJSON(api.getUrl('JellyfinCanopy/jellyseerr/collection/' + collectionId));
+                const c = await api.getJSON(api.getUrl('JellyfinCanopy/seerr/collection/' + collectionId));
                 const parts = (c && c.parts) || [];
                 return parts.length > 0 && parts.some((p: any) => ((p.mediaInfo && p.mediaInfo.status) || 1) !== 5);
             } catch {
@@ -99,7 +99,7 @@ async function ensureRenderableBoxSet(page: any): Promise<BoxSetFixture> {
             if (!tmdb) continue;
             let detail: any;
             try {
-                detail = await api.getJSON(api.getUrl('JellyfinCanopy/jellyseerr/movie/' + tmdb));
+                detail = await api.getJSON(api.getUrl('JellyfinCanopy/seerr/movie/' + tmdb));
             } catch {
                 continue;
             }
@@ -255,7 +255,7 @@ test.describe('mobile viewport fits', () => {
             // collection has movies not yet in the library.
             const appeared = await page
                 .waitForFunction(
-                    () => !!document.querySelector('.jellyseerr-collection-discovery-section .card'),
+                    () => !!document.querySelector('.seerr-collection-discovery-section .card'),
                     undefined,
                     { timeout: 20_000 }
                 )
@@ -272,7 +272,7 @@ test.describe('mobile viewport fits', () => {
             }
 
             const m = await page.evaluate(() => {
-                const section = document.querySelector('.jellyseerr-collection-discovery-section')!;
+                const section = document.querySelector('.seerr-collection-discovery-section')!;
                 const cards = [...section.querySelectorAll<HTMLElement>('.card')];
                 let maxRight = 0;
                 for (const c of cards) maxRight = Math.max(maxRight, c.getBoundingClientRect().right);

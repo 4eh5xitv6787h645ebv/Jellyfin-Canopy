@@ -69,41 +69,41 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
         /// <summary>
         /// Pins the external-wins projection end-to-end through the REAL
-        /// <c>JellyseerrBaseUrl</c> descriptor: a VALID external URL is emitted verbatim to
+        /// <c>SeerrBaseUrl</c> descriptor: a VALID external URL is emitted verbatim to
         /// authenticated callers (and the different internal URL is NOT). The distinctive golden
         /// only covers the fallback branch — its external URL is an invalid "cfg-…" sentinel — so
         /// this is the only assertion that the valid-external path actually reaches the payload.
         /// </summary>
         [Fact]
-        public void PublicConfig_ValidExternalUrl_ProjectsExternalAsJellyseerrBaseUrl()
+        public void PublicConfig_ValidExternalUrl_ProjectsExternalAsSeerrBaseUrl()
         {
             var config = new PluginConfiguration
             {
-                JellyseerrUrls = "http://seerr.internal:5055",
-                JellyseerrExternalUrl = "https://requests.example.com/seerr",
+                SeerrUrls = "http://seerr.internal:5055",
+                SeerrExternalUrl = "https://requests.example.com/seerr",
             };
 
             var payload = ConfigController.BuildPublicConfigPayload(config, isAuthed: true);
 
-            Assert.Equal("https://requests.example.com/seerr", GetStringField(payload, "JellyseerrBaseUrl"));
+            Assert.Equal("https://requests.example.com/seerr", GetStringField(payload, "SeerrBaseUrl"));
         }
 
         /// <summary>
         /// The fallback branch: with no external URL, the authenticated
-        /// <c>JellyseerrBaseUrl</c> is the first internal URL unchanged.
+        /// <c>SeerrBaseUrl</c> is the first internal URL unchanged.
         /// </summary>
         [Fact]
-        public void PublicConfig_EmptyExternalUrl_FallsBackToInternalJellyseerrBaseUrl()
+        public void PublicConfig_EmptyExternalUrl_FallsBackToInternalSeerrBaseUrl()
         {
             var config = new PluginConfiguration
             {
-                JellyseerrUrls = "http://seerr.internal:5055",
-                JellyseerrExternalUrl = string.Empty,
+                SeerrUrls = "http://seerr.internal:5055",
+                SeerrExternalUrl = string.Empty,
             };
 
             var payload = ConfigController.BuildPublicConfigPayload(config, isAuthed: true);
 
-            Assert.Equal("http://seerr.internal:5055", GetStringField(payload, "JellyseerrBaseUrl"));
+            Assert.Equal("http://seerr.internal:5055", GetStringField(payload, "SeerrBaseUrl"));
         }
 
         [Fact]
@@ -153,7 +153,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         /// property-name order so the values are stable across runs and machines. Side effects
         /// worth knowing when reading the snapshots:
         ///  - TMDB_API_KEY becomes non-empty, so TmdbEnabled flips to true (computed field).
-        ///  - JellyseerrUrls becomes a single non-URL line, which is what JellyseerrBaseUrl
+        ///  - SeerrUrls becomes a single non-URL line, which is what SeerrBaseUrl
         ///    echoes back for authenticated callers (first-line extraction).
         ///  - SonarrInstances/RadarrInstances become unparseable JSON, which pins the
         ///    corruption behavior: empty instance lists + *InstancesCorrupt = true.

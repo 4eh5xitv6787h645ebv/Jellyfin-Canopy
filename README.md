@@ -126,7 +126,7 @@ Full documentation lives in [`docs/`](docs/) and is published at [https://4eh5xi
 
 One C# project (server) plus one TypeScript module tree (client), shipped as a single client bundle:
 
-- **`Jellyfin.Plugin.JellyfinCanopy/src/`** — the client: strict TypeScript ES modules organized by area (`core/`, `enhanced/`, `jellyseerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/`), bundled by esbuild into `dist/jc.bundle.js` on every build. `src/facade.ts` types the frozen public `window.JellyfinCanopy` surface.
+- **`Jellyfin.Plugin.JellyfinCanopy/src/`** — the client: strict TypeScript ES modules organized by area (`core/`, `enhanced/`, `seerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/`), bundled by esbuild into `dist/jc.bundle.js` on every build. `src/facade.ts` types the frozen public `window.JellyfinCanopy` surface.
 - **`Jellyfin.Plugin.JellyfinCanopy/js/`** — the loader (`plugin.js`), the translation files (`locales/`), and ambient type declarations (`core/globals.d.ts`); all feature code lives in `src/`.
 - **`Jellyfin.Plugin.JellyfinCanopy/`** (C#) — `Controllers/` (one per feature area, policy-based auth), `Configuration/` (settings registry + admin page), `Services/` (integrations, live-update pushes). Targets Jellyfin 12 / net10.0 only.
 - **`Jellyfin.Plugin.JellyfinCanopy.Tests/`** — xUnit tests incl. golden snapshots pinning the config payload and on-disk user-data formats.
@@ -174,7 +174,7 @@ How to add a feature: [CONTRIBUTING.md](CONTRIBUTING.md)
     <th>Ratings</th>
   </tr>
   <tr>
-    <td><img src="docs/images/jellyseerr.png" width="400" /></td>
+    <td><img src="docs/images/seerr.png" width="400" /></td>
     <td><img src="docs/images/ratings.png" width="400" /></td>
   </tr>
 </table>

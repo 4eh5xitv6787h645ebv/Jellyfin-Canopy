@@ -26,7 +26,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // Track which movies have already been requested to avoid duplicates (with timestamps for expiry)
         private readonly Dictionary<string, Dictionary<string, DateTime>> _requestedMovies = new();
         private readonly object _movieCacheLock = new();
-        private readonly Jellyseerr.IJellyseerrClient _jellyseerrClient;
+        private readonly Seerr.ISeerrClient _seerrClient;
 
         public AutoMovieRequestService(
             IHttpClientFactory httpClientFactory,
@@ -34,19 +34,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             IUserManager userManager,
             ILibraryManager libraryManager,
             IPluginConfigProvider configProvider,
-            Jellyseerr.IJellyseerrClient jellyseerrClient)
+            Seerr.ISeerrClient seerrClient)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _userManager = userManager;
             _libraryManager = libraryManager;
             _configProvider = configProvider;
-            _jellyseerrClient = jellyseerrClient;
+            _seerrClient = seerrClient;
         }
 
         private static string[] GetConfiguredUrls(string? urls)
         {
-            return Jellyseerr.JellyseerrClient.GetConfiguredUrls(urls);
+            return Seerr.SeerrClient.GetConfiguredUrls(urls);
         }
 
         // Checks a movie to determine if the next movie in collection should be requested.
@@ -54,7 +54,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         public async Task CheckMovieForCollectionRequestAsync(BaseItem movieItem, Guid userId)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || !config.AutoMovieRequestEnabled || !config.JellyseerrEnabled)
+            if (config == null || !config.AutoMovieRequestEnabled || !config.SeerrEnabled)
             {
                 return;
             }
@@ -96,7 +96,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             _logger.LogInformation($"[Auto-Movie-Request] '{movie.Name}' is part of {collectionInfo.Name} (TMDB collection {collectionInfo.Id})");
 
-            // Get collection details from Jellyseerr
+            // Get collection details from Seerr
             var nextMovieInfo = await GetNextMovieInCollectionAsync(collectionInfo.Id, tmdbId);
             if (nextMovieInfo == null)
             {
@@ -159,7 +159,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
         }
 
-        // Jellyseerr movie status
+        // Seerr movie status
         private class MovieStatus
         {
             public bool IsAvailable { get; set; }
@@ -180,7 +180,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             public string Title { get; set; } = string.Empty;
         }
 
-        // Quality profile settings for Jellyseerr requests
+        // Quality profile settings for Seerr requests
         private class QualityProfileSettings
         {
             public int? ServerId { get; set; }
@@ -260,19 +260,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 .ToList();
         }
 
-        // Gets next movie in collection from Jellyseerr collection endpoint
+        // Gets next movie in collection from Seerr collection endpoint
         private async Task<MovieInfo?> GetNextMovieInCollectionAsync(int collectionId, string currentTmdbId)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
+            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
                 return null;
             }
 
             try
             {
-                var urls = GetConfiguredUrls(config.JellyseerrUrls);
-                var httpClient = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+                var urls = GetConfiguredUrls(config.SeerrUrls);
+                var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
                 foreach (var url in urls)
                 {
@@ -281,13 +281,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                     try
                     {
-                        using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
-                            HttpMethod.Get, requestUrl, config.JellyseerrApiKey);
+                        using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
+                            HttpMethod.Get, requestUrl, config.SeerrApiKey);
                         using var response = await httpClient.SendAsync(request);
-                        var (content, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
+                        var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
                         if (error != null)
                         {
-                            _logger.LogDebug($"[Auto-Movie-Request] Jellyseerr collection fetch failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
+                            _logger.LogDebug($"[Auto-Movie-Request] Seerr collection fetch failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
                             continue;
                         }
 
@@ -370,40 +370,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogDebug($"[Auto-Movie-Request] Error checking Jellyseerr at {trimmedUrl}: {ex.Message}");
+                        _logger.LogDebug($"[Auto-Movie-Request] Error checking Seerr at {trimmedUrl}: {ex.Message}");
                         continue;
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"[Auto-Movie-Request] Error querying Jellyseerr collection: {ex.Message}");
+                _logger.LogWarning($"[Auto-Movie-Request] Error querying Seerr collection: {ex.Message}");
             }
 
             return null;
         }
 
-        // Gets the quality profile of a movie from its existing Jellyseerr request
+        // Gets the quality profile of a movie from its existing Seerr request
         private async Task<QualityProfileSettings?> GetOriginalMovieQualityProfileAsync(string tmdbId)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
+            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
                 return null;
             }
 
-            var urls = GetConfiguredUrls(config.JellyseerrUrls);
-            var httpClient = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+            var urls = GetConfiguredUrls(config.SeerrUrls);
+            var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
             foreach (var url in urls)
             {
                 try
                 {
                     var requestUrl = $"{url}/api/v1/movie/{tmdbId}";
-                    using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
-                        HttpMethod.Get, requestUrl, config.JellyseerrApiKey);
+                    using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
+                        HttpMethod.Get, requestUrl, config.SeerrApiKey);
                     using var response = await httpClient.SendAsync(request);
-                    var (content, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
+                    var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
                     if (error != null)
                     {
                         _logger.LogDebug($"[Auto-Movie-Request] Quality profile lookup for movie {tmdbId} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
@@ -449,7 +449,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         }
                     }
 
-                    _logger.LogDebug($"[Auto-Movie-Request] No request records found for TMDB {tmdbId} in Jellyseerr");
+                    _logger.LogDebug($"[Auto-Movie-Request] No request records found for TMDB {tmdbId} in Seerr");
                     return null;
                 }
                 catch (HttpRequestException ex)
@@ -545,26 +545,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return null;
         }
 
-        // Requests a movie from Jellyseerr
+        // Requests a movie from Seerr
         private async Task<bool> RequestMovie(string tmdbId, string jellyfinUserId, QualityProfileSettings? qualitySettings = null)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
+            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
-                _logger.LogWarning("[Auto-Movie-Request] Jellyseerr configuration is missing");
+                _logger.LogWarning("[Auto-Movie-Request] Seerr configuration is missing");
                 return false;
             }
 
-            // Get Jellyseerr user ID
-            var jellyseerrUserId = await GetJellyseerrUserId(jellyfinUserId);
-            if (string.IsNullOrEmpty(jellyseerrUserId))
+            // Get Seerr user ID
+            var seerrUserId = await GetSeerrUserId(jellyfinUserId);
+            if (string.IsNullOrEmpty(seerrUserId))
             {
-                _logger.LogWarning($"[Auto-Movie-Request] Could not find Jellyseerr user for Jellyfin user {jellyfinUserId}");
+                _logger.LogWarning($"[Auto-Movie-Request] Could not find Seerr user for Jellyfin user {jellyfinUserId}");
                 return false;
             }
 
-            var urls = GetConfiguredUrls(config.JellyseerrUrls);
-            var httpClient = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+            var urls = GetConfiguredUrls(config.SeerrUrls);
+            var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
             foreach (var url in urls)
             {
@@ -592,10 +592,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                     var jsonContent = JsonSerializer.Serialize(requestBody);
 
-                    using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
-                        HttpMethod.Post, requestUri, config.JellyseerrApiKey, jellyseerrUserId, jsonContent);
+                    using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
+                        HttpMethod.Post, requestUri, config.SeerrApiKey, seerrUserId, jsonContent);
                     using var response = await httpClient.SendAsync(request);
-                    var (responseContent, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+                    var (responseContent, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
 
                     if (error == null)
                     {
@@ -604,10 +604,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     // Seerr already has this request (409) — idempotent success, stop here.
                     if (AutoRequest.AutoRequestRetryPolicy.IsAlreadyRequested(error))
                     {
-                        _logger.LogInformation($"[Auto-Movie-Request] Movie already requested on Jellyseerr (409) at {url} — treating as success.");
+                        _logger.LogInformation($"[Auto-Movie-Request] Movie already requested on Seerr (409) at {url} — treating as success.");
                         return true;
                     }
-                    _logger.LogWarning($"[Auto-Movie-Request] Jellyseerr request failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                    _logger.LogWarning($"[Auto-Movie-Request] Seerr request failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
                     // A server that RESPONDED (any real status) may already have committed the
                     // request; do not re-POST it to another backend. Only fail over on a pure
                     // transport failure (no commit possible).
@@ -618,20 +618,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError($"[Auto-Movie-Request] Exception requesting movie from Jellyseerr at {url}: {ex.Message}");
+                    _logger.LogError($"[Auto-Movie-Request] Exception requesting movie from Seerr at {url}: {ex.Message}");
                 }
             }
 
             return false;
         }
 
-        // Gets the Jellyseerr user ID for a Jellyfin user
-        private Task<string?> GetJellyseerrUserId(string jellyfinUserId)
+        // Gets the Seerr user ID for a Jellyfin user
+        private Task<string?> GetSeerrUserId(string jellyfinUserId)
         {
             // allowAutoImport: false — background monitors must never create
             // Seerr users as a side effect of playback (matches the former
-            // JellyseerrUserResolver semantics: lookup only, no import).
-            return _jellyseerrClient.GetJellyseerrUserId(jellyfinUserId, allowAutoImport: false);
+            // SeerrUserResolver semantics: lookup only, no import).
+            return _seerrClient.GetSeerrUserId(jellyfinUserId, allowAutoImport: false);
         }
 
         // Clears the request cache (useful for testing or resetting)

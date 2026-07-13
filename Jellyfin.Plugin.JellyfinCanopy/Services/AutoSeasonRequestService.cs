@@ -27,7 +27,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // In-memory cache of recently requested seasons to avoid duplicates (keyed by tmdbId_seasonNumber, global across all users)
         private readonly Dictionary<string, DateTime> _requestedSeasons = new();
         private readonly object _requestCacheLock = new();
-        private readonly Jellyseerr.IJellyseerrClient _jellyseerrClient;
+        private readonly Seerr.ISeerrClient _seerrClient;
         private readonly Dictionary<string, (string Content, DateTime CachedAt)> _seriesDetailsCache = new();
         private readonly object _seriesDetailsCacheLock = new();
         private readonly ConcurrentDictionary<string, Task<string?>> _seriesDetailsInFlight = new();
@@ -39,7 +39,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             IUserDataManager userDataManager,
             ILibraryManager libraryManager,
             IPluginConfigProvider configProvider,
-            Jellyseerr.IJellyseerrClient jellyseerrClient)
+            Seerr.ISeerrClient seerrClient)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
@@ -47,32 +47,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _userDataManager = userDataManager;
             _libraryManager = libraryManager;
             _configProvider = configProvider;
-            _jellyseerrClient = jellyseerrClient;
+            _seerrClient = seerrClient;
         }
 
         private static string[] GetConfiguredUrls(string? urls)
         {
-            return Jellyseerr.JellyseerrClient.GetConfiguredUrls(urls);
+            return Seerr.SeerrClient.GetConfiguredUrls(urls);
         }
 
         // instance method (was static) because config is now read through the injected provider
         private TimeSpan GetSeriesDetailsCacheTtl()
         {
-            var minutes = _configProvider.ConfigurationOrNull?.JellyseerrResponseCacheTtlMinutes ?? 10;
+            var minutes = _configProvider.ConfigurationOrNull?.SeerrResponseCacheTtlMinutes ?? 10;
             return TimeSpan.FromMinutes(Math.Max(1, minutes));
         }
 
         private async Task<string?> GetSeriesDetailsJsonAsync(string tmdbId)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
+            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
                 return null;
             }
 
             var cacheKey = tmdbId;
             var cacheTtl = GetSeriesDetailsCacheTtl();
-            var cacheEnabled = !config.JellyseerrDisableCache;
+            var cacheEnabled = !config.SeerrDisableCache;
 
             if (cacheEnabled)
             {
@@ -88,18 +88,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             async Task<string?> FetchAsync()
             {
-                var urls = GetConfiguredUrls(config.JellyseerrUrls);
-                var httpClient = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+                var urls = GetConfiguredUrls(config.SeerrUrls);
+                var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
                 foreach (var url in urls)
                 {
                     try
                     {
                         var requestUrl = $"{url}/api/v1/tv/{tmdbId}";
-                        using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
-                            HttpMethod.Get, requestUrl, config.JellyseerrApiKey);
+                        using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
+                            HttpMethod.Get, requestUrl, config.SeerrApiKey);
                         using var response = await httpClient.SendAsync(request);
-                        var (content, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
+                        var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
                         if (error != null)
                         {
                             _logger.LogDebug($"[Auto-Season-Request] Series details fetch for TMDB {tmdbId} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
@@ -110,7 +110,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogDebug($"[Auto-Season-Request] Error checking Jellyseerr at {url}: {ex.Message}");
+                        _logger.LogDebug($"[Auto-Season-Request] Error checking Seerr at {url}: {ex.Message}");
                     }
                 }
 
@@ -151,7 +151,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         public async Task CheckEpisodeCompletionAsync(BaseItem episodeItem, Guid userId)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || !config.AutoSeasonRequestEnabled || !config.JellyseerrEnabled)
+            if (config == null || !config.AutoSeasonRequestEnabled || !config.SeerrEnabled)
             {
                 return;
             }
@@ -188,7 +188,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
-            // Get TMDB ID first - we'll need it for Jellyseerr checks
+            // Get TMDB ID first - we'll need it for Seerr checks
             var tmdbId = GetTmdbId(series);
             if (string.IsNullOrEmpty(tmdbId))
             {
@@ -196,7 +196,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
-            // Get the total episode count for this season from TMDB/Jellyseerr
+            // Get the total episode count for this season from TMDB/Seerr
             var totalEpisodesInSeason = await GetTotalEpisodesInSeasonFromTmdb(tmdbId, currentSeasonNumber);
             if (totalEpisodesInSeason == null || totalEpisodesInSeason <= 0)
             {
@@ -312,10 +312,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
-            // Check Jellyseerr for season availability/status - always query to get latest status
-            var jellyseerrStatus = await GetSeasonStatusFromJellyseerr(tmdbId, nextSeasonNumber);
+            // Check Seerr for season availability/status - always query to get latest status
+            var seerrStatus = await GetSeasonStatusFromSeerr(tmdbId, nextSeasonNumber);
 
-            if (jellyseerrStatus == null)
+            if (seerrStatus == null)
             {
                 _logger.LogDebug($"[Auto-Season-Request] Season {nextSeasonNumber} does not exist for '{series.Name}' (not available on TMDB)");
                 lock (_requestCacheLock)
@@ -325,15 +325,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
-            if (jellyseerrStatus.IsAvailable)
+            if (seerrStatus.IsAvailable)
             {
                 _logger.LogDebug($"[Auto-Season-Request] Season {nextSeasonNumber} already available on Jellyfin for '{series.Name}'");
                 return;
             }
 
-            if (jellyseerrStatus.IsRequested)
+            if (seerrStatus.IsRequested)
             {
-                _logger.LogDebug($"[Auto-Season-Request] Season {nextSeasonNumber} already requested in Jellyseerr for '{series.Name}'");
+                _logger.LogDebug($"[Auto-Season-Request] Season {nextSeasonNumber} already requested in Seerr for '{series.Name}'");
                 return;
             }
 
@@ -359,7 +359,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private async Task<int?> GetTotalEpisodesInSeasonFromTmdb(string tmdbId, int seasonNumber)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
+            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
                 return null;
             }
@@ -409,26 +409,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return null;
         }
 
-        // Jellyseerr season status
+        // Seerr season status
         private class SeasonStatus
         {
             public bool IsAvailable { get; set; }
             public bool IsRequested { get; set; }
         }
 
-        // Gets season status from Jellyseerr - always fetches fresh to ensure accurate request/availability state
-        private async Task<SeasonStatus?> GetSeasonStatusFromJellyseerr(string tmdbId, int seasonNumber)
+        // Gets season status from Seerr - always fetches fresh to ensure accurate request/availability state
+        private async Task<SeasonStatus?> GetSeasonStatusFromSeerr(string tmdbId, int seasonNumber)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
+            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
                 return null;
             }
 
             try
             {
-                var urls = GetConfiguredUrls(config.JellyseerrUrls);
-                var httpClient = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+                var urls = GetConfiguredUrls(config.SeerrUrls);
+                var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
                 string? content = null;
                 foreach (var url in urls)
@@ -436,10 +436,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     try
                     {
                         var requestUrl = $"{url}/api/v1/tv/{tmdbId}";
-                        using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
-                            HttpMethod.Get, requestUrl, config.JellyseerrApiKey);
+                        using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
+                            HttpMethod.Get, requestUrl, config.SeerrApiKey);
                         using var response = await httpClient.SendAsync(request);
-                        var (body, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
+                        var (body, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
                         if (error != null)
                         {
                             _logger.LogDebug($"[Auto-Season-Request] Status check for TMDB {tmdbId} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
@@ -467,7 +467,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     if (root.TryGetProperty("numberOfSeasons", out var totalSeasonsProp))
                     {
                         var totalSeasons = totalSeasonsProp.GetInt32();
-                        _logger.LogInformation($"[Auto-Season-Request] Jellyseerr reports {totalSeasons} total seasons for TMDB ID {tmdbId}");
+                        _logger.LogInformation($"[Auto-Season-Request] Seerr reports {totalSeasons} total seasons for TMDB ID {tmdbId}");
                         if (seasonNumber > totalSeasons)
                         {
                             _logger.LogInformation($"[Auto-Season-Request] Season {seasonNumber} does not exist on TMDB - show only has {totalSeasons} season(s)");
@@ -479,7 +479,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     if (root.TryGetProperty("mediaInfo", out var mediaInfoElement) &&
                         mediaInfoElement.TryGetProperty("requests", out var requestsArray))
                     {
-                        _logger.LogInformation($"[Auto-Season-Request] Jellyseerr reports {requestsArray.GetArrayLength()} request(s) for TMDB ID {tmdbId}");
+                        _logger.LogInformation($"[Auto-Season-Request] Seerr reports {requestsArray.GetArrayLength()} request(s) for TMDB ID {tmdbId}");
                         foreach (var request in requestsArray.EnumerateArray())
                         {
                             if (request.TryGetProperty("seasons", out var requestSeasons))
@@ -515,24 +515,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                                 {
                                     var statusValue = statusProp.GetInt32();
                                     status.IsAvailable = statusValue == 5;
-                                    _logger.LogInformation($"[Auto-Season-Request] Jellyseerr Season {seasonNumber} raw status code: {statusValue} (5 = available)");
+                                    _logger.LogInformation($"[Auto-Season-Request] Seerr Season {seasonNumber} raw status code: {statusValue} (5 = available)");
                                 }
 
                                 status.IsRequested = hasRequest;
 
-                                _logger.LogInformation($"[Auto-Season-Request] Season {seasonNumber} final status from Jellyseerr: Available={status.IsAvailable}, Requested={status.IsRequested}");
+                                _logger.LogInformation($"[Auto-Season-Request] Season {seasonNumber} final status from Seerr: Available={status.IsAvailable}, Requested={status.IsRequested}");
                                 return status;
                             }
                         }
                     }
                 }
 
-                _logger.LogInformation($"[Auto-Season-Request] Season {seasonNumber} not found in Jellyseerr response");
+                _logger.LogInformation($"[Auto-Season-Request] Season {seasonNumber} not found in Seerr response");
                 return null;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"[Auto-Season-Request] Error querying Jellyseerr: {ex.Message}");
+                _logger.LogWarning($"[Auto-Season-Request] Error querying Seerr: {ex.Message}");
             }
 
             return null;
@@ -569,26 +569,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return null;
         }
 
-        // Requests the next season from Jellyseerr
+        // Requests the next season from Seerr
         private async Task<bool> RequestNextSeason(string tmdbId, int seasonNumber, string jellyfinUserId)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
+            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
-                _logger.LogWarning("[Auto-Season-Request] Jellyseerr configuration is missing");
+                _logger.LogWarning("[Auto-Season-Request] Seerr configuration is missing");
                 return false;
             }
 
-            // Get Jellyseerr user ID
-            var jellyseerrUserId = await GetJellyseerrUserId(jellyfinUserId);
-            if (string.IsNullOrEmpty(jellyseerrUserId))
+            // Get Seerr user ID
+            var seerrUserId = await GetSeerrUserId(jellyfinUserId);
+            if (string.IsNullOrEmpty(seerrUserId))
             {
-                _logger.LogWarning($"[Auto-Season-Request] Could not find Jellyseerr user for Jellyfin user {jellyfinUserId}");
+                _logger.LogWarning($"[Auto-Season-Request] Could not find Seerr user for Jellyfin user {jellyfinUserId}");
                 return false;
             }
 
-            var urls = GetConfiguredUrls(config.JellyseerrUrls);
-            var httpClient = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+            var urls = GetConfiguredUrls(config.SeerrUrls);
+            var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
             foreach (var url in urls)
             {
@@ -605,10 +605,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                     var jsonContent = JsonSerializer.Serialize(requestBody);
 
-                    using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(
-                        HttpMethod.Post, requestUri, config.JellyseerrApiKey, jellyseerrUserId, jsonContent);
+                    using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
+                        HttpMethod.Post, requestUri, config.SeerrApiKey, seerrUserId, jsonContent);
                     using var response = await httpClient.SendAsync(request);
-                    var (responseContent, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+                    var (responseContent, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
 
                     if (error == null)
                     {
@@ -617,10 +617,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     // Seerr already has this request (409) — idempotent success, stop here.
                     if (AutoRequest.AutoRequestRetryPolicy.IsAlreadyRequested(error))
                     {
-                        _logger.LogInformation($"[Auto-Season-Request] Season already requested on Jellyseerr (409) at {url} — treating as success.");
+                        _logger.LogInformation($"[Auto-Season-Request] Season already requested on Seerr (409) at {url} — treating as success.");
                         return true;
                     }
-                    _logger.LogWarning($"[Auto-Season-Request] Jellyseerr request failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                    _logger.LogWarning($"[Auto-Season-Request] Seerr request failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
                     // A server that RESPONDED (any real status) may already have committed the
                     // request; do not re-POST it to another backend. Only fail over on a pure
                     // transport failure (no commit possible).
@@ -631,20 +631,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError($"[Auto-Season-Request] Exception requesting season from Jellyseerr at {url}: {ex.Message}");
+                    _logger.LogError($"[Auto-Season-Request] Exception requesting season from Seerr at {url}: {ex.Message}");
                 }
             }
 
             return false;
         }
 
-        // Gets the Jellyseerr user ID for a Jellyfin user
-        private Task<string?> GetJellyseerrUserId(string jellyfinUserId)
+        // Gets the Seerr user ID for a Jellyfin user
+        private Task<string?> GetSeerrUserId(string jellyfinUserId)
         {
             // allowAutoImport: false — background monitors must never create
             // Seerr users as a side effect of playback (matches the former
-            // JellyseerrUserResolver semantics: lookup only, no import).
-            return _jellyseerrClient.GetJellyseerrUserId(jellyfinUserId, allowAutoImport: false);
+            // SeerrUserResolver semantics: lookup only, no import).
+            return _seerrClient.GetSeerrUserId(jellyfinUserId, allowAutoImport: false);
         }
     }
 }

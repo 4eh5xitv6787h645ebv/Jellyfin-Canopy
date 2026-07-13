@@ -16,7 +16,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Services;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 {
-    // Scheduled task that syncs Jellyfin watchlist items to Jellyseerr watchlist.
+    // Scheduled task that syncs Jellyfin watchlist items to Seerr watchlist.
     public class JellyfinToSeerrWatchlistSyncTask : IScheduledTask
     {
         private readonly ILibraryManager _libraryManager;
@@ -69,16 +69,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
         {
             var config = _configProvider.ConfigurationOrNull;
 
-            if (config == null || !config.SyncJellyfinWatchlistToSeerr || !config.JellyseerrEnabled)
+            if (config == null || !config.SyncJellyfinWatchlistToSeerr || !config.SeerrEnabled)
             {
                 _logger.LogInformation("[Jellyfin→Seerr Watchlist Sync] Sync is disabled in plugin configuration.");
                 progress?.Report(100);
                 return;
             }
 
-            if (string.IsNullOrEmpty(config.JellyseerrUrls) || string.IsNullOrEmpty(config.JellyseerrApiKey))
+            if (string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
-                _logger.LogWarning("[Jellyfin→Seerr Watchlist Sync] Jellyseerr URL or API key not configured.");
+                _logger.LogWarning("[Jellyfin→Seerr Watchlist Sync] Seerr URL or API key not configured.");
                 progress?.Report(100);
                 return;
             }
@@ -86,26 +86,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             _logger.LogInformation("[Jellyfin→Seerr Watchlist Sync] Starting sync task...");
             progress?.Report(0);
 
-            var urls = config.JellyseerrUrls.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            var jellyseerrUrl = urls.FirstOrDefault()?.Trim();
+            var urls = config.SeerrUrls.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var seerrUrl = urls.FirstOrDefault()?.Trim();
 
-            if (string.IsNullOrEmpty(jellyseerrUrl))
+            if (string.IsNullOrEmpty(seerrUrl))
             {
-                _logger.LogWarning("[Jellyfin→Seerr Watchlist Sync] No valid Jellyseerr URL found.");
+                _logger.LogWarning("[Jellyfin→Seerr Watchlist Sync] No valid Seerr URL found.");
                 progress?.Report(100);
                 return;
             }
 
-            var httpClient = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+            var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
-            var jellyseerrUserMap = await GetJellyseerrUserMap(httpClient, jellyseerrUrl, config.JellyseerrApiKey);
-            if (jellyseerrUserMap.Count == 0)
+            var seerrUserMap = await GetSeerrUserMap(httpClient, seerrUrl, config.SeerrApiKey);
+            if (seerrUserMap.Count == 0)
             {
-                _logger.LogWarning("[Jellyfin→Seerr Watchlist Sync] Unable to build Jellyseerr user map.");
+                _logger.LogWarning("[Jellyfin→Seerr Watchlist Sync] Unable to build Seerr user map.");
             }
 
-            var blockedIds = Helpers.Jellyseerr.JellyseerrUserImportHelper
-                .GetBlockedUserIds(config.JellyseerrImportBlockedUsers);
+            var blockedIds = Helpers.Seerr.SeerrUserImportHelper
+                .GetBlockedUserIds(config.SeerrImportBlockedUsers);
             var allUsers = _userManager.GetUsers().ToList();
             var jellyfinUsers = allUsers
                 .Where(u => !blockedIds.Contains(u.Id.ToString().Replace("-", ""), StringComparer.OrdinalIgnoreCase))
@@ -148,9 +148,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                     _logger.LogInformation($"[Jellyfin→Seerr Watchlist Sync] Processing user: {jellyfinUser.Username}");
 
                     var normalizedUserId = NormalizeUserId(jellyfinUser.Id.ToString());
-                    jellyseerrUserMap.TryGetValue(normalizedUserId, out var jellyseerrUserId);
+                    seerrUserMap.TryGetValue(normalizedUserId, out var seerrUserId);
 
-                    if (string.IsNullOrEmpty(jellyseerrUserId))
+                    if (string.IsNullOrEmpty(seerrUserId))
                     {
                         _logger.LogWarning($"[Jellyfin→Seerr Watchlist Sync] No Seerr account linked for user: {jellyfinUser.Username}");
                         processedUsers++;
@@ -171,7 +171,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                     }
 
                     // Get this user's current Seerr watchlist to avoid duplicates
-                    var seerrWatchlist = await GetSeerrWatchlist(httpClient, jellyseerrUrl, jellyseerrUserId, config.JellyseerrApiKey);
+                    var seerrWatchlist = await GetSeerrWatchlist(httpClient, seerrUrl, seerrUserId, config.SeerrApiKey);
                     var seerrWatchlistKeys = new HashSet<string>(
                         seerrWatchlist.Select(i => $"{i.MediaType}:{i.TmdbId}"),
                         StringComparer.OrdinalIgnoreCase);
@@ -199,7 +199,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                         }
 
                         var result = await AddToSeerrWatchlist(
-                            httpClient, jellyseerrUrl, jellyseerrUserId, config.JellyseerrApiKey,
+                            httpClient, seerrUrl, seerrUserId, config.SeerrApiKey,
                             int.Parse(tmdbIdStr), mediaType, item.Name ?? "");
 
                         if (result == 1)
@@ -239,7 +239,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
         private static string NormalizeUserId(string? userId)
             => string.IsNullOrEmpty(userId) ? string.Empty : userId.Replace("-", string.Empty);
 
-        private async Task<Dictionary<string, string>> GetJellyseerrUserMap(HttpClient httpClient, string jellyseerrUrl, string apiKey)
+        private async Task<Dictionary<string, string>> GetSeerrUserMap(HttpClient httpClient, string seerrUrl, string apiKey)
         {
             var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             const int pageSize = 1000;
@@ -250,10 +250,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             {
                 while (true)
                 {
-                    var requestUri = $"{jellyseerrUrl.TrimEnd('/')}/api/v1/user?take={pageSize}&skip={skip}";
-                    using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, apiKey);
+                    var requestUri = $"{seerrUrl.TrimEnd('/')}/api/v1/user?take={pageSize}&skip={skip}";
+                    using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, apiKey);
                     using var response = await httpClient.SendAsync(request);
-                    var (content, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+                    var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
 
                     if (error != null)
                     {
@@ -292,7 +292,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             return result;
         }
 
-        private async Task<List<SeerrWatchlistItem>> GetSeerrWatchlist(HttpClient httpClient, string jellyseerrUrl, string jellyseerrUserId, string apiKey)
+        private async Task<List<SeerrWatchlistItem>> GetSeerrWatchlist(HttpClient httpClient, string seerrUrl, string seerrUserId, string apiKey)
         {
             var items = new List<SeerrWatchlistItem>();
             const int pageSize = 100;
@@ -302,10 +302,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             {
                 while (true)
                 {
-                    var requestUri = $"{jellyseerrUrl.TrimEnd('/')}/api/v1/user/{jellyseerrUserId}/watchlist?take={pageSize}&page={page}";
-                    using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, apiKey, jellyseerrUserId);
+                    var requestUri = $"{seerrUrl.TrimEnd('/')}/api/v1/user/{seerrUserId}/watchlist?take={pageSize}&page={page}";
+                    using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, apiKey, seerrUserId);
                     using var response = await httpClient.SendAsync(request);
-                    var (content, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+                    var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
 
                     if (error != null)
                     {
@@ -340,15 +340,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
         }
 
         // Returns: 1 = added, 0 = already present, -1 = error
-        private async Task<int> AddToSeerrWatchlist(HttpClient httpClient, string jellyseerrUrl, string jellyseerrUserId, string apiKey, int tmdbId, string mediaType, string title)
+        private async Task<int> AddToSeerrWatchlist(HttpClient httpClient, string seerrUrl, string seerrUserId, string apiKey, int tmdbId, string mediaType, string title)
         {
             try
             {
-                var requestUri = $"{jellyseerrUrl.TrimEnd('/')}/api/v1/watchlist";
+                var requestUri = $"{seerrUrl.TrimEnd('/')}/api/v1/watchlist";
                 var body = JsonSerializer.Serialize(new { tmdbId, mediaType, title });
-                using var request = Helpers.Jellyseerr.SeerrHttpHelper.BuildRequest(HttpMethod.Post, requestUri, apiKey, jellyseerrUserId, body);
+                using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(HttpMethod.Post, requestUri, apiKey, seerrUserId, body);
                 using var response = await httpClient.SendAsync(request);
-                var (_, error) = await Helpers.Jellyseerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+                var (_, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
 
                 if (error != null)
                 {

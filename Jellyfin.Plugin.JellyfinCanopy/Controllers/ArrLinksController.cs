@@ -26,8 +26,8 @@ using System.Text.Json.Nodes;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using MediaBrowser.Controller;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
-using Jellyfin.Plugin.JellyfinCanopy.Model.Jellyseerr;
-using Jellyfin.Plugin.JellyfinCanopy.Helpers.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model;
 using MediaBrowser.Controller.Persistence;
@@ -35,7 +35,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
 using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
-using Jellyfin.Plugin.JellyfinCanopy.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Microsoft.Extensions.Logging;
 using MediaBrowser.Common.Api;
@@ -94,7 +94,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             // page — must surface as a failure the admin can see, not be silently
             // followed. The API key is attached per-request, never via
             // DefaultRequestHeaders on a factory client.
-            var http = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+            var http = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
             http.Timeout = TimeSpan.FromSeconds(10);
 
             try
@@ -132,7 +132,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             if (!IsAllowedUrl(url))
                 return BadRequest(new { reachable = false, service = "unknown" });
 
-            var http = Helpers.Jellyseerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+            var http = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
             http.Timeout = TimeSpan.FromSeconds(5);
             var cleanUrl = url.TrimEnd('/');
 
@@ -184,7 +184,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             catch (HttpRequestException) { /* continue to next service probe */ }
             catch (TaskCanceledException) { /* continue to next service probe */ }
 
-            // Try Jellyseerr (/api/v1/status — returns JSON)
+            // Try Seerr (/api/v1/status — returns JSON)
             try
             {
                 using var resp = await http.GetAsync($"{cleanUrl}/api/v1/status");
@@ -221,7 +221,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                             return Ok(new { reachable = true, service = "Radarr" });
                         if (title.Contains("Bazarr", StringComparison.OrdinalIgnoreCase))
                             return Ok(new { reachable = true, service = "Bazarr" });
-                        if (title.Contains("Jellyseerr", StringComparison.OrdinalIgnoreCase)
+                        if (title.Contains("Seerr", StringComparison.OrdinalIgnoreCase)
                             || title.Contains("Overseerr", StringComparison.OrdinalIgnoreCase))
                             return Ok(new { reachable = true, service = "Seerr" });
                         if (title.Contains("Jellyfin", StringComparison.OrdinalIgnoreCase))

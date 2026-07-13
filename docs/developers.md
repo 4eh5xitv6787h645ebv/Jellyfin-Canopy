@@ -273,7 +273,7 @@ The plugin exposes proxy endpoints for [Seerr](discover.md).
 ```bash
 curl -X GET \
   -H "Authorization: MediaBrowser Token=\"<API_KEY>\"" \
-  "<JELLYFIN_URL>/JellyfinCanopy/jellyseerr/status"
+  "<JELLYFIN_URL>/JellyfinCanopy/seerr/status"
 ```
 
 **Check user status.** Verifies that the currently logged-in Jellyfin user is successfully linked to a Seerr user account:
@@ -282,7 +282,7 @@ curl -X GET \
 curl -X GET \
   -H "Authorization: MediaBrowser Token=\"<JELLYFIN_API_KEY>\"" \
   -H "X-Jellyfin-User-Id: <JELLYFIN_USER_ID>" \
-  "<JELLYFIN_ADDRESS>/JellyfinCanopy/jellyseerr/user-status"
+  "<JELLYFIN_ADDRESS>/JellyfinCanopy/seerr/user-status"
 ```
 
 **Perform a Seerr search.** Executes a search query through the Seerr instance for the specified user:
@@ -291,7 +291,7 @@ curl -X GET \
 curl -X GET \
   -H "Authorization: MediaBrowser Token=\"<API_KEY>\"" \
   -H "X-Jellyfin-User-Id: <USER_ID>" \
-  "<JELLYFIN_URL>/JellyfinCanopy/jellyseerr/search?query=Inception"
+  "<JELLYFIN_URL>/JellyfinCanopy/seerr/search?query=Inception"
 ```
 
 **Make a request on Seerr.** Submits a media request to Seerr on behalf of the specified user. `mediaType` can be `tv` or `movie`; `mediaId` is the **TMDB ID** of the item:
@@ -302,7 +302,7 @@ curl -X POST \
   -H "X-Jellyfin-User-Id: <USER_ID>" \
   -H "Content-Type: application/json" \
   -d '{"mediaType": "movie", "mediaId": 27205}' \
-  "<JELLYFIN_URL>/JellyfinCanopy/jellyseerr/request"
+  "<JELLYFIN_URL>/JellyfinCanopy/seerr/request"
 ```
 
 ### Admin hidden-content API
@@ -450,7 +450,7 @@ ensureInjected(
 );
 ```
 
-**In the tree:** `src/core/dom-observer.ts` (`runPrePaintInjectors`), `src/core/ui-kit.ts` (`expandIn`), `src/enhanced/features/random-button.ts` (header-tray button), `src/enhanced/features/details-media-info.ts` (chips reserve their typical final width — progress ring, file size, flags with explicit width *and* height), `src/jellyseerr/issue-reporter.ts` (reserved-space entrance), `src/enhanced/native-tabs.ts` (one-time boot entrance).
+**In the tree:** `src/core/dom-observer.ts` (`runPrePaintInjectors`), `src/core/ui-kit.ts` (`expandIn`), `src/enhanced/features/random-button.ts` (header-tray button), `src/enhanced/features/details-media-info.ts` (chips reserve their typical final width — progress ring, file size, flags with explicit width *and* height), `src/seerr/issue-reporter.ts` (reserved-space entrance), `src/enhanced/native-tabs.ts` (one-time boot entrance).
 
 ### R2 — Overlays over in-flow
 
@@ -460,7 +460,7 @@ ensureInjected(
 
 **The pattern to copy:** the overlay container is positioned absolute against the card; the host is promoted to `position:relative` only if it is `static`.
 
-**In the tree:** `src/core/tag-renderer-base.ts` + `src/tags/*` (all four overlay families), `src/jellyseerr/issue-reporter.ts` (issue badge over the poster).
+**In the tree:** `src/core/tag-renderer-base.ts` + `src/tags/*` (all four overlay families), `src/seerr/issue-reporter.ts` (issue badge over the poster).
 
 ### R3 — Observer budget
 
@@ -502,7 +502,7 @@ function getContainer(): HTMLElement | null {
 }
 ```
 
-**In the tree:** `src/enhanced/helpers.ts` (`getHeaderRightContainer` per-nav cache), `src/jellyseerr/seamless-scroll.ts` (IntersectionObserver only — it exists precisely to avoid layout reads on scroll).
+**In the tree:** `src/enhanced/helpers.ts` (`getHeaderRightContainer` per-nav cache), `src/seerr/seamless-scroll.ts` (IntersectionObserver only — it exists precisely to avoid layout reads on scroll).
 
 ### R5 — No polling
 
@@ -554,7 +554,7 @@ const data = await dataPromise;
 overlay.classList.add('jc-tag-fadein');   // late data: opacity-only entrance
 ```
 
-**In the tree:** `src/elsewhere/elsewhere.ts` (single insert with content — the old flow inserted empty and filled in), `src/arr/arr-links.ts` (all link buttons collect into a fragment; the whole row lands in one reflow), `src/jellyseerr/item-details.ts` (sections built fully off-DOM, cards included), `src/enhanced/tag-pipeline.ts` (async passes fade tags in).
+**In the tree:** `src/elsewhere/elsewhere.ts` (single insert with content — the old flow inserted empty and filled in), `src/arr/arr-links.ts` (all link buttons collect into a fragment; the whole row lands in one reflow), `src/seerr/item-details.ts` (sections built fully off-DOM, cards included), `src/enhanced/tag-pipeline.ts` (async passes fade tags in).
 
 ### R8 — Sync work budget
 
@@ -608,7 +608,7 @@ function waitForAnchor(signal: AbortSignal): Promise<HTMLElement | null> {
 
 **Boundaries.** R9 does not license unbounded retries or standing timers: retries carry an attempt cap or `Date.now()` budget (leak-guard-enforced), waits are torn down on navigation, and polling — where a mutation signal genuinely doesn't exist — still obeys R5 (page-scoped, visibility-gated, decaying interval). R9 changes what happens at the *end* of a bounded effort: degrade gracefully and stay recoverable, never poison state.
 
-**In the tree:** `src/jellyseerr/discovery/filter-utils.ts` + `src/jellyseerr/item-details.ts` (`waitForPageReady`/`waitForDetailPageReady` — until-nav waits, unique waiter ids), `src/enhanced/features/details-page.ts` (item-type fetch retry), `src/enhanced/features/details-media-info.ts` + `src/enhanced/features/release-dates.ts` (`ERROR_CACHE_TTL` vs answer TTL, in-place bounded retries), `src/jellyseerr/api.ts` (transport-error status TTL ≪ genuine-negative TTL), `src/jellyseerr/issue-reporter.ts` (lazy status re-verification; per-view bounded retries), `src/elsewhere/reviews.ts` (nav-guarded decaying visibility poll — the page unhide is a class flip the structural body observer deliberately drops, so no mutation signal exists to wait on), `src/arr/arr-links.ts` (boot init retained across a slow login), `src/others/letterboxd-links.ts` + `src/enhanced/tag-pipeline.ts` (processed-set un-poisoning). Grep `PERF(R9)`.
+**In the tree:** `src/seerr/discovery/filter-utils.ts` + `src/seerr/item-details.ts` (`waitForPageReady`/`waitForDetailPageReady` — until-nav waits, unique waiter ids), `src/enhanced/features/details-page.ts` (item-type fetch retry), `src/enhanced/features/details-media-info.ts` + `src/enhanced/features/release-dates.ts` (`ERROR_CACHE_TTL` vs answer TTL, in-place bounded retries), `src/seerr/api.ts` (transport-error status TTL ≪ genuine-negative TTL), `src/seerr/issue-reporter.ts` (lazy status re-verification; per-view bounded retries), `src/elsewhere/reviews.ts` (nav-guarded decaying visibility poll — the page unhide is a class flip the structural body observer deliberately drops, so no mutation signal exists to wait on), `src/arr/arr-links.ts` (boot init retained across a slow login), `src/others/letterboxd-links.ts` + `src/enhanced/tag-pipeline.ts` (processed-set un-poisoning). Grep `PERF(R9)`.
 
 ### Server-side rules
 
@@ -769,7 +769,7 @@ Pass them raw text, interpolate their result raw. If you add a producer like the
 
 URL-ish values from item/API data (`posterUrl`, `href` targets, image `src`) use `escapeHtml(...)` like any other class-(c) value — that is the convention today, and it neutralizes attribute breakout. What it does **not** do is validate the URL itself (`javascript:` schemes in an `href` survive escaping). Scheme/shape validation is tracked as future work; the model to copy already exists in the tree:
 
-- **`isSafePosterPath`** (`src/jellyseerr/ui/cards.ts`) — validates a TMDB poster path against the exact shape TMDB returns (`/name.jpg`) before it enters a CSS `url('...')` context, with a local-asset fallback otherwise. The guard recognizes `isSafe*(x) ? ...x... : fallback` and treats the validated value as safe in the true branch.
+- **`isSafePosterPath`** (`src/seerr/ui/cards.ts`) — validates a TMDB poster path against the exact shape TMDB returns (`/name.jpg`) before it enters a CSS `url('...')` context, with a local-asset fallback otherwise. The guard recognizes `isSafe*(x) ? ...x... : fallback` and treats the validated value as safe in the true branch.
 - **`isCssColor` / `cssColorOr`** (`src/core/css-safe.ts`) — the same idea for CSS color values entering a style attribute or stylesheet rule; see [X2](#x2-sanitize-css-context-values).
 
 New user-influenced URLs in `href`/`src` positions should prefer a validator of this shape over bare `escapeHtml`.
@@ -780,7 +780,7 @@ New user-influenced URLs in `href`/`src` positions should prefer a validator of 
 
 **Enforced.** `src/test/escape-guard.test.ts` parses every shipped `src/**/*.ts` file with the TypeScript compiler API on each `npm run test:client` and classifies **every interpolation in every HTML-bearing template literal**, plus the arguments of `toast(...)`, `insertAdjacentHTML(...)`, `innerHTML`/`outerHTML` assignments, and HTML string concatenation. An interpolation that is not recognizably one of the three classes fails the build with its `file:line` and expression text. It resolves local `const`/`let` values, tracks builder functions across files (a builder that interpolates a bare parameter raw obligates *every call site* to pass a safe value), understands `.map(...).join(...)` over constant tables, validator guards, and the producers above. Genuinely-safe-but-unprovable expressions live in a small justified allowlist **inside the test file**; a stale entry fails a companion test, so the list cannot rot. If the guard fails on your code, fix it in this order: `escapeHtml(...)` → `Number(x) || 0` → route through a recognized producer → (last resort, with justification) allowlist. The allowlist is **line-pinned** — each entry names the exact `file:line` it covers and must match exactly one finding there, so an entry can never silently blanket a *new* interpolation added elsewhere in the same file.
 
-**In the tree:** `src/core/ui-kit.ts` (`escapeHtml`, `toast`), `src/arr/requests/render-cards.ts` + `src/jellyseerr/more-info-modal/render.ts` (escaped card/modal builders with hostile-payload unit tests alongside), `src/jellyseerr/ui/cards.ts` (`isSafePosterPath`), `src/bootstrap/splashscreen.ts` (the sanctioned local escaper), `src/test/escape-guard.test.ts` (the guard).
+**In the tree:** `src/core/ui-kit.ts` (`escapeHtml`, `toast`), `src/arr/requests/render-cards.ts` + `src/seerr/more-info-modal/render.ts` (escaped card/modal builders with hostile-payload unit tests alongside), `src/seerr/ui/cards.ts` (`isSafePosterPath`), `src/bootstrap/splashscreen.ts` (the sanctioned local escaper), `src/test/escape-guard.test.ts` (the guard).
 
 ### X2 — Sanitize CSS-context values
 
@@ -867,7 +867,7 @@ Jellyfin.Plugin.JellyfinCanopy/
     │                        # discovery toggle, per-user state + overrides, settings-panel tab,
     │                        # disable-confirm dialog/snooze, soft image-refresh on toggle, and the
     │                        # live-update-driven watched-refresh (UserDataChanged). Blur/strip is server-side
-    ├── jellyseerr/          # Seerr integration. Flat singles: api, request-manager, jellyseerr,
+    ├── seerr/          # Seerr integration. Flat singles: api, request-manager, seerr,
     │   │                    # seerr-status, modal, item-details, issue-reporter, seamless-scroll,
     │   │                    # hss-discovery-handler
     │   ├── discovery/       # Discovery rows: base + filter-utils + {genre,tag,network,person,collection}.ts
@@ -919,7 +919,7 @@ Jellyfin.Plugin.JellyfinCanopy/
 │   │                          # — authorization failures are bare 401/403 (empty body, see REST API)
 │   ├── ConfigController.cs    # public/private config (driven by SettingDescriptors), loader/bundle/locale serving
 │   ├── AssetsController.cs    # Serves locally cached third-party assets (/JellyfinCanopy/assets/{key}) so browsers never hit a CDN
-│   ├── JellyseerrProxyController.cs / JellyseerrUserController.cs
+│   ├── SeerrProxyController.cs / SeerrUserController.cs
 │   ├── ArrLinksController.cs / ArrCalendarController.cs / ArrRequestsController.cs
 │   ├── ArrSearchController.cs # Admin-only interactive Sonarr/Radarr search / manage surface (arr/search/*)
 │   ├── UserSettingsController.cs / HiddenContentController.cs / ReviewsController.cs
@@ -966,7 +966,7 @@ Jellyfin.Plugin.JellyfinCanopy/
 ├── Helpers/                  # Pure helpers: ArrIdHelper (zero-id normalize + per-instance id namespacing),
 │                              # ArrUrlGuard (SSRF guard: metadata/rebind blocked, LAN allowed),
 │                              # Arr/ArrReleaseDate (date-only vs instant calendar release contract),
-│                              # Jellyseerr/TmdbProxyPathClassifier (deny-by-default raw-TMDB gate)
+│                              # Seerr/TmdbProxyPathClassifier (deny-by-default raw-TMDB gate)
 ├── ScheduledTasks/ · Model/ · Logging/ · PluginPages/
 └── dist/                      # esbuild output (generated at build time, never committed)
 ```
@@ -982,7 +982,7 @@ These are the commands and suites you will touch day to day:
 - `npm run syntax` / `npm run typecheck` — `node --check` + opt-in `@ts-check` for the one remaining classic script (the loader).
 - `Jellyfin.Plugin.JellyfinCanopy.Tests/` — xUnit tests, including golden snapshots for the config payloads and on-disk user-file formats, plus a line-coverage ratchet (`scripts/check-dotnet-coverage.js`). Its `Configuration/` tests bridge the `SettingDescriptors` registry to both ends of the admin config page over one shared source parser (`ConfigPageSource.cs`, read by both directions so they can never drift): `ConfigControlCoverageTests` fails if any admin-settable descriptor backed by a real `PluginConfiguration` property has no config-page control (an admin default stuck at its hardcoded value), and `ClientConfigKeyLivenessTests` scans the shipped client source and fails if any `JC.pluginConfig.X` read is not a projected (`Public`/`Private`) descriptor key (a client knob that is always `undefined`).
 - `src/test/` — cross-cutting **guard tests** that parse the shipped source and fail on a whole *class* of regression, not just one instance: `escape-guard` (HTML-injection, incl. an escape-first check of pre-escaping producers), `css-injection-guard` (CSS-context values), `leak-guard` (object URLs, observers, TTL maps, unbounded retry loops), `perf-rules-guard` (the R-rules), `error-as-empty-guard` (fetch errors surfaced, not swallowed), `locale-guard`, `ratings-css`, `injected-css-balance`, `legacy-auth-header`, `plugin-loader`, `plugin-pages` (runs the shipped PluginPages/*.html inline scripts against jsdom), `build-scripts`. Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber's synchronous body (see [S1](#s1-never-block-jellyfins-synchronous-threads)).
-- `e2e/` — the committed Playwright suite (`npm run e2e`) + `e2e/docker/` (dockerized, seeded Jellyfin 12 for CI and local runs). Every spec closes on the shared `assertNoRuntimeErrors` net in `e2e/fixtures/auth.ts`: it fails on any un-whitelisted console error / pageerror and, because Chromium's generic 40x console line carries no url, on any 4xx response whose url is not on the known-legacy `ALLOWED_4XX_URL` allowlist (a real broken plugin endpoint) — `e2e/console-net.spec.ts` is the unit-of-behavior spec that pins that net. Alongside the boot / navigation / panel / live-update / tag specs, the security- and persistence-sensitive flows have their own: `arr-requests-parental.spec.ts` (the Requests page applies the caller's own parental limit server-side; an admin bypasses it), `search-tags.spec.ts` (`DisableTagsOnSearchPage` hides *every* tag family on the search page, not just genre), `settings-persist.spec.ts` (a per-user setting round-trips through the server across a reload), and `non-admin.spec.ts` (core surfaces from a non-admin session, where per-user gating bugs live). `e2e/docker/seed.sh` accepts optional `TMDB_API_KEY` / `JELLYSEERR_*` env so the Seerr/TMDB specs run when configured and skip cleanly when not — the readiness probes and per-user parental-limit helpers live in `e2e/fixtures/seerr.ts` (`tmdbReady` / `seerrReady` read the projected public-config).
+- `e2e/` — the committed Playwright suite (`npm run e2e`) + `e2e/docker/` (dockerized, seeded Jellyfin 12 for CI and local runs). Every spec closes on the shared `assertNoRuntimeErrors` net in `e2e/fixtures/auth.ts`: it fails on any un-whitelisted console error / pageerror and, because Chromium's generic 40x console line carries no url, on any 4xx response whose url is not on the known-legacy `ALLOWED_4XX_URL` allowlist (a real broken plugin endpoint) — `e2e/console-net.spec.ts` is the unit-of-behavior spec that pins that net. Alongside the boot / navigation / panel / live-update / tag specs, the security- and persistence-sensitive flows have their own: `arr-requests-parental.spec.ts` (the Requests page applies the caller's own parental limit server-side; an admin bypasses it), `search-tags.spec.ts` (`DisableTagsOnSearchPage` hides *every* tag family on the search page, not just genre), `settings-persist.spec.ts` (a per-user setting round-trips through the server across a reload), and `non-admin.spec.ts` (core surfaces from a non-admin session, where per-user gating bugs live). `e2e/docker/seed.sh` accepts optional `TMDB_API_KEY` / `SEERR_*` env so the Seerr/TMDB specs run when configured and skip cleanly when not — the readiness probes and per-user parental-limit helpers live in `e2e/fixtures/seerr.ts` (`tmdbReady` / `seerrReady` read the projected public-config).
 - `e2e/perf/` — hand-run (not CI) measurement tools that drive a real Chromium against a live server: `jank-benchmark.js` (aggregate jank/CLS/long-task/pop-in numbers behind [Measured impact](#measured-impact)) and `capture-traces.js` (`npm run perf:trace`) — the trace-capture harness described under [Performance trace capture](#performance-trace-capture).
 - `node scripts/new-feature.js <name>` — the paved-road scaffolder: generates a typed client module, a controller, an e2e spec stub, and a docs stub, wired into the area barrel (see `CONTRIBUTING.md`).
 - `scripts/release/` — release packaging + manifest generation/validation (see `RELEASING.md`).

@@ -259,7 +259,7 @@ export function renderEvent(event: CalendarEvent): string {
     const statusIcons = renderStatusIcons(event);
     const statusTop = statusIcons ? `<div class="jc-calendar-event-status-top">${statusIcons}</div>` : '';
     const timeText = formatTimeText(event);
-    const playButton = event.hasFile ? `<button class="jc-calendar-play-btn" title="${JC.t?.('jellyseerr_btn_available')}" aria-label="${JC.t?.('jellyseerr_btn_available')}" data-event-id="${escapeHtml(event.id)}"><span class="material-icons">play_arrow</span></button>` : '';
+    const playButton = event.hasFile ? `<button class="jc-calendar-play-btn" title="${JC.t?.('seerr_btn_available')}" aria-label="${JC.t?.('seerr_btn_available')}" data-event-id="${escapeHtml(event.id)}"><span class="material-icons">play_arrow</span></button>` : '';
     const backgroundStyle = getEventBackgroundStyle(event, color);
 
     return `
@@ -291,7 +291,7 @@ export function renderAgendaEvent(event: CalendarEvent): string {
     // Build indicators array (only add if they exist)
     const indicators: string[] = [];
     if (event.hasFile) {
-        indicators.push(`<button class="jc-calendar-play-btn" title="${JC.t?.('jellyseerr_btn_available')}" aria-label="${JC.t?.('jellyseerr_btn_available')}" data-event-id="${escapeHtml(event.id)}"><span class="material-icons">play_arrow</span></button>`);
+        indicators.push(`<button class="jc-calendar-play-btn" title="${JC.t?.('seerr_btn_available')}" aria-label="${JC.t?.('seerr_btn_available')}" data-event-id="${escapeHtml(event.id)}"><span class="material-icons">play_arrow</span></button>`);
     }
     const statusIcons = renderStatusIcons(event);
     if (statusIcons) {
@@ -345,7 +345,7 @@ export function renderCardItems(events: CalendarEvent[]): string {
         const iconClass = event.source === 'Sonarr' ? 'jc-calendar-sonarr-icon' : 'jc-calendar-radarr-icon';
         const statusIcons = renderStatusIcons(event);
         const timePill = buildTimePill(event);
-        const playButton = event.hasFile ? `<button class="jc-calendar-play-btn jc-calendar-play-btn-card" title="${JC.t?.('jellyseerr_btn_available')}" aria-label="${JC.t?.('jellyseerr_btn_available')}" data-event-id="${escapeHtml(event.id)}"><span class="material-icons">play_arrow</span></button>` : '';
+        const playButton = event.hasFile ? `<button class="jc-calendar-play-btn jc-calendar-play-btn-card" title="${JC.t?.('seerr_btn_available')}" aria-label="${JC.t?.('seerr_btn_available')}" data-event-id="${escapeHtml(event.id)}"><span class="material-icons">play_arrow</span></button>` : '';
         const timeRow = timePill || playButton ? `<div class="jc-calendar-card-time-row">${timePill}${playButton}</div>` : '';
         const statusTop = statusIcons ? `<div class="jc-calendar-card-status-top">${statusIcons}</div>` : '';
         const color = getEventColor(event);

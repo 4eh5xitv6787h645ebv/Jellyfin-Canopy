@@ -54,7 +54,7 @@ export const getStatusColors = (): Record<string, string> => {
  */
 export function translateStatus(status: string): string {
     const translations: Record<string, string> = {
-        'All': JC.t?.('jellyseerr_discover_all') || 'All',
+        'All': JC.t?.('seerr_discover_all') || 'All',
         'downloading': JC.t?.('downloads_status_downloading') || 'Downloading',
         'queued': JC.t?.('downloads_status_queued') || 'Queued',
         'paused': JC.t?.('downloads_status_paused') || 'Paused',
@@ -310,18 +310,18 @@ export function formatDownloadStats(totalSize: number | undefined, sizeRemaining
 }
 
 /**
- * Jellyseerr like chips
+ * Seerr like chips
  */
 export function resolveRequestStatus(status: string | undefined, item: RequestItem | null = null): { label: string; className: string } {
     const normalized = (status || '').toLowerCase();
-    const labelAvailable = JC.t?.('jellyseerr_btn_available') || 'Available';
-    const labelPartial = JC.t?.('jellyseerr_btn_partially_available') || 'Partially Available';
-    const labelProcessing = JC.t?.('jellyseerr_btn_processing') || 'Processing';
-    const labelPending = JC.t?.('jellyseerr_btn_pending') || 'Pending Approval';
-    const labelRequested = JC.t?.('jellyseerr_btn_requested') || 'Requested';
-    const labelDeclined = JC.t?.('jellyseerr_btn_declined') || 'Declined';
-    const labelBlocklisted = JC.t?.('jellyseerr_btn_blocklisted') || 'Blocklisted';
-    const labelDeleted = JC.t?.('jellyseerr_btn_deleted') || 'Deleted';
+    const labelAvailable = JC.t?.('seerr_btn_available') || 'Available';
+    const labelPartial = JC.t?.('seerr_btn_partially_available') || 'Partially Available';
+    const labelProcessing = JC.t?.('seerr_btn_processing') || 'Processing';
+    const labelPending = JC.t?.('seerr_btn_pending') || 'Pending Approval';
+    const labelRequested = JC.t?.('seerr_btn_requested') || 'Requested';
+    const labelDeclined = JC.t?.('seerr_btn_declined') || 'Declined';
+    const labelBlocklisted = JC.t?.('seerr_btn_blocklisted') || 'Blocklisted';
+    const labelDeleted = JC.t?.('seerr_btn_deleted') || 'Deleted';
     const labelComingSoon = JC.t?.('requests_coming_soon') || 'Coming Soon';
 
     // Check for "Coming Soon" status - items with future release dates

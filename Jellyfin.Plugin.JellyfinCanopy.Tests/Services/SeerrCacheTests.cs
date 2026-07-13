@@ -1,6 +1,6 @@
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
-using Jellyfin.Plugin.JellyfinCanopy.Model.Jellyseerr;
-using Jellyfin.Plugin.JellyfinCanopy.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using Xunit;
 
@@ -22,7 +22,7 @@ public class SeerrCacheTests
         var cache = NewCache();
         cache.UserIdCache["jf-user-a"] = ("1", DateTime.UtcNow);
         cache.UserIdCache["jf-user-b"] = ("2", DateTime.UtcNow);
-        cache.UserCache["jf-user-a"] = (new JellyseerrUser { Id = 1 }, DateTime.UtcNow);
+        cache.UserCache["jf-user-a"] = (new SeerrUser { Id = 1 }, DateTime.UtcNow);
         cache.UserCache["jf-user-b"] = (null, DateTime.UtcNow); // negative entry
         cache.ResponseCache["jf-user-a:/api/v1/discover/movies"] = ("{}", DateTime.UtcNow);
         cache.TmdbEnrichmentCache["movie:1"] = (new TmdbEnrichmentResult { Title = "T" }, DateTime.UtcNow);
@@ -68,8 +68,8 @@ public class SeerrCacheTests
     {
         var cache = NewCache(new PluginConfiguration
         {
-            JellyseerrUserIdCacheTtlMinutes = 45,
-            JellyseerrResponseCacheTtlMinutes = 7,
+            SeerrUserIdCacheTtlMinutes = 45,
+            SeerrResponseCacheTtlMinutes = 7,
         });
 
         Assert.Equal(TimeSpan.FromMinutes(45), cache.GetUserIdCacheTtl());
@@ -92,7 +92,7 @@ public class SeerrCacheTests
     {
         var provider = new FakePluginConfigProvider(new PluginConfiguration
         {
-            JellyseerrResponseCacheTtlMinutes = 0, // admin typo: clamp, don't disable
+            SeerrResponseCacheTtlMinutes = 0, // admin typo: clamp, don't disable
         });
         var cache = new SeerrCache(provider);
 
@@ -100,7 +100,7 @@ public class SeerrCacheTests
 
         // The provider contract is LIVE reads: an admin save (new config object)
         // must be visible on the very next access, with no snapshotting.
-        provider.Current = new PluginConfiguration { JellyseerrResponseCacheTtlMinutes = 25 };
+        provider.Current = new PluginConfiguration { SeerrResponseCacheTtlMinutes = 25 };
         Assert.Equal(TimeSpan.FromMinutes(25), cache.GetResponseCacheTtl());
     }
 }

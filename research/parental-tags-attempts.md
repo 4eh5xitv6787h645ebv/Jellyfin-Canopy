@@ -132,7 +132,7 @@ unenforceable) — that documentation gets retired by this work.
   the primary (discover-only; search/similar/trending uncovered; needs
   name→id resolution) — filed as a follow-up optimization to keep discover
   pages full-length instead of post-filter shrunk.
-- New server-side toggle `JellyseerrRespectBlockedTags` (default on),
+- New server-side toggle `SeerrRespectBlockedTags` (default on),
   subordinate to the existing parental master flag.
 
 ### 2026-07-08 13:20 — implemented, tested, live-verified
@@ -143,7 +143,7 @@ unenforceable) — that documentation gets retired by this work.
   returns TitleSignature (cert score + tag set), tag-rule passes fetch the
   Seerr full detail, cache entries carry tags (tag-bearing and cert-only
   fetches coalesce separately; light results never erase cached tags).
-  New sub-toggle `JellyseerrRespectBlockedTags` (default on).
+  New sub-toggle `SeerrRespectBlockedTags` (default on).
 - 624 unit tests green (28 new: decision precedence/normalization vectors,
   extractor shapes, orchestration incl. the cert-only-cache upgrade case);
   client gates green; goldens/save-keys regenerated (expected deltas).

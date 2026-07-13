@@ -16,17 +16,17 @@
 #
 # Optional Seerr/TMDB seeding (bare by default — no secrets in the repo/CI
 # unless supplied): export any of these before running to also wire the
-# TMDB and Jellyseerr integration the security specs exercise. When unset the
+# TMDB and Seerr integration the security specs exercise. When unset the
 # seed is bare and those specs SKIP (see e2e/fixtures/seerr.ts):
 #   TMDB_API_KEY               a TMDB v3 API key            -> TmdbEnabled
-#   JELLYSEERR_URL             a reachable Jellyseerr URL    \
-#   JELLYSEERR_API_KEY         its API key                   > JellyseerrEnabled
-#   JELLYSEERR_RESPECT_PARENTAL  true|false (default true) — parental gating
+#   SEERR_URL             a reachable Seerr URL    \
+#   SEERR_API_KEY         its API key                   > SeerrEnabled
+#   SEERR_RESPECT_PARENTAL  true|false (default true) — parental gating
 #
 # Usage:
 #   dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release
 #   bash e2e/docker/seed.sh                # default port 8100 (bare)
-#   TMDB_API_KEY=... JELLYSEERR_URL=... JELLYSEERR_API_KEY=... bash e2e/docker/seed.sh
+#   TMDB_API_KEY=... SEERR_URL=... SEERR_API_KEY=... bash e2e/docker/seed.sh
 #   JF_BASE_URL=http://localhost:8100 npm run e2e
 #   docker compose -f e2e/docker/compose.yml down -v
 set -euo pipefail
@@ -191,18 +191,18 @@ log "enabling the plugin features the specs exercise"
 # (never hardcode a key; CI passes these as secrets when it wants the security
 # specs to RUN rather than SKIP). See e2e/fixtures/seerr.ts for the gate.
 TMDB_API_KEY="${TMDB_API_KEY:-}"
-JELLYSEERR_URL="${JELLYSEERR_URL:-}"
-JELLYSEERR_API_KEY="${JELLYSEERR_API_KEY:-}"
-case "${JELLYSEERR_RESPECT_PARENTAL:-true}" in
-    false|FALSE|0|no) JELLYSEERR_RESPECT_PARENTAL=false ;;
-    *) JELLYSEERR_RESPECT_PARENTAL=true ;;
+SEERR_URL="${SEERR_URL:-}"
+SEERR_API_KEY="${SEERR_API_KEY:-}"
+case "${SEERR_RESPECT_PARENTAL:-true}" in
+    false|FALSE|0|no) SEERR_RESPECT_PARENTAL=false ;;
+    *) SEERR_RESPECT_PARENTAL=true ;;
 esac
 
 PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration" \
     | jq --arg tmdb "${TMDB_API_KEY}" \
-         --arg seerrUrl "${JELLYSEERR_URL}" \
-         --arg seerrKey "${JELLYSEERR_API_KEY}" \
-         --argjson seerrParental "${JELLYSEERR_RESPECT_PARENTAL}" \
+         --arg seerrUrl "${SEERR_URL}" \
+         --arg seerrKey "${SEERR_API_KEY}" \
+         --argjson seerrParental "${SEERR_RESPECT_PARENTAL}" \
         '.QualityTagsEnabled = true
         | .GenreTagsEnabled = true
         | .LanguageTagsEnabled = true
@@ -214,10 +214,10 @@ PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration" \
         | .ShowWatchProgress = true
         | (if $tmdb != "" then .TMDB_API_KEY = $tmdb else . end)
         | (if ($seerrUrl != "" and $seerrKey != "")
-             then .JellyseerrUrls = $seerrUrl
-                | .JellyseerrApiKey = $seerrKey
-                | .JellyseerrEnabled = true
-                | .JellyseerrRespectParentalRatings = $seerrParental
+             then .SeerrUrls = $seerrUrl
+                | .SeerrApiKey = $seerrKey
+                | .SeerrEnabled = true
+                | .SeerrRespectParentalRatings = $seerrParental
              else . end)')"
 api POST "/Plugins/${PLUGIN_ID}/Configuration" "${PLUGIN_CONFIG}" >/dev/null
 
@@ -226,10 +226,10 @@ if [ -n "${TMDB_API_KEY}" ]; then
 else
     log "optional: TMDB not configured — TMDB/reviews specs will SKIP"
 fi
-if [ -n "${JELLYSEERR_URL}" ] && [ -n "${JELLYSEERR_API_KEY}" ]; then
-    log "optional: Jellyseerr configured (${JELLYSEERR_URL}, respectParental=${JELLYSEERR_RESPECT_PARENTAL})"
+if [ -n "${SEERR_URL}" ] && [ -n "${SEERR_API_KEY}" ]; then
+    log "optional: Seerr configured (${SEERR_URL}, respectParental=${SEERR_RESPECT_PARENTAL})"
 else
-    log "optional: Jellyseerr not configured — Seerr specs will SKIP"
+    log "optional: Seerr not configured — Seerr specs will SKIP"
 fi
 
 log "waiting for the library scan to index the movies"

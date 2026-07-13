@@ -56,7 +56,7 @@ function norm(id: string): string {
 }
 
 // Opening a SERIES detail page fires the Seerr issue-indicator feature
-// (jellyseerr/api.ts fetchIssuesForMedia → GET /JellyfinCanopy/jellyseerr/issue).
+// (seerr/api.ts fetchIssuesForMedia → GET /JellyfinCanopy/seerr/issue).
 // On the shared dev server (:8099) Seerr is configured but that endpoint returns
 // 403 for the non-admin token, so JC logs a caught "Failed to fetch issues" error
 // and the response is a 403 — both entirely unrelated to Spoiler Guard, and both
@@ -64,7 +64,7 @@ function norm(id: string): string {
 // that pair out here (like settings-persist.spec's DASHBOARD_CHROME) so the check
 // still catches any REAL Spoiler Guard console error or plugin 4xx.
 const SEERR_ISSUE_NOISE_TEXT = /Seerr API: Failed to fetch issues/i;
-const SEERR_ISSUE_NOISE_URL = /\/JellyfinCanopy\/jellyseerr\/issue/i;
+const SEERR_ISSUE_NOISE_URL = /\/JellyfinCanopy\/seerr\/issue/i;
 
 function assertNoSpoilerRuntimeErrors(consoleErrors: {
     real(): string[];

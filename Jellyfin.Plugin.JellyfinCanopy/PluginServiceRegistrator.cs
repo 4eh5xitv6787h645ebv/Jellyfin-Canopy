@@ -37,7 +37,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // SeerrHttpHelper.CreateClient(factory) selects this for outbound
             // Seerr calls. The guarded handler re-validates the connect-time IP
             // (DNS-rebind / TOCTOU defense) on top of the pre-flight URL guard.
-            serviceCollection.AddHttpClient(Helpers.Jellyseerr.SeerrHttpHelper.NamedClient)
+            serviceCollection.AddHttpClient(Helpers.Seerr.SeerrHttpHelper.NamedClient)
                 .ConfigurePrimaryHttpMessageHandler(() => Helpers.ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: false));
 
             // Named clients for the remaining upstreams (see PluginHttpClients for
@@ -80,16 +80,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // Process-wide Seerr/TMDB caches (formerly the static SeerrCaches
             // holder). Must stay a singleton: controllers, the user-import task
             // and the plugin's config-change hook all share one instance.
-            serviceCollection.AddSingleton<Services.Jellyseerr.ISeerrCache, Services.Jellyseerr.SeerrCache>();
+            serviceCollection.AddSingleton<Services.Seerr.ISeerrCache, Services.Seerr.SeerrCache>();
             // Server-side parental-rating filter for Seerr search/discovery results.
-            // Injected into JellyseerrClient; must NOT depend on IJellyseerrClient
+            // Injected into SeerrClient; must NOT depend on ISeerrClient
             // (that would be a DI cycle) — it fetches per-item certifications via the
             // low-level SeerrHttpHelper instead.
-            serviceCollection.AddSingleton<Services.Jellyseerr.ISeerrParentalFilter, Services.Jellyseerr.SeerrParentalFilter>();
+            serviceCollection.AddSingleton<Services.Seerr.ISeerrParentalFilter, Services.Seerr.SeerrParentalFilter>();
             // All Seerr plumbing (user resolution + auto-import, proxy core,
             // watchlist/request helpers) extracted from the controller base.
             // Singleton: stateless besides the injected ISeerrCache.
-            serviceCollection.AddSingleton<Services.Jellyseerr.IJellyseerrClient, Services.Jellyseerr.JellyseerrClient>();
+            serviceCollection.AddSingleton<Services.Seerr.ISeerrClient, Services.Seerr.SeerrClient>();
             // Shared SSRF-guarded Sonarr/Radarr fetch plumbing for the Arr controllers.
             serviceCollection.AddSingleton<Services.Arr.ArrFetchService>();
             // Search / Interactive Search feature: itemId → arr identity resolution, instance
@@ -117,9 +117,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<TagCacheMonitor>();
             serviceCollection.AddTransient<ArrTagsSyncTask>();
             serviceCollection.AddTransient<BuildTagCacheTask>();
-            serviceCollection.AddTransient<JellyseerrWatchlistSyncTask>();
+            serviceCollection.AddTransient<SeerrWatchlistSyncTask>();
             serviceCollection.AddTransient<JellyfinToSeerrWatchlistSyncTask>();
-            serviceCollection.AddTransient<JellyseerrUserImportTask>();
+            serviceCollection.AddTransient<SeerrUserImportTask>();
             serviceCollection.AddTransient<ClearTranslationCacheTask>();
             // Local mirror of the third-party CDN assets the client scripts use, served at
             // /JellyfinCanopy/assets/* and refreshed daily by RefreshCachedAssetsTask —
@@ -157,8 +157,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<SpoilerFieldStripFilter>();
             // Shared pre-acquisition ("pending") pending-add core used by BOTH the
             // SpoilerGuardController HTTP endpoints and the Seerr auto-request hook on
-            // JellyseerrProxyController. Depends only on the config store + library +
-            // user managers (never IJellyseerrClient), so it stays cycle-free.
+            // SeerrProxyController. Depends only on the config store + library +
+            // user managers (never ISeerrClient), so it stays cycle-free.
             serviceCollection.AddSingleton<SpoilerPendingService>();
             serviceCollection.AddHostedService<SpoilerSeerrPendingPromoter>();
             serviceCollection.AddScoped<IEventConsumer<PlaybackStartEventArgs>, SpoilerAutoEnableOnFirstPlayConsumer>();

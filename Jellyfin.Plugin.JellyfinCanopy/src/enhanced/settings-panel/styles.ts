@@ -107,21 +107,21 @@ JC.injectGlobalStyles = (): void => {
               font-feature-settings: 'liga';
               -webkit-font-smoothing: antialiased;
             }
-            .jellyseerr-issue-radio-group {
+            .seerr-issue-radio-group {
               display: flex;
               justify-content: center;
               flex-wrap: wrap;
               gap: 12px;
               margin-top: 12px;
             }
-            .jellyseerr-radio-label {
+            .seerr-radio-label {
                 display: inline-flex;
                 align-items: center;
                 gap: 8px;
                 cursor: pointer;
                 position: relative;
             }
-            .jellyseerr-radio-input {
+            .seerr-radio-input {
                 position: absolute;
                 opacity: 0;
                 width: 1px;
@@ -131,7 +131,7 @@ JC.injectGlobalStyles = (): void => {
                 clip: rect(0 0 0 0);
                 border: 0;
             }
-            .jellyseerr-radio-option {
+            .seerr-radio-option {
                 padding: 8px 12px;
                 border-radius: 6px;
                 border: 2px solid rgba(255,255,255,0.2);
@@ -142,20 +142,20 @@ JC.injectGlobalStyles = (): void => {
                 display: inline-flex;
                 align-items: center;
             }
-            .jellyseerr-radio-input:checked + .jellyseerr-radio-option {
+            .seerr-radio-input:checked + .seerr-radio-option {
                 border-color: var(--primary-accent-color, #1e88e5);
                 background-color: var(--primary-accent-color, #1e88e5);
                 color: white;
             }
-            .jellyseerr-radio-input:focus + .jellyseerr-radio-option {
+            .seerr-radio-input:focus + .seerr-radio-option {
                 box-shadow: 0 0 0 4px rgba(30,136,229,0.12);
                 outline: none;
             }
-            .jellyseerr-radio-input:hover + .jellyseerr-radio-option {
+            .seerr-radio-input:hover + .seerr-radio-option {
                 border-color: var(--primary-accent-color, #1e88e5);
                 background-color: rgba(30,136,229,0.1);
             }
-            .jellyseerr-issue-textarea {
+            .seerr-issue-textarea {
               max-width: 96%;
               box-sizing: border-box;
             }

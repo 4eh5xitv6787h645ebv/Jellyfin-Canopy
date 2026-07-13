@@ -36,7 +36,7 @@ async function ensureRequest(page: any, mediaType: string, tmdbId: number): Prom
         try {
             await api.ajax({
                 type: 'POST',
-                url: api.getUrl('/JellyfinCanopy/jellyseerr/request'),
+                url: api.getUrl('/JellyfinCanopy/seerr/request'),
                 data: JSON.stringify({ mediaType: args.mediaType, mediaId: args.tmdbId }),
                 contentType: 'application/json',
                 dataType: 'json',
@@ -104,11 +104,11 @@ test.describe('requests page parental filter', () => {
     test('the requests list and page respect the caller parental limit', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
         // The reproducible docker seed is bare (no TMDB/Seerr). Skip cleanly
-        // rather than fail an unmeetable precondition (set JELLYSEERR_* /
+        // rather than fail an unmeetable precondition (set SEERR_* /
         // TMDB_API_KEY at seed time to run this security guard).
         test.skip(
             !(await seerrReady(page)) || !(await tmdbReady(page)),
-            'Seerr/TMDB not configured — set JELLYSEERR_* and TMDB_API_KEY at seed time to run'
+            'Seerr/TMDB not configured — set SEERR_* and TMDB_API_KEY at seed time to run'
         );
         const restrictedUserId = await findRestrictedUserId(page, USERS.user.username);
 

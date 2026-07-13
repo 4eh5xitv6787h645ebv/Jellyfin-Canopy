@@ -53,8 +53,8 @@
             const addShortcutBtn = document.getElementById('add-shortcut-btn');
             const shortcutErrorComment = document.getElementById('shortcut-error-comment');
 
-            const testJellyseerrBtn = document.getElementById('testJellyseerrBtn');
-            const jellyseerrStatusIndicator = document.getElementById('jellyseerrStatusIndicator');
+            const testSeerrBtn = document.getElementById('testSeerrBtn');
+            const seerrStatusIndicator = document.getElementById('seerrStatusIndicator');
 
             const tmdbStatusIndicator = document.getElementById('tmdbStatusIndicator');
 
@@ -375,7 +375,7 @@
             // a saved sessionStorage value from the old layout don't land on a missing tab.
             const LEGACY_TAB_MAP = {
                 'enhanced': 'display',
-                'jellyseerr': 'seerr',
+                'seerr': 'seerr',
                 'arr-links': 'arr'
             };
 
@@ -964,9 +964,9 @@
             }
         });
 
-        async function testJellyseerrConnection() {
-            const urls = (document.querySelector('#jellyseerrUrls').value || '').split('\n').map(u => u.trim()).filter(Boolean);
-            const apiKey = (document.querySelector('#JellyseerrApiKey').value || '').trim();
+        async function testSeerrConnection() {
+            const urls = (document.querySelector('#seerrUrls').value || '').split('\n').map(u => u.trim()).filter(Boolean);
+            const apiKey = (document.querySelector('#SeerrApiKey').value || '').trim();
 
             if (!urls.length || !apiKey) {
                 Dashboard.alert({ title: 'Missing Information', message: 'Please provide at least one Seerr URL and an API key to test the connection.' });
@@ -974,16 +974,16 @@
             }
 
             const _testToken = (typeof beginConnectionTest === 'function') ? beginConnectionTest() : undefined;
-            testJellyseerrBtn.disabled = true;
-            jellyseerrStatusIndicator.textContent = 'sync';
-            jellyseerrStatusIndicator.classList.add('status-check');
-            jellyseerrStatusIndicator.style.color = 'var(--primary-accent-color, #00a4dc)';
+            testSeerrBtn.disabled = true;
+            seerrStatusIndicator.textContent = 'sync';
+            seerrStatusIndicator.classList.add('status-check');
+            seerrStatusIndicator.style.color = 'var(--primary-accent-color, #00a4dc)';
 
             let validated = false;
             let lastError = '';
             for (const url of urls) {
                 try {
-                    const validationUrl = ApiClient.getUrl(`/JellyfinCanopy/jellyseerr/validate`, {
+                    const validationUrl = ApiClient.getUrl(`/JellyfinCanopy/seerr/validate`, {
                         url: url
                     });
 
@@ -1006,17 +1006,17 @@
                 }
             }
 
-            testJellyseerrBtn.disabled = false;
-            jellyseerrStatusIndicator.classList.remove('status-check');
+            testSeerrBtn.disabled = false;
+            seerrStatusIndicator.classList.remove('status-check');
 
             if (validated) {
-                jellyseerrStatusIndicator.textContent = 'check_circle';
-                jellyseerrStatusIndicator.style.color = '#52b54b';
+                seerrStatusIndicator.textContent = 'check_circle';
+                seerrStatusIndicator.style.color = '#52b54b';
                 try { setConnectionTestResult('seerr', 'ok', 'Connected', _testToken); } catch (e) { /* cache is best-effort */ }
                 jcTestAlert({ title: 'Success', message: 'Successfully connected to Seerr!' });
             } else {
-                jellyseerrStatusIndicator.textContent = 'error';
-                jellyseerrStatusIndicator.style.color = '#dc3545';
+                seerrStatusIndicator.textContent = 'error';
+                seerrStatusIndicator.style.color = '#dc3545';
                 try { setConnectionTestResult('seerr', 'error', (lastError && lastError.length < 80) ? lastError : 'Connection failed', _testToken); } catch (e) { /* cache is best-effort */ }
                 jcTestAlert({ title: 'Connection Failed', message: lastError || 'Could not connect to any provided URL.' });
             }
@@ -1530,7 +1530,7 @@
 
             ApiClient.ajax({
                 type: 'GET',
-                url: ApiClient.getUrl('/JellyfinCanopy/jellyseerr/radarr'),
+                url: ApiClient.getUrl('/JellyfinCanopy/seerr/radarr'),
                 dataType: 'json'
             }).then(function(servers) {
                 resetSelectWithMessage(serverSelect, '-1', 'Select Server...');
@@ -1575,7 +1575,7 @@
 
             ApiClient.ajax({
                 type: 'GET',
-                url: ApiClient.getUrl('/JellyfinCanopy/jellyseerr/radarr/' + serverId),
+                url: ApiClient.getUrl('/JellyfinCanopy/seerr/radarr/' + serverId),
                 dataType: 'json'
             }).then(function(details) {
                 resetSelectWithMessage(profileSelect, '0', 'Select Profile...');
@@ -1887,11 +1887,11 @@
             var arrOK = hasAnyArrService();
             // Seerr side uses the same "enabled AND a valid URL + API key" test as
             // the rest of the config page (the #seerr section gate). The requests
-            // and issues sections only render when JellyseerrEnabled is on, so
+            // and issues sections only render when SeerrEnabled is on, so
             // creds typed in while the integration is left disabled must NOT count
             // as a working source — otherwise the banner would report "ready" over
             // an empty page.
-            var seerrOK = hasJellyseerrConfigured();
+            var seerrOK = hasSeerrConfigured();
 
             if (arrOK || seerrOK) {
                 line.style.display = 'none';
@@ -2277,19 +2277,19 @@
                 }
                 loadMaintenanceUsers();
 
-                // One config value behind two synced inputs (Elsewhere + Jellyseerr tabs).
+                // One config value behind two synced inputs (Elsewhere + Seerr tabs).
                 document.querySelector('#TMDB_API_KEY').value = config.TMDB_API_KEY;
-                document.querySelector('#jellyseerr_TMDB_API_KEY').value = config.TMDB_API_KEY;
+                document.querySelector('#seerr_TMDB_API_KEY').value = config.TMDB_API_KEY;
 
                 // Set up bidirectional sync between TMDB API key fields
                 const tmdbKeyField = document.querySelector('#TMDB_API_KEY');
-                const jellyseerrTmdbKeyField = document.querySelector('#jellyseerr_TMDB_API_KEY');
+                const seerrTmdbKeyField = document.querySelector('#seerr_TMDB_API_KEY');
 
                 tmdbKeyField.addEventListener('input', function() {
-                    jellyseerrTmdbKeyField.value = this.value;
+                    seerrTmdbKeyField.value = this.value;
                 });
 
-                jellyseerrTmdbKeyField.addEventListener('input', function() {
+                seerrTmdbKeyField.addEventListener('input', function() {
                     tmdbKeyField.value = this.value;
                 });
 
@@ -2301,10 +2301,10 @@
                 document.querySelector('#enableTagsLocalStorageFallback').checked = config.EnableTagsLocalStorageFallback === true;
 
                 // Not bound: these fields are validated/normalized by hand on save.
-                document.querySelector('#jellyseerrUrls').value = config.JellyseerrUrls;
-                document.querySelector('#jellyseerrExternalUrl').value = config.JellyseerrExternalUrl || '';
-                document.querySelector('#JellyseerrApiKey').value = config.JellyseerrApiKey;
-                document.querySelector('#jellyseerrUrlMappings').value = config.JellyseerrUrlMappings || '';
+                document.querySelector('#seerrUrls').value = config.SeerrUrls;
+                document.querySelector('#seerrExternalUrl').value = config.SeerrExternalUrl || '';
+                document.querySelector('#SeerrApiKey').value = config.SeerrApiKey;
+                document.querySelector('#seerrUrlMappings').value = config.SeerrUrlMappings || '';
 
                 // One enum expanded into two trigger checkboxes.
                 const triggerType = config.AutoMovieRequestTriggerType || 'OnMinutesWatched';
@@ -2316,8 +2316,8 @@
                 }
 
                 // Not bound: hidden input kept in sync by the blocked-users list builder.
-                document.querySelector('#jellyseerrImportBlockedUsers').value = config.JellyseerrImportBlockedUsers || '';
-                loadBlockedUsersList(config.JellyseerrImportBlockedUsers || '');
+                document.querySelector('#seerrImportBlockedUsers').value = config.SeerrImportBlockedUsers || '';
+                loadBlockedUsersList(config.SeerrImportBlockedUsers || '');
 
                 // Load multi-instance Sonarr/Radarr
                 loadArrInstances(config);
@@ -2413,7 +2413,7 @@
             // produce malformed URIs and a confusing UriFormatException buried
             // in logs. Empty textarea remains valid (Seerr can be disabled).
             (function () {
-                const raw = (document.querySelector('#jellyseerrUrls').value || '').split('\n').map(u => u.trim()).filter(Boolean);
+                const raw = (document.querySelector('#seerrUrls').value || '').split('\n').map(u => u.trim()).filter(Boolean);
                 const valid = [];
                 const invalid = [];
                 for (const line of raw) {
@@ -2437,13 +2437,13 @@
                         });
                     }
                 }
-                config.JellyseerrUrls = valid.join('\n');
+                config.SeerrUrls = valid.join('\n');
             })();
             // Optional Seerr External URL: kept only when a well-formed http(s) URL; blanked with a
             // clear warning otherwise so it never reaches browser link building. Empty = the client
             // falls back to the first internal URL above (unchanged behaviour).
             (function () {
-                var raw = (document.querySelector('#jellyseerrExternalUrl').value || '').trim();
+                var raw = (document.querySelector('#seerrExternalUrl').value || '').trim();
                 if (raw && !jcIsHttpUrl(raw)) {
                     console.warn('Jellyfin Canopy: dropping invalid Seerr External URL on save (must be an http(s) URL without credentials or query/fragment):', raw);
                     if (typeof Dashboard !== 'undefined' && Dashboard.alert) {
@@ -2452,13 +2452,13 @@
                             message: 'The Seerr External URL was dropped: it must be an http:// or https:// URL without embedded credentials, query string or fragment.\n\n' + raw
                         });
                     }
-                    config.JellyseerrExternalUrl = '';
+                    config.SeerrExternalUrl = '';
                 } else {
-                    config.JellyseerrExternalUrl = raw;
+                    config.SeerrExternalUrl = raw;
                 }
             })();
-            config.JellyseerrApiKey = (document.querySelector('#JellyseerrApiKey').value || '').replace(/\s/g, '');
-            config.JellyseerrUrlMappings = (document.querySelector('#jellyseerrUrlMappings').value || '').split('\n').map(u => u.trim()).filter(Boolean).join('\n');
+            config.SeerrApiKey = (document.querySelector('#SeerrApiKey').value || '').replace(/\s/g, '');
+            config.SeerrUrlMappings = (document.querySelector('#seerrUrlMappings').value || '').split('\n').map(u => u.trim()).filter(Boolean).join('\n');
             // Bazarr External URL rides the generic data-config-key binder, so validate it here after
             // the bound fields are read: blank a malformed value with a clear warning.
             (function () {
@@ -2476,8 +2476,8 @@
                     config.BazarrExternalUrl = raw;
                 }
             })();
-            // Two synced inputs, one config value; the Jellyseerr-tab field wins (as before).
-            config.TMDB_API_KEY = document.querySelector('#jellyseerr_TMDB_API_KEY').value;
+            // Two synced inputs, one config value; the Seerr-tab field wins (as before).
+            config.TMDB_API_KEY = document.querySelector('#seerr_TMDB_API_KEY').value;
 
             const onStart = document.querySelector('#autoMovieRequestTriggerOnStart').checked;
             const onMinutes = document.querySelector('#autoMovieRequestTriggerOnMinutesWatched').checked;
@@ -2497,7 +2497,7 @@
             config.AutoMovieRequestCustomRootFolder = document.querySelector('#autoMovieRequestRootFolder').value || '';
 
             syncBlockedUsersToHiddenInput();
-            config.JellyseerrImportBlockedUsers = document.querySelector('#jellyseerrImportBlockedUsers').value || '';
+            config.SeerrImportBlockedUsers = document.querySelector('#seerrImportBlockedUsers').value || '';
 
             // Save multi-instance Sonarr/Radarr
             var arrIncompleteWarnings = saveArrInstances(config);
@@ -3144,7 +3144,7 @@
             }
             function relevant(target) {
                 if (!target) return false;
-                if (target.id === 'jellyseerrUrls' || target.id === 'JellyseerrApiKey') return true;
+                if (target.id === 'seerrUrls' || target.id === 'SeerrApiKey') return true;
                 if (!target.classList) return false;
                 return target.classList.contains('arr-instance-url')
                     || target.classList.contains('arr-instance-apikey')
@@ -3265,7 +3265,7 @@
          */
         function hasTmdbKey() {
             return document.querySelector('#TMDB_API_KEY').value.trim().length > 0
-                || document.querySelector('#jellyseerr_TMDB_API_KEY').value.trim().length > 0;
+                || document.querySelector('#seerr_TMDB_API_KEY').value.trim().length > 0;
         }
 
         /**
@@ -3291,13 +3291,13 @@
         }
 
         /**
-         * Checks whether Jellyseerr is enabled with both a URL and API key configured.
-         * @returns {boolean} True if Jellyseerr is fully configured
+         * Checks whether Seerr is enabled with both a URL and API key configured.
+         * @returns {boolean} True if Seerr is fully configured
          */
-        function hasJellyseerrConfigured() {
-            return document.querySelector('#jellyseerrEnabled').checked
-                && hasAtLeastOneValidSeerrUrl(document.querySelector('#jellyseerrUrls').value)
-                && document.querySelector('#JellyseerrApiKey').value.trim().length > 0;
+        function hasSeerrConfigured() {
+            return document.querySelector('#seerrEnabled').checked
+                && hasAtLeastOneValidSeerrUrl(document.querySelector('#seerrUrls').value)
+                && document.querySelector('#SeerrApiKey').value.trim().length > 0;
         }
 
         /**
@@ -3328,11 +3328,11 @@
         var SECTION_DEPS = [
             {
                 tabSelector: '#seerr',
-                checkFn: hasJellyseerrConfigured,
+                checkFn: hasSeerrConfigured,
                 bannerIcon: 'link_off',
                 bannerTitle: 'Enable "Seerr integration" to configure',
                 bannerHint: 'Provide a Seerr URL and API key in the Setup section above, then enable the integration.',
-                bannerId: 'dep-banner-jellyseerr'
+                bannerId: 'dep-banner-seerr'
             },
             {
                 tabSelector: '#arr',
@@ -3347,7 +3347,7 @@
         var INDIVIDUAL_DEPS = [
             { id: 'elsewhereEnabled',         checkFn: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
             { id: 'showReviews',              checkFn: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
-            { id: 'showElsewhereOnJellyseerr', checkFn: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
+            { id: 'showElsewhereOnSeerr', checkFn: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
             { id: 'autoMovieRequestEnabled',   checkFn: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
             { id: 'autoSkipIntro',                 checkFn: function() { return hasIntroSkipper !== false; }, hint: 'Install Intro Skipper plugin to enable', icon: 'extension' },
             { id: 'autoSkipOutro',                 checkFn: function() { return hasIntroSkipper !== false; }, hint: 'Install Intro Skipper plugin to enable', icon: 'extension' },
@@ -3541,7 +3541,7 @@
             //   • Default Region is read by the TMDB Release Dates chip
             //     (ShowReleaseDates && TmdbEnabled), and Default Region / Default
             //     Providers / Ignore Providers are all read by the Seerr poster
-            //     streaming icons (ShowElsewhereOnJellyseerr && TmdbEnabled).
+            //     streaming icons (ShowElsewhereOnSeerr && TmdbEnabled).
             // Those provider inputs therefore stay editable with Elsewhere off.
             { parent: 'elsewhereEnabled', label: 'Enable Elsewhere', children: ['ElsewhereCustomBrandingText', 'ElsewhereCustomBrandingImageUrl'] },
             { parent: 'showReviews', label: 'Show Reviews', children: ['reviewsExpandedByDefault'] },
@@ -3555,8 +3555,8 @@
             { parent: 'useIcons', label: 'Use Icons', children: ['iconStyle'] },
             { parent: 'letterboxdEnabled', label: 'Enable Letterboxd', children: ['showLetterboxdLinkAsText'] },
             { parent: 'enableCustomSplashScreen', label: 'Enable Custom Splash Screen', children: ['splashScreenImageUrl'] },
-            { parent: 'jellyseerrShowSearchResults', label: 'Show Seerr Results in Search', children: ['showCollectionsInSearch'] },
-            { parent: 'jellyseerrShowReportButton', label: 'Show Report Issue button', children: ['jellyseerrShowIssueIndicator'] },
+            { parent: 'seerrShowSearchResults', label: 'Show Seerr Results in Search', children: ['showCollectionsInSearch'] },
+            { parent: 'seerrShowReportButton', label: 'Show Report Issue button', children: ['seerrShowIssueIndicator'] },
             { parent: 'downloadsPageEnabled', label: 'Enable Requests Page', children: ['showDownloadsInRequests', 'downloadsPageShowIssues', 'downloadsUsePluginPages', 'downloadsUseNativeTab', 'downloadsUseCustomTabs', 'downloadsPagePollingEnabled'] },
             { parent: 'showDownloadsInRequests', label: 'Show Downloads in Requests Page', children: ['downloadsFilterByUserRequests'] },
             { parent: 'downloadsPagePollingEnabled', label: 'Enable Auto-Refresh', children: ['downloadsPollIntervalSeconds'] },
@@ -3983,7 +3983,7 @@
                 return false;
             }
             function seerrConfigured() {
-                return !!val('jellyseerrUrls') && !!val('JellyseerrApiKey');
+                return !!val('seerrUrls') && !!val('SeerrApiKey');
             }
 
             var features = [];
@@ -4046,8 +4046,8 @@
                 elsewhereWarn);
 
             // Seerr
-            var seerrWarn = bool('jellyseerrEnabled') && !seerrConfigured();
-            feat('Seerr integration', bool('jellyseerrEnabled'), 'seerr',
+            var seerrWarn = bool('seerrEnabled') && !seerrConfigured();
+            feat('Seerr integration', bool('seerrEnabled'), 'seerr',
                 seerrWarn ? 'Enabled but Seerr URL or API key missing' : 'Enabled',
                 seerrWarn);
 
@@ -4055,7 +4055,7 @@
             // need KefinTweaks to actually render the watchlist UI in Jellyfin;
             // the feature writes the data either way, but the user can't see
             // it without KefinTweaks.
-            var watchlistAny = bool('addRequestedMediaToWatchlist') || bool('syncJellyseerrWatchlist');
+            var watchlistAny = bool('addRequestedMediaToWatchlist') || bool('syncSeerrWatchlist');
             var watchlistWarn = watchlistAny && hasKefinTweaks !== true;
             feat('Watchlist sync', watchlistAny, 'seerr',
                 watchlistWarn ? 'Enabled but KefinTweaks plugin not installed (watchlist UI won\'t render)' : 'Enabled',
@@ -4224,7 +4224,7 @@
             PARENT_DEPS.forEach(updateParentDep);
             // Keep the Requests Page requirements banner in sync with dep-relevant
             // changes it now reads — notably the Seerr enable toggle (which fires
-            // updateAllDependencies) feeding hasJellyseerrConfigured(). Isolated so
+            // updateAllDependencies) feeding hasSeerrConfigured(). Isolated so
             // a throw here can't break the rest of the dependency pass.
             try { updateRequestsRequirementsBanner(); } catch (e) {
                 console.warn('[JC] requirements banner refresh threw:', e);
@@ -4359,9 +4359,9 @@
             });
 
             // Seerr
-            var seerrEnabled = document.getElementById('jellyseerrEnabled');
-            var seerrUrls = readFieldValue('#jellyseerrUrls');
-            var seerrKey = readFieldValue('#JellyseerrApiKey');
+            var seerrEnabled = document.getElementById('seerrEnabled');
+            var seerrUrls = readFieldValue('#seerrUrls');
+            var seerrKey = readFieldValue('#SeerrApiKey');
             if (seerrEnabled && seerrEnabled.checked) {
                 if (seerrUrls && seerrKey) {
                     var r = checklistRowState('seerr', 'Configured — not yet verified');
@@ -4546,12 +4546,12 @@
             clearTimeout(depDebounce);
             depDebounce = setTimeout(updateAllDependencies, 150);
         }
-        ['#TMDB_API_KEY', '#jellyseerr_TMDB_API_KEY'].forEach(function(sel) {
+        ['#TMDB_API_KEY', '#seerr_TMDB_API_KEY'].forEach(function(sel) {
             document.querySelector(sel).addEventListener('input', debouncedUpdateDeps);
         });
-        document.querySelector('#jellyseerrEnabled').addEventListener('change', updateAllDependencies);
+        document.querySelector('#seerrEnabled').addEventListener('change', updateAllDependencies);
         document.querySelector('#tagCacheServerMode').addEventListener('change', updateAllDependencies);
-        ['#jellyseerrUrls', '#JellyseerrApiKey'].forEach(function(sel) {
+        ['#seerrUrls', '#SeerrApiKey'].forEach(function(sel) {
             document.querySelector(sel).addEventListener('input', debouncedUpdateDeps);
         });
 
@@ -4576,9 +4576,9 @@
             });
         }
         _wireInvalidate('#TMDB_API_KEY',         'tmdb');
-        _wireInvalidate('#jellyseerr_TMDB_API_KEY', 'tmdb');
-        _wireInvalidate('#jellyseerrUrls',       'seerr');
-        _wireInvalidate('#JellyseerrApiKey',     'seerr');
+        _wireInvalidate('#seerr_TMDB_API_KEY', 'tmdb');
+        _wireInvalidate('#seerrUrls',       'seerr');
+        _wireInvalidate('#SeerrApiKey',     'seerr');
 
         // Parent checkbox change listeners
         var parentIds = {};
@@ -4968,7 +4968,7 @@
         if (validateSeerrMappingsBtn) {
             validateSeerrMappingsBtn.addEventListener('click', function() {
                 _jeRunMappingValidation(
-                    [{ id: 'jellyseerrUrlMappings', service: 'Seerr' }],
+                    [{ id: 'seerrUrlMappings', service: 'Seerr' }],
                     'validateSeerrMappingsBtn', 'seerrMappingsValidationResult'
                 );
             });
@@ -4996,11 +4996,11 @@
                 }
             }
         });
-        testJellyseerrBtn.addEventListener('click', testJellyseerrConnection);
+        testSeerrBtn.addEventListener('click', testSeerrConnection);
 
         async function triggerSeerrScanNow() {
-            const urls = (document.querySelector('#jellyseerrUrls').value || '').split('\n').map(u => u.trim()).filter(Boolean);
-            const apiKey = (document.querySelector('#JellyseerrApiKey').value || '').trim();
+            const urls = (document.querySelector('#seerrUrls').value || '').split('\n').map(u => u.trim()).filter(Boolean);
+            const apiKey = (document.querySelector('#SeerrApiKey').value || '').trim();
             const btn = document.querySelector('#triggerSeerrScanNowBtn');
             const status = document.querySelector('#triggerSeerrScanNowStatus');
 
@@ -5018,7 +5018,7 @@
             let lastError = '';
             for (const url of urls) {
                 try {
-                    const triggerUrl = ApiClient.getUrl('/JellyfinCanopy/jellyseerr/trigger-recently-added-scan', { url: url });
+                    const triggerUrl = ApiClient.getUrl('/JellyfinCanopy/seerr/trigger-recently-added-scan', { url: url });
                     const res = await ApiClient.ajax({ type: 'POST', url: triggerUrl, dataType: 'json', headers: { 'X-Arr-ApiKey': apiKey } });
                     if (res && res.ok) {
                         triggered = true;
@@ -5056,7 +5056,7 @@
          * Services invoked:
          *   - TMDB: one `.testTmdbBtn` click (multiple copies exist across tabs
          *     but any one test updates the shared status card)
-         *   - Seerr: `#testJellyseerrBtn` when Seerr is enabled + URL + key set
+         *   - Seerr: `#testSeerrBtn` when Seerr is enabled + URL + key set
          *   - Sonarr / Radarr: every `.arr-instance-test` inside the instance
          *     lists that has a URL + API key populated
          *
@@ -5129,14 +5129,14 @@
                 // Seerr — only if enabled with a URL + key (otherwise button
                 // would show a "missing info" toast, which is noisy for a
                 // batch re-test action).
-                var seerrEnabled = document.querySelector('#jellyseerrEnabled');
-                var seerrUrls = document.querySelector('#jellyseerrUrls');
-                var seerrKey = document.querySelector('#JellyseerrApiKey');
+                var seerrEnabled = document.querySelector('#seerrEnabled');
+                var seerrUrls = document.querySelector('#seerrUrls');
+                var seerrKey = document.querySelector('#SeerrApiKey');
                 if (seerrEnabled && seerrEnabled.checked
                     && seerrUrls && seerrUrls.value.trim()
                     && seerrKey && seerrKey.value.trim()
-                    && testJellyseerrBtn && !testJellyseerrBtn.disabled) {
-                    testJellyseerrBtn.click();
+                    && testSeerrBtn && !testSeerrBtn.disabled) {
+                    testSeerrBtn.click();
                     tested++;
                 }
 
@@ -5331,11 +5331,11 @@
             }
             const checkboxes = document.querySelectorAll('.blockedUserCheckbox:checked');
             const ids = Array.from(checkboxes).map(cb => cb.dataset.userid);
-            document.querySelector('#jellyseerrImportBlockedUsers').value = ids.join(',');
+            document.querySelector('#seerrImportBlockedUsers').value = ids.join(',');
         }
 
-        document.getElementById('btnImportJellyseerrUsers').addEventListener('click', async () => {
-            const btn = document.getElementById('btnImportJellyseerrUsers');
+        document.getElementById('btnImportSeerrUsers').addEventListener('click', async () => {
+            const btn = document.getElementById('btnImportSeerrUsers');
             const resultDiv = document.getElementById('importUsersResult');
             btn.disabled = true;
             btn.textContent = 'Saving config...';
@@ -5357,7 +5357,7 @@
             try {
                 btn.textContent = 'Importing...';
                 const response = await ApiClient.fetch({
-                    url: ApiClient.getUrl('JellyfinCanopy/jellyseerr/import-users'),
+                    url: ApiClient.getUrl('JellyfinCanopy/seerr/import-users'),
                     type: 'POST',
                     dataType: 'json'
                 });
@@ -5432,7 +5432,7 @@
 
         // Permission Audit — admin scans every Jellyfin user for missing Seerr
         // permissions required by the features the admin has currently enabled.
-        // GETs /JellyfinCanopy/jellyseerr/permission-audit which returns
+        // GETs /JellyfinCanopy/seerr/permission-audit which returns
         // [{ jellyfinUsername, linked, issues:[...] }]. We render a summary
         // line + a table of users with gaps (warnings/unlinked first, then
         // a collapsed "OK" group). Errors surface inline in the result div
@@ -5456,7 +5456,7 @@
                 try {
                     var data = await ApiClient.ajax({
                         type: 'GET',
-                        url: ApiClient.getUrl('/JellyfinCanopy/jellyseerr/permission-audit'),
+                        url: ApiClient.getUrl('/JellyfinCanopy/seerr/permission-audit'),
                         dataType: 'json'
                     });
                     var withIssues = data.filter(function(u) { return u.linked && u.issues && u.issues.length > 0; });

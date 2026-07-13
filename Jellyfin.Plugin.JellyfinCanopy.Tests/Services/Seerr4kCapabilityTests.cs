@@ -1,7 +1,7 @@
 using System.Net.Http;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
-using Jellyfin.Plugin.JellyfinCanopy.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -9,7 +9,7 @@ using Xunit;
 namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services;
 
 /// <summary>
-/// Pins <see cref="JellyseerrClient.GetSeerr4kCapabilityAsync"/>: the server 4K
+/// Pins <see cref="SeerrClient.GetSeerr4kCapabilityAsync"/>: the server 4K
 /// capability comes from Seerr's user-neutral <c>/api/v1/settings/public</c>
 /// (fetched with NO per-user header so it is safe to share-cache) combined with
 /// the caller's own Seerr 4K permissions, and short-circuits without a user
@@ -21,21 +21,21 @@ public class Seerr4kCapabilityTests
 
     private static PluginConfiguration Config() => new()
     {
-        JellyseerrEnabled = true,
-        JellyseerrUrls = "http://seerr:5055",
-        JellyseerrApiKey = "test-key",
+        SeerrEnabled = true,
+        SeerrUrls = "http://seerr:5055",
+        SeerrApiKey = "test-key",
     };
 
-    private static (JellyseerrClient client, RecordingHttpMessageHandler handler) NewClient()
+    private static (SeerrClient client, RecordingHttpMessageHandler handler) NewClient()
         => NewClient(Config());
 
-    private static (JellyseerrClient client, RecordingHttpMessageHandler handler) NewClient(PluginConfiguration config)
+    private static (SeerrClient client, RecordingHttpMessageHandler handler) NewClient(PluginConfiguration config)
     {
         var handler = new RecordingHttpMessageHandler();
         var provider = new FakePluginConfigProvider(config);
-        var client = new JellyseerrClient(
+        var client = new SeerrClient(
             new RecordingHttpClientFactory(handler),
-            NullLogger<JellyseerrClient>.Instance,
+            NullLogger<SeerrClient>.Instance,
             null!,
             new SeerrCache(provider),
             provider,
@@ -114,8 +114,8 @@ public class Seerr4kCapabilityTests
         // capability projection must report server-4K-enabled (AND the JC master
         // switch) even though the linked Seerr user holds no 4K bits.
         var config = Config();
-        config.JellyseerrEnable4KRequests = true;
-        config.JellyseerrEnable4KTvRequests = true;
+        config.SeerrEnable4KRequests = true;
+        config.SeerrEnable4KTvRequests = true;
         var (client, handler) = NewClient(config);
         handler.AddResponse("/api/v1/settings/public", "{\"movie4kEnabled\":true,\"series4kEnabled\":true}");
         // 262144 == REQUEST_MOVIE (base only, no 4K bits) — irrelevant for an admin.
@@ -145,13 +145,13 @@ public class Seerr4kCapabilityTests
 
     private sealed class PassthroughParentalFilter : ISeerrParentalFilter
     {
-        public Task<SeerrParentalResult> ApplyAsync(string json, string apiPath, JellyseerrCaller caller)
+        public Task<SeerrParentalResult> ApplyAsync(string json, string apiPath, SeerrCaller caller)
             => Task.FromResult(new SeerrParentalResult(false, json));
 
-        public Task<bool> IsBlockedAsync(string mediaType, int tmdbId, JellyseerrCaller caller)
+        public Task<bool> IsBlockedAsync(string mediaType, int tmdbId, SeerrCaller caller)
             => Task.FromResult(false);
 
-        public Task<bool> IsTmdbProxyPathBlockedAsync(string tmdbApiPath, JellyseerrCaller caller)
+        public Task<bool> IsTmdbProxyPathBlockedAsync(string tmdbApiPath, SeerrCaller caller)
             => Task.FromResult(false);
     }
 }

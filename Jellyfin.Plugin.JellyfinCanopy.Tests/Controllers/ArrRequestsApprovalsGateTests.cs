@@ -9,10 +9,10 @@ using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Controllers;
-using Jellyfin.Plugin.JellyfinCanopy.Model.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Arr;
-using Jellyfin.Plugin.JellyfinCanopy.Services.Jellyseerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -45,9 +45,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
         private static ArrRequestsController BuildController(
             PluginConfiguration config,
-            JellyseerrPermission callerPermissions,
+            SeerrPermission callerPermissions,
             RecordingHttpMessageHandler handler,
-            RecordingJellyseerrClient jellyseerr,
+            RecordingSeerrClient seerr,
             bool isAdmin,
             string? requestPath = null)
         {
@@ -61,7 +61,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 new StubUserManager(), // empty: IsAdminUser() falls through to the role claim below
                 seerrCache,
                 provider,
-                jellyseerr,
+                seerr,
                 new ArrFetchService(factory, NullLogger<ArrFetchService>.Instance),
                 new PassthroughParentalFilter());
 
@@ -86,9 +86,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
         private static PluginConfiguration Config(bool approvalsEnabled) => new()
         {
-            JellyseerrEnabled = true,
-            JellyseerrUrls = "http://seerr:5055",
-            JellyseerrApiKey = "key",
+            SeerrEnabled = true,
+            SeerrUrls = "http://seerr:5055",
+            SeerrApiKey = "key",
             RequestApprovalsEnabled = approvalsEnabled,
         };
 
@@ -110,14 +110,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         public async Task ActOnRequest_ApprovalsDisabled_Returns403_EvenForAdmin()
         {
             var handler = new RecordingHttpMessageHandler();
-            var jellyseerr = new RecordingJellyseerrClient(
-                new JellyseerrUser { Id = CallerSeerrId, Permissions = JellyseerrPermission.ADMIN });
+            var seerr = new RecordingSeerrClient(
+                new SeerrUser { Id = CallerSeerrId, Permissions = SeerrPermission.ADMIN });
 
             var controller = BuildController(
                 Config(approvalsEnabled: false),
-                JellyseerrPermission.ADMIN,
+                SeerrPermission.ADMIN,
                 handler,
-                jellyseerr,
+                seerr,
                 isAdmin: true,
                 requestPath: "/JellyfinCanopy/arr/requests/123/approve");
 
@@ -127,7 +127,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.Equal("In-app request approvals are disabled.", MessageOf(result));
             // The gate short-circuits before any upstream call or cache eviction.
             Assert.Empty(handler.Sent);
-            Assert.Empty(jellyseerr.Evictions);
+            Assert.Empty(seerr.Evictions);
         }
 
         // ── 2. Requests list advertises the capability off when toggled off ──
@@ -137,14 +137,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         {
             var handler = new RecordingHttpMessageHandler();
             handler.AddResponse("/api/v1/request", @"{ ""results"": [], ""pageInfo"": { ""results"": 0 } }");
-            var jellyseerr = new RecordingJellyseerrClient(
-                new JellyseerrUser { Id = CallerSeerrId, Permissions = JellyseerrPermission.MANAGE_REQUESTS });
+            var seerr = new RecordingSeerrClient(
+                new SeerrUser { Id = CallerSeerrId, Permissions = SeerrPermission.MANAGE_REQUESTS });
 
             var controller = BuildController(
                 Config(approvalsEnabled: false),
-                JellyseerrPermission.MANAGE_REQUESTS,
+                SeerrPermission.MANAGE_REQUESTS,
                 handler,
-                jellyseerr,
+                seerr,
                 isAdmin: false);
 
             Assert.False(CanApprove(await controller.GetRequests()));
@@ -158,14 +158,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             // toggle, not the permission, is the deciding factor.
             var handler = new RecordingHttpMessageHandler();
             handler.AddResponse("/api/v1/request", @"{ ""results"": [], ""pageInfo"": { ""results"": 0 } }");
-            var jellyseerr = new RecordingJellyseerrClient(
-                new JellyseerrUser { Id = CallerSeerrId, Permissions = JellyseerrPermission.MANAGE_REQUESTS });
+            var seerr = new RecordingSeerrClient(
+                new SeerrUser { Id = CallerSeerrId, Permissions = SeerrPermission.MANAGE_REQUESTS });
 
             var controller = BuildController(
                 Config(approvalsEnabled: true),
-                JellyseerrPermission.MANAGE_REQUESTS,
+                SeerrPermission.MANAGE_REQUESTS,
                 handler,
-                jellyseerr,
+                seerr,
                 isAdmin: false);
 
             Assert.True(CanApprove(await controller.GetRequests()));
@@ -179,21 +179,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var handler = new RecordingHttpMessageHandler();
             // Seerr's approve response is the MediaRequest: root `type` + `media.tmdbId`.
             handler.AddResponse("/approve", @"{ ""type"": ""movie"", ""media"": { ""tmdbId"": 550 } }");
-            var jellyseerr = new RecordingJellyseerrClient(
-                new JellyseerrUser { Id = CallerSeerrId, Permissions = JellyseerrPermission.ADMIN });
+            var seerr = new RecordingSeerrClient(
+                new SeerrUser { Id = CallerSeerrId, Permissions = SeerrPermission.ADMIN });
 
             var controller = BuildController(
                 Config(approvalsEnabled: true),
-                JellyseerrPermission.ADMIN,
+                SeerrPermission.ADMIN,
                 handler,
-                jellyseerr,
+                seerr,
                 isAdmin: true,
                 requestPath: "/JellyfinCanopy/arr/requests/9/approve");
 
             var result = await controller.ActOnRequest(9);
 
             Assert.IsType<OkObjectResult>(result);
-            var eviction = Assert.Single(jellyseerr.Evictions);
+            var eviction = Assert.Single(seerr.Evictions);
             Assert.Equal((550, "movie"), eviction);
         }
 
@@ -203,21 +203,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var handler = new RecordingHttpMessageHandler();
             // Well-formed JSON but missing media.tmdbId → parser must not throw and must not evict.
             handler.AddResponse("/approve", @"{ ""type"": ""movie"", ""media"": {} }");
-            var jellyseerr = new RecordingJellyseerrClient(
-                new JellyseerrUser { Id = CallerSeerrId, Permissions = JellyseerrPermission.ADMIN });
+            var seerr = new RecordingSeerrClient(
+                new SeerrUser { Id = CallerSeerrId, Permissions = SeerrPermission.ADMIN });
 
             var controller = BuildController(
                 Config(approvalsEnabled: true),
-                JellyseerrPermission.ADMIN,
+                SeerrPermission.ADMIN,
                 handler,
-                jellyseerr,
+                seerr,
                 isAdmin: true,
                 requestPath: "/JellyfinCanopy/arr/requests/9/approve");
 
             var result = await controller.ActOnRequest(9);
 
             Assert.IsType<OkObjectResult>(result);
-            Assert.Empty(jellyseerr.Evictions);
+            Assert.Empty(seerr.Evictions);
         }
 
         // ── Minimal fakes ────────────────────────────────────────────────────
@@ -227,20 +227,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         /// <see cref="EvictMediaDetailCache"/> call so the eviction path is assertable.
         /// Every other member is an unused NotImplemented stub (repo convention).
         /// </summary>
-        private sealed class RecordingJellyseerrClient : IJellyseerrClient
+        private sealed class RecordingSeerrClient : ISeerrClient
         {
-            private readonly JellyseerrUser _user;
+            private readonly SeerrUser _user;
 
-            public RecordingJellyseerrClient(JellyseerrUser user) => _user = user;
+            public RecordingSeerrClient(SeerrUser user) => _user = user;
 
             public List<(int TmdbId, string MediaType)> Evictions { get; } = new();
 
             public void EvictMediaDetailCache(int tmdbId, string mediaType) => Evictions.Add((tmdbId, mediaType));
 
-            public Task<JellyseerrUser?> GetJellyseerrUser(string jellyfinUserId, bool bypassCache = false, bool allowAutoImport = true)
-                => Task.FromResult<JellyseerrUser?>(_user);
+            public Task<SeerrUser?> GetSeerrUser(string jellyfinUserId, bool bypassCache = false, bool allowAutoImport = true)
+                => Task.FromResult<SeerrUser?>(_user);
 
-            public Task<string?> GetJellyseerrUserId(string jellyfinUserId, bool allowAutoImport = true)
+            public Task<string?> GetSeerrUserId(string jellyfinUserId, bool allowAutoImport = true)
                 => throw new NotImplementedException();
 
             public bool IsImportBlocked(string jellyfinUserId, PluginConfiguration config)
@@ -251,25 +251,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             public Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(string jellyfinUserId, bool isAdmin = false)
                 => throw new NotImplementedException();
 
-            public Task<IActionResult> ProxyRequestAsync(string apiPath, HttpMethod method, string? content, JellyseerrCaller caller)
+            public Task<IActionResult> ProxyRequestAsync(string apiPath, HttpMethod method, string? content, SeerrCaller caller)
                 => throw new NotImplementedException();
 
-            public Task<List<WatchlistItem>?> GetWatchlistForUser(string jellyseerrUserId)
+            public Task<List<WatchlistItem>?> GetWatchlistForUser(string seerrUserId)
                 => throw new NotImplementedException();
 
-            public Task<List<WatchlistItem>?> GetRequestsForUser(string jellyseerrUserId)
+            public Task<List<WatchlistItem>?> GetRequestsForUser(string seerrUserId)
                 => throw new NotImplementedException();
         }
 
         private sealed class PassthroughParentalFilter : ISeerrParentalFilter
         {
-            public Task<SeerrParentalResult> ApplyAsync(string json, string apiPath, JellyseerrCaller caller)
+            public Task<SeerrParentalResult> ApplyAsync(string json, string apiPath, SeerrCaller caller)
                 => Task.FromResult(new SeerrParentalResult(false, json));
 
-            public Task<bool> IsBlockedAsync(string mediaType, int tmdbId, JellyseerrCaller caller)
+            public Task<bool> IsBlockedAsync(string mediaType, int tmdbId, SeerrCaller caller)
                 => Task.FromResult(false);
 
-            public Task<bool> IsTmdbProxyPathBlockedAsync(string tmdbApiPath, JellyseerrCaller caller)
+            public Task<bool> IsTmdbProxyPathBlockedAsync(string tmdbApiPath, SeerrCaller caller)
                 => Task.FromResult(false);
         }
     }
