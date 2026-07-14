@@ -196,9 +196,60 @@ test('CI and release share the verifier while every non-lint workflow gate stays
     assert.match(build, /args=\(\s*manifest\.json/);
     assert.match(build, /--base-manifest/);
     assert.match(release, /Verify current public catalog/);
-    assert.match(release, /Verify anonymous catalog contract before manifest PR/);
-    assert.equal((release.match(/verify-manifest-remote\.js manifest\.json/g) || []).length, 2);
+    assert.match(release, /Verify exact immutable asset anonymously/);
+    assert.equal((release.match(/verify-manifest-remote\.js/g) || []).length, 2);
     assert.match(release, /--manifest-url/);
+});
+
+test('release reruns preserve published bytes and reviewer-owned manifest state', () => {
+    const release = fs.readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8');
+    const step = (name, nextName) => release.slice(
+        release.indexOf(`- name: ${name}`),
+        nextName ? release.indexOf(`- name: ${nextName}`) : release.length,
+    );
+    const inspect = release.indexOf('- name: Inspect release and manifest state');
+    const reconcile = release.indexOf('- name: Create or reconcile draft release asset');
+    const finalized = release.indexOf('- name: Download finalized draft asset');
+    const generated = release.indexOf('- name: Generate manifest from finalized immutable bytes');
+    const branch = release.indexOf('- name: Create manifest branch without overwriting reviewer commits');
+    const publish = release.indexOf('- name: Publish verified draft');
+    const anonymous = release.indexOf('- name: Verify exact immutable asset anonymously');
+    const pullRequest = release.indexOf('- name: Open manifest update PR');
+
+    assert.ok(inspect > 0, 'release-state inspection is missing');
+    assert.ok(inspect < reconcile && reconcile < finalized && finalized < generated);
+    assert.ok(generated < branch && branch < publish && publish < anonymous && anonymous < pullRequest);
+    assert.match(release, /node scripts\/release\/release-state\.js/);
+    assert.match(release, /gh release create "\$GITHUB_REF_NAME"[\s\S]*?--draft/);
+    assert.equal((release.match(/gh release upload[^\n]*--clobber/g) || []).length, 1);
+    assert.match(release, /replace-draft-asset\)[\s\S]*?require_existing_draft[\s\S]*?gh release upload[^\n]*--clobber/);
+    assert.match(release, /upload-draft-asset\)[\s\S]*?require_existing_draft[\s\S]*?gh release upload/);
+    assert.match(release, /noop-main\|resume-published-proposal\)[\s\S]*?no release mutation/);
+    assert.match(release, /gh release download[\s\S]*?generated-manifest\.json/);
+    assert.match(release, /git push --force-with-lease="refs\/heads\/\$BRANCH:"/);
+    assert.doesNotMatch(release, /git push[^\n]*--force(?:\s|$)/);
+    assert.doesNotMatch(release, /git (?:checkout|switch)[^\n]*-[Bb] /);
+    const rejectedGuard = release.indexOf('rejected/closed PR(s)');
+    assert.ok(rejectedGuard > inspect && rejectedGuard < reconcile, 'closed PR guard runs after mutation');
+    assert.match(release, /rerun made no release or manifest changes/);
+
+    assert.match(step('Download finalized draft asset', 'Generate manifest from finalized immutable bytes'),
+        /action != 'noop-main'[\s\S]*action != 'resume-published-proposal'/);
+    for (const name of [
+        'Generate manifest from finalized immutable bytes',
+        'Create manifest branch without overwriting reviewer commits',
+    ]) {
+        const source = step(name, name.startsWith('Generate')
+            ? 'Create manifest branch without overwriting reviewer commits'
+            : 'Publish verified draft');
+        assert.match(source, /action != 'noop-main'/);
+        assert.match(source, /action != 'resume-published-proposal'/);
+        assert.match(source, /action != 'resume-draft-proposal'/);
+    }
+    assert.match(step('Publish verified draft', 'Verify exact immutable asset anonymously'),
+        /action != 'noop-main'[\s\S]*action != 'resume-published-proposal'/);
+    assert.match(step('Open manifest update PR', 'Summarize immutable rerun'),
+        /if: steps\.release_state\.outputs\.action != 'noop-main'/);
 });
 
 test('the warning cap and local policy entry points remain explicit', () => {
