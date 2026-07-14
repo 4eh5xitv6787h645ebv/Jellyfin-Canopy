@@ -381,6 +381,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Неуспешно запазване на отметката",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Прескачане до отметка",
   "bookmark_cleanup_complete": "Почистването завърши: премахнати са {count} изоставени отметки",
+  "bookmark_cleanup_uncertain_summary": "Запазени несигурни: {retained}; грешки: {errors}",
   "bookmark_cleanup_failed": "Почистването е неуспешно",
   "bookmark_delete_all_confirm": "Изтриване на ВСИЧКИ отметки? Това действие не може да бъде отменено!",
   "bookmark_deleted_all": "Всички отметки са изтрити",

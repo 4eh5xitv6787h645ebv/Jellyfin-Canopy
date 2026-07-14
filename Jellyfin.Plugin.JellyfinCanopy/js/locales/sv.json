@@ -381,6 +381,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Misslyckades spara bokmärke",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Hoppade till bokmärke",
   "bookmark_cleanup_complete": "Upprensning klar: tog bort {count} föräldralösa bokmärken",
+  "bookmark_cleanup_uncertain_summary": "Behölls som osäkra: {retained}; fel: {errors}",
   "bookmark_cleanup_failed": "Upprensning misslyckades",
   "bookmark_delete_all_confirm": "Ta bort ALLA bokmärken? Detta kan inte ångras!",
   "bookmark_deleted_all": "Alla bokmärken borttagna",

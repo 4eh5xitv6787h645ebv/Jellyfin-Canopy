@@ -381,6 +381,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Error en desar el marcador",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Saltat al marcador",
   "bookmark_cleanup_complete": "Neteja completada: s'han eliminat {count} marcadors orfes",
+  "bookmark_cleanup_uncertain_summary": "Conservats per incertesa: {retained}; errors: {errors}",
   "bookmark_cleanup_failed": "Neteja fallida",
   "bookmark_delete_all_confirm": "Eliminar TOTS els marcadors? Això no es pot desfer!",
   "bookmark_deleted_all": "Tots els marcadors eliminats",

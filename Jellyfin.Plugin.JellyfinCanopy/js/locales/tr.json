@@ -381,6 +381,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Yer imi kaydedilemedi",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Yer imine atlandı",
   "bookmark_cleanup_complete": "Temizleme tamamlandı: {count} yetim yer imi kaldırıldı",
+  "bookmark_cleanup_uncertain_summary": "Belirsiz olduğu için korunan: {retained}; hatalar: {errors}",
   "bookmark_cleanup_failed": "Temizleme başarısız",
   "bookmark_delete_all_confirm": "TÜM yer imlerini sil? Bu geri alınamaz!",
   "bookmark_deleted_all": "Tüm yer imleri silindi",

@@ -381,6 +381,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Bladwijzer opslaan mislukt",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Gesprongen naar bladwijzer",
   "bookmark_cleanup_complete": "Opschonen voltooid: {count} weesbladwijzer(s) verwijderd",
+  "bookmark_cleanup_uncertain_summary": "Onzekere behouden: {retained}; fouten: {errors}",
   "bookmark_cleanup_failed": "Opschonen mislukt",
   "bookmark_delete_all_confirm": "ALLE bladwijzers verwijderen? Dit kan niet ongedaan worden gemaakt!",
   "bookmark_deleted_all": "Alle bladwijzers verwijderd",

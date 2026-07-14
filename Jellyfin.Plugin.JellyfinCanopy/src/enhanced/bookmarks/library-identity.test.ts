@@ -46,7 +46,7 @@ describe('bookmarks library identity ownership', () => {
     JC.bookmarks = {
       delete: deleteBookmark,
       update: vi.fn().mockResolvedValue(true),
-      cleanupOrphaned: vi.fn().mockResolvedValue({ cleaned: 0, errors: 0 }),
+      cleanupOrphaned: vi.fn().mockResolvedValue({ deleted: 0, retainedUncertain: 0, errors: 0 }),
       syncBookmarks: vi.fn().mockResolvedValue([]),
     } as any;
     JC.saveUserSettings = saveUserSettings;

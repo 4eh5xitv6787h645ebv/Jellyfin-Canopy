@@ -382,6 +382,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Failed to save bookmark",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Jumped to bookmark",
   "bookmark_cleanup_complete": "Cleanup complete: removed {count} orphaned bookmarks",
+  "bookmark_cleanup_uncertain_summary": "Retained uncertain: {retained}; errors: {errors}",
   "bookmark_cleanup_failed": "Cleanup failed",
   "bookmark_delete_all_confirm": "Delete ALL bookmarks? This cannot be undone!",
   "bookmark_deleted_all": "All bookmarks deleted",

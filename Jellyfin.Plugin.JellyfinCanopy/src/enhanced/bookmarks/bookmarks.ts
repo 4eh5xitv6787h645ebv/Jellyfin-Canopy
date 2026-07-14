@@ -5,9 +5,9 @@
 
 import { JC } from '../../globals';
 import { escapeHtml, toast } from '../../core/ui-kit';
-import { getItemCached, debounce } from '../helpers';
+import { debounce } from '../helpers';
 import { createObserver, disconnectObserver } from '../../core/dom-observer';
-import type { BookmarksApi } from './surface';
+import type { BookmarkCleanupResult, BookmarksApi } from './surface';
 import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -126,6 +126,17 @@ import type { IdentityContext } from '../../types/jc';
     if (direct) return direct;
     if (!shaped.responseText) return null;
     try { return committedState(JSON.parse(shaped.responseText)); } catch { return null; }
+  }
+
+  function cleanupResponse(value: unknown): { state: BookmarkCommittedState; result: BookmarkCleanupResult } | null {
+    const state = committedState(value);
+    if (!state || !value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    const deleted = Number(record.deleted ?? record.Deleted);
+    const retainedUncertain = Number(record.retainedUncertain ?? record.RetainedUncertain);
+    const errors = Number(record.errors ?? record.Errors);
+    if (![deleted, retainedUncertain, errors].every(count => Number.isSafeInteger(count) && count >= 0)) return null;
+    return { state, result: { deleted, retainedUncertain, errors } };
   }
 
   function httpStatus(error: unknown): number | undefined {
@@ -658,71 +669,73 @@ import type { IdentityContext } from '../../types/jc';
   }
 
   /**
-   * Delete bookmarks for items that no longer exist in Jellyfin
+   * Ask the server to classify every bookmarked item in the current user's
+   * library scope and atomically delete only authoritative global absences.
    */
-  async function cleanupOrphanedBookmarks(): Promise<{ cleaned: number; errors: number }> {
+  async function cleanupOrphanedBookmarks(): Promise<BookmarkCleanupResult> {
+    const empty = (): BookmarkCleanupResult => ({ deleted: 0, retainedUncertain: 0, errors: 0 });
     const captured = captureIdentity();
-    if (!captured.context) return { cleaned: 0, errors: 0 };
+    if (!captured.context) return empty();
     const root = bookmarkRootFor(captured);
-    if (!root) return { cleaned: 0, errors: 0 };
-    const allBookmarks = root.bookmarks;
-    const itemIds = new Set<string>();
-    const toDelete: string[] = [];
+    if (!root) return empty();
+    const plugin = JC.core.api?.plugin?.bind(JC.core.api);
+    if (typeof plugin !== 'function') throw new Error('Bookmark cleanup transport is unavailable');
+    const evidenceDeleted = new Set<string>();
 
-    // Collect all unique item IDs
-    for (const bookmark of Object.values<any>(allBookmarks)) {
-      if (bookmark?.itemId) itemIds.add(bookmark.itemId);
-    }
-
-    // Check which items still exist
-    const userId = captured.context.userId;
-
-    let cleaned = 0;
-    let errors = 0;
-
-    for (const itemId of itemIds) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (!isBookmarkRootCurrent(captured, root)) return empty();
+      const base = committedState(root);
+      if (!base) throw new Error('Bookmark state is unavailable; reload before cleanup');
       try {
-        await getItemCached(itemId, { userId });
-        if (!isIdentityCurrent(captured)) return { cleaned, errors };
-        // Item exists, keep bookmarks
-      } catch (e) {
-        if (!isBookmarkRootCurrent(captured, root)) return { cleaned, errors };
-        // DATA-SAFETY: only an EXPLICIT 404 (item confirmed gone) may delete a
-        // bookmark. A network blip, 5xx, timeout or any other failure must NOT
-        // destroy data — keep the bookmark and surface a warning instead.
-        const status = (e as { status?: number } | null)?.status;
-        if (status === 404) {
-          for (const [bookmarkId, bookmark] of Object.entries<any>(allBookmarks)) {
-            if (bookmark?.itemId === itemId) {
-              toDelete.push(bookmarkId);
+        const response = await plugin(
+          `/user-settings/${encodeURIComponent(captured.context.userId)}/bookmark.json/cleanup`,
+          { method: 'POST', body: { revision: base.revision }, skipRetry: true }
+        );
+        const cleaned = cleanupResponse(response);
+        if (!cleaned) throw new Error('Bookmark cleanup returned an invalid committed state');
+        if (!adoptCommittedState(captured, root, cleaned.state)) return empty();
+        const result = {
+          ...cleaned.result,
+          deleted: cleaned.result.deleted + evidenceDeleted.size
+        };
+        if (result.deleted > 0) emitBookmarksUpdated(captured, 'cleanup');
+        console.log(
+          `${logPrefix} Cleanup: ${result.deleted} removed, `
+          + `${result.retainedUncertain} retained uncertain, ${result.errors} errors`
+        );
+        return result;
+      } catch (error) {
+        if (isAmbiguousBookmarkTransportError(error)) {
+          if (!isBookmarkRootCurrent(captured, root)) return empty();
+          try {
+            const response = await plugin(
+              `/user-settings/${encodeURIComponent(captured.context.userId)}/bookmark.json`,
+              { method: 'GET', skipRetry: true }
+            );
+            const evidence = committedState(response);
+            if (!evidence) throw new Error('Bookmark evidence response was invalid');
+            // Evidence cannot distinguish our response-lost commit from a
+            // concurrent session deleting the same bookmark in this narrow
+            // window. Counting every newly absent id avoids false zero-success;
+            // this affects only the informational toast, never deletion policy.
+            for (const bookmarkId of Object.keys(base.bookmarks)) {
+              if (!evidence.bookmarks[bookmarkId]) evidenceDeleted.add(bookmarkId);
             }
+            if (!adoptCommittedState(captured, root, evidence)) return empty();
+            if ((error as { name?: string }).name === 'AbortError') throw error;
+            continue;
+          } catch {
+            throw error;
           }
-        } else {
-          errors++;
-          console.warn(`${logPrefix} Keeping bookmarks for ${itemId}; existence check failed (status=${status ?? 'n/a'}), not a 404:`, e);
         }
+        if (httpStatus(error) !== 409) throw error;
+        const latest = conflictState(error);
+        if (!latest) throw new Error('Bookmark conflict response omitted authoritative state');
+        if (!adoptCommittedState(captured, root, latest)) return empty();
       }
     }
 
-    // Delete every confirmed orphan in one revisioned transaction. A malformed
-    // or failed batch leaves every prior bookmark intact.
-    if (toDelete.length > 0) {
-      try {
-        const committed = await commitBookmarkBatch(captured, root, state =>
-          toDelete
-            .filter(bookmarkId => !!state.bookmarks[bookmarkId])
-            .map(bookmarkId => ({ type: 'delete' as const, bookmarkId })));
-        if (!committed) return { cleaned, errors };
-        cleaned = toDelete.filter(bookmarkId => !committed.bookmarks[bookmarkId]).length;
-      } catch (e) {
-        if (!isBookmarkRootCurrent(captured, root)) return { cleaned, errors };
-        errors += toDelete.length;
-      }
-    }
-
-    if (!isBookmarkRootCurrent(captured, root)) return { cleaned, errors };
-    console.log(`${logPrefix} Cleanup: ${cleaned} orphaned bookmarks removed, ${errors} kept/failed (non-404 or delete error)`);
-    return { cleaned, errors };
+    throw new Error('Bookmark state kept changing; retry cleanup');
   }
 
   /** Delete the currently loaded bookmark set in one atomic transaction. */

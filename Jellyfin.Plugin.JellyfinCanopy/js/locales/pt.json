@@ -381,6 +381,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Falha ao guardar marcador",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Saltou para o marcador",
   "bookmark_cleanup_complete": "Limpeza concluída: {count} marcadores órfãos removidos",
+  "bookmark_cleanup_uncertain_summary": "Mantidos por incerteza: {retained}; erros: {errors}",
   "bookmark_cleanup_failed": "Limpeza falhada",
   "bookmark_delete_all_confirm": "Eliminar TODOS os marcadores? Isto não pode ser desfeito!",
   "bookmark_deleted_all": "Todos os marcadores eliminados",

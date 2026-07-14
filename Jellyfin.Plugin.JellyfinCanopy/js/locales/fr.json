@@ -381,6 +381,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Échec de l'enregistrement du signet",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Sauté au signet",
   "bookmark_cleanup_complete": "Nettoyage terminé : {count} signets orphelins supprimés",
+  "bookmark_cleanup_uncertain_summary": "Conservés car incertains : {retained} ; erreurs : {errors}",
   "bookmark_cleanup_failed": "Échec du nettoyage",
   "bookmark_delete_all_confirm": "Supprimer TOUS les signets ? Cette action est irréversible !",
   "bookmark_deleted_all": "Tous les signets supprimés",

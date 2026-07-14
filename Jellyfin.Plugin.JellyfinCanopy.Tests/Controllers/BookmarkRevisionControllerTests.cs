@@ -22,6 +22,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         private readonly string _baseDir;
         private readonly UserConfigurationManager _manager;
         private readonly User _user;
+        private readonly CountingLibraryManager _libraryManager;
 
         public BookmarkRevisionControllerTests()
         {
@@ -29,6 +30,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Directory.CreateDirectory(_baseDir);
             _manager = new UserConfigurationManager(new StubAppPaths(_baseDir), NullLogger<UserConfigurationManager>.Instance);
             _user = new User("bookmark-user", "Provider", "PasswordProvider");
+            _libraryManager = new CountingLibraryManager();
         }
 
         private string UserId => _user.Id.ToString("N");
@@ -54,7 +56,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 new StubUserManager(_user),
                 new SeerrCache(provider),
                 provider,
-                _manager);
+                _manager,
+                _libraryManager);
             controller.ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext
@@ -338,6 +341,109 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var final = State();
             Assert.Equal(2, final.Revision);
             Assert.Equal(new[] { "keep", "new" }, final.Bookmarks.Keys.OrderBy(key => key).ToArray());
+        }
+
+        [Fact]
+        public void Cleanup_MixedExistenceResults_DeleteOnlyGlobalAbsenceAndRemainIdempotent()
+        {
+            var gone = Guid.NewGuid();
+            var visible = Guid.NewGuid();
+            var hidden = Guid.NewGuid();
+            var transient = Guid.NewGuid();
+            Seed(
+                ("gone-a", Bookmark(gone.ToString("N"))),
+                ("gone-b", Bookmark(gone.ToString("N"))),
+                ("visible", Bookmark(visible.ToString("N"))),
+                ("hidden", Bookmark(hidden.ToString("N"))),
+                ("transient", Bookmark(transient.ToString("N"))),
+                ("malformed", Bookmark("not-a-jellyfin-guid")));
+
+            _libraryManager.GetItemByIdHook = id =>
+            {
+                if (id == gone) return null;
+                if (id == transient) throw new IOException("temporary library database failure");
+                return new StubMovie { Id = id };
+            };
+            _libraryManager.GetItemByIdUserHook = (id, _) =>
+                id == hidden ? null : new StubMovie { Id = id };
+
+            var first = Controller().CleanupUserBookmarks(
+                UserId,
+                new UserSettingsController.BookmarkCleanupPayload { Revision = 0 },
+                CancellationToken.None);
+            var firstResponse = Assert.IsType<UserSettingsController.BookmarkMutationResponse>(
+                Assert.IsType<OkObjectResult>(first).Value);
+
+            Assert.Equal(2, firstResponse.Deleted);
+            Assert.Equal(3, firstResponse.RetainedUncertain);
+            Assert.Equal(2, firstResponse.Errors);
+            Assert.Equal(1, firstResponse.Revision);
+            Assert.Equal(
+                new[] { "hidden", "malformed", "transient", "visible" },
+                firstResponse.Bookmarks.Keys.OrderBy(key => key).ToArray());
+
+            // Regaining visibility must not turn the retained bookmark into a
+            // deletion candidate. Repeating cleanup is a no-op revision-wise.
+            _libraryManager.GetItemByIdUserHook = (id, _) => new StubMovie { Id = id };
+            var second = Controller().CleanupUserBookmarks(
+                UserId,
+                new UserSettingsController.BookmarkCleanupPayload { Revision = 1 },
+                CancellationToken.None);
+            var secondResponse = Assert.IsType<UserSettingsController.BookmarkMutationResponse>(
+                Assert.IsType<OkObjectResult>(second).Value);
+
+            Assert.Equal(0, secondResponse.Deleted);
+            Assert.Equal(2, secondResponse.RetainedUncertain);
+            Assert.Equal(2, secondResponse.Errors);
+            Assert.Equal(1, secondResponse.Revision);
+            Assert.Equal(firstResponse.Bookmarks.Keys.OrderBy(key => key), secondResponse.Bookmarks.Keys.OrderBy(key => key));
+        }
+
+        [Fact]
+        public void Cleanup_CancelledBeforeClassification_PreservesExactState()
+        {
+            var itemId = Guid.NewGuid();
+            Seed(("keep", Bookmark(itemId.ToString("N"))));
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+
+            var result = Controller().CleanupUserBookmarks(
+                UserId,
+                new UserSettingsController.BookmarkCleanupPayload { Revision = 0 },
+                cancellation.Token);
+
+            Assert.Equal(499, Assert.IsType<ObjectResult>(result).StatusCode);
+            Assert.Equal(0, State().Revision);
+            Assert.Contains("keep", State().Bookmarks.Keys);
+        }
+
+        [Fact]
+        public void Cleanup_OverBound_Returns413WithoutAnyLookupOrMutation()
+        {
+            var state = new UserBookmark
+            {
+                Revision = 0,
+                Bookmarks = Enumerable.Range(0, 1001).ToDictionary(
+                    index => $"bookmark-{index}",
+                    _ => Bookmark(Guid.NewGuid().ToString("N")),
+                    StringComparer.Ordinal)
+            };
+            _manager.SaveUserConfiguration(UserId, "bookmark.json", state);
+            _libraryManager.GetItemByIdHook = _ => throw new InvalidOperationException("lookup must remain bounded");
+
+            var result = Controller().CleanupUserBookmarks(
+                UserId,
+                new UserSettingsController.BookmarkCleanupPayload { Revision = 0 },
+                CancellationToken.None);
+            var response = Assert.IsType<UserSettingsController.BookmarkMutationResponse>(
+                Assert.IsType<ObjectResult>(result).Value);
+
+            Assert.Equal(StatusCodes.Status413PayloadTooLarge, Assert.IsType<ObjectResult>(result).StatusCode);
+            Assert.Equal(0, response.Deleted);
+            Assert.Equal(1001, response.RetainedUncertain);
+            Assert.Equal(1, response.Errors);
+            Assert.Equal(0, State().Revision);
+            Assert.Equal(1001, State().Bookmarks.Count);
         }
 
         [Fact]

@@ -10,6 +10,7 @@
     "e2e/arr-search.spec.ts › arr Search — action-sheet items › non-admin sees none of the arr Search items",
     "e2e/auto-skip.spec.ts › Auto-Skip v2 (native media segments) › resolves the clean-seed item, seeks to exact end once, and ignores direct seek-back",
     "e2e/bookmark-revisions.spec.ts › bookmark revision data integrity › stale replacement conflicts and same-revision tabs converge without lost bookmarks",
+    "e2e/bookmark-revisions.spec.ts › bookmark revision data integrity › server cleanup deletes only a globally absent item and is idempotent",
     "e2e/boot.spec.ts › boot › initializes with all core namespaces and no real console errors",
     "e2e/console-net.spec.ts › console and HTTP error safety net › structured console errors retain their source script URL",
     "e2e/console-net.spec.ts › console and HTTP error safety net › unexpected4xx() catches a broken plugin endpoint but not an allowlisted url",

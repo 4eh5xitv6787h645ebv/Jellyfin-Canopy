@@ -51,7 +51,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 new StubUserManager(_user),
                 new SeerrCache(_provider),
                 _provider,
-                _manager);
+                _manager,
+                new CountingLibraryManager());
             controller.ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext

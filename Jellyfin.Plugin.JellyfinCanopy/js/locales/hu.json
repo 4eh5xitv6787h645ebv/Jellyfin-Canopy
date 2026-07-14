@@ -381,6 +381,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Sikertelen könyvjelző mentés",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Ugrás könyvjelzőhöz",
   "bookmark_cleanup_complete": "Takarítás befejezve: {count} árva könyvjelző eltávolítva",
+  "bookmark_cleanup_uncertain_summary": "Bizonytalanság miatt megtartva: {retained}; hibák: {errors}",
   "bookmark_cleanup_failed": "Takarítás sikertelen",
   "bookmark_delete_all_confirm": "Töröljöd az ÖSSZES könyvjelzőt? Ez nem vonható vissza!",
   "bookmark_deleted_all": "Minden könyvjelző törölve",

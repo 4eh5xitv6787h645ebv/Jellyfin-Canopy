@@ -19,6 +19,12 @@ interface BookmarkState {
     Bookmarks: Record<string, BookmarkItem>;
 }
 
+interface BookmarkCleanupState extends BookmarkState {
+    Deleted: number;
+    RetainedUncertain: number;
+    Errors: number;
+}
+
 function pathFor(session: Session, suffix = ''): string {
     return `/JellyfinCanopy/user-settings/${encodeURIComponent(session.userId)}/bookmark.json${suffix}`;
 }
@@ -139,6 +145,66 @@ test.describe('bookmark revision data integrity', () => {
             expect(final.Bookmarks[ids.tab2]?.ItemId).toBe('jc-tab-2');
         } finally {
             await removeTestBookmarks(session, allIds);
+        }
+    });
+
+    test('server cleanup deletes only a globally absent item and is idempotent', async () => {
+        const session = await authenticate(BASE, process.env.JF_USER_NAME || 'jc_arruser', process.env.JF_USER_PASS || 'Test669Pw!x');
+        const itemsResponse = await apiRaw(
+            BASE,
+            `/Users/${encodeURIComponent(session.userId)}/Items?Recursive=true&Limit=1`,
+            session.token
+        );
+        expect(itemsResponse.status).toBe(200);
+        const items = (await itemsResponse.json()) as { Items?: Array<{ Id?: string }> };
+        const visibleItemId = String(items.Items?.[0]?.Id || '');
+        expect(visibleItemId).toMatch(/^[0-9a-f]{32}$/i);
+
+        const nonce = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        const visibleBookmarkId = `bm_e2e_cleanup_${nonce}_visible`;
+        const missingBookmarkId = `bm_e2e_cleanup_${nonce}_missing`;
+        const missingItemId = crypto.randomUUID().replaceAll('-', '');
+
+        try {
+            const initial = await readState(session);
+            const added = await batch(session, initial.Revision, [
+                {
+                    Type: 'add',
+                    BookmarkId: visibleBookmarkId,
+                    Bookmark: { ItemId: visibleItemId, Timestamp: 10, Label: 'visible' },
+                },
+                {
+                    Type: 'add',
+                    BookmarkId: missingBookmarkId,
+                    Bookmark: { ItemId: missingItemId, Timestamp: 20, Label: 'missing' },
+                },
+            ]);
+            expect(added.status).toBe(200);
+            const afterAdd = (await added.json()) as BookmarkState;
+
+            const cleaned = await apiRaw(BASE, pathFor(session, '/cleanup'), session.token, {
+                method: 'POST',
+                body: JSON.stringify({ Revision: afterAdd.Revision }),
+            });
+            expect(cleaned.status).toBe(200);
+            const cleanupState = (await cleaned.json()) as BookmarkCleanupState;
+            expect(cleanupState.Deleted).toBeGreaterThanOrEqual(1);
+            expect(cleanupState.RetainedUncertain).toBeGreaterThanOrEqual(0);
+            expect(cleanupState.Errors).toBeGreaterThanOrEqual(0);
+            expect(cleanupState.Bookmarks[visibleBookmarkId]?.ItemId).toBe(visibleItemId);
+            expect(cleanupState.Bookmarks[missingBookmarkId]).toBeUndefined();
+
+            const repeated = await apiRaw(BASE, pathFor(session, '/cleanup'), session.token, {
+                method: 'POST',
+                body: JSON.stringify({ Revision: cleanupState.Revision }),
+            });
+            expect(repeated.status).toBe(200);
+            const repeatedState = (await repeated.json()) as BookmarkCleanupState;
+            expect(repeatedState.Deleted).toBe(0);
+            expect(repeatedState.Revision).toBe(cleanupState.Revision);
+            expect(repeatedState.Bookmarks[visibleBookmarkId]?.ItemId).toBe(visibleItemId);
+        } finally {
+            await removeTestBookmarks(session, [visibleBookmarkId, missingBookmarkId]);
         }
     });
 });
