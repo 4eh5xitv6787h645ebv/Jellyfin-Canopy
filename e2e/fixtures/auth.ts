@@ -17,6 +17,7 @@ import {
     type AuthSessionPhase,
     type AuthSessionSnapshot,
 } from '../../scripts/e2e/auth-session-state';
+import { isKnownJellyfinWebHostNoise } from '../../scripts/e2e/jellyfin-host-noise';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -115,6 +116,8 @@ export interface ConsoleErrorDetail {
     lineNumber: number;
     columnNumber: number;
     source: 'console' | 'pageerror';
+    /** Browser stack retained so exact stock-web races can be source-gated. */
+    stack: string;
 }
 
 /** Console/pageerror sink with noise filtering + URL-aware response detectors. */
@@ -166,6 +169,7 @@ export const test = base.extend<Fixtures>({
                 lineNumber: Number(location.lineNumber || 0),
                 columnNumber: Number(location.columnNumber || 0),
                 source: 'console',
+                stack: '',
             });
         });
         page.on('pageerror', (error) => {
@@ -177,6 +181,7 @@ export const test = base.extend<Fixtures>({
                 lineNumber: 0,
                 columnNumber: 0,
                 source: 'pageerror',
+                stack: String(error.stack || ''),
             });
         });
         // URL-aware failed-response recorder: Chromium's console text is generic,
@@ -197,9 +202,13 @@ export const test = base.extend<Fixtures>({
         const sink: ConsoleErrors = {
             all,
             details,
-            real: () => all.filter((text) => !CONSOLE_NOISE.some((rx) => rx.test(text))),
+            real: () => details.filter(
+                (detail) => !CONSOLE_NOISE.some((rx) => rx.test(detail.text))
+                    && !isKnownJellyfinWebHostNoise(detail)
+            ).map(({ text }) => text),
             realDetails: () => details.filter(
-                ({ text }) => !CONSOLE_NOISE.some((rx) => rx.test(text))
+                (detail) => !CONSOLE_NOISE.some((rx) => rx.test(detail.text))
+                    && !isKnownJellyfinWebHostNoise(detail)
             ),
             unexpected4xx: () =>
                 failed.filter(

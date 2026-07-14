@@ -103,9 +103,9 @@ async function declineRequestsFor(page: any, tmdbIds: number[]): Promise<void> {
 test.describe('requests page parental filter', () => {
     test('the requests list and page respect the caller parental limit', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
-        // The reproducible docker seed is bare (no TMDB/Seerr). Skip cleanly
-        // rather than fail an unmeetable precondition (set SEERR_* /
-        // TMDB_API_KEY at seed time to run this security guard).
+        // Required CI supplies hermetic TMDB/Seerr. This readiness branch is
+        // only for exploratory runs against arbitrary unconfigured servers;
+        // the required inventory treats it as a failure.
         test.skip(
             !(await seerrReady(page)) || !(await tmdbReady(page)),
             'Seerr/TMDB not configured — set SEERR_* and TMDB_API_KEY at seed time to run'

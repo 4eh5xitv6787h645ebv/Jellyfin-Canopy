@@ -96,10 +96,9 @@ test.describe('seerr parental-rating filter', () => {
     test('restricted user is filtered server-side; admin and no-limit are not', async ({ page, consoleErrors }) => {
         // ── Admin: discover the restricted user and impose a PG-13 (13) limit ──
         await loginAs(page, 'admin', consoleErrors);
-        // The reproducible docker seed is bare: without a live Seerr + TMDB
-        // backend the search returns nothing and this security guard can't run.
-        // Skip cleanly rather than fail on an unmet precondition (set
-        // SEERR_* / TMDB_API_KEY at seed time to run).
+        // Required CI supplies hermetic Seerr + TMDB. This readiness branch is
+        // only for exploratory runs against arbitrary unconfigured servers;
+        // the required inventory treats it as a failure.
         test.skip(
             !(await seerrReady(page)) || !(await tmdbReady(page)),
             'Seerr/TMDB not configured — set SEERR_* and TMDB_API_KEY at seed time to run'

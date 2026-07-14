@@ -14,16 +14,20 @@ import { defineConfig } from 'playwright/test';
 
 const outputDir = process.env.JF_E2E_OUTPUT_DIR?.trim() || `${__dirname}/test-results`;
 const trace = process.env.JF_E2E_TRACE === 'off' ? 'off' : 'retain-on-failure';
+const required = process.env.JF_E2E_REQUIRED === 'true';
+const requiredReporter = required
+    ? [['list'], [`${__dirname}/../scripts/e2e/required-inventory-reporter.js`]]
+    : [['list']];
 
 export default defineConfig({
     testDir: __dirname,
     outputDir,
     timeout: 180_000,
     expect: { timeout: 30_000 },
-    retries: 1,
+    retries: required ? 0 : 1,
     workers: 1,
     fullyParallel: false,
-    reporter: [['list']],
+    reporter: requiredReporter,
     use: {
         baseURL: process.env.JF_BASE_URL || 'http://localhost:8099',
         viewport: { width: 1440, height: 900 },

@@ -275,8 +275,7 @@ async function spaLogout(
     const requests: LogoutRequestEvidence[] = [];
     const responses: LogoutResponseEvidence[] = [];
     let firstAuthorization = '';
-    let serializationErrors = 0;
-    let routeQueue = Promise.resolve();
+    let routeErrors = 0;
 
     const routeTarget = `${origin}/Sessions/Logout`;
     const routeHandler = async (route: Route): Promise<void> => {
@@ -303,16 +302,10 @@ async function spaLogout(
         };
         requests.push(record);
 
-        const previous = routeQueue;
-        let release!: () => void;
-        routeQueue = new Promise<void>((resolve) => { release = resolve; });
-        await previous;
         try {
-            // Jellyfin Web 12 RC2 dispatches ApiClient.logout() and the SDK's
-            // reportSessionEnded() concurrently. RC2's database deletion is
-            // not idempotent, so serialize only those two native requests for
-            // this Canopy lifecycle test. Both real host calls still run; the
-            // second simply reaches the server after the first has settled.
+            // Keep Jellyfin Web's two native logout calls concurrent. The
+            // digest-pinned nightly includes idempotent session deletion, so
+            // both calls must reach the real server and succeed independently.
             const upstream = await route.fetch({
                 timeout: 15_000,
                 maxRedirects: 0,
@@ -328,13 +321,12 @@ async function spaLogout(
             });
             await route.fulfill({ response: upstream });
         } catch {
-            serializationErrors++;
+            routeErrors++;
             try {
                 await route.abort('failed');
             } catch { /* the host may already have disposed the route */ }
         } finally {
             record.done = true;
-            release();
         }
     };
 
@@ -346,9 +338,8 @@ async function spaLogout(
             undefined,
             { timeout: 30_000 }
         );
-        // Jellyfin Web RC2's public Dashboard.logout() is fire-and-forget. Await
-        // a returned thenable for forward compatibility, but use the native
-        // responses + signed-out state below as the actual completion proof.
+        // Await a returned thenable when the host exposes one, but use the
+        // native responses + signed-out state below as the completion proof.
         await page.evaluate(async () => {
             const result = (window as any).Dashboard.logout();
             if (result && typeof result.then === 'function') await result;
@@ -372,11 +363,15 @@ async function spaLogout(
                 done: requests.filter(({ done }) => done).length,
             }),
             {
-                message: 'both serialized native logout calls return responses',
+                message: 'both concurrent native logout calls return responses',
                 timeout: 10_000,
             }
         ).toEqual({ requests: 2, responses: 2, done: 2 });
-        await routeQueue;
+
+        // Drain host reads which were scheduled before token revocation. Under
+        // local multi-shard CPU pressure their responses can otherwise arrive
+        // after the next user's login and be misattributed to that owner epoch.
+        await page.waitForLoadState('networkidle', { timeout: 30_000 });
 
         const state = await page.evaluate(() => {
             const JC = (window as any).JellyfinCanopy;
@@ -417,7 +412,7 @@ async function spaLogout(
         }
         const signedOut: SignedOutEvidence = { ...state, oldTokenStatus };
 
-        expect(serializationErrors, 'the native logout FIFO completes without route errors').toBe(0);
+        expect(routeErrors, 'both concurrent native logout routes complete without errors').toBe(0);
         expect(
             requests.map(({ method, sameOrigin, queryless, tokenMatchesOld,
                 deviceMatchesClient, authorizationMatchesFirst }) => ({
@@ -447,15 +442,21 @@ async function spaLogout(
                 authorizationMatchesFirst: true,
             },
         ]);
+        const orderedResponses = responses.map(({ requestIndex, status, bodyBytes }) =>
+            ({ requestIndex, status, bodyBytes }))
+            .sort((left, right) => left.requestIndex - right.requestIndex);
         expect(
-            responses.map(({ requestIndex, status, bodyBytes }) =>
-                ({ requestIndex, status, bodyBytes }))
-                .sort((left, right) => left.requestIndex - right.requestIndex),
-            'the FIFO commits one logout before RC2 rejects the now-revoked duplicate'
-        ).toEqual([
-            { requestIndex: 0, status: 204, bodyBytes: 0 },
-            { requestIndex: 1, status: 401, bodyBytes: 0 },
-        ]);
+            orderedResponses[0],
+            'the first native logout call revokes the session cleanly'
+        ).toEqual({ requestIndex: 0, status: 204, bodyBytes: 0 });
+        expect(
+            { requestIndex: orderedResponses[1]?.requestIndex, bodyBytes: orderedResponses[1]?.bodyBytes },
+            'the concurrent duplicate returns no body'
+        ).toEqual({ requestIndex: 1, bodyBytes: 0 });
+        expect(
+            [204, 401],
+            'the duplicate either authenticates before revocation or is rejected after it'
+        ).toContain(orderedResponses[1]?.status);
 
         expect(signedOut.identityCleared, 'Canopy identity is null after logout').toBe(true);
         expect(signedOut.userId, 'the host client has no current user after logout').toBe('');
@@ -484,7 +485,6 @@ async function spaLogout(
             signedOut,
         };
     } finally {
-        await routeQueue;
         await page.unroute(routeTarget, routeHandler);
     }
 }
@@ -713,13 +713,24 @@ function isExpectedHostLogout4xx(response: FailedResponse, origin: string): bool
     if (response.url.includes('/JellyfinCanopy/')) return false;
     const parsed = new URL(response.url);
     if (response.status === 401) {
-        if (parsed.origin !== origin || parsed.search !== '' || parsed.hash !== '') return false;
-        if (response.method === 'POST' && parsed.pathname === '/Sessions/Logout') return true;
-        // The host can finish these two already-scheduled home-view reads after
-        // logout has revoked its token. Keep the prior host-noise allowance,
-        // but bind it to the two exact read-only endpoints instead of all 401s.
-        return response.method === 'GET'
-            && (parsed.pathname === '/System/Info' || parsed.pathname === '/UserViews');
+        if (parsed.origin !== origin || parsed.hash !== '') return false;
+        if (response.method === 'POST') {
+            return parsed.search === '' && parsed.pathname === '/Sessions/Logout';
+        }
+        if (response.method !== 'GET') return false;
+        // The host can finish these already-scheduled connection/home probes
+        // after logout has revoked its token. Keep the allowance bound to the
+        // exact read-only endpoints and exact BitrateTest query.
+        if (parsed.search === '' && [
+            '/System/Info',
+            '/System/Endpoint',
+            '/UserViews',
+        ].includes(parsed.pathname)) return true;
+        return parsed.pathname === '/Playback/BitrateTest'
+            && parsed.searchParams.size === 1
+            && ['500000', '1000000', '3000000'].includes(
+                parsed.searchParams.get('Size') || ''
+            );
     }
     return response.status === 400 && /\/SyncPlay\/List(?:\?|$)/i.test(response.url);
 }

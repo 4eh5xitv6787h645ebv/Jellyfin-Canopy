@@ -75,13 +75,30 @@ async function ensureRenderableBoxSet(page: any): Promise<BoxSetFixture> {
             }
         };
 
+        /** The feature's own endpoint must observe the same TMDB anchor. */
+        const boxsetAnchorVisible = async (
+            boxsetId: string,
+            collectionId: string | number
+        ): Promise<boolean> => {
+            try {
+                const boxset = await api.getJSON(
+                    api.getUrl('JellyfinCanopy/boxset/' + boxsetId)
+                );
+                return String(boxset && boxset.tmdbId) === String(collectionId);
+            } catch {
+                return false;
+            }
+        };
+
         // 1) Reuse an existing renderable BoxSet.
         const existing = await api.getItems(uid, {
             IncludeItemTypes: 'BoxSet', Recursive: true, Fields: 'ProviderIds', Limit: 50,
         });
         for (const bs of (existing.Items || [])) {
             const tmdb = bs.ProviderIds && bs.ProviderIds.Tmdb;
-            if (tmdb && await collectionHasMissing(tmdb)) {
+            if (tmdb
+                && await collectionHasMissing(tmdb)
+                && await boxsetAnchorVisible(bs.Id, tmdb)) {
                 return { boxsetId: bs.Id, createdId: null, anchored: true };
             }
         }
@@ -133,6 +150,29 @@ async function ensureRenderableBoxSet(page: any): Promise<BoxSetFixture> {
                 data: JSON.stringify(dto),
                 contentType: 'application/json',
             });
+
+            // A newly-created BoxSet can be returned by POST /Collections just
+            // before Jellyfin's subsequent item lookup exposes its updated
+            // provider IDs. Collection discovery is deliberately one-shot, so
+            // navigating during that small window would permanently miss the
+            // section. Wait for the same plugin endpoint used by the feature to
+            // observe the anchor before opening the detail page.
+            let anchorVisible = false;
+            for (let attempt = 0; attempt < 50; attempt++) {
+                if (await boxsetAnchorVisible(createdId, collectionId)) {
+                    anchorVisible = true;
+                    break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+            if (!anchorVisible) {
+                try {
+                    await api.ajax({ type: 'DELETE', url: api.getUrl('Items/' + createdId) });
+                } catch {
+                    // Preserve the owning convergence failure below.
+                }
+                throw new Error(`new BoxSet ${createdId} did not expose TMDB collection ${collectionId}`);
+            }
         }
 
         return { boxsetId: createdId, createdId, anchored: !!collectionId };
@@ -242,6 +282,7 @@ test.describe('mobile viewport fits', () => {
         // supply one — so the assertions below actually run.
         const fixture = await ensureRenderableBoxSet(page);
         expect(fixture.boxsetId, 'a BoxSet must exist or be creatable (library needs >= 2 movies)').toBeTruthy();
+        expect(fixture.anchored, 'the hermetic fixture must provide an incomplete TMDB collection').toBe(true);
 
         try {
             // Fixture setup is admin-API infrastructure, not the surface under
@@ -261,15 +302,11 @@ test.describe('mobile viewport fits', () => {
                 )
                 .then(() => true, () => false);
 
-            if (!appeared) {
-                // Loud, explicit — the ONLY remaining legitimate skip. Never the
-                // old "no BoxSet in the library" skip, which can no longer occur.
-                console.warn(
-                    `[mobile-fits] collection Missing-from section did NOT render for BoxSet ${fixture.boxsetId} ` +
-                    `(anchored=${fixture.anchored}) — Seerr inactive or collection complete; skipping card assertions.`
-                );
-                test.skip(true, 'collection Missing-from section did not render (Seerr inactive or collection complete)');
-            }
+            expect(
+                appeared,
+                `collection Missing-from section must render for BoxSet ${fixture.boxsetId} ` +
+                `(anchored=${fixture.anchored}); integration unavailability is a failure, not a skip`
+            ).toBe(true);
 
             const m = await page.evaluate(() => {
                 const section = document.querySelector('.seerr-collection-discovery-section')!;

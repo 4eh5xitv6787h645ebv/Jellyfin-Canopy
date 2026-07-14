@@ -3,6 +3,7 @@ playwright-report/
 docker/media/
 docker/config/
 docker/cache/
+docker/mock-state/
 docker/seed-result.json
 docker/seed-result.json.tmp
 perf/traces/

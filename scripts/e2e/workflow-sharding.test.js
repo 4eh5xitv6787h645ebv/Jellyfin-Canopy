@@ -7,7 +7,11 @@ const test = require('node:test');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/build.yml'), 'utf8');
+const releaseWorkflow = fs.readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8');
+const compatibilityWorkflow = fs.readFileSync(path.join(ROOT, '.github/workflows/e2e-compatibility.yml'), 'utf8');
 const playwrightConfig = fs.readFileSync(path.join(ROOT, 'e2e/playwright.config.ts'), 'utf8');
+const compose = fs.readFileSync(path.join(ROOT, 'e2e/docker/compose.yml'), 'utf8');
+const seed = fs.readFileSync(path.join(ROOT, 'e2e/docker/seed.sh'), 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
 function jobBlock(start, end) {
@@ -18,7 +22,7 @@ function jobBlock(start, end) {
     return workflow.slice(from, to);
 }
 
-test('E2E uses six native file shards with one fresh serial two-CPU server each', () => {
+test('required E2E uses six native file shards with one fresh serial two-CPU server each', () => {
     const shard = jobBlock('e2e_shard', 'e2e');
 
     assert.match(workflow, /env:\n\s+E2E_SHARD_TOTAL: "6"/);
@@ -27,14 +31,31 @@ test('E2E uses six native file shards with one fresh serial two-CPU server each'
     assert.match(shard, /total: \[6\]/);
     assert.match(shard, /JF_BASE_URL: http:\/\/127\.0\.0\.1:8100/);
     assert.match(shard, /JF_CPUS: "2"/);
-    assert.match(shard, /JF_IMAGE: jellyfin\/jellyfin:12\.0-rc2/);
+    assert.match(shard, /JF_IMAGE: jellyfin\/jellyfin:unstable@sha256:[0-9a-f]{64}/);
+    assert.match(shard, /JF_MOCK_IMAGE: node:22-alpine@sha256:[0-9a-f]{64}/);
+    const requiredImage = workflow.match(/JF_IMAGE: (jellyfin\/jellyfin:unstable@sha256:[0-9a-f]{64})/)?.[1];
+    const composeImage = compose.match(/\$\{JF_IMAGE:-(jellyfin\/jellyfin:unstable@sha256:[0-9a-f]{64})\}/)?.[1];
+    const seedImage = seed.match(/export JF_IMAGE="\$\{JF_IMAGE:-(jellyfin\/jellyfin:unstable@sha256:[0-9a-f]{64})\}"/)?.[1];
+    assert.ok(requiredImage, 'required workflow Jellyfin digest is missing');
+    assert.equal(composeImage, requiredImage, 'Compose Jellyfin digest drifted from required CI');
+    assert.equal(seedImage, requiredImage, 'seed Jellyfin digest drifted from required CI');
+
+    const requiredMockImage = workflow.match(/JF_MOCK_IMAGE: (node:22-alpine@sha256:[0-9a-f]{64})/)?.[1];
+    const composeMockImage = compose.match(/\$\{JF_MOCK_IMAGE:-(node:22-alpine@sha256:[0-9a-f]{64})\}/)?.[1];
+    const seedMockImage = seed.match(/export JF_MOCK_IMAGE="\$\{JF_MOCK_IMAGE:-(node:22-alpine@sha256:[0-9a-f]{64})\}"/)?.[1];
+    const compatibilityMockImage = compatibilityWorkflow.match(/JF_MOCK_IMAGE: (node:22-alpine@sha256:[0-9a-f]{64})/)?.[1];
+    assert.ok(requiredMockImage, 'required workflow mock digest is missing');
+    assert.equal(composeMockImage, requiredMockImage, 'Compose mock digest drifted from required CI');
+    assert.equal(seedMockImage, requiredMockImage, 'seed mock digest drifted from required CI');
+    assert.equal(compatibilityMockImage, requiredMockImage, 'compatibility mock digest drifted from required CI');
+    assert.doesNotMatch(shard, /continue-on-error:/);
     assert.match(
         shard,
         /id: seed[\s\S]*JF_E2E_IMAGE_PREFETCHED: "true"[\s\S]*run: bash e2e\/docker\/seed\.sh/
     );
     assert.match(
         shard,
-        /id: playwright\n\s+timeout-minutes: 15\n\s+run: \|[\s\S]*jc-e2e-playwright-started-at[\s\S]*npm run e2e -- --shard=\$\{\{ matrix\.shard \}\}\/\$\{\{ matrix\.total \}\}/
+        /id: playwright\n\s+timeout-minutes: 15[\s\S]*?run: \|[\s\S]*jc-e2e-playwright-started-at[\s\S]*npm run e2e -- --shard=\$\{\{ matrix\.shard \}\}\/\$\{\{ matrix\.total \}\}/
     );
     assert.doesNotMatch(shard, /npm run e2e[^\n]*(--grep|\.spec\.ts)/);
     assert.match(shard, /name: Tear down\n\s+if: always\(\)/);
@@ -47,6 +68,7 @@ test('E2E uses six native file shards with one fresh serial two-CPU server each'
 
     assert.match(playwrightConfig, /workers:\s*1/);
     assert.match(playwrightConfig, /fullyParallel:\s*false/);
+    assert.match(playwrightConfig, /retries:\s*required \? 0 : 1/);
 });
 
 test('E2E installs once and prepares independent prerequisites concurrently', () => {
@@ -100,15 +122,30 @@ test('every shard reports current-attempt evidence under unique artifact names',
     assert.match(statusArtifact, /retention-days: 30/);
     assert.match(shard, /if-no-files-found: error/);
     assert.doesNotMatch(shard, /jc-e2e-shard-results[^\n]*e2e\/test-results/);
+    for (const variable of [
+        'JF_E2E_REQUIRED',
+        'JF_E2E_INVENTORY_FILE',
+        'JF_E2E_SHARD',
+        'JF_E2E_SHARD_TOTAL',
+        'JF_E2E_HEAD_SHA',
+        'JF_E2E_RUN_ID',
+        'JF_E2E_RUN_ATTEMPT',
+    ]) {
+        assert.ok(shard.includes(variable), `required reporter lost ${variable}`);
+    }
+    assert.match(shard, /shard-\$\{\{ matrix\.shard \}\}\.inventory/);
 });
 
-test('stable advisory aggregate reuses same-run attempts and rejects invalid shard evidence', () => {
+test('stable blocking aggregate reuses same-run attempts and rejects invalid shard or test evidence', () => {
     const aggregate = jobBlock('e2e', 'manifest');
 
     assert.match(aggregate, /name: E2E \(dockerized Jellyfin 12\)/);
     assert.match(aggregate, /needs: e2e_shard/);
     assert.match(aggregate, /if: always\(\)/);
-    assert.match(aggregate, /continue-on-error: true/);
+    const aggregateHeader = aggregate.slice(0, aggregate.indexOf('\n    steps:'));
+    assert.doesNotMatch(aggregateHeader, /continue-on-error:/);
+    assert.match(aggregate, /id: download\n\s+continue-on-error: true/);
+    assert.match(aggregate, /name: Require shard artifact download/);
     assert.match(aggregate, /permissions:\n\s+actions: read\n\s+contents: read/);
     assert.match(aggregate, /github-token: \$\{\{ github\.token \}\}/);
     assert.match(aggregate, /run-id: \$\{\{ github\.run_id \}\}/);
@@ -118,9 +155,29 @@ test('stable advisory aggregate reuses same-run attempts and rejects invalid sha
     );
     assert.match(aggregate, /merge-multiple: false/);
     assert.match(aggregate, /scripts\/e2e\/shard-result\.js aggregate/);
+    assert.match(aggregate, /scripts\/e2e\/required-inventory\.js aggregate/);
+    assert.match(aggregate, /--expected e2e\/required-test-inventory\.json/);
     for (const argument of ['--total "${E2E_SHARD_TOTAL}"', '--sha', '--run-id', '--run-attempt']) {
         assert.ok(aggregate.includes(argument), `aggregate lost ${argument}`);
     }
+});
+
+test('the same blocking workflow proves pull-request, main and release source SHAs', () => {
+    assert.match(workflow, /push:\n\s+branches: \[main, master\]/);
+    assert.match(workflow, /pull_request:\n\s+branches: \[main, master\]/);
+    assert.match(workflow, /workflow_call:/);
+    assert.match(releaseWorkflow, /quality-gates:\n\s+name: Required source-SHA quality gates\n\s+uses: \.\/\.github\/workflows\/build\.yml/);
+    assert.match(releaseWorkflow, /release:\n\s+name: Build, test, package & publish\n\s+needs: quality-gates/);
+});
+
+test('mutable latest-Jellyfin probing is isolated in one advisory workflow', () => {
+    assert.match(compatibilityWorkflow, /name: E2E compatibility \(latest Jellyfin, advisory\)/);
+    assert.match(compatibilityWorkflow, /schedule:/);
+    assert.match(compatibilityWorkflow, /workflow_dispatch:/);
+    assert.doesNotMatch(compatibilityWorkflow, /continue-on-error:/);
+    assert.match(compatibilityWorkflow, /jellyfin\/jellyfin:unstable/);
+    assert.doesNotMatch(workflow, /JF_IMAGE:\s+jellyfin\/jellyfin:unstable\s*$/m);
+    assert.doesNotMatch(releaseWorkflow, /JF_IMAGE:\s+jellyfin\/jellyfin:unstable\s*$/m);
 });
 
 test('new artifact actions are immutable Node-24-native pins', () => {

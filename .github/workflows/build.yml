@@ -3,14 +3,15 @@ name: Build & Test
 # The blocking quality gate for every change: the plugin must compile (Jellyfin
 # 12 / net10.0), unit/script tests, types, coverage, builds, and contracts must
 # pass, and ESLint always reports as an advisory signal. A broken lint
-# invocation/configuration still blocks. The E2E job has its own documented
-# temporary advisory policy below.
+# invocation/configuration still blocks. Required E2E is also blocking and is
+# reused by release.yml for the exact tag source SHA.
 on:
   push:
     branches: [main, master]
   pull_request:
     branches: [main, master]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -134,14 +135,11 @@ jobs:
   # stale, duplicate, or failed shard markers. On a failed-jobs rerun it can
   # reuse successful markers from prior attempts of the same run and commit.
   #
-  # NEW INFRASTRUCTURE — continue-on-error keeps the shard and aggregate jobs
-  # advisory while this lane earns trust. Once it has proven reliable, remove
-  # both continue-on-error lines and require only the stable aggregate check.
+  # This is a required gate: every shard and the exact aggregate inventory are
+  # blocking on pull requests, main pushes, and reusable release calls.
   e2e_shard:
     name: E2E shard ${{ matrix.shard }}/${{ matrix.total }} (dockerized Jellyfin 12)
     runs-on: ubuntu-latest
-    continue-on-error: true
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       max-parallel: 6
@@ -153,7 +151,8 @@ jobs:
       JF_PORT: "8100"
       JF_BASE_URL: http://127.0.0.1:8100
       JF_CPUS: "2"
-      JF_IMAGE: jellyfin/jellyfin:12.0-rc2
+      JF_IMAGE: jellyfin/jellyfin:unstable@sha256:9040e988eca1e53cd90679d16edf7bd842cc661bf85da124431e25452b4abeb5
+      JF_MOCK_IMAGE: node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
@@ -224,6 +223,14 @@ jobs:
       - name: Run E2E shard ${{ matrix.shard }}/${{ matrix.total }}
         id: playwright
         timeout-minutes: 15
+        env:
+          JF_E2E_REQUIRED: "true"
+          JF_E2E_INVENTORY_FILE: ${{ runner.temp }}/jc-e2e-shard-results/shard-${{ matrix.shard }}.inventory
+          JF_E2E_SHARD: ${{ matrix.shard }}
+          JF_E2E_SHARD_TOTAL: ${{ matrix.total }}
+          JF_E2E_HEAD_SHA: ${{ github.sha }}
+          JF_E2E_RUN_ID: ${{ github.run_id }}
+          JF_E2E_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           date -u +'%Y-%m-%dT%H:%M:%SZ' > "${RUNNER_TEMP}/jc-e2e-playwright-started-at"
           npm run e2e -- --shard=${{ matrix.shard }}/${{ matrix.total }}
@@ -280,7 +287,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-status-${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}-of-${{ matrix.total }}
-          path: ${{ runner.temp }}/jc-e2e-shard-results/shard-${{ matrix.shard }}.json
+          path: |
+            ${{ runner.temp }}/jc-e2e-shard-results/shard-${{ matrix.shard }}.json
+            ${{ runner.temp }}/jc-e2e-shard-results/shard-${{ matrix.shard }}.inventory
           # Match GitHub's 30-day workflow rerun window so a failed-jobs rerun
           # can still reuse untouched successful shard evidence.
           retention-days: 30
@@ -289,9 +298,8 @@ jobs:
   e2e:
     name: E2E (dockerized Jellyfin 12)
     needs: e2e_shard
-    if: always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+    if: always()
     runs-on: ubuntu-latest
-    continue-on-error: true
     timeout-minutes: 5
     permissions:
       actions: read
@@ -333,12 +341,22 @@ jobs:
       - name: Aggregate shard results
         if: always()
         run: |
+          marker_status=0
+          inventory_status=0
           node scripts/e2e/shard-result.js aggregate \
             --directory "${RUNNER_TEMP}/jc-e2e-shard-results" \
             --total "${E2E_SHARD_TOTAL}" \
             --sha "${GITHUB_SHA}" \
             --run-id "${GITHUB_RUN_ID}" \
-            --run-attempt "${GITHUB_RUN_ATTEMPT}"
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" || marker_status=$?
+          node scripts/e2e/required-inventory.js aggregate \
+            --directory "${RUNNER_TEMP}/jc-e2e-shard-results" \
+            --expected e2e/required-test-inventory.json \
+            --total "${E2E_SHARD_TOTAL}" \
+            --sha "${GITHUB_SHA}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" || inventory_status=$?
+          (( marker_status == 0 && inventory_status == 0 ))
 
   manifest:
     name: Manifest validation
@@ -382,4 +400,3 @@ jobs:
             args+=(--base-manifest "$RUNNER_TEMP/base-manifest.json")
           fi
           node scripts/release/verify-manifest-remote.js "${args[@]}"
-# Registered for Jellyfin Canopy CI (no functional change).

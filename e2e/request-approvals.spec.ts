@@ -50,10 +50,12 @@ async function fetchRequests(page: any): Promise<{ canApproveRequests: boolean; 
     });
 }
 
-/** The pending (requestStatus === 1) row id for a tmdbId, or null. */
-function pendingRowId(rows: any[], tmdbId: number): number | null {
+/** The pending row and its server-issued action token for a tmdbId, or null. */
+function pendingRow(rows: any[], tmdbId: number): { id: number; sourceToken: string } | null {
     const row = rows.find((r) => Number(r.tmdbId) === tmdbId && Number(r.requestStatus) === 1);
-    return row && row.id != null ? Number(row.id) : null;
+    return row && row.id != null && typeof row.sourceToken === 'string' && row.sourceToken.length > 0
+        ? { id: Number(row.id), sourceToken: row.sourceToken }
+        : null;
 }
 
 /** Open the actual Requests page and wait for the requests section to settle. */
@@ -79,9 +81,10 @@ async function declinePendingFor(page: any, tmdbIds: number[]): Promise<void> {
             for (const row of (res?.requests || []) as any[]) {
                 if (ids.includes(Number(row.tmdbId)) && Number(row.requestStatus) === 1 && row.id != null) {
                     try {
+                        if (typeof row.sourceToken !== 'string' || row.sourceToken.length === 0) continue;
                         await api.ajax({
                             type: 'POST',
-                            url: api.getUrl(`/JellyfinCanopy/arr/requests/${row.id}/decline`),
+                            url: api.getUrl(`/JellyfinCanopy/arr/requests/${row.id}/decline?sourceToken=${encodeURIComponent(row.sourceToken)}`),
                             dataType: 'json',
                         });
                     } catch { /* best effort */ }
@@ -107,8 +110,8 @@ test.describe('in-app request approvals', () => {
 
             await loginAs(page, 'admin', consoleErrors);
             const before = await fetchRequests(page);
-            const rowId = pendingRowId(before.rows, ADMIN_TMDB);
-            test.skip(rowId == null, 'could not seed a pending request for the admin round-trip');
+            const row = pendingRow(before.rows, ADMIN_TMDB);
+            test.skip(row == null, 'could not seed a pending request for the admin round-trip');
 
             // The admin gate resolves true and the affordance renders.
             expect(before.canApproveRequests, 'admin endpoint reports canApproveRequests').toBe(true);
@@ -122,19 +125,19 @@ test.describe('in-app request approvals', () => {
 
             // Round-trip: decline the seeded request through the JC endpoint and
             // confirm it leaves the pending set (also the cleanup for this row).
-            const declineStatus = await page.evaluate(async (id: number) => {
+            const declineStatus = await page.evaluate(async (request: { id: number; sourceToken: string }) => {
                 const api = (window as any).ApiClient;
                 const res = await api.ajax({
                     type: 'POST',
-                    url: api.getUrl(`/JellyfinCanopy/arr/requests/${id}/decline`),
+                    url: api.getUrl(`/JellyfinCanopy/arr/requests/${request.id}/decline?sourceToken=${encodeURIComponent(request.sourceToken)}`),
                     dataType: 'json',
                 });
                 return res?.success === true;
-            }, rowId);
+            }, row!);
             expect(declineStatus, 'decline endpoint returns success').toBe(true);
 
             const after = await fetchRequests(page);
-            expect(pendingRowId(after.rows, ADMIN_TMDB), 'declined request is no longer pending').toBeNull();
+            expect(pendingRow(after.rows, ADMIN_TMDB), 'declined request is no longer pending').toBeNull();
 
             assertNoRuntimeErrors(consoleErrors);
         } finally {
@@ -156,8 +159,8 @@ test.describe('in-app request approvals', () => {
             await ensureRequest(page, NONADMIN_TMDB);
             const mine = await fetchRequests(page);
             expect(mine.canApproveRequests, 'non-admin endpoint reports canApproveRequests=false').toBe(false);
-            const rowId = pendingRowId(mine.rows, NONADMIN_TMDB);
-            test.skip(rowId == null, 'could not seed a pending request in the non-admin view');
+            const row = pendingRow(mine.rows, NONADMIN_TMDB);
+            test.skip(row == null, 'could not seed a pending request in the non-admin view');
 
             await openRequestsPage(page);
             const counts = await page.evaluate(() => ({
@@ -170,16 +173,16 @@ test.describe('in-app request approvals', () => {
             expect(counts.decline, 'no decline buttons render for the non-admin').toBe(0);
 
             // The server still enforces: a direct POST is refused with 403.
-            const status = await page.evaluate(async (id: number) => {
+            const status = await page.evaluate(async (request: { id: number; sourceToken: string }) => {
                 const api = (window as any).ApiClient;
-                const res = await fetch(api.getUrl(`/JellyfinCanopy/arr/requests/${id}/approve`), {
+                const res = await fetch(api.getUrl(`/JellyfinCanopy/arr/requests/${request.id}/approve?sourceToken=${encodeURIComponent(request.sourceToken)}`), {
                     method: 'POST',
                     headers: {
                         Authorization: `MediaBrowser Token="${api.accessToken()}", Client="cc", Device="cc", DeviceId="cc", Version="1"`,
                     },
                 });
                 return res.status;
-            }, rowId);
+            }, row!);
             expect(status, 'non-admin approve is refused with 403').toBe(403);
 
             // Only console errors are asserted here: the intentional 403 above is a

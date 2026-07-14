@@ -6,9 +6,11 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+    HOME_SELECTED_INDEX_ERROR,
     HOME_TAB_PREFIX,
     SCROLL_HANDLER_ERROR,
     isKnownHiddenContentHostNoise,
+    isKnownJellyfinWebHostNoise,
 } = require('./jellyfin-host-noise');
 
 const ROOT = path.resolve(__dirname, '../..');
@@ -67,6 +69,37 @@ test('a different Home, querySelector, or Canopy error remains fatal', () => {
     );
     assert.equal(
         isKnownHiddenContentHostNoise("TypeError: Cannot read properties of undefined (reading 'querySelector')"),
+        false
+    );
+});
+
+test('selectedIndex host race requires an immutable Jellyfin-web stack without a Canopy frame', () => {
+    const hostStack = 'TypeError: selectedIndex host race\n'
+        + '    at http://localhost:8100/web/home-tsx.c7cb3091bdb6433241e6.chunk.js:1:6089';
+    assert.equal(
+        isKnownJellyfinWebHostNoise({ text: HOME_SELECTED_INDEX_ERROR, stack: hostStack }),
+        true
+    );
+    assert.equal(isKnownJellyfinWebHostNoise({ text: HOME_SELECTED_INDEX_ERROR }), false);
+    assert.equal(
+        isKnownJellyfinWebHostNoise({
+            text: HOME_SELECTED_INDEX_ERROR,
+            stack: 'TypeError: host race\n    at http://localhost:8100/web/home.ea733a1f3e4e4f7bee3b.chunk.js:1:2950',
+        }),
+        true
+    );
+    assert.equal(
+        isKnownJellyfinWebHostNoise({
+            text: HOME_SELECTED_INDEX_ERROR,
+            stack: `${hostStack}\n    at http://localhost:8100/JellyfinCanopy/dist/jc.bundle.js:1:20`,
+        }),
+        false
+    );
+    assert.equal(
+        isKnownJellyfinWebHostNoise({
+            text: HOME_SELECTED_INDEX_ERROR.replace('selectedIndex', 'remove'),
+            stack: hostStack,
+        }),
         false
     );
 });

@@ -219,6 +219,9 @@ test('seed, spec, compose, and CI consume the dynamic fixture contract', () => {
         spec.indexOf('await resolveAutoSkipFixture(') < spec.indexOf('showRoute(page'),
         'fixture preflight must appear before details navigation'
     );
-    assert.match(compose, /image: "\$\{JF_IMAGE:-jellyfin\/jellyfin:12\.0-rc2\}"/);
+    assert.match(
+        compose,
+        /image: "\$\{JF_IMAGE:-jellyfin\/jellyfin:unstable@sha256:[0-9a-f]{64}\}"/
+    );
     assert.match(workflow, /npm run test:scripts/);
 });

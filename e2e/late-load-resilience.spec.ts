@@ -111,8 +111,8 @@ test.describe('late-load resilience (R9)', () => {
         );
     });
 
-    test('report button appears despite a dead status endpoint at boot', async ({ page, consoleErrors }) => {
-        // Kill the Seerr status probe for the entire boot sequence — the exact
+    test('report button recovers after its initial status probe fails', async ({ page, consoleErrors }) => {
+        // Kill the first reporter activation's Seerr status probes — the exact
         // transient blip that used to disable the report button until a hard
         // reload (the viewshow listener was never registered).
         let blockStatus = true;
@@ -132,12 +132,21 @@ test.describe('late-load resilience (R9)', () => {
             return config?.SeerrEnabled === true && config?.SeerrShowReportButton === true;
         });
         test.skip(!enabled, 'Seerr report button disabled on this server');
-        expect(blockedCount, 'boot never hit the status endpoint — test is vacuous').toBeGreaterThan(0);
 
-        // Restore the endpoint and open a details page: lazy re-verification
-        // must bring the feature up in the SAME session.
-        blockStatus = false;
+        // The reporter intentionally probes only on a supported detail page;
+        // opening one while the route is blocked exercises its initial pass.
         const movieId = await suitableMovieId(page, { tmdb: true });
+        await showRoute(page, `/details?id=${movieId}`);
+        await expect.poll(() => blockedCount, {
+            message: 'initial reporter activation never hit the status endpoint',
+            timeout: 30_000,
+        }).toBeGreaterThan(0);
+
+        // Restore the endpoint and retrigger the view in the SAME session. The
+        // process-lifetime listener must still be present and bring the feature
+        // up without a hard reload.
+        blockStatus = false;
+        await showRoute(page, '/home.html');
         await showRoute(page, `/details?id=${movieId}`);
 
         const reportButton = page.locator(

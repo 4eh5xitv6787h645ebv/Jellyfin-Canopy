@@ -1,0 +1,95 @@
+name: E2E compatibility (latest Jellyfin, advisory)
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      jellyfin_image:
+        description: Mutable or experimental Jellyfin image to probe
+        required: false
+        default: jellyfin/jellyfin:unstable
+
+permissions:
+  contents: read
+
+jobs:
+  latest-jellyfin:
+    name: Latest Jellyfin compatibility (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      JF_IMAGE: ${{ inputs.jellyfin_image || 'jellyfin/jellyfin:unstable' }}
+      JF_MOCK_IMAGE: node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
+      JF_PORT: "8100"
+      JF_BASE_URL: http://127.0.0.1:8100
+      JF_CPUS: "2"
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dev dependencies
+        run: npm ci
+
+      - name: Prepare plugin, selected Jellyfin image and Playwright
+        run: |
+          prepare_dir="${RUNNER_TEMP}/jc-e2e-compat-prepare"
+          mkdir -p "${prepare_dir}"
+          dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release > "${prepare_dir}/build.log" 2>&1 &
+          build_pid=$!
+          docker pull -q "${JF_IMAGE}" > "${prepare_dir}/image.log" 2>&1 &
+          image_pid=$!
+          npx playwright install --with-deps --only-shell chromium > "${prepare_dir}/playwright.log" 2>&1 &
+          playwright_pid=$!
+          status=0
+          wait "${build_pid}" || status=1
+          wait "${image_pid}" || status=1
+          wait "${playwright_pid}" || status=1
+          for log_file in build image playwright; do
+            echo "::group::${log_file}"
+            cat "${prepare_dir}/${log_file}.log"
+            echo "::endgroup::"
+          done
+          exit "${status}"
+
+      - name: Seed disposable latest-Jellyfin server
+        env:
+          JF_E2E_IMAGE_PREFETCHED: "true"
+        run: bash e2e/docker/seed.sh
+
+      - name: Run compatibility suite
+        run: npm run e2e
+
+      - name: Upload compatibility diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: latest-jellyfin-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Sanitized server logs
+        if: failure()
+        run: |
+          docker compose -f e2e/docker/compose.yml logs --no-color jellyfin 2>&1 \
+            | node scripts/e2e/sanitize-jellyfin-log.js || true
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f e2e/docker/compose.yml down -v --remove-orphans || true

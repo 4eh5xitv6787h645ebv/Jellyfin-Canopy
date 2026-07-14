@@ -11,6 +11,9 @@ const ROOT = path.resolve(__dirname, '..', '..');
 const SCRIPT = path.join(__dirname, 'run-local-shards.sh');
 const source = fs.readFileSync(SCRIPT, 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+const requiredInventory = JSON.parse(
+    fs.readFileSync(path.join(ROOT, 'e2e', 'required-test-inventory.json'), 'utf8')
+);
 
 function runSourced(command, env = {}) {
     return spawnSync('bash', ['-c', `source "$1"; ${command}`, 'bash', SCRIPT], {
@@ -33,15 +36,13 @@ function discoverTests(shard) {
         .split(/\r?\n/)
         .filter((line) => /^\s+.+\.spec\.ts:\d+:\d+ › /.test(line))
         .map((line) => line.trim());
-    return { ...result, tests };
-}
-
-function discoveryUnavailable(result) {
-    const output = `${result.stdout || ''}\n${result.stderr || ''}`;
-    return result.error?.code === 'ENOENT'
-        || result.error?.code === 'ETIMEDOUT'
-        || !!result.signal
-        || (result.status === 127 && /playwright.*not found/i.test(output));
+    const inventoryIds = tests.map((line) => {
+        const match = line.match(/^(.+\.spec\.ts):\d+:\d+ › (.+)$/);
+        assert.ok(match, `could not normalize discovered test ${JSON.stringify(line)}`);
+        const file = match[1].replaceAll('\\', '/');
+        return `${file.startsWith('e2e/') ? file : `e2e/${file}`} › ${match[2]}`;
+    });
+    return { ...result, inventoryIds, tests };
 }
 
 test('package exposes the opt-in local E2E command', () => {
@@ -149,24 +150,39 @@ test('runner builds once, uses native file shards and waits for every phase', ()
     assert.match(source, /export JF_E2E_TRACE=off/);
 });
 
-test('native four- and six-shard discovery is an exact duplicate-free inventory union', (t) => {
-    const unsharded = discoverTests();
-    if (discoveryUnavailable(unsharded)) {
-        t.skip('Playwright discovery is unavailable or timed out');
-        return;
+test('default local parity mode enforces and aggregates the committed zero-skip inventory', () => {
+    for (const variable of [
+        'JF_E2E_REQUIRED=true',
+        'JF_E2E_INVENTORY_FILE=',
+        'JF_E2E_SHARD=',
+        'JF_E2E_SHARD_TOTAL=',
+        'JF_E2E_HEAD_SHA=',
+        'JF_E2E_RUN_ID=',
+        'JF_E2E_RUN_ATTEMPT=1',
+    ]) {
+        assert.ok(source.includes(variable), `local required reporter lost ${variable}`);
     }
+    assert.match(source, /scripts\/e2e\/required-inventory\.js" aggregate/);
+    assert.match(source, /e2e\/required-test-inventory\.json/);
+    assert.match(source, /validate_required_inventory \|\|/);
+    assert.match(source, /ALLOW_EXTERNAL_INTEGRATIONS == 0/);
+});
+
+test('native four- and six-shard discovery is an exact duplicate-free inventory union', () => {
+    const unsharded = discoverTests();
     assert.equal(unsharded.status, 0, unsharded.stderr || unsharded.stdout);
     assert.ok(unsharded.tests.length > 0, 'unsharded discovery returned no tests');
     const expected = [...unsharded.tests].sort();
+    assert.deepEqual(
+        [...unsharded.inventoryIds].sort(),
+        [...requiredInventory.tests].sort(),
+        'committed required inventory drifted from Playwright discovery'
+    );
 
     for (const total of [4, 6]) {
         const combined = [];
         for (let shard = 1; shard <= total; shard += 1) {
             const discovered = discoverTests(`${shard}/${total}`);
-            if (discoveryUnavailable(discovered)) {
-                t.skip(`Playwright discovery timed out for shard ${shard}/${total}`);
-                return;
-            }
             assert.equal(discovered.status, 0, discovered.stderr || discovered.stdout);
             combined.push(...discovered.tests);
         }
@@ -500,6 +516,7 @@ test('result markers and aggregate summary are atomic and exact-N', () => {
             'SHARDS=2',
             'CPUS_PER_SERVER=2',
             'RUN_ID=contract-run',
+            'ALLOW_EXTERNAL_INTEGRATIONS=1',
             'RESULT_ROOT="$2"',
             'for shard in 1 2; do',
             '  PROJECTS[$shard]="contract-s${shard}"',
