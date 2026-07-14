@@ -12,7 +12,7 @@ Jellyfin Canopy layers a richer, faster front-end and a set of opt-in power feat
 
 Jellyfin Canopy targets **Jellyfin 12 and nothing else**. Its manifest publishes only a Jellyfin 12 build (target ABI `12.0.0.0`), so a Jellyfin 10.11 server's catalog will never list it — there is no 10.11-compatible release to install.
 
-If you're still on Jellyfin 10.11, install the original [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) plugin instead. It stays actively maintained for 10.11, and your settings carry across cleanly if you later move to Jellyfin 12.
+If you're still on Jellyfin 10.11, install the original [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) plugin instead. When you later move to Jellyfin 12, Canopy can import that installation as described in [Upgrading from Jellyfin Enhanced](#upgrading-from-jellyfin-enhanced-1011).
 
 ## Install the plugin
 
@@ -53,6 +53,25 @@ After the restart:
 3. If the **Enhanced Panel** opens, the install worked.
 
 If nothing appears, jump to [Troubleshooting the install](#troubleshooting-the-install).
+
+## Upgrading from Jellyfin Enhanced (10.11)
+
+Jellyfin Enhanced and Jellyfin Canopy are separate plugins with different IDs and storage roots, so Jellyfin's catalog cannot update one into the other. Canopy has a one-time importer for the final Enhanced 10.11 state.
+
+1. Before upgrading, stop Jellyfin and back up its complete configuration directory. Keep that backup until you have verified the migration.
+2. Upgrade Jellyfin to 12, add the Canopy repository, install Canopy, and restart Jellyfin.
+3. On its first startup, Canopy looks for Enhanced's administration XML and `configurations/Jellyfin.Plugin.JellyfinEnhanced` directory. It validates and stages a copy before publishing it under the Canopy names.
+4. Check the Jellyfin log for both `Imported Jellyfin Enhanced` messages, then verify the admin page and each user's settings, shortcuts, bookmarks, hidden content, Elsewhere preferences, reviews, and custom branding.
+
+The importer never modifies or removes Enhanced's files. They remain the rollback/export copy. Running Canopy again is idempotent: a completed import is not replayed over newer Canopy changes, while an interrupted staged copy is rebuilt on the next restart.
+
+!!! warning "Conflicts are never auto-merged"
+
+    If Canopy already has an independently created configuration or non-empty data directory, the importer imports **nothing** and logs both paths. This prevents a mixed installation and makes the existing Canopy state the winner. The decision is recorded in `Jellyfin.Plugin.JellyfinCanopy.xml.enhanced-import.json`, so later restarts do not repeatedly attempt the import. To retry the automatic Enhanced import, stop Jellyfin, back up and move aside the Canopy XML, that marker, and the `configurations/Jellyfin.Plugin.JellyfinCanopy` directory, then restart. If you need values from both installations, retain both backups and reconcile them manually; do not copy individual live files while Jellyfin is running.
+
+Malformed Enhanced administration XML, or malformed critical Enhanced JSON such as settings, bookmarks, hidden content, or reviews, also blocks publication. Canopy logs the exact source file and refuses to finish loading for that startup, preventing defaults or background writers from contaminating the retry path; Jellyfin itself remains available. Repair or move aside the reported source, then restart. A genuinely missing XML or data half is reported by its absence and the available half is still imported.
+
+For rollback, stop Jellyfin, remove or move aside the Canopy installation/state, restore your pre-upgrade server backup, and start Jellyfin 10.11 with Enhanced. Because the importer copied rather than moved the Enhanced source, the original state is still available. Enhanced and Canopy are not intended to run side by side: Enhanced targets Jellyfin 10.11, while Canopy targets Jellyfin 12.
 
 ## Upgrading from Jellyfin Elevate
 
