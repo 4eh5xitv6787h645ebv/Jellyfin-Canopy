@@ -10,6 +10,7 @@
 import * as ts from 'typescript';
 import { afterAll, describe, expect, it } from 'vitest';
 import { verifyChecksums } from '../../../scripts/release/validate-manifest.js';
+import { writeZipFixture } from '../../../scripts/lib/zip-test-fixture.js';
 import { measurePackage } from '../../../scripts/check-dotnet-coverage.js';
 
 // Repo-root-relative temp dir. `tmp/` is gitignored, so leftovers never dirty
@@ -21,14 +22,13 @@ const REPO_ROOT = TEST_FILE_PATH.replace(
 );
 const TMP_DIR = REPO_ROOT + 'tmp';
 
-// content 'jc-checksum-fixture' → this uppercase MD5 (verified out-of-band).
-const FIXTURE_CONTENT = 'jc-checksum-fixture';
-const FIXTURE_MD5 = '6B369C7C96C67731E9AEC5E6157D1CF9';
 const FIXTURE_ZIP = 'jc-checksum-fixture.zip';
 const FIXTURE_PATH = `${TMP_DIR}/${FIXTURE_ZIP}`;
 
 if (!ts.sys.directoryExists(TMP_DIR)) ts.sys.createDirectory(TMP_DIR);
-ts.sys.writeFile(FIXTURE_PATH, FIXTURE_CONTENT);
+const FIXTURE_MD5 = writeZipFixture(FIXTURE_PATH, [
+    { name: 'JellyfinCanopy.dll', data: 'jc-checksum-fixture' },
+]);
 
 afterAll(() => {
     if (ts.sys.fileExists(FIXTURE_PATH)) ts.sys.deleteFile?.(FIXTURE_PATH);
