@@ -219,8 +219,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
                 DEFAULT_REGION = "US",
             });
             var cache = new SeerrCache(provider);
-            // Seed the EXPIRED entry with the outdated tag set.
-            cache.CertScoreCache["movie:400:US"] = (13, 0, new[] { "family" }, Array.Empty<string>(), DateTime.UtcNow.AddDays(-2));
 
             var ratingUserGuid = Guid.Parse("44444444-4444-4444-4444-444444444444");
             var registry = new Dictionary<Guid, (User, UserPolicy)>
@@ -242,10 +240,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
                 cache,
                 provider);
 
+            // Establish this configuration generation's opaque cache key, then
+            // replace its value with the expired/outdated tag set under test.
+            Assert.True(await filter.IsBlockedAsync("movie", 400, new SeerrCaller(CallerGuid, false)));
+            var generationCacheKey = Assert.Single(cache.CertScoreCache.Keys);
+            cache.CertScoreCache[generationCacheKey] =
+                (13, 0, new[] { "family" }, Array.Empty<string>(), DateTime.UtcNow.AddDays(-2));
+
             // Rating-only refresh through the light endpoint (entry was expired).
             Assert.False(await filter.IsBlockedAsync("movie", 400, new SeerrCaller(ratingUserGuid.ToString(), false)));
             // The refreshed entry must NOT carry the resurrected stale tags…
-            Assert.Null(cache.CertScoreCache["movie:400:US"].Keywords);
+            Assert.Null(cache.CertScoreCache[generationCacheKey].Keywords);
             // …so the tag-restricted user re-resolves the full detail and blocks.
             Assert.True(await filter.IsBlockedAsync("movie", 400, new SeerrCaller(CallerGuid, false)));
         }
@@ -297,6 +302,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
 
             // Rating-only pass caches the light (tag-less) result: PG-13 <= 13 -> allowed.
             Assert.False(await filter.IsBlockedAsync("movie", 400, new SeerrCaller(ratingUserGuid.ToString(), false)));
+            var generationCacheKey = Assert.Single(certCache.CertScoreCache.Keys);
+            Assert.Null(certCache.CertScoreCache[generationCacheKey].Keywords);
 
             // DISCRIMINATING assertion (review finding): the tag user blocks a
             // tag ABSENT from movie 400 ("werewolf"). Correct behavior:
@@ -308,7 +315,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
             // The re-resolution really happened via the Seerr full detail…
             Assert.Contains(handler.Requests, r => r.RequestUri!.AbsolutePath.EndsWith("/api/v1/movie/400", StringComparison.Ordinal));
             // The upgraded cache entry now carries the tag sets.
-            Assert.NotNull(certCache.CertScoreCache["movie:400:US"].Keywords);
+            Assert.NotNull(certCache.CertScoreCache[generationCacheKey].Keywords);
             // …and no werewolf keyword/genre exists on the title -> allowed.
             Assert.False(blocked);
         }

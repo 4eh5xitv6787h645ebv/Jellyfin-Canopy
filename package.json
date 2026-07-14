@@ -20,15 +20,8 @@
     "e2e:headed": "playwright test --config e2e/playwright.config.ts --headed",
     "perf:trace": "node e2e/perf/capture-traces.js"
   },
-  "peerDependencies": {
-    "@playwright/test": "^1.58.0"
-  },
-  "peerDependenciesMeta": {
-    "@playwright/test": {
-      "optional": true
-    }
-  },
   "devDependencies": {
+    "@playwright/test": "1.58.2",
     "@vitest/coverage-v8": "4.1.9",
     "esbuild": "0.28.1",
     "eslint": "^9.39.0",

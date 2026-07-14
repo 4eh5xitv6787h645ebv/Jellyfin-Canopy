@@ -5,12 +5,16 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Jellyfin.Data;
 using Jellyfin.Data.Enums;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Querying;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Services
@@ -24,9 +28,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly ILibraryManager _libraryManager;
 
         // Track which movies have already been requested to avoid duplicates (with timestamps for expiry)
-        private readonly Dictionary<string, Dictionary<string, DateTime>> _requestedMovies = new();
+        private readonly Dictionary<string, DateTime> _requestedMovies = new(StringComparer.Ordinal);
         private readonly object _movieCacheLock = new();
         private readonly Seerr.ISeerrClient _seerrClient;
+        private readonly ISeerrParentalFilter _parentalFilter;
 
         public AutoMovieRequestService(
             IHttpClientFactory httpClientFactory,
@@ -34,7 +39,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             IUserManager userManager,
             ILibraryManager libraryManager,
             IPluginConfigProvider configProvider,
-            Seerr.ISeerrClient seerrClient)
+            Seerr.ISeerrClient seerrClient,
+            ISeerrParentalFilter parentalFilter)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
@@ -42,6 +48,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _libraryManager = libraryManager;
             _configProvider = configProvider;
             _seerrClient = seerrClient;
+            _parentalFilter = parentalFilter;
         }
 
         private static string[] GetConfiguredUrls(string? urls)
@@ -62,6 +69,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             if (string.IsNullOrEmpty(config.TMDB_API_KEY))
             {
                 _logger.LogWarning("[Auto-Movie-Request] TMDB API key is not configured. Auto movie requests require TMDB API access.");
+                return;
+            }
+
+            var mutationConfigStamp = SeerrMutationConfigStamp.Capture(
+                config,
+                _configProvider.ConfigurationRevision);
+
+            // Custom Radarr ids and root folders are instance-local, but the
+            // persisted settings do not carry a Seerr source identity. They are
+            // therefore safe only when configuration has one identity domain.
+            // (Syntactic aliases collapse in GetConfiguredUrls.)
+            if (string.Equals(config.AutoMovieRequestQualityMode, "custom", StringComparison.Ordinal) &&
+                GetConfiguredUrls(config.SeerrUrls).Length != 1)
+            {
+                _logger.LogWarning(
+                    "[Auto-Movie-Request] Custom quality mode requires exactly one configured Seerr identity domain because its Radarr server/profile/root ids are not source-bound; no request was attempted");
                 return;
             }
 
@@ -86,8 +109,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
+            // Resolve the instance-local user id and its owning Seerr instance once,
+            // before any Seerr read. Collection/profile ids are local to an instance,
+            // so every later read and the final POST must use this exact binding.
+            var seerrBinding = await ResolvePinnedSeerrUserAsync(user.Id.ToString(), config).ConfigureAwait(false);
+            if (!seerrBinding.HasValue)
+            {
+                return;
+            }
+
+            var (seerrUser, seerrSourceUrl) = seerrBinding.Value;
+
             // Get collection info from TMDB
-            var collectionInfo = await GetTmdbCollectionIdAsync(tmdbId);
+            var collectionInfo = await GetTmdbCollectionIdAsync(tmdbId, config);
             if (collectionInfo == null)
             {
                 // _logger.LogDebug($"[Auto-Movie-Request] '{movie.Name}' is not part of a TMDB collection");
@@ -96,8 +130,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             _logger.LogInformation($"[Auto-Movie-Request] '{movie.Name}' is part of {collectionInfo.Name} (TMDB collection {collectionInfo.Id})");
 
-            // Get collection details from Seerr
-            var nextMovieInfo = await GetNextMovieInCollectionAsync(collectionInfo.Id, tmdbId);
+            // Resolve the exact quality domain before checking successor state:
+            // normal and 4K availability/request ids are independent in Seerr.
+            var qualityResolution = await ResolveQualityProfileAsync(
+                tmdbId,
+                seerrSourceUrl,
+                config);
+            if (!qualityResolution.IsComplete)
+            {
+                _logger.LogWarning(
+                    "[Auto-Movie-Request] Original quality state could not be read authoritatively; no request was attempted");
+                return;
+            }
+
+            var qualitySettings = qualityResolution.Settings;
+            var requestIs4k = qualitySettings?.Is4k == true;
+            if (requestIs4k && !config.SeerrEnable4KRequests)
+            {
+                _logger.LogInformation(
+                    "[Auto-Movie-Request] Original quality resolved to 4K, but Jellyfin Canopy's 4K movie master switch is disabled; no request was attempted");
+                return;
+            }
+
+            // Get collection details from Seerr and inspect status/status4k for
+            // the same quality domain the final POST will target.
+            var nextMovieInfo = await GetNextMovieInCollectionAsync(
+                collectionInfo.Id,
+                tmdbId,
+                seerrSourceUrl,
+                requestIs4k,
+                config);
             if (nextMovieInfo == null)
             {
                 // _logger.LogDebug($"[Auto-Movie-Request] No next movie found or next movie is already available/requested");
@@ -107,63 +169,79 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // Check if we've already requested this movie (in-memory cache with 1-hour expiry)
             // Uses a sentinel pattern: write the entry before async work so concurrent
             // callers see it immediately, then remove on failure to allow retries.
-            var requestKey = $"{user.Id}_{nextMovieInfo.TmdbId}";
+            var requestKey = BuildSourceScopedKey(
+                seerrSourceUrl,
+                $"{nextMovieInfo.TmdbId}:{(requestIs4k ? "4k" : "normal")}");
             lock (_movieCacheLock)
             {
-                // Clean up expired entries across all users
-                foreach (var cachedUserId in _requestedMovies.Keys.ToList())
-                {
-                    var expired = _requestedMovies[cachedUserId]
-                        .Where(kvp => (DateTime.Now - kvp.Value).TotalHours >= 1)
-                        .Select(kvp => kvp.Key).ToList();
-                    foreach (var key in expired) _requestedMovies[cachedUserId].Remove(key);
-                    if (_requestedMovies[cachedUserId].Count == 0) _requestedMovies.Remove(cachedUserId);
-                }
+                // The target reservation is global to this service instance,
+                // not per Jellyfin caller. Seerr's duplicate check is a
+                // non-atomic read/write, so two users racing the same source,
+                // successor, and quality domain must share one lease.
+                var expired = _requestedMovies
+                    .Where(kvp => (DateTime.Now - kvp.Value).TotalHours >= 1)
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+                foreach (var key in expired) _requestedMovies.Remove(key);
 
-                if (!_requestedMovies.ContainsKey(user.Id.ToString()))
-                {
-                    _requestedMovies[user.Id.ToString()] = new Dictionary<string, DateTime>();
-                }
-
-                if (_requestedMovies[user.Id.ToString()].ContainsKey(requestKey))
+                if (_requestedMovies.ContainsKey(requestKey))
                 {
                     _logger.LogDebug($"[Auto-Movie-Request] Already requested '{nextMovieInfo.Title}' (cached)");
                     return;
                 }
 
                 // Reserve the slot so concurrent callers see it immediately
-                _requestedMovies[user.Id.ToString()][requestKey] = DateTime.Now;
+                _requestedMovies[requestKey] = DateTime.Now;
             }
 
-            // Resolve quality profile settings based on configuration mode
-            var qualitySettings = await ResolveQualityProfileAsync(tmdbId);
-
             // Request the movie
-            var success = await RequestMovie(nextMovieInfo.TmdbId.ToString(), user.Id.ToString(), qualitySettings);
+            var outcome = await RequestMovie(
+                nextMovieInfo.TmdbId.ToString(),
+                user.Id.ToString(),
+                user.HasPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator),
+                seerrUser,
+                seerrSourceUrl,
+                qualitySettings,
+                config,
+                mutationConfigStamp);
 
-            if (success)
+            if (outcome == AutoRequestDispatchOutcome.Succeeded)
             {
                 _logger.LogInformation($"[Auto-Movie-Request] ✓ Requested '{nextMovieInfo.Title}' (TMDB {nextMovieInfo.TmdbId}) for {user.Username}");
             }
-            else
+            else if (outcome == AutoRequestDispatchOutcome.NotAttempted)
             {
-                // Remove sentinel so a future attempt can retry
+                // Preparation failed before dispatch, so retrying cannot replay
+                // a possibly committed non-idempotent request.
                 lock (_movieCacheLock)
                 {
-                    if (_requestedMovies.ContainsKey(user.Id.ToString()))
-                    {
-                        _requestedMovies[user.Id.ToString()].Remove(requestKey);
-                    }
+                    _requestedMovies.Remove(requestKey);
                 }
                 _logger.LogWarning($"[Auto-Movie-Request] ✗ Failed to request '{nextMovieInfo.Title}' (TMDB {nextMovieInfo.TmdbId}) for {user.Username}");
+            }
+            else
+            {
+                _logger.LogWarning($"[Auto-Movie-Request] Request outcome for '{nextMovieInfo.Title}' (TMDB {nextMovieInfo.TmdbId}) is ambiguous; retaining the cooldown reservation to prevent replay");
             }
         }
 
         // Seerr movie status
-        private class MovieStatus
+        private enum SeerrMediaAvailabilityStatus
         {
-            public bool IsAvailable { get; set; }
-            public bool IsRequested { get; set; }
+            Unknown = 1,
+            Pending = 2,
+            Processing = 3,
+            PartiallyAvailable = 4,
+            Available = 5,
+            Blocklisted = 6,
+            Deleted = 7,
+        }
+
+        private enum AutoRequestDispatchOutcome
+        {
+            NotAttempted,
+            Attempted,
+            Succeeded,
         }
 
         // Collection info from TMDB
@@ -189,11 +267,54 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             public bool Is4k { get; set; }
         }
 
-        // Gets TMDB collection ID and name for a movie
-        private async Task<CollectionInfo?> GetTmdbCollectionIdAsync(string tmdbId)
+        private sealed class QualityProfileResolution
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.TMDB_API_KEY))
+            private QualityProfileResolution(bool isComplete, QualityProfileSettings? settings)
+            {
+                IsComplete = isComplete;
+                Settings = settings;
+            }
+
+            public bool IsComplete { get; }
+
+            public QualityProfileSettings? Settings { get; }
+
+            public static QualityProfileResolution Ready(QualityProfileSettings? settings)
+                => new(true, settings);
+
+            public static QualityProfileResolution Incomplete()
+                => new(false, null);
+        }
+
+        private enum OriginalProfileReadStatus
+        {
+            Found,
+            Absent,
+            Incomplete,
+        }
+
+        private sealed class OriginalProfileReadResult
+        {
+            public OriginalProfileReadStatus Status { get; init; }
+
+            public QualityProfileSettings? Settings { get; init; }
+        }
+
+        private enum SeerrMediaRequestStatus
+        {
+            Pending = 1,
+            Approved = 2,
+            Declined = 3,
+            Failed = 4,
+            Completed = 5,
+        }
+
+        // Gets TMDB collection ID and name for a movie
+        private async Task<CollectionInfo?> GetTmdbCollectionIdAsync(
+            string tmdbId,
+            PluginConfiguration config)
+        {
+            if (string.IsNullOrEmpty(config.TMDB_API_KEY))
             {
                 return null;
             }
@@ -261,118 +382,136 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         }
 
         // Gets next movie in collection from Seerr collection endpoint
-        private async Task<MovieInfo?> GetNextMovieInCollectionAsync(int collectionId, string currentTmdbId)
+        private async Task<MovieInfo?> GetNextMovieInCollectionAsync(
+            int collectionId,
+            string currentTmdbId,
+            string seerrSourceUrl,
+            bool requestIs4k,
+            PluginConfiguration config)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+            if (string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
                 return null;
             }
 
             try
             {
-                var urls = GetConfiguredUrls(config.SeerrUrls);
-                var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
-
-                foreach (var url in urls)
+                var pinnedSource = FindConfiguredSource(config.SeerrUrls, seerrSourceUrl);
+                if (pinnedSource == null)
                 {
-                    var trimmedUrl = url.Trim().TrimEnd('/');
-                    var requestUrl = $"{trimmedUrl}/api/v1/collection/{collectionId}";
+                    _logger.LogWarning("[Auto-Movie-Request] The linked Seerr instance is no longer configured; no collection lookup was attempted");
+                    return null;
+                }
 
-                    try
+                var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+                var requestUrl = $"{pinnedSource}/api/v1/collection/{collectionId}";
+
+                try
+                {
+                    using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
+                        HttpMethod.Get, requestUrl, config.SeerrApiKey);
+                    using var response = await httpClient.SendAsync(request);
+                    var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
+                    if (error != null)
                     {
-                        using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
-                            HttpMethod.Get, requestUrl, config.SeerrApiKey);
-                        using var response = await httpClient.SendAsync(request);
-                        var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
-                        if (error != null)
-                        {
-                            _logger.LogDebug($"[Auto-Movie-Request] Seerr collection fetch failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
-                            continue;
-                        }
+                        _logger.LogDebug($"[Auto-Movie-Request] Seerr collection fetch failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
+                        return null;
+                    }
 
-                        using (JsonDocument doc = JsonDocument.Parse(content!))
-                        {
-                            var root = doc.RootElement;
+                    using (JsonDocument doc = JsonDocument.Parse(content!))
+                    {
+                        var root = doc.RootElement;
 
-                            if (root.TryGetProperty("parts", out var partsArray))
+                        if (root.TryGetProperty("parts", out var partsArray))
+                        {
+                            int? currentIndex = null;
+                            int? nextIndex = null;
+
+                            // Find current movie and next movie. The TMDB "parts" array is
+                            // NOT guaranteed to be in release order, so order it by release
+                            // date first — otherwise "next in collection" could request a
+                            // prequel/spin-off listed after the film just watched (ARR-7).
+                            var parts = OrderPartsByReleaseDate(partsArray);
+                            for (int i = 0; i < parts.Count; i++)
                             {
-                                int? currentIndex = null;
-                                int? nextIndex = null;
-
-                                // Find current movie and next movie. The TMDB "parts" array is
-                                // NOT guaranteed to be in release order, so order it by release
-                                // date first — otherwise "next in collection" could request a
-                                // prequel/spin-off listed after the film just watched (ARR-7).
-                                var parts = OrderPartsByReleaseDate(partsArray);
-                                for (int i = 0; i < parts.Count; i++)
+                                var part = parts[i];
+                                if (part.TryGetProperty("id", out var idProp) && idProp.GetInt32().ToString() == currentTmdbId)
                                 {
-                                    var part = parts[i];
-                                    if (part.TryGetProperty("id", out var idProp) && idProp.GetInt32().ToString() == currentTmdbId)
+                                    currentIndex = i;
+                                    break;
+                                }
+                            }
+
+                            if (currentIndex.HasValue && currentIndex.Value < parts.Count - 1)
+                            {
+                                nextIndex = currentIndex.Value + 1;
+                                var nextPart = parts[nextIndex.Value];
+
+                                // Check if next movie is available or already requested
+                                if (nextPart.TryGetProperty("mediaInfo", out var mediaInfo) &&
+                                    mediaInfo.ValueKind != JsonValueKind.Null)
+                                {
+                                    if (!TryReadMovieMediaState(
+                                            mediaInfo,
+                                            requestIs4k,
+                                            out var matchingStatus,
+                                            out var globallyBlocklisted))
                                     {
-                                        currentIndex = i;
-                                        break;
+                                        _logger.LogWarning(
+                                            "[Auto-Movie-Request] Next movie carried malformed or incomplete normal/4K media state; no request was attempted");
+                                        return null;
+                                    }
+
+                                    if (globallyBlocklisted ||
+                                        matchingStatus is not SeerrMediaAvailabilityStatus.Unknown and
+                                            not SeerrMediaAvailabilityStatus.Deleted)
+                                    {
+                                        _logger.LogDebug($"[Auto-Movie-Request] Next movie already unavailable for a new {(requestIs4k ? "4K" : "normal")} request (status: {matchingStatus})");
+                                        return null;
                                     }
                                 }
 
-                                if (currentIndex.HasValue && currentIndex.Value < parts.Count - 1)
+                                // Check release date if configured
+                                if (config.AutoMovieRequestCheckReleaseDate)
                                 {
-                                    nextIndex = currentIndex.Value + 1;
-                                    var nextPart = parts[nextIndex.Value];
-
-                                    // Check if next movie is available or already requested
-                                    if (nextPart.TryGetProperty("mediaInfo", out var mediaInfo))
+                                    if (!nextPart.TryGetProperty("releaseDate", out var releaseDateProp) ||
+                                        releaseDateProp.ValueKind != JsonValueKind.String ||
+                                        string.IsNullOrWhiteSpace(releaseDateProp.GetString()) ||
+                                        !DateTime.TryParse(releaseDateProp.GetString(), out var releaseDate))
                                     {
-                                        if (mediaInfo.TryGetProperty("status", out var statusProp))
-                                        {
-                                            var statusValue = statusProp.GetInt32();
-                                            // 5 = available, 2 = pending, 3 = processing
-                                            if (statusValue == 5 || statusValue == 2 || statusValue == 3)
-                                            {
-                                                _logger.LogDebug($"[Auto-Movie-Request] Next movie already available or requested (status: {statusValue})");
-                                                return null;
-                                            }
-                                        }
+                                        _logger.LogDebug("[Auto-Movie-Request] Next movie has no authoritative release date; release-date gating fails closed");
+                                        return null;
                                     }
 
-                                    // Check release date if configured
-                                    if (config.AutoMovieRequestCheckReleaseDate && nextPart.TryGetProperty("releaseDate", out var releaseDateProp))
+                                    if (releaseDate.Date > DateTime.UtcNow.Date)
                                     {
-                                        var releaseDateStr = releaseDateProp.GetString();
-                                        if (!string.IsNullOrEmpty(releaseDateStr) && DateTime.TryParse(releaseDateStr, out var releaseDate))
-                                        {
-                                            if (releaseDate > DateTime.Now)
-                                            {
-                                                _logger.LogDebug($"[Auto-Movie-Request] Next movie is not yet released (release date: {releaseDate:yyyy-MM-dd}), skipping");
-                                                return null;
-                                            }
-                                        }
-                                    }
-
-                                    // Return next movie's TMDB ID and title
-                                    if (nextPart.TryGetProperty("id", out var nextIdProp) &&
-                                        nextPart.TryGetProperty("title", out var titleProp))
-                                    {
-                                        return new MovieInfo
-                                        {
-                                            TmdbId = nextIdProp.GetInt32(),
-                                            Title = titleProp.GetString() ?? "Unknown Title"
-                                        };
+                                        _logger.LogDebug($"[Auto-Movie-Request] Next movie is not yet released (release date: {releaseDate:yyyy-MM-dd}), skipping");
+                                        return null;
                                     }
                                 }
-                                else
+
+                                // Return next movie's TMDB ID and title
+                                if (nextPart.TryGetProperty("id", out var nextIdProp) &&
+                                    nextPart.TryGetProperty("title", out var titleProp))
                                 {
-                                    // _logger.LogDebug($"[Auto-Movie-Request] Current movie is the last in collection or not found");
-                                    return null;
+                                    return new MovieInfo
+                                    {
+                                        TmdbId = nextIdProp.GetInt32(),
+                                        Title = titleProp.GetString() ?? "Unknown Title"
+                                    };
                                 }
+                            }
+                            else
+                            {
+                                // _logger.LogDebug($"[Auto-Movie-Request] Current movie is the last in collection or not found");
+                                return null;
                             }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug($"[Auto-Movie-Request] Error checking Seerr at {trimmedUrl}: {ex.Message}");
-                        continue;
-                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug($"[Auto-Movie-Request] Error checking Seerr at {pinnedSource}: {ex.Message}");
                 }
             }
             catch (Exception ex)
@@ -383,122 +522,287 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return null;
         }
 
-        // Gets the quality profile of a movie from its existing Seerr request
-        private async Task<QualityProfileSettings?> GetOriginalMovieQualityProfileAsync(string tmdbId)
+        private static bool TryReadMovieMediaState(
+            JsonElement mediaInfo,
+            bool requestIs4k,
+            out SeerrMediaAvailabilityStatus matchingStatus,
+            out bool globallyBlocklisted)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+            matchingStatus = SeerrMediaAvailabilityStatus.Unknown;
+            globallyBlocklisted = false;
+            if (mediaInfo.ValueKind != JsonValueKind.Object ||
+                !TryReadMovieMediaStatus(mediaInfo, "status", out var normalStatus) ||
+                !TryReadMovieMediaStatus(mediaInfo, "status4k", out var status4k))
             {
-                return null;
+                return false;
             }
 
-            var urls = GetConfiguredUrls(config.SeerrUrls);
+            // Seerr checks the normal media blocklist before handling either
+            // request quality. Otherwise normal and 4K status domains are
+            // independent.
+            globallyBlocklisted = normalStatus == SeerrMediaAvailabilityStatus.Blocklisted;
+            matchingStatus = requestIs4k ? status4k : normalStatus;
+            return true;
+        }
+
+        private static bool TryReadMovieMediaStatus(
+            JsonElement mediaInfo,
+            string propertyName,
+            out SeerrMediaAvailabilityStatus status)
+        {
+            status = SeerrMediaAvailabilityStatus.Unknown;
+            if (!mediaInfo.TryGetProperty(propertyName, out var statusElement) ||
+                statusElement.ValueKind != JsonValueKind.Number ||
+                !statusElement.TryGetInt32(out var statusValue) ||
+                !Enum.IsDefined(typeof(SeerrMediaAvailabilityStatus), statusValue))
+            {
+                return false;
+            }
+
+            status = (SeerrMediaAvailabilityStatus)statusValue;
+            return true;
+        }
+
+        // Gets the quality profile of a movie from its existing Seerr request
+        private async Task<OriginalProfileReadResult> GetOriginalMovieQualityProfileAsync(
+            string tmdbId,
+            string seerrSourceUrl,
+            PluginConfiguration config)
+        {
+            if (string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+            {
+                return new OriginalProfileReadResult { Status = OriginalProfileReadStatus.Incomplete };
+            }
+
+            var pinnedSource = FindConfiguredSource(config.SeerrUrls, seerrSourceUrl);
+            if (pinnedSource == null)
+            {
+                _logger.LogWarning("[Auto-Movie-Request] The linked Seerr instance is no longer configured; no quality-profile lookup was attempted");
+                return new OriginalProfileReadResult { Status = OriginalProfileReadStatus.Incomplete };
+            }
+
             var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
-            foreach (var url in urls)
+            try
             {
-                try
+                var requestUrl = $"{pinnedSource}/api/v1/movie/{tmdbId}";
+                using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
+                    HttpMethod.Get, requestUrl, config.SeerrApiKey);
+                using var response = await httpClient.SendAsync(request);
+                var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
+                if (error != null)
                 {
-                    var requestUrl = $"{url}/api/v1/movie/{tmdbId}";
-                    using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
-                        HttpMethod.Get, requestUrl, config.SeerrApiKey);
-                    using var response = await httpClient.SendAsync(request);
-                    var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
-                    if (error != null)
+                    _logger.LogDebug($"[Auto-Movie-Request] Quality profile lookup for movie {tmdbId} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
+                    return new OriginalProfileReadResult { Status = OriginalProfileReadStatus.Incomplete };
+                }
+
+                using (JsonDocument doc = JsonDocument.Parse(content!))
+                {
+                    var root = doc.RootElement;
+                    if (root.ValueKind != JsonValueKind.Object)
                     {
-                        _logger.LogDebug($"[Auto-Movie-Request] Quality profile lookup for movie {tmdbId} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
-                        continue;
+                        return new OriginalProfileReadResult { Status = OriginalProfileReadStatus.Incomplete };
                     }
 
-                    using (JsonDocument doc = JsonDocument.Parse(content!))
+                    if (!root.TryGetProperty("mediaInfo", out var mediaInfo))
                     {
-                        var root = doc.RootElement;
-                        if (root.TryGetProperty("mediaInfo", out var mediaInfo) &&
-                            mediaInfo.TryGetProperty("requests", out var requests) &&
-                            requests.GetArrayLength() > 0)
+                        // Seerr's movie mapper assigns `mediaInfo` from
+                        // Media.getMedia(). When no persisted Media row exists,
+                        // that value is undefined and Express omits the JSON
+                        // property entirely. Omission is therefore the normal,
+                        // authoritative no-original-request shape.
+                        return new OriginalProfileReadResult { Status = OriginalProfileReadStatus.Absent };
+                    }
+
+                    if (mediaInfo.ValueKind == JsonValueKind.Null)
+                    {
+                        return new OriginalProfileReadResult { Status = OriginalProfileReadStatus.Absent };
+                    }
+
+                    if (mediaInfo.ValueKind != JsonValueKind.Object ||
+                        !mediaInfo.TryGetProperty("requests", out var requests) ||
+                        requests.ValueKind != JsonValueKind.Array)
+                    {
+                        return new OriginalProfileReadResult { Status = OriginalProfileReadStatus.Incomplete };
+                    }
+
+                    var candidates = new List<(
+                        DateTimeOffset UpdatedAt,
+                        int Id,
+                        QualityProfileSettings Settings)>();
+                    var seenRequestIds = new HashSet<int>();
+                    foreach (var requestRow in requests.EnumerateArray())
+                    {
+                        if (requestRow.ValueKind != JsonValueKind.Object ||
+                            !requestRow.TryGetProperty("id", out var idElement) ||
+                            idElement.ValueKind != JsonValueKind.Number ||
+                            !idElement.TryGetInt32(out var requestId) ||
+                            requestId <= 0 ||
+                            !seenRequestIds.Add(requestId) ||
+                            !TryReadMovieRequestStatus(requestRow, out var requestStatus) ||
+                            !requestRow.TryGetProperty("is4k", out var is4kElement) ||
+                            (is4kElement.ValueKind != JsonValueKind.True &&
+                                is4kElement.ValueKind != JsonValueKind.False) ||
+                            !requestRow.TryGetProperty("updatedAt", out var updatedAtElement) ||
+                            updatedAtElement.ValueKind != JsonValueKind.String ||
+                            !DateTimeOffset.TryParse(updatedAtElement.GetString(), out var updatedAt) ||
+                            !TryReadOptionalProfileInteger(requestRow, "serverId", allowZero: true, out var serverId) ||
+                            !TryReadOptionalProfileInteger(requestRow, "profileId", allowZero: false, out var profileId) ||
+                            !TryReadOptionalRootFolder(requestRow, out var rootFolder))
                         {
-                            var firstRequest = requests[0];
-                            var settings = new QualityProfileSettings();
-
-                            if (firstRequest.TryGetProperty("profileId", out var profileId) &&
-                                profileId.ValueKind == JsonValueKind.Number)
-                            {
-                                settings.ProfileId = profileId.GetInt32();
-                            }
-                            if (firstRequest.TryGetProperty("serverId", out var serverId) &&
-                                serverId.ValueKind == JsonValueKind.Number)
-                            {
-                                settings.ServerId = serverId.GetInt32();
-                            }
-                            if (firstRequest.TryGetProperty("rootFolder", out var rootFolder) &&
-                                rootFolder.ValueKind == JsonValueKind.String)
-                            {
-                                settings.RootFolder = rootFolder.GetString();
-                            }
-                            if (firstRequest.TryGetProperty("is4k", out var is4k) &&
-                                is4k.ValueKind == JsonValueKind.True)
-                            {
-                                settings.Is4k = true;
-                            }
-
-                            if (settings.ProfileId.HasValue || settings.ServerId.HasValue)
-                            {
-                                _logger.LogDebug($"[Auto-Movie-Request] Found quality profile for TMDB {tmdbId}: profileId={settings.ProfileId}, serverId={settings.ServerId}, rootFolder={settings.RootFolder}, is4k={settings.Is4k}");
-                                return settings;
-                            }
+                            return new OriginalProfileReadResult { Status = OriginalProfileReadStatus.Incomplete };
                         }
+
+                        // Declined and failed rows are obsolete quality choices.
+                        // Among the remaining real requests, the most recently
+                        // updated row (then highest id) is deterministic despite
+                        // TypeORM returning the relation in no defined order.
+                        if (requestStatus is SeerrMediaRequestStatus.Declined or
+                            SeerrMediaRequestStatus.Failed)
+                        {
+                            continue;
+                        }
+
+                        candidates.Add((
+                            updatedAt,
+                            requestId,
+                            new QualityProfileSettings
+                            {
+                                ProfileId = profileId,
+                                ServerId = serverId,
+                                RootFolder = rootFolder,
+                                Is4k = is4kElement.GetBoolean(),
+                            }));
                     }
 
-                    _logger.LogDebug($"[Auto-Movie-Request] No request records found for TMDB {tmdbId} in Seerr");
-                    return null;
-                }
-                catch (HttpRequestException ex)
-                {
-                    _logger.LogDebug($"[Auto-Movie-Request] Failed to connect to {url}: {ex.Message}");
-                    continue;
-                }
-                catch (JsonException ex)
-                {
-                    _logger.LogWarning($"[Auto-Movie-Request] Invalid response from {url}: {ex.Message}");
-                    continue;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning($"[Auto-Movie-Request] Unexpected error fetching quality profile from {url}: {ex.Message}");
-                    continue;
+                    if (candidates.Count == 0)
+                    {
+                        return new OriginalProfileReadResult { Status = OriginalProfileReadStatus.Absent };
+                    }
+
+                    var selected = candidates
+                        .OrderByDescending(static candidate => candidate.UpdatedAt)
+                        .ThenByDescending(static candidate => candidate.Id)
+                        .First()
+                        .Settings;
+                    _logger.LogDebug($"[Auto-Movie-Request] Found deterministic latest quality profile for TMDB {tmdbId}: profileId={selected.ProfileId}, serverId={selected.ServerId}, rootFolder={selected.RootFolder}, is4k={selected.Is4k}");
+                    return new OriginalProfileReadResult
+                    {
+                        Status = OriginalProfileReadStatus.Found,
+                        Settings = selected,
+                    };
                 }
             }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogDebug($"[Auto-Movie-Request] Failed to connect to {pinnedSource}: {ex.Message}");
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning($"[Auto-Movie-Request] Invalid response from {pinnedSource}: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"[Auto-Movie-Request] Unexpected error fetching quality profile from {pinnedSource}: {ex.Message}");
+            }
 
-            return null;
+            return new OriginalProfileReadResult { Status = OriginalProfileReadStatus.Incomplete };
+        }
+
+        private static bool TryReadMovieRequestStatus(
+            JsonElement requestRow,
+            out SeerrMediaRequestStatus status)
+        {
+            status = SeerrMediaRequestStatus.Pending;
+            if (!requestRow.TryGetProperty("status", out var statusElement) ||
+                statusElement.ValueKind != JsonValueKind.Number ||
+                !statusElement.TryGetInt32(out var statusValue) ||
+                !Enum.IsDefined(typeof(SeerrMediaRequestStatus), statusValue))
+            {
+                return false;
+            }
+
+            status = (SeerrMediaRequestStatus)statusValue;
+            return true;
+        }
+
+        private static bool TryReadOptionalProfileInteger(
+            JsonElement requestRow,
+            string propertyName,
+            bool allowZero,
+            out int? value)
+        {
+            value = null;
+            if (!requestRow.TryGetProperty(propertyName, out var element) ||
+                element.ValueKind == JsonValueKind.Null)
+            {
+                return true;
+            }
+
+            if (element.ValueKind != JsonValueKind.Number ||
+                !element.TryGetInt32(out var parsed) ||
+                parsed < (allowZero ? 0 : 1))
+            {
+                return false;
+            }
+
+            value = parsed;
+            return true;
+        }
+
+        private static bool TryReadOptionalRootFolder(
+            JsonElement requestRow,
+            out string? rootFolder)
+        {
+            rootFolder = null;
+            if (!requestRow.TryGetProperty("rootFolder", out var element) ||
+                element.ValueKind == JsonValueKind.Null)
+            {
+                return true;
+            }
+
+            if (element.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
+            rootFolder = element.GetString();
+            return true;
         }
 
         // Resolves quality profile settings based on configuration mode
-        private async Task<QualityProfileSettings?> ResolveQualityProfileAsync(string watchedTmdbId)
+        private async Task<QualityProfileResolution> ResolveQualityProfileAsync(
+            string watchedTmdbId,
+            string seerrSourceUrl,
+            PluginConfiguration config)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null)
-            {
-                return null;
-            }
-
             var mode = config.AutoMovieRequestQualityMode ?? "default";
 
             if (mode == "original")
             {
-                var settings = await GetOriginalMovieQualityProfileAsync(watchedTmdbId);
-                if (settings == null)
+                var original = await GetOriginalMovieQualityProfileAsync(
+                    watchedTmdbId,
+                    seerrSourceUrl,
+                    config);
+                if (original.Status == OriginalProfileReadStatus.Incomplete)
                 {
-                    _logger.LogWarning($"[Auto-Movie-Request] Could not determine quality profile for watched movie TMDB {watchedTmdbId}, falling back to default");
-                    return null;
+                    return QualityProfileResolution.Incomplete();
                 }
 
+                if (original.Status == OriginalProfileReadStatus.Absent)
+                {
+                    _logger.LogInformation($"[Auto-Movie-Request] No usable request profile exists for watched movie TMDB {watchedTmdbId}; using Seerr's default profile");
+                    return QualityProfileResolution.Ready(null);
+                }
+
+                var settings = original.Settings!;
                 if (settings.Is4k && config.AutoMovieRequestFallbackOn4k)
                 {
                     _logger.LogInformation($"[Auto-Movie-Request] Original movie used a 4K quality profile, falling back to default (AutoMovieRequestFallbackOn4k is enabled)");
-                    return null;
+                    return QualityProfileResolution.Ready(null);
                 }
 
-                return settings;
+                return QualityProfileResolution.Ready(settings);
             }
 
             if (mode == "custom")
@@ -520,11 +824,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // Only return if at least one value is set
                 if (settings.ServerId.HasValue || settings.ProfileId.HasValue || !string.IsNullOrEmpty(settings.RootFolder))
                 {
-                    return settings;
+                    return QualityProfileResolution.Ready(settings);
                 }
 
                 _logger.LogWarning("[Auto-Movie-Request] Custom quality profile mode selected but no values configured, falling back to default");
-                return null;
+                return QualityProfileResolution.Ready(null);
             }
 
             // "default" mode or unrecognized - no quality profile settings
@@ -532,7 +836,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 _logger.LogWarning($"[Auto-Movie-Request] Unrecognized quality mode '{mode}', treating as default");
             }
-            return null;
+            return QualityProfileResolution.Ready(null);
         }
 
         // Gets TMDB ID from movie metadata
@@ -546,92 +850,242 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         }
 
         // Requests a movie from Seerr
-        private async Task<bool> RequestMovie(string tmdbId, string jellyfinUserId, QualityProfileSettings? qualitySettings = null)
+        private async Task<AutoRequestDispatchOutcome> RequestMovie(
+            string tmdbId,
+            string jellyfinUserId,
+            bool callerIsAdmin,
+            SeerrUser seerrUser,
+            string seerrSourceUrl,
+            QualityProfileSettings? qualitySettings,
+            PluginConfiguration config,
+            SeerrMutationConfigStamp mutationConfigStamp)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+            if (string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
                 _logger.LogWarning("[Auto-Movie-Request] Seerr configuration is missing");
-                return false;
+                return AutoRequestDispatchOutcome.NotAttempted;
             }
 
-            // Get Seerr user ID
-            var seerrUserId = await GetSeerrUserId(jellyfinUserId);
-            if (string.IsNullOrEmpty(seerrUserId))
+            var pinnedSource = FindConfiguredSource(config.SeerrUrls, seerrSourceUrl);
+            if (seerrUser.Id <= 0 || pinnedSource == null)
             {
-                _logger.LogWarning($"[Auto-Movie-Request] Could not find Seerr user for Jellyfin user {jellyfinUserId}");
-                return false;
+                _logger.LogWarning(
+                    "[Auto-Movie-Request] The linked Seerr user or instance is no longer valid; no request was attempted");
+                return AutoRequestDispatchOutcome.NotAttempted;
             }
 
-            var urls = GetConfiguredUrls(config.SeerrUrls);
+            var seerrUserId = seerrUser.Id.ToString();
             var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+            var dispatched = false;
 
-            foreach (var url in urls)
+            try
             {
-                try
+                var requestUri = $"{pinnedSource}/api/v1/request";
+
+                var requestBody = new Dictionary<string, object>
                 {
-                    var requestUri = $"{url.Trim().TrimEnd('/')}/api/v1/request";
+                    { "mediaType", "movie" },
+                    { "mediaId", int.Parse(tmdbId) },
+                    // Seerr quality-scopes duplicate detection using strict
+                    // boolean equality; undefined is not the normal domain.
+                    { "is4k", qualitySettings?.Is4k == true }
+                };
 
-                    var requestBody = new Dictionary<string, object>
-                    {
-                        { "mediaType", "movie" },
-                        { "mediaId", int.Parse(tmdbId) }
-                    };
-
-                    if (qualitySettings != null)
-                    {
-                        if (qualitySettings.ServerId.HasValue && qualitySettings.ServerId.Value >= 0)
-                            requestBody["serverId"] = qualitySettings.ServerId.Value;
-                        if (qualitySettings.ProfileId.HasValue && qualitySettings.ProfileId.Value > 0)
-                            requestBody["profileId"] = qualitySettings.ProfileId.Value;
-                        if (!string.IsNullOrEmpty(qualitySettings.RootFolder))
-                            requestBody["rootFolder"] = qualitySettings.RootFolder;
-                        if (qualitySettings.Is4k)
-                            requestBody["is4k"] = true;
-                    }
-
-                    var jsonContent = JsonSerializer.Serialize(requestBody);
-
-                    using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
-                        HttpMethod.Post, requestUri, config.SeerrApiKey, seerrUserId, jsonContent);
-                    using var response = await httpClient.SendAsync(request);
-                    var (responseContent, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
-
-                    if (error == null)
-                    {
-                        return true;
-                    }
-                    // Seerr already has this request (409) — idempotent success, stop here.
-                    if (AutoRequest.AutoRequestRetryPolicy.IsAlreadyRequested(error))
-                    {
-                        _logger.LogInformation($"[Auto-Movie-Request] Movie already requested on Seerr (409) at {url} — treating as success.");
-                        return true;
-                    }
-                    _logger.LogWarning($"[Auto-Movie-Request] Seerr request failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
-                    // A server that RESPONDED (any real status) may already have committed the
-                    // request; do not re-POST it to another backend. Only fail over on a pure
-                    // transport failure (no commit possible).
-                    if (!AutoRequest.AutoRequestRetryPolicy.ShouldTryNextUrl(error))
-                    {
-                        return false;
-                    }
-                }
-                catch (Exception ex)
+                if (qualitySettings != null)
                 {
-                    _logger.LogError($"[Auto-Movie-Request] Exception requesting movie from Seerr at {url}: {ex.Message}");
+                    if (qualitySettings.ServerId.HasValue && qualitySettings.ServerId.Value >= 0)
+                        requestBody["serverId"] = qualitySettings.ServerId.Value;
+                    if (qualitySettings.ProfileId.HasValue && qualitySettings.ProfileId.Value > 0)
+                        requestBody["profileId"] = qualitySettings.ProfileId.Value;
+                    if (!string.IsNullOrEmpty(qualitySettings.RootFolder))
+                        requestBody["rootFolder"] = qualitySettings.RootFolder;
                 }
+
+                var jsonContent = JsonSerializer.Serialize(requestBody);
+
+                // Auto requests bypass SeerrClient.ProxyRequestAsync, so they
+                // must apply the same Jellyfin parental policy explicitly. A
+                // successor that the acting user cannot see/request manually
+                // must never be created by the playback-triggered background
+                // path. Keep the fresh identity lookup below as the final
+                // awaited authorization step before dispatch.
+                if (await _parentalFilter.IsBlockedAsync(
+                        "movie",
+                        int.Parse(tmdbId, System.Globalization.CultureInfo.InvariantCulture),
+                        new SeerrCaller(jellyfinUserId, callerIsAdmin)).ConfigureAwait(false))
+                {
+                    _logger.LogInformation(
+                        "[Auto-Movie-Request] Successor movie TMDB {TmdbId} is blocked by the acting Jellyfin user's parental policy; no request was attempted",
+                        tmdbId);
+                    return AutoRequestDispatchOutcome.NotAttempted;
+                }
+
+                // This is the final awaited operation before dispatch. Re-read
+                // the binding without the user cache and refuse the POST if the
+                // account, source, Jellyfin mapping, or permissions changed
+                // while the collection/profile checks were in flight.
+                if (!await HasUnchangedFreshBindingAsync(
+                        jellyfinUserId,
+                        seerrUser,
+                        pinnedSource,
+                        config).ConfigureAwait(false))
+                {
+                    return AutoRequestDispatchOutcome.NotAttempted;
+                }
+
+                var currentConfig = _configProvider.ConfigurationOrNull;
+                var currentPinnedSource = FindConfiguredSource(
+                    currentConfig?.SeerrUrls,
+                    seerrSourceUrl);
+                if (!mutationConfigStamp.Matches(
+                        currentConfig,
+                        _configProvider.ConfigurationRevision)
+                    || currentConfig == null
+                    || !currentConfig.SeerrEnabled
+                    || !currentConfig.AutoMovieRequestEnabled
+                    || (qualitySettings?.Is4k == true && !currentConfig.SeerrEnable4KRequests)
+                    || string.IsNullOrEmpty(currentConfig.SeerrApiKey)
+                    || !string.Equals(currentPinnedSource, pinnedSource, StringComparison.Ordinal))
+                {
+                    _logger.LogWarning(
+                        "[Auto-Movie-Request] Plugin configuration changed while preparing the request; no mutation was attempted");
+                    return AutoRequestDispatchOutcome.NotAttempted;
+                }
+
+                config = currentConfig;
+                requestUri = $"{currentPinnedSource}/api/v1/request";
+
+                using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
+                    HttpMethod.Post, requestUri, config.SeerrApiKey, seerrUserId, jsonContent);
+                dispatched = true;
+                using var response = await httpClient.SendAsync(request);
+                var (_, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+
+                if (error == null)
+                {
+                    return AutoRequestDispatchOutcome.Succeeded;
+                }
+                // Seerr already has this request (409) — idempotent success.
+                if (AutoRequest.AutoRequestRetryPolicy.IsAlreadyRequested(error))
+                {
+                    _logger.LogInformation($"[Auto-Movie-Request] Movie already requested on Seerr (409) at {pinnedSource} — treating as success.");
+                    return AutoRequestDispatchOutcome.Succeeded;
+                }
+
+                _logger.LogWarning($"[Auto-Movie-Request] Seerr request failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"[Auto-Movie-Request] Exception requesting movie from Seerr at {pinnedSource}: {ex.Message}");
             }
 
-            return false;
+            return dispatched
+                ? AutoRequestDispatchOutcome.Attempted
+                : AutoRequestDispatchOutcome.NotAttempted;
         }
 
-        // Gets the Seerr user ID for a Jellyfin user
-        private Task<string?> GetSeerrUserId(string jellyfinUserId)
+        private async Task<bool> HasUnchangedFreshBindingAsync(
+            string jellyfinUserId,
+            SeerrUser initialUser,
+            string initialSourceUrl,
+            PluginConfiguration config)
+        {
+            var freshResolution = await _seerrClient.ResolveSeerrUser(
+                jellyfinUserId,
+                bypassCache: true,
+                allowAutoImport: false).ConfigureAwait(false);
+            var freshUser = freshResolution.User;
+            var freshSourceUrl = FindConfiguredSource(config.SeerrUrls, freshUser?.SourceUrl);
+            var expectedBinding = NormalizeJellyfinUserId(jellyfinUserId);
+            var unchanged = freshResolution.IsFound &&
+                freshUser != null &&
+                freshUser.Id > 0 &&
+                string.Equals(freshSourceUrl, initialSourceUrl, StringComparison.Ordinal) &&
+                freshUser.Id == initialUser.Id &&
+                freshUser.Permissions == initialUser.Permissions &&
+                string.Equals(
+                    NormalizeJellyfinUserId(initialUser.JellyfinUserId),
+                    expectedBinding,
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(
+                    NormalizeJellyfinUserId(freshUser.JellyfinUserId),
+                    expectedBinding,
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (!unchanged)
+            {
+                _seerrClient.InvalidateUserIdentityCache(jellyfinUserId);
+                _logger.LogWarning(
+                    "[Auto-Movie-Request] Fresh Seerr user resolution changed or invalidated the initial account/source/permission binding for Jellyfin user {UserId}; no request was attempted",
+                    jellyfinUserId);
+            }
+
+            return unchanged;
+        }
+
+        private async Task<(SeerrUser User, string SourceUrl)?> ResolvePinnedSeerrUserAsync(
+            string jellyfinUserId,
+            PluginConfiguration config)
+        {
+            var userResolution = await ResolveSeerrUser(jellyfinUserId).ConfigureAwait(false);
+            var seerrUser = userResolution.User;
+            var sourceUrl = FindConfiguredSource(config.SeerrUrls, seerrUser?.SourceUrl);
+            var expectedBinding = NormalizeJellyfinUserId(jellyfinUserId);
+            if (!userResolution.IsFound ||
+                seerrUser == null ||
+                seerrUser.Id <= 0 ||
+                sourceUrl == null ||
+                !string.Equals(
+                    NormalizeJellyfinUserId(seerrUser.JellyfinUserId),
+                    expectedBinding,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "[Auto-Movie-Request] Seerr user resolution for Jellyfin user {UserId} returned {Status} without a current source binding; no Seerr request was attempted. {Reason}",
+                    jellyfinUserId,
+                    userResolution.Status,
+                    userResolution.FailureReason);
+                return null;
+            }
+
+            return (seerrUser, sourceUrl);
+        }
+
+        private static string? FindConfiguredSource(string? configuredUrls, string? candidateSourceUrl)
+        {
+            var normalizedCandidate = Helpers.Seerr.SeerrUrlIdentity.Normalize(candidateSourceUrl);
+            if (string.IsNullOrWhiteSpace(normalizedCandidate))
+            {
+                return null;
+            }
+
+            return GetConfiguredUrls(configuredUrls).FirstOrDefault(url => string.Equals(
+                url,
+                normalizedCandidate,
+                StringComparison.Ordinal));
+        }
+
+        private static string BuildSourceScopedKey(string sourceUrl, string resourceKey)
+            => $"{sourceUrl.Length}:{sourceUrl}{resourceKey}";
+
+        private static string? NormalizeJellyfinUserId(string? jellyfinUserId)
+            => string.IsNullOrWhiteSpace(jellyfinUserId)
+                ? null
+                : jellyfinUserId.Replace("-", string.Empty, StringComparison.Ordinal);
+
+        // Resolves the Seerr user and the instance that owns its id.
+        private Task<SeerrUserResolution> ResolveSeerrUser(string jellyfinUserId)
         {
             // allowAutoImport: false — background monitors must never create
             // Seerr users as a side effect of playback (matches the former
             // SeerrUserResolver semantics: lookup only, no import).
-            return _seerrClient.GetSeerrUserId(jellyfinUserId, allowAutoImport: false);
+            return _seerrClient.ResolveSeerrUser(
+                jellyfinUserId,
+                // The initial lookup may use the healthy positive cache; the
+                // mandatory final pre-dispatch lookup bypasses it and requires
+                // the exact same source-local binding.
+                bypassCache: false,
+                allowAutoImport: false);
         }
 
         // Clears the request cache (useful for testing or resetting)

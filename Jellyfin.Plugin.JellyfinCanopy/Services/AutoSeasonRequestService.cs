@@ -3,15 +3,20 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Jellyfin.Data;
 using Jellyfin.Data.Enums;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Querying;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.JellyfinCanopy.Services
 {
@@ -28,9 +33,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly Dictionary<string, DateTime> _requestedSeasons = new();
         private readonly object _requestCacheLock = new();
         private readonly Seerr.ISeerrClient _seerrClient;
+        private readonly ISeerrParentalFilter _parentalFilter;
         private readonly Dictionary<string, (string Content, DateTime CachedAt)> _seriesDetailsCache = new();
         private readonly object _seriesDetailsCacheLock = new();
-        private readonly ConcurrentDictionary<string, Task<string?>> _seriesDetailsInFlight = new();
+        private readonly ConcurrentDictionary<string, Lazy<Task<string?>>> _seriesDetailsInFlight = new();
 
         public AutoSeasonRequestService(
             IHttpClientFactory httpClientFactory,
@@ -39,7 +45,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             IUserDataManager userDataManager,
             ILibraryManager libraryManager,
             IPluginConfigProvider configProvider,
-            Seerr.ISeerrClient seerrClient)
+            Seerr.ISeerrClient seerrClient,
+            ISeerrParentalFilter parentalFilter)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
@@ -48,6 +55,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _libraryManager = libraryManager;
             _configProvider = configProvider;
             _seerrClient = seerrClient;
+            _parentalFilter = parentalFilter;
         }
 
         private static string[] GetConfiguredUrls(string? urls)
@@ -55,14 +63,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return Seerr.SeerrClient.GetConfiguredUrls(urls);
         }
 
-        // instance method (was static) because config is now read through the injected provider
-        private TimeSpan GetSeriesDetailsCacheTtl()
-        {
-            var minutes = _configProvider.ConfigurationOrNull?.SeerrResponseCacheTtlMinutes ?? 10;
-            return TimeSpan.FromMinutes(Math.Max(1, minutes));
-        }
-
-        private async Task<string?> GetSeriesDetailsJsonAsync(string tmdbId)
+        internal async Task<string?> GetSeriesDetailsJsonAsync(string tmdbId, string seerrSourceUrl)
         {
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
@@ -70,16 +71,49 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return null;
             }
 
-            var cacheKey = tmdbId;
-            var cacheTtl = GetSeriesDetailsCacheTtl();
+            // Snapshot every input used by the request. PluginConfiguration is
+            // mutable, so retaining the object itself would allow an in-place
+            // admin edit to change the credential underneath an existing flight.
+            var configRevision = _configProvider.ConfigurationRevision;
+            var configStamp = SeerrMutationConfigStamp.Capture(config, configRevision);
+            var configuredUrls = config.SeerrUrls;
+            var apiKey = config.SeerrApiKey;
             var cacheEnabled = !config.SeerrDisableCache;
+            var cacheTtl = TimeSpan.FromMinutes(Math.Max(1, config.SeerrResponseCacheTtlMinutes));
+            var configFingerprint = ComputeConfigurationFingerprint(config);
+
+            bool IsCapturedConfigurationCurrent()
+                => configStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision);
+
+            if (!IsCapturedConfigurationCurrent())
+            {
+                return null;
+            }
+
+            var pinnedSource = FindConfiguredSource(configuredUrls, seerrSourceUrl);
+            if (pinnedSource == null)
+            {
+                _logger.LogWarning("[Auto-Season-Request] The linked Seerr instance is no longer configured; no series-details lookup was attempted");
+                return null;
+            }
+
+            // The TV detail contains instance-local media/request state. Neither
+            // the cached response nor a shared in-flight task may cross sources
+            // or configuration generations. The opaque full-config digest also
+            // partitions in-place edits for which the object revision is stable.
+            var cacheKey = BuildSourceScopedKey(
+                pinnedSource,
+                $"{configRevision}:{configFingerprint}:{tmdbId}");
 
             if (cacheEnabled)
             {
                 lock (_seriesDetailsCacheLock)
                 {
                     if (_seriesDetailsCache.TryGetValue(cacheKey, out var cached) &&
-                        DateTime.UtcNow - cached.CachedAt < cacheTtl)
+                        DateTime.UtcNow - cached.CachedAt < cacheTtl &&
+                        IsCapturedConfigurationCurrent())
                     {
                         return cached.Content;
                     }
@@ -88,30 +122,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             async Task<string?> FetchAsync()
             {
-                var urls = GetConfiguredUrls(config.SeerrUrls);
                 var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
-                foreach (var url in urls)
+                try
                 {
-                    try
+                    var requestUrl = $"{pinnedSource}/api/v1/tv/{tmdbId}";
+                    using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
+                        HttpMethod.Get, requestUrl, apiKey);
+                    using var response = await httpClient.SendAsync(request);
+                    var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
+                    if (error != null)
                     {
-                        var requestUrl = $"{url}/api/v1/tv/{tmdbId}";
-                        using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
-                            HttpMethod.Get, requestUrl, config.SeerrApiKey);
-                        using var response = await httpClient.SendAsync(request);
-                        var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
-                        if (error != null)
-                        {
-                            _logger.LogDebug($"[Auto-Season-Request] Series details fetch for TMDB {tmdbId} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
-                            continue;
-                        }
+                        _logger.LogDebug($"[Auto-Season-Request] Series details fetch for TMDB {tmdbId} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
+                        return null;
+                    }
 
-                        return content;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug($"[Auto-Season-Request] Error checking Seerr at {url}: {ex.Message}");
-                    }
+                    return IsCapturedConfigurationCurrent() ? content : null;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug($"[Auto-Season-Request] Error checking Seerr at {pinnedSource}: {ex.Message}");
                 }
 
                 return null;
@@ -120,31 +150,53 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             string? content;
             if (cacheEnabled)
             {
-                var task = _seriesDetailsInFlight.GetOrAdd(cacheKey, _ => FetchAsync());
-                try
+                async Task<string?> FetchAndCacheAsync()
                 {
-                    content = await task;
-                }
-                finally
-                {
-                    _seriesDetailsInFlight.TryRemove(cacheKey, out _);
+                    var fetchedContent = await FetchAsync().ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(fetchedContent) &&
+                        IsCapturedConfigurationCurrent())
+                    {
+                        // Cache publication is part of the shared flight, so
+                        // removal cannot expose a miss before the result lands.
+                        lock (_seriesDetailsCacheLock)
+                        {
+                            _seriesDetailsCache[cacheKey] = (fetchedContent, DateTime.UtcNow);
+                        }
+                    }
+
+                    return fetchedContent;
                 }
 
-                if (!string.IsNullOrEmpty(content))
-                {
-                    lock (_seriesDetailsCacheLock)
-                    {
-                        _seriesDetailsCache[cacheKey] = (content, DateTime.UtcNow);
-                    }
-                }
+                var task = Helpers.AsyncSingleFlight.GetOrAdd(
+                    _seriesDetailsInFlight,
+                    cacheKey,
+                    FetchAndCacheAsync);
+                content = await task.ConfigureAwait(false);
             }
             else
             {
                 content = await FetchAsync();
             }
 
+            if (!IsCapturedConfigurationCurrent())
+            {
+                // A generation change can occur after the flight's publication
+                // check but before this waiter resumes. Its generation-specific
+                // entry is no longer usable and must not survive for an A→B→A
+                // transition within this service instance.
+                lock (_seriesDetailsCacheLock)
+                {
+                    _seriesDetailsCache.Remove(cacheKey);
+                }
+
+                return null;
+            }
+
             return content;
         }
+
+        private static string ComputeConfigurationFingerprint(PluginConfiguration configuration)
+            => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(configuration)));
 
         // Checks a completed episode to determine if next season should be requested.
         // Event-driven entry point called when a user finishes or starts watching an episode.
@@ -180,13 +232,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         }
 
         // Checks if a specific season needs its next season requested
-        private async Task CheckSeasonForAutoRequest(Series series, int currentSeasonNumber, int currentEpisodeNumber, JUser user)
+        internal async Task CheckSeasonForAutoRequest(Series series, int currentSeasonNumber, int currentEpisodeNumber, JUser user)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null)
+            if (config == null || !config.AutoSeasonRequestEnabled || !config.SeerrEnabled)
             {
                 return;
             }
+
+            var mutationConfigStamp = SeerrMutationConfigStamp.Capture(
+                config,
+                _configProvider.ConfigurationRevision);
 
             // Get TMDB ID first - we'll need it for Seerr checks
             var tmdbId = GetTmdbId(series);
@@ -196,8 +252,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
+            // Resolve once before the first Seerr read. Seerr user ids, media
+            // state and request ids belong to one source and cannot be replayed
+            // against whichever configured instance happens to answer first.
+            var seerrBinding = await ResolvePinnedSeerrUserAsync(user.Id.ToString(), config).ConfigureAwait(false);
+            if (!seerrBinding.HasValue)
+            {
+                return;
+            }
+
+            var (seerrUser, seerrSourceUrl) = seerrBinding.Value;
+
             // Get the total episode count for this season from TMDB/Seerr
-            var totalEpisodesInSeason = await GetTotalEpisodesInSeasonFromTmdb(tmdbId, currentSeasonNumber);
+            var totalEpisodesInSeason = await GetTotalEpisodesInSeasonFromTmdb(
+                tmdbId,
+                currentSeasonNumber,
+                seerrSourceUrl);
             if (totalEpisodesInSeason == null || totalEpisodesInSeason <= 0)
             {
                 _logger.LogWarning($"[Auto-Season-Request] Could not determine total episodes for '{series.Name}' S{currentSeasonNumber} from TMDB");
@@ -278,7 +348,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // Check in-memory cache first (fast path to avoid redundant API calls)
             // Uses a sentinel pattern: write the entry before async work so concurrent
             // callers see it immediately, then remove on failure to allow retries.
-            var cacheKey = $"{tmdbId}_S{nextSeasonNumber}";
+            var cacheKey = BuildSourceScopedKey(
+                seerrSourceUrl,
+                $"{tmdbId}:S{nextSeasonNumber}");
             lock (_requestCacheLock)
             {
                 // Clean up expired entries
@@ -297,7 +369,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
 
             // Get episode count for next season to verify it has started
-            var nextSeasonEpisodeCount = await GetTotalEpisodesInSeasonFromTmdb(tmdbId, nextSeasonNumber);
+            var nextSeasonEpisodeCount = await GetTotalEpisodesInSeasonFromTmdb(
+                tmdbId,
+                nextSeasonNumber,
+                seerrSourceUrl);
 
             if (nextSeasonEpisodeCount == null || nextSeasonEpisodeCount <= 0)
             {
@@ -313,7 +388,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
 
             // Check Seerr for season availability/status - always query to get latest status
-            var seerrStatus = await GetSeasonStatusFromSeerr(tmdbId, nextSeasonNumber);
+            var seerrStatus = await GetSeasonStatusFromSeerr(
+                tmdbId,
+                nextSeasonNumber,
+                seerrSourceUrl);
 
             if (seerrStatus == null)
             {
@@ -338,25 +416,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
 
             // Season exists, not available, not requested - proceed with request
-            var success = await RequestNextSeason(tmdbId, nextSeasonNumber, user.Id.ToString());
+            var outcome = await RequestNextSeason(
+                tmdbId,
+                nextSeasonNumber,
+                user.Id.ToString(),
+                user.HasPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator),
+                seerrUser,
+                seerrSourceUrl,
+                mutationConfigStamp);
 
-            if (success)
+            if (outcome == AutoRequestDispatchOutcome.Succeeded)
             {
                 _logger.LogInformation($"[Auto-Season-Request] ✓ Requested '{series.Name}' S{nextSeasonNumber} (TMDB: {tmdbId}) for {user.Username}");
             }
-            else
+            else if (outcome == AutoRequestDispatchOutcome.NotAttempted)
             {
-                // Remove sentinel so a future attempt can retry
+                // Preparation failed before dispatch, so retrying cannot replay
+                // a possibly committed non-idempotent request.
                 lock (_requestCacheLock)
                 {
                     _requestedSeasons.Remove(cacheKey);
                 }
                 _logger.LogWarning($"[Auto-Season-Request] ✗ Failed to request '{series.Name}' S{nextSeasonNumber} for {user.Username}");
             }
+            else
+            {
+                _logger.LogWarning($"[Auto-Season-Request] Request outcome for '{series.Name}' S{nextSeasonNumber} is ambiguous; retaining the cooldown reservation to prevent replay");
+            }
         }
 
         // Gets the total number of episodes in a season from TMDB
-        private async Task<int?> GetTotalEpisodesInSeasonFromTmdb(string tmdbId, int seasonNumber)
+        private async Task<int?> GetTotalEpisodesInSeasonFromTmdb(
+            string tmdbId,
+            int seasonNumber,
+            string seerrSourceUrl)
         {
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
@@ -366,7 +459,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             try
             {
-                var content = await GetSeriesDetailsJsonAsync(tmdbId);
+                var content = await GetSeriesDetailsJsonAsync(tmdbId, seerrSourceUrl);
                 if (string.IsNullOrEmpty(content))
                 {
                     return null;
@@ -376,29 +469,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 {
                     var root = doc.RootElement;
 
-                    if (root.TryGetProperty("numberOfSeasons", out var totalSeasonsProp))
+                    if (TryReadTmdbSeasonEpisodeCount(root, seasonNumber, out var episodeCount))
                     {
-                        var totalSeasons = totalSeasonsProp.GetInt32();
-                        _logger.LogInformation($"[Auto-Season-Request] TMDB reports {totalSeasons} total seasons for TMDB ID {tmdbId}");
-                    }
-
-                    if (root.TryGetProperty("seasons", out var seasonsArray))
-                    {
-                        foreach (var season in seasonsArray.EnumerateArray())
-                        {
-                            if (season.TryGetProperty("seasonNumber", out var seasonNumProp) &&
-                                seasonNumProp.GetInt32() == seasonNumber &&
-                                season.TryGetProperty("episodeCount", out var episodeCountProp))
-                            {
-                                var episodeCount = episodeCountProp.GetInt32();
-                                _logger.LogInformation($"[Auto-Season-Request] TMDB reports {episodeCount} episodes in season {seasonNumber}");
-                                return episodeCount;
-                            }
-                        }
+                        _logger.LogInformation($"[Auto-Season-Request] TMDB reports {episodeCount} episodes in season {seasonNumber}");
+                        return episodeCount;
                     }
                 }
 
-                _logger.LogInformation($"[Auto-Season-Request] Season {seasonNumber} not found in TMDB data (season does not exist on TMDB)");
+                _logger.LogWarning($"[Auto-Season-Request] Season {seasonNumber} was absent, duplicated, or malformed in TMDB season metadata; refusing to infer that it is requestable");
                 return null;
             }
             catch (Exception ex)
@@ -416,8 +494,37 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             public bool IsRequested { get; set; }
         }
 
+        // These are MediaStatus values from Seerr's persisted media/season
+        // model. They are deliberately separate from MediaRequestStatus (whose
+        // value 5 means COMPLETED rather than AVAILABLE).
+        private enum SeerrMediaAvailabilityStatus
+        {
+            Unknown = 1,
+            Pending = 2,
+            Processing = 3,
+            PartiallyAvailable = 4,
+            Available = 5,
+            Blocklisted = 6,
+            Deleted = 7,
+        }
+
+        // Seerr's MediaRequestStatus is a different persistence enum from
+        // MediaStatus. Declined/completed historical requests do not block a
+        // new request; pending/approved/failed requests still do.
+        private enum SeerrMediaRequestStatus
+        {
+            Pending = 1,
+            Approved = 2,
+            Declined = 3,
+            Failed = 4,
+            Completed = 5,
+        }
+
         // Gets season status from Seerr - always fetches fresh to ensure accurate request/availability state
-        private async Task<SeasonStatus?> GetSeasonStatusFromSeerr(string tmdbId, int seasonNumber)
+        private async Task<SeasonStatus?> GetSeasonStatusFromSeerr(
+            string tmdbId,
+            int seasonNumber,
+            string seerrSourceUrl)
         {
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
@@ -427,32 +534,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             try
             {
-                var urls = GetConfiguredUrls(config.SeerrUrls);
-                var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
-
-                string? content = null;
-                foreach (var url in urls)
+                var pinnedSource = FindConfiguredSource(config.SeerrUrls, seerrSourceUrl);
+                if (pinnedSource == null)
                 {
-                    try
-                    {
-                        var requestUrl = $"{url}/api/v1/tv/{tmdbId}";
-                        using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
-                            HttpMethod.Get, requestUrl, config.SeerrApiKey);
-                        using var response = await httpClient.SendAsync(request);
-                        var (body, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
-                        if (error != null)
-                        {
-                            _logger.LogDebug($"[Auto-Season-Request] Status check for TMDB {tmdbId} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
-                            continue;
-                        }
+                    _logger.LogWarning("[Auto-Season-Request] The linked Seerr instance is no longer configured; no season-status lookup was attempted");
+                    return null;
+                }
 
-                        content = body;
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug($"[Auto-Season-Request] Error fetching season status from {url}: {ex.Message}");
-                    }
+                var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+                var requestUrl = $"{pinnedSource}/api/v1/tv/{tmdbId}";
+                using var statusRequest = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
+                    HttpMethod.Get, requestUrl, config.SeerrApiKey);
+                using var response = await httpClient.SendAsync(statusRequest);
+                var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
+                if (error != null)
+                {
+                    _logger.LogDebug($"[Auto-Season-Request] Status check for TMDB {tmdbId} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
+                    return null;
                 }
 
                 if (string.IsNullOrEmpty(content))
@@ -464,70 +562,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 {
                     var root = doc.RootElement;
 
-                    if (root.TryGetProperty("numberOfSeasons", out var totalSeasonsProp))
+                    if (TryReadSeerrSeasonState(root, seasonNumber, out var status))
                     {
-                        var totalSeasons = totalSeasonsProp.GetInt32();
-                        _logger.LogInformation($"[Auto-Season-Request] Seerr reports {totalSeasons} total seasons for TMDB ID {tmdbId}");
-                        if (seasonNumber > totalSeasons)
-                        {
-                            _logger.LogInformation($"[Auto-Season-Request] Season {seasonNumber} does not exist on TMDB - show only has {totalSeasons} season(s)");
-                            return null;
-                        }
-                    }
-
-                    bool hasRequest = false;
-                    if (root.TryGetProperty("mediaInfo", out var mediaInfoElement) &&
-                        mediaInfoElement.TryGetProperty("requests", out var requestsArray))
-                    {
-                        _logger.LogInformation($"[Auto-Season-Request] Seerr reports {requestsArray.GetArrayLength()} request(s) for TMDB ID {tmdbId}");
-                        foreach (var request in requestsArray.EnumerateArray())
-                        {
-                            if (request.TryGetProperty("seasons", out var requestSeasons))
-                            {
-                                foreach (var requestSeason in requestSeasons.EnumerateArray())
-                                {
-                                    if (requestSeason.TryGetProperty("seasonNumber", out var requestSeasonNum) &&
-                                        requestSeasonNum.GetInt32() == seasonNumber)
-                                    {
-                                        hasRequest = true;
-                                        _logger.LogInformation($"[Auto-Season-Request] Found existing request for season {seasonNumber}");
-                                        break;
-                                    }
-                                }
-                                if (hasRequest) break;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        _logger.LogInformation($"[Auto-Season-Request] No mediaInfo or no requests found for TMDB ID {tmdbId}");
-                    }
-
-                    if (root.TryGetProperty("seasons", out var seasonsArray))
-                    {
-                        foreach (var season in seasonsArray.EnumerateArray())
-                        {
-                            if (season.TryGetProperty("seasonNumber", out var seasonNumProp) &&
-                                seasonNumProp.GetInt32() == seasonNumber)
-                            {
-                                var status = new SeasonStatus();
-                                if (season.TryGetProperty("status", out var statusProp))
-                                {
-                                    var statusValue = statusProp.GetInt32();
-                                    status.IsAvailable = statusValue == 5;
-                                    _logger.LogInformation($"[Auto-Season-Request] Seerr Season {seasonNumber} raw status code: {statusValue} (5 = available)");
-                                }
-
-                                status.IsRequested = hasRequest;
-
-                                _logger.LogInformation($"[Auto-Season-Request] Season {seasonNumber} final status from Seerr: Available={status.IsAvailable}, Requested={status.IsRequested}");
-                                return status;
-                            }
-                        }
+                        _logger.LogInformation($"[Auto-Season-Request] Season {seasonNumber} final status from Seerr: Available={status.IsAvailable}, RequestedOrBlocked={status.IsRequested}");
+                        return status;
                     }
                 }
 
-                _logger.LogInformation($"[Auto-Season-Request] Season {seasonNumber} not found in Seerr response");
+                _logger.LogWarning($"[Auto-Season-Request] Season {seasonNumber} had absent, malformed, or conflicting TMDB/media state in the Seerr response; no request was attempted");
                 return null;
             }
             catch (Exception ex)
@@ -537,6 +579,226 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             return null;
         }
+
+        private static bool TryReadTmdbSeasonEpisodeCount(
+            JsonElement root,
+            int seasonNumber,
+            out int episodeCount)
+        {
+            episodeCount = 0;
+            if (root.ValueKind != JsonValueKind.Object || seasonNumber <= 0 ||
+                !root.TryGetProperty("numberOfSeasons", out var totalSeasonsElement) ||
+                totalSeasonsElement.ValueKind != JsonValueKind.Number ||
+                !totalSeasonsElement.TryGetInt32(out var totalSeasons) ||
+                totalSeasons < 0 ||
+                seasonNumber > totalSeasons ||
+                !root.TryGetProperty("seasons", out var seasonsElement) ||
+                seasonsElement.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            var seenSeasonNumbers = new HashSet<int>();
+            var found = false;
+            foreach (var season in seasonsElement.EnumerateArray())
+            {
+                if (season.ValueKind != JsonValueKind.Object ||
+                    !season.TryGetProperty("seasonNumber", out var seasonNumberElement) ||
+                    seasonNumberElement.ValueKind != JsonValueKind.Number ||
+                    !seasonNumberElement.TryGetInt32(out var candidateSeasonNumber) ||
+                    candidateSeasonNumber < 0 ||
+                    !seenSeasonNumbers.Add(candidateSeasonNumber) ||
+                    !season.TryGetProperty("episodeCount", out var episodeCountElement) ||
+                    episodeCountElement.ValueKind != JsonValueKind.Number ||
+                    !episodeCountElement.TryGetInt32(out var candidateEpisodeCount) ||
+                    candidateEpisodeCount < 0)
+                {
+                    return false;
+                }
+
+                if (candidateSeasonNumber == seasonNumber)
+                {
+                    found = true;
+                    episodeCount = candidateEpisodeCount;
+                }
+            }
+
+            return found;
+        }
+
+        private static bool TryReadSeerrSeasonState(
+            JsonElement root,
+            int seasonNumber,
+            out SeasonStatus status)
+        {
+            status = new SeasonStatus();
+
+            // Root seasons are mapped directly from TMDB and establish only
+            // existence/episode metadata. Never interpret a root `status`
+            // property as Seerr availability state.
+            if (!TryReadTmdbSeasonEpisodeCount(root, seasonNumber, out _))
+            {
+                return false;
+            }
+
+            if (!root.TryGetProperty("mediaInfo", out var mediaInfo) ||
+                mediaInfo.ValueKind == JsonValueKind.Null)
+            {
+                // No persisted Seerr media record yet: TMDB existence is still
+                // authoritative and there is no local state to conflict with.
+                return true;
+            }
+
+            if (mediaInfo.ValueKind != JsonValueKind.Object ||
+                !TryReadMediaAvailabilityStatus(mediaInfo, "status", out var mediaStatus) ||
+                !TryReadMediaAvailabilityStatus(mediaInfo, "status4k", out _) ||
+                !mediaInfo.TryGetProperty("requests", out var requests) ||
+                requests.ValueKind != JsonValueKind.Array ||
+                !mediaInfo.TryGetProperty("seasons", out var mediaSeasons) ||
+                mediaSeasons.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            var hasActiveNormalRequest = false;
+            var seenRequestIds = new HashSet<int>();
+            foreach (var request in requests.EnumerateArray())
+            {
+                if (request.ValueKind != JsonValueKind.Object ||
+                    !request.TryGetProperty("id", out var requestIdElement) ||
+                    requestIdElement.ValueKind != JsonValueKind.Number ||
+                    !requestIdElement.TryGetInt32(out var requestId) ||
+                    requestId <= 0 ||
+                    !seenRequestIds.Add(requestId) ||
+                    !TryReadMediaRequestStatus(request, "status", out var requestStatus) ||
+                    !request.TryGetProperty("is4k", out var is4kElement) ||
+                    (is4kElement.ValueKind != JsonValueKind.True &&
+                        is4kElement.ValueKind != JsonValueKind.False) ||
+                    !request.TryGetProperty("seasons", out var requestSeasons) ||
+                    requestSeasons.ValueKind != JsonValueKind.Array)
+                {
+                    return false;
+                }
+
+                var is4k = is4kElement.GetBoolean();
+                var seenRequestSeasonNumbers = new HashSet<int>();
+                foreach (var requestSeason in requestSeasons.EnumerateArray())
+                {
+                    if (requestSeason.ValueKind != JsonValueKind.Object ||
+                        !requestSeason.TryGetProperty("seasonNumber", out var requestSeasonNumber) ||
+                        requestSeasonNumber.ValueKind != JsonValueKind.Number ||
+                        !requestSeasonNumber.TryGetInt32(out var parsedRequestSeasonNumber) ||
+                        parsedRequestSeasonNumber < 0 ||
+                        !seenRequestSeasonNumbers.Add(parsedRequestSeasonNumber) ||
+                        !TryReadMediaRequestStatus(requestSeason, "status", out _))
+                    {
+                        return false;
+                    }
+
+                    if (!is4k &&
+                        requestStatus is not SeerrMediaRequestStatus.Declined and
+                            not SeerrMediaRequestStatus.Completed &&
+                        parsedRequestSeasonNumber == seasonNumber)
+                    {
+                        hasActiveNormalRequest = true;
+                    }
+                }
+            }
+
+            var seenMediaSeasonNumbers = new HashSet<int>();
+            var targetMediaSeasonFound = false;
+            var targetStatus = SeerrMediaAvailabilityStatus.Unknown;
+            foreach (var mediaSeason in mediaSeasons.EnumerateArray())
+            {
+                if (mediaSeason.ValueKind != JsonValueKind.Object ||
+                    !mediaSeason.TryGetProperty("seasonNumber", out var mediaSeasonNumber) ||
+                    mediaSeasonNumber.ValueKind != JsonValueKind.Number ||
+                    !mediaSeasonNumber.TryGetInt32(out var parsedMediaSeasonNumber) ||
+                    parsedMediaSeasonNumber < 0 ||
+                    !seenMediaSeasonNumbers.Add(parsedMediaSeasonNumber) ||
+                    !TryReadMediaAvailabilityStatus(mediaSeason, "status", out var parsedStatus) ||
+                    !TryReadMediaAvailabilityStatus(mediaSeason, "status4k", out _))
+                {
+                    return false;
+                }
+
+                if (parsedMediaSeasonNumber == seasonNumber)
+                {
+                    targetMediaSeasonFound = true;
+                    targetStatus = parsedStatus;
+                }
+            }
+
+            if (targetMediaSeasonFound)
+            {
+                // The emitted request is non-4K (no `is4k` field), so only the
+                // normal status is its availability/idempotency domain.
+                // status4k is still required and validated above, but a 4K-only
+                // copy/request must not suppress the missing normal season.
+                status.IsAvailable =
+                    targetStatus == SeerrMediaAvailabilityStatus.Available;
+                status.IsRequested =
+                    mediaStatus == SeerrMediaAvailabilityStatus.Blocklisted ||
+                    hasActiveNormalRequest ||
+                    IsNonRequestableMediaState(targetStatus);
+            }
+            else
+            {
+                // Seerr's top TV status is an aggregate of persisted season
+                // rows. A newly announced TMDB season may not be represented
+                // there yet even while that stale aggregate is AVAILABLE.
+                // Seerr's request path prunes duplicates per season and only
+                // treats the normal top-level BLOCKLISTED state as global.
+                status.IsAvailable = false;
+                status.IsRequested =
+                    mediaStatus == SeerrMediaAvailabilityStatus.Blocklisted ||
+                    hasActiveNormalRequest;
+            }
+
+            return true;
+        }
+
+        private static bool TryReadMediaAvailabilityStatus(
+            JsonElement mediaSeason,
+            string propertyName,
+            out SeerrMediaAvailabilityStatus status)
+        {
+            status = SeerrMediaAvailabilityStatus.Unknown;
+            if (!mediaSeason.TryGetProperty(propertyName, out var statusElement) ||
+                statusElement.ValueKind != JsonValueKind.Number ||
+                !statusElement.TryGetInt32(out var statusValue) ||
+                !Enum.IsDefined(typeof(SeerrMediaAvailabilityStatus), statusValue))
+            {
+                return false;
+            }
+
+            status = (SeerrMediaAvailabilityStatus)statusValue;
+            return true;
+        }
+
+        private static bool TryReadMediaRequestStatus(
+            JsonElement owner,
+            string propertyName,
+            out SeerrMediaRequestStatus status)
+        {
+            status = SeerrMediaRequestStatus.Pending;
+            if (!owner.TryGetProperty(propertyName, out var statusElement) ||
+                statusElement.ValueKind != JsonValueKind.Number ||
+                !statusElement.TryGetInt32(out var statusValue) ||
+                !Enum.IsDefined(typeof(SeerrMediaRequestStatus), statusValue))
+            {
+                return false;
+            }
+
+            status = (SeerrMediaRequestStatus)statusValue;
+            return true;
+        }
+
+        private static bool IsNonRequestableMediaState(SeerrMediaAvailabilityStatus status)
+            => status is SeerrMediaAvailabilityStatus.Pending
+                or SeerrMediaAvailabilityStatus.Processing
+                or SeerrMediaAvailabilityStatus.PartiallyAvailable
+                or SeerrMediaAvailabilityStatus.Blocklisted;
 
         // Calculates remaining unwatched episodes
         private int CalculateRemainingEpisodes(
@@ -570,81 +832,237 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         }
 
         // Requests the next season from Seerr
-        private async Task<bool> RequestNextSeason(string tmdbId, int seasonNumber, string jellyfinUserId)
+        private enum AutoRequestDispatchOutcome
+        {
+            NotAttempted,
+            Attempted,
+            Succeeded,
+        }
+
+        private async Task<AutoRequestDispatchOutcome> RequestNextSeason(
+            string tmdbId,
+            int seasonNumber,
+            string jellyfinUserId,
+            bool callerIsAdmin,
+            SeerrUser seerrUser,
+            string seerrSourceUrl,
+            SeerrMutationConfigStamp mutationConfigStamp)
         {
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
                 _logger.LogWarning("[Auto-Season-Request] Seerr configuration is missing");
-                return false;
+                return AutoRequestDispatchOutcome.NotAttempted;
             }
 
-            // Get Seerr user ID
-            var seerrUserId = await GetSeerrUserId(jellyfinUserId);
-            if (string.IsNullOrEmpty(seerrUserId))
+            var pinnedSource = FindConfiguredSource(config.SeerrUrls, seerrSourceUrl);
+            if (seerrUser.Id <= 0 || pinnedSource == null)
             {
-                _logger.LogWarning($"[Auto-Season-Request] Could not find Seerr user for Jellyfin user {jellyfinUserId}");
-                return false;
+                _logger.LogWarning(
+                    "[Auto-Season-Request] The linked Seerr user or instance is no longer valid; no request was attempted");
+                return AutoRequestDispatchOutcome.NotAttempted;
             }
 
-            var urls = GetConfiguredUrls(config.SeerrUrls);
+            var seerrUserId = seerrUser.Id.ToString();
             var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+            var dispatched = false;
 
-            foreach (var url in urls)
+            try
             {
-                try
+                var requestUri = $"{pinnedSource}/api/v1/request";
+
+                var requestBody = new
                 {
-                    var requestUri = $"{url.Trim().TrimEnd('/')}/api/v1/request";
+                    mediaType = "tv",
+                    mediaId = int.Parse(tmdbId),
+                    seasons = new[] { seasonNumber },
+                    // Keep Seerr's strict request-quality duplicate checks in
+                    // the normal (non-4K) domain.
+                    is4k = false,
+                };
 
-                    var requestBody = new
-                    {
-                        mediaType = "tv",
-                        mediaId = int.Parse(tmdbId),
-                        seasons = new[] { seasonNumber }
-                    };
+                var jsonContent = JsonSerializer.Serialize(requestBody);
 
-                    var jsonContent = JsonSerializer.Serialize(requestBody);
-
-                    using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
-                        HttpMethod.Post, requestUri, config.SeerrApiKey, seerrUserId, jsonContent);
-                    using var response = await httpClient.SendAsync(request);
-                    var (responseContent, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
-
-                    if (error == null)
-                    {
-                        return true;
-                    }
-                    // Seerr already has this request (409) — idempotent success, stop here.
-                    if (AutoRequest.AutoRequestRetryPolicy.IsAlreadyRequested(error))
-                    {
-                        _logger.LogInformation($"[Auto-Season-Request] Season already requested on Seerr (409) at {url} — treating as success.");
-                        return true;
-                    }
-                    _logger.LogWarning($"[Auto-Season-Request] Seerr request failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
-                    // A server that RESPONDED (any real status) may already have committed the
-                    // request; do not re-POST it to another backend. Only fail over on a pure
-                    // transport failure (no commit possible).
-                    if (!AutoRequest.AutoRequestRetryPolicy.ShouldTryNextUrl(error))
-                    {
-                        return false;
-                    }
-                }
-                catch (Exception ex)
+                // This service posts directly rather than through
+                // SeerrClient.ProxyRequestAsync. Apply the same server-side
+                // Jellyfin parental gate to the parent series before a
+                // playback-triggered request can be emitted.
+                if (await _parentalFilter.IsBlockedAsync(
+                        "tv",
+                        int.Parse(tmdbId, System.Globalization.CultureInfo.InvariantCulture),
+                        new SeerrCaller(jellyfinUserId, callerIsAdmin)).ConfigureAwait(false))
                 {
-                    _logger.LogError($"[Auto-Season-Request] Exception requesting season from Seerr at {url}: {ex.Message}");
+                    _logger.LogInformation(
+                        "[Auto-Season-Request] Series TMDB {TmdbId} is blocked by the acting Jellyfin user's parental policy; no request was attempted",
+                        tmdbId);
+                    return AutoRequestDispatchOutcome.NotAttempted;
                 }
+
+                // This is the final awaited operation before dispatch. A
+                // playback-triggered check can take long enough for a Seerr
+                // account to be remapped or lose permissions, so bypass the
+                // user cache and require the complete original binding again.
+                if (!await HasUnchangedFreshBindingAsync(
+                        jellyfinUserId,
+                        seerrUser,
+                        pinnedSource,
+                        config).ConfigureAwait(false))
+                {
+                    return AutoRequestDispatchOutcome.NotAttempted;
+                }
+
+                var currentConfig = _configProvider.ConfigurationOrNull;
+                var currentPinnedSource = FindConfiguredSource(
+                    currentConfig?.SeerrUrls,
+                    seerrSourceUrl);
+                if (!mutationConfigStamp.Matches(
+                        currentConfig,
+                        _configProvider.ConfigurationRevision)
+                    || currentConfig == null
+                    || !currentConfig.SeerrEnabled
+                    || !currentConfig.AutoSeasonRequestEnabled
+                    || string.IsNullOrEmpty(currentConfig.SeerrApiKey)
+                    || !string.Equals(currentPinnedSource, pinnedSource, StringComparison.Ordinal))
+                {
+                    _logger.LogWarning(
+                        "[Auto-Season-Request] Plugin configuration changed while preparing the request; no mutation was attempted");
+                    return AutoRequestDispatchOutcome.NotAttempted;
+                }
+
+                config = currentConfig;
+                requestUri = $"{currentPinnedSource}/api/v1/request";
+
+                using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
+                    HttpMethod.Post, requestUri, config.SeerrApiKey, seerrUserId, jsonContent);
+                dispatched = true;
+                using var response = await httpClient.SendAsync(request);
+                var (_, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+
+                if (error == null)
+                {
+                    return AutoRequestDispatchOutcome.Succeeded;
+                }
+                // Seerr already has this request (409) — idempotent success.
+                if (AutoRequest.AutoRequestRetryPolicy.IsAlreadyRequested(error))
+                {
+                    _logger.LogInformation($"[Auto-Season-Request] Season already requested on Seerr (409) at {pinnedSource} — treating as success.");
+                    return AutoRequestDispatchOutcome.Succeeded;
+                }
+
+                _logger.LogWarning($"[Auto-Season-Request] Seerr request failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"[Auto-Season-Request] Exception requesting season from Seerr at {pinnedSource}: {ex.Message}");
             }
 
-            return false;
+            return dispatched
+                ? AutoRequestDispatchOutcome.Attempted
+                : AutoRequestDispatchOutcome.NotAttempted;
         }
 
-        // Gets the Seerr user ID for a Jellyfin user
-        private Task<string?> GetSeerrUserId(string jellyfinUserId)
+        private async Task<bool> HasUnchangedFreshBindingAsync(
+            string jellyfinUserId,
+            SeerrUser initialUser,
+            string initialSourceUrl,
+            PluginConfiguration config)
+        {
+            var freshResolution = await _seerrClient.ResolveSeerrUser(
+                jellyfinUserId,
+                bypassCache: true,
+                allowAutoImport: false).ConfigureAwait(false);
+            var freshUser = freshResolution.User;
+            var freshSourceUrl = FindConfiguredSource(config.SeerrUrls, freshUser?.SourceUrl);
+            var expectedBinding = NormalizeJellyfinUserId(jellyfinUserId);
+            var unchanged = freshResolution.IsFound &&
+                freshUser != null &&
+                freshUser.Id > 0 &&
+                string.Equals(freshSourceUrl, initialSourceUrl, StringComparison.Ordinal) &&
+                freshUser.Id == initialUser.Id &&
+                freshUser.Permissions == initialUser.Permissions &&
+                string.Equals(
+                    NormalizeJellyfinUserId(initialUser.JellyfinUserId),
+                    expectedBinding,
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(
+                    NormalizeJellyfinUserId(freshUser.JellyfinUserId),
+                    expectedBinding,
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (!unchanged)
+            {
+                _seerrClient.InvalidateUserIdentityCache(jellyfinUserId);
+                _logger.LogWarning(
+                    "[Auto-Season-Request] Fresh Seerr user resolution changed or invalidated the initial account/source/permission binding for Jellyfin user {UserId}; no request was attempted",
+                    jellyfinUserId);
+            }
+
+            return unchanged;
+        }
+
+        private async Task<(SeerrUser User, string SourceUrl)?> ResolvePinnedSeerrUserAsync(
+            string jellyfinUserId,
+            PluginConfiguration config)
+        {
+            var userResolution = await ResolveSeerrUser(jellyfinUserId).ConfigureAwait(false);
+            var seerrUser = userResolution.User;
+            var sourceUrl = FindConfiguredSource(config.SeerrUrls, seerrUser?.SourceUrl);
+            var expectedBinding = NormalizeJellyfinUserId(jellyfinUserId);
+            if (!userResolution.IsFound ||
+                seerrUser == null ||
+                seerrUser.Id <= 0 ||
+                sourceUrl == null ||
+                !string.Equals(
+                    NormalizeJellyfinUserId(seerrUser.JellyfinUserId),
+                    expectedBinding,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "[Auto-Season-Request] Seerr user resolution for Jellyfin user {UserId} returned {Status} without a current source binding; no Seerr request was attempted. {Reason}",
+                    jellyfinUserId,
+                    userResolution.Status,
+                    userResolution.FailureReason);
+                return null;
+            }
+
+            return (seerrUser, sourceUrl);
+        }
+
+        private static string? FindConfiguredSource(string? configuredUrls, string? candidateSourceUrl)
+        {
+            var normalizedCandidate = Helpers.Seerr.SeerrUrlIdentity.Normalize(candidateSourceUrl);
+            if (string.IsNullOrWhiteSpace(normalizedCandidate))
+            {
+                return null;
+            }
+
+            return GetConfiguredUrls(configuredUrls).FirstOrDefault(url => string.Equals(
+                url,
+                normalizedCandidate,
+                StringComparison.Ordinal));
+        }
+
+        private static string BuildSourceScopedKey(string sourceUrl, string resourceKey)
+            => $"{sourceUrl.Length}:{sourceUrl}{resourceKey}";
+
+        private static string? NormalizeJellyfinUserId(string? jellyfinUserId)
+            => string.IsNullOrWhiteSpace(jellyfinUserId)
+                ? null
+                : jellyfinUserId.Replace("-", string.Empty, StringComparison.Ordinal);
+
+        // Resolves the Seerr user and the instance that owns its id.
+        private Task<SeerrUserResolution> ResolveSeerrUser(string jellyfinUserId)
         {
             // allowAutoImport: false — background monitors must never create
             // Seerr users as a side effect of playback (matches the former
             // SeerrUserResolver semantics: lookup only, no import).
-            return _seerrClient.GetSeerrUserId(jellyfinUserId, allowAutoImport: false);
+            return _seerrClient.ResolveSeerrUser(
+                jellyfinUserId,
+                // The initial lookup may use the healthy positive cache; the
+                // mandatory final pre-dispatch lookup bypasses it and requires
+                // the exact same source-local binding.
+                bypassCache: false,
+                allowAutoImport: false);
         }
     }
 }

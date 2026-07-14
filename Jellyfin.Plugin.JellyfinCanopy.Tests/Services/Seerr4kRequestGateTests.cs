@@ -47,7 +47,7 @@ public class Seerr4kRequestGateTests
     }
 
     private static void SeedUser(RecordingHttpMessageHandler handler, long permissions)
-        => handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":{permissions}}}]}}");
+        => handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":{permissions}}}],\"pageInfo\":{{\"page\":1,\"pages\":1,\"results\":1}}}}");
 
     private static string? GetCode(object? value)
         => value?.GetType().GetProperty("code")?.GetValue(value) as string;

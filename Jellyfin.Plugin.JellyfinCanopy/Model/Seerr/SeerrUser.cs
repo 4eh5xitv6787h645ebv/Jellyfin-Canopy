@@ -11,5 +11,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model.Seerr {
 
         [JsonPropertyName("permissions")]
         public SeerrPermission Permissions { get; set; }
+
+        /// <summary>
+        /// Configured Seerr base URL that produced this user record. Seerr user
+        /// ids are instance-local, so authenticated reads and mutations must stay
+        /// on this source instead of replaying the id against another URL.
+        /// </summary>
+        [JsonIgnore]
+        public string? SourceUrl { get; set; }
     }
 }

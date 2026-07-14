@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -41,7 +42,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         // Process-wide coalescing of concurrent certification fetches for the same
         // title, mirroring ISeerrCache.TmdbEnrichmentInFlight. A null Task result
         // means the fetch could not be resolved (fail-closed for restricted callers).
-        private readonly ConcurrentDictionary<string, Task<TitleSignature?>> _inFlight = new();
+        private readonly ConcurrentDictionary<string, Lazy<Task<TitleSignature?>>> _inFlight = new();
 
         // Bound per-request fan-out and total time so a cold combined_credits view
         // (whole cast+crew, easily 100-300 items) can't stall the proxy response or
@@ -130,8 +131,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             public bool HasTagRules => BlockedTags.Count > 0 || AllowedTags.Count > 0;
         }
 
+        /// <summary>
+        /// Immutable subset of configuration used by an upstream parental lookup.
+        /// Admin saves normally replace the configuration object, but retaining a
+        /// value snapshot also prevents an in-place edit from changing a flight's
+        /// source or credential halfway through its fallback sequence.
+        /// </summary>
+        private readonly record struct FetchConfiguration(
+            string SeerrUrls,
+            string SeerrApiKey,
+            string TmdbApiKey,
+            TimeSpan CacheTtl);
+
         /// <summary>Active gate for a restricted caller (feature on, non-admin, has a limit).</summary>
-        private readonly record struct GateContext(PluginConfiguration Config, PolicySnapshot Policy, string Region);
+        private readonly record struct GateContext(
+            PolicySnapshot Policy,
+            string Region,
+            FetchConfiguration FetchConfig,
+            long ConfigurationRevision,
+            string ConfigurationIdentity,
+            SeerrMutationConfigStamp ConfigurationStamp);
 
         public async Task<SeerrParentalResult> ApplyAsync(string json, string apiPath, SeerrCaller caller)
         {
@@ -177,7 +196,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             {
                 // A filter fault must not break Seerr. Log and pass through.
                 _logger.LogWarning(ex, "Seerr parental filter failed for {ApiPath}; returning unfiltered results.", apiPath);
-                return new SeerrParentalResult(false, json);
+                return new SeerrParentalResult(false, json, Succeeded: false);
             }
         }
 
@@ -196,8 +215,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Seerr parental request gate failed for {MediaType}/{TmdbId}; allowing.", mediaType, tmdbId);
-                return false;
+                // This method protects non-idempotent request mutations. If the
+                // caller's policy cannot be resolved authoritatively, allowing the
+                // POST would bypass the parental control with no safe way to undo it.
+                _logger.LogWarning(ex, "Seerr parental request gate failed for {MediaType}/{TmdbId}; blocking.", mediaType, tmdbId);
+                return true;
             }
         }
 
@@ -223,9 +245,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             catch (Exception ex)
             {
                 // The classifier is pure/exception-free, so this only trips on a genuine
-                // gate-resolution fault — allow rather than break the passthrough.
-                _logger.LogWarning(ex, "TMDB proxy gate failed for {ApiPath}; allowing.", tmdbApiPath);
-                return false;
+                // gate-resolution fault. The raw passthrough cannot filter its response
+                // body after the fact, so an indeterminate gate must fail closed.
+                _logger.LogWarning(ex, "TMDB proxy gate failed for {ApiPath}; blocking.", tmdbApiPath);
+                return true;
             }
         }
 
@@ -265,9 +288,46 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return null;
             }
 
+            var revision = _configProvider.ConfigurationRevision;
+            var configurationStamp = SeerrMutationConfigStamp.Capture(config, revision);
+            var fetchConfig = new FetchConfiguration(
+                config.SeerrUrls ?? string.Empty,
+                config.SeerrApiKey ?? string.Empty,
+                config.TMDB_API_KEY ?? string.Empty,
+                TimeSpan.FromMinutes(Math.Max(1, config.SeerrParentalRatingCacheTtlMinutes)));
+            var configurationIdentity = BuildConfigurationIdentity(config);
+
             // Kept async-shaped for a stable seam; nothing to await today.
             await Task.CompletedTask.ConfigureAwait(false);
-            return new GateContext(config, policy, ResolveRegion(config));
+            return new GateContext(
+                policy,
+                ResolveRegion(config),
+                fetchConfig,
+                revision,
+                configurationIdentity,
+                configurationStamp);
+        }
+
+        private bool IsCurrentConfiguration(GateContext gate)
+            => gate.ConfigurationStamp.Matches(
+                _configProvider.ConfigurationOrNull,
+                _configProvider.ConfigurationRevision);
+
+        private static string BuildConfigurationIdentity(PluginConfiguration config)
+        {
+            // The digest deliberately binds the normalized source set, both
+            // upstream credentials, and the complete configuration. No source
+            // credential is exposed in the process-wide cache key.
+            var fullConfigDigest = Convert.ToHexString(
+                SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(config)));
+            var identityMaterial = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                Sources = SeerrClient.GetConfiguredUrls(config.SeerrUrls),
+                SeerrApiKey = config.SeerrApiKey ?? string.Empty,
+                TmdbApiKey = config.TMDB_API_KEY ?? string.Empty,
+                FullConfigDigest = fullConfigDigest,
+            });
+            return Convert.ToHexString(SHA256.HashData(identityMaterial));
         }
 
         private bool TryGetPolicy(string? jellyfinUserId, PluginConfiguration config, out PolicySnapshot policy)
@@ -356,13 +416,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return true; // cannot identify -> fail closed
             }
 
+            if (!IsCurrentConfiguration(gate))
+            {
+                return true;
+            }
+
             using var cts = new CancellationTokenSource(PerFetchTimeout);
             var signature = await GetSignatureAsync(
-                CacheKey(mediaType, tmdbId, gate.Region), mediaType, tmdbId, gate.Region, gate.Config,
+                CacheKey(mediaType, tmdbId, gate.Region), mediaType, tmdbId, gate,
                 needTags: gate.Policy.HasTagRules, cts.Token).ConfigureAwait(false);
-            if (signature is null)
+            if (signature is null || !IsCurrentConfiguration(gate))
             {
-                return true; // fetch failed / unverifiable -> fail closed
+                return true; // fetch failed, stale generation, or unverifiable -> fail closed
             }
 
             return !IsAllowed(signature, mediaType, gate.Policy);
@@ -424,6 +489,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 var before = array.Count;
                 RemoveDisallowed(array, plan, gate, scores);
                 removed += before - array.Count;
+            }
+
+            if (!IsCurrentConfiguration(gate))
+            {
+                // A save can land after ResolveScoresAsync's final generation
+                // check. Re-run the removal with no trusted signatures so no
+                // title authorized by the stale generation is returned.
+                var noTrustedScores = new Dictionary<string, TitleSignature?>(StringComparer.Ordinal);
+                foreach (var array in arrays)
+                {
+                    var before = array.Count;
+                    RemoveDisallowed(array, plan, gate, noTrustedScores);
+                    removed += before - array.Count;
+                }
             }
 
             // Keep paginators honest: when rows are dropped, decrement the count fields
@@ -560,7 +639,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
                 try
                 {
-                    var score = await GetSignatureAsync(kvp.Key, kvp.Value.MediaType, kvp.Value.TmdbId, gate.Region, gate.Config, needTags: gate.Policy.HasTagRules, cts.Token).ConfigureAwait(false);
+                    var score = await GetSignatureAsync(
+                        kvp.Key,
+                        kvp.Value.MediaType,
+                        kvp.Value.TmdbId,
+                        gate,
+                        needTags: gate.Policy.HasTagRules,
+                        cts.Token).ConfigureAwait(false);
                     return (kvp.Key, score);
                 }
                 finally
@@ -572,6 +657,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             foreach (var (key, score) in await Task.WhenAll(tasks).ConfigureAwait(false))
             {
                 scores[key] = score;
+            }
+
+            // A generation change after the last individual lookup invalidates
+            // the whole snapshot. An empty score map makes every identifiable
+            // movie/series row fail closed in the existing removal pass.
+            if (!IsCurrentConfiguration(gate))
+            {
+                scores.Clear();
             }
 
             return scores;
@@ -730,19 +823,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             string cacheKey,
             string mediaType,
             int tmdbId,
-            string region,
-            PluginConfiguration config,
+            GateContext gate,
             bool needTags,
             CancellationToken ct)
         {
+            var generationCacheKey = GenerationCacheKey(cacheKey, gate);
+
             // A cached entry satisfies a tag-rule pass only if its tag set was
             // actually resolved (entries written by rating-only passes through
             // the light cert endpoints carry Tags == null).
-            if (_seerrCache.CertScoreCache.TryGetValue(cacheKey, out var cached)
-                && DateTime.UtcNow - cached.CachedAt < _seerrCache.GetParentalRatingCacheTtl()
-                && (!needTags || cached.Keywords != null))
+            if (_seerrCache.CertScoreCache.TryGetValue(generationCacheKey, out var cached)
+                && DateTime.UtcNow - cached.CachedAt < gate.FetchConfig.CacheTtl
+                && (!needTags || cached.Keywords != null)
+                && IsCurrentConfiguration(gate))
             {
                 return new TitleSignature(cached.Score, cached.SubScore, cached.Keywords, cached.Genres);
+            }
+
+            if (!IsCurrentConfiguration(gate))
+            {
+                return null;
             }
 
             // Coalesce concurrent fetches for the same title. The shared task carries
@@ -751,22 +851,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             // another request depends on.
             // Tag-bearing and cert-only fetches coalesce separately: a
             // rating-only fetch in flight cannot satisfy a tag-rule caller.
-            var inFlightKey = needTags ? cacheKey + "|tags" : cacheKey;
-            var task = _inFlight.GetOrAdd(inFlightKey, key =>
-            {
-                var fetch = FetchSignatureAsync(cacheKey, mediaType, tmdbId, region, config, needTags);
-                // Self-evict on completion so the map doesn't accumulate finished tasks.
-                _ = fetch.ContinueWith(
-                    completed => _inFlight.TryRemove(new KeyValuePair<string, Task<TitleSignature?>>(key, completed)),
-                    CancellationToken.None,
-                    TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default);
-                return fetch;
-            });
+            var inFlightKey = needTags ? generationCacheKey + "|tags" : generationCacheKey;
+            var task = Helpers.AsyncSingleFlight.GetOrAdd(
+                _inFlight,
+                inFlightKey,
+                () => FetchSignatureAsync(
+                    generationCacheKey,
+                    mediaType,
+                    tmdbId,
+                    gate,
+                    needTags));
 
             try
             {
-                return await task.WaitAsync(ct).ConfigureAwait(false);
+                var resolved = await task.WaitAsync(ct).ConfigureAwait(false);
+                return IsCurrentConfiguration(gate) ? resolved : null;
             }
             catch (Exception)
             {
@@ -777,27 +876,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         }
 
         private async Task<TitleSignature?> FetchSignatureAsync(
-            string cacheKey,
+            string generationCacheKey,
             string mediaType,
             int tmdbId,
-            string region,
-            PluginConfiguration config,
+            GateContext gate,
             bool needTags)
         {
             using var cts = new CancellationTokenSource(PerFetchTimeout);
-            var (detail, hasTagData) = await FetchDetailAsync(mediaType, tmdbId, config, needTags, cts.Token).ConfigureAwait(false);
-            if (detail is null)
+            var (detail, hasTagData) = await FetchDetailAsync(
+                mediaType,
+                tmdbId,
+                gate.FetchConfig,
+                needTags,
+                cts.Token).ConfigureAwait(false);
+            if (detail is null || !IsCurrentConfiguration(gate))
             {
                 // Fetch failed — do NOT cache, so it retries next time. Restricted
-                // callers fail closed on the missing verification.
+                // callers fail closed on missing or stale-generation verification.
                 return null;
             }
 
             // Extract tags whenever the body carries them (opportunistically on
             // Seerr-detail cert fetches too), so later tag-rule passes hit the
             // cache instead of re-fetching.
-            var resolved = SignatureFromDetail(detail.Value, mediaType, region, includeTags: hasTagData)
+            var resolved = SignatureFromDetail(detail.Value, mediaType, gate.Region, includeTags: hasTagData)
                 ?? new TitleSignature(null, null, hasTagData ? Array.Empty<string>() : null, hasTagData ? Array.Empty<string>() : null);
+
+            if (!IsCurrentConfiguration(gate))
+            {
+                return null;
+            }
 
             // Atomic write with a narrow tag-preservation rule. A light
             // cert-only result must not erase tags a CONCURRENT full fetch
@@ -810,9 +918,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             // So tags are preserved only while the existing entry is itself
             // still within TTL — in practice, the seconds-wide race window.
             var now = DateTime.UtcNow;
-            var ttl = _seerrCache.GetParentalRatingCacheTtl();
-            _seerrCache.CertScoreCache.AddOrUpdate(
-                cacheKey,
+            var ttl = gate.FetchConfig.CacheTtl;
+            var published = _seerrCache.CertScoreCache.AddOrUpdate(
+                generationCacheKey,
                 _ => (resolved.Score, resolved.SubScore, resolved.Keywords, resolved.Genres, now),
                 (_, current) =>
                 {
@@ -825,6 +933,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     }
                     return (resolved.Score, resolved.SubScore, keywords, genres, now);
                 });
+
+            // The generation may have changed in the narrow interval between
+            // the pre-publication check and AddOrUpdate. Remove only this exact
+            // value and never return it to a waiter from a newer generation.
+            if (!IsCurrentConfiguration(gate))
+            {
+                Helpers.AsyncSingleFlight.TryRemoveExact(
+                    _seerrCache.CertScoreCache,
+                    generationCacheKey,
+                    published);
+                return null;
+            }
+
             return resolved;
         }
 
@@ -836,9 +957,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         // keywords/genres, and the gate only activates when Seerr is
         // configured, so it is always reachable. Returns whether the body is
         // tag-bearing so the caller caches Tags correctly.
-        private async Task<(JsonElement? Detail, bool HasTagData)> FetchDetailAsync(string mediaType, int tmdbId, PluginConfiguration config, bool needTags, CancellationToken ct)
+        private async Task<(JsonElement? Detail, bool HasTagData)> FetchDetailAsync(
+            string mediaType,
+            int tmdbId,
+            FetchConfiguration config,
+            bool needTags,
+            CancellationToken ct)
         {
-            if (!needTags && !string.IsNullOrEmpty(config.TMDB_API_KEY))
+            if (!needTags && !string.IsNullOrEmpty(config.TmdbApiKey))
             {
                 var fromTmdb = await FetchCertFromTmdbAsync(mediaType, tmdbId, config, ct).ConfigureAwait(false);
                 if (fromTmdb is not null)
@@ -851,10 +977,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             return (fromSeerr, fromSeerr is not null);
         }
 
-        private async Task<JsonElement?> FetchCertFromTmdbAsync(string mediaType, int tmdbId, PluginConfiguration config, CancellationToken ct)
+        private async Task<JsonElement?> FetchCertFromTmdbAsync(
+            string mediaType,
+            int tmdbId,
+            FetchConfiguration config,
+            CancellationToken ct)
         {
             var subResource = mediaType == "tv" ? "content_ratings" : "release_dates";
-            var requestUri = $"https://api.themoviedb.org/3/{(mediaType == "tv" ? "tv" : "movie")}/{tmdbId.ToString(CultureInfo.InvariantCulture)}/{subResource}?api_key={config.TMDB_API_KEY}";
+            var requestUri = $"https://api.themoviedb.org/3/{(mediaType == "tv" ? "tv" : "movie")}/{tmdbId.ToString(CultureInfo.InvariantCulture)}/{subResource}?api_key={config.TmdbApiKey}";
             try
             {
                 var httpClient = Helpers.PluginHttpClients.CreateTmdbClient(_httpClientFactory);
@@ -885,7 +1015,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             }
         }
 
-        private async Task<JsonElement?> FetchDetailFromSeerrAsync(string mediaType, int tmdbId, PluginConfiguration config, CancellationToken ct)
+        private async Task<JsonElement?> FetchDetailFromSeerrAsync(
+            string mediaType,
+            int tmdbId,
+            FetchConfiguration config,
+            CancellationToken ct)
         {
             var urls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
             if (urls.Length == 0 || string.IsNullOrEmpty(config.SeerrApiKey))
@@ -1188,5 +1322,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         private static string CacheKey(string mediaType, int tmdbId, string region)
             => $"{mediaType}:{tmdbId.ToString(CultureInfo.InvariantCulture)}:{region}";
+
+        private static string GenerationCacheKey(string titleKey, GateContext gate)
+            => $"{titleKey}|cfg:{gate.ConfigurationRevision.ToString(CultureInfo.InvariantCulture)}:{gate.ConfigurationIdentity}";
     }
 }

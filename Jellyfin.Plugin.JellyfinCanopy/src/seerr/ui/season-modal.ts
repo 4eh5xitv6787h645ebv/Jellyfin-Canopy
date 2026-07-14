@@ -8,7 +8,21 @@ import { JC } from '../../globals';
 import { ui, internal } from './internal';
 const logPrefix = '🪼 Jellyfin Canopy: Seerr UI:';
 const escapeHtml = JC.escapeHtml;
-let refreshModalInterval: any = null;
+let refreshModalTimer: ReturnType<typeof setTimeout> | null = null;
+let refreshModalAbortController: AbortController | null = null;
+let refreshModalGeneration = 0;
+
+function cancelSeasonModalRefresh(): void {
+    refreshModalGeneration += 1;
+    if (refreshModalTimer !== null) {
+        clearTimeout(refreshModalTimer);
+        refreshModalTimer = null;
+    }
+    if (refreshModalAbortController) {
+        refreshModalAbortController.abort();
+        refreshModalAbortController = null;
+    }
+}
 
 /**
  * Shows the enhanced season selection modal for TV shows.
@@ -19,61 +33,50 @@ let refreshModalInterval: any = null;
  */
 ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showTitle: any, searchResultItem: any = null, is4k: any = false) {
     if (mediaType !== 'tv') return;
-    if (refreshModalInterval) {
-        clearInterval(refreshModalInterval);
-        refreshModalInterval = null;
-    }
+    cancelSeasonModalRefresh();
+    const modalGeneration = refreshModalGeneration;
+    const isCurrentGeneration = () => modalGeneration === refreshModalGeneration;
 
 
     const { create, createAdvancedOptionsHTML, populateAdvancedOptions } = JC.seerrModal!;
     const { fetchTvShowDetails, fetchTvSeasonDetails, fetchTmdbTvDetails, requestTvSeasons, fetchAdvancedRequestData, fetchRequestSettings, requestMedia } = JC.seerrAPI!;
 
-    // Fetch Seerr request settings (partial requests + special episodes)
-    let partialRequestsEnabled = false;
-    let enableSpecialEpisodes = false;
+    // These settings decide whether the primary action requests selected
+    // seasons or the whole show. A transport/schema failure cannot safely be
+    // interpreted as `partialRequestsEnabled: false`.
+    let requestSettings: Awaited<ReturnType<typeof fetchRequestSettings>> | null = null;
     try {
-        const settings = await fetchRequestSettings();
-        partialRequestsEnabled = settings.partialRequestsEnabled;
-        enableSpecialEpisodes = settings.enableSpecialEpisodes;
-    } catch (e: any) {
-        partialRequestsEnabled = false;
-        enableSpecialEpisodes = false;
+        requestSettings = await fetchRequestSettings();
+    } catch (error: any) {
+        console.warn(`${logPrefix} Failed to verify request settings:`, error);
     }
-
-    const tvDetails = await fetchTvShowDetails(tmdbId);
-    if (!tvDetails?.seasons) {
+    if (!isCurrentGeneration()) return;
+    if (!requestSettings?.available) {
         JC.toast!(JC.t!('seerr_toast_no_season_info'), 4000);
         return;
     }
+    const { partialRequestsEnabled, enableSpecialEpisodes } = requestSettings;
 
-    // Fetch Jellyfin season map to cross-reference Seerr's availability status.
-    // Seerr can report a season as status 5 (Available) after it was deleted from
-    // the library — the show-level jellyfinMediaId is still set (other seasons exist),
-    // so the per-show stale check doesn't fire. Querying Jellyfin directly tells us
-    // exactly which seasons are physically present.
-    let jellyfinSeasonMap: any = null;
-    const jellyfinSeriesId = tvDetails.mediaInfo?.jellyfinMediaId || null;
-    if (jellyfinSeriesId) {
-        try {
-            const userId = ApiClient.getCurrentUserId?.();
-            if (userId) {
-                const resp: any = await ApiClient.ajax({
-                    type: 'GET',
-                    url: ApiClient.getUrl(`/Users/${userId}/Items`, {
-                        ParentId: jellyfinSeriesId,
-                        IncludeItemTypes: 'Season',
-                        Recursive: false,
-                        Fields: 'IndexNumber'
-                    }),
-                    dataType: 'json'
-                });
-                jellyfinSeasonMap = {};
-                for (const s of (resp?.Items || [])) {
-                    const idx = Number(s?.IndexNumber);
-                    if (Number.isFinite(idx) && idx >= 0) jellyfinSeasonMap[idx] = true;
-                }
-            }
-        } catch (_: any) {}
+    const initialRequestController = new AbortController();
+    refreshModalAbortController = initialRequestController;
+    let tvDetails: any = null;
+    try {
+        tvDetails = await fetchTvShowDetails(tmdbId, {
+            signal: initialRequestController.signal,
+        });
+    } catch (error: any) {
+        if (!initialRequestController.signal.aborted) {
+            console.warn(`${logPrefix} Initial TV-detail request failed:`, error);
+        }
+    } finally {
+        if (refreshModalAbortController === initialRequestController) {
+            refreshModalAbortController = null;
+        }
+    }
+    if (!isCurrentGeneration() || initialRequestController.signal.aborted) return;
+    if (!tvDetails?.seasons) {
+        JC.toast!(JC.t!('seerr_toast_no_season_info'), 4000);
+        return;
     }
 
     const normalizedTitle = String(showTitle || '').trim();
@@ -101,14 +104,24 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
         backdropPath: tvDetails.backdropPath,
         buttonText: is4k ? (JC.t!('seerr_btn_request_4k') || 'Request in 4K') : undefined,
         onClose: () => {
-            if (refreshModalInterval) {
-                clearInterval(refreshModalInterval);
-                refreshModalInterval = null;
-            }
+            if (isCurrentGeneration()) cancelSeasonModalRefresh();
         },
         onSave: async (modalEl: any, requestBtn: any, closeFn: any) => {
             requestBtn.disabled = true;
             requestBtn.innerHTML = `${JC.t!('seerr_modal_requesting')}<span class="seerr-button-spinner"></span>`;
+
+            // Polling can invalidate or replace the relationship graph after
+            // the modal opens. Rendering disabled rows is not an authorization
+            // barrier: the non-partial path does not read checkboxes at all.
+            // Require the latest validated snapshot before either request path.
+            if (seasonList?._requestStateValid !== true) {
+                JC.toast!(JC.t!('seerr_toast_no_season_info'), 4000);
+                requestBtn.disabled = false;
+                requestBtn.textContent = is4k
+                    ? (JC.t!('seerr_btn_request_4k') || 'Request in 4K')
+                    : (partialRequestsEnabled ? JC.t!('seerr_modal_request_selected') : JC.t!('seerr_modal_request'));
+                return;
+            }
 
             let settings = {};
             if (showAdvanced) {
@@ -127,7 +140,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
             try {
                 if (partialRequestsEnabled) {
                     // Partial requests enabled: request selected seasons (exclude the Select All checkbox)
-                    const selectedSeasons = Array.from(modalEl.querySelectorAll('.seerr-season-item .seerr-season-checkbox:checked')).map((cb: any) => parseInt(cb.dataset.seasonNumber));
+                    const selectedSeasons = Array.from(modalEl.querySelectorAll('.seerr-season-item .seerr-season-checkbox:checked:not(:disabled)')).map((cb: any) => parseInt(cb.dataset.seasonNumber));
                     if (selectedSeasons.length === 0) {
                         JC.toast!(JC.t!('seerr_modal_toast_select_season'), 3000);
                         requestBtn.disabled = false;
@@ -138,9 +151,9 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
                     JC.toast!(JC.t!('seerr_modal_toast_request_success', { count: selectedSeasons.length, title: JC.escapeHtml(resolvedShowTitle) }), 4000);
                 } else {
                     // Partial requests disabled: request all non-special seasons to avoid locking specials
-                    const allSeasons = (tvDetails?.seasons || [])
-                        .map((season: any) => season.seasonNumber)
-                        .filter((seasonNumber: any) => Number.isFinite(seasonNumber) && seasonNumber > 0);
+                    const allSeasons = Array.isArray(seasonList._validatedRegularSeasonNumbers)
+                        ? seasonList._validatedRegularSeasonNumbers.slice()
+                        : [];
 
                     if (allSeasons.length > 0) {
                         await requestTvSeasons(tmdbId, allSeasons, settings, searchResultItem, is4k);
@@ -178,8 +191,11 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
 
     // Populate season list inside the modal (shows immediately, air dates may be empty)
     const seasonList: any = modalInstance.modalElement.querySelector('.seerr-season-list');
-    updateSeasonList(seasonList, tvDetails, partialRequestsEnabled, enableSpecialEpisodes, is4k, jellyfinSeasonMap);
+    let renderedDetailVersion = 1;
+    updateSeasonList(seasonList, tvDetails, partialRequestsEnabled, enableSpecialEpisodes, is4k);
     modalInstance.show();
+    const isLiveModal = () => isCurrentGeneration()
+        && document.body.contains(modalInstance.modalElement);
 
     // Quota chip — runs async so it doesn't block modal open.
     const tvBodyEl = modalInstance.modalElement.querySelector('.seerr-modal-body');
@@ -220,6 +236,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
     // Async backfill: fetch air dates from per-season episode data, with TMDB as fallback
     const seasonsNeedingDates = tvDetails.seasons.filter((s: any) => s.episodeCount > 0 && !s.airDate);
     if (seasonsNeedingDates.length > 0) {
+        const backfillDetailVersion = renderedDetailVersion;
         // Primary: fetch first episode air date from each season (Seerr/TheTVDB has these)
         const seasonFetches = seasonsNeedingDates.map((s: any) =>
             fetchTvSeasonDetails(tmdbId, s.seasonNumber).then((detail: any) => {
@@ -245,8 +262,12 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
 
         // When all fetches complete, re-render with backfilled dates
         void Promise.all([...seasonFetches, tmdbFetch]).then(() => {
+            // A poll may have rendered newer request/media state while this
+            // metadata-only backfill was in flight. Never restore the captured
+            // initial TV-detail snapshot over that newer state.
+            if (!isLiveModal() || renderedDetailVersion !== backfillDetailVersion) return;
             applyAirDateBackfill(tvDetails);
-            updateSeasonList(seasonList, tvDetails, partialRequestsEnabled, enableSpecialEpisodes, is4k, jellyfinSeasonMap);
+            updateSeasonList(seasonList, tvDetails, partialRequestsEnabled, enableSpecialEpisodes, is4k);
         });
     }
 
@@ -287,53 +308,202 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
         }
     }
 
+    // Poll recursively so at most one request is in flight. Every poll crosses
+    // both cache layers using the dedicated fresh-TV-detail contract.
+    const scheduleRefresh = () => {
+        if (!isLiveModal()) return;
+        refreshModalTimer = setTimeout(() => {
+            refreshModalTimer = null;
+            void refreshSeasonState();
+        }, 10000);
+    };
+    const refreshSeasonState = async () => {
+        if (!isLiveModal()) return;
 
-    // Start polling for updates when the modal is shown
-    refreshModalInterval = setInterval(async () => {
-        const freshTvDetails = await fetchTvShowDetails(tmdbId);
-        if (freshTvDetails) {
-            applyAirDateBackfill(freshTvDetails);
-            updateSeasonList(seasonList, freshTvDetails, partialRequestsEnabled, enableSpecialEpisodes, is4k, jellyfinSeasonMap);
-            // Update Select All state after refresh
-            if (seasonList._updateSelectAllState) {
-                seasonList._updateSelectAllState();
+        const controller = new AbortController();
+        refreshModalAbortController = controller;
+        let freshTvDetails: any = null;
+        try {
+            freshTvDetails = await fetchTvShowDetails(tmdbId, {
+                fresh: true,
+                signal: controller.signal,
+            });
+        } catch (error: any) {
+            console.warn(`${logPrefix} TV-detail refresh failed:`, error);
+        } finally {
+            if (refreshModalAbortController === controller) {
+                refreshModalAbortController = null;
             }
         }
-    }, 10000); // Refresh every 10 seconds
+
+        if (controller.signal.aborted || !isLiveModal()) return;
+        renderedDetailVersion += 1;
+        if (freshTvDetails) {
+            applyAirDateBackfill(freshTvDetails);
+            updateSeasonList(seasonList, freshTvDetails, partialRequestsEnabled, enableSpecialEpisodes, is4k);
+        } else {
+            invalidateSeasonRequestState(seasonList);
+        }
+        if (seasonList._updateSelectAllState) {
+            seasonList._updateSelectAllState();
+        }
+        scheduleRefresh();
+    };
+    scheduleRefresh();
 
     if (showAdvanced) {
         try {
             const data = await fetchAdvancedRequestData('tv');
+            if (!isLiveModal()) return;
             populateAdvancedOptions(modalInstance.modalElement, data, 'tv');
         } catch (error: any) {
+            if (!isLiveModal()) return;
             console.error(`${logPrefix} Failed to load TV advanced options:`, error);
             JC.toast!(JC.t!('seerr_err_load_server_options'), 3000);
         }
     }
 };
 
-function updateSeasonList(seasonListElement: any, tvDetails: any, partialRequestsEnabled: any = true, enableSpecialEpisodes: any = false, is4kMode: any = false, jellyfinSeasonMap: any = null) {
-    if (!seasonListElement || !tvDetails) return;
+function invalidateSeasonRequestState(seasonListElement: any): void {
+    if (!seasonListElement) return;
+    seasonListElement._requestStateValid = false;
+    seasonListElement._validatedRegularSeasonNumbers = [];
+    seasonListElement.querySelectorAll('.seerr-season-checkbox').forEach((checkbox: HTMLInputElement) => {
+        checkbox.checked = false;
+        checkbox.disabled = true;
+    });
+    seasonListElement.querySelectorAll('.seerr-season-item').forEach((row: HTMLElement) => {
+        row.classList.add('disabled');
+    });
+}
 
-    const seasonStatusMap: any = {};
-    tvDetails.mediaInfo?.seasons?.forEach((s: any) => {
-        const modeStatus = is4kMode ? s.status4k : s.status;
-        if (modeStatus !== undefined && modeStatus !== null) {
-            seasonStatusMap[s.seasonNumber] = modeStatus;
+function updateSeasonList(seasonListElement: any, tvDetails: any, partialRequestsEnabled: any = true, enableSpecialEpisodes: any = false, is4kMode: any = false) {
+    if (!seasonListElement) return;
+
+    // Publish validity only after the entire relationship graph and every row
+    // have rendered successfully. A malformed refresh must never inherit the
+    // previous snapshot's authorization marker.
+    seasonListElement._requestStateValid = false;
+    seasonListElement._validatedRegularSeasonNumbers = [];
+    if (!tvDetails || typeof tvDetails !== 'object') {
+        invalidateSeasonRequestState(seasonListElement);
+        return;
+    }
+
+    try {
+
+    const MediaStatus = JC.seerrStatus!.MEDIA;
+    const RequestStatus = JC.seerrStatus!.REQUEST;
+    const mediaStatusMap: any = {};
+    const validMediaStatuses = new Set(Object.values(MediaStatus));
+    const validRequestStatuses = new Set(Object.values(RequestStatus));
+    let relationStateValid = true;
+    let globallyBlocked = false;
+
+    // Request state and media availability are separate Seerr enum domains.
+    // An active same-mode parent request blocks a duplicate, but its child
+    // status integer must never overwrite or be interpreted as MediaStatus.
+    const activeRequestSeasons = new Set<number>();
+    const mediaInfo = tvDetails.mediaInfo;
+    if (mediaInfo !== undefined && mediaInfo !== null) {
+        if (typeof mediaInfo !== 'object'
+            || !validMediaStatuses.has(mediaInfo.status)
+            || !validMediaStatuses.has(mediaInfo.status4k)
+            || !Array.isArray(mediaInfo.seasons)
+            || !Array.isArray(mediaInfo.requests)) {
+            relationStateValid = false;
+        } else {
+            const selectedTopStatus = is4kMode ? mediaInfo.status4k : mediaInfo.status;
+            globallyBlocked = mediaInfo.status === MediaStatus.BLOCKED
+                || selectedTopStatus === MediaStatus.BLOCKED;
+            const seenMediaSeasons = new Set<number>();
+            for (const seasonState of mediaInfo.seasons) {
+                const seasonNumber = seasonState?.seasonNumber;
+                if (!Number.isInteger(seasonNumber)
+                    || seasonNumber < 0
+                    || seenMediaSeasons.has(seasonNumber)
+                    || !validMediaStatuses.has(seasonState?.status)
+                    || !validMediaStatuses.has(seasonState?.status4k)) {
+                    relationStateValid = false;
+                    break;
+                }
+                seenMediaSeasons.add(seasonNumber);
+                mediaStatusMap[seasonNumber] = is4kMode
+                    ? seasonState.status4k
+                    : seasonState.status;
+            }
+
+            const seenRequestIds = new Set<number>();
+            for (const request of mediaInfo.requests) {
+                const requestId = request?.id;
+                if (!relationStateValid
+                    || !Number.isInteger(requestId)
+                    || requestId <= 0
+                    || seenRequestIds.has(requestId)
+                    || typeof request?.is4k !== 'boolean'
+                    || !validRequestStatuses.has(request?.status)
+                    || !Array.isArray(request?.seasons)) {
+                    relationStateValid = false;
+                    break;
+                }
+                seenRequestIds.add(requestId);
+
+                const seenRequestSeasons = new Set<number>();
+                for (const requestSeason of request.seasons) {
+                    const seasonNumber = requestSeason?.seasonNumber;
+                    if (!Number.isInteger(seasonNumber)
+                        || seasonNumber < 0
+                        || seenRequestSeasons.has(seasonNumber)
+                        || !validRequestStatuses.has(requestSeason?.status)) {
+                        relationStateValid = false;
+                        break;
+                    }
+                    seenRequestSeasons.add(seasonNumber);
+                    if (request.is4k === !!is4kMode
+                        && request.status !== RequestStatus.DECLINED
+                        && request.status !== RequestStatus.COMPLETED) {
+                        activeRequestSeasons.add(seasonNumber);
+                    }
+                }
+
+                if (!relationStateValid) break;
+            }
         }
-    });
-    tvDetails.mediaInfo?.requests?.forEach((r: any) => {
-        const requestIs4k = !!r?.is4k;
-        if (requestIs4k !== !!is4kMode) return;
-        r.seasons?.forEach((sr: any) => { seasonStatusMap[sr.seasonNumber] = sr.status; });
-    });
+    }
 
     // Filter out seasons with no episodes, and hide Season 0 (Specials) unless enabled in Seerr
-    const seasons = (tvDetails.seasons || [])
+    const rootSeasons = Array.isArray(tvDetails.seasons) ? tvDetails.seasons : [];
+    if (!Array.isArray(tvDetails.seasons)) relationStateValid = false;
+    const seenRootSeasons = new Set<number>();
+    const seasons = rootSeasons
+        .filter((season: any) => {
+            const seasonNumber = season?.seasonNumber;
+            if (!Number.isInteger(seasonNumber)
+                || seasonNumber < 0
+                || !Number.isInteger(season?.episodeCount)
+                || season.episodeCount < 0
+                || seenRootSeasons.has(seasonNumber)) {
+                relationStateValid = false;
+                return false;
+            }
+            seenRootSeasons.add(seasonNumber);
+            if ((season.name !== undefined && season.name !== null && typeof season.name !== 'string')
+                || (season.airDate !== undefined && season.airDate !== null && typeof season.airDate !== 'string')) {
+                relationStateValid = false;
+            }
+            return true;
+        })
         .filter((s: any) => s.episodeCount && s.episodeCount > 0)
         .filter((s: any) => s.seasonNumber !== 0 || enableSpecialEpisodes)
         .slice()
         .sort((a: any, b: any) => (a.seasonNumber || 0) - (b.seasonNumber || 0));
+    const visibleSeasonNumbers = new Set(
+        seasons.map((season: any) => Number(season.seasonNumber)),
+    );
+    seasonListElement.querySelectorAll('.seerr-season-item').forEach((row: HTMLElement) => {
+        const seasonNumber = Number(row.dataset.seasonNumber);
+        if (!visibleSeasonNumbers.has(seasonNumber)) row.remove();
+    });
     seasons.forEach((season: any) => {
         const seasonNumber = season.seasonNumber;
         let seasonItem = seasonListElement.querySelector(`.seerr-season-item[data-season-number="${seasonNumber}"]`);
@@ -346,29 +516,39 @@ function updateSeasonList(seasonListElement: any, tvDetails: any, partialRequest
             seasonListElement.appendChild(seasonItem);
         }
 
-        const apiStatus = seasonStatusMap[seasonNumber];
+        const rawMediaStatus = !relationStateValid || globallyBlocked
+            ? MediaStatus.BLOCKED
+            : mediaStatusMap[seasonNumber];
+        const hasActiveRequest = !relationStateValid
+            || activeRequestSeasons.has(Number(seasonNumber));
 
-        // If Seerr reports Available (5) but neither the show nor this specific season
-        // has a Jellyfin media ID, the library entry was deleted and Seerr's status is
-        // stale — treat the season as requestable (status 7 = deleted).
+        // Jellyfin link IDs are not authoritative absence evidence: Seerr can
+        // aggregate multiple libraries and retain a different contributing ID.
+        // effectiveMediaStatus therefore preserves AVAILABLE until a future
+        // server-owned reconciliation source can prove global absence.
         const showJellyfinId = is4kMode
             ? (tvDetails.mediaInfo?.jellyfinMediaId4k || null)
             : (tvDetails.mediaInfo?.jellyfinMediaId || null);
-        // Also check per-season Jellyfin IDs from the season info in mediaInfo
-        const seasonMediaInfo = tvDetails.mediaInfo?.seasons?.find((s: any) => s.seasonNumber === seasonNumber);
-        const seasonJellyfinId = is4kMode
-            ? (seasonMediaInfo?.jellyfinMediaId4k || seasonMediaInfo?.jellyfinSeasonId4k || null)
-            : (seasonMediaInfo?.jellyfinMediaId || seasonMediaInfo?.jellyfinSeasonId || null);
-        const effectiveApiStatus = JC.seerrStatus!.effectiveMediaStatus(
-            apiStatus, showJellyfinId, jellyfinSeasonMap, seasonNumber
-        );
-        const canRequest = JC.seerrStatus!.isRequestable(effectiveApiStatus);
-        const modeDownloads = is4kMode ? (tvDetails.mediaInfo?.downloadStatus4k || []) : (tvDetails.mediaInfo?.downloadStatus || []);
+        const effectiveMediaStatus = JC.seerrStatus!.effectiveMediaStatus(rawMediaStatus, showJellyfinId);
+        const mediaIsRequestable = JC.seerrStatus!.isRequestable(effectiveMediaStatus);
+        const canRequest = relationStateValid && !globallyBlocked && !hasActiveRequest && mediaIsRequestable;
+        const rawModeDownloads = is4kMode ? tvDetails.mediaInfo?.downloadStatus4k : tvDetails.mediaInfo?.downloadStatus;
+        const modeDownloads = Array.isArray(rawModeDownloads) ? rawModeDownloads : [];
         const hasSeasonDownloads = modeDownloads.some((ds: any) => ds.episode?.seasonNumber === seasonNumber);
-        const { labelKey, cssClass: statusClass } = JC.seerrStatus!.getDisplayInfo(effectiveApiStatus, hasSeasonDownloads);
+        // Preserve canonical media state. When it is otherwise requestable but
+        // an active request exists, synthesize MediaStatus.PENDING for display
+        // only; getDisplayInfo then renders Requested/Processing without ever
+        // conflating the two upstream enum domains.
+        const displayStatus = hasActiveRequest && mediaIsRequestable
+            ? MediaStatus.PENDING
+            : effectiveMediaStatus;
+        const { labelKey, cssClass: statusClass } = JC.seerrStatus!.getDisplayInfo(displayStatus, hasSeasonDownloads);
         const statusText = JC.t!(labelKey);
 
-        // Update the content but preserve the checkbox state if it exists
+        // Preserve a selection only while the refreshed row remains
+        // requestable. Polling can make a previously selected season active;
+        // carrying its checked state onto a disabled checkbox would still let
+        // an older submit path include it.
         const existingCheckbox = seasonItem.querySelector('.seerr-season-checkbox');
         const isChecked = existingCheckbox ? existingCheckbox.checked : false;
 
@@ -378,7 +558,8 @@ function updateSeasonList(seasonListElement: any, tvDetails: any, partialRequest
         // Derive a display name: if the API returns just the number (TheTVDB), generate a proper label.
         // The numeric regex catches bare numbers and zero-padded variants (e.g., "01");
         // this may also match year-named seasons, which is an acceptable tradeoff.
-        const trimmedName = (season.name || '').trim();
+        const trimmedName = typeof season.name === 'string' ? season.name.trim() : '';
+        const airDate = typeof season.airDate === 'string' ? season.airDate : '';
         const isNumericOnly = trimmedName === String(seasonNumber) || /^0*\d+$/.test(trimmedName);
         const displayName = (trimmedName && !isNumericOnly)
             ? trimmedName
@@ -389,13 +570,13 @@ function updateSeasonList(seasonListElement: any, tvDetails: any, partialRequest
             <input type="checkbox" class="seerr-season-checkbox" data-season-number="${escapeHtml(seasonNumber)}" ${checkboxDisabled ? 'disabled' : ''} style="${!partialRequestsEnabled ? 'cursor: not-allowed;' : ''}">
             <div class="seerr-season-info">
                 <div class="seerr-season-name">${escapeHtml(displayName)}</div>
-                <div class="seerr-season-meta">${escapeHtml(season.airDate ? season.airDate.substring(0, 4) : '')}</div>
+                <div class="seerr-season-meta">${escapeHtml(airDate ? airDate.substring(0, 4) : '')}</div>
             </div>
             <div class="seerr-season-episodes">${escapeHtml(season.episodeCount || 0)} ep</div>
             <div class="seerr-season-status seerr-season-status-${escapeHtml(statusClass)}">${escapeHtml(statusText)}</div>
         `;
 
-        if(existingCheckbox) {
+        if(existingCheckbox && !checkboxDisabled) {
             seasonItem.querySelector('.seerr-season-checkbox').checked = isChecked;
         }
 
@@ -418,5 +599,22 @@ function updateSeasonList(seasonListElement: any, tvDetails: any, partialRequest
             }
         }
     });
+
+    if (relationStateValid && !globallyBlocked) {
+        seasonListElement._validatedRegularSeasonNumbers = seasons
+            .map((season: any) => Number(season.seasonNumber))
+            .filter((seasonNumber: number) => Number.isInteger(seasonNumber) && seasonNumber > 0);
+        const selectAllCheckbox = seasonListElement.querySelector('#seerr-select-all-seasons') as HTMLInputElement | null;
+        if (selectAllCheckbox) selectAllCheckbox.disabled = !partialRequestsEnabled;
+        // This assignment is deliberately last: any exception above leaves the
+        // submit path fail-closed.
+        seasonListElement._requestStateValid = true;
+    } else {
+        invalidateSeasonRequestState(seasonListElement);
+    }
+    } catch (error: any) {
+        console.warn(`${logPrefix} Refusing malformed TV-detail season state:`, error);
+        invalidateSeasonRequestState(seasonListElement);
+    }
 }
 internal.updateSeasonList = updateSeasonList;

@@ -22,6 +22,13 @@ const isValidDate = (d: any) => /^\d{4}-\d{2}-\d{2}/.test(d);
 /** Validates that a TMDB poster path matches the expected format (e.g., /abc123.jpg). */
 const isValidPosterPath = (p: any) => /^\/[a-zA-Z0-9._-]+\.[a-zA-Z]+$/.test(p);
 
+function normalizeSeasonNumber(value: any): number | null {
+if (value === null || value === undefined || typeof value === 'boolean') return null;
+if (typeof value === 'string' && value.trim() === '') return null;
+const normalized = Number(value);
+return Number.isInteger(normalized) && normalized >= 0 ? normalized : null;
+}
+
 /**
  * Backfills missing season metadata (posterPath, overview, airDate) from TMDB and episode data.
  * Fetches data asynchronously, then updates DOM season cards in-place.
@@ -137,8 +144,9 @@ try {
 
 function getSeasonStatusInfo(data: any, seasonNumber: any) {
 const seasons = data?.mediaInfo?.seasons;
-if (!Array.isArray(seasons) || !seasonNumber) return null;
-return seasons.find((s: any) => Number(s?.seasonNumber) === Number(seasonNumber)) || null;
+const normalizedSeasonNumber = normalizeSeasonNumber(seasonNumber);
+if (!Array.isArray(seasons) || normalizedSeasonNumber === null) return null;
+return seasons.find((s: any) => normalizeSeasonNumber(s?.seasonNumber) === normalizedSeasonNumber) || null;
 }
 
 function getSeasonJellyfinId(seasonInfo: any, is4k: any = false) {
@@ -152,13 +160,14 @@ return seasonInfo.jellyfinMediaId || seasonInfo.jellyfinSeasonId || seasonInfo.j
 function buildSeasonAvailabilityLinks(seasonInfo: any, jellyfinSeasonId: any = null, jellyfinSeasonId4k: any = null) {
 const normalStatus = seasonInfo?.status;
 const status4k = seasonInfo?.status4k;
-// A season is only "available" if Seerr says so AND we have a real Jellyfin ID to back it up.
-// If Seerr reports status 5 (available) but there's no jellyfinSeasonId, the library entry
-// was deleted and Seerr's status is stale — don't show the Available chip.
-const isNormalAvailable = (normalStatus === MediaStatus.AVAILABLE && !!jellyfinSeasonId)
+// Seerr media status remains authoritative for display and request safety. A
+// stored/viewer-visible Jellyfin id can turn the pill into a link, but its
+// absence cannot prove that the season is globally absent from every scanner
+// library.
+const isNormalAvailable = normalStatus === MediaStatus.AVAILABLE
     || normalStatus === MediaStatus.PARTIALLY_AVAILABLE
     || (!normalStatus && !!jellyfinSeasonId);
-const is4kAvailable = (status4k === MediaStatus.AVAILABLE && !!jellyfinSeasonId4k)
+const is4kAvailable = status4k === MediaStatus.AVAILABLE
     || status4k === MediaStatus.PARTIALLY_AVAILABLE
     || (!status4k && !!jellyfinSeasonId4k);
 
@@ -205,8 +214,8 @@ try {
     const map: any = {};
     const items = Array.isArray(response?.Items) ? response.Items : [];
     for (const season of items) {
-        const seasonNumber = Number(season?.IndexNumber);
-        if (season?.Id && Number.isFinite(seasonNumber) && seasonNumber > 0) {
+        const seasonNumber = normalizeSeasonNumber(season?.IndexNumber);
+        if (season?.Id && seasonNumber !== null) {
             map[seasonNumber] = { id: season.Id, name: season.Name || null };
         }
     }
@@ -257,91 +266,107 @@ cards.forEach((card: any) => {
  * @param {object} data - The TV show data from Seerr
  * @returns {Promise<boolean>} - True if there are seasons that can be requested
  */
+// Kept async because callers and the exported internal test seam consume a
+// Promise; the unsafe viewer-scoped Jellyfin read was deliberately removed.
+// eslint-disable-next-line @typescript-eslint/require-await
 async function checkForUnrequestedSeasons(data: any) {
 // Get all seasons from TMDB data that have episodes (excluding specials and unaired seasons)
 const tmdbSeasons = (data.seasons || []).filter((s: any) => s.seasonNumber > 0 && s.episodeCount > 0);
 if (tmdbSeasons.length === 0) return false;
 
-const tmdbId = data.id;
-
 try {
-    // Query the request endpoint to get ALL requests for this show
-    const response: any = await ApiClient.ajax({
-        type: 'GET',
-        url: ApiClient.getUrl(`/JellyfinCanopy/seerr/request?take=500&skip=0&filter=all`),
-        headers: { 'X-Jellyfin-User-Id': ApiClient.getCurrentUserId() },
-        dataType: 'json'
-    });
+    // Seerr's TV-detail response loads this media row with its complete
+    // `requests` relation, and each MediaRequest eagerly loads its season rows.
+    // Consume that bounded per-title relation instead of scanning the server's
+    // entire request history (which can exceed any practical global cap).
+    // No mediaInfo means the title has never had a Seerr media/request record.
+    const mediaInfo = data?.mediaInfo;
+    let requests: any[] = [];
+    if (mediaInfo != null) {
+        if (!Array.isArray(mediaInfo.requests)) {
+            throw new Error('TV detail did not contain a complete per-title request relation.');
+        }
+        requests = mediaInfo.requests;
+    }
 
-    // Collect all season statuses from all requests for this TMDB ID
-    const statusMap: any = {};
+    // MediaRequestStatus and MediaStatus are different enum domains even
+    // though both are integer-backed. Track active request membership
+    // separately from the season's media availability so, for example, a
+    // declined request (3) is never mistaken for processing media (3).
+    // Match Seerr's own duplicate-season rule: normal requests remain active
+    // until their parent request is declined or completed. A 4K-only request
+    // must not suppress the normal Request More path.
+    const activeNormalRequestSeasons = new Set<number>();
 
-    if (response.results) {
-        for (const request of response.results) {
-            if (request.type === 'tv' && request.media && request.media.tmdbId === tmdbId) {
-                if (request.seasons) {
-                    for (const season of request.seasons) {
-                        const seasonNum = season.seasonNumber;
-                        const status = season.status;
-                        if (!statusMap[seasonNum] || status > statusMap[seasonNum]) {
-                            statusMap[seasonNum] = status;
-                        }
-                    }
-                }
+    for (const request of requests) {
+        const requestStatus = Number(request?.status);
+        if (!request
+            || request.type !== 'tv'
+            || typeof request.is4k !== 'boolean'
+            || !Number.isInteger(requestStatus)
+            || requestStatus < 1
+            || requestStatus > 5
+            || !Array.isArray(request.seasons)) {
+            throw new Error('TV detail contained an invalid per-title request row.');
+        }
+
+        for (const season of request.seasons) {
+            const seasonNum = Number(season?.seasonNumber);
+            const seasonRequestStatus = Number(season?.status);
+            if (!Number.isInteger(seasonNum)
+                || seasonNum < 0
+                || !Number.isInteger(seasonRequestStatus)
+                || seasonRequestStatus < 1
+                || seasonRequestStatus > 5) {
+                throw new Error('TV detail contained an invalid season-request row.');
+            }
+
+            if (!request.is4k && requestStatus !== 3 && requestStatus !== 5) {
+                activeNormalRequestSeasons.add(seasonNum);
             }
         }
     }
 
-    // Also check mediaInfo.seasons for available seasons
-    if (data.mediaInfo && data.mediaInfo.seasons) {
-        for (const season of data.mediaInfo.seasons) {
-            const seasonNum = season.seasonNumber;
-            const status = season.status;
-            if (!statusMap[seasonNum] || status > statusMap[seasonNum]) {
-                statusMap[seasonNum] = status;
+    const mediaStatusMap = new Map<number, number>();
+    if (mediaInfo != null) {
+        if (!Array.isArray(mediaInfo.seasons)) {
+            throw new Error('TV detail did not contain a complete per-title media-season relation.');
+        }
+
+        for (const season of mediaInfo.seasons) {
+            const seasonNum = Number(season?.seasonNumber);
+            const mediaStatus = Number(season?.status);
+            if (!Number.isInteger(seasonNum)
+                || seasonNum < 0
+                || !Number.isInteger(mediaStatus)
+                || mediaStatus < 1
+                || mediaStatus > 7) {
+                throw new Error('TV detail contained an invalid media-season row.');
             }
+
+            const previousStatus = mediaStatusMap.get(seasonNum);
+            if (previousStatus !== undefined && previousStatus !== mediaStatus) {
+                throw new Error('TV detail contained conflicting media-season rows.');
+            }
+            mediaStatusMap.set(seasonNum, mediaStatus);
         }
     }
 
     // Check if any TMDB season is unrequested. Status 0/undefined and 1
     // (Unknown) mean it has never been requested. Status 7 (Deleted) means
-    // a prior request was removed and the season can be re-requested.
-    // Status 5 (Available) can be stale: Seerr keeps showing a season as
-    // available after it was deleted from the library. The show-level check
-    // (!jellyfinMediaId) only catches full-show deletions; for partial
-    // deletions (one missing season in an otherwise-present show) the show
-    // still has a jellyfinMediaId so the old check misses them. Query
-    // Jellyfin directly to get the authoritative per-season presence map.
+    // a prior request was removed and the season can be re-requested. Raw
+    // AVAILABLE stays fail-closed: viewer-scoped Jellyfin reads and stored
+    // link IDs cannot prove global absence across all scanner libraries.
     const jellyfinMediaId = data.mediaInfo?.jellyfinMediaId || null;
-    let jellyfinSeasonPresenceMap: any = null;
-    if (jellyfinMediaId) {
-        try {
-            const userId = ApiClient.getCurrentUserId?.();
-            if (userId) {
-                const resp: any = await ApiClient.ajax({
-                    type: 'GET',
-                    url: ApiClient.getUrl(`/Users/${userId}/Items`, {
-                        ParentId: jellyfinMediaId,
-                        IncludeItemTypes: 'Season',
-                        Recursive: false,
-                        Fields: 'IndexNumber'
-                    }),
-                    dataType: 'json'
-                });
-                jellyfinSeasonPresenceMap = {};
-                for (const s of (resp?.Items || [])) {
-                    const idx = Number(s?.IndexNumber);
-                    if (Number.isFinite(idx) && idx >= 0) jellyfinSeasonPresenceMap[idx] = true;
-                }
-            }
-        } catch (_: any) {}
-    }
 
     for (const tmdbSeason of tmdbSeasons) {
-        const rawStatus = statusMap[tmdbSeason.seasonNumber];
-        const effectiveStatus = JC.seerrStatus!.effectiveMediaStatus(
-            rawStatus, jellyfinMediaId, jellyfinSeasonPresenceMap, tmdbSeason.seasonNumber
-        );
+        const seasonNumber = Number(tmdbSeason.seasonNumber);
+        if (activeNormalRequestSeasons.has(seasonNumber)) {
+            continue;
+        }
+
+        const rawStatus = mediaStatusMap.get(seasonNumber);
+        const effectiveStatus = JC.seerrStatus!.effectiveMediaStatus(rawStatus, jellyfinMediaId);
         if (JC.seerrStatus!.isRequestable(effectiveStatus)) {
             return true;
         }

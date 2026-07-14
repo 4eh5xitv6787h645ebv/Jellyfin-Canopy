@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Data.Events;
@@ -52,7 +53,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         private static ArrRequestsController BuildController(
             string requestListJson,
             SeerrPermission callerPermissions,
-            out RecordingHttpMessageHandler handler)
+            out RecordingHttpMessageHandler handler,
+            SeerrUserResolution? userResolution = null,
+            ISeerrParentalFilter? parentalFilterOverride = null,
+            bool isAdmin = false)
         {
             handler = new RecordingHttpMessageHandler();
             handler.AddResponse("/api/v1/request", requestListJson);
@@ -87,11 +91,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 seerrCache,
                 provider);
 
-            var seerrClient = new FakeSeerrClient(new SeerrUser
+            var seerrClient = new FakeSeerrClient(userResolution ?? SeerrUserResolution.Found(new SeerrUser
             {
                 Id = CallerSeerrId,
                 Permissions = callerPermissions,
-            });
+                SourceUrl = "http://seerr:5055",
+            }));
 
             var controller = new ArrRequestsController(
                 factory,
@@ -101,9 +106,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 provider,
                 seerrClient,
                 new ArrFetchService(factory, NullLogger<ArrFetchService>.Instance),
-                parentalFilter);
+                parentalFilterOverride ?? parentalFilter);
 
-            var identity = new ClaimsIdentity(new[] { new Claim("Jellyfin-UserId", CallerGuid) }, "TestAuth");
+            var claims = new List<Claim> { new("Jellyfin-UserId", CallerGuid) };
+            if (isAdmin)
+            {
+                claims.Add(new Claim(ClaimTypes.Role, "Administrator"));
+            }
+
+            var identity = new ClaimsIdentity(claims, "TestAuth");
             controller.ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(identity) },
@@ -138,6 +149,238 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             Assert.Contains(100, tmdbIds);
             Assert.DoesNotContain(200, tmdbIds);
+        }
+
+        [Fact]
+        public async Task GetCompleteUserRequestSnapshot_FiltersOnlyAfterCompleteCollection()
+        {
+            const string list = @"{ ""results"": [
+                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
+                { ""id"": 2, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 200, ""mediaType"": ""movie"" } } ],
+                ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 2, ""results"": 2 } }";
+
+            var controller = BuildController(list, SeerrPermission.NONE, out var handler);
+
+            var ok = Assert.IsType<OkObjectResult>(await controller.GetCompleteUserRequestSnapshot());
+            var body = JsonNode.Parse(JsonSerializer.Serialize(ok.Value))!.AsObject();
+
+            Assert.True((bool?)body["complete"]);
+            Assert.Equal(1, (int?)body["totalResults"]);
+            var rawRows = Assert.IsType<JsonArray>(body["results"]);
+            Assert.Equal(100, (int?)rawRows.Single()!["media"]!["tmdbId"]);
+            var keys = Assert.IsType<JsonArray>(body["requests"]);
+            Assert.Equal(100, (int?)keys.Single()!["tmdbId"]);
+            var upstream = handler.Requests
+                .Where(request => request.RequestUri?.AbsolutePath == "/api/v1/request")
+                .ToList();
+            Assert.Equal(2, upstream.Count);
+            Assert.All(upstream, request =>
+            {
+                Assert.Contains($"requestedBy={CallerSeerrId}", request.RequestUri!.Query);
+                Assert.Equal(
+                    CallerSeerrId.ToString(),
+                    Assert.Single(request.Headers.GetValues("X-Api-User")));
+            });
+        }
+
+        [Fact]
+        public async Task GetCompleteUserRequestSnapshot_DropsForeignRowsFromRawAndCompactResults()
+        {
+            const string list = @"{ ""results"": [
+                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
+                { ""id"": 2, ""type"": ""movie"", ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 2, ""results"": 2 } }";
+            var controller = BuildController(list, SeerrPermission.NONE, out _);
+
+            var ok = Assert.IsType<OkObjectResult>(await controller.GetCompleteUserRequestSnapshot());
+            var body = JsonNode.Parse(JsonSerializer.Serialize(ok.Value))!.AsObject();
+
+            Assert.Equal(1, (int?)body["totalResults"]);
+            var rawRows = Assert.IsType<JsonArray>(body["results"]);
+            Assert.Equal(CallerSeerrId, (int?)rawRows.Single()!["requestedBy"]!["id"]);
+            Assert.Single(Assert.IsType<JsonArray>(body["requests"]));
+        }
+
+        [Fact]
+        public async Task GetCompleteUserRequestSnapshot_RequestViewerRetainsAuthorizedForeignRows()
+        {
+            const string list = @"{ ""results"": [
+                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
+                { ""id"": 2, ""type"": ""movie"", ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 2, ""results"": 2 } }";
+            var controller = BuildController(list, SeerrPermission.REQUEST_VIEW, out var handler);
+
+            var ok = Assert.IsType<OkObjectResult>(await controller.GetCompleteUserRequestSnapshot());
+            var body = JsonNode.Parse(JsonSerializer.Serialize(ok.Value))!.AsObject();
+
+            Assert.Equal(2, (int?)body["totalResults"]);
+            Assert.Equal(2, Assert.IsType<JsonArray>(body["results"]).Count);
+            // Compact calendar keys remain deduplicated even when two users
+            // requested the same title.
+            Assert.Single(Assert.IsType<JsonArray>(body["requests"]));
+            var upstream = handler.Requests
+                .Where(request => request.RequestUri?.AbsolutePath == "/api/v1/request")
+                .ToList();
+            Assert.Equal(2, upstream.Count);
+            Assert.All(upstream, request =>
+            {
+                Assert.DoesNotContain("requestedBy=", request.RequestUri!.Query);
+                Assert.Equal(
+                    CallerSeerrId.ToString(),
+                    Assert.Single(request.Headers.GetValues("X-Api-User")));
+            });
+        }
+
+        [Fact]
+        public async Task GetCompleteUserRequestSnapshot_JellyfinAdminGlobalRead_OmitsApiUserAndOwnerScope()
+        {
+            const string list = @"{ ""results"": [
+                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
+                { ""id"": 2, ""type"": ""movie"", ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 200, ""mediaType"": ""movie"" } } ],
+                ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 2, ""results"": 2 } }";
+            var controller = BuildController(
+                list,
+                SeerrPermission.NONE,
+                out var handler,
+                isAdmin: true);
+
+            var ok = Assert.IsType<OkObjectResult>(await controller.GetCompleteUserRequestSnapshot());
+            var body = JsonNode.Parse(JsonSerializer.Serialize(ok.Value))!.AsObject();
+
+            Assert.Equal(2, (int?)body["totalResults"]);
+            var upstream = handler.Requests
+                .Where(request => request.RequestUri?.AbsolutePath == "/api/v1/request")
+                .ToList();
+            Assert.Equal(2, upstream.Count);
+            Assert.All(upstream, request =>
+            {
+                Assert.DoesNotContain("requestedBy=", request.RequestUri!.Query);
+                Assert.False(request.Headers.Contains("X-Api-User"));
+            });
+        }
+
+        [Fact]
+        public async Task GetCompleteUserRequestSnapshot_UserOnlyOverridesRequestViewPermission()
+        {
+            const string list = @"{ ""results"": [
+                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
+                { ""id"": 2, ""type"": ""movie"", ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 2, ""results"": 2 } }";
+            var controller = BuildController(list, SeerrPermission.REQUEST_VIEW, out var handler);
+
+            var ok = Assert.IsType<OkObjectResult>(
+                await controller.GetCompleteUserRequestSnapshot(userOnly: true));
+            var body = JsonNode.Parse(JsonSerializer.Serialize(ok.Value))!.AsObject();
+
+            Assert.Equal(1, (int?)body["totalResults"]);
+            Assert.Equal(CallerSeerrId, (int?)Assert.IsType<JsonArray>(body["results"])
+                .Single()!["requestedBy"]!["id"]);
+            var upstream = handler.Requests
+                .Where(request => request.RequestUri?.AbsolutePath == "/api/v1/request")
+                .ToList();
+            Assert.Equal(2, upstream.Count);
+            Assert.All(upstream, request =>
+            {
+                Assert.Contains($"requestedBy={CallerSeerrId}", request.RequestUri!.Query);
+                Assert.Equal(
+                    CallerSeerrId.ToString(),
+                    Assert.Single(request.Headers.GetValues("X-Api-User")));
+            });
+        }
+
+        [Fact]
+        public async Task GetCompleteUserRequestSnapshot_IncompleteUserLookup_Returns502WithoutUpstreamRequest()
+        {
+            var controller = BuildController(
+                "{}",
+                SeerrPermission.NONE,
+                out var handler,
+                SeerrUserResolution.Incomplete("page two failed"));
+
+            var result = Assert.IsType<ObjectResult>(await controller.GetCompleteUserRequestSnapshot());
+            var body = JsonNode.Parse(JsonSerializer.Serialize(result.Value))!.AsObject();
+
+            Assert.Equal(502, result.StatusCode);
+            Assert.Equal("user_lookup_incomplete", (string?)body["code"]);
+            Assert.Empty(handler.Requests);
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("http://retired-seerr:5055")]
+        public async Task GetCompleteUserRequestSnapshot_MissingOrStaleSource_Returns502WithoutUpstreamRequest(
+            string? sourceUrl)
+        {
+            var controller = BuildController(
+                "{}",
+                SeerrPermission.NONE,
+                out var handler,
+                SeerrUserResolution.Found(new SeerrUser
+                {
+                    Id = CallerSeerrId,
+                    Permissions = SeerrPermission.NONE,
+                    SourceUrl = sourceUrl,
+                }));
+
+            var result = Assert.IsType<ObjectResult>(
+                await controller.GetCompleteUserRequestSnapshot());
+            var body = JsonNode.Parse(JsonSerializer.Serialize(result.Value))!.AsObject();
+
+            Assert.Equal(502, result.StatusCode);
+            Assert.Equal("source_affinity_unavailable", (string?)body["code"]);
+            Assert.Empty(handler.Requests);
+        }
+
+        [Fact]
+        public async Task GetCompleteUserRequestSnapshot_InvalidOwnedRow_Returns502WithoutPrefix()
+        {
+            const string list = @"{ ""results"": [
+                { ""id"": 1, ""type"": ""movie"", ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 1, ""results"": 1 } }";
+            var controller = BuildController(list, SeerrPermission.NONE, out _);
+
+            var result = Assert.IsType<ObjectResult>(await controller.GetCompleteUserRequestSnapshot());
+            var body = JsonNode.Parse(JsonSerializer.Serialize(result.Value))!.AsObject();
+
+            Assert.Equal(502, result.StatusCode);
+            Assert.Equal("upstream_collection_invalid", (string?)body["code"]);
+            Assert.Empty(Assert.IsType<JsonArray>(body["requests"]));
+        }
+
+        [Fact]
+        public async Task GetCompleteUserRequestSnapshot_MissingRequestId_ReturnsIncompleteWithoutPrefix()
+        {
+            const string list = @"{ ""results"": [
+                { ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 1, ""results"": 1 } }";
+            var controller = BuildController(list, SeerrPermission.NONE, out _);
+
+            var result = Assert.IsType<ObjectResult>(await controller.GetCompleteUserRequestSnapshot());
+            var body = JsonNode.Parse(JsonSerializer.Serialize(result.Value))!.AsObject();
+
+            Assert.Equal(502, result.StatusCode);
+            Assert.Equal("upstream_collection_incomplete", (string?)body["code"]);
+            Assert.Empty(Assert.IsType<JsonArray>(body["requests"]));
+        }
+
+        [Fact]
+        public async Task GetCompleteUserRequestSnapshot_ParentalFilterThrows_Returns502WithoutRows()
+        {
+            const string list = @"{ ""results"": [
+                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 1, ""results"": 1 } }";
+            var controller = BuildController(
+                list,
+                SeerrPermission.NONE,
+                out _,
+                parentalFilterOverride: new ThrowingParentalFilter());
+
+            var result = Assert.IsType<ObjectResult>(await controller.GetCompleteUserRequestSnapshot());
+            var body = JsonNode.Parse(JsonSerializer.Serialize(result.Value))!.AsObject();
+
+            Assert.Equal(502, result.StatusCode);
+            Assert.Equal("parental_filter_incomplete", (string?)body["code"]);
+            Assert.Empty(Assert.IsType<JsonArray>(body["requests"]));
         }
 
         [Fact]
@@ -189,7 +432,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var seerrCache = new SeerrCache(provider);
             var parentalFilter = new SeerrParentalFilter(
                 factory, NullLogger<SeerrParentalFilter>.Instance, userManager, new FakeLocalization(), seerrCache, provider);
-            var seerrClient = new FakeSeerrClient(new SeerrUser { Id = CallerSeerrId, Permissions = SeerrPermission.REQUEST_VIEW });
+            var seerrClient = new FakeSeerrClient(new SeerrUser
+            {
+                Id = CallerSeerrId,
+                Permissions = SeerrPermission.REQUEST_VIEW,
+                SourceUrl = "http://seerr:5055",
+            });
 
             var controller = new ArrRequestsController(
                 factory, NullLogger<ArrRequestsController>.Instance, userManager, seerrCache, provider,
@@ -210,12 +458,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
         private sealed class FakeSeerrClient : ISeerrClient
         {
-            private readonly SeerrUser _user;
+            private readonly SeerrUserResolution _resolution;
 
-            public FakeSeerrClient(SeerrUser user) => _user = user;
+            public FakeSeerrClient(SeerrUser user) : this(SeerrUserResolution.Found(user)) { }
+
+            public FakeSeerrClient(SeerrUserResolution resolution) => _resolution = resolution;
 
             public Task<SeerrUser?> GetSeerrUser(string jellyfinUserId, bool bypassCache = false, bool allowAutoImport = true)
-                => Task.FromResult<SeerrUser?>(_user);
+                => Task.FromResult(_resolution.User);
+
+            public Task<SeerrUserResolution> ResolveSeerrUser(
+                string jellyfinUserId,
+                bool bypassCache = false,
+                bool allowAutoImport = true,
+                CancellationToken cancellationToken = default)
+                => Task.FromResult(_resolution);
 
             public Task<string?> GetSeerrUserId(string jellyfinUserId, bool allowAutoImport = true)
                 => throw new NotImplementedException();
@@ -238,6 +495,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             public Task<List<WatchlistItem>?> GetRequestsForUser(string seerrUserId)
                 => throw new NotImplementedException();
+        }
+
+        private sealed class ThrowingParentalFilter : ISeerrParentalFilter
+        {
+            public Task<SeerrParentalResult> ApplyAsync(string json, string apiPath, SeerrCaller caller)
+                => throw new InvalidOperationException("simulated filter failure");
+
+            public Task<bool> IsBlockedAsync(string mediaType, int tmdbId, SeerrCaller caller)
+                => Task.FromResult(false);
+
+            public Task<bool> IsTmdbProxyPathBlockedAsync(string tmdbApiPath, SeerrCaller caller)
+                => Task.FromResult(false);
         }
 
         private sealed class StubUserManager : IUserManager

@@ -74,8 +74,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             // a second carries tvdbId 0 (normalized to null). GetRequestsForUser depends only on the
             // config + HTTP seams, so the user/parental deps are unused here.
             const string list = @"{ ""results"": [
-                { ""type"": ""tv"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 555, ""tvdbId"": 999, ""mediaType"": ""tv"" } },
-                { ""type"": ""tv"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 556, ""tvdbId"": 0, ""mediaType"": ""tv"" } } ] }";
+                { ""id"": 1, ""type"": ""tv"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 555, ""tvdbId"": 999, ""mediaType"": ""tv"" } },
+                { ""id"": 2, ""type"": ""tv"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 556, ""tvdbId"": 0, ""mediaType"": ""tv"" } } ],
+                ""pageInfo"": { ""page"": 1, ""pages"": 1, ""results"": 2 } }";
 
             var handler = new RecordingHttpMessageHandler();
             handler.AddResponse("/api/v1/request", list);

@@ -8,7 +8,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
     /// blocked title's detail/season body). The controller returns a bare 403.
     /// </param>
     /// <param name="Body">The body to return when <see cref="Block"/> is false (filtered list, or the original body).</param>
-    public readonly record struct SeerrParentalResult(bool Block, string Body);
+    /// <param name="Succeeded">
+    /// False when filtering faulted and <paramref name="Body"/> is only the legacy
+    /// fail-open passthrough. Authoritative snapshot consumers must reject that body.
+    /// </param>
+    public readonly record struct SeerrParentalResult(bool Block, string Body, bool Succeeded = true);
 
     /// <summary>
     /// Enforces each Jellyfin user's own parental-rating restriction across the

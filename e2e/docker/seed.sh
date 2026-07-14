@@ -29,6 +29,8 @@
 #   JF_PORT               loopback host port; 0 asks Docker for a free port
 #   JF_CPUS               Jellyfin CPU quota (default 2)
 #   JF_FFMPEG_THREADS     host encoder threads per seed (default 2)
+#   JF_E2E_IMAGE_PREFETCHED true requires the exact JF_IMAGE to already exist
+#                         locally (used by CI after its parallel preparation)
 #   JF_BIND_ADDRESS       numeric bind address (default 127.0.0.1)
 #   JF_ALLOW_NON_LOOPBACK true explicitly permits a non-loopback bind, but only
 #                         when all four JF_* user/password values are nondefault
@@ -259,7 +261,12 @@ if command -v ffmpeg >/dev/null; then
     run_ffmpeg() { (cd "${MEDIA_DIR}" && ffmpeg -hide_banner -loglevel error "$@"); }
 else
     log "no host ffmpeg — using jellyfin-ffmpeg from ${IMAGE}"
-    docker pull -q "${IMAGE}" >/dev/null
+    if [ "${JF_E2E_IMAGE_PREFETCHED:-false}" = true ]; then
+        docker image inspect "${IMAGE}" >/dev/null 2>&1 \
+            || fail "JF_E2E_IMAGE_PREFETCHED=true but ${IMAGE} is not available locally"
+    else
+        docker pull -q "${IMAGE}" >/dev/null
+    fi
     # Current jellyfin images ship ffmpeg at /usr/lib/jellyfin-ffmpeg/ffmpeg —
     # try that first; the old /usr/lib/jellyfin/ffmpeg path is the fallback.
     # The first attempt's stderr is silenced so a wrong-path miss doesn't spam
@@ -320,6 +327,13 @@ log "starting Compose project ${E2E_PROJECT} on ${JF_BIND_ADDRESS}:${JF_PORT} wi
 
 CONTAINER_ID="$("${COMPOSE[@]}" ps -q jellyfin)"
 [ -n "${CONTAINER_ID}" ] || fail "could not resolve the Jellyfin Compose container ID"
+EXPECTED_NANO_CPUS="$(jq -nr --arg cpus "${JF_CPUS}" '$cpus | tonumber * 1000000000 | round')"
+ACTUAL_NANO_CPUS="$(docker inspect --format '{{.HostConfig.NanoCpus}}' "${CONTAINER_ID}")"
+[[ "${ACTUAL_NANO_CPUS}" =~ ^[1-9][0-9]*$ ]] \
+    || fail "Jellyfin container reported invalid HostConfig.NanoCpus '${ACTUAL_NANO_CPUS}'"
+[ "${ACTUAL_NANO_CPUS}" = "${EXPECTED_NANO_CPUS}" ] \
+    || fail "Jellyfin container CPU quota is ${ACTUAL_NANO_CPUS} NanoCpus; expected ${EXPECTED_NANO_CPUS} for JF_CPUS=${JF_CPUS}"
+log "verified Jellyfin CPU quota: ${JF_CPUS} CPUs (${ACTUAL_NANO_CPUS} NanoCpus)"
 PORT_BINDINGS="$(docker inspect --format '{{json (index .NetworkSettings.Ports "8096/tcp")}}' "${CONTAINER_ID}")"
 PUBLISHED_PORT="$(printf '%s' "${PORT_BINDINGS}" | jq -er \
     'select(type == "array" and length == 1) | .[0].HostPort | select(test("^[0-9]+$"))')" \
@@ -634,6 +648,7 @@ jq -n \
     --arg layoutEnforcement "${LAYOUT_ENFORCEMENT}" \
     --argjson port "${PUBLISHED_PORT}" \
     --argjson cpus "${JF_CPUS}" \
+    --argjson actualNanoCpus "${ACTUAL_NANO_CPUS}" \
     --arg id "${AUTOSKIP_ID}" \
     --arg name "${AUTOSKIP_NAME}" \
     --arg path "${AUTOSKIP_CONTAINER_PATH}" \
@@ -645,6 +660,7 @@ jq -n \
         port: $port,
         project: $project,
         cpus: $cpus,
+        actualNanoCpus: $actualNanoCpus,
         image: $image,
         imageId: $imageId,
         serverVersion: $serverVersion,

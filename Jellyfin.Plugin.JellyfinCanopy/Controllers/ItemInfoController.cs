@@ -382,54 +382,91 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         [HttpGet("proxy/avatar")]
         [Authorize]
-        public async Task<IActionResult> ProxyAvatar([FromQuery] string path)
+        public async Task<IActionResult> ProxyAvatar(
+            [FromQuery] string path,
+            [FromQuery] string? sourceToken = null)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(path))
+            if (config == null
+                || string.IsNullOrWhiteSpace(config.SeerrUrls)
+                || string.IsNullOrWhiteSpace(config.SeerrApiKey)
+                || string.IsNullOrEmpty(path))
             {
                 return NotFound();
             }
 
-            var seerrUrl = config.SeerrUrls
-                .Split(new[] { '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries)[0]
-                .Trim().TrimEnd('/');
-
-            // Strip query string (?v=timestamp) and fragment — only the path is needed.
-            var avatarPath = path.Trim();
-            var q = avatarPath.IndexOf('?');
-            if (q >= 0) avatarPath = avatarPath[..q];
-            var f = avatarPath.IndexOf('#');
-            if (f >= 0) avatarPath = avatarPath[..f];
-
-            if (!avatarPath.StartsWith('/'))
-                avatarPath = $"/{avatarPath}";
-
-            // Block path traversal, scheme injection, and request smuggling.
-            if (avatarPath.Contains("..") || avatarPath.Contains("://") || avatarPath.Contains("@")
-                || avatarPath.Contains("\r") || avatarPath.Contains("\n")
-                || avatarPath.Contains("%0d", StringComparison.OrdinalIgnoreCase)
-                || avatarPath.Contains("%0a", StringComparison.OrdinalIgnoreCase)
-                || avatarPath.Contains("%00"))
+            var configurationRevision = _configProvider.ConfigurationRevision;
+            var configurationStamp = SeerrMutationConfigStamp.Capture(
+                config,
+                configurationRevision);
+            var seerrApiKey = config.SeerrApiKey;
+            bool IsConfigurationCurrent() => configurationStamp.Matches(
+                _configProvider.ConfigurationOrNull,
+                _configProvider.ConfigurationRevision);
+            IActionResult ConfigurationChanged() => StatusCode(409, new
             {
-                _logger.LogWarning("ProxyAvatar: unsafe characters in path blocked");
+                error = true,
+                code = "avatar_configuration_changed",
+                message = "Seerr configuration changed while fetching the avatar. Refresh the issue list and try again."
+            });
+
+            // Normalize before validating the token so both the SSRF guard and
+            // HMAC bind the exact path that will be sent upstream.
+            if (!SeerrSourceToken.TryNormalizeAvatarPath(path, out var avatarPath))
+            {
+                _logger.LogWarning("ProxyAvatar: unsafe or unsupported path blocked");
                 return BadRequest("Invalid avatar path");
             }
 
-            // SSRF guard: only allow known Seerr avatar path prefixes.
-            if (!avatarPath.StartsWith("/avatar/", StringComparison.OrdinalIgnoreCase)
-                && !avatarPath.StartsWith("/avatarproxy/", StringComparison.OrdinalIgnoreCase)
-                && !avatarPath.StartsWith("/api/v1/avatar/", StringComparison.OrdinalIgnoreCase))
+            var jellyfinUserId = UserHelper.GetCurrentUserId(User)?.ToString();
+            if (string.IsNullOrEmpty(jellyfinUserId)
+                || !SeerrSourceToken.TryValidate(
+                    sourceToken,
+                    seerrApiKey,
+                    SeerrSourceToken.AvatarPurpose,
+                    jellyfinUserId,
+                    avatarPath,
+                    out var sourceClaims))
             {
-                _logger.LogWarning($"ProxyAvatar: path not in allowed list '{avatarPath}'");
-                return BadRequest("Invalid avatar path");
+                return StatusCode(403, new
+                {
+                    error = true,
+                    code = "invalid_source_token",
+                    message = "The avatar token is missing, invalid, or expired."
+                });
+            }
+
+            var seerrUrl = SeerrClient.GetConfiguredUrls(config.SeerrUrls).FirstOrDefault(url => SeerrSourceToken.MatchesSource(
+                sourceClaims!.SourceKey,
+                seerrApiKey,
+                url));
+            if (seerrUrl == null)
+            {
+                return StatusCode(409, new
+                {
+                    error = true,
+                    code = "stale_source_token",
+                    message = "The linked Seerr instance changed. Refresh the request list and try again."
+                });
+            }
+
+            if (!IsConfigurationCurrent())
+            {
+                return ConfigurationChanged();
             }
 
             try
             {
-                // include the resolved Seerr URL in the cache key
-                // so that switching to a different Seerr instance with the same
-                // avatar path doesn't serve stale bytes from the old instance.
-                var cacheKey = $"{seerrUrl}|{avatarPath}";
+                // Partition by configuration revision and a one-way API-key
+                // fingerprint as well as source/path. A same-URL credential
+                // rotation must not reuse bytes fetched by the prior identity
+                // generation, including when a custom provider mutates its
+                // configuration object in place without advancing revision.
+                var cacheKey = BuildAvatarCacheKey(
+                    seerrUrl,
+                    avatarPath,
+                    configurationRevision,
+                    seerrApiKey);
 
                 // Check server-side cache first to avoid hitting upstream Seerr
                 // on every request. This is critical for large avatars (e.g., animated
@@ -437,16 +474,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 if (_seerrCache.AvatarCache.TryGetValue(cacheKey, out var cached)
                     && DateTime.UtcNow - cached.CachedAt < _seerrCache.AvatarCacheDuration)
                 {
+                    if (!IsConfigurationCurrent())
+                    {
+                        return ConfigurationChanged();
+                    }
+
                     // Serve 304 if client already has this version
                     if (Request.Headers.TryGetValue("If-None-Match", out var cachedIfNoneMatch)
                         && cachedIfNoneMatch.ToString().Contains(cached.ETag))
                     {
-                        Response.Headers["Cache-Control"] = "public, max-age=3600";
+                        Response.Headers["Cache-Control"] = "private, no-cache";
                         Response.Headers["ETag"] = cached.ETag;
                         return StatusCode(304);
                     }
 
-                    Response.Headers["Cache-Control"] = "public, max-age=3600";
+                    Response.Headers["Cache-Control"] = "private, no-cache";
                     Response.Headers["ETag"] = cached.ETag;
                     return File(cached.Content, cached.ContentType);
                 }
@@ -454,13 +496,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 var client = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
                 client.Timeout = TimeSpan.FromSeconds(10);
 
+                if (!IsConfigurationCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
                 using var avatarRequest = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, $"{seerrUrl}{avatarPath}");
                 // explicit User-Agent + Accept so Cloudflare's bot
                 // mode doesn't return an HTML challenge page that we'd try to
                 // serve as an image.
                 avatarRequest.Headers.UserAgent.ParseAdd(Helpers.Seerr.SeerrHttpHelper.UserAgent);
                 avatarRequest.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("image/*"));
-                var response = await client.SendAsync(avatarRequest);
+                using var response = await client.SendAsync(
+                    avatarRequest,
+                    HttpContext.RequestAborted).ConfigureAwait(false);
+                if (!IsConfigurationCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
                 if (!response.IsSuccessStatusCode)
                 {
                     return NotFound();
@@ -483,14 +537,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     return NotFound();
                 }
 
-                var content = await response.Content.ReadAsByteArrayAsync();
+                var content = await response.Content.ReadAsByteArrayAsync(
+                    HttpContext.RequestAborted).ConfigureAwait(false);
+                if (!IsConfigurationCurrent())
+                {
+                    return ConfigurationChanged();
+                }
 
                 // Compute ETag from content hash for conditional request support.
                 var hash = SHA256.HashData(content);
                 var etag = $"\"{Convert.ToHexString(hash)}\"";
 
-                // Store in server-side cache and evict expired entries periodically
-                _seerrCache.AvatarCache[cacheKey] = (content, contentType, etag, DateTime.UtcNow);
+                // Store only in the captured generation. The post-write check
+                // closes the narrow check-to-publication race; exact removal
+                // cannot delete a newer flight's replacement at the same key.
+                var publishedEntry = (
+                    Content: content,
+                    ContentType: contentType,
+                    ETag: etag,
+                    CachedAt: DateTime.UtcNow);
+                if (!TryPublishAvatarCacheEntry(
+                    _seerrCache.AvatarCache,
+                    cacheKey,
+                    publishedEntry,
+                    IsConfigurationCurrent))
+                {
+                    return ConfigurationChanged();
+                }
+
+                // Evict expired entries periodically.
                 if (_seerrCache.AvatarCache.Count > 50 || _seerrCache.AvatarCache.Count % 10 == 0)
                 {
                     foreach (var key in _seerrCache.AvatarCache
@@ -502,16 +577,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     }
                 }
 
+                if (!IsConfigurationCurrent())
+                {
+                    AsyncSingleFlight.TryRemoveExact(
+                        _seerrCache.AvatarCache,
+                        cacheKey,
+                        publishedEntry);
+                    return ConfigurationChanged();
+                }
+
                 // Serve 304 if client already has this version
                 if (Request.Headers.TryGetValue("If-None-Match", out var ifNoneMatch)
                     && ifNoneMatch.ToString().Contains(etag))
                 {
-                    Response.Headers["Cache-Control"] = "public, max-age=3600";
+                    Response.Headers["Cache-Control"] = "private, no-cache";
                     Response.Headers["ETag"] = etag;
                     return StatusCode(304);
                 }
 
-                Response.Headers["Cache-Control"] = "public, max-age=3600";
+                // The URL contains a caller-bound authorization token. Shared
+                // caches must never satisfy it without re-running this endpoint's
+                // authenticated caller/HMAC/source checks. Browsers may retain
+                // bytes but must revalidate; the server-side AvatarCache still
+                // avoids another upstream download and can answer with 304.
+                Response.Headers["Cache-Control"] = "private, no-cache";
                 Response.Headers["ETag"] = etag;
 
                 return File(content, contentType);
@@ -521,6 +610,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 _logger.LogWarning($"ProxyAvatar exception: {ex.Message}");
                 return NotFound();
             }
+        }
+
+        internal static string BuildAvatarCacheKey(
+            string seerrUrl,
+            string avatarPath,
+            long configurationRevision,
+            string seerrApiKey)
+        {
+            var apiKeyFingerprint = Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(seerrApiKey)));
+            return $"{configurationRevision.ToString(System.Globalization.CultureInfo.InvariantCulture)}:{apiKeyFingerprint}:{seerrUrl.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)}:{seerrUrl}{avatarPath}";
+        }
+
+        internal static bool TryPublishAvatarCacheEntry(
+            ConcurrentDictionary<string, (byte[] Content, string ContentType, string ETag, DateTime CachedAt)> cache,
+            string cacheKey,
+            (byte[] Content, string ContentType, string ETag, DateTime CachedAt) entry,
+            Func<bool> isConfigurationCurrent)
+        {
+            if (!isConfigurationCurrent())
+            {
+                return false;
+            }
+
+            cache[cacheKey] = entry;
+            if (isConfigurationCurrent())
+            {
+                return true;
+            }
+
+            AsyncSingleFlight.TryRemoveExact(cache, cacheKey, entry);
+            return false;
         }
 
         [Authorize]

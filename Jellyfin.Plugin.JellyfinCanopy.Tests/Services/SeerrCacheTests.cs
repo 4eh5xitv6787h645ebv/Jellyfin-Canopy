@@ -20,12 +20,13 @@ public class SeerrCacheTests
     private static SeerrCache PopulatedCache()
     {
         var cache = NewCache();
-        cache.UserIdCache["jf-user-a"] = ("1", DateTime.UtcNow);
-        cache.UserIdCache["jf-user-b"] = ("2", DateTime.UtcNow);
-        cache.UserCache["jf-user-a"] = (new SeerrUser { Id = 1 }, DateTime.UtcNow);
-        cache.UserCache["jf-user-b"] = (null, DateTime.UtcNow); // negative entry
-        cache.ResponseCache["jf-user-a:/api/v1/discover/movies"] = ("{}", DateTime.UtcNow);
-        cache.TmdbEnrichmentCache["movie:1"] = (new TmdbEnrichmentResult { Title = "T" }, DateTime.UtcNow);
+        cache.UserIdCache["jf-user-a"] = ("1", DateTime.UtcNow, 1, "test-generation");
+        cache.UserIdCache["jf-user-b"] = ("2", DateTime.UtcNow, 1, "test-generation");
+        cache.UserCache["jf-user-a"] = (new SeerrUser { Id = 1 }, DateTime.UtcNow, 1, "test-generation");
+        cache.UserCache["jf-user-b"] = (null, DateTime.UtcNow, 1, "test-generation"); // negative entry
+        cache.AutoImportFailureThrottle["jf-user-c"] = DateTime.UtcNow;
+        cache.ResponseCache["jf-user-a:/api/v1/discover/movies"] = ("{}", DateTime.UtcNow, 1, "test-generation");
+        cache.TmdbEnrichmentCache["movie:1"] = (new TmdbEnrichmentResult { Title = "T" }, DateTime.UtcNow, 1);
         cache.AvatarCache["avatar-key"] = (new byte[] { 1 }, "image/png", "etag", DateTime.UtcNow);
         cache.SeerrStatusCache = (true, DateTime.UtcNow);
         return cache;
@@ -40,6 +41,7 @@ public class SeerrCacheTests
 
         Assert.Empty(cache.UserIdCache);
         Assert.Empty(cache.UserCache);
+        Assert.Empty(cache.AutoImportFailureThrottle);
         Assert.Empty(cache.ResponseCache);
         Assert.Empty(cache.TmdbEnrichmentCache);
         Assert.Empty(cache.AvatarCache);
@@ -56,6 +58,7 @@ public class SeerrCacheTests
         // user-scoped caches are flushed...
         Assert.Empty(cache.UserIdCache);
         Assert.Empty(cache.UserCache);
+        Assert.Empty(cache.AutoImportFailureThrottle);
         // ...but non-user caches keep their entries.
         Assert.Single(cache.ResponseCache);
         Assert.Single(cache.TmdbEnrichmentCache);

@@ -1073,7 +1073,7 @@
                                 <textarea class="emby-textarea emby-input jc-textarea-medium" id="seerrUrls" name="seerrUrls" placeholder="http://192.168.1.10:5055&#10;https://seerr.example.com"></textarea>
                             </div>
                                 <div class="jc-setting-description" data-desc-for="seerrUrls">
-                                    <div class="fieldDescription">Internal URL(s) the Jellyfin server uses to reach Seerr, one per line. The script uses the first one that connects successfully. If Seerr sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here and set the External URL below for user-facing links.</div>
+                                    <div class="fieldDescription">Internal URL(s) the Jellyfin server uses to reach Seerr, one per line. Treat each distinct URL as a separate Seerr identity domain: user-scoped reads and mutations stay pinned to the instance where that user was resolved, while safe public reads may try the configured order. Do not list multiple aliases for the same instance. If Seerr sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here and set the External URL below for user-facing links.</div>
                                 </div>
                             <div class="inputContainer">
                                 <label class="inputLabel" for="seerrExternalUrl">Seerr External URL <span style="font-size:0.8em; opacity:0.6;">(optional)</span></label>
@@ -1358,7 +1358,7 @@
                                             <div class="fieldDescription jc-field-desc-mt-sm">
                                             <strong>Default:</strong> Seerr uses its default Radarr server and quality profile.<br/>
                                             <strong>Original:</strong> Uses the same quality profile as the movie being watched (falls back to default if not found).<br/>
-                                            <strong>Custom:</strong> Always uses the specific Radarr server, quality profile, and root folder selected below.
+                                            <strong>Custom:</strong> Uses the specific Radarr server, quality profile, and root folder selected below. Because those saved IDs are not source-bound, Custom mode sends automatic requests only when exactly one distinct Seerr identity domain is configured; multi-domain configurations fail closed without a request.
                                             </div>
                                         </div>
 
@@ -1375,7 +1375,7 @@
                                         <div class="inputContainer"><label class="inputLabel" for="autoMovieRequestRootFolder">Root Folder:</label><select id="autoMovieRequestRootFolder" name="autoMovieRequestRootFolder" is="emby-select" class="emby-select"></select></div>
                                         <div class="jc-setting-description" data-desc-for="autoMovieRequestRootFolder">
                                             <div class="fieldDescription jc-field-desc-mt-sm">
-                                                These settings are only used when Quality Profile Mode is set to "Custom".
+                                                These settings are only used when Quality Profile Mode is set to "Custom". Custom mode requires exactly one distinct configured Seerr identity domain.
                                             </div>
                                             <div class="jc-info-banner-inline">
                                             <i class="material-icons jc-info-icon-sm">info</i>
@@ -1419,7 +1419,7 @@
                             </div>
                             <div class="jc-setting-description" data-desc-for="triggerSeerrScanNowBtn">
                                 <div class="fieldDescription jc-field-desc-md">
-                                    Uses the Seerr URL and API key entered in the Setup section above. If multiple URLs are configured, the first reachable one is used.
+                                    Uses the Seerr URL(s) and API key entered in the Setup section above. Each normalized distinct URL is a separate Seerr identity domain and is triggered once. Comma/newline duplicates and trailing-slash aliases are collapsed; a failure in one domain does not stop the others.
                                 </div>
                             </div>
                         </div>
@@ -1488,7 +1488,7 @@
                             <div class="checkboxContainer"><label><input id="seerrAutoImportUsers" data-config-key="SeerrAutoImportUsers" is="emby-checkbox" type="checkbox"/><span>Auto import Jellyfin users to Seerr</span></label></div>
                             <div class="jc-setting-description" data-desc-for="seerrAutoImportUsers">
                                 <div class="fieldDescription jc-field-desc-xl">
-                                    Automatically import Jellyfin users into Seerr so they can use Seerr Search without needing to visit Seerr directly. New users are imported the first time they use Seerr Search; a scheduled task also bulk-imports periodically. Already-imported users are skipped.<br/><br/>
+                                    Automatically import Jellyfin users into Seerr so they can use Seerr Search without needing to visit Seerr directly. Just-in-time lookup searches existing mappings across every configured identity domain; if no mapping exists, the user is imported once into the first configured domain. Manual and scheduled bulk imports first require complete, stable user maps from every domain and exclude users mapped anywhere; only the truly unbound batch is sent to the first canonical configured domain. An incomplete, malformed, or internally ambiguous domain map suppresses the whole import. A user intentionally linked on multiple domains is valid and is simply excluded from import. Import mutations are never fanned out or replayed on another domain after an uncertain response.<br/><br/>
                                     Configure the bulk import frequency in Jellyfin Dashboard &gt; Scheduled Tasks &gt; "Import Jellyfin Users to Seerr".
                                 </div>
                             </div>

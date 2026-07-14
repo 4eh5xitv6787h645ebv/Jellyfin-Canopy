@@ -41,7 +41,7 @@ public class Seerr4kMasterSwitchTests
             provider,
             new PassthroughParentalFilter());
         // A resolvable user so the gate is reached; permissions are irrelevant here.
-        handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":2048}}]}}");
+        handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":2048}}],\"pageInfo\":{{\"page\":1,\"pages\":1,\"results\":1}}}}");
         return (client, handler);
     }
 

@@ -24,7 +24,7 @@ export interface SeerrStatusApi {
     DISPLAY: Readonly<Record<'AVAILABLE' | 'AVAILABLE_UPDATING' | 'PENDING' | 'PROCESSING' | 'REQUESTED' | 'PARTIAL' | 'BLOCKED' | 'DELETED' | 'NONE', string>>;
     isRequestable: (mediaStatus: number | undefined) => boolean;
     hasStatus: (mediaStatus: number | undefined) => boolean;
-    effectiveMediaStatus: (rawStatus: number | undefined, jellyfinId: string | null | undefined, jellyfinSeasonMap?: Record<number, boolean> | null, seasonNumber?: number | null) => number;
+    effectiveMediaStatus: (rawStatus: number | undefined, jellyfinId?: string | null, jellyfinSeasonMap?: Record<number, boolean | null> | null, seasonNumber?: number | null) => number;
     resolveDisplayStatus: (status: number | undefined, hasActiveDownloads?: boolean) => string;
     getButtonConfig: (displayStatus: string) => SeerrButtonConfig;
     getBadgeConfig: (displayStatus: string) => { icon: string; cssClass: string } | null;
@@ -108,24 +108,18 @@ seerrStatus.hasStatus = function(mediaStatus) {
 };
 
 /**
- * Resolves the effective media status, demoting stale AVAILABLE (5) to
- * DELETED (7) when Jellyfin's own data confirms the item is no longer in
- * the library.
+ * Resolves the effective media status. Jellyfin link IDs and viewer-scoped
+ * item lists are not authoritative absence evidence: restricted users can
+ * receive a successful empty list for globally present content, and Seerr can
+ * aggregate several libraries while retaining only one contributing ID.
+ * AVAILABLE therefore remains fail-closed/non-requestable until a server-owned
+ * reconciliation source can prove global absence.
  *
  * @param {number|undefined} rawStatus
- * @param {string|null}      jellyfinId        — series/movie Jellyfin ID (may be stale)
- * @param {Object|null}      [jellyfinSeasonMap] — presence map { [seasonNum]: true }
- * @param {number|null}      [seasonNumber]      — season to check in the map
  * @returns {number} effective status
  */
-seerrStatus.effectiveMediaStatus = function(rawStatus, jellyfinId, jellyfinSeasonMap = null, seasonNumber = null) {
-    const status = rawStatus ?? M.UNKNOWN;
-    if (status !== M.AVAILABLE) return status;
-
-    if (jellyfinSeasonMap !== null && seasonNumber !== null) {
-        return jellyfinSeasonMap[seasonNumber] ? M.AVAILABLE : M.DELETED;
-    }
-    return jellyfinId ? M.AVAILABLE : M.DELETED;
+seerrStatus.effectiveMediaStatus = function(rawStatus) {
+    return rawStatus ?? M.UNKNOWN;
 };
 
 // ── Display resolution ───────────────────────────────────────────────────

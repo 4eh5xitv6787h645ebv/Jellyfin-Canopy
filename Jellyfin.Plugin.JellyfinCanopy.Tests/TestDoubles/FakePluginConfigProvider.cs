@@ -10,16 +10,53 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 /// </summary>
 public sealed class FakePluginConfigProvider : IPluginConfigProvider
 {
+    private readonly object _revisionLock = new();
+    private PluginConfiguration? _current;
+    private PluginConfiguration? _lastObserved;
+    private long _revision;
+    private bool _hasObserved;
+
     public FakePluginConfigProvider(PluginConfiguration? config = null)
     {
-        Current = config;
+        _current = config;
     }
 
     /// <summary>The configuration returned on every access; null simulates "plugin not loaded".</summary>
-    public PluginConfiguration? Current { get; set; }
+    public PluginConfiguration? Current
+    {
+        get => _current;
+        set => _current = value;
+    }
 
     public PluginConfiguration Configuration =>
-        Current ?? throw new InvalidOperationException("Plugin configuration not available (simulated unloaded plugin).");
+        Observe(_current) ?? throw new InvalidOperationException("Plugin configuration not available (simulated unloaded plugin).");
 
-    public PluginConfiguration? ConfigurationOrNull => Current;
+    public PluginConfiguration? ConfigurationOrNull => Observe(_current);
+
+    public long ConfigurationRevision
+    {
+        get
+        {
+            Observe(_current);
+            lock (_revisionLock)
+            {
+                return _revision;
+            }
+        }
+    }
+
+    private PluginConfiguration? Observe(PluginConfiguration? configuration)
+    {
+        lock (_revisionLock)
+        {
+            if (!_hasObserved || !ReferenceEquals(_lastObserved, configuration))
+            {
+                _lastObserved = configuration;
+                _hasObserved = true;
+                _revision++;
+            }
+
+            return configuration;
+        }
+    }
 }

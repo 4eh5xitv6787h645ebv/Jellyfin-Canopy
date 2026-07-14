@@ -42,7 +42,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
         // renamed key would silently reset every admin-customized schedule.
         public string Key => "JellyfinCanopyJellyseerrUserImport";
 
-        public string Description => "Imports all Jellyfin users into Seerr so they can use Seerr Search without needing to visit the Seerr UI.\n\nAlready imported users are automatically skipped. Configure the task triggers to run this task periodically.";
+        public string Description => "Imports Jellyfin users not already mapped on any configured Seerr identity domain into the first configured domain, so they can use Seerr Search without visiting the Seerr UI.\n\nEvery domain's complete user map is checked before importing; an incomplete or internally ambiguous domain map suppresses the run. Configure the task triggers to run this task periodically.";
 
         public string Category => "Jellyfin Canopy";
 
@@ -76,10 +76,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 return;
             }
 
+            var importConfigStamp = SeerrMutationConfigStamp.Capture(
+                config,
+                _configProvider.ConfigurationRevision);
+
             _logger.LogInformation("[Seerr User Import] Starting Seerr user import task...");
             progress?.Report(0);
 
-            var urls = config.SeerrUrls.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var urls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
             var jellyfinUsers = _userManager.GetUsers().ToList();
             var blockedIds = SeerrUserImportHelper.GetBlockedUserIds(config.SeerrImportBlockedUsers);
             var userIds = jellyfinUsers
@@ -92,9 +96,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
             cancellationToken.ThrowIfCancellationRequested();
             var importResult = await SeerrUserImportHelper.BulkImportAsync(
-                userIds, urls, config.SeerrApiKey, _httpClientFactory, _logger, cancellationToken);
+                userIds,
+                urls,
+                config.SeerrApiKey,
+                _httpClientFactory,
+                _logger,
+                cancellationToken,
+                () =>
+                {
+                    var current = _configProvider.ConfigurationOrNull;
+                    return importConfigStamp.Matches(
+                            current,
+                            _configProvider.ConfigurationRevision)
+                        && current?.SeerrEnabled == true
+                        && current.SeerrAutoImportUsers;
+                });
 
-            if (importResult.Reached && importResult.Imported > 0)
+            if (importResult.Succeeded && importResult.Imported > 0)
             {
                 // Only flush caches when at least one user was actually
                 // imported — otherwise a 0-imported partial-failure run wipes
@@ -102,13 +120,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 _seerrCache.ClearUserCaches();
             }
 
-            if (importResult.Reached)
+            if (importResult.Succeeded)
             {
-                _logger.LogInformation($"[Seerr User Import] Completed. {importResult.Imported} new user(s) imported out of {userIds.Count} sent. Errors: {importResult.Errors.Count}");
+                _logger.LogInformation($"[Seerr User Import] Completed on {importResult.SourceUrl}. {importResult.Imported} new user(s) imported after evaluating {userIds.Count} eligible candidate(s).");
             }
             else
             {
-                _logger.LogWarning("[Seerr User Import] Import failed on all configured Seerr URLs.");
+                _logger.LogWarning("[Seerr User Import] User-map preflight or import outcome was incomplete; no mutation was replayed elsewhere.");
             }
 
             progress?.Report(100);

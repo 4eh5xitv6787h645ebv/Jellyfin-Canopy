@@ -13,6 +13,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
     /// </summary>
     public sealed class TmdbEnrichmentResult
     {
+        /// <summary>
+        /// Gets a value indicating whether the pinned Seerr detail read completed
+        /// and produced a parseable response. A complete response may legitimately
+        /// omit release dates; transport and parse failures remain incomplete.
+        /// </summary>
+        public bool IsComplete { get; init; }
+
         public string? Title { get; init; }
         public int? Year { get; init; }
         public string? PosterUrl { get; init; }
@@ -41,17 +48,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         TimeSpan AvatarCacheDuration { get; }
 
         /// <summary>Cache for Seerr user ID lookups (JellyfinUserId -> SeerrUserId).</summary>
-        Dictionary<string, (string SeerrUserId, DateTime CachedAt)> UserIdCache { get; }
+        Dictionary<string, (string SeerrUserId, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> UserIdCache { get; }
 
         object UserIdCacheLock { get; }
 
         /// <summary>Cache for Seerr user lookups (JellyfinUserId -> full Seerr user payload, null = negative cache).</summary>
-        Dictionary<string, (SeerrUser? User, DateTime CachedAt)> UserCache { get; }
+        Dictionary<string, (SeerrUser? User, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> UserCache { get; }
 
         object UserCacheLock { get; }
 
+        /// <summary>
+        /// Short-lived retry guard for non-authoritative automatic user-import
+        /// failures. A fresh timestamp also reserves an in-flight attempt so a
+        /// burst of callers cannot fan out duplicate import POSTs. This is not
+        /// an authoritative negative-user cache.
+        /// </summary>
+        Dictionary<string, DateTime> AutoImportFailureThrottle { get; }
+
+        object AutoImportFailureThrottleLock { get; }
+
+        TimeSpan AutoImportFailureThrottleTtl { get; }
+
         /// <summary>Cache for Seerr proxy responses (discovery/search endpoints).</summary>
-        Dictionary<string, (string Content, DateTime CachedAt)> ResponseCache { get; }
+        Dictionary<string, (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> ResponseCache { get; }
 
         object ResponseCacheLock { get; }
 
@@ -72,33 +91,31 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         TimeSpan SeerrStatusCacheTtl { get; }
 
         /// <summary>
-        /// Caches Seerr's <c>/api/v1/settings/public</c> 4K flags
-        /// (<c>movie4kEnabled</c> / <c>series4kEnabled</c>). User-neutral by
-        /// construction — the fetch sends no per-user header — so it is safe to
-        /// share across users. Short TTL so an admin toggling 4K in Seerr is
-        /// reflected promptly.
+        /// Caches Seerr's <c>/api/v1/settings/public</c> 4K flags by exact source
+        /// URL. The response is user-neutral within one Seerr instance, but
+        /// separate configured instances are distinct settings domains.
         /// </summary>
-        (bool Movie4kEnabled, bool Series4kEnabled, DateTime CachedAt)? Public4kSettingsCache { get; set; }
+        Dictionary<string, (bool Movie4kEnabled, bool Series4kEnabled, DateTime CachedAt, long ConfigurationRevision, string ApiKeyFingerprint)> Public4kSettingsCache { get; }
 
         object Public4kSettingsCacheLock { get; }
 
         TimeSpan Public4kSettingsCacheTtl { get; }
 
         /// <summary>Cache for request-page TMDB enrichments (movie/tv detail lookups via Seerr).</summary>
-        Dictionary<string, (TmdbEnrichmentResult Data, DateTime CachedAt)> TmdbEnrichmentCache { get; }
+        Dictionary<string, (TmdbEnrichmentResult Data, DateTime CachedAt, long ConfigurationRevision)> TmdbEnrichmentCache { get; }
 
         object TmdbEnrichmentCacheLock { get; }
 
-        ConcurrentDictionary<string, Task<TmdbEnrichmentResult>> TmdbEnrichmentInFlight { get; }
+        ConcurrentDictionary<string, Lazy<Task<TmdbEnrichmentResult>>> TmdbEnrichmentInFlight { get; }
 
         /// <summary>
-        /// User-independent cache of a title's resolved parental score, keyed
-        /// <c>"{mediaType}:{tmdbId}:{region}"</c>. A <c>null</c> <c>Score</c> means the
-        /// title is unrated/unknown. Populated by the Seerr parental-rating filter
-        /// from per-item detail lookups. Certifications rarely change, so this uses a
-        /// deliberately long TTL (<see cref="GetParentalRatingCacheTtl"/>). Because the
-        /// value depends only on the title (not the caller), it is safe to share
-        /// across users.
+        /// User-independent cache of a title's resolved parental score. Keys
+        /// contain <c>mediaType/tmdbId/region</c> plus a configuration revision
+        /// and a one-way digest binding the source set, credentials, and full
+        /// configuration. A <c>null</c> <c>Score</c> means the title is
+        /// unrated/unknown. Certifications rarely change, so this uses a
+        /// deliberately long TTL. Values are safe to share across users only
+        /// inside that exact configuration generation.
         /// </summary>
         /// <remarks>
         /// Keywords/Genres are the title's cleaned TMDB keyword and genre
@@ -120,7 +137,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         TimeSpan GetTmdbEnrichmentCacheTtl();
 
-        /// <summary>Clears the Seerr user and user-id caches (e.g. after a bulk user import).</summary>
+        /// <summary>
+        /// Clears the Seerr user, user-id, and auto-import retry caches (e.g.
+        /// after a bulk user import).
+        /// </summary>
         void ClearUserCaches();
 
         /// <summary>Flushes every Seerr-related cache the moment the admin saves config.</summary>

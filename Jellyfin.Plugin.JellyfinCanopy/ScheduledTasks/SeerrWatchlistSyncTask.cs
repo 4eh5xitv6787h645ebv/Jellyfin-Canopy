@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -88,13 +89,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 return;
             }
 
+            var syncConfigStamp = SeerrMutationConfigStamp.Capture(
+                config,
+                _configProvider.ConfigurationRevision);
+
             _logger.LogInformation("[Seerr→Jellyfin Watchlist Sync] Starting Seerr watchlist sync task...");
             progress?.Report(0);
 
-            var urls = config.SeerrUrls.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            var seerrUrl = urls.FirstOrDefault()?.Trim();
+            var urls = Jellyfin.Plugin.JellyfinCanopy.Services.Seerr.SeerrClient
+                .GetConfiguredUrls(config.SeerrUrls);
 
-            if (string.IsNullOrEmpty(seerrUrl))
+            if (urls.Length == 0)
             {
                 _logger.LogWarning("[Seerr→Jellyfin Watchlist Sync] No valid Seerr URL found.");
                 progress?.Report(100);
@@ -103,10 +108,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
             var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
-            var seerrUserMap = await GetSeerrUserMap(httpClient, seerrUrl, config.SeerrApiKey);
-            if (seerrUserMap.Count == 0)
+            var userSnapshots = await FetchSeerrUserMapSnapshotsAsync(
+                httpClient,
+                urls,
+                config.SeerrApiKey,
+                cancellationToken).ConfigureAwait(false);
+            if (!userSnapshots.IsComplete)
             {
-                _logger.LogWarning("[Seerr→Jellyfin Watchlist Sync] Unable to build Seerr user map.");
+                LogIncompleteCollection("user maps", userSnapshots);
+                progress?.Report(100);
+                return;
+            }
+
+            if (!SeerrUserIdentityDomains.TryParse(userSnapshots, out var seerrUserDomains))
+            {
+                _logger.LogWarning("[Seerr→Jellyfin Watchlist Sync] A complete Seerr user map contained an invalid linked-user row or duplicate identity domain. No changes will be applied.");
+                progress?.Report(100);
+                return;
+            }
+            if (seerrUserDomains.All(static domain => domain.SeerrUserIdsByJellyfinUserId.Count == 0))
+            {
+                _logger.LogWarning("[Seerr→Jellyfin Watchlist Sync] Complete Seerr user maps contained no linked Jellyfin users.");
             }
 
             // Get all Jellyfin users, then filter out the SeerrImportBlockedUsers
@@ -124,14 +146,141 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             }
             _logger.LogInformation($"[Seerr→Jellyfin Watchlist Sync] Found {jellyfinUsers.Count} Jellyfin users (of {allUsers.Count} total)");
 
+            // Build and validate the complete remote input for the whole run before the
+            // first local write. A failure on a later user or identity domain must not
+            // leave earlier users reconciled from a mixed-authority snapshot.
+            var stagedInputs = new Dictionary<Guid, (List<WatchlistItem> WatchlistItems, List<WatchlistItem> RequestItems)>();
+            try
+            {
+                foreach (var jellyfinUser in jellyfinUsers)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var seerrBindings = SeerrUserIdentityDomains.FindBindings(
+                        seerrUserDomains,
+                        jellyfinUser.Id.ToString());
+                    if (seerrBindings.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    var watchlistItems = new List<WatchlistItem>();
+                    var requestItems = new List<WatchlistItem>();
+                    foreach (var binding in seerrBindings)
+                    {
+                        var watchlistSnapshot = await FetchSeerrWatchlistSnapshotAsync(
+                            httpClient,
+                            binding.SourceUrl,
+                            binding.SeerrUserId,
+                            config.SeerrApiKey,
+                            cancellationToken).ConfigureAwait(false);
+                        if (!watchlistSnapshot.IsComplete)
+                        {
+                            LogIncompleteCollection($"watchlist for {jellyfinUser.Username}", watchlistSnapshot);
+                            progress?.Report(100);
+                            return;
+                        }
+
+                        if (!TryParseWatchlistItems(watchlistSnapshot.Items, out var sourceWatchlistItems))
+                        {
+                            _logger.LogWarning($"[Seerr→Jellyfin Watchlist Sync] Complete watchlist for {jellyfinUser.Username} from {binding.SourceUrl} contained an invalid row. No changes will be applied for this run.");
+                            progress?.Report(100);
+                            return;
+                        }
+
+                        watchlistItems.AddRange(sourceWatchlistItems);
+
+                        if (!config.AddRequestedMediaToWatchlist)
+                        {
+                            continue;
+                        }
+
+                        var requestSnapshot = await FetchSeerrRequestSnapshotAsync(
+                            httpClient,
+                            binding.SourceUrl,
+                            binding.SeerrUserId,
+                            config.SeerrApiKey,
+                            cancellationToken).ConfigureAwait(false);
+                        if (!requestSnapshot.IsComplete)
+                        {
+                            // Watchlist + request rows across every identity domain form one
+                            // additive input set. Never publish only its complete prefix.
+                            LogIncompleteCollection($"requests for {jellyfinUser.Username}", requestSnapshot);
+                            progress?.Report(100);
+                            return;
+                        }
+
+                        if (!TryParseRequestItems(
+                                requestSnapshot.Items,
+                                binding.SeerrUserId,
+                                out var sourceRequestItems))
+                        {
+                            _logger.LogWarning($"[Seerr→Jellyfin Watchlist Sync] Complete request collection for {jellyfinUser.Username} from {binding.SourceUrl} contained an invalid row. No changes will be applied for this run.");
+                            progress?.Report(100);
+                            return;
+                        }
+
+                        requestItems.AddRange(sourceRequestItems);
+                    }
+
+                    stagedInputs.Add(jellyfinUser.Id, (watchlistItems, requestItems));
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"[Seerr→Jellyfin Watchlist Sync] Failed while staging the complete multi-source snapshot: {ex.Message}. No changes will be applied.");
+                progress?.Report(100);
+                return;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            // Remote rows and their owner bindings form one authorization
+            // snapshot. Re-prove the complete all-domain identity map after all
+            // watchlist/request reads and require exact equality immediately
+            // before the first local mutation. A source-local id rebound during
+            // staging must invalidate the whole run, not apply B's rows to A.
+            var commitUserSnapshots = await FetchSeerrUserMapSnapshotsAsync(
+                httpClient,
+                urls,
+                config.SeerrApiKey,
+                cancellationToken).ConfigureAwait(false);
+            if (!commitUserSnapshots.IsComplete
+                || !SeerrUserIdentityDomains.TryParse(
+                    commitUserSnapshots,
+                    out var commitUserDomains)
+                || !SeerrUserIdentityDomains.AreEquivalent(
+                    seerrUserDomains,
+                    commitUserDomains))
+            {
+                _logger.LogWarning(
+                    "[Seerr→Jellyfin Watchlist Sync] User ownership changed or could not be revalidated before the local commit. No changes will be applied.");
+                progress?.Report(100);
+                return;
+            }
+
+            var commitConfig = _configProvider.ConfigurationOrNull;
+            if (!syncConfigStamp.Matches(
+                    commitConfig,
+                    _configProvider.ConfigurationRevision)
+                || commitConfig?.SeerrEnabled != true
+                || !commitConfig.SyncSeerrWatchlist)
+            {
+                _logger.LogWarning(
+                    "[Seerr→Jellyfin Watchlist Sync] Configuration changed while staging the sync. No local changes will be applied.");
+                progress?.Report(100);
+                return;
+            }
+
+            config = commitConfig;
             var totalUsers = jellyfinUsers.Count;
             var processedUsers = 0;
             var totalItemsAdded = 0;
 
             foreach (var jellyfinUser in jellyfinUsers)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
                 try
                 {
                     _logger.LogInformation($"=================================================================================================================================");
@@ -139,29 +288,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
                     _logger.LogInformation($"[Seerr→Jellyfin Watchlist Sync] Processing user: {jellyfinUser.Username}");
 
-                    // Clean up old processed items if prevention is enabled
-                    if (config.PreventWatchlistReAddition)
-                    {
-                        _userConfigurationManager.CleanupOldProcessedWatchlistItems(jellyfinUser.Id, config.WatchlistMemoryRetentionDays);
-                    }
-
-                    var normalizedUserId = NormalizeUserId(jellyfinUser.Id.ToString());
-                    seerrUserMap.TryGetValue(normalizedUserId, out var seerrUserId);
-
-                    if (string.IsNullOrEmpty(seerrUserId))
+                    if (!stagedInputs.TryGetValue(jellyfinUser.Id, out var stagedInput))
                     {
                         _logger.LogWarning($"[Seerr→Jellyfin Watchlist Sync] No Seerr account linked for user: {jellyfinUser.Username}");
                         processedUsers++;
+                        progress?.Report((double)processedUsers / totalUsers * 100);
                         continue;
                     }
 
-                    // Get watchlist from Seerr
-                    var watchlistItems = await GetSeerrWatchlist(httpClient, seerrUrl, seerrUserId, config.SeerrApiKey) ?? new List<WatchlistItem>();
+                    var watchlistItems = stagedInput.WatchlistItems;
+                    var requestItems = stagedInput.RequestItems;
 
-                    var requestItems = new List<WatchlistItem>();
-                    if (config.AddRequestedMediaToWatchlist)
+                    // This is a local mutation, so it belongs after every required
+                    // Seerr collection for the entire run has been proven complete.
+                    if (config.PreventWatchlistReAddition)
                     {
-                        requestItems = await GetSeerrRequests(httpClient, seerrUrl, seerrUserId, config.SeerrApiKey) ?? new List<WatchlistItem>();
+                        _userConfigurationManager.CleanupOldProcessedWatchlistItems(jellyfinUser.Id, config.WatchlistMemoryRetentionDays);
                     }
 
                     // Log consolidated summary
@@ -189,15 +331,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                     var processedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var item in combinedItems)
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-
                         var key = $"{item.MediaType}:{item.TmdbId}";
                         if (!processedKeys.Add(key))
                         {
                             continue;
                         }
 
-                        var result = await ProcessWatchlistItem(jellyfinUser, item);
+                        var result = await ProcessWatchlistItem(
+                            jellyfinUser,
+                            item,
+                            config,
+                            CancellationToken.None).ConfigureAwait(false);
                         var itemInfo = $"TMDB: {item.TmdbId}";
 
                         switch (result)
@@ -237,6 +381,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
                     _logger.LogInformation($"[Seerr→Jellyfin Watchlist Sync] User {jellyfinUser.Username}: Added {itemsAdded} items to watchlist, {itemsPending} items added to pending watchlist, {alreadyProcessedItems.Count} already processed, {alreadyInWatchlistItems.Count} already in watchlist, {notInLibraryItems.Count} not in library");
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogError($"[Seerr→Jellyfin Watchlist Sync] Error processing user {jellyfinUser.Username}: {ex.Message}");
@@ -253,240 +401,243 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             progress?.Report(100);
         }
 
-        private static string NormalizeUserId(string? userId)
+        internal static Task<SeerrPagedCollectionResult> FetchSeerrUserMapSnapshotAsync(
+            HttpClient httpClient,
+            IEnumerable<string> seerrUrls,
+            string apiKey,
+            CancellationToken cancellationToken)
         {
-            return string.IsNullOrEmpty(userId) ? string.Empty : userId.Replace("-", string.Empty);
-        }
-
-        private async Task<Dictionary<string, string>> GetSeerrUserMap(HttpClient httpClient, string seerrUrl, string apiKey)
-        {
-            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-            // paginate beyond take=1000. Without
-            // this, deployments with >1000 Seerr users silently lose the tail
-            // and those users get "no Seerr account linked" warnings.
             const int pageSize = 1000;
-            int skip = 0;
-            int reportedTotal = -1;
-            try
-            {
-                while (true)
-                {
-                    var requestUri = $"{seerrUrl.TrimEnd('/')}/api/v1/user?take={pageSize}&skip={skip}";
-                    using var request = Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr.SeerrHttpHelper.BuildRequest(
-                        HttpMethod.Get, requestUri, apiKey);
-                    using var response = await httpClient.SendAsync(request);
-                    var (content, error) = await Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
-
-                    if (error != null)
-                    {
-                        _logger.LogWarning($"[Seerr→Jellyfin Watchlist Sync] Failed to get users from Seerr: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
-                        return result;
-                    }
-
-                    var usersResponse = JsonSerializer.Deserialize<JsonElement>(content!);
-
-                    if (!usersResponse.TryGetProperty("results", out var usersArray))
-                    {
-                        return result;
-                    }
-
-                    int pageCount = 0;
-                    foreach (var user in usersArray.EnumerateArray())
-                    {
-                        pageCount++;
-                        if (!user.TryGetProperty("jellyfinUserId", out var jfUserId) ||
-                            !user.TryGetProperty("id", out var id))
-                        {
-                            continue;
-                        }
-
-                        var normalizedJellyfinUserId = NormalizeUserId(jfUserId.GetString());
-                        if (string.IsNullOrEmpty(normalizedJellyfinUserId))
-                        {
-                            continue;
-                        }
-
-                        result[normalizedJellyfinUserId] = id.GetInt32().ToString();
-                    }
-
-                    // Try to read the upstream's total to know when to stop
-                    if (reportedTotal < 0
-                        && usersResponse.TryGetProperty("pageInfo", out var pageInfo)
-                        && pageInfo.TryGetProperty("results", out var totalEl)
-                        && totalEl.ValueKind == JsonValueKind.Number)
-                    {
-                        reportedTotal = totalEl.GetInt32();
-                    }
-
-                    skip += pageCount;
-                    if (pageCount < pageSize) break;          // last page
-                    if (reportedTotal >= 0 && skip >= reportedTotal) break;
-                    if (skip >= 100000) { _logger.LogWarning("[Seerr→Jellyfin Watchlist Sync] Pagination safety cap hit at 100000 users"); break; }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"[Seerr→Jellyfin Watchlist Sync] Error getting Seerr user map: {ex.Message}");
-            }
-
-            return result;
+            return SeerrPaginationHelper.FetchAllAsync(
+                httpClient,
+                seerrUrls,
+                static (url, _, skip) => $"{url}/api/v1/user?take={pageSize}&skip={skip}",
+                apiKey,
+                apiUserId: null,
+                requestedPageSize: pageSize,
+                JsonIdIdentity,
+                cancellationToken);
         }
 
-        private async Task<List<WatchlistItem>?> GetSeerrWatchlist(HttpClient httpClient, string seerrUrl, string seerrUserId, string apiKey)
+        internal static Task<SeerrMultiSourceCollectionResult> FetchSeerrUserMapSnapshotsAsync(
+            HttpClient httpClient,
+            IEnumerable<string> seerrUrls,
+            string apiKey,
+            CancellationToken cancellationToken)
         {
-            try
-            {
-                var requestUri = $"{seerrUrl.TrimEnd('/')}/api/v1/user/{seerrUserId}/watchlist";
-                using var request = Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr.SeerrHttpHelper.BuildRequest(
-                    HttpMethod.Get, requestUri, apiKey, seerrUserId);
-                using var response = await httpClient.SendAsync(request);
-                var (content, error) = await Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
-
-                if (error == null && content != null)
-                {
-                    var watchlistResponse = JsonSerializer.Deserialize<JsonElement>(content);
-
-                    var items = new List<WatchlistItem>();
-
-                    if (watchlistResponse.TryGetProperty("results", out var resultsArray))
-                    {
-                        foreach (var item in resultsArray.EnumerateArray())
-                        {
-                            var watchlistItem = new WatchlistItem();
-
-                            if (item.TryGetProperty("tmdbId", out var tmdbId))
-                            {
-                                watchlistItem.TmdbId = tmdbId.GetInt32();
-                            }
-
-                            if (item.TryGetProperty("mediaType", out var mediaType))
-                            {
-                                watchlistItem.MediaType = mediaType.GetString() ?? "";
-                            }
-
-                            if (item.TryGetProperty("title", out var title))
-                            {
-                                watchlistItem.Title = title.GetString() ?? "";
-                            }
-
-                            items.Add(watchlistItem);
-                        }
-                    }
-
-                    return items;
-                }
-                else if (error != null)
-                {
-                    _logger.LogDebug($"[Seerr→Jellyfin Watchlist Sync] Watchlist fetch failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"[Seerr→Jellyfin Watchlist Sync] Error getting Seerr watchlist: {ex.Message}");
-            }
-
-            return null;
+            const int pageSize = 1000;
+            return SeerrPaginationHelper.FetchAllSourcesAsync(
+                httpClient,
+                seerrUrls,
+                static (url, _, skip) => $"{url}/api/v1/user?take={pageSize}&skip={skip}",
+                apiKey,
+                apiUserId: null,
+                requestedPageSize: pageSize,
+                JsonIdIdentity,
+                cancellationToken);
         }
 
-        private async Task<List<WatchlistItem>?> GetSeerrRequests(HttpClient httpClient, string seerrUrl, string seerrUserId, string apiKey)
+        internal static Task<SeerrPagedCollectionResult> FetchSeerrWatchlistSnapshotAsync(
+            HttpClient httpClient,
+            string seerrUrl,
+            string seerrUserId,
+            string apiKey,
+            CancellationToken cancellationToken)
         {
-            try
-            {
-                var requestUri = $"{seerrUrl.TrimEnd('/')}/api/v1/request?take=500&skip=0&sort=added&filter=all";
-                using var request = Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr.SeerrHttpHelper.BuildRequest(
-                    HttpMethod.Get, requestUri, apiKey, seerrUserId);
-                using var response = await httpClient.SendAsync(request);
-                var (content, error) = await Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
-
-                if (error != null)
-                {
-                    _logger.LogDebug($"[Seerr→Jellyfin Watchlist Sync] Requests fetch failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
-                    return null;
-                }
-
-                var json = JsonSerializer.Deserialize<JsonElement>(content!);
-
-                if (!json.TryGetProperty("results", out var resultsArray))
-                {
-                    _logger.LogDebug("[Seerr→Jellyfin Watchlist Sync] Requests response missing results array");
-                    return null;
-                }
-
-                var items = new List<WatchlistItem>();
-                foreach (var item in resultsArray.EnumerateArray())
-                {
-                    // Filter to the requesting user
-                    if (!BelongsToUser(item, seerrUserId))
-                    {
-                        continue;
-                    }
-
-                    var parsed = ParseRequestItem(item);
-                    if (parsed != null)
-                    {
-                        items.Add(parsed);
-                    }
-                }
-
-                return items;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"[Seerr→Jellyfin Watchlist Sync] Error getting Seerr requests: {ex.Message}");
-            }
-
-            return null;
+            const int pageSize = 100;
+            return SeerrPaginationHelper.FetchAllAsync(
+                httpClient,
+                new[] { seerrUrl },
+                (url, page, _) => $"{url}/api/v1/user/{seerrUserId}/watchlist?take={pageSize}&page={page}",
+                apiKey,
+                seerrUserId,
+                requestedPageSize: pageSize,
+                WatchlistIdentity,
+                cancellationToken);
         }
 
-        private bool BelongsToUser(JsonElement requestElement, string seerrUserId)
+        private static bool TryParseWatchlistItems(
+            IEnumerable<JsonElement> rows,
+            out List<WatchlistItem> items)
         {
+            items = new List<WatchlistItem>();
+            foreach (var row in rows)
+            {
+                if (!row.TryGetProperty("tmdbId", out var tmdbId)
+                    || !tmdbId.TryGetInt32(out var parsedTmdbId)
+                    || parsedTmdbId <= 0
+                    || !row.TryGetProperty("mediaType", out var mediaType)
+                    || !TryNormalizeMediaType(mediaType, out var normalizedMediaType))
+                {
+                    return false;
+                }
+
+                items.Add(new WatchlistItem
+                {
+                    TmdbId = parsedTmdbId,
+                    MediaType = normalizedMediaType,
+                    Title = row.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String
+                        ? title.GetString() ?? string.Empty
+                        : string.Empty
+                });
+            }
+
+            return true;
+        }
+
+        internal static Task<SeerrPagedCollectionResult> FetchSeerrRequestSnapshotAsync(
+            HttpClient httpClient,
+            string seerrUrl,
+            string seerrUserId,
+            string apiKey,
+            CancellationToken cancellationToken)
+        {
+            const int pageSize = 500;
+            return SeerrPaginationHelper.FetchAllAsync(
+                httpClient,
+                new[] { seerrUrl },
+                (url, _, skip) => $"{url}/api/v1/request?take={pageSize}&skip={skip}&sort=added&filter=all&requestedBy={Uri.EscapeDataString(seerrUserId)}",
+                apiKey,
+                seerrUserId,
+                requestedPageSize: pageSize,
+                JsonIdIdentity,
+                cancellationToken);
+        }
+
+        private static bool TryParseRequestItems(
+            IEnumerable<JsonElement> rows,
+            string seerrUserId,
+            out List<WatchlistItem> items)
+        {
+            items = new List<WatchlistItem>();
+            foreach (var row in rows)
+            {
+                if (!TryGetRequestOwnerId(row, out var ownerId)) return false;
+                if (!string.Equals(ownerId, seerrUserId, StringComparison.OrdinalIgnoreCase)) continue;
+                var parsed = ParseRequestItem(row);
+                if (parsed == null) return false;
+                items.Add(parsed);
+            }
+
+            return true;
+        }
+
+        internal static bool HasCompleteValidRequestProjection(
+            IEnumerable<JsonElement> rows,
+            string seerrUserId)
+            => CountCompleteValidRequestProjection(rows, seerrUserId).HasValue;
+
+        internal static int? CountCompleteValidRequestProjection(
+            IEnumerable<JsonElement> rows,
+            string seerrUserId)
+            => TryParseRequestItems(rows, seerrUserId, out var items)
+                ? items.Count
+                : null;
+
+        private static string? JsonIdIdentity(JsonElement item)
+            => SeerrPaginationHelper.CanonicalPositiveIntegerPropertyIdentity(item, "id");
+
+        private static string? WatchlistIdentity(JsonElement item)
+        {
+            if (item.TryGetProperty("tmdbId", out var tmdbId)
+                && tmdbId.TryGetInt32(out var parsedTmdbId)
+                && item.TryGetProperty("mediaType", out var mediaType)
+                && mediaType.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(mediaType.GetString()))
+            {
+                return $"{mediaType.GetString()!.Trim().ToLowerInvariant()}:{parsedTmdbId}";
+            }
+
+            return JsonIdIdentity(item);
+        }
+
+        private void LogIncompleteCollection(string collectionName, SeerrPagedCollectionResult snapshot)
+        {
+            if (snapshot.Error != null)
+            {
+                _logger.LogWarning(
+                    $"[Seerr→Jellyfin Watchlist Sync] Incomplete {collectionName} from {snapshot.SourceUrl}: code={snapshot.Error.Code} status={snapshot.Error.HttpStatus} cf-ray={snapshot.Error.CfRay} — {snapshot.Error.Message}; {snapshot.FailureReason}. No changes will be applied.");
+                return;
+            }
+
+            _logger.LogWarning(
+                $"[Seerr→Jellyfin Watchlist Sync] Incomplete {collectionName} from {snapshot.SourceUrl ?? "configured URLs"}: {snapshot.FailureReason}. No changes will be applied.");
+        }
+
+        private void LogIncompleteCollection(
+            string collectionName,
+            SeerrMultiSourceCollectionResult snapshots)
+        {
+            if (snapshots.Error != null)
+            {
+                var error = snapshots.Error;
+                _logger.LogWarning(
+                    $"[Seerr→Jellyfin Watchlist Sync] Incomplete {collectionName} from {snapshots.FailedSourceUrl}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}; {snapshots.FailureReason}. No changes will be applied.");
+                return;
+            }
+
+            _logger.LogWarning(
+                $"[Seerr→Jellyfin Watchlist Sync] Incomplete {collectionName} from {snapshots.FailedSourceUrl ?? "configured URLs"}: {snapshots.FailureReason}. No changes will be applied.");
+        }
+
+        private static bool TryGetRequestOwnerId(JsonElement requestElement, out string? ownerId)
+        {
+            ownerId = null;
             // Check common shapes: requestedBy is object with id, or scalar id, or userId
             if (requestElement.TryGetProperty("requestedBy", out var requestedBy))
             {
                 if (requestedBy.ValueKind == JsonValueKind.Number && requestedBy.TryGetInt32(out var idNumber))
                 {
-                    return string.Equals(idNumber.ToString(), seerrUserId, StringComparison.OrdinalIgnoreCase);
+                    ownerId = idNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    return idNumber > 0;
                 }
 
-                if (requestedBy.ValueKind == JsonValueKind.String)
+                if (requestedBy.ValueKind == JsonValueKind.String
+                    && TryReadPositiveInt(requestedBy, out var stringId))
                 {
-                    var idStr = requestedBy.GetString();
-                    if (!string.IsNullOrEmpty(idStr) && string.Equals(idStr, seerrUserId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return true;
-                    }
+                    ownerId = stringId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    return true;
                 }
 
                 if (requestedBy.ValueKind == JsonValueKind.Object && requestedBy.TryGetProperty("id", out var idProp))
                 {
-                    if ((idProp.ValueKind == JsonValueKind.Number && idProp.TryGetInt32(out var objId) && string.Equals(objId.ToString(), seerrUserId, StringComparison.OrdinalIgnoreCase)) ||
-                        (idProp.ValueKind == JsonValueKind.String && string.Equals(idProp.GetString() ?? string.Empty, seerrUserId, StringComparison.OrdinalIgnoreCase)))
+                    if (idProp.ValueKind == JsonValueKind.Number && idProp.TryGetInt32(out var objId))
                     {
+                        ownerId = objId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        return objId > 0;
+                    }
+
+                    if (idProp.ValueKind == JsonValueKind.String
+                        && TryReadPositiveInt(idProp, out var objectStringId))
+                    {
+                        ownerId = objectStringId.ToString(System.Globalization.CultureInfo.InvariantCulture);
                         return true;
                     }
+
+                    return false;
                 }
             }
 
             return false;
         }
 
-        private WatchlistItem? ParseRequestItem(JsonElement requestElement)
+        private static WatchlistItem? ParseRequestItem(JsonElement requestElement)
         {
             // Prefer media.tmdbId / media.mediaType, fallback to top-level tmdbId/mediaType
             int tmdbId = 0;
-            string mediaType = "";
+            string? mediaType = null;
             string title = "";
 
             if (requestElement.TryGetProperty("media", out var media))
             {
+                if (media.ValueKind != JsonValueKind.Object) return null;
                 if (media.TryGetProperty("tmdbId", out var tmdbProp))
                 {
-                    tmdbId = tmdbProp.GetInt32();
+                    if (!TryReadPositiveInt(tmdbProp, out tmdbId)) return null;
                 }
-                if (media.TryGetProperty("mediaType", out var mtProp) && mtProp.ValueKind == JsonValueKind.String)
+                if (!TryMergeMediaType(media, "mediaType", ref mediaType))
                 {
-                    mediaType = mtProp.GetString() ?? "";
+                    return null;
                 }
                 if (media.TryGetProperty("title", out var titleProp) && titleProp.ValueKind == JsonValueKind.String)
                 {
@@ -494,27 +645,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 }
             }
 
-            if (tmdbId == 0 && requestElement.TryGetProperty("tmdbId", out var topTmdb))
+            if (requestElement.TryGetProperty("tmdbId", out var topTmdb))
             {
-                tmdbId = topTmdb.GetInt32();
+                if (!TryReadPositiveInt(topTmdb, out var topTmdbId)) return null;
+                if (tmdbId > 0 && tmdbId != topTmdbId) return null;
+                tmdbId = topTmdbId;
             }
 
-            if (tmdbId == 0 && requestElement.TryGetProperty("mediaId", out var mediaIdProp))
+            if (!TryMergeMediaType(requestElement, "mediaType", ref mediaType)
+                || !TryMergeMediaType(requestElement, "type", ref mediaType))
             {
-                if (mediaIdProp.ValueKind == JsonValueKind.Number && mediaIdProp.TryGetInt32(out var mediaIdInt))
-                {
-                    tmdbId = mediaIdInt;
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(mediaType) && requestElement.TryGetProperty("mediaType", out var topMediaType) && topMediaType.ValueKind == JsonValueKind.String)
-            {
-                mediaType = topMediaType.GetString() ?? "";
-            }
-
-            if (string.IsNullOrWhiteSpace(mediaType) && requestElement.TryGetProperty("type", out var typeProp) && typeProp.ValueKind == JsonValueKind.String)
-            {
-                mediaType = typeProp.GetString() ?? "";
+                return null;
             }
 
             if (string.IsNullOrWhiteSpace(title) && requestElement.TryGetProperty("title", out var topTitle) && topTitle.ValueKind == JsonValueKind.String)
@@ -522,7 +663,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 title = topTitle.GetString() ?? "";
             }
 
-            if (tmdbId == 0 || string.IsNullOrWhiteSpace(mediaType))
+            if (tmdbId <= 0 || mediaType == null)
             {
                 return null;
             }
@@ -533,6 +674,43 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 MediaType = mediaType,
                 Title = title
             };
+        }
+
+        private static bool TryNormalizeMediaType(JsonElement value, out string normalized)
+        {
+            normalized = string.Empty;
+            if (value.ValueKind != JsonValueKind.String) return false;
+            normalized = value.GetString()?.Trim().ToLowerInvariant() ?? string.Empty;
+            return normalized is "movie" or "tv";
+        }
+
+        private static bool TryReadPositiveInt(JsonElement value, out int parsed)
+        {
+            parsed = 0;
+            if (value.ValueKind == JsonValueKind.Number)
+            {
+                return value.TryGetInt32(out parsed) && parsed > 0;
+            }
+
+            return value.ValueKind == JsonValueKind.String
+                && int.TryParse(
+                    value.GetString(),
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out parsed)
+                && parsed > 0;
+        }
+
+        private static bool TryMergeMediaType(
+            JsonElement owner,
+            string propertyName,
+            ref string? mediaType)
+        {
+            if (!owner.TryGetProperty(propertyName, out var value)) return true;
+            if (!TryNormalizeMediaType(value, out var candidate)) return false;
+            if (mediaType != null && !string.Equals(mediaType, candidate, StringComparison.Ordinal)) return false;
+            mediaType = candidate;
+            return true;
         }
 
         private enum WatchlistItemResult
@@ -562,10 +740,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                     StringComparison.Ordinal);
         }
 
-        private Task<WatchlistItemResult> ProcessWatchlistItem(JUser user, WatchlistItem watchlistItem)
+        private Task<WatchlistItemResult> ProcessWatchlistItem(
+            JUser user,
+            WatchlistItem watchlistItem,
+            PluginConfiguration config,
+            CancellationToken cancellationToken)
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 // Drop items with no real TMDB id (absent → 0, or an explicit 0) before matching or
                 // recording them: a 0 would otherwise key the processed-items check and match a
                 // Jellyfin item stored with ProviderIds["Tmdb"]=="0", liking the wrong item.
@@ -574,8 +758,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                     return Task.FromResult(WatchlistItemResult.Skipped);
                 }
 
-                var config = _configProvider.ConfigurationOrNull;
-                if (config?.PreventWatchlistReAddition == true)
+                if (config.PreventWatchlistReAddition)
                 {
                     // Check if this item was already processed for this user
                     var processedItems = _userConfigurationManager.GetProcessedWatchlistItems(user.Id);
@@ -619,7 +802,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 if (userData.Likes == true)
                 {
                     // Mark as processed if prevention is enabled and not already marked
-                    if (config?.PreventWatchlistReAddition == true)
+                    if (config.PreventWatchlistReAddition)
                     {
                         TryMarkProcessed(user.Id, watchlistItem.TmdbId, watchlistItem.MediaType, "existing");
                     }
@@ -629,16 +812,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
                 // Add to watchlist
                 userData.Likes = true;
-                _userDataManager.SaveUserData(user, item, userData, UserDataSaveReason.UpdateUserRating, default);
+                _userDataManager.SaveUserData(
+                    user,
+                    item,
+                    userData,
+                    UserDataSaveReason.UpdateUserRating,
+                    cancellationToken);
 
                 // Mark as processed if prevention is enabled
-                if (config?.PreventWatchlistReAddition == true)
+                if (config.PreventWatchlistReAddition)
                 {
                     TryMarkProcessed(user.Id, watchlistItem.TmdbId, watchlistItem.MediaType, "sync");
                 }
 
                 _logger.LogInformation($"[Seerr→Jellyfin Watchlist Sync] ✓ Added to watchlist: {item.Name} for user {user.Username}");
                 return Task.FromResult(WatchlistItemResult.Added);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {

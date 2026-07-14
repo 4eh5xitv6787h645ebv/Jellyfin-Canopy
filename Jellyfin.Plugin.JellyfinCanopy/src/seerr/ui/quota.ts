@@ -70,7 +70,10 @@ function formatQuotaLine(q: any, type: any) {
         text: usagePart,
         restricted,
         unlimited: false,
-        resetText: formatNextReset(q.nextResetAt)
+        // The reset copy promises request eligibility. If remaining capacity
+        // exists, the user can request now and a future roll-off timestamp
+        // would be actively misleading even if an older server supplied one.
+        resetText: restricted ? formatNextReset(q.nextResetAt) : ''
     };
 }
 

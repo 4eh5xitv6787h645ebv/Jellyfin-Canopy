@@ -6,9 +6,7 @@
 //   - CI: the dockerized seeded server from e2e/docker/ (see compose.yml).
 //
 // Imports come from 'playwright/test' (the runner re-exported by the
-// `playwright` package) so the suite runs both against a globally installed
-// `playwright` (NODE_PATH) and a CI-installed `@playwright/test` — the two
-// packages ship the same runner.
+// `playwright` dependency installed with `@playwright/test`).
 //
 // Specs are intentionally serial (workers: 1): they share one server's state
 // (favorites, plugin config) and every spec restores what it touches.

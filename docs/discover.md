@@ -253,7 +253,7 @@ Users with access and users without access appear differently in Seerr:
 1. Go to **Dashboard → Plugins → Jellyfin Canopy → Seerr** tab.
 2. Check **Enable Seerr integration** — the master toggle; nothing Seerr-related works until this is on.
 3. Check **Show Seerr Results in Search**.
-4. Enter your **Seerr URL(s)**, one per line — the **internal** address the Jellyfin *server* uses (LAN or docker-network). Use the internal URL for best performance; you can list several, and the first successful connection is used.
+4. Enter your **Seerr URL(s)**, one per line — the **internal** address the Jellyfin *server* uses (LAN or docker-network). Use the internal URL for best performance. Each distinct URL represents a separate Seerr identity domain: user-scoped work stays pinned to the instance where that user was resolved, while safe public reads can try the configured order. Do not list multiple aliases for the same instance.
 5. Optionally enter a **Seerr External URL** — the **public** address a user's *browser* opens for "Open in Seerr" links (see [Internal vs external URL](#internal-vs-external-url)). Leave blank to reuse the internal URL.
 6. Enter your **Seerr API Key** — found in Seerr under **Settings → General → API Key**.
 7. Click the **Test** button next to the API Key field to verify the connection.
@@ -307,7 +307,7 @@ jellyfin_url|seerr_url
 
 #### Step 4 — Auto-import users (optional)
 
-Skip manual imports in Seerr by letting the plugin import users just in time. When enabled, a new Jellyfin user is imported into Seerr the first time they use Seerr Search.
+Skip manual imports in Seerr by letting the plugin import users just in time. When enabled, the lookup searches every configured identity domain for an existing mapping. If none exists, the new Jellyfin user is imported once into the first canonical configured domain when they first use Seerr Search.
 
 1. Go to **Dashboard → Plugins → Jellyfin Canopy → Seerr** tab.
 2. In the **Users** section, check **Auto import Jellyfin users to Seerr**.
@@ -316,7 +316,7 @@ Skip manual imports in Seerr by letting the plugin import users just in time. Wh
 5. Click **Save**.
 
 !!! tip "Scheduled import"
-    The scheduled task **Import Jellyfin Users to Seerr** runs every 6 hours by default when auto import is enabled. Change the trigger under **Dashboard → Scheduled Tasks**.
+    The scheduled task **Import Jellyfin Users to Seerr** runs every 6 hours by default when auto import is enabled. Manual and scheduled bulk imports first read complete, stable user maps from every configured identity domain and exclude every user already mapped anywhere. A user linked on multiple domains is valid and remains excluded. Only the truly unbound batch is sent once to the first canonical configured domain; the POST is never fanned out or replayed elsewhere after a timeout, malformed response, or error. If any domain's map is incomplete, malformed, or internally ambiguous, no import is sent. Change the trigger under **Dashboard → Scheduled Tasks**.
 
 ### Search & request
 
@@ -374,7 +374,7 @@ These toggles on the **Seerr** tab shape the request experience:
 | **Enable 4K Requests** | Off | Master switch for 4K movie requests. Requires a Seerr instance with a 4K Radarr and users with 4K permission. See [4K requests](#4k-requests). |
 | **Enable 4K TV Requests** | Off | Master switch for 4K TV requests. Requires a 4K Sonarr and users with 4K permission. When enabled and available, TV request buttons gain a 4K dropdown, the season modal opens in 4K mode with the title **Request Series - 4K** and primary button **Request in 4K**. |
 | **Show Advanced Request Options** | — | Shows advanced options (season selection, quality options, etc.) in the request modal. |
-| **Show Request Quota Info** | On | Request modals display a chip with the user's current request usage and when their next request slot frees up, read from Seerr's per-user quota. A blocked request shows a detailed quota-error dialog instead of a vanishing toast. |
+| **Show Request Quota Info** | On | Request modals display a chip with the user's current request usage and, when a complete request history makes it safe to derive, when the next slot frees up. A temporary history failure omits only that reset estimate rather than hiding Seerr's authoritative quota numbers. A blocked request shows a detailed quota-error dialog instead of a vanishing toast. |
 | **Show Collections in Seerr Results** | On | Shows TMDB collections in results with an option to request the whole collection. See [Requesting collections](#requesting-collections). |
 | **Open Results in "More Info" Modal** | Off | Controls what happens when a user clicks a Seerr result's title or poster. **Off** opens the item in Seerr; **On** opens an in-app **More Info** modal, keeping the user inside Jellyfin. |
 | **Show "Request More" Button on Series** | On | Adds a **Request More** button beside the Seasons heading on Series detail pages whenever the show has unrequested seasons in Seerr, so users can request more seasons without using the search bar. |
@@ -423,11 +423,11 @@ Auto-Requests place a request on your users' behalf based on what they watch —
 - **Quality Profile Mode** — how the auto request picks its Radarr target:
     - *Default* — Seerr uses its default Radarr server and quality profile.
     - *Original* — uses the same quality profile as the movie being watched, falling back to default if not found.
-    - *Custom* — always uses the specific Radarr server, quality profile and root folder you select.
+    - *Custom* — uses the specific Radarr server, quality profile and root folder you select. These IDs are local to a Seerr instance, so Custom mode requires exactly one distinct configured Seerr identity domain. With multiple domains, the automatic request fails closed instead of applying source-less IDs to whichever instance owns the user.
 - **Use default instead of 4K fallback** (default on) — applies only when Quality Profile Mode is *Original*. If the watched movie was requested with a 4K profile, the auto-request uses Seerr's default profile instead, preventing failures or manual approvals for users who lack 4K request permission. Disable it to preserve the original 4K profile when all your users have 4K request access.
 
-!!! note "One request per title across multiple Seerr backends"
-    When more than one Seerr instance is configured, an automatic request only fans out to the next backend on a **pure transport failure** (a backend that couldn't be reached at all). A backend that answered — even with an error — may already have committed the request, so it isn't re-sent elsewhere, and an "already requested" response is treated as success. This prevents the same title being duplicated across two Seerr instances.
+!!! note "Automatic requests stay on one Seerr instance"
+    When more than one Seerr instance is configured, the plugin first resolves the Jellyfin user to one source instance. Collection/status/profile reads and the final automatic request all stay on that exact instance. The POST is never replayed to another backend after a failure, because the first backend may already have committed it. An "already requested" response from the pinned instance is treated as success.
 
 ### The Requests page
 
@@ -461,7 +461,7 @@ The page shows active downloads with progress bars, ETA, quality and size; Seerr
 
 !!! note "Complete lists and per-user filtering"
     - The request list is filtered by **each caller's own Jellyfin parental-rating limit** (see [Parental-rating & tag filtering](#parental-rating-tag-filtering)), and a user who can only see their own requests never receives another user's rows.
-    - The **Coming Soon** view aggregates *all* pages of pending and approved requests before paging locally, so it doesn't stop at the first page and its totals reflect the full future-dated set.
+    - The **Coming Soon** view reads *all* pages of Seerr's non-terminal processing collection before filtering future dates and paging locally, so it doesn't stop at the first page and its totals reflect the full future-dated set.
 
 #### Polling
 
@@ -535,6 +535,7 @@ Keep watchlists in step between Seerr and Jellyfin, in either direction. Configu
 Close the gap between new items landing in Jellyfin and Seerr noticing them. **Trigger Seerr recently-added scan when new Jellyfin items are added** (default **off**) — when on, the plugin asks Seerr to run its recently-added scan whenever new items are imported into your Jellyfin library, so Seerr marks matching requests as available sooner.
 
 - **Debounce (seconds)** (default **60**, range **5–3600**) — coalesces bursts of item-added events into a single Seerr scan, so a large import triggers one scan after activity settles rather than one per item.
+- Each debounced batch and each manual **Trigger scan now** click sends at most one trigger to every normalized distinct Seerr URL. Comma/newline duplicates and trailing-slash aliases collapse to one identity domain; distinct URLs are independent intended domains, so one domain failing does not prevent the others from being attempted. The manual result reports all-success, partial-success, and all-failed outcomes separately.
 
 ### Parental-rating & tag filtering
 

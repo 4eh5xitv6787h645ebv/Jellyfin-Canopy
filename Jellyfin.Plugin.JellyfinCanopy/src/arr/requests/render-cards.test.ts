@@ -8,7 +8,8 @@ import { describe, expect, it } from 'vitest';
 // ui-kit must load before render-cards: it installs the real JC.escapeHtml
 // (the test setup stub is a no-op) which render-cards captures at import.
 import '../../core/ui-kit';
-import { renderDownloadCard, renderSeasonPackCard } from './render-cards';
+import { renderDownloadCard, renderIssueCard, renderRequestCard, renderSeasonPackCard } from './render-cards';
+import { state } from './data';
 import type { DownloadItem } from './data';
 import type { DownloadGroup } from './render-helpers';
 
@@ -97,5 +98,54 @@ describe('renderSeasonPackCard escaping', () => {
         const rangeBadge = badges[badges.length - 1];
         expect(rangeBadge.textContent).toBe(HOSTILE);
         expect(rangeBadge.children.length).toBe(0);
+    });
+});
+
+describe('renderRequestCard source binding', () => {
+    it('only renders approval controls when a source token is present', () => {
+        state.canApproveRequests = true;
+        const pluginConfig = window.JellyfinCanopy.pluginConfig as Record<string, unknown>;
+        pluginConfig.RequestApprovalsEnabled = true;
+
+        const withoutToken = renderToDom(renderRequestCard({
+            id: 9,
+            requestStatus: 1,
+            title: 'Pending movie',
+        }));
+        expect(withoutToken.querySelector('.jc-request-approve-btn')).toBeNull();
+
+        const token = 'signed.payload"><img src=x onerror=alert(1)>';
+        const withToken = renderToDom(renderRequestCard({
+            id: 9,
+            sourceToken: token,
+            requestStatus: 1,
+            title: 'Pending movie',
+        }));
+        const approve = withToken.querySelector<HTMLButtonElement>('.jc-request-approve-btn');
+        const decline = withToken.querySelector<HTMLButtonElement>('.jc-request-decline-btn');
+        expect(approve?.getAttribute('data-source-token')).toBe(token);
+        expect(decline?.getAttribute('data-source-token')).toBe(token);
+        expect(withToken.querySelector('img[src="x"]')).toBeNull();
+    });
+});
+
+describe('renderIssueCard avatar source binding', () => {
+    it('refuses a relative issue avatar unless the server decorated it with a source token', () => {
+        const withoutToken = renderToDom(renderIssueCard({
+            createdBy: { username: 'reporter', avatar: '/avatar/reporter.png' },
+        }));
+        expect(withoutToken.querySelector('.jc-request-avatar')).toBeNull();
+
+        const withToken = renderToDom(renderIssueCard({
+            createdBy: {
+                username: 'reporter',
+                avatar: '/avatar/reporter.png',
+                avatarSourceToken: 'payload.signature',
+            },
+        }));
+        const avatar = withToken.querySelector<HTMLImageElement>('.jc-request-avatar');
+        expect(avatar?.getAttribute('data-avatar-src')).toBe(
+            '/JellyfinCanopy/proxy/avatar?path=%2Favatar%2Freporter.png&sourceToken=payload.signature',
+        );
     });
 });

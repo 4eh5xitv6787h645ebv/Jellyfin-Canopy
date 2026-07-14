@@ -4684,49 +4684,201 @@
         });
         testSeerrBtn.addEventListener('click', testSeerrConnection);
 
+        /* jc-seerr-scan-helpers:start */
+        function jcNormalizeSeerrIdentityDomain(value) {
+            const trimmed = String(value || '').trim().replace(/\/+$/, '');
+            if (!trimmed) return '';
+
+            // WHATWG URL repairs forms such as `http:seerr.example` into an
+            // authority URL, while System.Uri deliberately retains that input
+            // as invalid/no-host. Require the explicit configuration grammar
+            // before parsing so manual and background scans use one identity
+            // policy and an unsaved malformed value is never silently retargeted.
+            if (!/^https?:\/\//i.test(trimmed)) return trimmed;
+
+            try {
+                const parsed = new URL(trimmed);
+                if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+                    || !parsed.hostname
+                    || parsed.username
+                    || parsed.password
+                    || parsed.search
+                    || parsed.hash) {
+                    // Configuration validation owns malformed URL reporting.
+                    // Preserve the exact trimmed value here so duplicate invalid
+                    // entries are still collapsed without changing their meaning.
+                    return trimmed;
+                }
+
+                const path = parsed.pathname === '/'
+                    ? ''
+                    : parsed.pathname.replace(/\/+$/, '');
+                // URL canonicalizes the case-insensitive scheme/host and removes
+                // default ports; pathname casing remains identity-significant.
+                const normalizedHostname = parsed.hostname.endsWith('.') && !parsed.hostname.endsWith('..')
+                    ? parsed.hostname.slice(0, -1)
+                    : parsed.hostname;
+                if (!normalizedHostname) return trimmed;
+                return parsed.protocol + '//' + normalizedHostname
+                    + (parsed.port ? ':' + parsed.port : '') + path;
+            } catch (_) {
+                return trimmed;
+            }
+        }
+
+        function jcParseSeerrIdentityDomains(rawUrls) {
+            const seen = new Set();
+            const domains = [];
+
+            String(rawUrls || '').split(/[\r\n,]+/).forEach(value => {
+                // Match SeerrUrlIdentity.ParseConfigured in the server project.
+                const domain = jcNormalizeSeerrIdentityDomain(value);
+                if (domain && !seen.has(domain)) {
+                    seen.add(domain);
+                    domains.push(domain);
+                }
+            });
+
+            return domains;
+        }
+
+        async function jcDispatchSeerrScanDomains(rawUrls, send, signal) {
+            const domains = jcParseSeerrIdentityDomains(rawUrls);
+            const results = [];
+
+            // Every distinct URL is an intended Seerr identity domain. Continue
+            // after both successes and failures: a later URL is not a failover
+            // target for an earlier one, and each domain needs its own scan.
+            for (const domain of domains) {
+                if (signal && signal.aborted) {
+                    return { domains, results, cancelled: true };
+                }
+
+                try {
+                    const response = await send(domain, signal);
+                    if (signal && signal.aborted) {
+                        return { domains, results, cancelled: true };
+                    }
+                    results.push({
+                        domain,
+                        ok: Boolean(response && response.ok === true),
+                        error: response && response.message ? String(response.message) : ''
+                    });
+                } catch (error) {
+                    if (signal && signal.aborted) {
+                        return { domains, results, cancelled: true };
+                    }
+                    results.push({ domain, ok: false, error });
+                }
+            }
+
+            return { domains, results, cancelled: false };
+        }
+
+        function jcSummarizeSeerrScanDispatch(dispatch) {
+            const total = dispatch.domains.length;
+            const succeeded = dispatch.results.filter(result => result.ok).length;
+            const failed = total - succeeded;
+            return {
+                total,
+                succeeded,
+                failed,
+                outcome: failed === 0 ? 'success' : (succeeded > 0 ? 'partial' : 'failure')
+            };
+        }
+        /* jc-seerr-scan-helpers:end */
+
+        let activeSeerrScanController = null;
+
+        function cancelActiveSeerrScan() {
+            if (activeSeerrScanController) {
+                activeSeerrScanController.abort();
+                activeSeerrScanController = null;
+            }
+        }
+
+        // Jellyfin dashboard builds have used both lifecycle event names. The
+        // dispatch helper also checks the signal between domains, so leaving the
+        // page cannot start another POST after the current request settles.
+        page.addEventListener('pagehide', cancelActiveSeerrScan);
+        page.addEventListener('viewhide', cancelActiveSeerrScan);
+
         async function triggerSeerrScanNow() {
-            const urls = (document.querySelector('#seerrUrls').value || '').split('\n').map(u => u.trim()).filter(Boolean);
+            const rawUrls = document.querySelector('#seerrUrls').value || '';
+            const domains = jcParseSeerrIdentityDomains(rawUrls);
             const apiKey = (document.querySelector('#SeerrApiKey').value || '').trim();
             const btn = document.querySelector('#triggerSeerrScanNowBtn');
             const status = document.querySelector('#triggerSeerrScanNowStatus');
 
-            if (!urls.length || !apiKey) {
+            if (!domains.length || !apiKey) {
                 Dashboard.alert({ title: 'Missing Information', message: 'Please provide at least one Seerr URL and an API key in the Setup section above.' });
                 return;
             }
 
+            cancelActiveSeerrScan();
+            const controller = new AbortController();
+            activeSeerrScanController = controller;
             btn.disabled = true;
             status.textContent = 'sync';
             status.className = 'material-icons status-check';
             status.style.color = '#00a4dc';
 
-            let triggered = false;
-            let lastError = '';
-            for (const url of urls) {
-                try {
-                    const triggerUrl = ApiClient.getUrl('/JellyfinCanopy/seerr/trigger-recently-added-scan', { url: url });
-                    const res = await ApiClient.ajax({ type: 'POST', url: triggerUrl, dataType: 'json', headers: { 'X-Arr-ApiKey': apiKey } });
-                    if (res && res.ok) {
-                        triggered = true;
-                        break;
-                    }
-                } catch (e) {
-                    console.error('Seerr scan trigger failed for ' + url + ':', e);
-                    lastError = connectionErrorMessage(e, 'Seerr', url);
+            try {
+                const dispatch = await jcDispatchSeerrScanDomains(rawUrls, async (domain, signal) => {
+                    const triggerUrl = ApiClient.getUrl('/JellyfinCanopy/seerr/trigger-recently-added-scan', { url: domain });
+                    return ApiClient.ajax({
+                        type: 'POST',
+                        url: triggerUrl,
+                        dataType: 'json',
+                        headers: { 'X-Arr-ApiKey': apiKey },
+                        signal
+                    });
+                }, controller.signal);
+
+                if (dispatch.cancelled || controller.signal.aborted) {
+                    return;
                 }
-            }
 
-            btn.disabled = false;
-            status.classList.remove('status-check');
+                const summary = jcSummarizeSeerrScanDispatch(dispatch);
+                const { succeeded, failed, total } = summary;
+                dispatch.results.filter(result => !result.ok).forEach(result => {
+                    console.error('Seerr scan trigger failed for ' + result.domain + ':', result.error || 'Upstream rejected the trigger');
+                });
 
-            if (triggered) {
-                status.textContent = 'check_circle';
-                status.style.color = '#52b54b';
-                Dashboard.alert({ title: 'Scan Triggered', message: 'Triggered "Jellyfin Recently Added Scan" in Seerr' });
-            } else {
-                status.textContent = 'error';
-                status.style.color = '#dc3545';
-                Dashboard.alert({ title: 'Trigger Failed', message: lastError || 'Could not trigger a scan against any provided URL.' });
+                if (summary.outcome === 'success') {
+                    status.textContent = 'check_circle';
+                    status.style.color = '#52b54b';
+                    Dashboard.alert({
+                        title: 'Scans Triggered',
+                        message: `Triggered "Jellyfin Recently Added Scan" for all ${total} Seerr identity domain${total === 1 ? '' : 's'}.`
+                    });
+                } else if (summary.outcome === 'partial') {
+                    status.textContent = 'warning';
+                    status.style.color = '#ffb300';
+                    Dashboard.alert({
+                        title: 'Scans Partially Triggered',
+                        message: `Triggered ${succeeded} of ${total} Seerr identity domains; ${failed} failed. Each URL was attempted once. Check the browser console and server log for failure details.`
+                    });
+                } else {
+                    status.textContent = 'error';
+                    status.style.color = '#dc3545';
+                    Dashboard.alert({
+                        title: 'Trigger Failed',
+                        message: `None of the ${total} Seerr identity domain${total === 1 ? '' : 's'} accepted the scan trigger. Check the browser console and server log for failure details.`
+                    });
+                }
+            } finally {
+                if (activeSeerrScanController === controller) {
+                    activeSeerrScanController = null;
+                }
+                if (!activeSeerrScanController) {
+                    btn.disabled = false;
+                    status.classList.remove('status-check');
+                    if (controller.signal.aborted) {
+                        status.textContent = '';
+                        status.style.color = '';
+                    }
+                }
             }
         }
 

@@ -589,7 +589,7 @@ start_seed_jobs() {
 validate_seed_result() {
     local shard="$1"
     local result_file="${STATE_DIRS[shard]}/seed-result.json"
-    local base_url port project cpus
+    local base_url port project cpus actual_nano_cpus expected_nano_cpus
 
     [[ -f "${result_file}" ]] || {
         warn "shard ${shard} did not write ${result_file}"
@@ -601,10 +601,14 @@ validate_seed_result() {
     port="$(jq -er '.port | tostring' "${result_file}" 2>/dev/null)" || return 1
     project="$(jq -er '.project | select(type == "string" and length > 0)' "${result_file}" 2>/dev/null)" || return 1
     cpus="$(jq -er '.cpus | tostring' "${result_file}" 2>/dev/null)" || return 1
+    actual_nano_cpus="$(jq -er '.actualNanoCpus | tostring' "${result_file}" 2>/dev/null)" || return 1
+    expected_nano_cpus="$(jq -nr --arg cpus "${CPUS_PER_SERVER}" '$cpus | tonumber * 1000000000 | round')" \
+        || return 1
 
     [[ "${port}" =~ ^[1-9][0-9]*$ ]] && (( port <= 65535 )) || return 1
     [[ "${project}" == "${PROJECTS[shard]}" ]] || return 1
     [[ "${cpus}" == "${CPUS_PER_SERVER}" ]] || return 1
+    [[ "${actual_nano_cpus}" == "${expected_nano_cpus}" ]] || return 1
     [[ "${base_url}" == "http://127.0.0.1:${port}" ]] || return 1
 
     BASE_URLS[shard]="${base_url}"
