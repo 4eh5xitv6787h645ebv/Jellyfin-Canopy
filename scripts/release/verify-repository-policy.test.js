@@ -23,6 +23,12 @@ function liveState() {
         id: index + 100,
         source_type: 'Repository',
     }));
+    const immutableTagUpdate = rulesets
+        .find(ruleset => ruleset.name === 'Make release tags immutable')
+        .rules.find(rule => rule.type === 'update');
+    // The live API omits this false/default parameter from tag-rule reads,
+    // even though the create endpoint requires and accepts it.
+    delete immutableTagUpdate.parameters;
     const environment = {
         name: policy.environment.name,
         can_admins_bypass: policy.environment.can_admins_bypass,
@@ -80,11 +86,19 @@ async function verify(state) {
     });
 }
 
-test('exact live rulesets, bypasses, checks, reviewers, and tag policies pass', async () => {
+test('exact live policy passes with GitHub-normalized tag update parameters', async () => {
     const result = await verify(liveState());
     assert.equal(result.repository, policy.repository);
     assert.equal(result.rulesets.length, 3);
     assert.equal(result.environment, 'release');
+});
+
+test('an explicit false tag-update parameter remains compatible', async () => {
+    const state = liveState();
+    state.rulesets[2].rules.find(rule => rule.type === 'update').parameters = {
+        update_allows_fetch_and_merge: false,
+    };
+    await verify(state);
 });
 
 test('missing or duplicate named rulesets fail closed', async () => {
@@ -102,6 +116,15 @@ test('weakened enforcement, status checks, or immutable-tag bypasses are detecte
         state => { state.rulesets[0].enforcement = 'disabled'; },
         state => { state.rulesets[0].rules.at(-1).parameters.required_status_checks.pop(); },
         state => { state.rulesets[0].rules.at(-1).parameters.required_status_checks[0].integration_id = 1; },
+        state => {
+            state.rulesets[2].rules = state.rulesets[2].rules
+                .filter(rule => rule.type !== 'update');
+        },
+        state => {
+            state.rulesets[2].rules.find(rule => rule.type === 'update').parameters = {
+                update_allows_fetch_and_merge: true,
+            };
+        },
         state => { state.rulesets[2].bypass_actors.push({ actor_id: 45441845, actor_type: 'User', bypass_mode: 'always' }); },
     ];
     for (const mutate of mutations) {

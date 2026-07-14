@@ -33,6 +33,17 @@ function normalizeRuleset(ruleset, expected) {
         const normalized = { type: rule.type };
         if (contract.parameters) {
             normalized.parameters = projectObject(rule.parameters, contract.parameters);
+            if (rule.type === 'update'
+                && expected.target === 'tag'
+                && contract.parameters.update_allows_fetch_and_merge === false
+                && normalized.parameters.update_allows_fetch_and_merge === undefined) {
+                // GitHub requires and accepts this field when creating an
+                // update rule, but omits the false/default value when reading
+                // tag rules back. For tags there is no upstream fetch/merge
+                // exception; the update rule itself (with no bypass actors)
+                // is the complete immutable-ref control.
+                normalized.parameters.update_allows_fetch_and_merge = false;
+            }
             if (rule.type === 'required_status_checks') {
                 normalized.parameters.required_status_checks = sortBy(
                     normalized.parameters.required_status_checks.map(check => ({
