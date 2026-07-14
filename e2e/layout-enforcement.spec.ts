@@ -109,7 +109,7 @@ test.describe('layout enforcement', () => {
         assertNoRuntimeErrors(consoleErrors);
     });
 
-    test('ForceExperimental leaves an already-experimental client alone (no reload)', async ({ page, baseURL }) => {
+    test('ForceExperimental leaves an already-experimental client alone (no reload)', async ({ page, consoleErrors, baseURL }) => {
         await setMode(baseURL!, 'ForceExperimental');
 
         // Seed 'experimental' — the converged branch. This is the path that
@@ -127,9 +127,11 @@ test.describe('layout enforcement', () => {
         expect(await readLoads(page), 'converged device must not reload').toBe(1);
         expect(await page.evaluate(() => localStorage.getItem('layout'))).toBe('experimental');
         expect(await page.evaluate(() => sessionStorage.getItem('jc_layout_enforced')), 'no loop marker on the converged path').toBeNull();
+
+        assertNoRuntimeErrors(consoleErrors);
     });
 
-    test('None leaves a legacy-set client untouched (no reload)', async ({ page, baseURL }) => {
+    test('None leaves a legacy-set client untouched (no reload)', async ({ page, consoleErrors, baseURL }) => {
         await setMode(baseURL!, 'None');
 
         // Seed 'desktop' before the first app read; wait for the loader's
@@ -147,5 +149,7 @@ test.describe('layout enforcement', () => {
         expect(await readLoads(page), 'None must not trigger a reload').toBe(1);
         expect(await page.evaluate(() => localStorage.getItem('layout')), 'None must not touch the stored layout').toBe('desktop');
         expect(await page.evaluate(() => sessionStorage.getItem('jc_layout_enforced')), 'None never arms the reload guard').toBeNull();
+
+        assertNoRuntimeErrors(consoleErrors);
     });
 });

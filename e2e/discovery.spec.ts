@@ -44,6 +44,8 @@ test.describe('Discovery / Trending — library placement', () => {
         // Assert the feature's own health. Discovery surfaces in-library items whose Jellyfin
         // artwork can 404 on servers that haven't cached it yet (environmental, not a feature
         // defect), so we scope the 4xx check to the plugin's own endpoints rather than all 4xx.
+        // Server failures remain globally blocking.
+        expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
         expect(consoleErrors.real(), 'console errors').toEqual([]);
         expect(
             consoleErrors.unexpected4xx().filter((r) => /\/JellyfinCanopy\//.test(r.url)),

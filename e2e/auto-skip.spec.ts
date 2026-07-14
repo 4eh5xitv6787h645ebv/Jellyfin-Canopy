@@ -369,6 +369,7 @@ test.describe('Auto-Skip v2 (native media segments)', () => {
 
             // Real media playback may legitimately produce core-server probe
             // 4xx responses in headless Chromium; plugin endpoints may not.
+            expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
             expect(consoleErrors.real(), 'unexpected console errors').toEqual([]);
             const pluginFourxx = consoleErrors
                 .unexpected4xx()

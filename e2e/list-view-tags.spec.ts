@@ -144,6 +144,7 @@ test.describe('list-view tags', () => {
             }, { k: viewKey, original: originalSetting });
         }
 
+        expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
         expect(consoleErrors.real()).toEqual([]);
     });
 });

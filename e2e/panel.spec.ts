@@ -53,6 +53,7 @@ test.describe('panel', () => {
         await page.keyboard.press('Escape');
         await expect(panel).toBeHidden({ timeout: 10_000 });
 
+        expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
         expect(consoleErrors.real()).toEqual([]);
     });
 });

@@ -7,7 +7,13 @@
 // Drives the real embedded config page and manipulates the live DOM (never
 // saving) so the scenario is deterministic regardless of the dev server's
 // stored config.
-import { test, expect, loginAs } from './fixtures/auth';
+import {
+    test,
+    expect,
+    loginAs,
+    assertNoRuntimeErrors,
+    type ConsoleErrors,
+} from './fixtures/auth';
 import { tmdbReady } from './fixtures/seerr';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -19,6 +25,26 @@ const CONFIG_HASH = '#/configurationpage?name=Jellyfin%20Canopy';
 // the 60s waitForFunction would time out rather than guard anything. Skip
 // cleanly when TMDB is unconfigured (set TMDB_API_KEY at seed time to run).
 const NEEDS_TMDB = 'TMDB not configured — set TMDB_API_KEY at seed time to run';
+
+// Jellyfin dashboard chrome can lack an admin avatar/branding preview and its
+// host bundle can emit the exact scroll-handler pageerror. Keep that existing
+// config-page exception local; every 5xx and every other console/4xx still
+// flows through the shared runtime assertion.
+const DASHBOARD_CHROME =
+    /scrollHandler is not a function|\/Users\/[^/]+\/Images\/Primary|\/JellyfinCanopy\/BrandingImage/i;
+
+function assertNoConfigPageRuntimeErrors(consoleErrors: ConsoleErrors): void {
+    assertNoRuntimeErrors({
+        ...consoleErrors,
+        real: () => consoleErrors.real().filter((text) => !DASHBOARD_CHROME.test(text)),
+        realDetails: () => consoleErrors.realDetails().filter(
+            ({ text }) => !DASHBOARD_CHROME.test(text)
+        ),
+        unexpected4xx: () => consoleErrors.unexpected4xx().filter(
+            ({ url }) => !DASHBOARD_CHROME.test(url)
+        ),
+    });
+}
 
 test.describe('requests page requirements gating', () => {
     test('Radarr-only (no Sonarr, no Seerr) satisfies the Requests Page requirement', async ({ page, consoleErrors }) => {
@@ -87,6 +113,8 @@ test.describe('requests page requirements gating', () => {
         // The fix: with a working Radarr and nothing else, the requirement is met
         // and the banner hides. Under the old AND-of-three logic this stayed shown.
         expect(result.lineDisplay, 'Requests requirements line must hide with Radarr-only configured').toBe('none');
+
+        assertNoConfigPageRuntimeErrors(consoleErrors);
     });
 
     test('With nothing configured, the requirement does not single out Sonarr as mandatory', async ({ page, consoleErrors }) => {
@@ -132,5 +160,7 @@ test.describe('requests page requirements gating', () => {
         expect(state.lineDisplay, 'Requirements line should show when nothing is configured').not.toBe('none');
         expect(state.text).toContain('Sonarr or Radarr');
         expect(state.text.toLowerCase()).toContain('and/or');
+
+        assertNoConfigPageRuntimeErrors(consoleErrors);
     });
 });

@@ -13,6 +13,7 @@ import {
     assertNoRuntimeErrors,
     USERS,
     type ConsoleErrors,
+    type FailedResponse,
 } from './fixtures/auth';
 import type { Page, Request, Route } from 'playwright/test';
 
@@ -54,6 +55,42 @@ interface DocumentIdentity {
 interface LoginResult {
     userId: string;
     token: string;
+}
+
+interface LogoutRequestEvidence {
+    index: number;
+    url: string;
+    method: string;
+    sameOrigin: boolean;
+    queryless: boolean;
+    tokenMatchesOld: boolean;
+    deviceMatchesClient: boolean;
+    authorizationMatchesFirst: boolean;
+    done: boolean;
+}
+
+interface LogoutResponseEvidence extends FailedResponse {
+    requestIndex: number;
+    bodyBytes: number;
+}
+
+interface SignedOutEvidence {
+    identityCleared: boolean;
+    userId: string;
+    route: string;
+    cookie: string;
+    initialized: boolean;
+    pendingInitializations: number;
+    initializationControllers: number;
+    oldTokenStatus: number;
+}
+
+interface LogoutEvidence {
+    epoch: number;
+    origin: string;
+    requests: LogoutRequestEvidence[];
+    responses: LogoutResponseEvidence[];
+    signedOut: SignedOutEvidence;
 }
 
 interface IdentitySnapshot {
@@ -224,69 +261,232 @@ async function readDiagnostics(page: Page): Promise<Diagnostics> {
  * permitted here: if Jellyfin replaces the document, the marker assertion
  * below fails.
  */
-async function spaLogout(page: Page, documentIdentity: DocumentIdentity): Promise<number> {
-    await page.waitForFunction(
-        () => typeof (window as any).Dashboard?.logout === 'function',
-        undefined,
-        { timeout: 30_000 }
+async function spaLogout(
+    page: Page,
+    documentIdentity: DocumentIdentity,
+    oldToken: string
+): Promise<LogoutEvidence> {
+    const origin = new URL(page.url()).origin;
+    const clientDeviceId = await page.evaluate(
+        () => String((window as any).ApiClient?.deviceId?.() || '')
     );
-    await page.evaluate(() => {
-        const state = ((window as any).__jcLogoutState = { done: false, error: '' });
+    expect(clientDeviceId, 'the authenticated host client exposes its device ID').not.toBe('');
+
+    const requests: LogoutRequestEvidence[] = [];
+    const responses: LogoutResponseEvidence[] = [];
+    let firstAuthorization = '';
+    let serializationErrors = 0;
+    let routeQueue = Promise.resolve();
+
+    const routeTarget = `${origin}/Sessions/Logout`;
+    const routeHandler = async (route: Route): Promise<void> => {
+        const request = route.request();
+        if (request.method() !== 'POST') {
+            await route.continue();
+            return;
+        }
+        const parsed = new URL(request.url());
+        const authorization = String(request.headers().authorization || '');
+        if (!firstAuthorization) firstAuthorization = authorization;
+        const record: LogoutRequestEvidence = {
+            index: requests.length,
+            url: request.url(),
+            method: request.method(),
+            sameOrigin: parsed.origin === origin,
+            queryless: parsed.search === '' && parsed.hash === '',
+            tokenMatchesOld: authorizationParameter(authorization, 'Token') === oldToken,
+            deviceMatchesClient:
+                authorizationParameter(authorization, 'DeviceId') === clientDeviceId,
+            authorizationMatchesFirst:
+                authorization !== '' && authorization === firstAuthorization,
+            done: false,
+        };
+        requests.push(record);
+
+        const previous = routeQueue;
+        let release!: () => void;
+        routeQueue = new Promise<void>((resolve) => { release = resolve; });
+        await previous;
         try {
-            Promise.resolve((window as any).Dashboard.logout()).then(
-                () => { state.done = true; },
-                (error: unknown) => {
-                    state.error = String((error as Error)?.message || error);
-                    state.done = true;
+            // Jellyfin Web 12 RC2 dispatches ApiClient.logout() and the SDK's
+            // reportSessionEnded() concurrently. RC2's database deletion is
+            // not idempotent, so serialize only those two native requests for
+            // this Canopy lifecycle test. Both real host calls still run; the
+            // second simply reaches the server after the first has settled.
+            const upstream = await route.fetch({
+                timeout: 15_000,
+                maxRedirects: 0,
+                maxRetries: 0,
+            });
+            const bodyBytes = (await upstream.body()).byteLength;
+            responses.push({
+                url: upstream.url(),
+                status: upstream.status(),
+                method: request.method(),
+                requestIndex: record.index,
+                bodyBytes,
+            });
+            await route.fulfill({ response: upstream });
+        } catch {
+            serializationErrors++;
+            try {
+                await route.abort('failed');
+            } catch { /* the host may already have disposed the route */ }
+        } finally {
+            record.done = true;
+            release();
+        }
+    };
+
+    await page.route(routeTarget, routeHandler);
+
+    try {
+        await page.waitForFunction(
+            () => typeof (window as any).Dashboard?.logout === 'function',
+            undefined,
+            { timeout: 30_000 }
+        );
+        // Jellyfin Web RC2's public Dashboard.logout() is fire-and-forget. Await
+        // a returned thenable for forward compatibility, but use the native
+        // responses + signed-out state below as the actual completion proof.
+        await page.evaluate(async () => {
+            const result = (window as any).Dashboard.logout();
+            if (result && typeof result.then === 'function') await result;
+        });
+
+        await page.waitForFunction(() => {
+            const JC = (window as any).JellyfinCanopy;
+            const userId = String((window as any).ApiClient?.getCurrentUserId?.() || '').trim();
+            return !JC?.identity?.capture?.() && !userId;
+        }, undefined, { timeout: 30_000 });
+        await page.waitForFunction(
+            () => /login|selectserver/i.test(`${window.location.pathname}${window.location.hash}`),
+            undefined,
+            { timeout: 30_000 }
+        );
+
+        await expect.poll(
+            () => ({
+                requests: requests.length,
+                responses: responses.length,
+                done: requests.filter(({ done }) => done).length,
+            }),
+            {
+                message: 'both serialized native logout calls return responses',
+                timeout: 10_000,
+            }
+        ).toEqual({ requests: 2, responses: 2, done: 2 });
+        await routeQueue;
+
+        const state = await page.evaluate(() => {
+            const JC = (window as any).JellyfinCanopy;
+            return {
+                identityCleared: !JC.identity.capture(),
+                userId: String((window as any).ApiClient?.getCurrentUserId?.() || '').trim(),
+                route: `${window.location.pathname}${window.location.hash}`,
+                epoch: Number(JC.identity.getEpoch()),
+                cookie: document.cookie,
+                initialized: JC.initialized === true,
+                pendingInitializations: Number(JC.identity.getPendingInitializationCount()),
+                initializationControllers: Number(JC.identity.getInitializationControllerCount()),
+            };
+        });
+        let oldTokenStatus = 0;
+        try {
+            const probe = await page.context().request.get(
+                new URL('/Users/Me', origin).href,
+                {
+                    failOnStatusCode: false,
+                    maxRedirects: 0,
+                    timeout: 15_000,
+                    headers: {
+                        // Reuse the exact pre-logout host authorization/device
+                        // header without exposing it in evidence or diagnostics.
+                        'Authorization': firstAuthorization,
+                        'Cache-Control': 'no-cache, no-store',
+                        'Pragma': 'no-cache',
+                    },
                 }
             );
-        } catch (error) {
-            state.error = String((error as Error)?.message || error);
-            state.done = true;
+            oldTokenStatus = probe.status();
+            await probe.dispose();
+        } catch {
+            // Preserve a non-secret sentinel so the assertion below fails
+            // without printing the token-bearing request configuration.
+            oldTokenStatus = 0;
         }
-    });
+        const signedOut: SignedOutEvidence = { ...state, oldTokenStatus };
 
-    await page.waitForFunction(() => {
-        const JC = (window as any).JellyfinCanopy;
-        const userId = String((window as any).ApiClient?.getCurrentUserId?.() || '').trim();
-        return !JC?.identity?.capture?.() && !userId;
-    }, undefined, { timeout: 30_000 });
-    await page.waitForFunction(
-        () => /login|selectserver/i.test(`${window.location.pathname}${window.location.hash}`),
-        undefined,
-        { timeout: 30_000 }
-    );
-    await page.waitForFunction(
-        () => (window as any).__jcLogoutState?.done === true,
-        undefined,
-        { timeout: 30_000 }
-    );
+        expect(serializationErrors, 'the native logout FIFO completes without route errors').toBe(0);
+        expect(
+            requests.map(({ method, sameOrigin, queryless, tokenMatchesOld,
+                deviceMatchesClient, authorizationMatchesFirst }) => ({
+                method,
+                sameOrigin,
+                queryless,
+                tokenMatchesOld,
+                deviceMatchesClient,
+                authorizationMatchesFirst,
+            })),
+            'Jellyfin Web dispatches exactly two same-origin, same-session native logout calls'
+        ).toEqual([
+            {
+                method: 'POST',
+                sameOrigin: true,
+                queryless: true,
+                tokenMatchesOld: true,
+                deviceMatchesClient: true,
+                authorizationMatchesFirst: true,
+            },
+            {
+                method: 'POST',
+                sameOrigin: true,
+                queryless: true,
+                tokenMatchesOld: true,
+                deviceMatchesClient: true,
+                authorizationMatchesFirst: true,
+            },
+        ]);
+        expect(
+            responses.map(({ requestIndex, status, bodyBytes }) =>
+                ({ requestIndex, status, bodyBytes }))
+                .sort((left, right) => left.requestIndex - right.requestIndex),
+            'the FIFO commits one logout before RC2 rejects the now-revoked duplicate'
+        ).toEqual([
+            { requestIndex: 0, status: 204, bodyBytes: 0 },
+            { requestIndex: 1, status: 401, bodyBytes: 0 },
+        ]);
 
-    const signedOut = await page.evaluate(() => {
-        const JC = (window as any).JellyfinCanopy;
+        expect(signedOut.identityCleared, 'Canopy identity is null after logout').toBe(true);
+        expect(signedOut.userId, 'the host client has no current user after logout').toBe('');
+        expect(signedOut.route, 'the host reaches a signed-out route').toMatch(/login|selectserver/i);
+        expect(signedOut.cookie, 'the spoiler identity cookie is removed synchronously on logout')
+            .not.toMatch(/(?:^|;\s*)jc-spoiler-uid=/i);
+        expect(signedOut.initialized, 'signed-out state cannot remain initialized as the prior user').toBe(false);
+        expect(
+            signedOut.pendingInitializations,
+            'identity transition synchronously drains prior initialization work'
+        ).toBe(0);
+        expect(
+            signedOut.initializationControllers,
+            'signed-out state retains no prior initialization controller'
+        ).toBe(0);
+        expect(
+            signedOut.oldTokenStatus,
+            'the pre-logout access token is independently revoked'
+        ).toBe(401);
+        await expectSameDocument(page, documentIdentity);
         return {
-            error: (window as any).__jcLogoutState?.error || '',
-            epoch: Number(JC.identity.getEpoch()),
-            cookie: document.cookie,
-            initialized: JC.initialized === true,
-            pendingInitializations: Number(JC.identity.getPendingInitializationCount()),
-            initializationControllers: Number(JC.identity.getInitializationControllerCount()),
+            epoch: state.epoch,
+            origin,
+            requests: [...requests],
+            responses: [...responses],
+            signedOut,
         };
-    });
-    expect(signedOut.error, 'Dashboard.logout() must complete without error').toBe('');
-    expect(signedOut.cookie, 'the spoiler identity cookie is removed synchronously on logout')
-        .not.toMatch(/(?:^|;\s*)jc-spoiler-uid=/i);
-    expect(signedOut.initialized, 'signed-out state cannot remain initialized as the prior user').toBe(false);
-    expect(
-        signedOut.pendingInitializations,
-        'identity transition synchronously drains prior initialization work'
-    ).toBe(0);
-    expect(
-        signedOut.initializationControllers,
-        'signed-out state retains no prior initialization controller'
-    ).toBe(0);
-    await expectSameDocument(page, documentIdentity);
-    return signedOut.epoch;
+    } finally {
+        await routeQueue;
+        await page.unroute(routeTarget, routeHandler);
+    }
 }
 
 /** Authenticate on the current host client, without waiting for JC boot. */
@@ -504,25 +704,47 @@ function expectRequestOwnership(
     }
 }
 
-function isExpectedHostLogout4xx(response: { url: string; status: number }): boolean {
+function authorizationParameter(authorization: string, name: 'Token' | 'DeviceId'): string {
+    const match = authorization.match(new RegExp(`(?:^|,\\s*)${name}="([^"]*)"`, 'i'));
+    return match?.[1] || '';
+}
+
+function isExpectedHostLogout4xx(response: FailedResponse, origin: string): boolean {
     if (response.url.includes('/JellyfinCanopy/')) return false;
-    if (response.status === 401) return true;
+    const parsed = new URL(response.url);
+    if (response.status === 401) {
+        if (parsed.origin !== origin || parsed.search !== '' || parsed.hash !== '') return false;
+        if (response.method === 'POST' && parsed.pathname === '/Sessions/Logout') return true;
+        // The host can finish these two already-scheduled home-view reads after
+        // logout has revoked its token. Keep the prior host-noise allowance,
+        // but bind it to the two exact read-only endpoints instead of all 401s.
+        return response.method === 'GET'
+            && (parsed.pathname === '/System/Info' || parsed.pathname === '/UserViews');
+    }
     return response.status === 400 && /\/SyncPlay\/List(?:\?|$)/i.test(response.url);
 }
 
-function assertOnlyHostLogoutNoise(consoleErrors: ConsoleErrors, label: string): void {
+function assertOnlyHostLogoutNoise(
+    consoleErrors: ConsoleErrors,
+    label: string,
+    evidence: LogoutEvidence
+): void {
+    expect(
+        consoleErrors.unexpected5xx(),
+        `${label}: no plugin or host 5xx responses`
+    ).toEqual([]);
     const failed = consoleErrors.unexpected4xx();
     const syncPlay400 = failed.some((response) =>
         response.status === 400 && /\/SyncPlay\/List(?:\?|$)/i.test(response.url));
+    const unexpectedDetails = consoleErrors.realDetails().filter((detail) =>
+        !HOST_LOGOUT_NOISE.test(detail.text)
+        && !(syncPlay400 && /Failed to load resource:.*status of 400 \(Bad Request\)/i.test(detail.text)));
     expect(
-        consoleErrors.real().filter((text) =>
-            !HOST_LOGOUT_NOISE.test(text)
-            && !(syncPlay400 && /Failed to load resource:.*status of 400 \(Bad Request\)/i.test(text))
-        ),
+        unexpectedDetails.map(({ text, url, source }) => ({ text, url, source })),
         `${label}: no errors beyond Jellyfin Web's own logout cancellation`
     ).toEqual([]);
     expect(
-        failed.filter((response) => !isExpectedHostLogout4xx(response)),
+        failed.filter((response) => !isExpectedHostLogout4xx(response, evidence.origin)),
         `${label}: no plugin 4xx or unexpected host 4xx responses`
     ).toEqual([]);
 }
@@ -715,7 +937,8 @@ test.describe('no-reload account identity switching', () => {
         }
 
         segment = 'logout-a1';
-        const logoutA1Epoch = await spaLogout(page, documentIdentity);
+        const logoutA1 = await spaLogout(page, documentIdentity, a1Token);
+        const logoutA1Epoch = logoutA1.epoch;
         expect(logoutA1Epoch).toBeGreaterThan(a1.epoch);
 
         await page.waitForFunction(
@@ -745,7 +968,7 @@ test.describe('no-reload account identity switching', () => {
             ),
             'the induced save race reports only the expected identity abort'
         ).toEqual([]);
-        assertOnlyHostLogoutNoise(consoleErrors, 'A1 logout / held-save abort');
+        assertOnlyHostLogoutNoise(consoleErrors, 'A1 logout / held-save abort', logoutA1);
         consoleErrors.reset();
 
         segment = 'b1';
@@ -774,9 +997,10 @@ test.describe('no-reload account identity switching', () => {
         assertNoRuntimeErrors(consoleErrors);
         consoleErrors.reset();
         segment = 'logout-b1';
-        const logoutB1Epoch = await spaLogout(page, documentIdentity);
+        const logoutB1 = await spaLogout(page, documentIdentity, b1Login.token);
+        const logoutB1Epoch = logoutB1.epoch;
         expect(logoutB1Epoch).toBeGreaterThan(b1.epoch);
-        assertOnlyHostLogoutNoise(consoleErrors, 'B1 logout');
+        assertOnlyHostLogoutNoise(consoleErrors, 'B1 logout', logoutB1);
         consoleErrors.reset();
 
         holdA2Fetch = true;
@@ -809,9 +1033,10 @@ test.describe('no-reload account identity switching', () => {
         assertNoRuntimeErrors(consoleErrors);
         consoleErrors.reset();
         segment = 'logout-a2';
-        const logoutA2Epoch = await spaLogout(page, documentIdentity);
+        const logoutA2 = await spaLogout(page, documentIdentity, a2Login.token);
+        const logoutA2Epoch = logoutA2.epoch;
         expect(logoutA2Epoch).toBeGreaterThan(a2.epoch);
-        assertOnlyHostLogoutNoise(consoleErrors, 'A2 logout / held-loader abort');
+        assertOnlyHostLogoutNoise(consoleErrors, 'A2 logout / held-loader abort', logoutA2);
         consoleErrors.reset();
 
         segment = 'b2';

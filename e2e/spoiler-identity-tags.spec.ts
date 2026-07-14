@@ -14,6 +14,11 @@
 // Content-independent like spoiler-guard.spec.ts: the target series/episode is
 // discovered via the REST API; every test SKIPs when the master switch is off;
 // all guard state is restored in finally blocks.
+//
+// This suite intentionally has no browser consoleErrors fixture: every request
+// is Node-side through api()/fetch(), so a Playwright page collector would be
+// empty and misleading. api() rejects non-success responses, while the raw
+// image fetches assert their status explicitly at each call site.
 import { test, expect } from './fixtures/auth';
 import { USERS } from './fixtures/auth';
 import { authenticate, api, authHeader, type Session } from './fixtures/api';
@@ -179,6 +184,7 @@ test.describe('spoiler guard identity tags (reverse-proxy-safe attribution)', ()
                 `${BASE}/Items/${target!.episodeId}/Images/Primary?tag=${encodeURIComponent(userTag)}`,
                 { headers: { Authorization: authHeader(user.token) } }
             );
+            expect(authRes.status, 'authenticated ground-truth image fetch succeeds').toBe(200);
             const authBytes = Buffer.from(await authRes.arrayBuffer());
             expect(asUser.bytes.equals(authBytes), 'marker attribution must match authenticated ground truth').toBe(
                 true
