@@ -159,6 +159,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             AssertMatchesGolden("bookmark.write", File.ReadAllText(UserFilePath("bookmark.json")));
 
             var back = _manager.GetUserConfiguration<UserBookmark>(UserId, "bookmark.json");
+            Assert.Equal(0, back.Revision);
             Assert.Equal(12.25, back.Bookmarks["item-1:12.25"].Timestamp);
             Assert.Equal("Amélie — 映画", back.Bookmarks["item-1:12.25"].Name);
             // String CreatedAt must come back verbatim (not date-normalized).

@@ -139,13 +139,14 @@ function bUserFilePayload(
     const accountSwitchOwnerSentinel = bPayloadSentinel(segment, file);
     switch (file) {
         case 'shortcuts.json':
-            return { Shortcuts: [], accountSwitchOwnerSentinel };
+            return { Revision: 0, Shortcuts: [], accountSwitchOwnerSentinel };
         case 'bookmark.json':
-            return { Bookmarks: {}, accountSwitchOwnerSentinel };
+            return { Revision: 0, Bookmarks: {}, accountSwitchOwnerSentinel };
+        case 'settings.json':
+        case 'elsewhere.json':
+            return { Revision: 0, accountSwitchOwnerSentinel };
         case 'hidden-content.json':
             return { Items: {}, Settings: {}, accountSwitchOwnerSentinel };
-        default:
-            return { accountSwitchOwnerSentinel };
     }
 }
 

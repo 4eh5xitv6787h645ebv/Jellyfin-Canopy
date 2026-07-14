@@ -28,6 +28,17 @@ import type { IdentityContext } from '../../types/jc';
     readonly generation: number;
   }
 
+  interface BookmarkOperation {
+    type: 'add' | 'update' | 'delete';
+    bookmarkId: string;
+    bookmark?: Record<string, unknown>;
+  }
+
+  interface BookmarkCommittedState {
+    revision: number;
+    bookmarks: Record<string, any>;
+  }
+
   function captureIdentity(): BookmarkIdentityCapture {
     const context = JC.identity.capture();
     return Object.freeze({
@@ -62,7 +73,7 @@ import type { IdentityContext } from '../../types/jc';
     activeModalDisposers.clear();
   }
 
-  function bookmarkRootFor(captured: BookmarkIdentityCapture, create = false): any {
+  function bookmarkRootFor(captured: BookmarkIdentityCapture): any {
     if (!captured.context || !isIdentityCurrent(captured)) return null;
     const userConfig = (JC as any).userConfig;
     if (!userConfig || typeof userConfig !== 'object') return null;
@@ -70,23 +81,118 @@ import type { IdentityContext } from '../../types/jc';
     const configOwner = JC.identity.ownerOf(userConfig);
     if (configOwner && !JC.identity.isOwned(userConfig, captured.context)) return null;
 
-    let root = userConfig.bookmark;
-    if (!root && create) {
-      root = JC.identity.own({ bookmarks: {} }, captured.context);
-      userConfig.bookmark = root;
-    }
+    const root = userConfig.bookmark;
     if (!root || typeof root !== 'object') return null;
 
     const rootOwner = JC.identity.ownerOf(root);
     if (rootOwner && !JC.identity.isOwned(root, captured.context)) return null;
-    if (!root.bookmarks && create) root.bookmarks = {};
-    return root.bookmarks && typeof root.bookmarks === 'object' ? root : null;
+    // A revision exists only after the server bookmark GET completed
+    // successfully. The identity transition's deliberately empty placeholder
+    // has no revision, so no mutation can turn a failed/unfinished boot read
+    // into a destructive empty replacement.
+    if (!Number.isSafeInteger(root.revision) || root.revision < 0) return null;
+    return root.bookmarks && typeof root.bookmarks === 'object' && !Array.isArray(root.bookmarks) ? root : null;
   }
 
   function isBookmarkRootCurrent(captured: BookmarkIdentityCapture, root: any): boolean {
     if (!isIdentityCurrent(captured) || (JC.userConfig as any)?.bookmark !== root) return false;
     const owner = JC.identity.ownerOf(root);
     return !owner || (!!captured.context && JC.identity.isOwned(root, captured.context));
+  }
+
+  function committedState(value: unknown): BookmarkCommittedState | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    const revision = Number(record.revision ?? record.Revision);
+    const bookmarks = record.bookmarks ?? record.Bookmarks;
+    if (!Number.isSafeInteger(revision) || revision < 0
+      || !bookmarks || typeof bookmarks !== 'object' || Array.isArray(bookmarks)) return null;
+
+    // Core API responses are raw ASP.NET JSON, unlike the boot loader's GET
+    // path. Preserve every dictionary id exactly while converting each nested
+    // BookmarkItem from PascalCase to the camelCase shape the live UI owns.
+    const converter = (JC as any).toCamelCase;
+    const normalized: Record<string, any> = {};
+    for (const [bookmarkId, bookmark] of Object.entries(bookmarks as Record<string, unknown>)) {
+      normalized[bookmarkId] = typeof converter === 'function' ? converter(bookmark) : bookmark;
+    }
+    return { revision, bookmarks: normalized };
+  }
+
+  function conflictState(error: unknown): BookmarkCommittedState | null {
+    if (!error || typeof error !== 'object') return null;
+    const shaped = error as { responseJSON?: unknown; responseText?: string };
+    const direct = committedState(shaped.responseJSON);
+    if (direct) return direct;
+    if (!shaped.responseText) return null;
+    try { return committedState(JSON.parse(shaped.responseText)); } catch { return null; }
+  }
+
+  function httpStatus(error: unknown): number | undefined {
+    if (!error || typeof error !== 'object') return undefined;
+    const shaped = error as { status?: number; statusCode?: number; response?: { status?: number } };
+    return Number(shaped.status ?? shaped.statusCode ?? shaped.response?.status) || undefined;
+  }
+
+  function adoptCommittedState(
+    captured: BookmarkIdentityCapture,
+    root: any,
+    state: BookmarkCommittedState
+  ): boolean {
+    if (!isBookmarkRootCurrent(captured, root)) return false;
+    root.revision = state.revision;
+    root.bookmarks = state.bookmarks;
+    return isBookmarkRootCurrent(captured, root);
+  }
+
+  function sameBookmark(left: Record<string, any>, right: Record<string, any>): boolean {
+    const fields = [
+      'itemId', 'tmdbId', 'tvdbId', 'mediaType', 'name', 'timestamp',
+      'label', 'createdAt', 'updatedAt', 'syncedFrom'
+    ];
+    return fields.every(field => (left[field] ?? '') === (right[field] ?? ''));
+  }
+
+  /**
+   * Commit one atomic server-side transaction. A stale revision is not a
+   * failure by itself: adopt the authoritative state returned with 409, rebuild
+   * the operation list against it, and retry. Operations use stable client ids,
+   * so a lost acknowledgement followed by a retry cannot duplicate an add.
+   */
+  async function commitBookmarkBatch(
+    captured: BookmarkIdentityCapture,
+    root: any,
+    buildOperations: (state: BookmarkCommittedState) => BookmarkOperation[]
+  ): Promise<BookmarkCommittedState | null> {
+    if (!captured.context || !isBookmarkRootCurrent(captured, root)) return null;
+    const plugin = JC.core.api?.plugin?.bind(JC.core.api);
+    if (typeof plugin !== 'function') throw new Error('Bookmark mutation transport is unavailable');
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (!isBookmarkRootCurrent(captured, root)) return null;
+      const base = committedState(root);
+      if (!base) throw new Error('Bookmark state is unavailable; reload before changing bookmarks');
+      const operations = buildOperations(base);
+      if (operations.length === 0) return base;
+
+      try {
+        const response = await plugin(`/user-settings/${encodeURIComponent(captured.context.userId)}/bookmark.json/batch`, {
+          method: 'POST',
+          body: { revision: base.revision, operations },
+          skipRetry: true
+        });
+        const committed = committedState(response);
+        if (!committed) throw new Error('Bookmark server returned an invalid committed state');
+        return adoptCommittedState(captured, root, committed) ? committed : null;
+      } catch (error) {
+        if (httpStatus(error) !== 409) throw error;
+        const latest = conflictState(error);
+        if (!latest) throw new Error('Bookmark conflict response omitted authoritative state');
+        if (!adoptCommittedState(captured, root, latest)) return null;
+      }
+    }
+
+    throw new Error('Bookmark state kept changing; retry the operation');
   }
 
   // Notify other views (e.g., CustomTabs library) when bookmarks change
@@ -320,6 +426,11 @@ import type { IdentityContext } from '../../types/jc';
   async function addBookmark(timestamp: number, label = ''): Promise<Record<string, unknown> | null> {
     const captured = captureIdentity();
     if (!captured.context) return null;
+    const root = bookmarkRootFor(captured);
+    if (!root) {
+      console.error(`${logPrefix} Bookmark state has not loaded; refusing to add`);
+      return null;
+    }
     const itemData = getCurrentItemData();
     if (!itemData) {
       toast(JC.t!('toast_bookmark_no_item'), 3000);
@@ -351,22 +462,26 @@ import type { IdentityContext } from '../../types/jc';
       syncedFrom: ''
     };
 
-    const root = bookmarkRootFor(captured, true);
-    if (!root || !isMediaItemCurrent(captured, requestedItemId)) return null;
-    const store = root.bookmarks;
-    store[bookmarkId] = bookmark;
+    if (!isBookmarkRootCurrent(captured, root) || !isMediaItemCurrent(captured, requestedItemId)) return null;
 
     try {
-      await JC.saveUserSettings!('bookmark.json', root);
+      const committed = await commitBookmarkBatch(captured, root, state => {
+        const existing = state.bookmarks[bookmarkId];
+        if (existing) {
+          if (sameBookmark(existing, bookmark)) return [];
+          throw new Error(`Bookmark id collision for ${bookmarkId}`);
+        }
+        return [{ type: 'add', bookmarkId, bookmark }];
+      });
+      if (!committed) return null;
       if (!isBookmarkRootCurrent(captured, root)
         || !isMediaItemCurrent(captured, requestedItemId)) return null;
       console.log(`${logPrefix} Bookmark added:`, bookmarkId, bookmark);
       if (!emitBookmarksUpdated(captured, 'add')) return null;
-      return { id: bookmarkId, ...bookmark };
+      return { id: bookmarkId, ...(committed.bookmarks[bookmarkId] || bookmark) };
     } catch (e) {
       if (!isBookmarkRootCurrent(captured, root)) return null;
       console.error(`${logPrefix} Failed to save bookmark:`, e);
-      delete store[bookmarkId];
       throw e;
     }
   }
@@ -383,11 +498,19 @@ import type { IdentityContext } from '../../types/jc';
       return false;
     }
 
-    const bookmark = root.bookmarks[bookmarkId];
-    Object.assign(bookmark, updates, { updatedAt: new Date().toISOString() });
+    const updatedAt = new Date().toISOString();
 
     try {
-      await JC.saveUserSettings!('bookmark.json', root);
+      const committed = await commitBookmarkBatch(captured, root, state => {
+        const current = state.bookmarks[bookmarkId];
+        if (!current) return [];
+        return [{
+          type: 'update',
+          bookmarkId,
+          bookmark: { ...current, ...updates, updatedAt }
+        }];
+      });
+      if (!committed || !committed.bookmarks[bookmarkId]) return false;
       if (!isBookmarkRootCurrent(captured, root)) return false;
       console.log(`${logPrefix} Bookmark updated:`, bookmarkId);
       return emitBookmarksUpdated(captured, 'update');
@@ -410,10 +533,10 @@ import type { IdentityContext } from '../../types/jc';
       return false;
     }
 
-    delete root.bookmarks[bookmarkId];
-
     try {
-      await JC.saveUserSettings!('bookmark.json', root);
+      const committed = await commitBookmarkBatch(captured, root, state =>
+        state.bookmarks[bookmarkId] ? [{ type: 'delete', bookmarkId }] : []);
+      if (!committed) return false;
       if (!isBookmarkRootCurrent(captured, root)) return false;
       console.log(`${logPrefix} Bookmark deleted:`, bookmarkId);
       return emitBookmarksUpdated(captured, 'delete');
@@ -428,16 +551,8 @@ import type { IdentityContext } from '../../types/jc';
    * Sync bookmarks from old item ID to new item ID.
    *
    * Creates duplicate copies under the new item ID. When `removeOldIds` is
-   * supplied (a migration — replace rather than merge) the originals are
-   * deleted, but ONLY after the new copies are written AND verified on disk.
-   *
-   * DATA-SAFETY ordering (a mid-flight failure must never lose bookmarks):
-   *   1. write the new copies into memory,
-   *   2. persist + verify them; on failure roll back the new copies and throw
-   *      (the originals were never touched),
-   *   3. only THEN delete the originals and persist that deletion; on failure
-   *      restore the originals in memory so state matches disk (new copies PLUS
-   *      originals — duplicates the user can retry, never data loss).
+   * supplied, the copies and removals are committed in one server-side atomic
+   * batch: either the complete migration lands or the prior state remains.
    */
   async function syncBookmarks(oldBookmarks: any[], newItemDetails: any, timeOffset = 0, removeOldIds?: string[]): Promise<any[]> {
     const captured = captureIdentity();
@@ -446,9 +561,8 @@ import type { IdentityContext } from '../../types/jc';
     const now = new Date().toISOString();
     const root = bookmarkRootFor(captured);
     if (!root) return [];
-    const store = root.bookmarks;
-
-    // 1. Write the new copies into memory.
+    // Stable ids make a conflict retry (or a replay after a lost response)
+    // idempotent rather than creating a second copy.
     for (const oldBookmark of oldBookmarks) {
       const newBookmarkId = generateBookmarkId();
       const newTimestamp = Math.max(0, oldBookmark.timestamp + timeOffset);
@@ -466,44 +580,33 @@ import type { IdentityContext } from '../../types/jc';
         syncedFrom: oldBookmark.itemId // Track where it came from
       };
 
-      store[newBookmarkId] = newBookmark;
       synced.push({ id: newBookmarkId, ...newBookmark });
     }
 
-    // 2. Persist + verify the new copies BEFORE removing any originals.
     try {
-      await JC.saveUserSettings!('bookmark.json', root);
-      if (!isBookmarkRootCurrent(captured, root)) return [];
-      console.log(`${logPrefix} Synced ${synced.length} bookmarks to new item ID`);
+      const committed = await commitBookmarkBatch(captured, root, state => {
+        const operations: BookmarkOperation[] = [];
+        for (const next of synced) {
+          const { id, ...bookmark } = next;
+          if (state.bookmarks[id]) {
+            if (!sameBookmark(state.bookmarks[id], bookmark)) {
+              throw new Error(`Bookmark id collision for ${id}`);
+            }
+          } else {
+            operations.push({ type: 'add', bookmarkId: id, bookmark });
+          }
+        }
+        for (const id of removeOldIds || []) {
+          if (state.bookmarks[id]) operations.push({ type: 'delete', bookmarkId: id });
+        }
+        return operations;
+      });
+      if (!committed) return [];
+      console.log(`${logPrefix} Atomically synced ${synced.length} bookmarks to new item ID`);
     } catch (e) {
       if (!isBookmarkRootCurrent(captured, root)) return [];
       console.error(`${logPrefix} Failed to sync bookmarks:`, e);
-      // Roll back the new copies we added; the originals were never touched.
-      synced.forEach(bm => delete store[bm.id]);
       throw e;
-    }
-
-    // 3. New copies are durable — now (and only now) remove the originals.
-    if (removeOldIds && removeOldIds.length) {
-      const removed: Record<string, any> = {};
-      for (const id of removeOldIds) {
-        if (store[id]) {
-          removed[id] = store[id];
-          delete store[id];
-        }
-      }
-      try {
-        await JC.saveUserSettings!('bookmark.json', root);
-        if (!isBookmarkRootCurrent(captured, root)) return [];
-      } catch (e) {
-        if (!isBookmarkRootCurrent(captured, root)) return [];
-        console.error(`${logPrefix} Synced new copies but could not persist removal of originals:`, e);
-        // Restore the originals in memory so state matches disk (new copies +
-        // originals). At worst duplicates remain — never data loss.
-        Object.assign(store, removed);
-        if (!emitBookmarksUpdated(captured, 'sync')) return [];
-        throw e;
-      }
     }
 
     if (!isBookmarkRootCurrent(captured, root)) return [];
@@ -558,23 +661,43 @@ import type { IdentityContext } from '../../types/jc';
       }
     }
 
-    // Delete orphaned bookmarks (confirmed 404s only)
-    for (const bookmarkId of toDelete) {
-      if (!isBookmarkRootCurrent(captured, root)) return { cleaned, errors };
+    // Delete every confirmed orphan in one revisioned transaction. A malformed
+    // or failed batch leaves every prior bookmark intact.
+    if (toDelete.length > 0) {
       try {
-        const deleted = await deleteBookmark(bookmarkId);
-        if (!isBookmarkRootCurrent(captured, root)) return { cleaned, errors };
-        if (deleted) cleaned++;
-        else errors++;
+        const committed = await commitBookmarkBatch(captured, root, state =>
+          toDelete
+            .filter(bookmarkId => !!state.bookmarks[bookmarkId])
+            .map(bookmarkId => ({ type: 'delete' as const, bookmarkId })));
+        if (!committed) return { cleaned, errors };
+        cleaned = toDelete.filter(bookmarkId => !committed.bookmarks[bookmarkId]).length;
       } catch (e) {
         if (!isBookmarkRootCurrent(captured, root)) return { cleaned, errors };
-        errors++;
+        errors += toDelete.length;
       }
     }
 
     if (!isBookmarkRootCurrent(captured, root)) return { cleaned, errors };
     console.log(`${logPrefix} Cleanup: ${cleaned} orphaned bookmarks removed, ${errors} kept/failed (non-404 or delete error)`);
     return { cleaned, errors };
+  }
+
+  /** Delete the currently loaded bookmark set in one atomic transaction. */
+  async function deleteAllBookmarks(): Promise<number> {
+    const captured = captureIdentity();
+    if (!captured.context) return 0;
+    const root = bookmarkRootFor(captured);
+    if (!root) return 0;
+    const ids = Object.keys(root.bookmarks);
+    if (ids.length === 0) return 0;
+    const committed = await commitBookmarkBatch(captured, root, state =>
+      ids
+        .filter(bookmarkId => !!state.bookmarks[bookmarkId])
+        .map(bookmarkId => ({ type: 'delete' as const, bookmarkId })));
+    if (!committed || !isBookmarkRootCurrent(captured, root)) return 0;
+    const deleted = ids.filter(bookmarkId => !committed.bookmarks[bookmarkId]).length;
+    if (deleted > 0) emitBookmarksUpdated(captured, 'delete-all');
+    return deleted;
   }
 
   /**
@@ -1283,7 +1406,8 @@ import type { IdentityContext } from '../../types/jc';
     updateMarkers: updateBookmarkMarkersForCurrentVideo,
     formatTimestamp,
     syncBookmarks,
-    cleanupOrphaned: cleanupOrphanedBookmarks
+    cleanupOrphaned: cleanupOrphanedBookmarks,
+    deleteAll: deleteAllBookmarks
   } satisfies BookmarksApi;
 
   /**

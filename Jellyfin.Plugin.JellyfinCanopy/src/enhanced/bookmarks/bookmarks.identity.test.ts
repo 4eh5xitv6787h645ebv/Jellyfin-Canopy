@@ -34,7 +34,7 @@ function bookmark(itemId = 'item-a', label = 'A'): AnyRecord {
 
 describe('bookmark player identity ownership', () => {
   let JC: AnyRecord;
-  let save: ReturnType<typeof vi.fn<(fileName: string, settings: unknown) => Promise<void>>>;
+  let save: ReturnType<typeof vi.fn>;
   let ajax: ReturnType<typeof vi.fn>;
   let video: HTMLVideoElement;
 
@@ -52,15 +52,25 @@ describe('bookmark player identity ownership', () => {
     JC = window.JellyfinCanopy;
     JC.identity.transition('', '', 'bookmark-identity-test-logout');
     const context = JC.identity.transition('server-a', 'user-a', 'bookmark-identity-test-a');
-    const root = JC.identity.own({ bookmarks: initialBookmarks }, context);
+    const root = JC.identity.own({ revision: 0, bookmarks: initialBookmarks }, context);
     JC.userConfig = JC.identity.own({ bookmark: root }, context);
     JC.pluginConfig = { BookmarksEnabled: true };
     JC.t = (key: string) => key;
     JC.escapeHtml = (value: unknown) => typeof value === 'string' ? value : '';
     JC.isVideoPage = () => true;
 
-    save = vi.fn<(fileName: string, settings: unknown) => Promise<void>>().mockResolvedValue(undefined);
+    save = vi.fn((_path: string, options: AnyRecord) => {
+      const current = JC.userConfig.bookmark;
+      const payload = options.body as { revision: number; operations: AnyRecord[] };
+      const next = structuredClone(current.bookmarks);
+      for (const operation of payload.operations) {
+        if (operation.type === 'delete') delete next[operation.bookmarkId];
+        else next[operation.bookmarkId] = structuredClone(operation.bookmark);
+      }
+      return Promise.resolve({ revision: payload.revision + 1, bookmarks: next });
+    });
     JC.saveUserSettings = save;
+    JC.core.api = { plugin: save };
     ajax = vi.fn().mockResolvedValue({
       Items: [{
         Id: 'item-a',
@@ -88,7 +98,7 @@ describe('bookmark player identity ownership', () => {
 
   function switchToB(bookmarks: AnyRecord, userId = 'user-b'): AnyRecord {
     const context = JC.identity.transition('server-b', userId, 'bookmark-identity-test-switch');
-    const root = JC.identity.own({ bookmarks }, context);
+    const root = JC.identity.own({ revision: 0, bookmarks }, context);
     JC.userConfig = JC.identity.own({ bookmark: root }, context);
     return root;
   }
@@ -319,8 +329,8 @@ describe('bookmark player identity ownership', () => {
 
     const pending = api.add(12, 'A label');
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    const aStore = save.mock.calls[0][1] as AnyRecord;
-    const generatedId = Object.keys(aStore.bookmarks)[0];
+    const request = save.mock.calls[0][1] as AnyRecord;
+    const generatedId = request.body.operations[0].bookmarkId;
     const bBookmark = { ...bookmark('item-b', 'B'), owner: 'b' };
     const bRoot = switchToB({ [generatedId]: bBookmark });
 
@@ -354,7 +364,7 @@ describe('bookmark player identity ownership', () => {
   it('drops a held A migration removal without restoring or notifying through B', async () => {
     const api = await loadModule({ old: bookmark('old-item', 'Old') });
     const heldRemoval = deferred<void>();
-    save.mockResolvedValueOnce(undefined).mockReturnValueOnce(heldRemoval.promise);
+    save.mockReturnValueOnce(heldRemoval.promise);
     const updated = vi.fn();
     document.addEventListener('jc-bookmarks-updated', updated);
 
@@ -364,7 +374,7 @@ describe('bookmark player identity ownership', () => {
       0,
       ['old']
     );
-    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     const bBookmark = { ...bookmark('item-b', 'B'), owner: 'b' };
     const bRoot = switchToB({ old: bBookmark });
     heldRemoval.resolve(undefined);

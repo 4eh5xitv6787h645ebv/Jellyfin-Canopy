@@ -230,6 +230,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
     public class UserBookmark
     {
+        /// <summary>
+        /// Gets or sets the optimistic-concurrency revision for this complete
+        /// bookmark state. Legacy files deserialize as revision zero; every
+        /// successful mutation increments the value exactly once.
+        /// </summary>
+        public long Revision { get; set; }
+
         public Dictionary<string, BookmarkItem> Bookmarks { get; set; } = new Dictionary<string, BookmarkItem>();
     }
 

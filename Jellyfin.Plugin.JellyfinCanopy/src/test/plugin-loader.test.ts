@@ -554,10 +554,12 @@ describe('plugin.js loader guards', () => {
             race: <T>(promise: PromiseLike<T> | T) => Promise.resolve(promise),
         };
         const context = { serverId: 'server', userId: 'user/id', epoch: 1 };
+        const validUserFile = (options: AjaxOptions): Record<string, unknown> =>
+            options.url.includes('bookmark.json') ? { revision: 0, bookmarks: {} } : {};
         const transientError = Object.assign(new Error('temporary server failure'), { status: 503 });
         const transientAjax = vi.fn((options: AjaxOptions) => options.url.includes('settings.json')
             ? Promise.reject(transientError)
-            : Promise.resolve({}));
+            : Promise.resolve(validUserFile(options)));
 
         await expect(fetchUserConfig({ getUrl: (path) => path, ajax: transientAjax }, context, scope))
             .rejects.toBe(transientError);
@@ -565,7 +567,7 @@ describe('plugin.js loader guards', () => {
 
         const malformedAjax = vi.fn((options: AjaxOptions) => options.url.includes('settings.json')
             ? Promise.resolve(null)
-            : Promise.resolve({}));
+            : Promise.resolve(validUserFile(options)));
         await expect(fetchUserConfig({ getUrl: (path) => path, ajax: malformedAjax }, context, scope))
             .rejects.toThrow('Invalid settings user-settings response');
         expect(malformedAjax).toHaveBeenCalledTimes(5);
@@ -573,7 +575,7 @@ describe('plugin.js loader guards', () => {
         const missingError = Object.assign(new Error('missing'), { status: 404 });
         const missingAjax = vi.fn((options: AjaxOptions) => options.url.includes('shortcuts.json')
             ? Promise.reject(missingError)
-            : Promise.resolve({}));
+            : Promise.resolve(validUserFile(options)));
         const snapshot = await fetchUserConfig({ getUrl: (path) => path, ajax: missingAjax }, context, scope);
 
         expect(missingAjax).toHaveBeenCalledTimes(5);
@@ -581,6 +583,12 @@ describe('plugin.js loader guards', () => {
         for (const [options] of missingAjax.mock.calls) {
             expect(options.url).toContain('/user-settings/user%2Fid/');
         }
+
+        const missingBookmarkAjax = vi.fn((options: AjaxOptions) => options.url.includes('bookmark.json')
+            ? Promise.reject(missingError)
+            : Promise.resolve({}));
+        await expect(fetchUserConfig({ getUrl: (path) => path, ajax: missingBookmarkAjax }, context, scope))
+            .rejects.toBe(missingError);
     });
 
     it('does not downgrade current-user failure and encodes every loader user path', () => {

@@ -223,6 +223,7 @@ The data structure is (property names are persisted as-is, in PascalCase):
 
 ```json
 {
+  "Revision": 7,
   "Bookmarks": {
     "unique-bookmark-id": {
       "ItemId": "jellyfin-item-id",
@@ -240,7 +241,10 @@ The data structure is (property names are persisted as-is, in PascalCase):
 }
 ```
 
-External applications read and write bookmarks through the endpoints below. `{userId}` is the 32-character hex (`"N"` format) Jellyfin user id.
+External applications read and write bookmarks through the endpoints below. `{userId}` is the 32-character hex (`"N"` format) Jellyfin user id. Bookmark state is server-authoritative and revisioned: retain the `Revision` returned by every GET/mutation, submit it with the next operation, and rebase on the authoritative state returned with HTTP `409 Conflict`. Missing preconditions return `428 Precondition Required`. A successful mutation increments the revision once and returns the complete committed state.
+
+!!! warning "Concurrency-contract upgrade"
+    Clients written for the older unversioned bookmark API must be updated before upgrading: unversioned full replacements and operation requests now return `428 Precondition Required` instead of writing. This intentional compatibility break prevents an older/stale client from silently erasing writes acknowledged to another tab or device.
 
 **Get bookmarks:**
 
@@ -249,17 +253,52 @@ GET /JellyfinCanopy/user-settings/{userId}/bookmark.json
 Authorization: MediaBrowser Token="{your-api-key}"
 ```
 
-**Save bookmarks.** The request body is the `UserBookmark` object itself — a single `Bookmarks` map, not an envelope. This performs a **full replace** of the user's bookmarks:
+The response body is the complete `{ "Revision": n, "Bookmarks": { ... } }` state and the same revision is returned as a strong `ETag` (for example, `ETag: "7"`). A persistence read fault returns `503`; it is never converted to an empty state.
+
+**Atomic batch (recommended).** Adds, updates, and deletes in one request commit as one transaction or not at all. `BookmarkId` is caller-generated and must be stable across retries so a lost acknowledgement cannot duplicate an add:
+
+```http
+POST /JellyfinCanopy/user-settings/{userId}/bookmark.json/batch
+Authorization: MediaBrowser Token="{your-api-key}"
+Content-Type: application/json
+
+{
+  "Revision": 7,
+  "Operations": [
+    { "Type": "add", "BookmarkId": "client-stable-id", "Bookmark": { "ItemId": "item-a", "Timestamp": 12.5 } },
+    { "Type": "update", "BookmarkId": "existing-id", "Bookmark": { "ItemId": "item-b", "Timestamp": 30, "Label": "New label" } },
+    { "Type": "delete", "BookmarkId": "old-id" }
+  ]
+}
+```
+
+The operation list is validated before saving and is capped at 1,000 operations. Bookmark ids are capped at 256 characters and individual bookmark string fields at 4,096 characters. A stale `Revision` returns `409` with `Revision` and `Bookmarks` containing the current server state; rebuild the intended operations against that state and retry.
+
+Dedicated operation endpoints expose the same revision contract:
+
+```http
+POST   /JellyfinCanopy/user-settings/{userId}/bookmark.json/add
+PUT    /JellyfinCanopy/user-settings/{userId}/bookmark.json/{bookmarkId}
+DELETE /JellyfinCanopy/user-settings/{userId}/bookmark.json/{bookmarkId}?revision=7
+```
+
+The add body includes `Revision`, optional stable `BookmarkId`, and the bookmark fields. The update body is `{ "Revision": 7, "Bookmark": { ... } }`. All return the complete committed revision/map; add also returns `Id`, and delete returns `Removed`.
+
+**Full replacement (specialized callers only).** The request body remains the `UserBookmark` object itself, but replacement now requires a strong `If-Match` precondition. The body `Revision` must equal the header revision. Stale replacement returns `409` without changing the file:
 
 ```http
 POST /JellyfinCanopy/user-settings/{userId}/bookmark.json
 Authorization: MediaBrowser Token="{your-api-key}"
 Content-Type: application/json
+If-Match: "7"
 
 {
+  "Revision": 7,
   "Bookmarks": { ... }
 }
 ```
+
+Only one quoted numeric strong ETag is accepted. Wildcard (`If-Match: *`), weak (`W/"7"`), unquoted, and comma-separated ETag-list forms intentionally return `428`: accepting a wildcard would bypass the stale-snapshot protection that this endpoint exists to enforce.
 
 ### Seerr integration
 
