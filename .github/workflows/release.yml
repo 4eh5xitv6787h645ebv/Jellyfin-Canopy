@@ -43,18 +43,70 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  provenance:
+    name: Verify release source provenance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag_sha: ${{ steps.provenance.outputs.tag_sha }}
+      default_branch: ${{ steps.provenance.outputs.default_branch }}
+      default_sha: ${{ steps.provenance.outputs.default_sha }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Fetch reviewed default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: git fetch --no-tags origin "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+
+      - name: Require tag commit on reviewed default-branch history
+        id: provenance
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_SHA: ${{ github.sha }}
+        run: >-
+          node scripts/release/verify-provenance.js
+          --tag-ref "${EVENT_SHA}"
+          --default-ref "refs/remotes/origin/${DEFAULT_BRANCH}"
+          --default-branch "${DEFAULT_BRANCH}"
+          --github-output "${GITHUB_OUTPUT}"
+          --summary "${GITHUB_STEP_SUMMARY}"
+
   quality-gates:
     name: Required source-SHA quality gates
+    needs: provenance
     uses: ./.github/workflows/build.yml
     permissions:
       actions: read
       contents: read
 
+  security-gates:
+    name: Required source-SHA security gates
+    needs: provenance
+    uses: ./.github/workflows/security-scan.yml
+    with:
+      verify_repository_policy: true
+    permissions:
+      # The called policy-verifier job needs write-level repository identity
+      # so GitHub returns bypass actors; its other jobs stay contents:read.
+      contents: write
+
   release:
     name: Build, test, package & publish
-    needs: quality-gates
+    needs: [provenance, quality-gates, security-gates]
     runs-on: ubuntu-latest
+    environment:
+      name: release
     permissions:
+      actions: write # dispatch required checks for the generated manifest PR
       contents: write # create the release + push the manifest branch
       pull-requests: write # open the manifest-update PR
     steps:
@@ -94,6 +146,24 @@ jobs:
           version="$(IFS='.'; echo "${parts[*]}")"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Releasing version $version from tag $GITHUB_REF_NAME"
+
+      - name: Record approved source provenance
+        env:
+          TAG_SHA: ${{ needs.provenance.outputs.tag_sha }}
+          DEFAULT_BRANCH: ${{ needs.provenance.outputs.default_branch }}
+          DEFAULT_SHA: ${{ needs.provenance.outputs.default_sha }}
+          QUALITY_RESULT: ${{ needs.quality-gates.result }}
+          SECURITY_RESULT: ${{ needs.security-gates.result }}
+        run: |
+          {
+            echo '### Approved release provenance'
+            echo "- Tag commit: \`${TAG_SHA}\`"
+            echo "- Reviewed branch: \`${DEFAULT_BRANCH}\` at \`${DEFAULT_SHA}\`"
+            echo "- Default-branch ancestry: verified"
+            echo "- Required Build & Test workflow: \`${QUALITY_RESULT}\`"
+            echo "- Required Security Scan workflow: \`${SECURITY_RESULT}\`"
+            echo "- Protected environment: \`release\` (explicit approval recorded by GitHub)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # ---- Quality policy mirrors build.yml: lint findings are advisory; ----
       # ---- every other failure (including broken lint tooling) blocks.  ----
@@ -428,6 +498,9 @@ jobs:
             echo '`scripts/release/validate-manifest.js`.'
             echo
             echo "Merging this PR is what publishes the update to installed plugins."
+            echo "If main advances, first update this proposal branch from main. After"
+            echo "any proposal-head change, rerun the source Release workflow so it"
+            echo "dispatches both required suites for that exact new head SHA."
           } > pr-body.md
           open_pr="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')"
           if [ -z "$open_pr" ]; then
@@ -439,6 +512,72 @@ jobs:
           else
             echo "PR $open_pr already owns $BRANCH; leaving it unchanged"
           fi
+
+      # PRs opened with GITHUB_TOKEN intentionally do not trigger other
+      # workflows. Dispatch the same required suites explicitly against the
+      # exact proposal SHA so the protected default branch remains mergeable
+      # without weakening or bypassing its status-check rules.
+      - name: Dispatch required checks for manifest proposal
+        if: steps.release_state.outputs.action != 'noop-main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.release_state.outputs.branch }}
+        run: |
+          resolve_head() {
+            git ls-remote --exit-code --heads origin "refs/heads/$BRANCH" \
+              | awk 'NR == 1 { print $1 }'
+          }
+          list_runs() {
+            gh run list --workflow "$1" --branch "$BRANCH" \
+              --event workflow_dispatch --limit 100 \
+              --json databaseId,headSha,status,conclusion
+          }
+
+          head_sha="$(resolve_head)"
+          if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Could not resolve one manifest proposal SHA"
+            exit 1
+          fi
+          for workflow in build.yml security-scan.yml; do
+            runs="$(list_runs "$workflow")"
+            action="$(node scripts/release/check-dispatch.js --sha "$head_sha" <<< "$runs")"
+            if [ "$action" = dispatch ]; then
+              before_runs="$RUNNER_TEMP/${workflow}.before-runs.json"
+              printf '%s\n' "$runs" > "$before_runs"
+              if [ "$(resolve_head)" != "$head_sha" ]; then
+                echo "::error::Manifest branch changed before $workflow dispatch; rerun Release"
+                exit 1
+              fi
+              gh workflow run "$workflow" --ref "$BRANCH"
+              observed=false
+              # GitHub's run-list index can lag workflow_dispatch. Allow just
+              # under two minutes, while treating malformed API evidence as an
+              # immediate tooling failure rather than misreporting a timeout.
+              for attempt in {1..24}; do
+                runs="$(list_runs "$workflow")"
+                if node scripts/release/check-dispatch.js \
+                    --sha "$head_sha" --mode observed \
+                    --before "$before_runs" <<< "$runs"; then
+                  observed=true
+                  break
+                else
+                  observation_status=$?
+                  if [ "$observation_status" -ne 1 ]; then
+                    echo "::error::Could not validate $workflow dispatch evidence"
+                    exit "$observation_status"
+                  fi
+                fi
+                if [ "$attempt" -lt 24 ]; then sleep 5; fi
+              done
+              if [ "$observed" != true ]; then
+                current_head="$(resolve_head)"
+                echo "::error::$workflow did not start for exact proposal $head_sha (current head $current_head); rerun Release"
+                exit 1
+              fi
+            else
+              echo "$workflow already has a successful or active run for $head_sha"
+            fi
+          done
 
       - name: Summarize immutable rerun
         if: steps.release_state.outputs.action == 'noop-main'

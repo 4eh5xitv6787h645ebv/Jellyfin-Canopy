@@ -1,0 +1,121 @@
+{
+  "repository": "4eh5xitv6787h645ebv/Jellyfin-Canopy",
+  "maintainer": {
+    "login": "4eh5xitv6787h645ebv",
+    "id": 45441845
+  },
+  "rulesets": [
+    {
+      "name": "Protect reviewed default branch",
+      "target": "branch",
+      "enforcement": "active",
+      "bypass_actors": [],
+      "conditions": {
+        "ref_name": {
+          "include": ["~DEFAULT_BRANCH"],
+          "exclude": []
+        }
+      },
+      "rules": [
+        { "type": "deletion" },
+        { "type": "non_fast_forward" },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "allowed_merge_methods": ["squash", "rebase"],
+            "dismiss_stale_reviews_on_push": true,
+            "require_code_owner_review": false,
+            "require_last_push_approval": false,
+            "required_approving_review_count": 0,
+            "required_review_thread_resolution": true
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              { "context": "Plugin (Jellyfin 12 / net10.0)", "integration_id": 15368 },
+              { "context": "Unit tests", "integration_id": 15368 },
+              { "context": "Client checks (lint advisory; all other gates blocking)", "integration_id": 15368 },
+              { "context": "E2E (dockerized Jellyfin 12)", "integration_id": 15368 },
+              { "context": "Manifest validation", "integration_id": 15368 },
+              { "context": "Secret Scanning", "integration_id": 15368 },
+              { "context": ".NET Security Audit", "integration_id": 15368 }
+            ],
+            "strict_required_status_checks_policy": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "Restrict release tag creation",
+      "target": "tag",
+      "enforcement": "active",
+      "bypass_actors": [
+        {
+          "actor_id": 45441845,
+          "actor_type": "User",
+          "bypass_mode": "always"
+        }
+      ],
+      "conditions": {
+        "ref_name": {
+          "include": [
+            "refs/tags/v[0-9]*",
+            "refs/tags/[0-9]*.[0-9]*.[0-9]*"
+          ],
+          "exclude": []
+        }
+      },
+      "rules": [
+        { "type": "creation" }
+      ]
+    },
+    {
+      "name": "Make release tags immutable",
+      "target": "tag",
+      "enforcement": "active",
+      "bypass_actors": [],
+      "conditions": {
+        "ref_name": {
+          "include": [
+            "refs/tags/v[0-9]*",
+            "refs/tags/[0-9]*.[0-9]*.[0-9]*"
+          ],
+          "exclude": []
+        }
+      },
+      "rules": [
+        {
+          "type": "update",
+          "parameters": {
+            "update_allows_fetch_and_merge": false
+          }
+        },
+        { "type": "deletion" },
+        { "type": "non_fast_forward" }
+      ]
+    }
+  ],
+  "environment": {
+    "name": "release",
+    "wait_timer": 0,
+    "prevent_self_review": false,
+    "can_admins_bypass": false,
+    "reviewers": [
+      {
+        "type": "User",
+        "id": 45441845
+      }
+    ],
+    "deployment_branch_policy": {
+      "protected_branches": false,
+      "custom_branch_policies": true
+    },
+    "deployment_policies": [
+      { "type": "tag", "name": "v[0-9]*" },
+      { "type": "tag", "name": "[0-9]*.[0-9]*.[0-9]*" }
+    ]
+  }
+}
