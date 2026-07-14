@@ -134,7 +134,12 @@ test.describe('Seerr resilience: a bad/down Seerr never breaks the UI (591)', ()
             expect(initialized, 'JC must boot even when Seerr is unreachable').toBe(true);
 
             // Drive a global search, the surface most likely to fire Seerr calls, then
-            // give the deferred Seerr fetches time to fail and be handled.
+            // give the deferred Seerr fetches time to fail and be handled. Let
+            // jellyfin-web's home controller mount a real card first: navigating
+            // away while hometab.chunk.js is still constructing its controller
+            // triggers the host's documented querySelector race and obscures the
+            // Seerr resilience signal this test owns.
+            await page.waitForSelector('#indexPage .card', { timeout: 60_000 });
             await page.evaluate(() => { void (window as any).Emby?.Page?.show?.('/search.html?query=test'); });
             await page.waitForTimeout(2500);
 

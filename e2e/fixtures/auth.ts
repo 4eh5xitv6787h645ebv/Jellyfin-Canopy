@@ -9,7 +9,9 @@ import { test as base, expect, type Page } from 'playwright/test';
 import {
     CURRENT_USER_TIMEOUT_MS,
     FAST_BOUNCE_TIMEOUT_MS,
+    INITIAL_CONNECTION_TIMEOUT_MS,
     PLUGIN_INIT_TIMEOUT_MS,
+    waitForInitialConnectionDecision,
     waitForSessionDecision,
     type AuthSessionDecision,
     type AuthSessionPhase,
@@ -181,7 +183,7 @@ async function readAuthSession(page: Page): Promise<AuthSessionSnapshot> {
     });
 }
 
-type LoginPhase = AuthSessionPhase | 'home-route';
+type LoginPhase = AuthSessionPhase | 'home-route' | 'initial-connection';
 
 interface LoginAttemptResult {
     ok: boolean;
@@ -246,6 +248,24 @@ async function attemptLogin(
         undefined,
         { timeout: 60_000 }
     );
+
+    // ApiClient is exposed before Jellyfin Web's initial unauthenticated
+    // connect has necessarily resolved. If login starts during that window,
+    // the stale connect can later report ServerSignIn and overwrite the fresh
+    // token with a null session. Wait for either the settled sign-in view or a
+    // coherently restored session before programmatic authentication begins.
+    const initialConnection = await waitForInitialConnectionDecision(
+        () => readAuthSession(page),
+        { timeoutMs: INITIAL_CONNECTION_TIMEOUT_MS }
+    );
+    if (initialConnection.timedOut) {
+        return {
+            ok: false,
+            phase: 'initial-connection',
+            diagnostic: `timed out: ${initialConnection.diagnostic}`,
+        };
+    }
+
     const expectedUserId = await page.evaluate(async (credentials) => {
         const apiClient = (window as any).ApiClient;
         const authenticationResult = await apiClient.authenticateUserByName(
