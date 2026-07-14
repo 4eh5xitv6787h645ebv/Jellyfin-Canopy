@@ -485,6 +485,41 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
         }
 
         [Fact]
+        public async Task IsTmdbProxyPathBlocked_GateResolutionFault_FailsClosed()
+        {
+            var provider = new ThrowingPluginConfigProvider();
+            var filter = new SeerrParentalFilter(
+                new RecordingHttpClientFactory(new RecordingHttpMessageHandler()),
+                NullLogger<SeerrParentalFilter>.Instance,
+                userManager: null!,
+                localization: null!,
+                new SeerrCache(provider),
+                provider);
+
+            Assert.True(await filter.IsTmdbProxyPathBlockedAsync(
+                "movie/100",
+                new SeerrCaller(CallerGuid, false)));
+        }
+
+        [Fact]
+        public async Task IsBlockedAsync_GateResolutionFault_FailsClosed()
+        {
+            var provider = new ThrowingPluginConfigProvider();
+            var filter = new SeerrParentalFilter(
+                new RecordingHttpClientFactory(new RecordingHttpMessageHandler()),
+                NullLogger<SeerrParentalFilter>.Instance,
+                userManager: null!,
+                localization: null!,
+                new SeerrCache(provider),
+                provider);
+
+            Assert.True(await filter.IsBlockedAsync(
+                "movie",
+                100,
+                new SeerrCaller(CallerGuid, false)));
+        }
+
+        [Fact]
         public async Task ListFilter_DecrementsPageInfoCounts_WhenRowsRemoved()
         {
             const string body = @"{ ""results"": [
@@ -605,6 +640,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
         }
 
         // ── Minimal fakes ────────────────────────────────────────────────────
+
+        private sealed class ThrowingPluginConfigProvider : Jellyfin.Plugin.JellyfinCanopy.Services.IPluginConfigProvider
+        {
+            public PluginConfiguration Configuration => throw new InvalidOperationException("configuration read failed");
+
+            public PluginConfiguration? ConfigurationOrNull => throw new InvalidOperationException("configuration read failed");
+
+            public long ConfigurationRevision => throw new InvalidOperationException("configuration read failed");
+        }
 
     }
 }

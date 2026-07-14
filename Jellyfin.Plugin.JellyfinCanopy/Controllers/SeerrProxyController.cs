@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
@@ -74,7 +75,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         // Thin delegation kept so the ~35 proxy endpoints below read unchanged;
         // the implementation lives on the injected ISeerrClient.
         private Task<IActionResult> ProxySeerrRequest(string apiPath, HttpMethod method, string? content = null)
-            => _seerr.ProxyRequestAsync(apiPath, method, content, SeerrCaller());
+            => _seerr.ProxyRequestAsync(
+                apiPath,
+                method,
+                content,
+                SeerrCaller(),
+                HttpContext.RequestAborted);
 
         // Seerr's discover API accepts these params (verified live against
         // Seerr 3.2.0). The correct names are `keywords`, `watchProviders`,
@@ -175,7 +181,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(apiKey))
                 return BadRequest(new { ok = false, message = "Missing url or apiKey" });
 
-            if (!IsAllowedUrl(url))
+            // This endpoint intentionally accepts exactly one identity domain;
+            // the admin page normalizes/deduplicates the form list and invokes
+            // the endpoint once per distinct URL. Normalize the same aliases as
+            // SeerrClient.GetConfiguredUrls before validating and dispatching.
+            var normalizedUrl = Helpers.Seerr.SeerrUrlIdentity.Normalize(url);
+            if (string.IsNullOrWhiteSpace(normalizedUrl) || !IsAllowedUrl(normalizedUrl))
                 return BadRequest(new { ok = false, message = "Invalid URL" });
 
             var http = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
@@ -183,20 +194,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             // route via SeerrHttpHelper so a Cloudflare/forward-auth
             // 200+HTML response no longer falsely reports `ok=true` to admins.
-            var requestUri = $"{url.TrimEnd('/')}/api/v1/settings/jobs/jellyfin-recently-added-scan/run";
+            var requestUri = $"{normalizedUrl}/api/v1/settings/jobs/jellyfin-recently-added-scan/run";
             try
             {
                 using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                     HttpMethod.Post, requestUri, apiKey, bodyJson: "{}");
-                using var resp = await http.SendAsync(request);
-                var (_, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(resp, requestUri);
+                using var resp = await http.SendAsync(request, HttpContext.RequestAborted).ConfigureAwait(false);
+                var (_, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(
+                    resp,
+                    requestUri,
+                    HttpContext.RequestAborted).ConfigureAwait(false);
                 if (error == null)
                 {
-                    _logger.LogInformation($"[SeerrScan] Manually triggered Seerr recently-added scan via admin button — {url}");
+                    _logger.LogInformation($"[SeerrScan] Manually triggered Seerr recently-added scan via admin button — {normalizedUrl}");
                     return Ok(new { ok = true });
                 }
 
-                _logger.LogWarning($"[SeerrScan] Manual trigger failed for {url}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                _logger.LogWarning($"[SeerrScan] Manual trigger failed for {normalizedUrl}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
                 int httpCode = error.Code switch
                 {
                     Helpers.Seerr.SeerrErrorCode.HtmlResponse => 502,
@@ -212,9 +226,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     message = error.Message
                 });
             }
+            catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
-                _logger.LogWarning($"[SeerrScan] Manual trigger threw for {url}: {ex.Message}");
+                _logger.LogWarning($"[SeerrScan] Manual trigger threw for {normalizedUrl}: {ex.Message}");
                 return StatusCode(502, new
                 {
                     ok = false,
@@ -382,139 +400,562 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [Authorize]
         public async Task<IActionResult> GetSeerrQuota()
         {
-            var jellyfinUserId = UserHelper.GetCurrentUserId(User)?.ToString() ?? "";
-            var seerrUserId = await _seerr.GetSeerrUserId(jellyfinUserId);
-            var quotaResult = await ProxySeerrRequest($"/api/v1/user/{seerrUserId}/quota", HttpMethod.Get);
+            var requestConfig = _configProvider.Configuration;
+            var requestConfigRevision = _configProvider.ConfigurationRevision;
+            var requestConfigStamp = SeerrMutationConfigStamp.Capture(
+                requestConfig,
+                requestConfigRevision);
+            IActionResult ConfigurationChanged() => StatusCode(409, new
+            {
+                error = true,
+                code = "quota_configuration_changed",
+                message = "Seerr configuration changed during quota lookup. Retry the request."
+            });
 
-            // Reset-time enrichment is best-effort — fall back to the un-enriched
-            // result on any failure (malformed body, Seerr admin shape, etc).
+            if (!requestConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision))
+            {
+                return ConfigurationChanged();
+            }
+
+            var jellyfinUserId = UserHelper.GetCurrentUserId(User)?.ToString() ?? "";
+            var resolution = await _seerr.ResolveSeerrUser(
+                jellyfinUserId,
+                bypassCache: true,
+                allowAutoImport: false,
+                cancellationToken: HttpContext.RequestAborted).ConfigureAwait(false);
+            if (!requestConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision))
+            {
+                return ConfigurationChanged();
+            }
+
+            var seerrUser = resolution.User;
+            if (seerrUser == null)
+            {
+                if (resolution.Status is SeerrUserResolutionStatus.Incomplete or SeerrUserResolutionStatus.Unavailable)
+                {
+                    return StatusCode(502, new
+                    {
+                        error = true,
+                        code = "user_lookup_incomplete",
+                        message = "Seerr user lookup was incomplete. Quota was not published."
+                    });
+                }
+
+                return NotFound(new
+                {
+                    error = true,
+                    code = "unlinked",
+                    message = "Current Jellyfin user is not linked to a Seerr user."
+                });
+            }
+
+            var seerrUserId = seerrUser.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (seerrUser.Id <= 0 || string.IsNullOrWhiteSpace(seerrUser.SourceUrl))
+            {
+                _logger.LogWarning(
+                    "Quota lookup refused because the resolved Seerr user did not carry a valid source instance.");
+                return StatusCode(502, new
+                {
+                    error = true,
+                    code = "source_affinity_unavailable",
+                    message = "The linked Seerr instance could not be verified. Quota was not published."
+                });
+            }
+
+            // The numeric Seerr user id is instance-local. Reuse the exact user
+            // context resolved above so the quota request cannot resolve again
+            // or fail over to a different configured instance.
+            var quotaResult = await _seerr.ProxyRequestAsync(
+                $"/api/v1/user/{seerrUserId}/quota",
+                HttpMethod.Get,
+                content: null,
+                SeerrCaller(),
+                seerrUser,
+                HttpContext.RequestAborted).ConfigureAwait(false);
+
+            if (!requestConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision))
+            {
+                return ConfigurationChanged();
+            }
+
             if (quotaResult is ContentResult cr && cr.StatusCode is null or 200)
             {
                 try
                 {
                     var quota = JsonNode.Parse(cr.Content ?? "{}")!.AsObject();
-                    await EnrichQuotaWithResetAsync(quota, seerrUserId!, _configProvider.Configuration);
+                    var enrichment = await EnrichQuotaWithResetAsync(
+                        quota,
+                        seerrUserId,
+                        seerrUser.SourceUrl,
+                        requestConfig).ConfigureAwait(false);
+                    if (!requestConfigStamp.Matches(
+                            _configProvider.ConfigurationOrNull,
+                            _configProvider.ConfigurationRevision))
+                    {
+                        return ConfigurationChanged();
+                    }
+
+                    if (enrichment == QuotaResetEnrichmentStatus.InvalidQuota)
+                    {
+                        return StatusCode(502, new
+                        {
+                            error = true,
+                            code = "quota_projection_invalid",
+                            message = "Seerr returned invalid quota data. Quota was not published."
+                        });
+                    }
+
+                    // Request history is a derived reset-time projection. If it
+                    // is incomplete or temporarily disagrees with the quota
+                    // snapshot, preserve Seerr's authoritative usage/limit
+                    // values but publish no guessed nextResetAt.
                     // Compact output like the old JObject.ToString(Formatting.None).
                     return Content(quota.ToJsonString(), "application/json");
                 }
+                catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning($"Quota enrichment skipped ({ex.GetType().Name}): {ex.Message}");
+                    _logger.LogWarning($"Quota enrichment failed closed ({ex.GetType().Name}): {ex.Message}");
+                    return StatusCode(502, new
+                    {
+                        error = true,
+                        code = "quota_projection_invalid",
+                        message = "Seerr returned invalid quota data. Quota was not published."
+                    });
                 }
             }
 
             return quotaResult;
         }
 
-        private async Task EnrichQuotaWithResetAsync(JsonObject quota, string seerrUserId, PluginConfiguration config)
+        private async Task<QuotaResetEnrichmentStatus> EnrichQuotaWithResetAsync(
+            JsonObject quota,
+            string seerrUserId,
+            string? sourceUrl,
+            PluginConfiguration config)
         {
-            // Parallel: independent HTTP calls, sequential would double worst-case latency.
-            var movieTask = ComputeNextResetAsync(quota, "movie", seerrUserId, config);
-            var tvTask = ComputeNextResetAsync(quota, "tv", seerrUserId, config);
+            // This endpoint owns the projection; never preserve an upstream or
+            // cached value that was not computed from this exact snapshot.
+            if (quota["movie"] is JsonObject movieSide) movieSide.Remove("nextResetAt");
+            if (quota["tv"] is JsonObject tvSide) tvSide.Remove("nextResetAt");
+
+            // Both quota sides must be projected from the same complete user
+            // history snapshot. Apart from avoiding duplicate I/O, sharing the
+            // read prevents a request arriving between two independent reads
+            // from producing mutually inconsistent reset dates.
+            var historySnapshot = new Lazy<Task<SeerrPagedCollectionResult>>(() =>
+            {
+                var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+                httpClient.Timeout = TimeSpan.FromSeconds(8);
+                return FetchQuotaRequestHistoryAsync(
+                    httpClient,
+                    sourceUrl ?? string.Empty,
+                    config.SeerrApiKey,
+                    seerrUserId,
+                    HttpContext.RequestAborted);
+            });
+            var projectionNow = DateTime.UtcNow;
+
+            var movieTask = ComputeNextResetAsync(
+                quota,
+                "movie",
+                seerrUserId,
+                historySnapshot,
+                projectionNow);
+            var tvTask = ComputeNextResetAsync(
+                quota,
+                "tv",
+                seerrUserId,
+                historySnapshot,
+                projectionNow);
             await Task.WhenAll(movieTask, tvTask);
 
+            if (movieTask.Result.Status == QuotaResetComputationStatus.InvalidQuota
+                || tvTask.Result.Status == QuotaResetComputationStatus.InvalidQuota)
+            {
+                return QuotaResetEnrichmentStatus.InvalidQuota;
+            }
+
+            if (movieTask.Result.Status == QuotaResetComputationStatus.ProjectionUnavailable
+                || tvTask.Result.Status == QuotaResetComputationStatus.ProjectionUnavailable)
+            {
+                quota["resetProjectionComplete"] = false;
+                return QuotaResetEnrichmentStatus.ProjectionUnavailable;
+            }
+
             // Seerr admins / no-policy users return {"movie":null,"tv":null}; cast safely.
-            if (movieTask.Result.HasValue && quota["movie"] is JsonObject mObj)
+            if (movieTask.Result.NextResetAt.HasValue && quota["movie"] is JsonObject mObj)
             {
-                mObj["nextResetAt"] = movieTask.Result.Value.ToString("o");
+                mObj["nextResetAt"] = movieTask.Result.NextResetAt.Value.ToString("o");
             }
-            if (tvTask.Result.HasValue && quota["tv"] is JsonObject tObj)
+            if (tvTask.Result.NextResetAt.HasValue && quota["tv"] is JsonObject tObj)
             {
-                tObj["nextResetAt"] = tvTask.Result.Value.ToString("o");
+                tObj["nextResetAt"] = tvTask.Result.NextResetAt.Value.ToString("o");
             }
+
+            quota["resetProjectionComplete"] = true;
+            return QuotaResetEnrichmentStatus.Complete;
         }
 
-        private async Task<DateTime?> ComputeNextResetAsync(JsonObject quota, string mediaType, string seerrUserId, PluginConfiguration config)
+        private async Task<QuotaResetComputation> ComputeNextResetAsync(
+            JsonObject quota,
+            string mediaType,
+            string seerrUserId,
+            Lazy<Task<SeerrPagedCollectionResult>> historySnapshot,
+            DateTime projectionNow)
         {
-            var side = quota[mediaType] as JsonObject;
-            if (side == null) return null;
-
-            int limit = (int?)side["limit"] ?? 0;
-            int used = (int?)side["used"] ?? 0;
-            int days = (int?)side["days"] ?? 0;
-
-            // limit=0 is unlimited; no requests means nothing to roll off.
-            if (limit <= 0 || used <= 0 || days <= 0) return null;
-
-            var urls = config.SeerrUrls.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
-            httpClient.Timeout = TimeSpan.FromSeconds(8);
-
-            // Iterate URLs for multi-instance failover, matching ProxySeerrRequest.
-            foreach (var rawUrl in urls)
+            if (!int.TryParse(
+                    seerrUserId,
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var expectedSeerrUserId)
+                || expectedSeerrUserId <= 0
+                || mediaType is not ("movie" or "tv"))
             {
-                var trimmedUrl = rawUrl.Trim().TrimEnd('/');
-                try
+                return QuotaResetComputation.InvalidQuota();
+            }
+
+            if (!quota.TryGetPropertyValue(mediaType, out var sideNode))
+            {
+                return QuotaResetComputation.InvalidQuota();
+            }
+
+            // Older/admin Seerr shapes may explicitly use null for an
+            // unrestricted side. Missing or any other non-object shape is not
+            // equivalent to that explicit value.
+            if (sideNode == null) return QuotaResetComputation.Complete();
+            if (sideNode is not JsonObject side
+                || !TryReadRequiredNonNegativeInt(side, "used", out var used)
+                || !TryReadRequiredBoolean(side, "restricted", out var restricted)
+                || !TryReadOptionalNonNegativeInt(side, "limit", out var limit)
+                || !TryReadOptionalNonNegativeInt(side, "days", out var days)
+                || !TryReadOptionalNonNegativeInt(side, "remaining", out var remaining))
+            {
+                return QuotaResetComputation.InvalidQuota();
+            }
+
+            var effectiveLimit = limit ?? 0;
+            var expectedRestricted = effectiveLimit > 0 && used >= effectiveLimit;
+            if (restricted != expectedRestricted
+                || (effectiveLimit <= 0 && (used != 0 || remaining.HasValue))
+                || (effectiveLimit > 0
+                    && remaining.HasValue
+                    && remaining.Value != Math.Max(0, effectiveLimit - used)))
+            {
+                // The individual quota fields are well-formed, but this
+                // snapshot is not internally coherent enough to derive a
+                // reset time. Preserve Seerr's authoritative raw quota rather
+                // than turning a transient cross-field disagreement into a
+                // failure of the quota endpoint.
+                return QuotaResetComputation.ProjectionUnavailable();
+            }
+
+            // nextResetAt is an eligibility promise (the UI says another
+            // request can be made then), not merely the next accounting event.
+            // An unrestricted caller can already request now, so publish no
+            // future eligibility timestamp. Unlimited, empty, and all-time
+            // quotas likewise have no rolling reset to expose.
+            if (!restricted
+                || effectiveLimit <= 0
+                || used == 0
+                || !days.HasValue
+                || days.Value == 0)
+            {
+                return QuotaResetComputation.Complete();
+            }
+
+            var snapshot = await historySnapshot.Value.ConfigureAwait(false);
+            if (!snapshot.IsComplete)
+            {
+                _logger.LogWarning(
+                    "Quota reset enrichment skipped because the {MediaType} request collection from {Url} was incomplete: {Reason}",
+                    mediaType,
+                    snapshot.SourceUrl,
+                    snapshot.FailureReason);
+                return QuotaResetComputation.ProjectionUnavailable();
+            }
+
+            // Mirror Seerr User.getQuota exactly: count every non-declined
+            // parent request newer than the rolling boundary. Movies contribute
+            // one unit; TV contributes one unit per requested season. Media
+            // status (including BLOCKLISTED) and ignoreQuota are not part of
+            // Seerr's quota predicate.
+            var windowStart = projectionNow.AddDays(-days.Value);
+            var activeContributions = new List<(DateTime CreatedAt, int Units)>();
+            var derivedUsage = 0;
+            foreach (var req in snapshot.Items)
+            {
+                if (!QuotaHistoryRowMatchesUser(req, expectedSeerrUserId)
+                    || !req.TryGetProperty("type", out var typeEl)
+                    || typeEl.ValueKind != JsonValueKind.String)
                 {
-                    // sortDirection=asc returns oldest first; take=20 gives a margin for declined.
-                    var requestUri = $"{trimmedUrl}/api/v1/request" +
-                                     $"?take=20&skip=0&sortDirection=asc&requestedBy={seerrUserId}&mediaType={mediaType}";
-
-                    using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
-                        HttpMethod.Get, requestUri, config.SeerrApiKey, seerrUserId);
-                    using var response = await httpClient.SendAsync(request);
-                    var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
-                    if (error != null)
-                    {
-                        _logger.LogDebug($"ComputeNextResetAsync({mediaType}) on {trimmedUrl} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
-                        continue;
-                    }
-
-                    using var doc = JsonDocument.Parse(content!);
-                    if (!doc.RootElement.TryGetProperty("results", out var results) || results.ValueKind != JsonValueKind.Array)
-                    {
-                        continue;
-                    }
-
-                    // Quota excludes DECLINED (status==3), so we do too.
-                    var windowStart = DateTime.UtcNow.AddDays(-days);
-                    DateTime? oldestCreatedAt = null;
-                    foreach (var req in results.EnumerateArray())
-                    {
-                        if (req.TryGetProperty("status", out var statusEl) &&
-                            statusEl.ValueKind == JsonValueKind.Number &&
-                            statusEl.GetInt32() == 3)
-                        {
-                            continue;
-                        }
-
-                        if (!req.TryGetProperty("createdAt", out var createdEl) ||
-                            createdEl.ValueKind != JsonValueKind.String)
-                        {
-                            continue;
-                        }
-
-                        if (!DateTime.TryParse(createdEl.GetString(), null,
-                            System.Globalization.DateTimeStyles.RoundtripKind, out var createdAt))
-                        {
-                            continue;
-                        }
-
-                        var createdAtUtc = createdAt.ToUniversalTime();
-                        if (createdAtUtc < windowStart) continue;
-
-                        if (oldestCreatedAt == null || createdAtUtc < oldestCreatedAt.Value)
-                        {
-                            oldestCreatedAt = createdAtUtc;
-                        }
-                    }
-
-                    return oldestCreatedAt?.AddDays(days);
+                    _logger.LogWarning(
+                        "Quota reset request history from {Url} contained a row outside the requested user scope or with an invalid type; refusing a partial projection.",
+                        snapshot.SourceUrl);
+                    return QuotaResetComputation.ProjectionUnavailable();
                 }
-                catch (Exception ex)
+
+                var requestType = typeEl.GetString();
+                if (requestType is not ("movie" or "tv"))
                 {
-                    _logger.LogWarning($"ComputeNextResetAsync({mediaType}) on {trimmedUrl} failed ({ex.GetType().Name}): {ex.Message}");
+                    _logger.LogWarning(
+                        "Quota reset request history from {Url} contained an invalid request type; refusing a partial projection.",
+                        snapshot.SourceUrl);
+                    return QuotaResetComputation.ProjectionUnavailable();
+                }
+
+                if (!req.TryGetProperty("status", out var statusEl)
+                    || statusEl.ValueKind != JsonValueKind.Number
+                    || !statusEl.TryGetInt32(out var status)
+                    || status is < 1 or > 5)
+                {
+                    _logger.LogWarning(
+                        "Quota reset request history from {Url} contained an invalid status row; refusing a partial projection.",
+                        snapshot.SourceUrl);
+                    return QuotaResetComputation.ProjectionUnavailable();
+                }
+
+                if (!req.TryGetProperty("createdAt", out var createdEl)
+                    || createdEl.ValueKind != JsonValueKind.String
+                    || !DateTimeOffset.TryParse(
+                        createdEl.GetString(),
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.RoundtripKind,
+                        out var createdAt))
+                {
+                    _logger.LogWarning(
+                        "Quota reset request history from {Url} contained an invalid createdAt row; refusing a partial projection.",
+                        snapshot.SourceUrl);
+                    return QuotaResetComputation.ProjectionUnavailable();
+                }
+
+                var units = 1;
+                if (requestType == "tv")
+                {
+                    if (!req.TryGetProperty("seasons", out var seasons)
+                        || seasons.ValueKind != JsonValueKind.Array)
+                    {
+                        _logger.LogWarning(
+                            "Quota reset request history from {Url} contained a TV row without a seasons array; refusing a partial projection.",
+                            snapshot.SourceUrl);
+                        return QuotaResetComputation.ProjectionUnavailable();
+                    }
+
+                    units = seasons.GetArrayLength();
+                }
+
+                if (!string.Equals(requestType, mediaType, StringComparison.Ordinal)
+                    || status == 3)
+                {
+                    continue;
+                }
+
+                var createdAtUtc = createdAt.UtcDateTime;
+                // Seerr uses MoreThan(windowStart), not an inclusive boundary.
+                if (createdAtUtc <= windowStart) continue;
+                if (derivedUsage > int.MaxValue - units)
+                {
+                    _logger.LogWarning(
+                        "Quota reset request history from {Url} exceeded the supported usage range; refusing a partial projection.",
+                        snapshot.SourceUrl);
+                    return QuotaResetComputation.ProjectionUnavailable();
+                }
+
+                derivedUsage += units;
+                if (units > 0)
+                {
+                    activeContributions.Add((createdAtUtc, units));
                 }
             }
 
-            return null;
+            if (derivedUsage != used || (used > 0 && activeContributions.Count == 0))
+            {
+                _logger.LogWarning(
+                    "Quota reported {Used} {MediaType} units, but the complete history from {Url} reconstructed {Derived}; refusing a cross-snapshot reset projection.",
+                    used,
+                    mediaType,
+                    snapshot.SourceUrl,
+                    derivedUsage);
+                return QuotaResetComputation.ProjectionUnavailable();
+            }
+
+            // A lowered quota can leave Seerr reporting used > limit. Expiry of
+            // the oldest request alone does not necessarily open a slot: walk
+            // contributions in expiry order until the post-expiry usage is
+            // strictly below the limit. TV requests contribute all of their
+            // season units at their shared request timestamp.
+            var expiredUnits = 0L;
+            foreach (var contribution in activeContributions.OrderBy(entry => entry.CreatedAt))
+            {
+                expiredUnits += contribution.Units;
+                if ((long)used - expiredUnits < effectiveLimit)
+                {
+                    return QuotaResetComputation.Complete(
+                        contribution.CreatedAt.AddDays(days.Value));
+                }
+            }
+
+            _logger.LogWarning(
+                "Quota reset request history from {Url} could not identify an expiry that opens a {MediaType} quota slot.",
+                snapshot.SourceUrl,
+                mediaType);
+            return QuotaResetComputation.ProjectionUnavailable();
+        }
+
+        private static bool TryReadRequiredNonNegativeInt(
+            JsonObject owner,
+            string propertyName,
+            out int value)
+        {
+            value = 0;
+            return owner.TryGetPropertyValue(propertyName, out var node)
+                && node is JsonValue jsonValue
+                && jsonValue.TryGetValue<int>(out value)
+                && value >= 0;
+        }
+
+        private static bool TryReadOptionalNonNegativeInt(
+            JsonObject owner,
+            string propertyName,
+            out int? value)
+        {
+            value = null;
+            if (!owner.TryGetPropertyValue(propertyName, out var node))
+            {
+                return true;
+            }
+
+            if (node is not JsonValue jsonValue
+                || !jsonValue.TryGetValue<int>(out var parsed)
+                || parsed < 0)
+            {
+                return false;
+            }
+
+            value = parsed;
+            return true;
+        }
+
+        private static bool TryReadRequiredBoolean(
+            JsonObject owner,
+            string propertyName,
+            out bool value)
+        {
+            value = false;
+            return owner.TryGetPropertyValue(propertyName, out var node)
+                && node is JsonValue jsonValue
+                && jsonValue.TryGetValue<bool>(out value);
+        }
+
+        private static bool QuotaHistoryRowMatchesUser(
+            JsonElement request,
+            int expectedSeerrUserId)
+        {
+            if (!request.TryGetProperty("requestedBy", out var requestedBy)
+                || !TryReadPositiveSeerrUserId(requestedBy, out var actualSeerrUserId)
+                || actualSeerrUserId != expectedSeerrUserId)
+            {
+                return false;
+            }
+            return true;
+        }
+
+        private static bool TryReadPositiveSeerrUserId(JsonElement value, out int userId)
+        {
+            if (value.ValueKind == JsonValueKind.Object
+                && value.TryGetProperty("id", out var nestedId))
+            {
+                value = nestedId;
+            }
+
+            if (value.ValueKind == JsonValueKind.Number)
+            {
+                return value.TryGetInt32(out userId) && userId > 0;
+            }
+
+            if (value.ValueKind == JsonValueKind.String)
+            {
+                return int.TryParse(
+                        value.GetString(),
+                        System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out userId)
+                    && userId > 0;
+            }
+
+            userId = 0;
+            return false;
+        }
+
+        internal static Task<SeerrPagedCollectionResult> FetchQuotaRequestHistoryAsync(
+            HttpClient httpClient,
+            string sourceUrl,
+            string apiKey,
+            string seerrUserId,
+            CancellationToken cancellationToken,
+            int pageSize = 100,
+            int maximumPages = SeerrPaginationHelper.DefaultMaximumPages,
+            int maximumItems = SeerrPaginationHelper.DefaultMaximumItems)
+            => SeerrPaginationHelper.FetchAllAsync(
+                httpClient,
+                new[] { sourceUrl },
+                (url, _, skip) => $"{url}/api/v1/user/{Uri.EscapeDataString(seerrUserId)}/requests" +
+                    $"?take={pageSize}&skip={skip}",
+                apiKey,
+                seerrUserId,
+                requestedPageSize: pageSize,
+                static row => SeerrPaginationHelper.CanonicalPositiveIntegerPropertyIdentity(row, "id"),
+                cancellationToken,
+                maximumPages,
+                maximumItems);
+
+        private enum QuotaResetEnrichmentStatus
+        {
+            Complete,
+            ProjectionUnavailable,
+            InvalidQuota,
+        }
+
+        private enum QuotaResetComputationStatus
+        {
+            Complete,
+            ProjectionUnavailable,
+            InvalidQuota,
+        }
+
+        private readonly record struct QuotaResetComputation(
+            QuotaResetComputationStatus Status,
+            DateTime? NextResetAt)
+        {
+            public static QuotaResetComputation Complete(DateTime? nextResetAt = null)
+                => new(QuotaResetComputationStatus.Complete, nextResetAt);
+
+            public static QuotaResetComputation ProjectionUnavailable()
+                => new(QuotaResetComputationStatus.ProjectionUnavailable, null);
+
+            public static QuotaResetComputation InvalidQuota()
+                => new(QuotaResetComputationStatus.InvalidQuota, null);
         }
 
         [HttpGet("seerr/tv/{tmdbId}")]
         [Authorize]
-        public Task<IActionResult> GetTvShow(int tmdbId)
+        public Task<IActionResult> GetTvShow(int tmdbId, [FromQuery] bool fresh = false)
         {
-            return ProxySeerrRequest($"/api/v1/tv/{tmdbId}", HttpMethod.Get);
+            return fresh
+                ? _seerr.ProxyFreshTvDetailAsync(
+                    tmdbId,
+                    SeerrCaller(),
+                    HttpContext.RequestAborted)
+                : ProxySeerrRequest($"/api/v1/tv/{tmdbId}", HttpMethod.Get);
         }
 
         [HttpGet("seerr/tv/{tmdbId}/season/{seasonNumber}")]
@@ -774,58 +1215,148 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // previously returned 200+false, which made the
                 // frontend silently flip the request modal to whole-season
                 // mode. Returns 503 with structured `code` so the frontend
-                // can keep its last-known state instead of regressing.
+                // can refuse to choose a mutation shape and ask for a retry.
                 _logger.LogWarning("Seerr integration is not configured or enabled.");
                 return StatusCode(503, new { error = true, code = "disabled", message = "Seerr integration not configured." });
             }
 
-            var urls = config.SeerrUrls.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
-
-            foreach (var url in urls)
+            var configurationRevision = _configProvider.ConfigurationRevision;
+            var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
+            var apiKey = config.SeerrApiKey;
+            var configuredUrls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
+            IActionResult ConfigurationChanged() => StatusCode(409, new
             {
-                var trimmedUrl = url.Trim();
-                try
-                {
-                    var requestUri = $"{trimmedUrl.TrimEnd('/')}/api/v1/settings/main";
-                    _logger.LogInformation($"Fetching Seerr partial requests setting from: {requestUri}");
+                error = true,
+                code = "read_configuration_changed",
+                message = "Seerr configuration changed while reading request settings. Retry the request."
+            });
 
-                    using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
-                        HttpMethod.Get, requestUri, config.SeerrApiKey);
-                    using var response = await httpClient.SendAsync(request);
-                    var (responseContent, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+            bool IsConfigurationCurrent() => configStamp.Matches(
+                _configProvider.ConfigurationOrNull,
+                _configProvider.ConfigurationRevision);
 
-                    if (error == null && responseContent != null)
-                    {
-                        using var settings = JsonDocument.Parse(responseContent);
-                        var partialRequestsEnabled = false;
-                        if (settings.RootElement.TryGetProperty("partialRequestsEnabled", out var prop))
-                        {
-                            partialRequestsEnabled = prop.GetBoolean();
-                        }
-
-                        var enableSpecialEpisodes = false;
-                        if (settings.RootElement.TryGetProperty("enableSpecialEpisodes", out var specialProp))
-                        {
-                            enableSpecialEpisodes = specialProp.GetBoolean();
-                        }
-
-                        _logger.LogInformation($"Seerr settings — partialRequests: {partialRequestsEnabled}, specialEpisodes: {enableSpecialEpisodes}");
-                        return Ok(new { partialRequestsEnabled, enableSpecialEpisodes });
-                    }
-
-                    _logger.LogWarning($"Failed to fetch Seerr settings from {trimmedUrl}: code={error!.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError($"Failed to connect to Seerr URL: {trimmedUrl}. Error: {ex.Message}");
-                }
+            if (!IsConfigurationCurrent())
+            {
+                return ConfigurationChanged();
             }
 
-            // don't silently default to false on outage — that
+            var jellyfinUserId = UserHelper.GetCurrentUserId(User)?.ToString() ?? string.Empty;
+            var resolution = await _seerr.ResolveSeerrUser(
+                jellyfinUserId,
+                bypassCache: true,
+                allowAutoImport: false,
+                cancellationToken: HttpContext.RequestAborted).ConfigureAwait(false);
+            if (!IsConfigurationCurrent())
+            {
+                return ConfigurationChanged();
+            }
+
+            var seerrUser = resolution.User;
+            if (seerrUser == null)
+            {
+                if (resolution.Status is SeerrUserResolutionStatus.Incomplete or SeerrUserResolutionStatus.Unavailable)
+                {
+                    return StatusCode(502, new
+                    {
+                        error = true,
+                        code = "user_lookup_incomplete",
+                        message = "Seerr user lookup was incomplete. Settings were not published."
+                    });
+                }
+
+                return resolution.Status == SeerrUserResolutionStatus.Blocked
+                    ? StatusCode(403, new { error = true, code = "blocked", message = "Seerr is disabled for this account." })
+                    : NotFound(new { error = true, code = "unlinked", message = "Current user is not linked to Seerr." });
+            }
+
+            var sourceUrl = configuredUrls.FirstOrDefault(url => string.Equals(
+                url,
+                SeerrUrlIdentity.Normalize(seerrUser.SourceUrl),
+                StringComparison.Ordinal));
+            if (seerrUser.Id <= 0 || sourceUrl == null)
+            {
+                return StatusCode(502, new
+                {
+                    error = true,
+                    code = "source_affinity_unavailable",
+                    message = "The linked Seerr instance could not be verified. Settings were not published."
+                });
+            }
+
+            var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
+            var requestUri = $"{sourceUrl.TrimEnd('/')}/api/v1/settings/main";
+            try
+            {
+                if (!IsConfigurationCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
+                _logger.LogInformation($"Fetching Seerr partial requests setting from: {requestUri}");
+
+                using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
+                    HttpMethod.Get, requestUri, apiKey);
+                using var response = await httpClient.SendAsync(
+                    request,
+                    HttpContext.RequestAborted).ConfigureAwait(false);
+                var (responseContent, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(
+                    response,
+                    requestUri,
+                    HttpContext.RequestAborted).ConfigureAwait(false);
+
+                if (!IsConfigurationCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
+                if (error == null && responseContent != null)
+                {
+                    using var settings = JsonDocument.Parse(responseContent);
+                    if (!settings.RootElement.TryGetProperty("partialRequestsEnabled", out var partialProp)
+                        || partialProp.ValueKind is not (JsonValueKind.True or JsonValueKind.False)
+                        || !settings.RootElement.TryGetProperty("enableSpecialEpisodes", out var specialsProp)
+                        || specialsProp.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                    {
+                        return StatusCode(502, new
+                        {
+                            error = true,
+                            code = "settings_invalid",
+                            message = "Seerr returned invalid request settings."
+                        });
+                    }
+
+                    var partialRequestsEnabled = partialProp.ValueKind == JsonValueKind.True;
+                    var enableSpecialEpisodes = specialsProp.ValueKind == JsonValueKind.True;
+                    _logger.LogInformation($"Seerr settings — partialRequests: {partialRequestsEnabled}, specialEpisodes: {enableSpecialEpisodes}");
+                    return Ok(new { partialRequestsEnabled, enableSpecialEpisodes });
+                }
+
+                _logger.LogWarning($"Failed to fetch Seerr settings from {sourceUrl}: code={error!.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+            }
+            catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                if (!IsConfigurationCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
+                _logger.LogError($"Failed to connect to Seerr URL: {sourceUrl}. Error: {ex.Message}");
+            }
+
+            if (!IsConfigurationCurrent())
+            {
+                return ConfigurationChanged();
+            }
+
+            // Do not fail over to another Seerr identity domain and do not
+            // silently default to false on outage — that
             // hides admin-configured "partial requests off" UX state. Return
             // 503 so the frontend can keep last-known state.
-            _logger.LogWarning("Could not fetch Seerr settings from any URL — surfacing as 503 unreachable");
+            _logger.LogWarning("Could not fetch settings from the resolved Seerr source — surfacing as 503 unreachable");
             return StatusCode(503, new
             {
                 error = true,
@@ -883,6 +1414,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return StatusCode(503, "TMDB API key is not configured.");
             }
 
+            var configurationRevision = _configProvider.ConfigurationRevision;
+            var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
+            var tmdbApiKey = config.TMDB_API_KEY;
+            bool IsConfigurationCurrent() => configStamp.Matches(
+                _configProvider.ConfigurationOrNull,
+                _configProvider.ConfigurationRevision);
+            IActionResult ConfigurationChanged() => StatusCode(409, new
+            {
+                error = true,
+                code = "read_configuration_changed",
+                message = "Plugin configuration changed while reading TMDB metadata. Retry the request."
+            });
+
+            if (!IsConfigurationCurrent())
+            {
+                return ConfigurationChanged();
+            }
+
             // The raw TMDB passthrough bypasses the Seerr proxy, so gate it here too —
             // otherwise a restricted user could enumerate above-limit titles or recover a
             // blocked title's metadata/sub-resources through /tmdb/{**apiPath} despite the
@@ -895,19 +1444,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             // otherwise an append_to_response=similar,recommendations rides on an allowed
             // detail and smuggles above-limit title lists the passthrough cannot body-filter.
             var queryString = HttpContext.Request.QueryString;
-            if (await _parentalFilter.IsTmdbProxyPathBlockedAsync($"{apiPath}{queryString}", SeerrCaller()))
+            var isBlocked = await _parentalFilter
+                .IsTmdbProxyPathBlockedAsync($"{apiPath}{queryString}", SeerrCaller())
+                .ConfigureAwait(false);
+            if (!IsConfigurationCurrent())
+            {
+                return ConfigurationChanged();
+            }
+
+            if (isBlocked)
             {
                 return new StatusCodeResult(403);
             }
 
             var httpClient = Helpers.PluginHttpClients.CreateTmdbClient(_httpClientFactory);
             var separator = queryString.HasValue ? "&" : "?";
-            var requestUri = $"https://api.themoviedb.org/3/{apiPath}{queryString}{separator}api_key={config.TMDB_API_KEY}";
+            var requestUri = $"https://api.themoviedb.org/3/{apiPath}{queryString}{separator}api_key={Uri.EscapeDataString(tmdbApiKey)}";
 
             try
             {
-                var response = await httpClient.GetAsync(requestUri);
-                var content = await response.Content.ReadAsStringAsync();
+                if (!IsConfigurationCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
+                using var response = await httpClient
+                    .GetAsync(requestUri, HttpContext.RequestAborted)
+                    .ConfigureAwait(false);
+                var content = await response.Content
+                    .ReadAsStringAsync(HttpContext.RequestAborted)
+                    .ConfigureAwait(false);
+                if (!IsConfigurationCurrent())
+                {
+                    return ConfigurationChanged();
+                }
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -925,7 +1495,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         [HttpGet("seerr/issue")]
         [Authorize]
-        public Task<IActionResult> GetSeerrIssues(
+        public async Task<IActionResult> GetSeerrIssues(
             [FromQuery] int? mediaId,
             [FromQuery] int take = 20,
             [FromQuery] int skip = 0,
@@ -959,7 +1529,169 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var queryString = string.Join("&", queryParts);
             var apiPath = string.IsNullOrWhiteSpace(queryString) ? "/api/v1/issue" : $"/api/v1/issue?{queryString}";
 
-            return ProxySeerrRequest(apiPath, HttpMethod.Get);
+            var config = _configProvider.ConfigurationOrNull;
+            var caller = SeerrCaller();
+            if (config == null
+                || !config.SeerrEnabled
+                || string.IsNullOrWhiteSpace(config.SeerrUrls)
+                || string.IsNullOrWhiteSpace(config.SeerrApiKey))
+            {
+                return StatusCode(503, new { error = true, code = "unavailable", message = "Seerr integration is not available." });
+            }
+
+            if (string.IsNullOrWhiteSpace(caller.JellyfinUserId))
+            {
+                return Forbid();
+            }
+
+            var configurationRevision = _configProvider.ConfigurationRevision;
+            var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
+            var apiKey = config.SeerrApiKey;
+            var configuredUrls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
+            bool IsConfigurationCurrent() => configStamp.Matches(
+                _configProvider.ConfigurationOrNull,
+                _configProvider.ConfigurationRevision);
+            IActionResult ConfigurationChanged() => StatusCode(409, new
+            {
+                error = true,
+                code = "read_configuration_changed",
+                message = "Seerr configuration changed while preparing the issue list. Retry the request."
+            });
+            if (!IsConfigurationCurrent())
+            {
+                return ConfigurationChanged();
+            }
+
+            // Resolve once so both the issue read and every avatar token are
+            // bound to the same current instance-local user domain.
+            var resolution = await _seerr.ResolveSeerrUser(
+                caller.JellyfinUserId,
+                bypassCache: true,
+                allowAutoImport: false,
+                cancellationToken: HttpContext.RequestAborted).ConfigureAwait(false);
+            if (!IsConfigurationCurrent())
+            {
+                return ConfigurationChanged();
+            }
+
+            if (!resolution.IsFound)
+            {
+                return resolution.Status switch
+                {
+                    SeerrUserResolutionStatus.Blocked => StatusCode(403, new { error = true, code = "blocked", message = "Seerr is disabled for this account." }),
+                    SeerrUserResolutionStatus.NotFound => NotFound(new { error = true, code = "unlinked", message = "Current Jellyfin user is not linked to a Seerr user." }),
+                    SeerrUserResolutionStatus.Unavailable => StatusCode(503, new { error = true, code = "unavailable", message = "Seerr integration is not available." }),
+                    _ => StatusCode(502, new { error = true, code = "user_lookup_incomplete", message = "Seerr user lookup was incomplete. Please try again." }),
+                };
+            }
+
+            var seerrUser = resolution.User!;
+            var normalizedSource = SeerrSourceToken.NormalizeSourceUrl(seerrUser.SourceUrl);
+            var configuredSource = configuredUrls.FirstOrDefault(url => string.Equals(
+                url,
+                normalizedSource,
+                StringComparison.Ordinal));
+            if (configuredSource == null)
+            {
+                return StatusCode(502, new
+                {
+                    error = true,
+                    code = "source_affinity_unavailable",
+                    message = "The linked Seerr instance could not be verified. No issue list was published."
+                });
+            }
+
+            var pinnedUser = new SeerrUser
+            {
+                Id = seerrUser.Id,
+                JellyfinUserId = seerrUser.JellyfinUserId,
+                Permissions = seerrUser.Permissions,
+                SourceUrl = configuredSource,
+            };
+            var result = await _seerr.ProxyRequestAsync(
+                apiPath,
+                HttpMethod.Get,
+                null,
+                caller,
+                pinnedUser,
+                HttpContext.RequestAborted).ConfigureAwait(false);
+            if (!IsConfigurationCurrent())
+            {
+                return ConfigurationChanged();
+            }
+
+            if (result is not ContentResult contentResult || string.IsNullOrWhiteSpace(contentResult.Content))
+            {
+                return result;
+            }
+
+            JsonObject? body;
+            try
+            {
+                body = JsonNode.Parse(contentResult.Content) as JsonObject;
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Seerr issue response was not valid JSON; refusing an undecorated avatar projection.");
+                return StatusCode(502, new { error = true, code = "upstream_response_invalid", message = "Seerr returned an invalid issue list." });
+            }
+
+            if (body == null || !TryDecorateIssueAvatarTokens(
+                body,
+                apiKey,
+                caller.JellyfinUserId,
+                configuredSource))
+            {
+                return StatusCode(502, new { error = true, code = "upstream_response_invalid", message = "Seerr returned an invalid issue list." });
+            }
+
+            if (!IsConfigurationCurrent())
+            {
+                return ConfigurationChanged();
+            }
+
+            contentResult.Content = body.ToJsonString();
+            return contentResult;
+        }
+
+        internal static bool TryDecorateIssueAvatarTokens(
+            JsonObject body,
+            string apiKey,
+            string callerId,
+            string sourceUrl)
+        {
+            if (body["results"] is not JsonArray results)
+            {
+                return false;
+            }
+
+            foreach (var row in results)
+            {
+                var createdBy = (row as JsonObject)?["createdBy"] as JsonObject;
+                var avatar = (string?)createdBy?["avatar"];
+                if (createdBy == null || string.IsNullOrWhiteSpace(avatar) || !avatar.StartsWith('/'))
+                {
+                    continue;
+                }
+
+                if (!SeerrSourceToken.TryNormalizeAvatarPath(avatar, out var avatarPath))
+                {
+                    // Never leave an unsafe relative value for the client to
+                    // proxy without a valid source-bound token.
+                    createdBy["avatar"] = null;
+                    continue;
+                }
+
+                createdBy["avatar"] = avatarPath;
+                createdBy["avatarSourceToken"] = SeerrSourceToken.Create(
+                    apiKey,
+                    SeerrSourceToken.AvatarPurpose,
+                    callerId,
+                    sourceUrl,
+                    avatarPath);
+            }
+
+            return true;
         }
 
         [HttpGet("seerr/issue/{id}")]

@@ -16,7 +16,7 @@ export interface SeerrApi {
     search: (query: string, page?: number, options?: any) => Promise<any>;
     fetchMovieCollection: (tmdbId: any) => Promise<any>;
     addCollections: (results: any[]) => Promise<any[]>;
-    fetchTvShowDetails: (tmdbId: any) => Promise<any>;
+    fetchTvShowDetails: (tmdbId: any, options?: any) => Promise<any>;
     fetchTvSeasonDetails: (tmdbId: any, seasonNumber: any) => Promise<any>;
     fetchTmdbTvDetails: (tmdbId: any) => Promise<any>;
     fetchOverrideRules: () => Promise<any[]>;
@@ -28,7 +28,7 @@ export interface SeerrApi {
     fetchIssueById: (issueId: any) => Promise<any>;
     fetchAdvancedRequestData: (mediaType: any) => Promise<{ servers: any[]; tags: any[]; error?: string }>;
     fetchUserQuota: (options?: any) => Promise<any>;
-    fetchRequestSettings: () => Promise<{ partialRequestsEnabled: boolean; enableSpecialEpisodes: boolean }>;
+    fetchRequestSettings: () => Promise<SeerrRequestSettings>;
     addToWatchlist: (tmdbId: any, mediaType: any) => Promise<boolean>;
     reportIssue: (mediaId: any, mediaType: any, problemType: any, message?: string, problemSeason?: any, problemEpisode?: any) => Promise<any>;
     fetchSimilarMovies: (tmdbId: any, pageOrOptions?: any) => Promise<any>;
@@ -48,6 +48,21 @@ export interface SeerrApi {
      */
     canRequest4k: (mediaType: any) => boolean;
 }
+
+/**
+ * Request-shape settings are part of the mutation authorization decision.
+ * A false setting is valid only when it came from a complete, well-typed
+ * response; transport and schema failures stay explicitly unavailable.
+ */
+export type SeerrRequestSettings =
+    | {
+        available: true;
+        partialRequestsEnabled: boolean;
+        enableSpecialEpisodes: boolean;
+    }
+    | {
+        available: false;
+    };
 
 declare module '../types/jc' {
     interface JEGlobal {
@@ -421,11 +436,16 @@ api.addCollections = async function(results) {
 /**
  * Fetches detailed information for a specific TV show from Seerr.
  * @param {number} tmdbId - The TMDB ID of the TV show.
+ * @param {object} [options] - Pass `fresh: true` for the modal status poll.
  * @returns {Promise<object|null>}
  */
-api.fetchTvShowDetails = async function(tmdbId) {
+api.fetchTvShowDetails = async function(tmdbId, options: any = {}) {
     try {
-        return await get(`/tv/${tmdbId}`);
+        const { fresh = false, ...fetchOptions } = options;
+        return await get(
+            `/tv/${tmdbId}${fresh ? '?fresh=true' : ''}`,
+            fresh ? { ...fetchOptions, skipCache: true } : fetchOptions,
+        );
     } catch (error: any) {
         console.error(`${logPrefix} Failed to fetch TV show details for TMDB ID ${tmdbId}:`, error);
         return null;
@@ -813,28 +833,31 @@ api.fetchUserQuota = async function(options = {}) {
 
 /**
  * Fetches Seerr request settings (partial requests + special episodes).
- * @returns {Promise<{partialRequestsEnabled: boolean, enableSpecialEpisodes: boolean}>}
+ * @returns {Promise<SeerrRequestSettings>}
  */
-// keep last-known good settings across a Seerr outage so
-// the request modal doesn't silently flip to whole-season UI when admin
-// had partial requests enabled. The backend now returns 503 on outage
-// (was 200+false). Cache the last successful response in module scope.
-let _lastRequestSettings: { partialRequestsEnabled: boolean; enableSpecialEpisodes: boolean } | null = null;
 api.fetchRequestSettings = async function() {
     try {
         const result = await get('/settings/partial-requests', { skipCache: true });
-        const settings = {
-            partialRequestsEnabled: !!(result && result.partialRequestsEnabled),
-            enableSpecialEpisodes: !!(result && result.enableSpecialEpisodes)
+        if (!result
+            || typeof result !== 'object'
+            || typeof result.partialRequestsEnabled !== 'boolean'
+            || typeof result.enableSpecialEpisodes !== 'boolean') {
+            console.warn(`${logPrefix} Request settings response was incomplete or invalid`);
+            return { available: false };
+        }
+
+        return {
+            available: true,
+            partialRequestsEnabled: result.partialRequestsEnabled,
+            enableSpecialEpisodes: result.enableSpecialEpisodes
         };
-        _lastRequestSettings = settings;
-        return settings;
     } catch (error: any) {
         console.warn(`${logPrefix} Failed to fetch request settings:`, error);
-        // Return last known good if we have one — better than flipping the
-        // UI to "no partial requests" when Seerr is briefly unreachable.
-        if (_lastRequestSettings) return _lastRequestSettings;
-        return { partialRequestsEnabled: false, enableSpecialEpisodes: false };
+        // These settings determine whether a click means selected seasons or
+        // the whole show. No source/config-scoped last-good cache exists in the
+        // browser, so an outage must remain unavailable rather than silently
+        // changing the mutation shape.
+        return { available: false };
     }
 };
 

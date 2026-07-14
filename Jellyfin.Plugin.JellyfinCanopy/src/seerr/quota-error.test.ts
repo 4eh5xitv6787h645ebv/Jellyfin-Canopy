@@ -45,4 +45,28 @@ describe('seerr handleRequestError sanitization', () => {
         expect(toast).toHaveBeenCalledTimes(1);
         expect(String(toast.mock.calls[0][0])).toContain('Movie already requested');
     });
+
+    it('shows eligibility timing only when the quota is actually restricted', () => {
+        const future = new Date(Date.now() + 3_600_000).toISOString();
+
+        const available = internal.formatQuotaLine({
+            limit: 5,
+            used: 4,
+            remaining: 1,
+            days: 7,
+            restricted: false,
+            nextResetAt: future,
+        }, 'movie');
+        const restricted = internal.formatQuotaLine({
+            limit: 5,
+            used: 5,
+            remaining: 0,
+            days: 7,
+            restricted: true,
+            nextResetAt: future,
+        }, 'movie');
+
+        expect(available.resetText).toBe('');
+        expect(restricted.resetText).toContain('seerr_quota_reset_in_');
+    });
 });

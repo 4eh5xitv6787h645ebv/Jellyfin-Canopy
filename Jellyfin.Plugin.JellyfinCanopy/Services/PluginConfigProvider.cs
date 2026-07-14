@@ -10,8 +10,41 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// </summary>
     public sealed class PluginConfigProvider : IPluginConfigProvider
     {
-        public PluginConfiguration Configuration => JellyfinCanopy.Instance!.Configuration;
+        private readonly object _revisionLock = new();
+        private PluginConfiguration? _lastObservedConfiguration;
+        private long _configurationRevision;
+        private bool _hasObservedConfiguration;
 
-        public PluginConfiguration? ConfigurationOrNull => JellyfinCanopy.Instance?.Configuration;
+        public PluginConfiguration Configuration => Observe(JellyfinCanopy.Instance!.Configuration)!;
+
+        public PluginConfiguration? ConfigurationOrNull => Observe(JellyfinCanopy.Instance?.Configuration);
+
+        public long ConfigurationRevision
+        {
+            get
+            {
+                Observe(JellyfinCanopy.Instance?.Configuration);
+                lock (_revisionLock)
+                {
+                    return _configurationRevision;
+                }
+            }
+        }
+
+        private PluginConfiguration? Observe(PluginConfiguration? configuration)
+        {
+            lock (_revisionLock)
+            {
+                if (!_hasObservedConfiguration
+                    || !ReferenceEquals(_lastObservedConfiguration, configuration))
+                {
+                    _lastObservedConfiguration = configuration;
+                    _hasObservedConfiguration = true;
+                    _configurationRevision++;
+                }
+
+                return configuration;
+            }
+        }
     }
 }

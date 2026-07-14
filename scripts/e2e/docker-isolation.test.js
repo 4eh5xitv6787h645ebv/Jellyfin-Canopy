@@ -34,6 +34,7 @@ function runSeed(overrides = {}) {
         'JF_BIND_ADDRESS',
         'JF_CPUS',
         'JF_E2E_PROJECT',
+        'JF_E2E_IMAGE_PREFETCHED',
         'JF_E2E_SEED_ID',
         'JF_E2E_STATE_DIR',
         'JF_FFMPEG_THREADS',
@@ -117,10 +118,19 @@ test('port zero is discovered from the owned container and recorded without cred
     assert.match(seed, /--arg project "\$\{E2E_PROJECT\}"/);
     assert.match(seed, /--argjson port "\$\{PUBLISHED_PORT\}"/);
     assert.match(seed, /--argjson cpus "\$\{JF_CPUS\}"/);
+    assert.match(seed, /docker inspect --format '\{\{\.HostConfig\.NanoCpus\}\}'/);
+    assert.match(seed, /--argjson actualNanoCpus "\$\{ACTUAL_NANO_CPUS\}"/);
+    assert.match(seed, /actualNanoCpus: \$actualNanoCpus/);
 
     const resultBuilder = seed.slice(seed.lastIndexOf('jq -n \\\n'));
     assert.ok(resultBuilder.length > 0, 'seed result builder must exist');
     assert.doesNotMatch(resultBuilder, /ADMIN_(?:USER|PASS)|USER_(?:NAME|PASS)|TOKEN/);
+});
+
+test('a declared image prefetch is verified locally instead of pulled again', () => {
+    assert.match(seed, /JF_E2E_IMAGE_PREFETCHED:-false/);
+    assert.match(seed, /docker image inspect "\$\{IMAGE\}"/);
+    assert.match(seed, /JF_E2E_IMAGE_PREFETCHED=true but \$\{IMAGE\} is not available locally/);
 });
 
 test('Playwright output can be unique per local shard while retaining the old default', () => {

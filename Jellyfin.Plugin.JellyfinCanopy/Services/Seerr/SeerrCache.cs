@@ -29,17 +29,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         public TimeSpan AvatarCacheDuration { get; } = TimeSpan.FromHours(1);
 
         // Cache for Seerr user ID lookups (JellyfinUserId -> SeerrUserId)
-        public Dictionary<string, (string SeerrUserId, DateTime CachedAt)> UserIdCache { get; } = new();
+        public Dictionary<string, (string SeerrUserId, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> UserIdCache { get; } = new();
 
         public object UserIdCacheLock { get; } = new();
 
         // Cache for Seerr user lookups (JellyfinUserId -> full Seerr user payload, null = negative cache)
-        public Dictionary<string, (SeerrUser? User, DateTime CachedAt)> UserCache { get; } = new();
+        public Dictionary<string, (SeerrUser? User, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> UserCache { get; } = new();
 
         public object UserCacheLock { get; } = new();
 
+        // A non-authoritative, short-lived retry guard for failed automatic
+        // imports. The timestamp is written before the POST and retained only
+        // when its outcome is incomplete, preventing concurrent/repeated
+        // requests from creating an import storm without publishing absence.
+        public Dictionary<string, DateTime> AutoImportFailureThrottle { get; } = new();
+
+        public object AutoImportFailureThrottleLock { get; } = new();
+
+        public TimeSpan AutoImportFailureThrottleTtl { get; } = TimeSpan.FromSeconds(60);
+
         // Cache for Seerr proxy responses (discovery/search endpoints)
-        public Dictionary<string, (string Content, DateTime CachedAt)> ResponseCache { get; } = new();
+        public Dictionary<string, (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> ResponseCache { get; } = new();
 
         public object ResponseCacheLock { get; } = new();
 
@@ -57,28 +67,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         public TimeSpan SeerrStatusCacheTtl { get; } = TimeSpan.FromSeconds(30);
 
-        // Cache of Seerr's /api/v1/settings/public 4K flags. User-neutral (the
-        // fetch sends no per-user header). Short TTL so a Seerr-side 4K toggle
-        // surfaces promptly without a per-request round trip.
-        public (bool Movie4kEnabled, bool Series4kEnabled, DateTime CachedAt)? Public4kSettingsCache { get; set; }
+        // Source-keyed cache of Seerr's /api/v1/settings/public 4K flags.
+        public Dictionary<string, (bool Movie4kEnabled, bool Series4kEnabled, DateTime CachedAt, long ConfigurationRevision, string ApiKeyFingerprint)> Public4kSettingsCache { get; } = new(StringComparer.Ordinal);
 
         public object Public4kSettingsCacheLock { get; } = new();
 
         public TimeSpan Public4kSettingsCacheTtl { get; } = TimeSpan.FromMinutes(5);
 
         // Cache for request-page TMDB enrichments (movie/tv detail lookups via Seerr)
-        public Dictionary<string, (TmdbEnrichmentResult Data, DateTime CachedAt)> TmdbEnrichmentCache { get; } = new();
+        public Dictionary<string, (TmdbEnrichmentResult Data, DateTime CachedAt, long ConfigurationRevision)> TmdbEnrichmentCache { get; } = new();
 
         public object TmdbEnrichmentCacheLock { get; } = new();
 
-        public ConcurrentDictionary<string, Task<TmdbEnrichmentResult>> TmdbEnrichmentInFlight { get; } = new();
+        public ConcurrentDictionary<string, Lazy<Task<TmdbEnrichmentResult>>> TmdbEnrichmentInFlight { get; } = new();
 
-        // User-independent cache of a title's resolved parental signals
-        // ("{mediaType}:{tmdbId}:{region}" -> cert score + cleaned keyword and
-        // genre name sets, separate because the two tag directions match
-        // different surfaces). Null Score = unrated/unknown; null Keywords =
-        // tag data not fetched (light cert-only endpoint) — a tag-rule pass
-        // treats that as a miss and re-resolves through the full detail.
+        // User-independent cache of a title's resolved parental signals. The
+        // title/region prefix is generation-scoped by revision plus a digest of
+        // source, credentials, and full configuration. Null Score =
+        // unrated/unknown; null Keywords = tag data not fetched (light
+        // cert-only endpoint) — a tag-rule pass treats that as a miss.
         public ConcurrentDictionary<string, (int? Score, int? SubScore, string[]? Keywords, string[]? Genres, DateTime CachedAt)> CertScoreCache { get; } = new();
 
         public TimeSpan GetResponseCacheTtl()
@@ -116,6 +123,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             {
                 UserIdCache.Clear();
             }
+
+            lock (AutoImportFailureThrottleLock)
+            {
+                AutoImportFailureThrottle.Clear();
+            }
         }
 
         public void ClearAllSeerrCachesOnConfigChange()
@@ -139,7 +151,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             lock (SeerrStatusCacheLock) { SeerrStatusCache = null; }
             // Flush the cached 4K capability so a changed Seerr URL / key
             // re-resolves movie4kEnabled/series4kEnabled immediately.
-            lock (Public4kSettingsCacheLock) { Public4kSettingsCache = null; }
+            lock (Public4kSettingsCacheLock) { Public4kSettingsCache.Clear(); }
         }
     }
 }

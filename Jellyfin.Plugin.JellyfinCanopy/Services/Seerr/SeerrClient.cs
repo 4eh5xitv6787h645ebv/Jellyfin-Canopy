@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
@@ -36,6 +39,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         private readonly ISeerrCache _seerrCache;
         private readonly IPluginConfigProvider _configProvider;
         private readonly ISeerrParentalFilter _parentalFilter;
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> _userResolutionGates = new(
+            StringComparer.OrdinalIgnoreCase);
 
         public SeerrClient(
             IHttpClientFactory httpClientFactory,
@@ -57,18 +62,44 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         /// <summary>Splits the configured Seerr URL list (newline/comma separated) into trimmed base URLs.</summary>
         public static string[] GetConfiguredUrls(string? urls)
-        {
-            return (urls ?? string.Empty)
-                .Split(new[] { '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(url => url.Trim().TrimEnd('/'))
-                .Where(url => !string.IsNullOrWhiteSpace(url))
-                .ToArray();
-        }
+            => SeerrUrlIdentity.ParseConfigured(urls);
 
         /// <summary>Normalizes a Jellyfin user id for comparison and cache keys (dashes removed, lowercase).</summary>
         public static string NormalizeUserId(string userId)
         {
             return userId.Replace("-", string.Empty).ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// One-way identity for every serialized plugin setting. Cache entries
+        /// carry this in addition to the provider revision because custom/test
+        /// providers can mutate the same configuration object in place. The
+        /// digest binds credentials without storing or logging them.
+        /// </summary>
+        internal static string BuildConfigurationIdentity(PluginConfiguration configuration)
+        {
+            ArgumentNullException.ThrowIfNull(configuration);
+            return Convert.ToHexString(
+                SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(configuration)));
+        }
+
+        private static string? FindConfiguredSource(
+            IEnumerable<string> configuredUrls,
+            string? candidateSourceUrl)
+        {
+            var normalizedCandidate = SeerrUrlIdentity.Normalize(candidateSourceUrl);
+            if (string.IsNullOrWhiteSpace(normalizedCandidate)) return null;
+
+            // SourceUrl is an identity-domain token, not just a host name. URL
+            // paths (and potentially queries) are case-sensitive, so an
+            // ignore-case comparison can validate /TenantA against /tenanta and
+            // replay an instance-local user id to a different backend. Exact
+            // matching may cause a harmless fresh lookup after cosmetic config
+            // edits, but it never weakens affinity.
+            return configuredUrls.FirstOrDefault(configuredUrl => string.Equals(
+                configuredUrl,
+                normalizedCandidate,
+                StringComparison.Ordinal));
         }
 
         // ── Status probe ─────────────────────────────────────────────────────
@@ -136,10 +167,63 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         public async Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(string jellyfinUserId, bool isAdmin = false)
         {
-            var (movie4k, series4k) = await GetPublic4kSettingsAsync();
+            var config = _configProvider.ConfigurationOrNull;
+            if (config == null
+                || !config.SeerrEnabled
+                || string.IsNullOrWhiteSpace(config.SeerrUrls)
+                || string.IsNullOrWhiteSpace(config.SeerrApiKey))
+            {
+                return new Seerr4kCapability(false, false, false, false);
+            }
 
-            // No server-side 4K at all → nothing to request; skip the user lookup.
-            if (!movie4k && !series4k)
+            var configurationRevision = _configProvider.ConfigurationRevision;
+            var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
+            var configuredUrls = GetConfiguredUrls(config.SeerrUrls);
+            var apiKey = config.SeerrApiKey;
+            var cacheDisabled = config.SeerrDisableCache;
+            var masterMovie4k = config.SeerrEnable4KRequests;
+            var masterTv4k = config.SeerrEnable4KTvRequests;
+            bool IsConfigurationCurrent() => configStamp.Matches(
+                _configProvider.ConfigurationOrNull,
+                _configProvider.ConfigurationRevision);
+            if (!IsConfigurationCurrent())
+            {
+                return new Seerr4kCapability(false, false, false, false);
+            }
+
+            // Resolve the identity domain first. Public settings are neutral
+            // between users of one Seerr instance, not between independently
+            // configured instances.
+            var resolution = await ResolveSeerrUser(
+                jellyfinUserId,
+                bypassCache: true,
+                allowAutoImport: false).ConfigureAwait(false);
+            if (!IsConfigurationCurrent())
+            {
+                return new Seerr4kCapability(false, false, false, false);
+            }
+
+            var sourceUrl = configuredUrls.FirstOrDefault(url => string.Equals(
+                url,
+                SeerrUrlIdentity.Normalize(resolution.User?.SourceUrl),
+                StringComparison.Ordinal));
+            if (!resolution.IsFound || string.IsNullOrWhiteSpace(sourceUrl))
+            {
+                _logger.LogWarning(
+                    "4K capability user resolution returned {Status}; capability will not be published as available. {Reason}",
+                    resolution.Status,
+                    resolution.FailureReason);
+                return new Seerr4kCapability(false, false, false, false);
+            }
+
+            var (movie4k, series4k) = await GetPublic4kSettingsAsync(
+                sourceUrl,
+                configuredUrls,
+                apiKey,
+                cacheDisabled,
+                configurationRevision,
+                configStamp).ConfigureAwait(false);
+            if (!IsConfigurationCurrent())
             {
                 return new Seerr4kCapability(false, false, false, false);
             }
@@ -152,14 +236,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 // actually accept the request. Mirror the gate: their capability is
                 // server-4K-enabled, still AND'd with the JC admin master switch
                 // (which applies to admins too — consistent with the gate order).
-                var adminConfig = _configProvider.ConfigurationOrNull;
-                bool masterMovie = adminConfig?.SeerrEnable4KRequests ?? false;
-                bool masterTv = adminConfig?.SeerrEnable4KTvRequests ?? false;
-                return new Seerr4kCapability(movie4k, series4k, movie4k && masterMovie, series4k && masterTv);
+                return new Seerr4kCapability(
+                    movie4k,
+                    series4k,
+                    movie4k && masterMovie4k,
+                    series4k && masterTv4k);
             }
 
-            var user = await GetSeerrUser(jellyfinUserId);
-            var perms = user?.Permissions ?? SeerrPermission.NONE;
+            var perms = resolution.User!.Permissions;
             bool canMovie = movie4k && SeerrPermissionHelper.CanRequest4k(perms, isTv: false);
             bool canTv = series4k && SeerrPermissionHelper.CanRequest4k(perms, isTv: true);
             return new Seerr4kCapability(movie4k, series4k, canMovie, canTv);
@@ -171,79 +255,135 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         /// across users. Returns (false, false) when Seerr is unconfigured or
         /// every configured URL fails.
         /// </summary>
-        private async Task<(bool Movie4k, bool Series4k)> GetPublic4kSettingsAsync()
+        private async Task<(bool Movie4k, bool Series4k)> GetPublic4kSettingsAsync(
+            string sourceUrl,
+            IReadOnlyList<string> capturedConfiguredUrls,
+            string capturedApiKey,
+            bool cacheDisabled,
+            long configurationRevision,
+            SeerrMutationConfigStamp configStamp)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+            bool IsConfigurationCurrent() => configStamp.Matches(
+                _configProvider.ConfigurationOrNull,
+                _configProvider.ConfigurationRevision);
+            var configuredSource = capturedConfiguredUrls
+                .FirstOrDefault(url => string.Equals(url, sourceUrl, StringComparison.Ordinal));
+            var apiKey = capturedApiKey;
+            if (configuredSource == null
+                || string.IsNullOrEmpty(apiKey)
+                || !IsConfigurationCurrent())
             {
                 return (false, false);
             }
 
-            if (!config.SeerrDisableCache)
+            var apiKeyFingerprint = Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(apiKey)));
+
+            if (!cacheDisabled)
             {
+                (bool Movie4k, bool Series4k)? cachedResult = null;
                 lock (_seerrCache.Public4kSettingsCacheLock)
                 {
-                    if (_seerrCache.Public4kSettingsCache.HasValue
-                        && DateTime.UtcNow - _seerrCache.Public4kSettingsCache.Value.CachedAt < _seerrCache.Public4kSettingsCacheTtl)
+                    if (_seerrCache.Public4kSettingsCache.TryGetValue(configuredSource, out var cached)
+                        && cached.ConfigurationRevision == configurationRevision
+                        && string.Equals(cached.ApiKeyFingerprint, apiKeyFingerprint, StringComparison.Ordinal)
+                        && DateTime.UtcNow - cached.CachedAt < _seerrCache.Public4kSettingsCacheTtl)
                     {
-                        var c = _seerrCache.Public4kSettingsCache.Value;
-                        return (c.Movie4kEnabled, c.Series4kEnabled);
+                        cachedResult = (cached.Movie4kEnabled, cached.Series4kEnabled);
                     }
+                }
+
+                if (cachedResult.HasValue)
+                {
+                    return IsConfigurationCurrent()
+                        ? cachedResult.Value
+                        : (false, false);
                 }
             }
 
-            var urls = GetConfiguredUrls(config.SeerrUrls);
             var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
             httpClient.Timeout = TimeSpan.FromSeconds(15);
-
-            foreach (var url in urls)
+            var requestUri = $"{configuredSource}/api/v1/settings/public";
+            try
             {
-                var requestUri = $"{url}/api/v1/settings/public";
-                try
+                if (!IsConfigurationCurrent())
                 {
-                    // User-neutral: no X-Api-User — the response is identical for
-                    // all users, so it is share-cached (see cache user-neutrality
-                    // invariant in docs/v12-platform.md).
-                    using var request = SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, config.SeerrApiKey);
-                    using var response = await httpClient.SendAsync(request);
-                    var (json, error) = await SeerrHttpHelper.ReadResponseAsync(response, requestUri);
-                    if (error != null || string.IsNullOrEmpty(json))
-                    {
-                        if (error != null)
-                        {
-                            _logger.LogWarning($"Failed to fetch Seerr public settings at {url}: code={error.Code} status={error.HttpStatus} — {error.Message}");
-                        }
+                    return (false, false);
+                }
 
-                        continue;
+                // User-neutral within this pinned source: no X-Api-User.
+                using var request = SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, apiKey);
+                using var response = await httpClient.SendAsync(request).ConfigureAwait(false);
+                var (json, error) = await SeerrHttpHelper.ReadResponseAsync(response, requestUri).ConfigureAwait(false);
+                if (!IsConfigurationCurrent())
+                {
+                    return (false, false);
+                }
+
+                if (error != null || string.IsNullOrEmpty(json))
+                {
+                    if (error != null)
+                    {
+                        _logger.LogWarning($"Failed to fetch Seerr public settings at {configuredSource}: code={error.Code} status={error.HttpStatus} — {error.Message}");
                     }
 
-                    using var doc = JsonDocument.Parse(json);
-                    var root = doc.RootElement;
-                    bool movie4k = root.TryGetProperty("movie4kEnabled", out var m) && m.ValueKind == JsonValueKind.True;
-                    bool series4k = root.TryGetProperty("series4kEnabled", out var s) && s.ValueKind == JsonValueKind.True;
+                    return (false, false);
+                }
 
-                    if (!config.SeerrDisableCache)
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("movie4kEnabled", out var movieSetting)
+                    || movieSetting.ValueKind is not (JsonValueKind.True or JsonValueKind.False)
+                    || !root.TryGetProperty("series4kEnabled", out var seriesSetting)
+                    || seriesSetting.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                {
+                    _logger.LogWarning("Malformed Seerr public-settings response at {Url}", configuredSource);
+                    return (false, false);
+                }
+
+                var movie4k = movieSetting.ValueKind == JsonValueKind.True;
+                var series4k = seriesSetting.ValueKind == JsonValueKind.True;
+                if (!cacheDisabled && IsConfigurationCurrent())
+                {
+                    var publishedEntry = (
+                        Movie4kEnabled: movie4k,
+                        Series4kEnabled: series4k,
+                        CachedAt: DateTime.UtcNow,
+                        ConfigurationRevision: configurationRevision,
+                        ApiKeyFingerprint: apiKeyFingerprint);
+                    lock (_seerrCache.Public4kSettingsCacheLock)
+                    {
+                        _seerrCache.Public4kSettingsCache[configuredSource] = publishedEntry;
+                    }
+
+                    if (!IsConfigurationCurrent())
                     {
                         lock (_seerrCache.Public4kSettingsCacheLock)
                         {
-                            _seerrCache.Public4kSettingsCache = (movie4k, series4k, DateTime.UtcNow);
+                            if (_seerrCache.Public4kSettingsCache.TryGetValue(configuredSource, out var published)
+                                && published.Equals(publishedEntry))
+                            {
+                                _seerrCache.Public4kSettingsCache.Remove(configuredSource);
+                            }
                         }
                     }
+                }
 
-                    return (movie4k, series4k);
-                }
-                catch (JsonException ex)
-                {
-                    _logger.LogWarning(ex, "Malformed Seerr public-settings response at {Url}", url);
-                }
-                catch (HttpRequestException ex)
-                {
-                    _logger.LogWarning(ex, "Transport error fetching Seerr public settings at {Url}", url);
-                }
-                catch (TaskCanceledException)
-                {
-                    // timeout — try next URL
-                }
+                return IsConfigurationCurrent()
+                    ? (movie4k, series4k)
+                    : (false, false);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Malformed Seerr public-settings response at {Url}", configuredSource);
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogWarning(ex, "Transport error fetching Seerr public settings at {Url}", configuredSource);
+            }
+            catch (TaskCanceledException)
+            {
+                // Pinned source timed out; never fall over to another identity domain.
             }
 
             return (false, false);
@@ -263,87 +403,343 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             return blockedIds.Contains(normalizedId);
         }
 
-        public async Task<SeerrUser?> GetSeerrUser(string jellyfinUserId, bool bypassCache = false, bool allowAutoImport = true)
+        public async Task<SeerrUser?> GetSeerrUser(
+            string jellyfinUserId,
+            bool bypassCache = false,
+            bool allowAutoImport = true)
+            => (await ResolveSeerrUser(jellyfinUserId, bypassCache, allowAutoImport).ConfigureAwait(false)).User;
+
+        public async Task<SeerrUserResolution> ResolveSeerrUser(
+            string jellyfinUserId,
+            bool bypassCache = false,
+            bool allowAutoImport = true,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            var resolutionGate = _userResolutionGates.GetOrAdd(
+                NormalizeUserId(jellyfinUserId),
+                static _ => new SemaphoreSlim(1, 1));
+            await resolutionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                // Serialize a user's complete lookup/import transaction. The
+                // short retry timestamp prevents sequential storms; this gate
+                // also closes the race where a slower concurrent absence read
+                // could reach POST after the winning importer cleared its
+                // reservation on success.
+                return await ResolveSeerrUserCore(
+                    jellyfinUserId,
+                    bypassCache,
+                    allowAutoImport,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                resolutionGate.Release();
+            }
+        }
+
+        private async Task<SeerrUserResolution> ResolveSeerrUserCore(
+            string jellyfinUserId,
+            bool bypassCache,
+            bool allowAutoImport,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
                 _logger.LogWarning("Seerr configuration is missing. Cannot look up user ID.");
-                return null;
+                return new SeerrUserResolution(
+                    SeerrUserResolutionStatus.Unavailable,
+                    FailureReason: "Seerr integration is not configured.");
+            }
+
+            var configurationRevision = _configProvider.ConfigurationRevision;
+            var configurationIdentity = BuildConfigurationIdentity(config);
+            var importConfigStamp = SeerrMutationConfigStamp.Capture(
+                config,
+                configurationRevision);
+            bool ConfigurationIsCurrent() => importConfigStamp.Matches(
+                _configProvider.ConfigurationOrNull,
+                _configProvider.ConfigurationRevision);
+            static SeerrUserResolution ConfigurationChanged() =>
+                SeerrUserResolution.Incomplete(
+                    "Seerr configuration changed during user lookup; retry the request.");
+            void RemovePublishedUserCache(string publishedCacheKey, SeerrUser? expectedUser)
+            {
+                lock (_seerrCache.UserCacheLock)
+                {
+                    if (_seerrCache.UserCache.TryGetValue(publishedCacheKey, out var published)
+                        && published.ConfigurationRevision == configurationRevision
+                        && string.Equals(
+                            published.ConfigurationIdentity,
+                            configurationIdentity,
+                            StringComparison.Ordinal)
+                        && ReferenceEquals(published.User, expectedUser))
+                    {
+                        _seerrCache.UserCache.Remove(publishedCacheKey);
+                    }
+                }
+            }
+
+            // Reading the object and its monotonic revision are separate
+            // provider calls. A replacement between them deliberately creates
+            // a stamp that cannot match either generation.
+            if (!ConfigurationIsCurrent())
+            {
+                return ConfigurationChanged();
             }
 
             // Skip blocked users entirely — no lookup, no import, no API calls
             if (IsImportBlocked(jellyfinUserId, config))
             {
-                return null;
+                return new SeerrUserResolution(SeerrUserResolutionStatus.Blocked);
+            }
+
+            var urls = GetConfiguredUrls(config.SeerrUrls);
+            if (urls.Length == 0)
+            {
+                return new SeerrUserResolution(
+                    SeerrUserResolutionStatus.Unavailable,
+                    FailureReason: "No valid Seerr URL is configured.");
             }
 
             var cacheKey = NormalizeUserId(jellyfinUserId);
             bool cacheEnabled = !config.SeerrDisableCache && !bypassCache;
+            SeerrUserResolution? cachedResolution = null;
+            var invalidatedPositiveCache = false;
             if (cacheEnabled)
             {
                 lock (_seerrCache.UserCacheLock)
                 {
                     if (_seerrCache.UserCache.TryGetValue(cacheKey, out var cached))
                     {
-                        // Negative entries use a much shorter TTL so transient
-                        // failures don't poison discovery for 30 min after recovery.
-                        var ttl = cached.User == null ? TimeSpan.FromSeconds(60) : _seerrCache.GetUserIdCacheTtl();
-                        if (DateTime.UtcNow - cached.CachedAt < ttl)
+                        if (cached.ConfigurationRevision != configurationRevision
+                            || !string.Equals(
+                                cached.ConfigurationIdentity,
+                                configurationIdentity,
+                                StringComparison.Ordinal))
                         {
-                            return cached.User;
+                            _seerrCache.UserCache.Remove(cacheKey);
+                            invalidatedPositiveCache = cached.User != null;
+                        }
+                        else
+                        {
+                            // Negative entries use a much shorter TTL so transient
+                            // failures don't poison discovery for 30 min after recovery.
+                            var ttl = cached.User == null ? TimeSpan.FromSeconds(60) : _seerrCache.GetUserIdCacheTtl();
+                            if (DateTime.UtcNow - cached.CachedAt < ttl)
+                            {
+                                if (cached.User == null)
+                                {
+                                    cachedResolution = SeerrUserResolution.NotFound("Cached authoritative absence.");
+                                }
+                                else
+                                {
+                                    // Numeric Seerr ids and permission masks are
+                                    // instance-local. Never trust a positive cache
+                                    // entry after its source URL is removed from the
+                                    // current configuration: doing so can send the
+                                    // new API key, caller identity, or a mutation to
+                                    // the retired endpoint.
+                                    var configuredSource = cached.User.Id > 0
+                                        ? FindConfiguredSource(urls, cached.User.SourceUrl)
+                                        : null;
+                                    if (configuredSource != null)
+                                    {
+                                        cached.User.SourceUrl = configuredSource;
+                                        cachedResolution = SeerrUserResolution.Found(cached.User);
+                                    }
+                                    else
+                                    {
+                                        _seerrCache.UserCache.Remove(cacheKey);
+                                        invalidatedPositiveCache = true;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            var urls = GetConfiguredUrls(config.SeerrUrls);
+            if (invalidatedPositiveCache)
+            {
+                // The legacy id-only cache carries no source fingerprint. Drop
+                // the corresponding entry after releasing UserCacheLock so no
+                // caller can reuse the retired instance-local id and cache-lock
+                // order remains non-nested.
+                lock (_seerrCache.UserIdCacheLock)
+                {
+                    _seerrCache.UserIdCache.Remove(cacheKey);
+                }
+
+                _logger.LogWarning(
+                    "Discarded a cached Seerr user because its source instance is no longer configured; resolving the user again against current sources.");
+            }
+
+            if (cachedResolution != null)
+            {
+                if (!ConfigurationIsCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
+                if (cachedResolution.IsFound)
+                {
+                    ClearAutoImportFailureThrottle(cacheKey);
+                }
+
+                return cachedResolution;
+            }
+
             var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
             httpClient.Timeout = TimeSpan.FromSeconds(15);
-
+            var normalizedJellyfinUserId = jellyfinUserId.Replace("-", "");
+            var usersChecked = 0;
+            var hadIncompleteServer = false;
+            string? incompleteReason = null;
             foreach (var url in urls)
             {
-                var requestUri = $"{url}/api/v1/user?take=1000"; // Fetch all users to find a match
+                cancellationToken.ThrowIfCancellationRequested();
+                // Configured Seerr URLs are separate identity domains, not
+                // replicas. A complete absence on one server must continue to
+                // the next; paginator URL failover alone would stop too early.
+                var usersSnapshot = await SeerrPaginationHelper.FetchAllAsync(
+                    httpClient,
+                    new[] { url },
+                    static (baseUrl, _, skip) => $"{baseUrl}/api/v1/user?take=1000&skip={skip}",
+                    config.SeerrApiKey,
+                    apiUserId: null,
+                    requestedPageSize: 1000,
+                    UserCollectionIdentity,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (!ConfigurationIsCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
+                if (!usersSnapshot.IsComplete)
+                {
+                    if (usersSnapshot.Error != null)
+                    {
+                        var error = usersSnapshot.Error;
+                        _logger.LogWarning(
+                            $"Failed to fetch a complete Seerr user collection from {usersSnapshot.SourceUrl}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}; {usersSnapshot.FailureReason}");
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Failed to fetch a complete Seerr user collection from {Url}: {Reason}",
+                            url,
+                            usersSnapshot.FailureReason);
+                    }
+
+                    // A later server may still hold an explicit mapping (the
+                    // historical multi-server failover behavior), but absence
+                    // is not authoritative unless every server completed.
+                    hadIncompleteServer = true;
+                    incompleteReason = usersSnapshot.FailureReason;
+                    continue;
+                }
+
+                List<SeerrUser> users;
                 try
                 {
-                    using var request = SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, config.SeerrApiKey);
-                    using var response = await httpClient.SendAsync(request);
-                    var (json, error) = await SeerrHttpHelper.ReadResponseAsync(response, requestUri);
-
-                    if (error != null)
+                    users = new List<SeerrUser>(usersSnapshot.Items.Count);
+                    foreach (var item in usersSnapshot.Items)
                     {
-                        // Distinct error logging by class lets admins triage
-                        // (HTML response = reverse proxy, 401 = key wrong, etc.)
-                        _logger.LogWarning($"Failed to fetch users from Seerr at {url}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
-                        continue;
-                    }
-
-                    var usersResponse = JsonSerializer.Deserialize<JsonElement>(json!);
-                    if (usersResponse.TryGetProperty("results", out var usersArray))
-                    {
-                        var users = JsonSerializer.Deserialize<List<SeerrUser>>(usersArray.ToString());
-                        var normalizedJellyfinUserId = jellyfinUserId.Replace("-", "");
-                        var user = users?.FirstOrDefault(u => string.Equals(u.JellyfinUserId, normalizedJellyfinUserId, StringComparison.OrdinalIgnoreCase));
-                        if (user != null)
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var candidate = JsonSerializer.Deserialize<SeerrUser>(item.GetRawText());
+                        if (candidate == null || candidate.Id <= 0)
                         {
-                            if (cacheEnabled)
-                            {
-                                lock (_seerrCache.UserCacheLock)
-                                {
-                                    _seerrCache.UserCache[cacheKey] = (user, DateTime.UtcNow);
-                                }
-                            }
-
-                            return user;
+                            throw new JsonException("A Seerr user row did not contain a positive id.");
                         }
 
-                        _logger.LogInformation($"No matching Jellyfin User ID found in the {users?.Count ?? 0} users from {url}");
+                        if (!string.IsNullOrWhiteSpace(candidate.JellyfinUserId))
+                        {
+                            var canonicalJellyfinUserId = SeerrPaginationHelper.CanonicalJellyfinUserIdentity(
+                                candidate.JellyfinUserId);
+                            if (canonicalJellyfinUserId == null)
+                            {
+                                throw new JsonException("A Seerr user row contained a malformed Jellyfin user id.");
+                            }
+
+                            candidate.JellyfinUserId = canonicalJellyfinUserId;
+                        }
+
+                        candidate.SourceUrl = usersSnapshot.SourceUrl ?? url;
+                        users.Add(candidate);
                     }
                 }
-                catch (Exception ex)
+                catch (JsonException ex)
                 {
-                    _logger.LogError($"Exception while trying to get Seerr user ID from {url}: {ex.Message}");
+                    _logger.LogWarning(
+                        ex,
+                        "A complete Seerr user collection from {Url} contained an invalid user row; refusing a partial lookup result.",
+                        usersSnapshot.SourceUrl ?? url);
+                    return SeerrUserResolution.Incomplete("The complete user collection contained an invalid row.");
                 }
+
+                usersChecked += users.Count;
+                var mappedUsers = users
+                    .Where(u => string.Equals(u.JellyfinUserId, normalizedJellyfinUserId, StringComparison.OrdinalIgnoreCase))
+                    .Take(2)
+                    .ToList();
+                if (mappedUsers.Count > 1)
+                {
+                    _logger.LogWarning(
+                        "Multiple distinct Seerr users from {Url} map to Jellyfin user {User}; refusing an ambiguous instance-local identity.",
+                        usersSnapshot.SourceUrl ?? url,
+                        ResolveUserDisplay(jellyfinUserId));
+                    return SeerrUserResolution.Incomplete("Multiple Seerr users map to the same Jellyfin user.");
+                }
+
+                var user = mappedUsers.SingleOrDefault();
+                if (user == null) continue;
+
+                // A successful authoritative lookup supersedes any previous
+                // transient auto-import failure for this user.
+                ClearAutoImportFailureThrottle(cacheKey);
+
+                if (!ConfigurationIsCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
+                if (cacheEnabled)
+                {
+                    lock (_seerrCache.UserCacheLock)
+                    {
+                        _seerrCache.UserCache[cacheKey] = (
+                            user,
+                            DateTime.UtcNow,
+                            configurationRevision,
+                            configurationIdentity);
+                    }
+                }
+
+                if (!ConfigurationIsCurrent())
+                {
+                    RemovePublishedUserCache(cacheKey, user);
+                    return ConfigurationChanged();
+                }
+
+                return SeerrUserResolution.Found(user);
+            }
+
+            _logger.LogInformation(
+                "No matching Jellyfin User ID found after complete reads of {ServerCount} Seerr servers ({UserCount} users).",
+                urls.Length,
+                usersChecked);
+
+            if (hadIncompleteServer)
+            {
+                // Never import or negative-cache from a partial cross-server
+                // view: the missing server may already contain the mapping.
+                return SeerrUserResolution.Incomplete(
+                    incompleteReason ?? "At least one Seerr user collection was incomplete.");
             }
 
             // User not found — attempt just-in-time import into Seerr.
@@ -356,138 +752,452 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             var importDefinite = false;
             if (allowAutoImport && config.SeerrAutoImportUsers)
             {
+                // This operational guard is deliberately independent of the
+                // response-cache setting: it never represents absence, it only
+                // prevents repeated/concurrent mutation attempts after an
+                // incomplete outcome. An explicit bypass forces a retry.
+                if (!TryReserveAutoImportAttempt(cacheKey, bypassCache))
+                {
+                    return SeerrUserResolution.Incomplete(
+                        "A recent Seerr user import attempt was inconclusive; retry is temporarily throttled.");
+                }
+
                 _logger.LogInformation($"User not found in Seerr. Attempting just-in-time import for Jellyfin User ID {ResolveUserDisplay(jellyfinUserId)}...");
-                var (importedUser, definite) = await TryAutoImportSeerrUser(jellyfinUserId, urls, httpClient);
-                importDefinite = definite;
+                SeerrUser? importedUser;
+                bool authoritativeNotImportable;
+                try
+                {
+                    (importedUser, authoritativeNotImportable) = await TryAutoImportSeerrUser(
+                        jellyfinUserId,
+                        urls,
+                        httpClient,
+                        config,
+                        importConfigStamp,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    // Cancellation can arrive after Seerr committed the POST
+                    // but before its response reached us. Preserve a short
+                    // inconclusive-attempt throttle (including for an explicit
+                    // bypass) so another caller cannot immediately replay this
+                    // non-idempotent import. The original cancellation still
+                    // propagates, and the normal short TTL permits a later retry.
+                    RecordAutoImportFailure(cacheKey);
+                    throw;
+                }
+
+                if (!ConfigurationIsCurrent())
+                {
+                    // The POST may have committed just before the generation
+                    // changed. Keep the ambiguity throttle and never publish
+                    // that old-generation identity to this caller.
+                    RecordAutoImportFailure(cacheKey);
+                    return ConfigurationChanged();
+                }
+
+                importDefinite = authoritativeNotImportable;
                 if (importedUser != null)
                 {
+                    ClearAutoImportFailureThrottle(cacheKey);
                     if (cacheEnabled)
                     {
                         lock (_seerrCache.UserCacheLock)
                         {
-                            _seerrCache.UserCache[cacheKey] = (importedUser, DateTime.UtcNow);
+                            _seerrCache.UserCache[cacheKey] = (
+                                importedUser,
+                                DateTime.UtcNow,
+                                configurationRevision,
+                                configurationIdentity);
                         }
                     }
 
-                    return importedUser;
+                    if (!ConfigurationIsCurrent())
+                    {
+                        RemovePublishedUserCache(cacheKey, importedUser);
+                        RecordAutoImportFailure(cacheKey);
+                        return ConfigurationChanged();
+                    }
+
+                    return SeerrUserResolution.Found(importedUser);
+                }
+
+                if (importDefinite)
+                {
+                    ClearAutoImportFailureThrottle(cacheKey);
+                }
+                else
+                {
+                    RecordAutoImportFailure(cacheKey);
                 }
             }
 
             // Only negative-cache when the import gave a definite "not importable" answer.
-            // Transient failures (network errors, exceptions) should not be cached so the
-            // next request can retry immediately.
+            // Transient failures remain Incomplete and use only the separate short retry
+            // guard above; they never become authoritative absence.
             if (cacheEnabled && importDefinite)
             {
+                if (!ConfigurationIsCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
                 lock (_seerrCache.UserCacheLock)
                 {
-                    _seerrCache.UserCache[cacheKey] = (null, DateTime.UtcNow);
+                    _seerrCache.UserCache[cacheKey] = (
+                        null,
+                        DateTime.UtcNow,
+                        configurationRevision,
+                        configurationIdentity);
                 }
+            }
+
+            if (!ConfigurationIsCurrent())
+            {
+                RemovePublishedUserCache(cacheKey, expectedUser: null);
+                return ConfigurationChanged();
             }
 
             _logger.LogWarning($"Could not find or import a matching Seerr user for Jellyfin User ID {ResolveUserDisplay(jellyfinUserId)} after checking all URLs.");
-            return null;
-        }
-
-        private async Task<(SeerrUser? User, bool Definite)> TryAutoImportSeerrUser(string jellyfinUserId, string[] urls, HttpClient httpClient)
-        {
-            var config = _configProvider.ConfigurationOrNull;
-            var apiKey = config?.SeerrApiKey ?? string.Empty;
-
-            // Seerr requires dashless UUIDs — dashed format causes empty email and UNIQUE constraint errors
-            var normalizedUserId = jellyfinUserId.Replace("-", "");
-
-            // Track whether we got any HTTP response from Seerr (vs network failures).
-            // This determines whether a null result should be negative-cached or retried.
-            var reachedSeerr = false;
-
-            foreach (var url in urls)
+            if (allowAutoImport && config.SeerrAutoImportUsers && !importDefinite)
             {
-                try
-                {
-                    var importUri = $"{url}/api/v1/user/import-from-jellyfin";
-                    var requestBody = JsonSerializer.Serialize(new { jellyfinUserIds = new[] { normalizedUserId } });
-
-                    using var importRequest = SeerrHttpHelper.BuildRequest(HttpMethod.Post, importUri, apiKey, bodyJson: requestBody);
-                    using var importResponse = await httpClient.SendAsync(importRequest);
-                    reachedSeerr = true;
-                    var (importJson, importError) = await SeerrHttpHelper.ReadResponseAsync(importResponse, importUri);
-
-                    if (importError != null)
-                    {
-                        // Email collision is a definite failure — a renamed/deleted Jellyfin user left
-                        // an orphaned Seerr account with the same email. Won't resolve on retry.
-                        if (!string.IsNullOrEmpty(importError.Message)
-                            && importError.Message.Contains("UNIQUE constraint failed: user.email", StringComparison.OrdinalIgnoreCase))
-                        {
-                            _logger.LogWarning($"Could not auto-import Jellyfin User ID {ResolveUserDisplay(jellyfinUserId)}: an existing Seerr account has a conflicting email (possibly from a previous user that was renamed or deleted). Remove the conflicting user in Seerr to resolve this.");
-                            return (null, true);
-                        }
-
-                        _logger.LogWarning($"Failed to auto-import user to Seerr at {url}: code={importError.Code} status={importError.HttpStatus} cf-ray={importError.CfRay} — {importError.Message}");
-                        continue;
-                    }
-
-                    // The import endpoint returns an array of newly created users.
-                    // Parse it directly to avoid a second API call.
-                    var importedUsers = JsonSerializer.Deserialize<List<SeerrUser>>(importJson!);
-                    var user = importedUsers?.FirstOrDefault(u => string.Equals(u.JellyfinUserId, normalizedUserId, StringComparison.OrdinalIgnoreCase));
-                    if (user != null)
-                    {
-                        _logger.LogInformation($"Auto-imported Seerr user ID {user.Id} for Jellyfin User {ResolveUserDisplay(jellyfinUserId)}");
-                        return (user, true);
-                    }
-
-                    // Some Seerr versions return an empty array even on success (user already existed
-                    // but wasn't in the import response). Fall back to a full user list query to find them.
-                    _logger.LogInformation($"Import succeeded at {url} but user not in response. Doing fresh lookup...");
-                    var lookupUri = $"{url}/api/v1/user?take=1000";
-                    using var lookupRequest = SeerrHttpHelper.BuildRequest(HttpMethod.Get, lookupUri, apiKey);
-                    using var lookupResponse = await httpClient.SendAsync(lookupRequest);
-                    var (lookupJson, lookupError) = await SeerrHttpHelper.ReadResponseAsync(lookupResponse, lookupUri);
-                    if (lookupError == null && lookupJson != null)
-                    {
-                        var lookupRoot = JsonSerializer.Deserialize<JsonElement>(lookupJson);
-                        if (lookupRoot.TryGetProperty("results", out var usersArray))
-                        {
-                            var allUsers = JsonSerializer.Deserialize<List<SeerrUser>>(usersArray.ToString());
-                            var found = allUsers?.FirstOrDefault(u => string.Equals(u.JellyfinUserId, normalizedUserId, StringComparison.OrdinalIgnoreCase));
-                            if (found != null)
-                            {
-                                _logger.LogInformation($"Found Seerr user ID {found.Id} for Jellyfin User {ResolveUserDisplay(jellyfinUserId)} via fresh lookup");
-                                return (found, true);
-                            }
-                        }
-                    }
-                    else if (lookupError != null)
-                    {
-                        _logger.LogDebug($"Fresh lookup at {url} failed: code={lookupError.Code} status={lookupError.HttpStatus} cf-ray={lookupError.CfRay}");
-                    }
-
-                    // Import succeeded and fresh lookup found nothing — user is genuinely not importable
-                    return (null, true);
-                }
-                catch (HttpRequestException ex)
-                {
-                    // Network errors, timeouts, etc. are transient — try the next URL
-                    _logger.LogDebug($"Connection error during auto-import for Jellyfin User {ResolveUserDisplay(jellyfinUserId)} at {url}: {ex.Message}");
-                }
-                catch (JsonException ex)
-                {
-                    // Invalid Seerr response — log warning but try next URL
-                    _logger.LogWarning($"Invalid response from Seerr during auto-import for Jellyfin User {ResolveUserDisplay(jellyfinUserId)} at {url}: {ex.Message}");
-                }
+                return SeerrUserResolution.Incomplete("Seerr user import outcome was not authoritative.");
             }
 
-            // Definite only if we actually got an HTTP response from at least one URL.
-            // If all URLs failed with exceptions (network down), this is transient and should not be cached.
-            return (null, reachedSeerr);
+            return SeerrUserResolution.NotFound();
+        }
+
+        private bool TryReserveAutoImportAttempt(string cacheKey, bool bypassThrottle)
+        {
+            if (bypassThrottle)
+            {
+                return true;
+            }
+
+            lock (_seerrCache.AutoImportFailureThrottleLock)
+            {
+                var now = DateTime.UtcNow;
+                if (_seerrCache.AutoImportFailureThrottle.TryGetValue(cacheKey, out var attemptedAt)
+                    && now - attemptedAt < _seerrCache.AutoImportFailureThrottleTtl)
+                {
+                    return false;
+                }
+
+                // Reserve before the asynchronous POST, not after it, so
+                // concurrent resolution calls cannot all start imports.
+                _seerrCache.AutoImportFailureThrottle[cacheKey] = now;
+                return true;
+            }
+        }
+
+        private void RecordAutoImportFailure(string cacheKey)
+        {
+            lock (_seerrCache.AutoImportFailureThrottleLock)
+            {
+                _seerrCache.AutoImportFailureThrottle[cacheKey] = DateTime.UtcNow;
+            }
+        }
+
+        private void ClearAutoImportFailureThrottle(string cacheKey)
+        {
+            lock (_seerrCache.AutoImportFailureThrottleLock)
+            {
+                _seerrCache.AutoImportFailureThrottle.Remove(cacheKey);
+            }
+        }
+
+        private async Task<(SeerrUser? User, bool Definite)> TryAutoImportSeerrUser(
+            string jellyfinUserId,
+            string[] urls,
+            HttpClient httpClient,
+            PluginConfiguration capturedConfig,
+            SeerrMutationConfigStamp configStamp,
+            CancellationToken cancellationToken)
+        {
+            var apiKey = capturedConfig.SeerrApiKey;
+
+            // Seerr requires dashless UUIDs — dashed format causes empty email and UNIQUE constraint errors
+            var normalizedUserId = SeerrPaginationHelper.CanonicalJellyfinUserIdentity(jellyfinUserId);
+            if (normalizedUserId == null)
+            {
+                _logger.LogWarning("Refusing to auto-import a malformed Jellyfin user identity.");
+                return (null, true);
+            }
+
+            var url = urls.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return (null, false);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            // The absence observed by the caller may be stale by the time the
+            // non-idempotent import is ready. Re-read a complete stable map from
+            // every configured identity domain, validate its ownership graph,
+            // and require the target to remain absent. A target-domain-only
+            // check would still create a duplicate when another domain gained
+            // the mapping during preparation.
+            var dispatchSnapshots = await SeerrPaginationHelper.FetchAllSourcesAsync(
+                httpClient,
+                urls,
+                static (baseUrl, _, skip) => $"{baseUrl}/api/v1/user?take=1000&skip={skip}",
+                apiKey,
+                apiUserId: null,
+                requestedPageSize: 1000,
+                UserCollectionIdentity,
+                cancellationToken).ConfigureAwait(false);
+            if (!dispatchSnapshots.IsComplete)
+            {
+                _logger.LogWarning(
+                    "Refusing Seerr auto-import because its final all-domain user-map proof was incomplete or invalid: {Reason}",
+                    dispatchSnapshots.FailureReason);
+                return (null, false);
+            }
+
+            if (!SeerrUserImportHelper.TryCollectMappedUserIds(
+                    dispatchSnapshots,
+                    out var mappedUserIds,
+                    out var mapFailure))
+            {
+                _logger.LogWarning(
+                    "Refusing Seerr auto-import because its final all-domain user-map proof was incomplete or invalid: {Reason}",
+                    mapFailure);
+                return (null, false);
+            }
+
+            if (mappedUserIds.Contains(normalizedUserId))
+            {
+                _logger.LogInformation(
+                    "Refusing Seerr auto-import because the Jellyfin user became linked during preparation; a fresh resolution is required.");
+                return (null, false);
+            }
+
+            var currentConfig = _configProvider.ConfigurationOrNull;
+            if (!configStamp.Matches(currentConfig, _configProvider.ConfigurationRevision)
+                || currentConfig?.SeerrEnabled != true
+                || !currentConfig.SeerrAutoImportUsers
+                || IsImportBlocked(normalizedUserId, currentConfig))
+            {
+                _logger.LogInformation(
+                    "Refusing Seerr auto-import because its configuration or authorization changed during preparation.");
+                return (null, false);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            // User creation is not idempotent. Configured URLs are distinct
+            // identity domains rather than failover replicas, and no source
+            // binding exists for a user that was absent from every domain.
+            // Deterministically select one normalized configured endpoint and
+            // never replay the POST elsewhere after any outcome: a timeout,
+            // reset, HTTP error, HTML response, or malformed body may follow a
+            // committed import even though this caller cannot prove it.
+            try
+            {
+                var importUri = $"{url}/api/v1/user/import-from-jellyfin";
+                var requestBody = JsonSerializer.Serialize(new { jellyfinUserIds = new[] { normalizedUserId } });
+
+                using var importRequest = SeerrHttpHelper.BuildRequest(HttpMethod.Post, importUri, apiKey, bodyJson: requestBody);
+                using var importResponse = await httpClient.SendAsync(importRequest, cancellationToken).ConfigureAwait(false);
+                var (importJson, importError) = await SeerrHttpHelper.ReadResponseAsync(
+                    importResponse,
+                    importUri,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (importError != null)
+                {
+                    // Email collision is a definite failure — a renamed/deleted Jellyfin user left
+                    // an orphaned Seerr account with the same email. Won't resolve on retry.
+                    if (!string.IsNullOrEmpty(importError.Message)
+                        && importError.Message.Contains("UNIQUE constraint failed: user.email", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogWarning($"Could not auto-import Jellyfin User ID {ResolveUserDisplay(jellyfinUserId)}: an existing Seerr account has a conflicting email (possibly from a previous user that was renamed or deleted). Remove the conflicting user in Seerr to resolve this.");
+                        return (null, true);
+                    }
+
+                    _logger.LogWarning($"Failed to auto-import user to Seerr at {url}: code={importError.Code} status={importError.HttpStatus} cf-ray={importError.CfRay} — {importError.Message}");
+                    return (null, false);
+                }
+
+                // The import endpoint returns an array of newly created users.
+                // Parse it directly to avoid a second API call.
+                var importedUsers = JsonSerializer.Deserialize<List<SeerrUser>>(importJson!);
+                if (importedUsers == null)
+                {
+                    _logger.LogWarning("Auto-import response at {Url} was not a user array.", url);
+                    return (null, false);
+                }
+
+                var importedMatches = importedUsers
+                    .Where(u => u != null && string.Equals(
+                        SeerrPaginationHelper.CanonicalJellyfinUserIdentity(u.JellyfinUserId),
+                        normalizedUserId,
+                        StringComparison.OrdinalIgnoreCase))
+                    .Take(2)
+                    .ToList();
+                if (importedMatches.Count > 1)
+                {
+                    _logger.LogWarning(
+                        "Auto-import response at {Url} contained multiple users mapped to Jellyfin user {User}; the import outcome is ambiguous.",
+                        url,
+                        ResolveUserDisplay(jellyfinUserId));
+                    return (null, false);
+                }
+
+                var user = importedMatches.SingleOrDefault();
+                if (user != null)
+                {
+                    if (user.Id <= 0)
+                    {
+                        _logger.LogWarning("Auto-import response at {Url} contained an invalid user id.", url);
+                        return (null, false);
+                    }
+
+                    user.JellyfinUserId = normalizedUserId;
+                    user.SourceUrl = url;
+                    _logger.LogInformation($"Auto-imported Seerr user ID {user.Id} for Jellyfin User {ResolveUserDisplay(jellyfinUserId)}");
+                    return (user, true);
+                }
+
+                // Some Seerr versions return an empty array even on success (user already existed
+                // but wasn't in the import response). Fall back to a full user list query to find them.
+                _logger.LogInformation($"Import succeeded at {url} but user not in response. Doing fresh lookup...");
+                var freshSnapshot = await SeerrPaginationHelper.FetchAllAsync(
+                    httpClient,
+                    new[] { url },
+                    static (baseUrl, _, skip) => $"{baseUrl}/api/v1/user?take=1000&skip={skip}",
+                    apiKey,
+                    apiUserId: null,
+                    requestedPageSize: 1000,
+                    UserCollectionIdentity,
+                    cancellationToken).ConfigureAwait(false);
+                if (freshSnapshot.IsComplete)
+                {
+                    try
+                    {
+                        var allUsers = new List<SeerrUser>(freshSnapshot.Items.Count);
+                        foreach (var item in freshSnapshot.Items)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            var candidate = JsonSerializer.Deserialize<SeerrUser>(item.GetRawText());
+                            if (candidate == null || candidate.Id <= 0)
+                            {
+                                throw new JsonException("A Seerr user row did not contain a positive id.");
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(candidate.JellyfinUserId))
+                            {
+                                var canonicalJellyfinUserId = SeerrPaginationHelper.CanonicalJellyfinUserIdentity(
+                                    candidate.JellyfinUserId);
+                                if (canonicalJellyfinUserId == null)
+                                {
+                                    throw new JsonException("A Seerr user row contained a malformed Jellyfin user id.");
+                                }
+
+                                candidate.JellyfinUserId = canonicalJellyfinUserId;
+                            }
+
+                            allUsers.Add(candidate);
+                        }
+
+                        var freshMatches = allUsers
+                            .Where(u => string.Equals(u.JellyfinUserId, normalizedUserId, StringComparison.OrdinalIgnoreCase))
+                            .Take(2)
+                            .ToList();
+                        if (freshMatches.Count > 1)
+                        {
+                            _logger.LogWarning(
+                                "Fresh Seerr lookup at {Url} found multiple users mapped to Jellyfin user {User}; the import outcome is ambiguous.",
+                                url,
+                                ResolveUserDisplay(jellyfinUserId));
+                            return (null, false);
+                        }
+
+                        var found = freshMatches.SingleOrDefault();
+                        if (found != null)
+                        {
+                            found.SourceUrl = url;
+                            _logger.LogInformation($"Found Seerr user ID {found.Id} for Jellyfin User {ResolveUserDisplay(jellyfinUserId)} via fresh lookup");
+                            return (found, true);
+                        }
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(
+                            ex,
+                            "Fresh Seerr user lookup at {Url} contained an invalid row; the import outcome is not definite.",
+                            url);
+                        return (null, false);
+                    }
+
+                    // Import succeeded and a complete fresh lookup found
+                    // nothing: the user is genuinely not importable.
+                    return (null, true);
+                }
+
+                _logger.LogWarning(
+                    "Fresh Seerr user lookup at {Url} was incomplete after import; refusing to publish or cache an absence: {Reason}",
+                    url,
+                    freshSnapshot.FailureReason);
+                return (null, false);
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogDebug($"Connection error during auto-import for Jellyfin User {ResolveUserDisplay(jellyfinUserId)} at {url}: {ex.Message}");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException ex)
+            {
+                _logger.LogWarning(
+                    "Timed out while auto-importing Jellyfin user {User} at {Url}: {Message}",
+                    ResolveUserDisplay(jellyfinUserId),
+                    url,
+                    ex.Message);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning($"Invalid response from Seerr during auto-import for Jellyfin User {ResolveUserDisplay(jellyfinUserId)} at {url}: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    "Unexpected auto-import failure for Jellyfin user {User} at {Url}: {Type}: {Message}",
+                    ResolveUserDisplay(jellyfinUserId),
+                    url,
+                    ex.GetType().Name,
+                    ex.Message);
+            }
+
+            // A generic HTTP error, malformed body, timeout, or transport failure
+            // says nothing authoritative about whether the user is importable.
+            // Only the explicit collision case or a successful import followed by
+            // a complete fresh absence may be negative-cached.
+            return (null, false);
         }
 
         public async Task<string?> GetSeerrUserId(string jellyfinUserId, bool allowAutoImport = true)
         {
             var config = _configProvider.ConfigurationOrNull;
-            bool cacheEnabled = config == null || !config.SeerrDisableCache;
+            if (config == null)
+            {
+                return null;
+            }
+
+            var configurationRevision = _configProvider.ConfigurationRevision;
+            var configurationIdentity = BuildConfigurationIdentity(config);
+            var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
+            bool ConfigurationIsCurrent() => configStamp.Matches(
+                _configProvider.ConfigurationOrNull,
+                _configProvider.ConfigurationRevision);
+            bool cacheEnabled = !config.SeerrDisableCache;
             var cacheKey = NormalizeUserId(jellyfinUserId);
+
+            if (!ConfigurationIsCurrent())
+            {
+                return null;
+            }
 
             // Check cache first (unless disabled)
             if (cacheEnabled)
@@ -495,21 +1205,59 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 lock (_seerrCache.UserIdCacheLock)
                 {
                     if (_seerrCache.UserIdCache.TryGetValue(cacheKey, out var cached) &&
+                        cached.ConfigurationRevision == configurationRevision &&
+                        string.Equals(
+                            cached.ConfigurationIdentity,
+                            configurationIdentity,
+                            StringComparison.Ordinal) &&
                         DateTime.UtcNow - cached.CachedAt < _seerrCache.GetUserIdCacheTtl())
                     {
-                        return cached.SeerrUserId;
+                        return ConfigurationIsCurrent() ? cached.SeerrUserId : null;
+                    }
+
+                    if (_seerrCache.UserIdCache.TryGetValue(cacheKey, out cached)
+                        && (cached.ConfigurationRevision != configurationRevision
+                            || !string.Equals(
+                                cached.ConfigurationIdentity,
+                                configurationIdentity,
+                                StringComparison.Ordinal)))
+                    {
+                        _seerrCache.UserIdCache.Remove(cacheKey);
                     }
                 }
             }
 
             var user = await GetSeerrUser(jellyfinUserId, allowAutoImport: allowAutoImport);
             var seerrUserId = user?.Id.ToString();
+            if (!ConfigurationIsCurrent())
+            {
+                return null;
+            }
 
             if (!string.IsNullOrEmpty(seerrUserId) && cacheEnabled)
             {
+                var publishedEntry = (
+                    SeerrUserId: seerrUserId,
+                    CachedAt: DateTime.UtcNow,
+                    ConfigurationRevision: configurationRevision,
+                    ConfigurationIdentity: configurationIdentity);
                 lock (_seerrCache.UserIdCacheLock)
                 {
-                    _seerrCache.UserIdCache[cacheKey] = (seerrUserId, DateTime.UtcNow);
+                    _seerrCache.UserIdCache[cacheKey] = publishedEntry;
+                }
+
+                if (!ConfigurationIsCurrent())
+                {
+                    lock (_seerrCache.UserIdCacheLock)
+                    {
+                        if (_seerrCache.UserIdCache.TryGetValue(cacheKey, out var published)
+                            && published.Equals(publishedEntry))
+                        {
+                            _seerrCache.UserIdCache.Remove(cacheKey);
+                        }
+                    }
+
+                    return null;
                 }
             }
 
@@ -558,7 +1306,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             // per-user to be safe; only the truly content-only TMDB sliders
             // and direct genre/keyword/person lookups are shared.
             if (apiPath.StartsWith("/api/v1/genres/", StringComparison.OrdinalIgnoreCase)) return true;
-            if (apiPath.StartsWith("/api/v1/person/", StringComparison.OrdinalIgnoreCase)) return true;
+            // Only the bare person-detail route is user-neutral. Seerr's
+            // /person/{id}/combined_credits route joins Media through req.user
+            // and serializes user-local mediaInfo/watchlist state, so treating
+            // every /person/* path as public would cache one user's projection
+            // for every caller.
+            var personPath = apiPath.Split('?', 2)[0].TrimEnd('/');
+            const string personPrefix = "/api/v1/person/";
+            if (personPath.StartsWith(personPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var personResource = personPath[personPrefix.Length..];
+                if (int.TryParse(
+                        personResource,
+                        System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out var personId)
+                    && personId > 0)
+                {
+                    return true;
+                }
+            }
             if (apiPath.StartsWith("/api/v1/keyword", StringComparison.OrdinalIgnoreCase)) return true;
             // For discover/movies?genre=X and discover/tv?genre=X paths
             // (query-string discovery), the response includes mediaInfo
@@ -588,7 +1355,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         public void EvictMediaDetailCache(int tmdbId, string mediaType)
         {
             if (mediaType != "movie" && mediaType != "tv") return;
-            // The cache key shape is `{userId}:{apiPath}`. We want to match
+            // User-scoped cache keys end with
+            // `{jellyfinUserId}:{seerrUserId}:{apiPath}` (after a
+            // source-identity prefix). We want to match
             // EITHER the bare detail (apiPath ends with `/api/v1/movie/12`)
             // OR a sub-path (apiPath starts with `/api/v1/movie/12/` —
             // for `/similar`, `/recommendations`, `/season/1`, etc).
@@ -605,6 +1374,43 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             }
         }
 
+        internal static bool TryPublishResponseCacheEntry(
+            Dictionary<string, (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> cache,
+            object cacheLock,
+            string cacheKey,
+            (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity) entry,
+            Func<bool> isConfigurationCurrent)
+        {
+            if (!isConfigurationCurrent())
+            {
+                return false;
+            }
+
+            lock (cacheLock)
+            {
+                cache[cacheKey] = entry;
+            }
+
+            if (isConfigurationCurrent())
+            {
+                return true;
+            }
+
+            // Remove only the tuple this flight published. A newer same-key
+            // refresh can win between publication and the post-write fence and
+            // must not be deleted by stale cleanup.
+            lock (cacheLock)
+            {
+                if (cache.TryGetValue(cacheKey, out var published)
+                    && published.Equals(entry))
+                {
+                    cache.Remove(cacheKey);
+                }
+            }
+
+            return false;
+        }
+
         /// <summary>
         /// Applies the parental-rating filter to a response body and turns the
         /// outcome into a result: a bare 403 when a restricted caller reached a
@@ -613,9 +1419,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         private async Task<IActionResult> ApplyParentalFilterAsync(string body, string apiPath, SeerrCaller caller)
         {
             var result = await _parentalFilter.ApplyAsync(body, apiPath, caller);
-            return result.Block
-                ? new StatusCodeResult(403)
-                : new ContentResult { Content = result.Body, ContentType = "application/json" };
+            if (result.Block)
+            {
+                return new StatusCodeResult(403);
+            }
+
+            if (!result.Succeeded)
+            {
+                // ApplyAsync deliberately carries the raw body only as a
+                // diagnostic/legacy fallback when filtering faults. Returning
+                // it here would disclose the unfiltered cache/upstream payload
+                // to a restricted caller, so ordinary proxy reads fail closed.
+                return new ObjectResult(new
+                {
+                    error = true,
+                    code = "parental_filter_unavailable",
+                    message = "Parental filtering could not be completed. Please try again."
+                })
+                { StatusCode = 503 };
+            }
+
+            return new ContentResult { Content = result.Body, ContentType = "application/json" };
         }
 
         /// <summary>
@@ -702,14 +1526,90 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             }
         }
 
-        public async Task<IActionResult> ProxyRequestAsync(string apiPath, HttpMethod method, string? content, SeerrCaller caller)
+        public Task<IActionResult> ProxyRequestAsync(
+            string apiPath,
+            HttpMethod method,
+            string? content,
+            SeerrCaller caller)
+            => ProxyRequestAsyncCore(apiPath, method, content, caller, resolvedUser: null, CancellationToken.None);
+
+        public Task<IActionResult> ProxyRequestAsync(
+            string apiPath,
+            HttpMethod method,
+            string? content,
+            SeerrCaller caller,
+            CancellationToken cancellationToken)
+            => ProxyRequestAsyncCore(apiPath, method, content, caller, resolvedUser: null, cancellationToken);
+
+        public Task<IActionResult> ProxyRequestAsync(
+            string apiPath,
+            HttpMethod method,
+            string? content,
+            SeerrCaller caller,
+            SeerrUser resolvedUser)
+            => ProxyRequestAsyncCore(apiPath, method, content, caller, resolvedUser, CancellationToken.None);
+
+        public Task<IActionResult> ProxyRequestAsync(
+            string apiPath,
+            HttpMethod method,
+            string? content,
+            SeerrCaller caller,
+            SeerrUser resolvedUser,
+            CancellationToken cancellationToken)
+            => ProxyRequestAsyncCore(apiPath, method, content, caller, resolvedUser, cancellationToken);
+
+        public Task<IActionResult> ProxyFreshTvDetailAsync(
+            int tmdbId,
+            SeerrCaller caller,
+            CancellationToken cancellationToken = default)
         {
+            if (tmdbId <= 0)
+            {
+                return Task.FromResult<IActionResult>(
+                    new BadRequestObjectResult(new
+                    {
+                        error = true,
+                        code = "invalid_tmdb_id",
+                        message = "A positive TMDB ID is required."
+                    }));
+            }
+
+            return ProxyRequestAsyncCore(
+                $"/api/v1/tv/{tmdbId}",
+                HttpMethod.Get,
+                content: null,
+                caller,
+                resolvedUser: null,
+                cancellationToken,
+                bypassResponseCache: true);
+        }
+
+        private async Task<IActionResult> ProxyRequestAsyncCore(
+            string apiPath,
+            HttpMethod method,
+            string? content,
+            SeerrCaller caller,
+            SeerrUser? resolvedUser,
+            CancellationToken cancellationToken,
+            bool bypassResponseCache = false)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.SeerrEnabled || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
                 _logger.LogWarning("Seerr integration is not configured or enabled.");
                 return new ObjectResult("Seerr integration is not configured or enabled.") { StatusCode = 503 };
             }
+
+            var requestConfigurationRevision = _configProvider.ConfigurationRevision;
+            var requestConfigurationIdentity = BuildConfigurationIdentity(config);
+            var requestConfigStamp = SeerrMutationConfigStamp.Capture(
+                config,
+                requestConfigurationRevision);
+            var mutationConfigStamp = method != HttpMethod.Get
+                ? requestConfigStamp
+                : (SeerrMutationConfigStamp?)null;
+            var isPublicScope = method == HttpMethod.Get && IsPublicScopeApiPath(apiPath);
 
             // The caller identity is resolved by the controller from the
             // authenticated principal (never caller-controlled headers).
@@ -720,42 +1620,116 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return new ForbidResult();
             }
 
-            // resolve the Seerr user ONCE up-front and reuse for
-            // both ID-extraction and the non-admin permission check below.
-            // Previously made TWO calls (and TWO Seerr round-trips when
-            // SeerrDisableCache=true), doubling load on debugging admins.
-            var seerrUser = await GetSeerrUser(jellyfinUserId);
-            var seerrUserId = seerrUser?.Id.ToString();
-            if (string.IsNullOrEmpty(seerrUserId))
+            // Resolve once unless the caller already carries the exact
+            // instance-local user context. A supplied user must have a source
+            // that is still configured: falling back here could replay its
+            // numeric id against another Seerr instance.
+            SeerrUserResolution userResolution;
+            string? pinnedSourceUrl = null;
+            if (resolvedUser != null)
             {
-                _logger.LogWarning($"Could not find a Seerr user for Jellyfin user {ResolveUserDisplay(jellyfinUserId)}. Aborting request.");
-                // When the lookup returns null because every Seerr URL
-                // is returning a Cloudflare/proxy HTML challenge, the generic
-                // "user not linked" message misleads the admin. Do one quick
-                // reachability probe so the frontend gets a structured reason
-                // it can render in a banner, matching /seerr/user-status.
-                // The probe is cached so a Seerr outage doesn't fan out N
-                // status probes from the negative-user-cache window.
-                bool reachable = await IsSeerrReachableCached();
-
-                if (!reachable)
+                pinnedSourceUrl = FindConfiguredSource(
+                    GetConfiguredUrls(config.SeerrUrls),
+                    resolvedUser.SourceUrl);
+                if (resolvedUser.Id <= 0 || pinnedSourceUrl == null)
                 {
-                    // Admins get a pointer to the JC log (which carries the
-                    // full code=Cloudflare5xx status=. cf-ray=. line);
-                    // non-admins get plain copy.
-                    var unreachableMsg = caller.IsAdmin
-                        ? "Can't reach Seerr. Check the JC log for cf-ray / Content-Type / status details."
-                        : "Can't reach Seerr right now. Please try again in a moment.";
+                    _logger.LogWarning(
+                        "Refusing a pre-resolved Seerr request because its instance-local user context is invalid or no longer configured.");
                     return new ObjectResult(new
                     {
                         error = true,
-                        code = "unreachable",
-                        message = unreachableMsg
+                        code = "source_affinity_unavailable",
+                        message = "The linked Seerr instance could not be verified. Please try again."
                     })
                     { StatusCode = 502 };
                 }
 
-                if (IsImportBlocked(jellyfinUserId, config))
+                if (method == HttpMethod.Get && !isPublicScope)
+                {
+                    // A positive cache entry cannot authorize user-local data:
+                    // the same instance-local id may have been rebound from
+                    // Jellyfin user A to B without changing the source URL.
+                    // Validate the caller's exact pinned binding against a
+                    // fresh complete all-domain snapshot before using an API
+                    // path that was built from that id (for example quota).
+                    var freshUser = await FetchExactUserBindingAsync(
+                        jellyfinUserId,
+                        resolvedUser.Id,
+                        pinnedSourceUrl,
+                        config.SeerrApiKey,
+                        cancellationToken).ConfigureAwait(false);
+                    if (freshUser == null
+                        || freshUser.Id != resolvedUser.Id
+                        || !string.Equals(
+                            SeerrUrlIdentity.Normalize(freshUser.SourceUrl),
+                            pinnedSourceUrl,
+                            StringComparison.Ordinal))
+                    {
+                        InvalidateUserIdentityCache(jellyfinUserId);
+
+                        _logger.LogWarning(
+                            "Refusing a user-scoped Seerr read because its supplied user binding changed before dispatch.");
+                        return new ObjectResult(new
+                        {
+                            error = true,
+                            code = "user_binding_changed",
+                            message = "Your linked Seerr identity changed. Please try again."
+                        })
+                        { StatusCode = 409 };
+                    }
+
+                    freshUser.SourceUrl = pinnedSourceUrl;
+                    userResolution = SeerrUserResolution.Found(freshUser);
+                }
+                else
+                {
+                    userResolution = SeerrUserResolution.Found(resolvedUser);
+                }
+            }
+            else
+            {
+                // Resolve the Seerr user ONCE up-front and reuse for both
+                // ID-extraction and the non-admin permission check below.
+                userResolution = await ResolveSeerrUser(
+                    jellyfinUserId,
+                    bypassCache: method == HttpMethod.Get && !isPublicScope,
+                    allowAutoImport: !(method == HttpMethod.Get && !isPublicScope),
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+
+            var seerrUser = userResolution.User;
+            var seerrUserId = seerrUser?.Id.ToString();
+            if (!userResolution.IsFound || string.IsNullOrEmpty(seerrUserId))
+            {
+                _logger.LogWarning(
+                    "Could not resolve a Seerr user for Jellyfin user {User}: {Status}; {Reason}",
+                    ResolveUserDisplay(jellyfinUserId),
+                    userResolution.Status,
+                    userResolution.FailureReason);
+
+                if (userResolution.Status == SeerrUserResolutionStatus.Incomplete)
+                {
+                    return new ObjectResult(new
+                    {
+                        error = true,
+                        code = "user_lookup_incomplete",
+                        message = "Seerr returned an incomplete user collection. Please try again."
+                    })
+                    { StatusCode = 502 };
+                }
+
+                if (userResolution.Status == SeerrUserResolutionStatus.Unavailable)
+                {
+                    return new ObjectResult(new
+                    {
+                        error = true,
+                        code = "unavailable",
+                        message = "Seerr integration is not available."
+                    })
+                    { StatusCode = 503 };
+                }
+
+                if (userResolution.Status == SeerrUserResolutionStatus.Blocked)
                 {
                     return new ObjectResult(new
                     {
@@ -888,23 +1862,58 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 }
             }
 
+            var configuredUrls = GetConfiguredUrls(config.SeerrUrls);
+            // Only safe GETs may use the public cache/failover path. A future
+            // controller must not accidentally replay a write merely because
+            // its URL resembles a user-neutral metadata endpoint.
+            string? boundSourceUrl = null;
+            if (!isPublicScope)
+            {
+                boundSourceUrl = FindConfiguredSource(
+                    configuredUrls,
+                    pinnedSourceUrl ?? seerrUser!.SourceUrl);
+                if (boundSourceUrl == null)
+                {
+                    _logger.LogWarning(
+                        "Refusing a user-scoped Seerr request because its resolved source is missing or no longer configured.");
+                    return new ObjectResult(new
+                    {
+                        error = true,
+                        code = "source_affinity_unavailable",
+                        message = "The linked Seerr instance could not be verified. Please try again."
+                    })
+                    { StatusCode = 502 };
+                }
+            }
+
             // Check server-side response cache for cacheable endpoints.
             // bifurcate cache key. Public discovery
             // endpoints return identical content for all users, so include the
             // user-id in the key only for endpoints whose response actually
             // varies per-user (mediaInfo.requests, watchlist, partial-requests
             // setting, requested-by-me filters, etc).
-            bool isCacheable = IsCacheableApiPath(apiPath, method) && !config.SeerrDisableCache;
-            bool isPublicScope = IsPublicScopeApiPath(apiPath);
+            bool isCacheable = !bypassResponseCache
+                && IsCacheableApiPath(apiPath, method)
+                && !config.SeerrDisableCache;
+            var responseCacheGenerationPrefix = $"cfg:{requestConfigurationIdentity}:";
             var cacheKey = isPublicScope
-                ? $"public:{apiPath}"
-                : $"{jellyfinUserId}:{apiPath}";
+                ? $"{responseCacheGenerationPrefix}public:{apiPath}"
+                // A Jellyfin account can be unlinked/re-imported as a different
+                // instance-local Seerr user without changing either its caller
+                // id or source URL. Include that current Seerr id so a cached
+                // user-local body can never survive such a same-source rebind.
+                : $"{responseCacheGenerationPrefix}{boundSourceUrl!.Length}:{boundSourceUrl}:{jellyfinUserId}:{seerrUserId}:{apiPath}";
             if (isCacheable)
             {
                 string? cachedContent = null;
                 lock (_seerrCache.ResponseCacheLock)
                 {
                     if (_seerrCache.ResponseCache.TryGetValue(cacheKey, out var cached) &&
+                        cached.ConfigurationRevision == requestConfigurationRevision &&
+                        string.Equals(
+                            cached.ConfigurationIdentity,
+                            requestConfigurationIdentity,
+                            StringComparison.Ordinal) &&
                         DateTime.UtcNow - cached.CachedAt < _seerrCache.GetResponseCacheTtl())
                     {
                         cachedContent = cached.Content;
@@ -916,11 +1925,135 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     // Filter per-caller on the way out; the cached body itself stays
                     // user-neutral (never store a per-user-filtered view under a
                     // possibly-shared public: cache key).
-                    return await ApplyParentalFilterAsync(cachedContent, apiPath, caller);
+                    var filtered = await ApplyParentalFilterAsync(cachedContent, apiPath, caller).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!requestConfigStamp.Matches(
+                            _configProvider.ConfigurationOrNull,
+                            _configProvider.ConfigurationRevision))
+                    {
+                        return new ObjectResult(new
+                        {
+                            error = true,
+                            code = "read_configuration_changed",
+                            message = "Seerr configuration changed while preparing the response. Please try again."
+                        })
+                        { StatusCode = 409 };
+                    }
+
+                    return filtered;
                 }
             }
 
-            var urls = GetConfiguredUrls(config.SeerrUrls);
+            // Seerr user ids are instance-local. Public endpoints carry no
+            // X-Api-User and may use normal URL failover; every user-scoped read
+            // or mutation stays on the instance that resolved this user.
+            var urls = isPublicScope
+                ? configuredUrls
+                : new[] { boundSourceUrl! };
+
+            if (method == HttpMethod.Get
+                && !requestConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision))
+            {
+                return new ObjectResult(new
+                {
+                    error = true,
+                    code = "read_configuration_changed",
+                    message = "Seerr configuration changed while preparing the request. Please try again."
+                })
+                { StatusCode = 409 };
+            }
+
+            if (method != HttpMethod.Get)
+            {
+                // The normal resolver cache is useful for reads, but a Seerr
+                // numeric user id and its permissions can be revoked/rebound
+                // during its TTL. Re-resolve immediately before dispatch and
+                // require the exact binding that all checks above used. Never
+                // auto-import here: that is another non-idempotent mutation and
+                // must not be coupled to replay of the requested write.
+                var freshResolution = await ResolveSeerrUser(
+                    jellyfinUserId,
+                    bypassCache: true,
+                    allowAutoImport: false,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                // Configuration saves replace the live object while the fresh
+                // identity lookup is in flight. Never dispatch with the stale
+                // URLs, API key, feature gates, parental policy, or request
+                // settings that authorized the write. The complete digest also
+                // catches a test/custom provider mutating an object in place.
+                var currentMutationConfig = _configProvider.ConfigurationOrNull;
+                if (!mutationConfigStamp.HasValue
+                    || !mutationConfigStamp.Value.Matches(
+                        currentMutationConfig,
+                        _configProvider.ConfigurationRevision)
+                    || currentMutationConfig == null
+                    || !currentMutationConfig.SeerrEnabled
+                    || string.IsNullOrEmpty(currentMutationConfig.SeerrUrls)
+                    || string.IsNullOrEmpty(currentMutationConfig.SeerrApiKey))
+                {
+                    return new ObjectResult(new
+                    {
+                        error = true,
+                        code = "mutation_configuration_changed",
+                        message = "Seerr configuration changed while preparing the request. No mutation was attempted; retry with fresh data."
+                    })
+                    { StatusCode = 409 };
+                }
+
+                config = currentMutationConfig;
+                configuredUrls = GetConfiguredUrls(config.SeerrUrls);
+                if (!freshResolution.IsFound || freshResolution.User == null)
+                {
+                    if (freshResolution.Status is SeerrUserResolutionStatus.NotFound
+                        or SeerrUserResolutionStatus.Blocked)
+                    {
+                        InvalidateUserIdentityCache(jellyfinUserId);
+                    }
+
+                    return new ObjectResult(new
+                    {
+                        error = true,
+                        code = freshResolution.Status == SeerrUserResolutionStatus.Blocked
+                            ? "blocked"
+                            : "mutation_identity_unavailable",
+                        message = "The current Seerr identity could not be revalidated. No mutation was attempted."
+                    })
+                    {
+                        StatusCode = freshResolution.Status switch
+                        {
+                            SeerrUserResolutionStatus.Blocked => 403,
+                            SeerrUserResolutionStatus.Unavailable => 503,
+                            SeerrUserResolutionStatus.Incomplete => 502,
+                            _ => 409,
+                        }
+                    };
+                }
+
+                var freshUser = freshResolution.User;
+                var freshSource = FindConfiguredSource(configuredUrls, freshUser.SourceUrl);
+                if (freshUser.Id != seerrUser!.Id
+                    || freshUser.Permissions != seerrUser.Permissions
+                    || freshSource == null
+                    || !string.Equals(freshSource, boundSourceUrl, StringComparison.Ordinal))
+                {
+                    InvalidateUserIdentityCache(jellyfinUserId);
+                    return new ObjectResult(new
+                    {
+                        error = true,
+                        code = "mutation_identity_changed",
+                        message = "The linked Seerr identity changed while preparing the request. No mutation was attempted; retry with fresh data."
+                    })
+                    { StatusCode = 409 };
+                }
+
+                seerrUser = freshUser;
+                seerrUserId = freshUser.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                urls = new[] { boundSourceUrl! };
+            }
+
             var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
             httpClient.Timeout = TimeSpan.FromSeconds(15);
 
@@ -929,6 +2062,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
             foreach (var url in urls)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var requestUri = $"{url}{apiPath}";
                 // High-frequency endpoints that don't need a per-call INFO line.
                 // also covers /search/keyword (typeahead) and item-
@@ -967,20 +2101,60 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     using var request = SeerrHttpHelper.BuildRequest(method, requestUri, config.SeerrApiKey, requestUserId, content);
                     if (content != null) _logger.LogDebug($"Request body: {content}");
 
-                    using var response = await httpClient.SendAsync(request);
-                    var (json, error) = await SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+                    using var response = await httpClient.SendAsync(
+                        request,
+                        cancellationToken).ConfigureAwait(false);
+                    var (json, error) = await SeerrHttpHelper.ReadResponseAsync(
+                        response,
+                        requestUri,
+                        cancellationToken).ConfigureAwait(false);
 
                     if (error == null && json != null)
                     {
+                        if (method == HttpMethod.Get
+                            && !requestConfigStamp.Matches(
+                                _configProvider.ConfigurationOrNull,
+                                _configProvider.ConfigurationRevision))
+                        {
+                            return new ObjectResult(new
+                            {
+                                error = true,
+                                code = "read_configuration_changed",
+                                message = "Seerr configuration changed while the response was in flight. Please try again."
+                            })
+                            { StatusCode = 409 };
+                        }
+
                         // Cache only verified-JSON 2xx responses. The Content-Type
                         // guard inside ReadResponseAsync prevents HTML challenge
                         // pages from being cached as JSON for 10 min.
                         if (isCacheable)
                         {
+                            var publishedEntry = (
+                                Content: json,
+                                CachedAt: DateTime.UtcNow,
+                                ConfigurationRevision: requestConfigurationRevision,
+                                ConfigurationIdentity: requestConfigurationIdentity);
+                            if (!TryPublishResponseCacheEntry(
+                                    _seerrCache.ResponseCache,
+                                    _seerrCache.ResponseCacheLock,
+                                    cacheKey,
+                                    publishedEntry,
+                                    () => requestConfigStamp.Matches(
+                                        _configProvider.ConfigurationOrNull,
+                                        _configProvider.ConfigurationRevision)))
+                            {
+                                return new ObjectResult(new
+                                {
+                                    error = true,
+                                    code = "read_configuration_changed",
+                                    message = "Seerr configuration changed while caching the response. Please try again."
+                                })
+                                { StatusCode = 409 };
+                            }
+
                             lock (_seerrCache.ResponseCacheLock)
                             {
-                                _seerrCache.ResponseCache[cacheKey] = (json, DateTime.UtcNow);
-
                                 if (_seerrCache.ResponseCache.Count > 200 || _seerrCache.ResponseCache.Count % 50 == 0)
                                 {
                                     var staleKeys = _seerrCache.ResponseCache
@@ -1007,7 +2181,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
                         // Cache above stores the raw, user-neutral body; the parental
                         // filter runs per-caller on the way out.
-                        return await ApplyParentalFilterAsync(json, apiPath, caller);
+                        var filtered = await ApplyParentalFilterAsync(json, apiPath, caller).ConfigureAwait(false);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (method == HttpMethod.Get
+                            && !requestConfigStamp.Matches(
+                                _configProvider.ConfigurationOrNull,
+                                _configProvider.ConfigurationRevision))
+                        {
+                            return new ObjectResult(new
+                            {
+                                error = true,
+                                code = "read_configuration_changed",
+                                message = "Seerr configuration changed while filtering the response. Please try again."
+                            })
+                            { StatusCode = 409 };
+                        }
+
+                        return filtered;
                     }
 
                     _logger.LogWarning($"Seerr request failed for user {ResolveUserDisplay(jellyfinUserId)} at {url}: code={error!.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
@@ -1028,6 +2218,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     // non-admins get a sanitised version that strips it.
                     lastErrorBody = caller.IsAdmin ? error.ToAdminResponseShape() : error.ToResponseShape();
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogError($"Failed to connect to Seerr URL for user {ResolveUserDisplay(jellyfinUserId)}: {url}. Error: {ex.Message}");
@@ -1045,9 +2239,100 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             return new ObjectResult(lastErrorBody) { StatusCode = lastStatusCode };
         }
 
+        public void InvalidateUserIdentityCache(string jellyfinUserId)
+        {
+            var cacheKey = NormalizeUserId(jellyfinUserId);
+            lock (_seerrCache.UserCacheLock)
+            {
+                _seerrCache.UserCache.Remove(cacheKey);
+            }
+
+            lock (_seerrCache.UserIdCacheLock)
+            {
+                _seerrCache.UserIdCache.Remove(cacheKey);
+            }
+        }
+
+        private async Task<SeerrUser?> FetchExactUserBindingAsync(
+            string jellyfinUserId,
+            int seerrUserId,
+            string sourceUrl,
+            string apiKey,
+            CancellationToken cancellationToken)
+        {
+            if (seerrUserId <= 0) return null;
+            var expectedJellyfinUserId = SeerrPaginationHelper.CanonicalJellyfinUserIdentity(
+                jellyfinUserId);
+            if (expectedJellyfinUserId == null) return null;
+
+            var requestUri = $"{sourceUrl}/api/v1/user/{seerrUserId}";
+            try
+            {
+                var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
+                httpClient.Timeout = TimeSpan.FromSeconds(15);
+                using var request = SeerrHttpHelper.BuildRequest(
+                    HttpMethod.Get,
+                    requestUri,
+                    apiKey);
+                using var response = await httpClient.SendAsync(
+                    request,
+                    cancellationToken).ConfigureAwait(false);
+                var (json, error) = await SeerrHttpHelper.ReadResponseAsync(
+                    response,
+                    requestUri,
+                    cancellationToken).ConfigureAwait(false);
+                if (error != null || json == null) return null;
+
+                var user = JsonSerializer.Deserialize<SeerrUser>(json);
+                var actualJellyfinUserId = SeerrPaginationHelper.CanonicalJellyfinUserIdentity(
+                    user?.JellyfinUserId);
+                if (user == null
+                    || user.Id != seerrUserId
+                    || !string.Equals(
+                        actualJellyfinUserId,
+                        expectedJellyfinUserId,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                user.JellyfinUserId = actualJellyfinUserId;
+                user.SourceUrl = sourceUrl;
+                return user;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    "Exact Seerr user-binding validation failed at {Source}: {Type}: {Message}",
+                    sourceUrl,
+                    ex.GetType().Name,
+                    ex.Message);
+                return null;
+            }
+        }
+
         // ── Watchlist / requests helpers ─────────────────────────────────────
 
-        public async Task<List<WatchlistItem>?> GetWatchlistForUser(string seerrUserId)
+        public Task<List<WatchlistItem>?> GetWatchlistForUser(string seerrUserId)
+        {
+            var config = _configProvider.ConfigurationOrNull;
+            var configuredUrls = GetConfiguredUrls(config?.SeerrUrls);
+            // The legacy overload carries an instance-local user id without its
+            // identity domain. It is safe only when configuration proves there
+            // is exactly one possible source.
+            return configuredUrls.Length == 1
+                ? GetWatchlistForUser(seerrUserId, configuredUrls[0])
+                : Task.FromResult<List<WatchlistItem>?>(null);
+        }
+
+        public async Task<List<WatchlistItem>?> GetWatchlistForUser(
+            string seerrUserId,
+            string? sourceUrl,
+            CancellationToken cancellationToken = default)
         {
             try
             {
@@ -1057,52 +2342,62 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     return null;
                 }
 
-                var urls = GetConfiguredUrls(config.SeerrUrls);
-                var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
-
-                foreach (var url in urls)
+                var configuredSource = FindConfiguredSource(
+                    GetConfiguredUrls(config.SeerrUrls),
+                    sourceUrl);
+                if (configuredSource == null)
                 {
-                    try
-                    {
-                        var requestUri = $"{url}/api/v1/user/{seerrUserId}/watchlist";
-                        using var request = SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, config.SeerrApiKey);
-                        using var response = await httpClient.SendAsync(request);
-                        var (content, error) = await SeerrHttpHelper.ReadResponseAsync(response, requestUri);
-
-                        if (error == null && content != null)
-                        {
-                            var json = JsonDocument.Parse(content);
-
-                            if (json.RootElement.TryGetProperty("results", out var results))
-                            {
-                                var items = new List<WatchlistItem>();
-                                foreach (var item in results.EnumerateArray())
-                                {
-                                    if (item.TryGetProperty("tmdbId", out var tmdbId) &&
-                                        item.TryGetProperty("mediaType", out var mediaType))
-                                    {
-                                        items.Add(new WatchlistItem
-                                        {
-                                            TmdbId = tmdbId.GetInt32(),
-                                            MediaType = mediaType.GetString() ?? "movie"
-                                        });
-                                    }
-                                }
-
-                                return items;
-                            }
-                        }
-                        else if (error != null)
-                        {
-                            _logger.LogWarning($"Failed to get watchlist from {url}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning($"Failed to get watchlist from {url}: {ex.Message}");
-                        continue;
-                    }
+                    _logger.LogWarning(
+                        "Refusing a Seerr watchlist lookup because the instance-local user id had no current source binding.");
+                    return null;
                 }
+
+                var urls = new[] { configuredSource };
+                var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
+                var snapshot = await SeerrPaginationHelper.FetchAllAsync(
+                    httpClient,
+                    urls,
+                    (url, page, _) => $"{url}/api/v1/user/{seerrUserId}/watchlist?take=100&page={page}",
+                    config.SeerrApiKey,
+                    seerrUserId,
+                    requestedPageSize: 100,
+                    WatchlistCollectionIdentity,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (!snapshot.IsComplete)
+                {
+                    LogIncompleteCollection("watchlist", snapshot);
+                    return null;
+                }
+
+                var items = new List<WatchlistItem>(snapshot.Items.Count);
+                foreach (var item in snapshot.Items)
+                {
+                    if (!item.TryGetProperty("tmdbId", out var tmdbId)
+                        || tmdbId.ValueKind != JsonValueKind.Number
+                        || !tmdbId.TryGetInt32(out var parsedTmdbId)
+                        || parsedTmdbId <= 0
+                        || !item.TryGetProperty("mediaType", out var mediaType)
+                        || !TryNormalizeMediaType(mediaType, out var normalizedMediaType))
+                    {
+                        _logger.LogWarning(
+                            "A complete Seerr watchlist from {Url} contained an invalid row; refusing a partial result.",
+                            snapshot.SourceUrl);
+                        return null;
+                    }
+
+                    items.Add(new WatchlistItem
+                    {
+                        TmdbId = parsedTmdbId,
+                        MediaType = normalizedMediaType,
+                    });
+                }
+
+                return items;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -1112,64 +2407,139 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             return null;
         }
 
-        public async Task<List<WatchlistItem>?> GetRequestsForUser(string seerrUserId)
+        public Task<List<WatchlistItem>?> GetRequestsForUser(string seerrUserId)
+        {
+            var config = _configProvider.ConfigurationOrNull;
+            var configurationRevision = _configProvider.ConfigurationRevision;
+            var configuredUrls = GetConfiguredUrls(config?.SeerrUrls);
+            return config != null && configuredUrls.Length == 1
+                ? GetRequestsForUser(
+                    seerrUserId,
+                    configuredUrls[0],
+                    config,
+                    configurationRevision,
+                    config.SeerrApiKey,
+                    configuredUrls)
+                : Task.FromResult<List<WatchlistItem>?>(null);
+        }
+
+        public Task<List<WatchlistItem>?> GetRequestsForUser(
+            string seerrUserId,
+            string? sourceUrl,
+            CancellationToken cancellationToken = default)
+        {
+            var config = _configProvider.ConfigurationOrNull;
+            var configurationRevision = _configProvider.ConfigurationRevision;
+            return config == null
+                ? Task.FromResult<List<WatchlistItem>?>(null)
+                : GetRequestsForUser(
+                    seerrUserId,
+                    sourceUrl,
+                    config,
+                    configurationRevision,
+                    config.SeerrApiKey,
+                    GetConfiguredUrls(config.SeerrUrls),
+                    cancellationToken);
+        }
+
+        public async Task<List<WatchlistItem>?> GetRequestsForUser(
+            string seerrUserId,
+            string? sourceUrl,
+            PluginConfiguration capturedConfiguration,
+            long configurationRevision,
+            string capturedApiKey,
+            IReadOnlyList<string> capturedConfiguredUrls,
+            CancellationToken cancellationToken = default)
         {
             try
             {
-                var config = _configProvider.ConfigurationOrNull;
-                if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+                var configStamp = SeerrMutationConfigStamp.Capture(
+                    capturedConfiguration,
+                    configurationRevision);
+                var configuredUrls = capturedConfiguredUrls.ToArray();
+                var apiKey = capturedApiKey;
+                if (configuredUrls.Length == 0
+                    || string.IsNullOrEmpty(apiKey)
+                    || !configStamp.Matches(
+                        _configProvider.ConfigurationOrNull,
+                        _configProvider.ConfigurationRevision))
                 {
                     return null;
                 }
 
-                var urls = GetConfiguredUrls(config.SeerrUrls);
-                var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
-
-                foreach (var url in urls)
+                var configuredSource = FindConfiguredSource(
+                    configuredUrls,
+                    sourceUrl);
+                if (configuredSource == null)
                 {
-                    try
+                    _logger.LogWarning(
+                        "Refusing a Seerr request lookup because the instance-local user id had no current source binding.");
+                    return null;
+                }
+
+                var urls = new[] { configuredSource };
+                var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
+                var snapshot = await SeerrPaginationHelper.FetchAllAsync(
+                    httpClient,
+                    urls,
+                    (url, _, skip) => $"{url}/api/v1/request?take=500&skip={skip}&sort=added&requestedBy={Uri.EscapeDataString(seerrUserId)}",
+                    apiKey,
+                    seerrUserId,
+                    requestedPageSize: 500,
+                    RequestCollectionIdentity,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (!configStamp.Matches(
+                        _configProvider.ConfigurationOrNull,
+                        _configProvider.ConfigurationRevision))
+                {
+                    return null;
+                }
+
+                if (!snapshot.IsComplete)
+                {
+                    LogIncompleteCollection("request", snapshot);
+                    return null;
+                }
+
+                var items = new List<WatchlistItem>();
+                foreach (var item in snapshot.Items)
+                {
+                    if (!TryGetRequestOwnerId(item, out var ownerId))
                     {
-                        var requestUri = $"{url}/api/v1/request?take=500&skip=0&sort=added";
-                        using var request = SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, config.SeerrApiKey, seerrUserId);
-                        using var response = await httpClient.SendAsync(request);
-                        var (content, error) = await SeerrHttpHelper.ReadResponseAsync(response, requestUri);
-                        if (error != null)
-                        {
-                            _logger.LogWarning($"Failed to get requests from {url}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
-                            continue;
-                        }
-
-                        var json = JsonDocument.Parse(content!);
-
-                        if (!json.RootElement.TryGetProperty("results", out var results))
-                        {
-                            continue;
-                        }
-
-                        var items = new List<WatchlistItem>();
-
-                        foreach (var item in results.EnumerateArray())
-                        {
-                            if (!BelongsToUser(item, seerrUserId))
-                            {
-                                continue;
-                            }
-
-                            var parsed = ParseRequestItem(item);
-                            if (parsed != null)
-                            {
-                                items.Add(parsed);
-                            }
-                        }
-
-                        return items;
+                        _logger.LogWarning(
+                            "A complete Seerr request collection from {Url} contained a row with invalid ownership; refusing a partial result.",
+                            snapshot.SourceUrl);
+                        return null;
                     }
-                    catch (Exception ex)
+
+                    if (!string.Equals(ownerId, seerrUserId, StringComparison.OrdinalIgnoreCase))
                     {
-                        _logger.LogWarning($"Failed to get requests from {url}: {ex.Message}");
                         continue;
                     }
+
+                    var parsed = ParseRequestItem(item);
+                    if (parsed == null)
+                    {
+                        _logger.LogWarning(
+                            "A complete Seerr request collection from {Url} contained an invalid row for user {UserId}; refusing a partial result.",
+                            snapshot.SourceUrl,
+                            seerrUserId);
+                        return null;
+                    }
+
+                    items.Add(parsed);
                 }
+
+                return configStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision)
+                    ? items
+                    : null;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -1179,49 +2549,73 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             return null;
         }
 
-        private static bool BelongsToUser(JsonElement requestElement, string seerrUserId)
+        private void LogIncompleteCollection(string collectionName, SeerrPagedCollectionResult snapshot)
         {
-            if (requestElement.TryGetProperty("requestedBy", out var requestedBy))
+            if (snapshot.Error != null)
             {
-                if (requestedBy.ValueKind == JsonValueKind.Number && requestedBy.TryGetInt32(out var idNumber))
-                {
-                    return string.Equals(idNumber.ToString(), seerrUserId, StringComparison.OrdinalIgnoreCase);
-                }
-
-                if (requestedBy.ValueKind == JsonValueKind.String)
-                {
-                    var idStr = requestedBy.GetString();
-                    if (!string.IsNullOrEmpty(idStr) && string.Equals(idStr, seerrUserId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return true;
-                    }
-                }
-
-                if (requestedBy.ValueKind == JsonValueKind.Object && requestedBy.TryGetProperty("id", out var idProp))
-                {
-                    if ((idProp.ValueKind == JsonValueKind.Number && idProp.TryGetInt32(out var objId) && string.Equals(objId.ToString(), seerrUserId, StringComparison.OrdinalIgnoreCase)) ||
-                        (idProp.ValueKind == JsonValueKind.String && string.Equals(idProp.GetString() ?? string.Empty, seerrUserId, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        return true;
-                    }
-                }
+                var error = snapshot.Error;
+                _logger.LogWarning(
+                    "Failed to fetch a complete Seerr {Collection} collection from {Url}: code={Code} status={Status} cf-ray={CfRay} — {Message}; {Reason}",
+                    collectionName,
+                    snapshot.SourceUrl,
+                    error.Code,
+                    error.HttpStatus,
+                    error.CfRay,
+                    error.Message,
+                    snapshot.FailureReason);
+                return;
             }
 
-            return false;
+            _logger.LogWarning(
+                "Failed to fetch a complete Seerr {Collection} collection from configured URLs: {Reason}",
+                collectionName,
+                snapshot.FailureReason);
+        }
+
+        private static string? UserCollectionIdentity(JsonElement item)
+            => SeerrPaginationHelper.CanonicalPositiveIntegerPropertyIdentity(item, "id");
+
+        private static string? WatchlistCollectionIdentity(JsonElement item)
+        {
+            var tmdbId = SeerrPaginationHelper.CanonicalPositiveIntegerPropertyIdentity(item, "tmdbId");
+            var mediaType = item.TryGetProperty("mediaType", out var mediaTypeValue)
+                && mediaTypeValue.ValueKind == JsonValueKind.String
+                    ? mediaTypeValue.GetString()?.Trim().ToLowerInvariant()
+                    : null;
+            return tmdbId == null || mediaType == null
+                ? null
+                : $"{mediaType}:{tmdbId}";
+        }
+
+        private static string? RequestCollectionIdentity(JsonElement item)
+            => SeerrPaginationHelper.CanonicalPositiveIntegerPropertyIdentity(item, "id");
+
+        private static bool TryGetRequestOwnerId(JsonElement requestElement, out string? ownerId)
+        {
+            ownerId = null;
+            if (!requestElement.TryGetProperty("requestedBy", out var requestedBy))
+            {
+                return false;
+            }
+
+            var ownerValue = requestedBy.ValueKind == JsonValueKind.Object
+                && requestedBy.TryGetProperty("id", out var nestedId)
+                    ? nestedId
+                    : requestedBy;
+            ownerId = SeerrPaginationHelper.CanonicalPositiveIntegerIdentity(ownerValue);
+            return ownerId != null;
         }
 
         private static WatchlistItem? ParseRequestItem(JsonElement requestElement)
         {
             int tmdbId = 0;
             int? tvdbId = null;
-            string mediaType = "";
+            string? mediaType = null;
 
             if (requestElement.TryGetProperty("media", out var media))
             {
-                if (media.TryGetProperty("tmdbId", out var tmdbProp))
-                {
-                    tmdbId = tmdbProp.GetInt32();
-                }
+                if (media.ValueKind != JsonValueKind.Object) return null;
+                if (!TryMergePositiveIntegerProperty(media, "tmdbId", ref tmdbId)) return null;
 
                 // Seerr media objects carry tvdbId for TV — expose it (0/absent → null) so the
                 // download-queue filter can match a Sonarr record that reports tmdbId 0.
@@ -1230,23 +2624,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     tvdbId = ArrIdHelper.ToNullableId(tvdbProp.GetInt32());
                 }
 
-                if (media.TryGetProperty("mediaType", out var mtProp) && mtProp.ValueKind == JsonValueKind.String)
+                if (!TryMergeMediaType(media, "mediaType", ref mediaType))
                 {
-                    mediaType = mtProp.GetString() ?? "";
+                    return null;
                 }
             }
 
-            if (tmdbId == 0 && requestElement.TryGetProperty("tmdbId", out var topTmdb))
+            if (!TryMergePositiveIntegerProperty(requestElement, "tmdbId", ref tmdbId)) return null;
+
+            if (!TryMergeMediaType(requestElement, "mediaType", ref mediaType)
+                || !TryMergeMediaType(requestElement, "type", ref mediaType))
             {
-                tmdbId = topTmdb.GetInt32();
+                return null;
             }
 
-            if (string.IsNullOrWhiteSpace(mediaType) && requestElement.TryGetProperty("mediaType", out var topMediaType) && topMediaType.ValueKind == JsonValueKind.String)
-            {
-                mediaType = topMediaType.GetString() ?? "";
-            }
-
-            if (tmdbId == 0 || string.IsNullOrWhiteSpace(mediaType))
+            if (tmdbId == 0 || mediaType == null)
             {
                 return null;
             }
@@ -1257,6 +2649,48 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 MediaType = mediaType,
                 TvdbId = tvdbId
             };
+        }
+
+        private static bool TryMergePositiveIntegerProperty(
+            JsonElement owner,
+            string propertyName,
+            ref int mergedValue)
+        {
+            if (!owner.TryGetProperty(propertyName, out var value)) return true;
+            var canonical = SeerrPaginationHelper.CanonicalPositiveIntegerIdentity(value);
+            if (canonical == null
+                || !int.TryParse(
+                    canonical,
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var parsed))
+            {
+                return false;
+            }
+
+            if (mergedValue > 0 && mergedValue != parsed) return false;
+            mergedValue = parsed;
+            return true;
+        }
+
+        private static bool TryNormalizeMediaType(JsonElement value, out string normalized)
+        {
+            normalized = string.Empty;
+            if (value.ValueKind != JsonValueKind.String) return false;
+            normalized = value.GetString()?.Trim().ToLowerInvariant() ?? string.Empty;
+            return normalized is "movie" or "tv";
+        }
+
+        private static bool TryMergeMediaType(
+            JsonElement owner,
+            string propertyName,
+            ref string? mediaType)
+        {
+            if (!owner.TryGetProperty(propertyName, out var value)) return true;
+            if (!TryNormalizeMediaType(value, out var candidate)) return false;
+            if (mediaType != null && !string.Equals(mediaType, candidate, StringComparison.Ordinal)) return false;
+            mediaType = candidate;
+            return true;
         }
 
         // ── Logging helpers ──────────────────────────────────────────────────

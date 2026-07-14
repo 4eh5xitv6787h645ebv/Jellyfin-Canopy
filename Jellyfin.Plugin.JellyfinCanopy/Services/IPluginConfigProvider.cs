@@ -24,5 +24,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// the plugin isn't loaded (mirrors <c>JellyfinCanopy.Instance?.Configuration</c>).
         /// </summary>
         PluginConfiguration? ConfigurationOrNull { get; }
+
+        /// <summary>
+        /// Monotonic process-local revision of the live configuration object.
+        /// Every observed object replacement increments it, even if a later
+        /// save restores byte-for-byte identical settings. Mutation pipelines
+        /// use this to detect A→B→A changes across awaited preparation work.
+        /// </summary>
+        long ConfigurationRevision { get; }
     }
 }

@@ -60,6 +60,10 @@ public sealed class CountingLibraryManager : ILibraryManager
     /// <summary>Live subscriber count for ItemRemoved.</summary>
     public int ItemRemovedCount => _itemRemoved?.GetInvocationList().Length ?? 0;
 
+    /// <summary>Raise Jellyfin's synchronous item-added event.</summary>
+    public void RaiseItemAdded(BaseItem item)
+        => _itemAdded?.Invoke(this, new ItemChangeEventArgs { Item = item });
+
     // ---- Optional query hooks (default null = throw, per convention). Set by tests that need
     //      BuildFullCache's full scan (GetItemList) and per-id resolve (GetItemById<T>). ----
 

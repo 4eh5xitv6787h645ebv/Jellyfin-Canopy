@@ -36,6 +36,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
+using Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks;
 using Microsoft.Extensions.Logging;
 using MediaBrowser.Common.Api;
 
@@ -73,7 +74,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         // Thin delegation kept so the proxy endpoints below read unchanged.
         private Task<IActionResult> ProxySeerrRequest(string apiPath, HttpMethod method, string? content = null)
-            => _seerr.ProxyRequestAsync(apiPath, method, content, SeerrCaller());
+            => _seerr.ProxyRequestAsync(
+                apiPath,
+                method,
+                content,
+                SeerrCaller(),
+                HttpContext.RequestAborted);
 
         [HttpGet("seerr/user-status")]
         [Authorize]
@@ -99,11 +105,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return Ok(new { active = true, userFound = false, reason = "blocked" });
             }
 
-            // GetSeerrUserId uses the user ID cache (30-min TTL).
-            // A successful user lookup implicitly proves Seerr is reachable.
-            var seerrUserId = await _seerr.GetSeerrUserId(jellyfinUserId);
-            if (!string.IsNullOrEmpty(seerrUserId))
+            var resolution = await _seerr.ResolveSeerrUser(
+                jellyfinUserId,
+                cancellationToken: HttpContext.RequestAborted).ConfigureAwait(false);
+            if (resolution.IsFound)
             {
+                var seerrUserId = resolution.User!.Id.ToString();
                 // Surface the 4K capability so the client can gate its 4K request
                 // UI on Seerr actually having 4K enabled AND this user holding the
                 // 4K permission (degrade-by-hiding), rather than on the admin
@@ -122,15 +129,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 });
             }
 
-            // User not found — could be server unreachable, HTML challenge from
-            // proxy, or user genuinely not linked. Probe /status to distinguish
-            // "unreachable" from "unlinked".
-            bool active = await _seerr.GetStatusActiveAsync();
+            if (resolution.Status == SeerrUserResolutionStatus.Incomplete)
+            {
+                return StatusCode(502, new
+                {
+                    error = true,
+                    active = false,
+                    userFound = false,
+                    reason = "incomplete",
+                    code = "user_lookup_incomplete",
+                    message = "Seerr returned an incomplete user collection. Please try again."
+                });
+            }
+
+            if (resolution.Status == SeerrUserResolutionStatus.Unavailable)
+            {
+                return StatusCode(503, new
+                {
+                    error = true,
+                    active = false,
+                    userFound = false,
+                    reason = "unavailable",
+                });
+            }
+
             return Ok(new
             {
-                active,
+                active = true,
                 userFound = false,
-                reason = active ? "unlinked" : "unreachable"
+                reason = resolution.Status == SeerrUserResolutionStatus.Blocked ? "blocked" : "unlinked"
             });
         }
 
@@ -155,25 +182,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 var userId = jfUser.Id.ToString("N");
                 // allowAutoImport: false — audit must be read-only and must not
                 // create Seerr users as a side effect.
-                var seerrUser = await _seerr.GetSeerrUser(userId, bypassCache: true, allowAutoImport: false);
+                var resolution = await _seerr.ResolveSeerrUser(
+                    userId,
+                    bypassCache: true,
+                    allowAutoImport: false,
+                    cancellationToken: HttpContext.RequestAborted).ConfigureAwait(false);
+                var seerrUser = resolution.User;
+
+                if (resolution.Status is SeerrUserResolutionStatus.Incomplete or SeerrUserResolutionStatus.Unavailable)
+                {
+                    _logger.LogWarning(
+                        "[audit] Seerr user lookup for {User} was {Status}: {Reason}; refusing a partial audit.",
+                        jfUser.Username,
+                        resolution.Status,
+                        resolution.FailureReason);
+                    return StatusCode(502, new
+                    {
+                        error = true,
+                        code = "user_lookup_incomplete",
+                        message = "Seerr user lookup was incomplete. No partial permission audit was published."
+                    });
+                }
 
                 if (seerrUser == null)
                 {
-                    // Null has 5 distinct causes: user genuinely unlinked, blocked
-                    // by JC config, every Seerr URL HTTP-failed, every URL threw,
-                    // or JSON shape mismatch. The UI renders them all as "Not
-                    // linked", which misleads admins during transient Seerr
-                    // outages. Leave a breadcrumb in the server log so the cause
-                    // can be correlated with the preceding WARN/ERROR lines
-                    // that GetSeerrUser already emits.
-                    _logger.LogInformation($"[audit] user {jfUser.Username} ({userId}): GetSeerrUser returned null — see preceding log lines for cause");
+                    var issue = resolution.Status == SeerrUserResolutionStatus.Blocked
+                        ? "Blocked from Seerr by Jellyfin Canopy configuration"
+                        : "Not linked to a Seerr account";
                     results.Add(new
                     {
                         jellyfinUsername = jfUser.Username,
                         jellyfinUserId   = userId,
                         linked           = false,
                         permissions      = (int?)null,
-                        issues           = new[] { "Not linked to a Seerr account" }
+                        issues           = new[] { issue }
                     });
                     continue;
                 }
@@ -321,6 +363,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> SyncSeerrWatchlist()
         {
+            var cancellationToken = HttpContext.RequestAborted;
             try
             {
                 var config = _configProvider.ConfigurationOrNull;
@@ -329,84 +372,216 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     return BadRequest(new { error = "Seerr watchlist sync is not enabled" });
                 }
 
+                if (string.IsNullOrWhiteSpace(config.SeerrUrls)
+                    || string.IsNullOrWhiteSpace(config.SeerrApiKey))
+                {
+                    return BadRequest(new { error = "Seerr URL or API key not configured" });
+                }
+
+                var syncConfigStamp = SeerrMutationConfigStamp.Capture(
+                    config,
+                    _configProvider.ConfigurationRevision);
+
                 _logger.LogInformation("[Manual Watchlist Sync] Starting manual Seerr watchlist sync...");
 
-                int itemsProcessed = 0;
-                int itemsAdded = 0;
-                var errors = new List<string>();
-
-                foreach (var user in _userManager.GetUsers())
+                var urls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
+                if (urls.Length == 0)
                 {
-                    try
-                    {
-                        _logger.LogInformation($"[Manual Watchlist Sync] Processing user: {user.Username} ({user.Id})");
+                    return BadRequest(new { error = "No valid Seerr URL configured" });
+                }
 
-                        // Get Seerr user ID for this Jellyfin user
-                        var seerrUserId = await _seerr.GetSeerrUserId(user.Id.ToString());
-                        if (string.IsNullOrEmpty(seerrUserId))
+                // Configured Seerr instances are independent identity domains, not
+                // failover replicas. Prove a complete, stable user map for every
+                // normalized distinct domain before resolving any instance-local id.
+                var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
+                var userSnapshots = await SeerrWatchlistSyncTask.FetchSeerrUserMapSnapshotsAsync(
+                    httpClient,
+                    urls,
+                    config.SeerrApiKey,
+                    cancellationToken).ConfigureAwait(false);
+                if (!userSnapshots.IsComplete)
+                {
+                    _logger.LogWarning(
+                        "[Manual Watchlist Sync] Could not stage every Seerr user identity domain: {Reason}. No local changes were applied.",
+                        userSnapshots.FailureReason);
+                    return StatusCode(502, new
+                    {
+                        error = true,
+                        code = "user_map_incomplete",
+                        message = "A complete Seerr user map could not be read from every configured instance. No local changes were applied."
+                    });
+                }
+
+                if (!SeerrUserIdentityDomains.TryParse(userSnapshots, out var identityDomains))
+                {
+                    _logger.LogWarning(
+                        "[Manual Watchlist Sync] A Seerr user map contained a malformed or ambiguous linked-user row. No local changes were applied.");
+                    return StatusCode(502, new
+                    {
+                        error = true,
+                        code = "user_map_invalid",
+                        message = "A Seerr user map contained an invalid or ambiguous linked-user row. No local changes were applied."
+                    });
+                }
+
+                var blockedIds = SeerrUserImportHelper.GetBlockedUserIds(config.SeerrImportBlockedUsers);
+                var users = _userManager.GetUsers()
+                    .GroupBy(static user => user.Id)
+                    .Select(static group => group.First())
+                    .Where(user => !blockedIds.Contains(user.Id.ToString("N")))
+                    .ToList();
+
+                // Stage every remote row for every binding before the first local
+                // library lookup or write. A failure on a later user/domain therefore
+                // cannot publish a complete prefix from an earlier domain.
+                var stagedItems = new Dictionary<Guid, IReadOnlyList<WatchlistItem>>();
+                foreach (var user in users)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var bindings = SeerrUserIdentityDomains.FindBindings(identityDomains, user.Id.ToString());
+                    if (bindings.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    var itemsByMediaKey = new Dictionary<string, WatchlistItem>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var binding in bindings)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var watchlistItems = await _seerr.GetWatchlistForUser(
+                            binding.SeerrUserId,
+                            binding.SourceUrl,
+                            cancellationToken).ConfigureAwait(false);
+                        if (watchlistItems == null
+                            || !TryAddStagedWatchlistItems(watchlistItems, itemsByMediaKey))
                         {
-                            _logger.LogWarning($"[Manual Watchlist Sync] Could not find Seerr user for {user.Username}");
+                            _logger.LogWarning(
+                                "[Manual Watchlist Sync] Watchlist for {User} from {Source} was incomplete or invalid. No local changes were applied.",
+                                user.Username,
+                                binding.SourceUrl);
+                            return StatusCode(502, new
+                            {
+                                error = true,
+                                code = "watchlist_incomplete",
+                                message = "A complete valid Seerr watchlist could not be read for every linked instance. No local changes were applied."
+                            });
+                        }
+
+                        if (!config.AddRequestedMediaToWatchlist)
+                        {
                             continue;
                         }
 
-                        // Get watchlist from Seerr
-                        var watchlistItems = await _seerr.GetWatchlistForUser(seerrUserId);
-                        if (watchlistItems == null || watchlistItems.Count == 0)
+                        var requestItems = await _seerr.GetRequestsForUser(
+                            binding.SeerrUserId,
+                            binding.SourceUrl,
+                            cancellationToken).ConfigureAwait(false);
+                        if (requestItems == null
+                            || !TryAddStagedWatchlistItems(requestItems, itemsByMediaKey))
                         {
-                            _logger.LogInformation($"[Manual Watchlist Sync] No watchlist items found for {user.Username}");
-                            watchlistItems = new List<WatchlistItem>();
-                        }
-
-                        _logger.LogInformation($"[Manual Watchlist Sync] Found {watchlistItems.Count} watchlist items for {user.Username}");
-
-                        var requestItems = await _seerr.GetRequestsForUser(seerrUserId);
-                        if (requestItems != null && requestItems.Count > 0)
-                        {
-                            _logger.LogInformation($"[Manual Watchlist Sync] Found {requestItems.Count} request items for {user.Username}");
-                            watchlistItems.AddRange(requestItems);
-                        }
-
-                        var processedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                        // Process each watchlist item
-                        foreach (var item in watchlistItems)
-                        {
-                            itemsProcessed++;
-
-                            var key = $"{item.MediaType}:{item.TmdbId}";
-                            if (!processedKeys.Add(key))
+                            _logger.LogWarning(
+                                "[Manual Watchlist Sync] Request collection for {User} from {Source} was incomplete or invalid. No local changes were applied.",
+                                user.Username,
+                                binding.SourceUrl);
+                            return StatusCode(502, new
                             {
-                                continue;
-                            }
-
-                            // Find the item in Jellyfin library by TMDB ID
-                            var libraryItem = FindItemByTmdbId(item.TmdbId, item.MediaType);
-                            if (libraryItem != null)
-                            {
-                                var userData = _userDataManager.GetUserData(user, libraryItem);
-                                if (userData == null)
-                                {
-                                    _logger.LogWarning($"[Manual Watchlist Sync] User data was null for '{libraryItem.Name}' and user {user.Username}; skipping.");
-                                }
-                                else if (userData.Likes != true)
-                                {
-                                    userData.Likes = true;
-                                    _userDataManager.SaveUserData(user, libraryItem, userData, UserDataSaveReason.UpdateUserRating, default);
-                                    itemsAdded++;
-                                    _logger.LogInformation($"[Manual Watchlist Sync] Added '{libraryItem.Name}' to watchlist for {user.Username}");
-                                }
-                            }
-                            else
-                            {
-                                // Item not in library yet - WatchlistMonitor will automatically add it when it arrives
-                                _logger.LogDebug($"[Manual Watchlist Sync] Item TMDB {item.TmdbId} ({item.MediaType}) not in library yet for {user.Username} - will be auto-added by WatchlistMonitor when available");
-                            }
+                                error = true,
+                                code = "request_collection_incomplete",
+                                message = "A complete valid Seerr request collection could not be read for every linked instance. No local changes were applied."
+                            });
                         }
                     }
-                    catch (Exception ex)
+
+                    stagedItems.Add(user.Id, itemsByMediaKey.Values.ToArray());
+                }
+
+                // The commit phase is deliberately non-cancellable. Cancellation is
+                // observed once after the complete remote snapshot is staged; after
+                // that boundary the small local batch runs to completion instead of
+                // leaving a cancellation-created partial prefix.
+                cancellationToken.ThrowIfCancellationRequested();
+                var commitUserSnapshots = await SeerrWatchlistSyncTask.FetchSeerrUserMapSnapshotsAsync(
+                    httpClient,
+                    urls,
+                    config.SeerrApiKey,
+                    cancellationToken).ConfigureAwait(false);
+                if (!commitUserSnapshots.IsComplete
+                    || !SeerrUserIdentityDomains.TryParse(
+                        commitUserSnapshots,
+                        out var commitIdentityDomains)
+                    || !SeerrUserIdentityDomains.AreEquivalent(
+                        identityDomains,
+                        commitIdentityDomains))
+                {
+                    _logger.LogWarning(
+                        "[Manual Watchlist Sync] User ownership changed or could not be revalidated before the local commit. No local changes were applied.");
+                    return StatusCode(409, new
                     {
-                        _logger.LogError($"[Manual Watchlist Sync] Error processing user {user.Username}: {ex.Message}");
-                        errors.Add("Failed to sync watchlist for a user.");
+                        error = true,
+                        code = "user_binding_changed",
+                        message = "Seerr user ownership changed while staging the sync. No local changes were applied."
+                    });
+                }
+
+                var commitConfig = _configProvider.ConfigurationOrNull;
+                if (!syncConfigStamp.Matches(
+                        commitConfig,
+                        _configProvider.ConfigurationRevision)
+                    || commitConfig?.SeerrEnabled != true
+                    || !commitConfig.SyncSeerrWatchlist)
+                {
+                    _logger.LogWarning(
+                        "[Manual Watchlist Sync] Configuration changed before the local commit. No local changes were applied.");
+                    return StatusCode(409, new
+                    {
+                        error = true,
+                        code = "sync_configuration_changed",
+                        message = "Seerr configuration changed while staging the sync. No local changes were applied."
+                    });
+                }
+
+                config = commitConfig;
+                int itemsProcessed = 0;
+                int itemsAdded = 0;
+                var errors = new List<string>();
+                foreach (var user in users)
+                {
+                    if (!stagedItems.TryGetValue(user.Id, out var items))
+                    {
+                        continue;
+                    }
+
+                    foreach (var item in items)
+                    {
+                        itemsProcessed++;
+
+                        // Find the item in Jellyfin library by TMDB ID
+                        var libraryItem = FindItemByTmdbId(item.TmdbId, item.MediaType);
+                        if (libraryItem != null)
+                        {
+                            var userData = _userDataManager.GetUserData(user, libraryItem);
+                            if (userData == null)
+                            {
+                                _logger.LogWarning($"[Manual Watchlist Sync] User data was null for '{libraryItem.Name}' and user {user.Username}; skipping.");
+                            }
+                            else if (userData.Likes != true)
+                            {
+                                userData.Likes = true;
+                                _userDataManager.SaveUserData(
+                                    user,
+                                    libraryItem,
+                                    userData,
+                                    UserDataSaveReason.UpdateUserRating,
+                                    CancellationToken.None);
+                                itemsAdded++;
+                                _logger.LogInformation($"[Manual Watchlist Sync] Added '{libraryItem.Name}' to watchlist for {user.Username}");
+                            }
+                        }
+                        else
+                        {
+                            // Item not in library yet - WatchlistMonitor will automatically add it when it arrives
+                            _logger.LogDebug($"[Manual Watchlist Sync] Item TMDB {item.TmdbId} ({item.MediaType}) not in library yet for {user.Username} - will be auto-added by WatchlistMonitor when available");
+                        }
                     }
                 }
 
@@ -420,11 +595,44 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     errors = errors.Count > 0 ? errors : null
                 });
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogError($"[Manual Watchlist Sync] Fatal error: {ex}");
                 return StatusCode(500, new { error = "An internal error occurred during watchlist sync." });
             }
+        }
+
+        private static bool TryAddStagedWatchlistItems(
+            IEnumerable<WatchlistItem> sourceItems,
+            IDictionary<string, WatchlistItem> stagedItems)
+        {
+            foreach (var item in sourceItems)
+            {
+                if (item == null || item.TmdbId <= 0)
+                {
+                    return false;
+                }
+
+                var mediaType = item.MediaType?.Trim().ToLowerInvariant();
+                if (mediaType is not ("movie" or "tv"))
+                {
+                    return false;
+                }
+
+                var key = $"{mediaType}:{item.TmdbId}";
+                stagedItems.TryAdd(key, new WatchlistItem
+                {
+                    TmdbId = item.TmdbId,
+                    MediaType = mediaType,
+                    TvdbId = item.TvdbId
+                });
+            }
+
+            return true;
         }
 
         [HttpPost("seerr/import-users")]
@@ -444,6 +652,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     return BadRequest(new { error = "Seerr URL or API key not configured" });
                 }
 
+                var importConfigStamp = SeerrMutationConfigStamp.Capture(
+                    config,
+                    _configProvider.ConfigurationRevision);
+
                 // Claim the throttle slot atomically to prevent concurrent imports
                 lock (_seerrCache.ImportThrottleLock)
                 {
@@ -457,22 +669,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                 _logger.LogInformation("[Manual User Import] Starting manual Seerr user import...");
 
-                var urls = config.SeerrUrls.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                var urls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
                 var blockedIds = Helpers.Seerr.SeerrUserImportHelper.GetBlockedUserIds(config.SeerrImportBlockedUsers);
                 var userIds = _userManager.GetUsers()
                     .Select(u => u.Id.ToString().Replace("-", ""))
                     .Where(id => !blockedIds.Contains(id))
                     .ToList();
-                _logger.LogInformation($"[Manual User Import] Importing {userIds.Count} Jellyfin users...");
+                _logger.LogInformation($"[Manual User Import] Evaluating {userIds.Count} unblocked Jellyfin users against every configured Seerr identity domain...");
 
                 var importResult = await Helpers.Seerr.SeerrUserImportHelper.BulkImportAsync(
-                    userIds, urls, config.SeerrApiKey, _httpClientFactory, _logger);
+                    userIds,
+                    urls,
+                    config.SeerrApiKey,
+                    _httpClientFactory,
+                    _logger,
+                    HttpContext.RequestAborted,
+                    () =>
+                    {
+                        var current = _configProvider.ConfigurationOrNull;
+                        return importConfigStamp.Matches(
+                                current,
+                                _configProvider.ConfigurationRevision)
+                            && current?.SeerrEnabled == true;
+                    }).ConfigureAwait(false);
 
                 // only flush user caches when at least one user
                 // was actually imported. Previously a 0-imported "success" (all
                 // email-collisioned) would wipe every healthy cache entry,
                 // forcing a stampede on next request.
-                if (importResult.Reached && importResult.Imported > 0)
+                if (importResult.Succeeded && importResult.Imported > 0)
                 {
                     _seerrCache.ClearUserCaches();
                 }
@@ -488,9 +713,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     }
                 }
 
-                if (importResult.Reached)
+                if (importResult.Succeeded)
                 {
-                    _logger.LogInformation($"[Manual User Import] Completed. {importResult.Imported} new user(s) imported out of {userIds.Count} sent. Errors: {importResult.Errors.Count}");
+                    _logger.LogInformation($"[Manual User Import] Completed on {importResult.SourceUrl}. {importResult.Imported} new user(s) imported after evaluating {userIds.Count} eligible candidate(s).");
                     return Ok(new
                     {
                         success = true,
@@ -503,7 +728,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 {
                     return StatusCode(502, new
                     {
-                        error = "Import failed on all configured Seerr URLs.",
+                        error = "The Seerr user-map preflight or import outcome was incomplete. No mutation was replayed elsewhere.",
                         errors = importResult.Errors,
                     });
                 }

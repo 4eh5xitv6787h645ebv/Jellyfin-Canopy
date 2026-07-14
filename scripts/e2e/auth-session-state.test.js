@@ -10,8 +10,11 @@ const path = require('node:path');
 const {
     CURRENT_USER_TIMEOUT_MS,
     FAST_BOUNCE_TIMEOUT_MS,
+    INITIAL_CONNECTION_TIMEOUT_MS,
     PLUGIN_INIT_TIMEOUT_MS,
     classifyAuthSession,
+    classifyInitialConnection,
+    waitForInitialConnectionDecision,
     waitForSessionDecision,
 } = require('./auth-session-state');
 
@@ -42,6 +45,81 @@ test('matching stored and current users classify as authenticated', () => {
     assert.equal(result.outcome, 'authenticated');
     assert.equal(result.phase, 'current-user');
     assert.match(result.diagnostic, /expected=admin-user-id, current=admin-user-id/);
+});
+
+test('the initial connection stays pending while Jellyfin is still on its boot route', () => {
+    const result = classifyInitialConnection(snapshot({
+        route: '/web/',
+        currentUserId: '',
+        pluginInitialized: false,
+        storedSessions: [],
+    }));
+    assert.equal(result.outcome, 'pending');
+    assert.match(result.diagnostic, /initial connection to settle/);
+});
+
+test('the initial connection settles only after the unauthenticated sign-in view wins', () => {
+    const result = classifyInitialConnection(snapshot({
+        route: '#/login?serverid=test',
+        currentUserId: '',
+        pluginInitialized: false,
+        storedSessions: [],
+    }));
+    assert.equal(result.outcome, 'sign-in');
+    assert.match(result.diagnostic, /reached the sign-in view/);
+});
+
+test('the initial connection also settles when Jellyfin restores a coherent session', () => {
+    const result = classifyInitialConnection(snapshot());
+    assert.equal(result.outcome, 'authenticated');
+});
+
+test('a restored token waits for authenticated plugin boot before it is terminal', () => {
+    const result = classifyInitialConnection(snapshot({ pluginInitialized: false }));
+    assert.equal(result.outcome, 'pending');
+    assert.match(result.diagnostic, /plugin=pending/);
+});
+
+test('a settled sign-in route may retain a rejected token without stalling login', () => {
+    const result = classifyInitialConnection(snapshot({
+        route: '#/login?serverid=test',
+        currentUserId: '',
+        pluginInitialized: false,
+        storedSessions: [{ userId: EXPECTED_USER_ID, hasToken: true }],
+    }));
+    assert.equal(result.outcome, 'sign-in');
+});
+
+test('a malformed credential store never counts as a settled sign-in state', () => {
+    const result = classifyInitialConnection(snapshot({
+        route: '#/login?serverid=test',
+        currentUserId: '',
+        pluginInitialized: false,
+        storedSessions: [],
+        credentialsMalformed: true,
+    }));
+    assert.equal(result.outcome, 'pending');
+    assert.match(result.diagnostic, /credentials are malformed/);
+});
+
+test('login waits for a delayed initial connection instead of racing it', async () => {
+    const clock = fakeClock();
+    const result = await waitForInitialConnectionDecision(async () => snapshot({
+        route: clock.elapsed() >= 700 ? '#/login?serverid=test' : '/web/',
+        currentUserId: '',
+        pluginInitialized: false,
+        storedSessions: [],
+    }), {
+        timeoutMs: INITIAL_CONNECTION_TIMEOUT_MS,
+        pollIntervalMs: 100,
+        now: clock.now,
+        sleep: clock.sleep,
+    });
+
+    assert.equal(result.outcome, 'sign-in');
+    assert.equal(result.timedOut, false);
+    assert.equal(result.elapsedMs, 700);
+    assert.equal(clock.elapsed(), 700);
 });
 
 test('an auth route without a token or current user is a definite bounce', () => {
@@ -185,6 +263,8 @@ test('auth.ts retains the full phase timeouts and captures the login result user
 
     assert.equal(PLUGIN_INIT_TIMEOUT_MS, 60_000);
     assert.equal(CURRENT_USER_TIMEOUT_MS, 15_000);
+    assert.equal(INITIAL_CONNECTION_TIMEOUT_MS, 60_000);
+    assert.match(source, /waitForInitialConnectionDecision/);
     assert.match(source, /timeoutMs: FAST_BOUNCE_TIMEOUT_MS/);
     assert.match(source, /timeoutMs: PLUGIN_INIT_TIMEOUT_MS/);
     assert.match(source, /timeoutMs: CURRENT_USER_TIMEOUT_MS/);
@@ -192,4 +272,13 @@ test('auth.ts retains the full phase timeouts and captures the login result user
     assert.match(source, /authenticationResult\?\.User\?\.Id/);
     assert.match(source, /expectedUserId/);
     assert.match(source, /consoleErrors\?\.reset\(\)/);
+
+    const initialConnectionGate = source.indexOf('await waitForInitialConnectionDecision');
+    const authenticationCall = source.indexOf('apiClient.authenticateUserByName');
+    assert.ok(initialConnectionGate >= 0, 'initial connection gate must be present');
+    assert.ok(authenticationCall >= 0, 'authentication call must be present');
+    assert.ok(
+        initialConnectionGate < authenticationCall,
+        'initial Jellyfin connection must settle before programmatic authentication'
+    );
 });

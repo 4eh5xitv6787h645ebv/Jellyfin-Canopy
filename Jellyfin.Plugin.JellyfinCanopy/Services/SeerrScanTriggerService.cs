@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
@@ -120,7 +121,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return DispatchAsync(0);
         }
 
-        private async Task<IReadOnlyList<DispatchResult>> DispatchAsync(int batchSize)
+        internal async Task<IReadOnlyList<DispatchResult>> DispatchAsync(int batchSize)
         {
             var results = new List<DispatchResult>();
             try
@@ -131,16 +132,50 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     return results;
                 }
 
+                var configurationRevision = _configProvider.ConfigurationRevision;
+                var configStamp = SeerrMutationConfigStamp.Capture(
+                    config,
+                    configurationRevision);
+                bool IsConfigurationCurrent() => configStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision);
+
+                // A debounced timer is only authorization to reconsider the
+                // event under the current configuration. Disabling either the
+                // integration or this trigger while the timer is pending must
+                // cancel the queued side effect. Manual calls retain their
+                // explicit semantics but still use one stamped source/key set.
+                if (batchSize > 0
+                    && (!config.SeerrEnabled || !config.TriggerSeerrScanOnItemAdded))
+                {
+                    _logger.LogInformation(
+                        "[SeerrScan] Discarded a pending scan trigger because the feature is no longer enabled");
+                    return results;
+                }
+
                 var apiKey = config.SeerrApiKey;
                 var urls = ParseUrls(config.SeerrUrls);
-                if (urls.Count == 0 || string.IsNullOrEmpty(apiKey))
+                if (urls.Count == 0 || string.IsNullOrEmpty(apiKey) || !IsConfigurationCurrent())
                 {
                     _logger.LogWarning("[SeerrScan] Cannot dispatch: Seerr URL(s) or API key not configured");
                     return results;
                 }
 
+                // Each normalized distinct URL is its own Seerr identity domain,
+                // not a failover candidate. PostScanTrigger contains failures so
+                // every configured domain is attempted exactly once per batch.
                 foreach (var url in urls)
                 {
+                    // Never continue a multi-domain mutation batch with a
+                    // retired URL/key snapshot after an admin save lands while
+                    // an earlier domain is in flight.
+                    if (!IsConfigurationCurrent())
+                    {
+                        _logger.LogWarning(
+                            "[SeerrScan] Configuration changed during dispatch; remaining Seerr domains were not triggered");
+                        break;
+                    }
+
                     var result = await PostScanTrigger(url, apiKey).ConfigureAwait(false);
                     results.Add(result);
                     if (result.Success)
@@ -200,15 +235,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
         }
 
-        private static List<string> ParseUrls(string? raw)
-        {
-            if (string.IsNullOrWhiteSpace(raw)) return new List<string>();
-            return raw
-                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(u => u.Trim())
-                .Where(u => !string.IsNullOrEmpty(u))
-                .ToList();
-        }
+        // Keep background dispatch on the same comma/newline/trailing-slash
+        // alias rules as all other Seerr source selection.
+        internal static List<string> ParseUrls(string? raw)
+            => Seerr.SeerrClient.GetConfiguredUrls(raw).ToList();
 
         private static int ClampDebounceSeconds(int requested)
         {

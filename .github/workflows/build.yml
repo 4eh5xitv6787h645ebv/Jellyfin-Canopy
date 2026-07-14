@@ -15,6 +15,13 @@ on:
 permissions:
   contents: read
 
+# GitHub expressions cannot derive a matrix axis from workflow `env`, so the
+# shard job declares the same total once as its one-value `matrix.total` axis.
+# Every shard coordinate/artifact derives from that axis; the aggregate derives
+# from this workflow-wide value.
+env:
+  E2E_SHARD_TOTAL: "6"
+
 jobs:
   build-plugin:
     name: Plugin (Jellyfin 12 / net10.0)
@@ -121,9 +128,9 @@ jobs:
   # (e2e/docker/): boot, tags, panel, navigation survival, live updates and the
   # admin authz matrix, straight from the committed Playwright suite.
   #
-  # Each shard owns a fresh Jellyfin server. Specs remain serial within that
-  # server; only independent seeded environments run concurrently. The stable
-  # aggregate job below preserves the existing check name and rejects missing,
+  # Each of the six shards owns a fresh Jellyfin server. Specs remain serial
+  # within that server; only independent seeded environments run concurrently.
+  # The stable aggregate job below preserves the existing check name and rejects missing,
   # stale, duplicate, or failed shard markers. On a failed-jobs rerun it can
   # reuse successful markers from prior attempts of the same run and commit.
   #
@@ -131,18 +138,22 @@ jobs:
   # advisory while this lane earns trust. Once it has proven reliable, remove
   # both continue-on-error lines and require only the stable aggregate check.
   e2e_shard:
-    name: E2E shard ${{ matrix.shard }}/4 (dockerized Jellyfin 12)
+    name: E2E shard ${{ matrix.shard }}/${{ matrix.total }} (dockerized Jellyfin 12)
     runs-on: ubuntu-latest
     continue-on-error: true
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 6
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
+        # One-value axis centralizes the total for every matrix-job expression.
+        total: [6]
     env:
       JF_PORT: "8100"
       JF_BASE_URL: http://127.0.0.1:8100
+      JF_CPUS: "2"
+      JF_IMAGE: jellyfin/jellyfin:12.0-rc2
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
@@ -156,9 +167,6 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Build plugin (Release)
-        run: dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release
-
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -168,25 +176,55 @@ jobs:
       - name: Install dev dependencies
         run: npm ci
 
-      # @playwright/test is an optional peer dependency (local runs resolve the
-      # globally installed `playwright` instead) — CI installs it explicitly,
-      # plus its browser.
-      - name: Install Playwright
+      # The plugin build, pinned Jellyfin image pull, and headless Chromium
+      # preparation are independent once npm ci has completed. Run them together
+      # and wait for every process so one failure can never be hidden by another.
+      - name: Prepare plugin, Jellyfin image and Playwright
         run: |
-          npm install --no-save @playwright/test@^1.58.0
-          npx playwright install --with-deps chromium
+          prepare_dir="${RUNNER_TEMP}/jc-e2e-prepare"
+          mkdir -p "${prepare_dir}"
+
+          dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release \
+            > "${prepare_dir}/plugin-build.log" 2>&1 &
+          build_pid=$!
+          docker pull -q "${JF_IMAGE}" > "${prepare_dir}/jellyfin-pull.log" 2>&1 &
+          image_pid=$!
+          npx playwright install --with-deps --only-shell chromium \
+            > "${prepare_dir}/playwright-install.log" 2>&1 &
+          playwright_pid=$!
+
+          build_status=0
+          image_status=0
+          playwright_status=0
+          wait "${build_pid}" || build_status=$?
+          wait "${image_pid}" || image_status=$?
+          wait "${playwright_pid}" || playwright_status=$?
+
+          for log_file in plugin-build jellyfin-pull playwright-install; do
+            echo "::group::${log_file}"
+            cat "${prepare_dir}/${log_file}.log"
+            echo "::endgroup::"
+          done
+
+          if (( build_status != 0 || image_status != 0 || playwright_status != 0 )); then
+            echo "Preparation failed: build=${build_status}, image=${image_status}, playwright=${playwright_status}" >&2
+            exit 1
+          fi
 
       # Generates tiny ffmpeg test movies, boots jellyfin:12 with the freshly
       # built plugin DLL, completes the startup wizard, creates the library +
       # test users and waits for the scan (see e2e/docker/seed.sh).
       - name: Seed dockerized Jellyfin
         id: seed
+        env:
+          # The preparation step already pulled this exact job-level JF_IMAGE.
+          JF_E2E_IMAGE_PREFETCHED: "true"
         run: bash e2e/docker/seed.sh
 
-      - name: Run E2E shard ${{ matrix.shard }}/4
+      - name: Run E2E shard ${{ matrix.shard }}/${{ matrix.total }}
         id: playwright
         timeout-minutes: 15
-        run: npm run e2e -- --shard=${{ matrix.shard }}/4
+        run: npm run e2e -- --shard=${{ matrix.shard }}/${{ matrix.total }}
 
       - name: Server logs on failure
         if: always() && (steps.seed.outcome != 'success' || steps.playwright.outcome != 'success')
@@ -196,7 +234,7 @@ jobs:
         if: always() && steps.playwright.outcome != 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-test-results-${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}-of-4
+          name: e2e-test-results-${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}-of-${{ matrix.total }}
           path: e2e/test-results/
           retention-days: 7
           if-no-files-found: ignore
@@ -214,7 +252,7 @@ jobs:
           node scripts/e2e/shard-result.js write \
             --output "${RUNNER_TEMP}/jc-e2e-shard-results/shard-${{ matrix.shard }}.json" \
             --shard "${{ matrix.shard }}" \
-            --total 4 \
+            --total "${{ matrix.total }}" \
             --sha "${GITHUB_SHA}" \
             --run-id "${GITHUB_RUN_ID}" \
             --run-attempt "${GITHUB_RUN_ATTEMPT}" \
@@ -225,9 +263,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-status-${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}-of-4
+          name: e2e-status-${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}-of-${{ matrix.total }}
           path: ${{ runner.temp }}/jc-e2e-shard-results/shard-${{ matrix.shard }}.json
-          retention-days: 7
+          # Match GitHub's 30-day workflow rerun window so a failed-jobs rerun
+          # can still reuse untouched successful shard evidence.
+          retention-days: 30
           if-no-files-found: error
 
   e2e:
@@ -262,7 +302,7 @@ jobs:
           # artifacts retained from prior attempts of this same workflow run.
           github-token: ${{ github.token }}
           run-id: ${{ github.run_id }}
-          pattern: e2e-status-${{ github.run_id }}-*-shard-*-of-4
+          pattern: e2e-status-${{ github.run_id }}-*-shard-*-of-${{ env.E2E_SHARD_TOTAL }}
           path: ${{ runner.temp }}/jc-e2e-shard-results
           # Each attempt reuses shard-N.json; separate artifact directories
           # prevent prior and current attempts from overwriting one another.
@@ -279,7 +319,7 @@ jobs:
         run: |
           node scripts/e2e/shard-result.js aggregate \
             --directory "${RUNNER_TEMP}/jc-e2e-shard-results" \
-            --total 4 \
+            --total "${E2E_SHARD_TOTAL}" \
             --sha "${GITHUB_SHA}" \
             --run-id "${GITHUB_RUN_ID}" \
             --run-attempt "${GITHUB_RUN_ATTEMPT}"

@@ -8,6 +8,7 @@
 // below the plugin's real boot allowance so the common retry path is cheap
 // without treating a slow, credentialed boot as a bounce.
 const FAST_BOUNCE_TIMEOUT_MS = 8_000;
+const INITIAL_CONNECTION_TIMEOUT_MS = 60_000;
 const PLUGIN_INIT_TIMEOUT_MS = 60_000;
 const CURRENT_USER_TIMEOUT_MS = 15_000;
 const SESSION_POLL_INTERVAL_MS = 100;
@@ -15,6 +16,99 @@ const SESSION_POLL_INTERVAL_MS = 100;
 /** @param {unknown} value */
 function id(value) {
     return String(value || '').trim();
+}
+
+/**
+ * Classify Jellyfin Web's initial connection attempt before programmatic
+ * authentication starts. Calling authenticateUserByName while the initial
+ * unauthenticated connect is still pending races its eventual ServerSignIn
+ * result: that stale result can replace the freshly stored token with a null
+ * session. A rendered auth route, or an already-restored exact stored/current
+ * session, proves the initial connection has reached a terminal state.
+ *
+ * @param {import('./auth-session-state').AuthSessionSnapshot} snapshot
+ * @returns {import('./auth-session-state').InitialConnectionDecision}
+ */
+function classifyInitialConnection(snapshot) {
+    const route = id(snapshot?.route) || '<empty>';
+    const currentUserId = id(snapshot?.currentUserId);
+    const storedUserIds = (Array.isArray(snapshot?.storedSessions)
+        ? snapshot.storedSessions
+        : [])
+        .filter((session) => session?.hasToken === true && id(session?.userId))
+        .map((session) => id(session.userId));
+    const onAuthRoute = /login|selectserver/i.test(route);
+    const pluginInitialized = snapshot?.pluginInitialized === true;
+    const malformed = snapshot?.credentialsMalformed === true
+        ? '; stored credentials are malformed'
+        : '';
+    const context = `current=${currentUserId || '<none>'}, `
+        + `stored=${storedUserIds.join(',') || '<none>'}, route=${route}, `
+        + `plugin=${pluginInitialized ? 'ready' : 'pending'}${malformed}`;
+
+    if (currentUserId && storedUserIds.includes(currentUserId) && pluginInitialized) {
+        return {
+            outcome: 'authenticated',
+            diagnostic: `initial connection restored an authenticated session (${context})`,
+        };
+    }
+
+    if (
+        onAuthRoute
+        && !currentUserId
+        && snapshot?.credentialsMalformed !== true
+    ) {
+        return {
+            outcome: 'sign-in',
+            diagnostic: `initial connection reached the sign-in view (${context})`,
+        };
+    }
+
+    return {
+        outcome: 'pending',
+        diagnostic: `waiting for Jellyfin's initial connection to settle (${context})`,
+    };
+}
+
+/**
+ * Wait for Jellyfin Web's initial connection attempt to settle before login.
+ * Injectable time keeps the race regression deterministic in unit tests.
+ *
+ * @param {() => Promise<import('./auth-session-state').AuthSessionSnapshot>} readSnapshot
+ * @param {import('./auth-session-state').InitialConnectionWaitOptions} options
+ * @returns {Promise<import('./auth-session-state').InitialConnectionWaitResult>}
+ */
+async function waitForInitialConnectionDecision(readSnapshot, options) {
+    if (typeof readSnapshot !== 'function') {
+        throw new Error('initial connection wait requires a snapshot reader');
+    }
+
+    const timeoutMs = Number(options?.timeoutMs);
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+        throw new Error(`initial connection wait has invalid timeout: ${String(options?.timeoutMs)}`);
+    }
+    const pollIntervalMs = Number(options?.pollIntervalMs ?? SESSION_POLL_INTERVAL_MS);
+    if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
+        throw new Error(`initial connection wait has invalid poll interval: ${String(pollIntervalMs)}`);
+    }
+
+    const now = options?.now || Date.now;
+    const sleep = options?.sleep || ((delayMs) => new Promise((resolve) => {
+        setTimeout(resolve, delayMs);
+    }));
+    const startedAt = now();
+
+    while (true) {
+        const decision = classifyInitialConnection(await readSnapshot());
+        const elapsedMs = Math.max(0, now() - startedAt);
+        if (decision.outcome !== 'pending') {
+            return { ...decision, elapsedMs, timedOut: false };
+        }
+        if (elapsedMs >= timeoutMs) {
+            return { ...decision, elapsedMs, timedOut: true };
+        }
+        await sleep(Math.min(pollIntervalMs, timeoutMs - elapsedMs));
+    }
 }
 
 /**
@@ -149,8 +243,11 @@ async function waitForSessionDecision(readSnapshot, expectedUserId, options) {
 module.exports = {
     CURRENT_USER_TIMEOUT_MS,
     FAST_BOUNCE_TIMEOUT_MS,
+    INITIAL_CONNECTION_TIMEOUT_MS,
     PLUGIN_INIT_TIMEOUT_MS,
     SESSION_POLL_INTERVAL_MS,
     classifyAuthSession,
+    classifyInitialConnection,
+    waitForInitialConnectionDecision,
     waitForSessionDecision,
 };

@@ -113,12 +113,13 @@ test('every shard gets isolated Docker, state, port, CPU and browser coordinates
     assert.match(source, /JF_ADMIN_PASS="\$\{ADMIN_PASS\}"/);
 });
 
-test('seed evidence is bound back to the expected loopback project and CPU quota', () => {
-    for (const field of ['.baseUrl', '.port', '.project', '.cpus']) {
+test('seed evidence is bound back to the expected loopback project and actual CPU quota', () => {
+    for (const field of ['.baseUrl', '.port', '.project', '.cpus', '.actualNanoCpus']) {
         assert.ok(source.includes(field), `seed-result validation lost ${field}`);
     }
     assert.match(source, /"\$\{project\}" == "\$\{PROJECTS\[shard\]\}"/);
     assert.match(source, /"\$\{cpus\}" == "\$\{CPUS_PER_SERVER\}"/);
+    assert.match(source, /"\$\{actual_nano_cpus\}" == "\$\{expected_nano_cpus\}"/);
     assert.match(source, /"\$\{base_url\}" == "http:\/\/127\.0\.0\.1:\$\{port\}"/);
 });
 

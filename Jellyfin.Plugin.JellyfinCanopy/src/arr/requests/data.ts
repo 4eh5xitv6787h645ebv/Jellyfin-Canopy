@@ -49,6 +49,7 @@ export interface DownloadItem {
 /** One entry of the /arr/requests list. */
 export interface RequestItem {
     id?: number | string;
+    sourceToken?: string;
     title?: string;
     year?: string | number;
     type?: string;
@@ -107,6 +108,7 @@ export interface IssueItem {
         username?: string;
         email?: string;
         avatar?: string;
+        avatarSourceToken?: string;
     };
     createdAt?: string;
     [key: string]: unknown;
@@ -596,7 +598,8 @@ export function loadAllData(signal?: AbortSignal): Promise<void> {
 
 export async function handleRequestAction(btn: HTMLButtonElement, action: 'approve' | 'decline'): Promise<void> {
     const requestId = btn.getAttribute('data-request-id');
-    if (!requestId) return;
+    const sourceToken = btn.getAttribute('data-source-token');
+    if (!requestId || !sourceToken) return;
 
     // Disable BOTH action buttons on this card, not just the clicked one, so the
     // request can't be approved and declined concurrently (two POSTs) before the
@@ -611,7 +614,7 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: 'appro
 
     try {
         // skipRetry: approving/declining is not idempotent — never auto-repeat it.
-        await api.plugin(`/arr/requests/${requestId}/${action}`, {
+        await api.plugin(`/arr/requests/${encodeURIComponent(requestId)}/${action}?sourceToken=${encodeURIComponent(sourceToken)}`, {
             method: 'POST',
             skipRetry: true,
         });

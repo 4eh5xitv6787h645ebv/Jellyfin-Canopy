@@ -9,6 +9,7 @@ using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Controllers;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Arr;
@@ -84,13 +85,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             return controller;
         }
 
-        private static PluginConfiguration Config(bool approvalsEnabled) => new()
+        private static PluginConfiguration Config(
+            bool approvalsEnabled,
+            string urls = "http://seerr:5055") => new()
         {
             SeerrEnabled = true,
-            SeerrUrls = "http://seerr:5055",
+            SeerrUrls = urls,
             SeerrApiKey = "key",
             RequestApprovalsEnabled = approvalsEnabled,
         };
+
+        private static string ActionToken(
+            int requestId,
+            string source = "http://seerr:5055",
+            string caller = CallerGuid,
+            DateTimeOffset? issuedAt = null,
+            int seerrUserId = CallerSeerrId)
+            => SeerrSourceToken.Create(
+                "key",
+                SeerrSourceToken.RequestActionPurpose,
+                caller,
+                source,
+                requestId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                issuedAt,
+                binding: seerrUserId.ToString(System.Globalization.CultureInfo.InvariantCulture))!;
 
         private static int? StatusOf(IActionResult result) => (result as ObjectResult)?.StatusCode;
 
@@ -111,7 +129,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         {
             var handler = new RecordingHttpMessageHandler();
             var seerr = new RecordingSeerrClient(
-                new SeerrUser { Id = CallerSeerrId, Permissions = SeerrPermission.ADMIN });
+                new SeerrUser
+                {
+                    Id = CallerSeerrId,
+                    Permissions = SeerrPermission.ADMIN,
+                    SourceUrl = "http://seerr:5055",
+                });
 
             var controller = BuildController(
                 Config(approvalsEnabled: false),
@@ -138,7 +161,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var handler = new RecordingHttpMessageHandler();
             handler.AddResponse("/api/v1/request", @"{ ""results"": [], ""pageInfo"": { ""results"": 0 } }");
             var seerr = new RecordingSeerrClient(
-                new SeerrUser { Id = CallerSeerrId, Permissions = SeerrPermission.MANAGE_REQUESTS });
+                new SeerrUser
+                {
+                    Id = CallerSeerrId,
+                    Permissions = SeerrPermission.MANAGE_REQUESTS,
+                    SourceUrl = "http://seerr:5055",
+                });
 
             var controller = BuildController(
                 Config(approvalsEnabled: false),
@@ -159,7 +187,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var handler = new RecordingHttpMessageHandler();
             handler.AddResponse("/api/v1/request", @"{ ""results"": [], ""pageInfo"": { ""results"": 0 } }");
             var seerr = new RecordingSeerrClient(
-                new SeerrUser { Id = CallerSeerrId, Permissions = SeerrPermission.MANAGE_REQUESTS });
+                new SeerrUser
+                {
+                    Id = CallerSeerrId,
+                    Permissions = SeerrPermission.MANAGE_REQUESTS,
+                    SourceUrl = "http://seerr:5055",
+                });
 
             var controller = BuildController(
                 Config(approvalsEnabled: true),
@@ -171,6 +204,65 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.True(CanApprove(await controller.GetRequests()));
         }
 
+        [Fact]
+        public async Task GetRequests_ActionAndAvatarTokensBindCallerResourceAndResolvedSource()
+        {
+            var handler = new RecordingHttpMessageHandler();
+            handler.AddResponse("/api/v1/request", @"{
+                ""results"": [{
+                    ""id"": 9,
+                    ""status"": 1,
+                    ""type"": ""movie"",
+                    ""is4k"": false,
+                    ""createdAt"": ""2026-01-01T00:00:00Z"",
+                    ""requestedBy"": { ""id"": 42, ""username"": ""requester"", ""avatar"": ""/avatar/requester.png?v=1"" },
+                    ""media"": { ""tmdbId"": 550, ""status"": 2, ""downloadStatus"": [] }
+                }],
+                ""pageInfo"": { ""results"": 1, ""pages"": 1 }
+            }");
+            handler.AddResponse("/api/v1/movie/550", @"{ ""title"": ""Movie"" }");
+            var seerr = new RecordingSeerrClient(new SeerrUser
+            {
+                Id = CallerSeerrId,
+                Permissions = SeerrPermission.MANAGE_REQUESTS,
+                SourceUrl = "http://source-b:5055/Tenant",
+            });
+            var controller = BuildController(
+                Config(true, "http://source-a:5055,http://source-b:5055/Tenant/"),
+                SeerrPermission.MANAGE_REQUESTS,
+                handler,
+                seerr,
+                isAdmin: false);
+
+            var ok = Assert.IsType<OkObjectResult>(await controller.GetRequests());
+            var body = JsonNode.Parse(JsonSerializer.Serialize(ok.Value))!.AsObject();
+            var row = body["requests"]!.AsArray().Single()!.AsObject();
+            var actionToken = (string)row["sourceToken"]!;
+            var avatarUrl = (string)row["requestedByAvatar"]!;
+            var avatarToken = Uri.UnescapeDataString(avatarUrl.Split("sourceToken=", StringSplitOptions.None)[1]);
+
+            Assert.True(SeerrSourceToken.TryValidate(
+                actionToken,
+                "key",
+                SeerrSourceToken.RequestActionPurpose,
+                CallerGuid,
+                "9",
+                out var actionClaims));
+            Assert.True(SeerrSourceToken.MatchesSource(
+                actionClaims!.SourceKey,
+                "key",
+                "http://source-b:5055/Tenant"));
+            Assert.Equal(CallerSeerrId.ToString(), actionClaims.Binding);
+            Assert.True(SeerrSourceToken.TryValidate(
+                avatarToken,
+                "key",
+                SeerrSourceToken.AvatarPurpose,
+                CallerGuid,
+                "/avatar/requester.png",
+                out var avatarClaims));
+            Assert.Equal(actionClaims.SourceKey, avatarClaims!.SourceKey);
+        }
+
         // ── 3. Approve/decline response drives detail-cache eviction ─────────
 
         [Fact]
@@ -180,7 +272,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             // Seerr's approve response is the MediaRequest: root `type` + `media.tmdbId`.
             handler.AddResponse("/approve", @"{ ""type"": ""movie"", ""media"": { ""tmdbId"": 550 } }");
             var seerr = new RecordingSeerrClient(
-                new SeerrUser { Id = CallerSeerrId, Permissions = SeerrPermission.ADMIN });
+                new SeerrUser
+                {
+                    Id = CallerSeerrId,
+                    Permissions = SeerrPermission.ADMIN,
+                    SourceUrl = "http://seerr:5055",
+                });
 
             var controller = BuildController(
                 Config(approvalsEnabled: true),
@@ -190,7 +287,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 isAdmin: true,
                 requestPath: "/JellyfinCanopy/arr/requests/9/approve");
 
-            var result = await controller.ActOnRequest(9);
+            var result = await controller.ActOnRequest(9, ActionToken(9));
 
             Assert.IsType<OkObjectResult>(result);
             var eviction = Assert.Single(seerr.Evictions);
@@ -204,7 +301,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             // Well-formed JSON but missing media.tmdbId → parser must not throw and must not evict.
             handler.AddResponse("/approve", @"{ ""type"": ""movie"", ""media"": {} }");
             var seerr = new RecordingSeerrClient(
-                new SeerrUser { Id = CallerSeerrId, Permissions = SeerrPermission.ADMIN });
+                new SeerrUser
+                {
+                    Id = CallerSeerrId,
+                    Permissions = SeerrPermission.ADMIN,
+                    SourceUrl = "http://seerr:5055",
+                });
 
             var controller = BuildController(
                 Config(approvalsEnabled: true),
@@ -214,10 +316,170 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 isAdmin: true,
                 requestPath: "/JellyfinCanopy/arr/requests/9/approve");
 
-            var result = await controller.ActOnRequest(9);
+            var result = await controller.ActOnRequest(9, ActionToken(9));
 
             Assert.IsType<OkObjectResult>(result);
             Assert.Empty(seerr.Evictions);
+        }
+
+        [Fact]
+        public async Task ActOnRequest_MissingResolvedSourceFailsClosedWithoutHttp()
+        {
+            var handler = new RecordingHttpMessageHandler();
+            var seerr = new RecordingSeerrClient(
+                new SeerrUser { Id = CallerSeerrId, Permissions = SeerrPermission.ADMIN });
+            var controller = BuildController(
+                Config(approvalsEnabled: true),
+                SeerrPermission.ADMIN,
+                handler,
+                seerr,
+                isAdmin: true,
+                requestPath: "/JellyfinCanopy/arr/requests/9/approve");
+
+            var failure = Assert.IsType<ObjectResult>(await controller.ActOnRequest(9, ActionToken(9)));
+            Assert.Equal(409, failure.StatusCode);
+            var body = JsonNode.Parse(JsonSerializer.Serialize(failure.Value))!.AsObject();
+            Assert.Equal("stale_source_token", (string?)body["code"]);
+            Assert.Empty(handler.Sent);
+            Assert.Empty(seerr.Evictions);
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("not-a-token")]
+        public async Task ActOnRequest_MissingOrTamperedTokenFailsBeforeResolutionOrHttp(string? token)
+        {
+            var handler = new RecordingHttpMessageHandler();
+            var seerr = new RecordingSeerrClient(new SeerrUser
+            {
+                Id = CallerSeerrId,
+                Permissions = SeerrPermission.ADMIN,
+                SourceUrl = "http://seerr:5055",
+            });
+            var controller = BuildController(
+                Config(approvalsEnabled: true),
+                SeerrPermission.ADMIN,
+                handler,
+                seerr,
+                isAdmin: true,
+                requestPath: "/JellyfinCanopy/arr/requests/9/approve");
+
+            var failure = Assert.IsType<ObjectResult>(await controller.ActOnRequest(9, token));
+
+            Assert.Equal(403, failure.StatusCode);
+            Assert.Empty(seerr.Resolutions);
+            Assert.Empty(handler.Sent);
+        }
+
+        [Fact]
+        public async Task ActOnRequest_ExpiredTokenFailsBeforeResolutionOrHttp()
+        {
+            var handler = new RecordingHttpMessageHandler();
+            var seerr = new RecordingSeerrClient(new SeerrUser
+            {
+                Id = CallerSeerrId,
+                Permissions = SeerrPermission.ADMIN,
+                SourceUrl = "http://seerr:5055",
+            });
+            var controller = BuildController(
+                Config(approvalsEnabled: true),
+                SeerrPermission.ADMIN,
+                handler,
+                seerr,
+                isAdmin: true,
+                requestPath: "/JellyfinCanopy/arr/requests/9/approve");
+
+            var failure = Assert.IsType<ObjectResult>(await controller.ActOnRequest(
+                9,
+                ActionToken(9, issuedAt: DateTimeOffset.UtcNow.AddMinutes(-31))));
+
+            Assert.Equal(403, failure.StatusCode);
+            Assert.Empty(seerr.Resolutions);
+            Assert.Empty(handler.Sent);
+        }
+
+        [Fact]
+        public async Task ActOnRequest_UserRemappedToAnotherConfiguredSourceFailsWithoutMutation()
+        {
+            var handler = new RecordingHttpMessageHandler();
+            var seerr = new RecordingSeerrClient(new SeerrUser
+            {
+                Id = CallerSeerrId,
+                Permissions = SeerrPermission.ADMIN,
+                SourceUrl = "http://source-b:5055",
+            });
+            var controller = BuildController(
+                Config(true, "http://source-a:5055,http://source-b:5055"),
+                SeerrPermission.ADMIN,
+                handler,
+                seerr,
+                isAdmin: true,
+                requestPath: "/JellyfinCanopy/arr/requests/9/approve");
+
+            var failure = Assert.IsType<ObjectResult>(await controller.ActOnRequest(
+                9,
+                ActionToken(9, "http://source-a:5055")));
+
+            Assert.Equal(409, failure.StatusCode);
+            Assert.Single(seerr.Resolutions);
+            Assert.True(seerr.Resolutions[0].BypassCache);
+            Assert.False(seerr.Resolutions[0].AllowAutoImport);
+            Assert.Empty(handler.Sent);
+        }
+
+        [Fact]
+        public async Task ActOnRequest_UserReboundOnSameSourceFailsWithoutMutation()
+        {
+            var handler = new RecordingHttpMessageHandler();
+            var seerr = new RecordingSeerrClient(new SeerrUser
+            {
+                Id = 99,
+                Permissions = SeerrPermission.ADMIN,
+                SourceUrl = "http://source-a:5055",
+            });
+            var controller = BuildController(
+                Config(true, "http://source-a:5055"),
+                SeerrPermission.ADMIN,
+                handler,
+                seerr,
+                isAdmin: true,
+                requestPath: "/JellyfinCanopy/arr/requests/9/approve");
+
+            var failure = Assert.IsType<ObjectResult>(await controller.ActOnRequest(
+                9,
+                ActionToken(9, "http://source-a:5055", seerrUserId: CallerSeerrId)));
+
+            Assert.Equal(409, failure.StatusCode);
+            Assert.Single(seerr.Resolutions);
+            Assert.True(seerr.Resolutions[0].BypassCache);
+            Assert.False(seerr.Resolutions[0].AllowAutoImport);
+            Assert.Empty(handler.Sent);
+        }
+
+        [Fact]
+        public async Task ActOnRequest_ValidTokenMutatesOnlyTokenSource()
+        {
+            var handler = new RecordingHttpMessageHandler();
+            handler.AddResponse("/approve", @"{ ""type"": ""movie"", ""media"": { ""tmdbId"": 550 } }");
+            var seerr = new RecordingSeerrClient(new SeerrUser
+            {
+                Id = CallerSeerrId,
+                Permissions = SeerrPermission.ADMIN,
+                SourceUrl = "http://source-b:5055",
+            });
+            var controller = BuildController(
+                Config(true, "http://source-a:5055,http://source-b:5055"),
+                SeerrPermission.ADMIN,
+                handler,
+                seerr,
+                isAdmin: true,
+                requestPath: "/JellyfinCanopy/arr/requests/9/approve");
+
+            var result = await controller.ActOnRequest(9, ActionToken(9, "http://source-b:5055"));
+
+            Assert.IsType<OkObjectResult>(result);
+            var request = Assert.Single(handler.Requests);
+            Assert.Equal("source-b", request.RequestUri!.Host);
         }
 
         // ── Minimal fakes ────────────────────────────────────────────────────
@@ -235,10 +497,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             public List<(int TmdbId, string MediaType)> Evictions { get; } = new();
 
+            public List<(bool BypassCache, bool AllowAutoImport)> Resolutions { get; } = new();
+
             public void EvictMediaDetailCache(int tmdbId, string mediaType) => Evictions.Add((tmdbId, mediaType));
 
             public Task<SeerrUser?> GetSeerrUser(string jellyfinUserId, bool bypassCache = false, bool allowAutoImport = true)
-                => Task.FromResult<SeerrUser?>(_user);
+            {
+                Resolutions.Add((bypassCache, allowAutoImport));
+                return Task.FromResult<SeerrUser?>(_user);
+            }
 
             public Task<string?> GetSeerrUserId(string jellyfinUserId, bool allowAutoImport = true)
                 => throw new NotImplementedException();

@@ -11,7 +11,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services;
 /// <summary>
 /// Pins <see cref="SeerrClient.GetSeerr4kCapabilityAsync"/>: the server 4K
 /// capability comes from Seerr's user-neutral <c>/api/v1/settings/public</c>
-/// (fetched with NO per-user header so it is safe to share-cache) combined with
+/// (fetched with NO per-user header and cached within the resolved source) combined with
 /// the caller's own Seerr 4K permissions, and short-circuits without a user
 /// lookup when the server has no 4K at all.
 /// </summary>
@@ -49,7 +49,7 @@ public class Seerr4kCapabilityTests
         var (client, handler) = NewClient();
         handler.AddResponse("/api/v1/settings/public", "{\"movie4kEnabled\":true,\"series4kEnabled\":false}");
         // permissions 1024 == REQUEST_4K (global 4K grant, covers movie + TV).
-        handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":1024}}]}}");
+        handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":1024}}],\"pageInfo\":{{\"page\":1,\"pages\":1,\"results\":1}}}}");
 
         var cap = await client.GetSeerr4kCapabilityAsync(UserId);
 
@@ -65,7 +65,7 @@ public class Seerr4kCapabilityTests
     {
         var (client, handler) = NewClient();
         handler.AddResponse("/api/v1/settings/public", "{\"movie4kEnabled\":true,\"series4kEnabled\":true}");
-        handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":1024}}]}}");
+        handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":1024}}],\"pageInfo\":{{\"page\":1,\"pages\":1,\"results\":1}}}}");
 
         await client.GetSeerr4kCapabilityAsync(UserId);
 
@@ -76,10 +76,11 @@ public class Seerr4kCapabilityTests
     }
 
     [Fact]
-    public async Task NoServer4k_ShortCircuits_WithoutUserLookup()
+    public async Task NoServer4k_StillResolvesTheOwningSourceBeforeReadingSettings()
     {
         var (client, handler) = NewClient();
         handler.AddResponse("/api/v1/settings/public", "{\"movie4kEnabled\":false,\"series4kEnabled\":false}");
+        handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":1024}}],\"pageInfo\":{{\"page\":1,\"pages\":1,\"results\":1}}}}");
 
         var cap = await client.GetSeerr4kCapabilityAsync(UserId);
 
@@ -87,8 +88,7 @@ public class Seerr4kCapabilityTests
         Assert.False(cap.Series4kEnabled);
         Assert.False(cap.CanRequest4kMovie);
         Assert.False(cap.CanRequest4kTv);
-        // With no server 4K there is nothing to request — the user lookup is skipped.
-        Assert.Empty(handler.Requests.FindAll(r => r.RequestUri!.AbsolutePath == "/api/v1/user"));
+        Assert.NotEmpty(handler.Requests.FindAll(r => r.RequestUri!.AbsolutePath == "/api/v1/user"));
     }
 
     [Fact]
@@ -97,7 +97,7 @@ public class Seerr4kCapabilityTests
         var (client, handler) = NewClient();
         handler.AddResponse("/api/v1/settings/public", "{\"movie4kEnabled\":true,\"series4kEnabled\":true}");
         // permissions 262144 == REQUEST_MOVIE only (base request, no 4K bits).
-        handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":262144}}]}}");
+        handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":262144}}],\"pageInfo\":{{\"page\":1,\"pages\":1,\"results\":1}}}}");
 
         var cap = await client.GetSeerr4kCapabilityAsync(UserId);
 
@@ -119,7 +119,7 @@ public class Seerr4kCapabilityTests
         var (client, handler) = NewClient(config);
         handler.AddResponse("/api/v1/settings/public", "{\"movie4kEnabled\":true,\"series4kEnabled\":true}");
         // 262144 == REQUEST_MOVIE (base only, no 4K bits) — irrelevant for an admin.
-        handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":262144}}]}}");
+        handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":262144}}],\"pageInfo\":{{\"page\":1,\"pages\":1,\"results\":1}}}}");
 
         var cap = await client.GetSeerr4kCapabilityAsync(UserId, isAdmin: true);
 
@@ -134,6 +134,7 @@ public class Seerr4kCapabilityTests
         // order): with it off, an admin gets no 4K capability despite server 4K.
         var (client, handler) = NewClient(Config()); // master switches default false
         handler.AddResponse("/api/v1/settings/public", "{\"movie4kEnabled\":true,\"series4kEnabled\":true}");
+        handler.AddResponse("/api/v1/user", $"{{\"results\":[{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":0}}],\"pageInfo\":{{\"page\":1,\"pages\":1,\"results\":1}}}}");
 
         var cap = await client.GetSeerr4kCapabilityAsync(UserId, isAdmin: true);
 

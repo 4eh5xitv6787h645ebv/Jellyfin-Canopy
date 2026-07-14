@@ -11,6 +11,7 @@ import { JC } from '../arr-globals';
 import { renderPage } from './render-views';
 import { getEventDateKey } from './event-date';
 import { describeFetchError } from '../../core/fetch-error';
+import { IncompleteCollectionError, readCollectionItems } from '../../core/paged-collection';
 import type { ApiApi } from '../../types/jc';
 
 const logPrefix = '🪼 Jellyfin Canopy: Calendar Page:';
@@ -353,48 +354,66 @@ async function fetchUserRequests(signal?: AbortSignal): Promise<void> {
 
     state.requestedLoading = true;
     state.requestedError = false;
-    const requested = new Set<string>();
-    const pageSize = 200;
-    let page = 1;
-    let totalPages = 1;
 
     try {
-        while (page <= totalPages) {
-            const skip = (page - 1) * pageSize;
-            const query = new URLSearchParams({
-                take: String(pageSize),
-                skip: String(skip),
-                userOnly: 'true',
-            });
-
-            const data = await api.plugin(`/arr/requests?${query.toString()}`, { signal }) as {
-                totalPages?: number;
-                requests?: { tmdbId?: number | string; type?: string }[];
-            };
-            totalPages = data.totalPages || 1;
-            (data.requests || []).forEach((req) => {
-                const tmdbId = req?.tmdbId;
-                const type = (req?.type || '').toLowerCase();
-                if (!tmdbId || !type) return;
-                requested.add(`${type}:${tmdbId}`);
-            });
-
-            page += 1;
+        // Upstream pagination and parental filtering are server-owned. Visible
+        // rows from a filtered page are not a valid next offset, so the browser
+        // consumes a single explicitly-complete, self-scoped snapshot instead.
+        const snapshot = await api.plugin('/arr/request-snapshot?userOnly=true', { signal });
+        if (signal?.aborted) return;
+        if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) {
+            throw new IncompleteCollectionError('Request snapshot was not an object.');
         }
+        const envelope = snapshot as Record<string, unknown>;
+        if (envelope.complete !== true) {
+            throw new IncompleteCollectionError('Request snapshot was not marked complete.');
+        }
+
+        const requestRows = readCollectionItems(envelope, 'requests');
+        const requestKeyCount = envelope.requestKeyCount;
+        if (typeof requestKeyCount !== 'number'
+            || !Number.isInteger(requestKeyCount)
+            || requestKeyCount < 0
+            || requestKeyCount !== requestRows.length) {
+            throw new IncompleteCollectionError('Request snapshot key count was invalid.');
+        }
+
+        const requested = new Set<string>();
+        for (const row of requestRows) {
+            if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+                throw new IncompleteCollectionError('Request snapshot contained an invalid key.');
+            }
+            const request = row as Record<string, unknown>;
+            const tmdbId = request.tmdbId;
+            const type = request.type;
+            if (typeof tmdbId !== 'number'
+                || !Number.isInteger(tmdbId)
+                || tmdbId <= 0
+                || (type !== 'movie' && type !== 'tv')) {
+                throw new IncompleteCollectionError('Request snapshot contained an invalid key.');
+            }
+            requested.add(`${type}:${String(tmdbId)}`);
+        }
+        if (requested.size !== requestRows.length) {
+            throw new IncompleteCollectionError('Request snapshot contained duplicate keys.');
+        }
+
+        state.requestedItems = requested;
+        state.requestedLoaded = true;
+        state.requestedError = false;
     } catch (error) {
         if (signal?.aborted) return;
         console.warn(`${logPrefix} Failed to fetch user requests:`, error);
-        // A mid-loop throw would otherwise under-populate the Requests filter
-        // silently (requestedLoaded still flips true in finally). Flag it +
-        // toast once so the "Requests"/force-only view isn't quietly incomplete.
+        // Never retain an old or partial projection. Keep requestedLoaded false
+        // so a later refresh or Requests-filter toggle can retry the snapshot.
+        state.requestedItems = new Set();
+        state.requestedLoaded = false;
         state.requestedError = true;
         if (typeof JC.toast === 'function') {
             JC.toast('⚠ ' + esc(describeFetchError(error, JC.t?.('calendar_load_error') || 'Unable to load calendar')));
         }
     } finally {
         if (!signal?.aborted) {
-            state.requestedItems = requested;
-            state.requestedLoaded = true;
             state.requestedLoading = false;
             renderPage();
         } else {

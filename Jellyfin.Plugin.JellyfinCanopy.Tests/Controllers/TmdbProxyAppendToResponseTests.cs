@@ -72,6 +72,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var parentalFilter = new SeerrParentalFilter(
                 factory, NullLogger<SeerrParentalFilter>.Instance, userManager, new ScoreLocalization(), seerrCache, provider);
 
+            return BuildController(factory, provider, userManager, seerrCache, parentalFilter, queryString);
+        }
+
+        private static SeerrProxyController BuildController(
+            IHttpClientFactory factory,
+            FakePluginConfigProvider provider,
+            IUserManager userManager,
+            ISeerrCache seerrCache,
+            ISeerrParentalFilter parentalFilter,
+            string queryString)
+        {
+
             var spoilerPending = new SpoilerPendingService(
                 new UserConfigurationManager(
                     new StubAppPaths(Path.Combine(Path.GetTempPath(), "jc-tmdb-" + Guid.NewGuid().ToString("N"))),
@@ -120,6 +132,62 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.IsNotType<StatusCodeResult>(result); // reaches the passthrough (ContentResult)
         }
 
+        [Fact]
+        public async Task ProxyTmdb_ConfigChangesDuringParentalGate_Returns409WithoutDispatching()
+        {
+            var initial = Configuration("tmdb-key-a");
+            var provider = new FakePluginConfigProvider(initial);
+            var handler = new RecordingHttpMessageHandler();
+            handler.AddResponse("/movie/100", @"{ ""id"": 100 }");
+            var factory = new RecordingHttpClientFactory(handler);
+            var userManager = new SingleUserManager(new User("kid", "Prov", "PwProv"));
+            var cache = new SeerrCache(provider);
+            var filter = new SwitchingParentalFilter(provider, Configuration("tmdb-key-b"));
+            var controller = BuildController(factory, provider, userManager, cache, filter, string.Empty);
+
+            var result = await controller.ProxyTmdbRequest("movie/100");
+
+            var conflict = Assert.IsType<ObjectResult>(result);
+            Assert.Equal(409, conflict.StatusCode);
+            Assert.Equal(
+                "read_configuration_changed",
+                conflict.Value?.GetType().GetProperty("code")?.GetValue(conflict.Value));
+            Assert.Empty(handler.Sent);
+        }
+
+        [Fact]
+        public async Task ProxyTmdb_ConfigChangesDuringUpstreamGet_Returns409WithoutPublishingBody()
+        {
+            var provider = new FakePluginConfigProvider(Configuration("tmdb-key-a"));
+            var handler = new SwitchingHandler(provider, Configuration("tmdb-key-b"));
+            var factory = new RecordingHttpClientFactory(handler);
+            var userManager = new SingleUserManager(new User("kid", "Prov", "PwProv"));
+            var cache = new SeerrCache(provider);
+            var controller = BuildController(
+                factory,
+                provider,
+                userManager,
+                cache,
+                new AllowingParentalFilter(),
+                string.Empty);
+
+            var result = await controller.ProxyTmdbRequest("movie/100");
+
+            var conflict = Assert.IsType<ObjectResult>(result);
+            Assert.Equal(409, conflict.StatusCode);
+            Assert.Equal(1, handler.RequestCount);
+        }
+
+        private static PluginConfiguration Configuration(string tmdbApiKey) => new()
+        {
+            SeerrEnabled = true,
+            SeerrRespectParentalRatings = true,
+            SeerrUrls = "http://seerr:5055",
+            SeerrApiKey = "key",
+            TMDB_API_KEY = tmdbApiKey,
+            DEFAULT_REGION = "US",
+        };
+
         // ── Minimal fakes ────────────────────────────────────────────────────
 
         private sealed class UnusedSeerrClient : ISeerrClient
@@ -140,6 +208,66 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             public Task<List<WatchlistItem>?> GetWatchlistForUser(string seerrUserId) => throw new NotImplementedException();
 
             public Task<List<WatchlistItem>?> GetRequestsForUser(string seerrUserId) => throw new NotImplementedException();
+        }
+
+        private class AllowingParentalFilter : ISeerrParentalFilter
+        {
+            public Task<SeerrParentalResult> ApplyAsync(string json, string apiPath, SeerrCaller caller)
+                => Task.FromResult(new SeerrParentalResult(false, json));
+
+            public Task<bool> IsBlockedAsync(string mediaType, int tmdbId, SeerrCaller caller)
+                => Task.FromResult(false);
+
+            public virtual Task<bool> IsTmdbProxyPathBlockedAsync(string tmdbApiPath, SeerrCaller caller)
+                => Task.FromResult(false);
+        }
+
+        private sealed class SwitchingParentalFilter : AllowingParentalFilter
+        {
+            private readonly FakePluginConfigProvider _provider;
+            private readonly PluginConfiguration _replacement;
+
+            public SwitchingParentalFilter(
+                FakePluginConfigProvider provider,
+                PluginConfiguration replacement)
+            {
+                _provider = provider;
+                _replacement = replacement;
+            }
+
+            public override Task<bool> IsTmdbProxyPathBlockedAsync(string tmdbApiPath, SeerrCaller caller)
+            {
+                _provider.Current = _replacement;
+                return Task.FromResult(false);
+            }
+        }
+
+        private sealed class SwitchingHandler : HttpMessageHandler
+        {
+            private readonly FakePluginConfigProvider _provider;
+            private readonly PluginConfiguration _replacement;
+
+            public SwitchingHandler(
+                FakePluginConfigProvider provider,
+                PluginConfiguration replacement)
+            {
+                _provider = provider;
+                _replacement = replacement;
+            }
+
+            public int RequestCount { get; private set; }
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                System.Threading.CancellationToken cancellationToken)
+            {
+                RequestCount++;
+                _provider.Current = _replacement;
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(@"{ ""id"": 100 }"),
+                });
+            }
         }
 
         private sealed class ScoreLocalization : ILocalizationManager

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
@@ -52,6 +53,34 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         bool CanRequest4kTv);
 
     /// <summary>
+    /// Distinguishes an authoritative missing/blocked user from a lookup whose
+    /// paginated source could not be read completely. Consumers must never turn
+    /// <see cref="Incomplete"/> into a successful empty or "unlinked" response.
+    /// </summary>
+    public enum SeerrUserResolutionStatus
+    {
+        Found,
+        NotFound,
+        Blocked,
+        Unavailable,
+        Incomplete,
+    }
+
+    public sealed record SeerrUserResolution(
+        SeerrUserResolutionStatus Status,
+        SeerrUser? User = null,
+        string? FailureReason = null)
+    {
+        public bool IsFound => Status == SeerrUserResolutionStatus.Found && User != null;
+
+        public static SeerrUserResolution Found(SeerrUser user) => new(SeerrUserResolutionStatus.Found, user);
+
+        public static SeerrUserResolution NotFound(string? reason = null) => new(SeerrUserResolutionStatus.NotFound, FailureReason: reason);
+
+        public static SeerrUserResolution Incomplete(string? reason = null) => new(SeerrUserResolutionStatus.Incomplete, FailureReason: reason);
+    }
+
+    /// <summary>
     /// All Seerr (Seerr) plumbing that used to live on
     /// <c>JellyfinCanopyControllerBase</c>: configured-URL fan-out, user
     /// resolution with TTL cache + optional just-in-time import, the proxy core
@@ -69,6 +98,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         /// attempts a just-in-time import of missing users.
         /// </summary>
         Task<SeerrUser?> GetSeerrUser(string jellyfinUserId, bool bypassCache = false, bool allowAutoImport = true);
+
+        /// <summary>
+        /// Resolves a Seerr user without collapsing incomplete collection reads
+        /// into authoritative absence. The default keeps existing test doubles
+        /// source-compatible; production overrides it with the typed paginator
+        /// result.
+        /// </summary>
+        async Task<SeerrUserResolution> ResolveSeerrUser(
+            string jellyfinUserId,
+            bool bypassCache = false,
+            bool allowAutoImport = true,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var user = await GetSeerrUser(jellyfinUserId, bypassCache, allowAutoImport).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return user == null ? SeerrUserResolution.NotFound() : SeerrUserResolution.Found(user);
+        }
 
         /// <summary>
         /// Resolves just the Seerr user id (cached separately with the same TTL).
@@ -105,16 +152,124 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         void EvictMediaDetailCache(int tmdbId, string mediaType);
 
         /// <summary>
+        /// Drops cached source-local identity data after a mandatory fresh
+        /// lookup proves it stale. Test doubles may keep the default no-op.
+        /// </summary>
+        void InvalidateUserIdentityCache(string jellyfinUserId)
+        {
+        }
+
+        /// <summary>
         /// The proxy core: authenticated fan-out of <paramref name="apiPath"/> to the
         /// configured Seerr URLs on behalf of <paramref name="caller"/>, with response
         /// caching, permission pre-checks and the typed error envelope contract.
         /// </summary>
         Task<IActionResult> ProxyRequestAsync(string apiPath, HttpMethod method, string? content, SeerrCaller caller);
 
+        Task<IActionResult> ProxyRequestAsync(
+            string apiPath,
+            HttpMethod method,
+            string? content,
+            SeerrCaller caller,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ProxyRequestAsync(apiPath, method, content, caller);
+        }
+
+        /// <summary>
+        /// Reads one TV-detail document without consulting or publishing to the
+        /// ordinary response cache. This deliberately narrow seam exists for an
+        /// already-open season modal's state poll; callers cannot turn it into an
+        /// arbitrary cache-bypass proxy. Implementations that do not provide a
+        /// dedicated cache path retain source compatibility and fall back to the
+        /// normal proxy behavior.
+        /// </summary>
+        Task<IActionResult> ProxyFreshTvDetailAsync(
+            int tmdbId,
+            SeerrCaller caller,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ProxyRequestAsync(
+                $"/api/v1/tv/{tmdbId}",
+                HttpMethod.Get,
+                null,
+                caller,
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Proxies a user-scoped request using an already-resolved Seerr user.
+        /// Production keeps the instance-local user id on
+        /// <see cref="SeerrUser.SourceUrl"/> and must not resolve or fail over to
+        /// another instance. Implementations that do not support this context
+        /// fail closed by default instead of falling back to another resolution.
+        /// </summary>
+        Task<IActionResult> ProxyRequestAsync(
+            string apiPath,
+            HttpMethod method,
+            string? content,
+            SeerrCaller caller,
+            SeerrUser resolvedUser)
+            => Task.FromResult<IActionResult>(new ObjectResult(new
+            {
+                error = true,
+                code = "source_affinity_unavailable",
+                message = "The linked Seerr instance could not be verified. Please try again."
+            })
+            { StatusCode = 502 });
+
+        Task<IActionResult> ProxyRequestAsync(
+            string apiPath,
+            HttpMethod method,
+            string? content,
+            SeerrCaller caller,
+            SeerrUser resolvedUser,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ProxyRequestAsync(apiPath, method, content, caller, resolvedUser);
+        }
+
         /// <summary>Fetches a Seerr user's watchlist (by Seerr user id).</summary>
         Task<List<WatchlistItem>?> GetWatchlistForUser(string seerrUserId);
 
+        /// <summary>
+        /// Fetches a Seerr user's watchlist from the instance that resolved the
+        /// instance-local user id. The default preserves compatibility for test
+        /// doubles; the production client pins to <paramref name="sourceUrl"/>.
+        /// </summary>
+        Task<List<WatchlistItem>?> GetWatchlistForUser(
+            string seerrUserId,
+            string? sourceUrl,
+            CancellationToken cancellationToken = default)
+            => GetWatchlistForUser(seerrUserId);
+
         /// <summary>Fetches the requests a Seerr user made (by Seerr user id).</summary>
         Task<List<WatchlistItem>?> GetRequestsForUser(string seerrUserId);
+
+        /// <summary>Fetches requests from the instance that resolved the Seerr user id.</summary>
+        Task<List<WatchlistItem>?> GetRequestsForUser(
+            string seerrUserId,
+            string? sourceUrl,
+            CancellationToken cancellationToken = default)
+            => GetRequestsForUser(seerrUserId);
+
+        /// <summary>
+        /// Fetches requests with the source URL and API key taken from one
+        /// captured configuration generation. The default keeps existing test
+        /// doubles source-compatible; the production client fences dispatch and
+        /// return against <paramref name="configurationRevision"/>.
+        /// </summary>
+        Task<List<WatchlistItem>?> GetRequestsForUser(
+            string seerrUserId,
+            string? sourceUrl,
+            PluginConfiguration capturedConfiguration,
+            long configurationRevision,
+            string capturedApiKey,
+            IReadOnlyList<string> capturedConfiguredUrls,
+            CancellationToken cancellationToken = default)
+            => GetRequestsForUser(seerrUserId, sourceUrl, cancellationToken);
     }
 }

@@ -103,12 +103,12 @@ export function renderRequestCard(item: RequestItem): string {
     // server already folds it into canApproveRequests, and the client re-checks
     // the projected pluginConfig flag so a disabled feature renders no buttons.
     const approvalsEnabled = JC.pluginConfig?.RequestApprovalsEnabled !== false;
-    if (approvalsEnabled && state.canApproveRequests && item.requestStatus === 1 && item.id) {
+    if (approvalsEnabled && state.canApproveRequests && item.requestStatus === 1 && item.id && item.sourceToken) {
         const approveLabel = JC.t?.('requests_approve') || 'Approve';
         const declineLabel = JC.t?.('requests_decline') || 'Decline';
         approvalButtons = `
-        <button class="jc-request-approve-btn" data-request-id="${escapeHtml(String(item.id))}" title="${escapeHtml(approveLabel)}" aria-label="${escapeHtml(approveLabel)}"><span class="material-icons">check</span></button>
-        <button class="jc-request-decline-btn" data-request-id="${escapeHtml(String(item.id))}" title="${escapeHtml(declineLabel)}" aria-label="${escapeHtml(declineLabel)}"><span class="material-icons">close</span></button>
+        <button class="jc-request-approve-btn" data-request-id="${escapeHtml(String(item.id))}" data-source-token="${escapeHtml(item.sourceToken)}" title="${escapeHtml(approveLabel)}" aria-label="${escapeHtml(approveLabel)}"><span class="material-icons">check</span></button>
+        <button class="jc-request-decline-btn" data-request-id="${escapeHtml(String(item.id))}" data-source-token="${escapeHtml(item.sourceToken)}" title="${escapeHtml(declineLabel)}" aria-label="${escapeHtml(declineLabel)}"><span class="material-icons">close</span></button>
       `;
     }
 
@@ -207,7 +207,9 @@ function getIssueAvatarUrl(issue: IssueItem): string {
     const avatar = issue?.createdBy?.avatar;
     if (!avatar) return '';
     if (avatar.startsWith('/')) {
-        return richApiClient.getUrl('/JellyfinCanopy/proxy/avatar', { path: avatar });
+        const sourceToken = issue?.createdBy?.avatarSourceToken;
+        if (!sourceToken) return '';
+        return `/JellyfinCanopy/proxy/avatar?path=${encodeURIComponent(avatar)}&sourceToken=${encodeURIComponent(sourceToken)}`;
     }
     return avatar;
 }
