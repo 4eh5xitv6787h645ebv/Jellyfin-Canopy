@@ -16,6 +16,10 @@ import {
     type FailedResponse,
 } from './fixtures/auth';
 import type { Page, Request, Route } from 'playwright/test';
+import {
+    isExpectedSignedOutHomeAxios401,
+    isExpectedSignedOutHostLogout4xx,
+} from '../scripts/e2e/jellyfin-host-noise';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -77,6 +81,7 @@ interface LogoutResponseEvidence extends FailedResponse {
 interface SignedOutEvidence {
     identityCleared: boolean;
     userId: string;
+    oldUserId: string;
     route: string;
     cookie: string;
     initialized: boolean;
@@ -272,6 +277,10 @@ async function spaLogout(
         () => String((window as any).ApiClient?.deviceId?.() || '')
     );
     expect(clientDeviceId, 'the authenticated host client exposes its device ID').not.toBe('');
+    const oldUserId = normalizeIdentityPart(await page.evaluate(
+        () => String((window as any).ApiClient?.getCurrentUserId?.() || '')
+    ));
+    expect(oldUserId, 'logout starts with an authenticated owner').not.toBe('');
 
     const requests: LogoutRequestEvidence[] = [];
     const responses: LogoutResponseEvidence[] = [];
@@ -411,7 +420,7 @@ async function spaLogout(
             // without printing the token-bearing request configuration.
             oldTokenStatus = 0;
         }
-        const signedOut: SignedOutEvidence = { ...state, oldTokenStatus };
+        const signedOut: SignedOutEvidence = { ...state, oldUserId, oldTokenStatus };
 
         expect(routeErrors, 'both concurrent native logout routes complete without errors').toBe(0);
         expect(
@@ -710,32 +719,6 @@ function authorizationParameter(authorization: string, name: 'Token' | 'DeviceId
     return match?.[1] || '';
 }
 
-function isExpectedHostLogout4xx(response: FailedResponse, origin: string): boolean {
-    if (response.url.includes('/JellyfinCanopy/')) return false;
-    const parsed = new URL(response.url);
-    if (response.status === 401) {
-        if (parsed.origin !== origin || parsed.hash !== '') return false;
-        if (response.method === 'POST') {
-            return parsed.search === '' && parsed.pathname === '/Sessions/Logout';
-        }
-        if (response.method !== 'GET') return false;
-        // The host can finish these already-scheduled connection/home probes
-        // after logout has revoked its token. Keep the allowance bound to the
-        // exact read-only endpoints and exact BitrateTest query.
-        if (parsed.search === '' && [
-            '/System/Info',
-            '/System/Endpoint',
-            '/UserViews',
-        ].includes(parsed.pathname)) return true;
-        return parsed.pathname === '/Playback/BitrateTest'
-            && parsed.searchParams.size === 1
-            && ['500000', '1000000', '3000000'].includes(
-                parsed.searchParams.get('Size') || ''
-            );
-    }
-    return response.status === 400 && /\/SyncPlay\/List(?:\?|$)/i.test(response.url);
-}
-
 function assertOnlyHostLogoutNoise(
     consoleErrors: ConsoleErrors,
     label: string,
@@ -747,17 +730,22 @@ function assertOnlyHostLogoutNoise(
     ).toEqual([]);
     const failed = consoleErrors.unexpected4xx();
     const syncPlay400 = failed.some((response) =>
-        response.status === 400 && /\/SyncPlay\/List(?:\?|$)/i.test(response.url));
+        response.status === 400
+        && isExpectedSignedOutHostLogout4xx(response, evidence));
+    const hasAllowedHost401 = failed.some((response) =>
+        response.status === 401
+        && isExpectedSignedOutHostLogout4xx(response, evidence));
     const unexpectedDetails = consoleErrors.realDetails().filter((detail) =>
         !HOST_LOGOUT_NOISE.test(detail.text)
         && !EXPECTED_IDENTITY_ABORT.test(detail.text)
+        && !isExpectedSignedOutHomeAxios401(detail, evidence, hasAllowedHost401)
         && !(syncPlay400 && /Failed to load resource:.*status of 400 \(Bad Request\)/i.test(detail.text)));
     expect(
         unexpectedDetails.map(({ text, url, source }) => ({ text, url, source })),
         `${label}: no errors beyond Jellyfin Web's own logout cancellation`
     ).toEqual([]);
     expect(
-        failed.filter((response) => !isExpectedHostLogout4xx(response, evidence.origin)),
+        failed.filter((response) => !isExpectedSignedOutHostLogout4xx(response, evidence)),
         `${label}: no plugin 4xx or unexpected host 4xx responses`
     ).toEqual([]);
 }
