@@ -440,12 +440,21 @@ api GET /Plugins | jq -e --arg id "${PLUGIN_ID}" \
     || fail "Jellyfin Canopy plugin did not load (check config/log/)"
 
 log "creating the Movies library"
-api POST "/Library/VirtualFolders?name=Movies&collectionType=movies&paths=%2Fmedia%2FMovies&refreshLibrary=true" \
+api POST "/Library/VirtualFolders?name=Movies&collectionType=movies&paths=%2Fmedia%2FMovies&refreshLibrary=false" \
     '{"LibraryOptions":{"EnableRealtimeMonitor":false}}'
 
 log "creating the Shows library"
-api POST "/Library/VirtualFolders?name=Shows&collectionType=tvshows&paths=%2Fmedia%2FShows&refreshLibrary=true" \
+api POST "/Library/VirtualFolders?name=Shows&collectionType=tvshows&paths=%2Fmedia%2FShows&refreshLibrary=false" \
     '{"LibraryOptions":{"EnableRealtimeMonitor":false}}'
+
+# A refresh per library creates two independent scans. Their state can briefly
+# become Idle between runs, and the later scan can overwrite deterministic
+# ProviderIds written below. Capture a high-resolution timestamp and trigger
+# exactly one scan after both libraries exist; metadata writes later require a
+# completed run whose own start time is strictly later than this trigger bound.
+LIBRARY_SCAN_TRIGGERED_AT="$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)"
+log "starting one explicit library scan"
+api POST "/Library/Refresh"
 
 log "creating the seeded non-admin user"
 api POST /Users/New "$(jq -nc --arg name "${USER_NAME}" --arg password "${USER_PASS}" \
@@ -557,6 +566,56 @@ done
     || fail "Auto-Skip fixture '${AUTOSKIP_NAME}' at ${AUTOSKIP_CONTAINER_PATH} has no probed media source after the scan wait"
 [ "${AUTOSKIP_SCAN_TICKS}" -ge "${AUTOSKIP_MIN_TICKS}" ] 2>/dev/null \
     || fail "Auto-Skip fixture '${AUTOSKIP_NAME}' at ${AUTOSKIP_CONTAINER_PATH} has ${AUTOSKIP_SCAN_TICKS} ticks; ${AUTOSKIP_MIN_TICKS} required"
+
+log "waiting for the explicit library scan to complete before metadata writes"
+LIBRARY_SCAN_STATE=""
+LIBRARY_SCAN_STATUS=""
+LIBRARY_SCAN_START=""
+LIBRARY_SCAN_END=""
+LIBRARY_SCAN_AFTER_TRIGGER=false
+for _ in $(seq 1 120); do
+    LIBRARY_SCAN_TASK="$(api GET /ScheduledTasks | jq -ec \
+        '[.[] | select(.Key == "RefreshLibrary")][0] // empty' || true)"
+    if [ -n "${LIBRARY_SCAN_TASK}" ]; then
+        LIBRARY_SCAN_STATE="$(printf '%s' "${LIBRARY_SCAN_TASK}" | jq -r '.State // ""')"
+        LIBRARY_SCAN_STATUS="$(printf '%s' "${LIBRARY_SCAN_TASK}" | jq -r \
+            '.LastExecutionResult.Status // ""')"
+        LIBRARY_SCAN_START="$(printf '%s' "${LIBRARY_SCAN_TASK}" | jq -r \
+            '.LastExecutionResult.StartTimeUtc // ""')"
+        LIBRARY_SCAN_END="$(printf '%s' "${LIBRARY_SCAN_TASK}" | jq -r \
+            '.LastExecutionResult.EndTimeUtc // ""')"
+        # Normalize both supported ISO-8601 fractional precisions to nine
+        # digits, then compare fixed-width UTC strings without floating-point
+        # timestamp loss. A startup scan already in flight before the POST can
+        # therefore never satisfy this gate when it later completes.
+        if jq -en --arg start "${LIBRARY_SCAN_START}" \
+            --arg trigger "${LIBRARY_SCAN_TRIGGERED_AT}" '
+                def canonical:
+                    capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<fraction>[0-9]+))?Z$") as $v
+                    | $v.base + "." + ((($v.fraction // "") + "000000000")[0:9]) + "Z";
+                ($start | canonical) > ($trigger | canonical)
+            ' >/dev/null; then
+            LIBRARY_SCAN_AFTER_TRIGGER=true
+        else
+            LIBRARY_SCAN_AFTER_TRIGGER=false
+        fi
+        if [ "${LIBRARY_SCAN_STATE}" = Idle ] \
+            && [ "${LIBRARY_SCAN_STATUS}" = Completed ] \
+            && [ "${LIBRARY_SCAN_AFTER_TRIGGER}" = true ] \
+            && [ -n "${LIBRARY_SCAN_END}" ] \
+            && [ "${LIBRARY_SCAN_END}" != "${LIBRARY_SCAN_START}" ]; then
+            break
+        fi
+    fi
+    sleep 1
+done
+[ "${LIBRARY_SCAN_STATE}" = Idle ] \
+    && [ "${LIBRARY_SCAN_STATUS}" = Completed ] \
+    && [ "${LIBRARY_SCAN_AFTER_TRIGGER}" = true ] \
+    && [ -n "${LIBRARY_SCAN_END}" ] \
+    && [ "${LIBRARY_SCAN_END}" != "${LIBRARY_SCAN_START}" ] \
+    || fail "explicit Scan Media Library task did not complete after trigger=${LIBRARY_SCAN_TRIGGERED_AT} (state=${LIBRARY_SCAN_STATE:-missing}, status=${LIBRARY_SCAN_STATUS:-missing}, start=${LIBRARY_SCAN_START:-missing}, end=${LIBRARY_SCAN_END:-missing})"
+log "explicit library scan completed at ${LIBRARY_SCAN_END}"
 
 # Resolve by the physical path owned by this seed, validate the media metadata,
 # then apply the stable logical name used by the spec. Re-read after the update
