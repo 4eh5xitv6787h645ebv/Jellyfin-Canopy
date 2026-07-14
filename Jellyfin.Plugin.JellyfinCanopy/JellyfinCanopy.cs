@@ -35,15 +35,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             _applicationPaths = applicationPaths;
             _logger = logger;
             // Must run before anything touches Configuration: BasePlugin loads the
-            // config XML lazily on first access, so adopting the legacy file here
-            // means the first load already sees the migrated copy.
+            // config XML lazily on first access, so adopting legacy state here
+            // means the first load already sees the migrated copy. Elevate runs
+            // first because it is the same-GUID predecessor; a separately installed
+            // Enhanced source is considered only when that path did not establish
+            // independent Canopy state.
             MigrateLegacyElevateState(applicationPaths);
+            var enhancedMigration = EnhancedStateMigration.Run(
+                applicationPaths.PluginConfigurationsPath,
+                ConfigurationFilePath,
+                Path.GetFileNameWithoutExtension(ConfigurationFileName),
+                msg => _logger.LogInformation(msg),
+                msg => _logger.LogError(msg));
+            _configWritesSuspendedByFailedMigration = enhancedMigration == EnhancedStateMigrationStatus.Failed;
+            if (_configWritesSuspendedByFailedMigration)
+            {
+                // An XML-only save barrier is insufficient: per-user managers and
+                // hosted services can also create files in the Canopy data root,
+                // converting a retryable import failure into a mixed-state conflict.
+                // Refuse this plugin instance before DI services start. Jellyfin
+                // itself remains available and will retry the plugin next startup.
+                Instance = null;
+                throw new InvalidOperationException(
+                    "Jellyfin Enhanced state migration failed. Canopy was not started so no new state can contaminate the retry; repair or move aside the source named in the preceding log entry and restart Jellyfin.");
+            }
             // After the file itself is adopted, rename any pre-rename "Jellyseerr"
             // element names inside it — a ≤2.0 config would otherwise deserialize
             // those settings to defaults. A failed migration arms the write
             // suppressor below: saving the defaults-loaded configuration would
             // permanently overwrite the legacy values the retry depends on.
-            _configWritesSuspendedByFailedMigration = !MigrateLegacySeerrElementNamesCore(ConfigurationFilePath, msg => _logger.LogInformation(msg), msg => _logger.LogError(msg));
+            _configWritesSuspendedByFailedMigration |= !MigrateLegacySeerrElementNamesCore(ConfigurationFilePath, msg => _logger.LogInformation(msg), msg => _logger.LogError(msg));
             _logger.LogInformation($"{PluginName} v{Version} initialized. Plugin logs will be written to: {fileLogProvider.CurrentLogFilePath}");
             // Set the User-Agent used by every Seerr/TMDB outbound HTTP call.
             // Cloudflare's Browser Integrity Check / Bot Fight Mode flags
@@ -209,21 +230,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             base.UpdateConfiguration(configuration);
         }
 
-        // Armed when the legacy Jellyseerr-name migration failed: the loaded
-        // Configuration then holds defaults for every un-migrated setting, and
-        // persisting it (startup backfills, scheduled-task saves, admin saves,
-        // and BasePlugin.LoadConfiguration's own on-deserialization-failure
-        // save) would overwrite the legacy XML with those defaults — permanent
-        // data loss. Every write path ends in the TYPED SaveConfiguration
-        // virtual (the parameterless overload delegates to it), so guarding it
-        // here protects the file until a later startup migrates successfully.
+        // Armed while a startup migration failure is being handled. Enhanced import
+        // failures abort construction before services start; legacy Jellyseerr-name
+        // failures retain the save barrier below. The loaded Configuration can hold
+        // defaults for settings whose source is still awaiting a safe retry. Persisting it
+        // (startup backfills, scheduled-task saves, admin saves, and
+        // BasePlugin.LoadConfiguration's own on-deserialization-failure save) would
+        // overwrite that recovery path. Every write ends in this typed virtual.
         private bool _configWritesSuspendedByFailedMigration;
 
         public override void SaveConfiguration(PluginConfiguration config)
         {
             if (_configWritesSuspendedByFailedMigration)
             {
-                _logger.LogError("Configuration save suppressed: the legacy Jellyseerr-name migration failed this startup, and saving now would overwrite the un-migrated settings with defaults. Fix the configuration file/permissions and restart Jellyfin; changes made this session are not persisted.");
+                _logger.LogError("Configuration save suppressed: a startup state migration failed, and saving now could overwrite settings still awaiting a safe retry. Fix the source configuration/data or permissions and restart Jellyfin; changes made this session are not persisted.");
                 return;
             }
 
