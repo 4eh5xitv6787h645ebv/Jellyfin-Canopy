@@ -132,6 +132,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // (Resume, Items, Latest, NextUp, Upcoming, Suggestions, SearchHints). Same filter handles "Remove from
             // Continue Watching" via HideScope=continuewatching in hidden-content.json.
             serviceCollection.AddSingleton<MaintenanceModeService>();
+            serviceCollection.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<MaintenanceModeService>());
             serviceCollection.AddSingleton<HiddenContentResponseFilter>();
             serviceCollection.AddScoped<IEventConsumer<PlaybackStartEventArgs>, ContinueWatchingPlaybackConsumer>();
             serviceCollection.AddHostedService<ContinueWatchingLibraryHook>();

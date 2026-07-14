@@ -60,7 +60,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             await service.EnableAsync("maintenance", durationMinutes: 0, action: "disable_accounts", affectedUserIds: null);
 
             // Disable: user1's restore throws; the other two restore fine.
-            await service.DisableAsync();
+            await Assert.ThrowsAsync<InvalidOperationException>(() => service.DisableAsync());
 
             Assert.True(File.Exists(_stateFilePath));
             var state = JsonSerializer.Deserialize<MaintenanceState>(
@@ -69,6 +69,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
             // The failed user's record survives so a retry/restart can still re-enable them...
             Assert.True(state.IsActive);
+            Assert.Equal(MaintenancePhases.RestoreFailed, state.Phase);
             Assert.Equal(new[] { failUser.Id.ToString() }, state.AccountDisabledUserIds.ToArray());
 
             // ...and the two successfully-restored users' records are cleared.
