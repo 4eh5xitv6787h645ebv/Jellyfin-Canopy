@@ -1,4 +1,6 @@
 {
+  "SchemaVersion": 2,
+  "Phase": "Active",
   "IsActive": true,
   "Message": "Wartung aktualisiert — 更新",
   "Action": "both",
@@ -7,5 +9,8 @@
   "AccountDisabledUserIds": [
     "3f2504e04f8941d39a0c0305e82c3301"
   ],
-  "RemoteDisabledUserIds": []
+  "RemoteDisabledUserIds": [],
+  "FailureReason": null,
+  "RecoveryAvailable": true,
+  "RecoveryPhase": null
 }

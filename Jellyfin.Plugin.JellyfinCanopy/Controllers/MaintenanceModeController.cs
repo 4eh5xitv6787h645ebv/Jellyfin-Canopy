@@ -76,13 +76,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var state = _maintenanceModeService.GetStatus();
             return Ok(new
             {
+                state.Phase,
                 state.IsActive,
                 state.Message,
                 state.Action,
                 state.StartedAt,
                 state.EndsAt,
                 AccountDisabledCount = state.AccountDisabledUserIds.Count,
-                RemoteDisabledCount  = state.RemoteDisabledUserIds.Count
+                RemoteDisabledCount = state.RemoteDisabledUserIds.Count,
+                state.FailureReason,
+                state.RecoveryAvailable,
+                state.RecoveryPhase
             });
         }
 
@@ -90,20 +94,61 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpPost("MaintenanceMode/Enable")]
         public async Task<IActionResult> EnableMaintenanceMode([FromBody] MaintenanceModeRequest request)
         {
-            await _maintenanceModeService.EnableAsync(
-                request.Message ?? string.Empty,
-                request.DurationMinutes,
-                request.Action ?? "disable_accounts",
-                request.AffectedUserIds).ConfigureAwait(false);
-            return Ok(new { success = true });
+            try
+            {
+                await _maintenanceModeService.EnableAsync(
+                    request.Message ?? string.Empty,
+                    request.DurationMinutes,
+                    request.Action ?? "disable_accounts",
+                    request.AffectedUserIds).ConfigureAwait(false);
+                return Ok(new { success = true });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return MaintenanceFailure(StatusCodes.Status409Conflict, ex.Message);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogError(ex, "[Maintenance] Could not persist the enable transition.");
+                return MaintenanceFailure(
+                    StatusCodes.Status503ServiceUnavailable,
+                    "Maintenance state could not be persisted; no account changes were authorized.");
+            }
         }
 
         [Authorize(Policy = Policies.RequiresElevation)]
         [HttpPost("MaintenanceMode/Disable")]
         public async Task<IActionResult> DisableMaintenanceMode()
         {
-            await _maintenanceModeService.DisableAsync().ConfigureAwait(false);
-            return Ok(new { success = true });
+            try
+            {
+                await _maintenanceModeService.DisableAsync().ConfigureAwait(false);
+                return Ok(new { success = true });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return MaintenanceFailure(StatusCodes.Status409Conflict, ex.Message);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogError(ex, "[Maintenance] Could not persist the disable transition.");
+                return MaintenanceFailure(
+                    StatusCodes.Status503ServiceUnavailable,
+                    "Account recovery ran, but its durable outcome could not be committed. The recovery ledger was retained.");
+            }
+        }
+
+        private IActionResult MaintenanceFailure(int statusCode, string message)
+        {
+            var state = _maintenanceModeService.GetStatus();
+            return StatusCode(statusCode, new
+            {
+                success = false,
+                error = message,
+                state.Phase,
+                state.IsActive,
+                state.RecoveryAvailable
+            });
         }
 
         [Authorize(Policy = Policies.RequiresElevation)]
