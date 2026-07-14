@@ -14,13 +14,12 @@ name: Release
 #   3. packages the Jellyfin 12 ZIP with the DLL at the zip root
 #      (Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip — the exact layout and
 #      naming of the existing release assets),
-#   4. creates the GitHub Release (or attaches assets to a pre-drafted one,
-#      reusing its body as the changelog),
-#   5. regenerates manifest.json via scripts/release/update-manifest.js,
-#      publishes the release asset, then proves the catalog and exact ZIP are
-#      anonymously downloadable/checksum-valid before opening the manifest PR
-#      (MD5 checksums from the real ZIPs, monotonic version guard) and opens
-#      a PR with the change — manifest.json is never pushed directly.
+#   4. creates or resumes an unadvertised draft and finalizes its immutable
+#      asset; an already-published tag is verified and never modified,
+#   5. generates a create-only manifest branch from the downloaded final ZIP,
+#      publishes the draft, proves the exact bytes anonymously downloadable,
+#      and opens the manifest PR. A valid rerun is a verified no-op; neither
+#      release bytes/notes nor reviewer commits are overwritten.
 #
 # New releases publish only targetAbi 12.0.0.0 manifest entries; the
 # existing 10.11.0.0 entries in manifest.json are frozen history that keeps
@@ -140,20 +139,51 @@ jobs:
             -p:AssemblyVersion="$VERSION" -p:FileVersion="$VERSION"
           # Existing release-asset layout: exactly one file, the plugin DLL
           # at the zip root, named after the targetAbi.
-          zip -j dist/Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip \
-            Jellyfin.Plugin.JellyfinCanopy/bin/Release/net10.0/Jellyfin.Plugin.JellyfinCanopy.dll
+          dll=Jellyfin.Plugin.JellyfinCanopy/bin/Release/net10.0/Jellyfin.Plugin.JellyfinCanopy.dll
+          # Give repeat builds of the same tag stable ZIP metadata. Published
+          # bytes are immutable regardless; determinism is diagnostic aid only.
+          source_date_epoch="$(git log -1 --format=%ct "refs/tags/$GITHUB_REF_NAME^{commit}")"
+          touch -d "@$source_date_epoch" "$dll"
+          TZ=UTC zip -X -j dist/Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip "$dll"
           ls -l dist/
+
+      # Query the REST collection once so API failures are blocking and so two
+      # manual drafts for one tag cannot be mistaken for one resumable release.
+      - name: Discover existing release metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            > "$RUNNER_TEMP/release-pages.json"
+          jq --arg tag "$GITHUB_REF_NAME" \
+            '[.[][] | select(.tag_name == $tag)]' \
+            "$RUNNER_TEMP/release-pages.json" > "$RUNNER_TEMP/tag-releases.json"
+          release_count="$(jq length "$RUNNER_TEMP/tag-releases.json")"
+          if [ "$release_count" -gt 1 ]; then
+            echo "::error::Multiple releases/drafts exist for tag $GITHUB_REF_NAME"
+            exit 1
+          fi
+          if [ "$release_count" -eq 1 ]; then
+            jq '.[0] | {
+              id,
+              isDraft: .draft,
+              tagName: .tag_name,
+              body,
+              assets: [.assets[] | { id, name }]
+            }' "$RUNNER_TEMP/tag-releases.json" > "$RUNNER_TEMP/release.json"
+          fi
 
       # Changelog precedence: a pre-drafted release body for this tag wins;
       # otherwise commit subjects since the previous tag, in the same
       # "- first\n - second" shape the manifest has always used. The text is
       # only ever passed around as a file — never through the shell.
       - name: Collect changelog
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" --json body --jq .body > changelog.txt 2>/dev/null \
-              && [ -s changelog.txt ]; then
+          if [ -f "$RUNNER_TEMP/release.json" ]; then
+            jq -r '.body // ""' "$RUNNER_TEMP/release.json" > changelog.txt
+          fi
+          if [ -s changelog.txt ]; then
             echo "Using existing release body as changelog"
           else
             prev_tag="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
@@ -177,71 +207,210 @@ jobs:
             exit 1
           fi
 
-      - name: Update manifest.json
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cp manifest.json "$RUNNER_TEMP/manifest-before-release.json"
-          node scripts/release/update-manifest.js \
-            --manifest manifest.json \
-            --tag "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --changelog-file changelog.txt \
-            --asset "12.0.0.0=dist/Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip" > new-entries.json
-          node scripts/release/validate-manifest.js manifest.json --assets-dir dist
-          {
-            echo '### New manifest entries'
-            echo '````json'
-            cat new-entries.json
-            echo '````'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Create release & attach ZIPs
+      # This is the release-state ownership boundary. It downloads any existing
+      # asset before choosing an action and fails closed when published bytes do
+      # not match main or the create-only proposal branch.
+      - name: Inspect release and manifest state
+        id: release_state
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            echo "Release for $GITHUB_REF_NAME already exists; attaching assets"
-            gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber
-            # A pre-drafted release stays a DRAFT after upload, and draft assets
-            # are not served at releases/download/<tag>/... — the URL the
-            # manifest entry points at. Publish it, or every install polling
-            # the merged manifest would hit a 404.
-            gh release edit "$GITHUB_REF_NAME" --draft=false
-          else
-            gh release create "$GITHUB_REF_NAME" dist/*.zip \
-              --verify-tag \
-              --title "v$VERSION" \
-              --notes-file changelog.txt
+          zip_name=Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip
+          default_branch="$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)"
+          branch="release/manifest-$VERSION"
+
+          git fetch origin "$default_branch"
+          git show "origin/$default_branch:manifest.json" > "$RUNNER_TEMP/main-manifest.json"
+
+          args=(
+            --repo "$GITHUB_REPOSITORY"
+            --tag "$GITHUB_REF_NAME"
+            --target-abi 12.0.0.0
+            --zip-name "$zip_name"
+            --built-asset "dist/$zip_name"
+            --main-manifest "$RUNNER_TEMP/main-manifest.json"
+            --github-output "$GITHUB_OUTPUT"
+            --contract-manifest-output "$RUNNER_TEMP/existing-contract.json"
+          )
+
+          if git ls-remote --exit-code --heads origin "refs/heads/$branch" > /dev/null; then
+            git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
+            git show "refs/remotes/origin/$branch:manifest.json" \
+              > "$RUNNER_TEMP/proposal-manifest.json"
+            args+=(--proposal-manifest "$RUNNER_TEMP/proposal-manifest.json")
           fi
 
-      # A published GitHub release can still be unreachable to Jellyfin when
-      # the repository is private, the asset path is wrong, or GitHub redirects
-      # anonymous callers to authentication. Do not even open the manifest PR
-      # until the exact newly generated sourceUrl passes the public contract.
-      - name: Verify anonymous catalog contract before manifest PR
-        run: >-
-          node scripts/release/verify-manifest-remote.js manifest.json
-          --base-manifest "$RUNNER_TEMP/manifest-before-release.json"
-          --manifest-url
-          https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/main/manifest.json
+          rejected_pr="$(gh pr list --head "$branch" --state closed --limit 100 \
+            --json number,mergedAt \
+            --jq '[.[] | select(.mergedAt == null) | .number] | join(",")')"
+          if [ -n "$rejected_pr" ]; then
+            echo "::error::Manifest branch has rejected/closed PR(s) $rejected_pr; refusing release mutation"
+            exit 1
+          fi
+
+          if [ -f "$RUNNER_TEMP/release.json" ]; then
+            args+=(--release-json "$RUNNER_TEMP/release.json")
+            asset_count="$(jq --arg name "$zip_name" \
+              '[.assets[] | select(.name == $name)] | length' "$RUNNER_TEMP/release.json")"
+            if [ "$asset_count" -gt 1 ]; then
+              echo "::error::Release contains duplicate $zip_name assets"
+              exit 1
+            fi
+            if [ "$asset_count" -eq 1 ]; then
+              mkdir -p "$RUNNER_TEMP/existing-assets"
+              gh release download "$GITHUB_REF_NAME" \
+                --pattern "$zip_name" --dir "$RUNNER_TEMP/existing-assets"
+              args+=(--remote-asset "$RUNNER_TEMP/existing-assets/$zip_name")
+            fi
+          fi
+
+          node scripts/release/release-state.js "${args[@]}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+
+      - name: Create or reconcile draft release asset
+        env:
+          ACTION: ${{ steps.release_state.outputs.action }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          zip_name=Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip
+          require_existing_draft() {
+            current="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)"
+            if [ "$current" != true ]; then
+              echo "::error::Release is no longer a draft; refusing asset mutation"
+              exit 1
+            fi
+          }
+          case "$ACTION" in
+            create-draft)
+              gh release create "$GITHUB_REF_NAME" "dist/$zip_name" \
+                --draft --verify-tag --title "v$VERSION" --notes-file changelog.txt
+              ;;
+            upload-draft-asset)
+              require_existing_draft
+              gh release upload "$GITHUB_REF_NAME" "dist/$zip_name"
+              ;;
+            reuse-draft-asset|resume-draft-proposal)
+              echo "Draft already has the verified immutable asset"
+              ;;
+            replace-draft-asset)
+              # The state gate permits this only with no main/proposal contract.
+              require_existing_draft
+              gh release upload "$GITHUB_REF_NAME" "dist/$zip_name" --clobber
+              ;;
+            noop-main|resume-published-proposal)
+              echo "Published release is immutable; no release mutation"
+              ;;
+            *)
+              echo "::error::Unknown release action: $ACTION"
+              exit 1
+              ;;
+          esac
+
+      - name: Download finalized draft asset
+        if: >-
+          steps.release_state.outputs.action != 'noop-main' &&
+          steps.release_state.outputs.action != 'resume-published-proposal'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          zip_name=Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip
+          mkdir -p "$RUNNER_TEMP/final-assets"
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern "$zip_name" --dir "$RUNNER_TEMP/final-assets"
+          test -f "$RUNNER_TEMP/final-assets/$zip_name"
+
+      - name: Generate manifest from finalized immutable bytes
+        if: >-
+          steps.release_state.outputs.action != 'noop-main' &&
+          steps.release_state.outputs.action != 'resume-published-proposal' &&
+          steps.release_state.outputs.action != 'resume-draft-proposal'
+        run: |
+          cp "$RUNNER_TEMP/main-manifest.json" "$RUNNER_TEMP/generated-manifest.json"
+          node scripts/release/update-manifest.js \
+            --manifest "$RUNNER_TEMP/generated-manifest.json" \
+            --tag "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --changelog-file changelog.txt \
+            --asset "12.0.0.0=$RUNNER_TEMP/final-assets/Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip" \
+            > "$RUNNER_TEMP/new-entries.json"
+          node scripts/release/validate-manifest.js \
+            "$RUNNER_TEMP/generated-manifest.json" --assets-dir "$RUNNER_TEMP/final-assets"
+          {
+            echo '### New manifest entries'
+            echo '````json'
+            cat "$RUNNER_TEMP/new-entries.json"
+            echo '````'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create manifest branch without overwriting reviewer commits
+        if: >-
+          steps.release_state.outputs.action != 'noop-main' &&
+          steps.release_state.outputs.action != 'resume-published-proposal' &&
+          steps.release_state.outputs.action != 'resume-draft-proposal'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BRANCH: ${{ steps.release_state.outputs.branch }}
+          DEFAULT_BRANCH: ${{ steps.release_state.outputs.default_branch }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --create "$BRANCH" "origin/$DEFAULT_BRANCH"
+          cp "$RUNNER_TEMP/generated-manifest.json" manifest.json
+          git add manifest.json
+          git commit -m "chore: update manifest for $VERSION"
+          # Create-only push: a concurrent run or reviewer-owned branch wins.
+          # There is deliberately no force/lease update of an existing ref.
+          git push --force-with-lease="refs/heads/$BRANCH:" \
+            origin "HEAD:refs/heads/$BRANCH"
+
+      - name: Publish verified draft
+        if: >-
+          steps.release_state.outputs.action != 'noop-main' &&
+          steps.release_state.outputs.action != 'resume-published-proposal'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.release_state.outputs.branch }}
+        run: |
+          git ls-remote --exit-code --heads origin "refs/heads/$BRANCH" > /dev/null
+          is_draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)"
+          if [ "$is_draft" != true ]; then
+            echo "::error::Release changed state after inspection; refusing to mutate it"
+            exit 1
+          fi
+          gh release edit "$GITHUB_REF_NAME" --draft=false
+
+      - name: Verify exact immutable asset anonymously
+        env:
+          ACTION: ${{ steps.release_state.outputs.action }}
+        run: |
+          if [[ "$ACTION" == noop-main \
+              || "$ACTION" == resume-published-proposal \
+              || "$ACTION" == resume-draft-proposal ]]; then
+            manifest="$RUNNER_TEMP/existing-contract.json"
+            args=("$manifest")
+          else
+            manifest="$RUNNER_TEMP/generated-manifest.json"
+            args=("$manifest" --base-manifest "$RUNNER_TEMP/main-manifest.json")
+          fi
+          node scripts/release/verify-manifest-remote.js "${args[@]}" \
+            --manifest-url \
+            https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/main/manifest.json
 
       # The manifest lands via PR, not a direct push: a human reviews the
       # generated entry before every installed plugin starts seeing it.
       - name: Open manifest update PR
+        if: steps.release_state.outputs.action != 'noop-main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
+          BRANCH: ${{ steps.release_state.outputs.branch }}
+          DEFAULT_BRANCH: ${{ steps.release_state.outputs.default_branch }}
         run: |
-          branch="release/manifest-$VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
-          git add manifest.json
-          git commit -m "chore: update manifest for $VERSION"
-          git push --force origin "$branch"
-          default_branch="$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)"
+          git ls-remote --exit-code --heads origin "refs/heads/$BRANCH" > /dev/null
           release_url="https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
           {
             echo "Automated manifest update for release [$GITHUB_REF_NAME]($release_url)."
@@ -252,13 +421,21 @@ jobs:
             echo
             echo "Merging this PR is what publishes the update to installed plugins."
           } > pr-body.md
-          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+          open_pr="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')"
+          if [ -z "$open_pr" ]; then
             gh pr create \
-              --base "$default_branch" \
-              --head "$branch" \
+              --base "$DEFAULT_BRANCH" \
+              --head "$BRANCH" \
               --title "chore: update manifest for $VERSION" \
               --body-file pr-body.md
           else
-            echo "PR for $branch already open; branch updated"
+            echo "PR $open_pr already owns $BRANCH; leaving it unchanged"
           fi
+
+      - name: Summarize immutable rerun
+        if: steps.release_state.outputs.action == 'noop-main'
+        run: >-
+          echo "Verified existing published release, committed manifest, ZIP layout,
+          checksum, and anonymous download; rerun made no release or manifest changes."
+          >> "$GITHUB_STEP_SUMMARY"
 # Registered for Jellyfin Canopy CI (no functional change).
