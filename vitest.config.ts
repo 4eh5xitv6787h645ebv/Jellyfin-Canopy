@@ -8,10 +8,14 @@
 //
 // Coverage gate (`npm run test:client:coverage`, enforced in CI): line
 // coverage over src/core/ only — the typed platform layer every feature
-// builds on. Measured 48.77% lines when the gate was introduced; the
-// threshold is a RATCHET set just below that. When you raise coverage,
-// raise the threshold to just below the new number — never lower it.
+// builds on. The reviewed measurement and one-line tolerance live in the same
+// committed baseline artifact as the server gate. The post-run count checker
+// owns the floor because Vitest truncates percentages before comparison; it
+// also fails scope and upward drift, forcing an explicit ratchet update.
 import { defineConfig } from 'vitest/config';
+import coverageBaselines from './scripts/coverage-baselines.json';
+
+const clientBaseline = coverageBaselines.profiles.client;
 
 export default defineConfig({
     test: {
@@ -25,11 +29,8 @@ export default defineConfig({
         testTimeout: 15_000,
         coverage: {
             provider: 'v8',
-            include: ['Jellyfin.Plugin.JellyfinCanopy/src/core/**'],
-            reporter: ['text', 'text-summary'],
-            thresholds: {
-                lines: 47,
-            },
+            include: [clientBaseline.scope],
+            reporter: ['text', 'text-summary', 'json-summary'],
         },
     },
 });

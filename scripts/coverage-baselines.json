@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "policy": {
+    "maximumTolerancePercentagePoints": 0.15,
+    "description": "Blocking line-coverage ratchets. Update measured counts in the same reviewed change whenever scope or coverage advances; never lower a floor without an explicit, justified scope change."
+  },
+  "profiles": {
+    "client": {
+      "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
+      "report": "coverage/coverage-summary.json",
+      "measured": {
+        "coveredLines": 1361,
+        "totalLines": 1692
+      },
+      "tolerance": {
+        "missingCoveredLines": 1,
+        "rationale": "Two clean Node 22/V8 runs on 2026-07-15 were identical; one line permits only negligible instrumentation variance."
+      }
+    },
+    "server": {
+      "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
+      "package": "Jellyfin.Plugin.JellyfinCanopy",
+      "measured": {
+        "coveredLines": 12765,
+        "totalLines": 20998
+      },
+      "tolerance": {
+        "missingCoveredLines": 1,
+        "rationale": "Two clean .NET 10/Coverlet runs on 2026-07-15 were identical; one line permits only negligible instrumentation variance."
+      }
+    }
+  }
+}

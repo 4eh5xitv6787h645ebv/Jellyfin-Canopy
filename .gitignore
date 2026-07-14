@@ -161,6 +161,7 @@ dllssigned/
 
 # Node modules
 node_modules/
+coverage/
 TRANSLATION_GUIDE.md
 
 # Windows Azure Build Output
