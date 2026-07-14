@@ -4,13 +4,26 @@
 // (Converted from js/enhanced/osd-rating.js — bodies semantically identical.)
 
 import { JC } from '../globals';
-import { waitForElement } from '../core/dom-observer';
+import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate } from '../core/navigation';
+import type { IdentityContext } from '../types/jc';
 
 /** Ratings resolved for one item (display-ready values). */
 interface OsdRating {
     tmdb: string | null;
     critic: number | null;
+}
+
+/** Minimal Jellyfin item projection requested by the OSD rating endpoint. */
+interface RatingItem {
+  Type?: string;
+  SeriesId?: string;
+  CommunityRating?: unknown;
+  CriticRating?: unknown;
+}
+
+interface RatingItemsResponse {
+  Items?: RatingItem[];
 }
 
 const logPrefix = '🪼 Jellyfin Canopy: OSD Rating:';
@@ -26,6 +39,23 @@ const ratingCache = new Map<string, OsdRating>();
 const pendingRatings = new Map<string, Promise<OsdRating>>();
 let scheduledUpdate: number | null = null;
 let osdObserver: MutationObserver | null = null;
+let navUnsubscribe: (() => void) | null = null;
+let generation = 0;
+
+interface AttachAttempt {
+  readonly generation: number;
+  cancel(): void;
+}
+
+let attachAttempt: AttachAttempt | null = null;
+
+function isActive(context: IdentityContext, expectedGeneration: number): boolean {
+  return generation === expectedGeneration && JC.identity.isCurrent(context);
+}
+
+function ratingKey(context: IdentityContext, itemId: string): string {
+  return `${context.serverId}:${context.userId}:${context.epoch}:${itemId}`;
+}
 
 function isEnabled(): boolean {
   // Controlled by server config; default true unless explicitly disabled
@@ -52,26 +82,33 @@ function getCurrentItemId(): string | null {
   return favBtn?.dataset?.id || null;
 }
 
-async function fetchItemRatings(userId: string, itemId: string): Promise<OsdRating> {
+async function fetchItemRatings(
+  context: IdentityContext,
+  expectedGeneration: number,
+  itemId: string
+): Promise<OsdRating> {
   try {
-    const result: any = await ApiClient.ajax({
-      type: 'GET',
-      url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl(`/Users/${userId}/Items`, { Ids: itemId, Fields: 'CommunityRating,CriticRating,Type' }),
-      dataType: 'json'
+    const params = new URLSearchParams({
+      Ids: itemId,
+      Fields: 'CommunityRating,CriticRating,Type'
     });
+    const result = await JC.core.api!.jf(`/Users/${context.userId}/Items?${params}`) as RatingItemsResponse;
+    if (!isActive(context, expectedGeneration)) return { tmdb: null, critic: null };
     const item = result?.Items?.[0];
     if (!item) return { tmdb: null, critic: null };
 
     let sourceItem = item;
     if ((item.Type === 'Season' || item.Type === 'Episode') && item.SeriesId && !item.CommunityRating && !item.CriticRating) {
       try {
-        const seriesResult: any = await ApiClient.ajax({
-          type: 'GET',
-          url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl(`/Users/${userId}/Items`, { Ids: item.SeriesId, Fields: 'CommunityRating,CriticRating,Type' }),
-          dataType: 'json'
+        const seriesParams = new URLSearchParams({
+          Ids: String(item.SeriesId),
+          Fields: 'CommunityRating,CriticRating,Type'
         });
+        const seriesResult = await JC.core.api!.jf(`/Users/${context.userId}/Items?${seriesParams}`) as RatingItemsResponse;
+        if (!isActive(context, expectedGeneration)) return { tmdb: null, critic: null };
         sourceItem = seriesResult?.Items?.[0] || item;
       } catch (e) {
+        if (!isActive(context, expectedGeneration)) return { tmdb: null, critic: null };
         console.warn(`${logPrefix} Failed to fetch series rating for ${item.Type}`, e);
       }
     }
@@ -81,6 +118,7 @@ async function fetchItemRatings(userId: string, itemId: string): Promise<OsdRati
 
     return { tmdb, critic };
   } catch (e) {
+    if (!isActive(context, expectedGeneration)) return { tmdb: null, critic: null };
     console.warn(`${logPrefix} Failed to fetch rating for ${itemId}`, e);
     return { tmdb: null, critic: null };
   }
@@ -106,6 +144,7 @@ export function ensureStyles(): void {
 
 function injectRating(osdRoot: HTMLElement, rating: OsdRating, itemId: string): void {
   if (!osdRoot || (!rating.tmdb && rating.critic === null)) return;
+  if (!osdRoot.isConnected || getCurrentItemId() !== itemId) return;
   ensureStyles();
 
   const osdTimeContainer = osdRoot.querySelector('.osdTimeText');
@@ -151,20 +190,24 @@ function injectRating(osdRoot: HTMLElement, rating: OsdRating, itemId: string): 
   osdTimeContainer.insertAdjacentElement('beforebegin', container);
 }
 
-async function updateOsdRating(): Promise<void> {
+async function updateOsdRating(
+  context = JC.identity.capture(),
+  expectedGeneration = generation
+): Promise<void> {
+  if (!context || !isActive(context, expectedGeneration)) return;
   if (!isEnabled()) {
     console.debug(`${logPrefix} Skipped - feature disabled`);
     return;
   }
-  if (!(JC as any).isVideoPage()) {
+  if (!JC.isVideoPage?.()) {
     return;
   }
   const osdRoot = document.querySelector<HTMLElement>('.videoOsdBottom');
   if (!osdRoot) return;
 
-  const userId = ApiClient.getCurrentUserId?.();
   const itemId = getCurrentItemId();
-  if (!userId || !itemId) return;
+  if (!itemId) return;
+  const key = ratingKey(context, itemId);
 
   // Skip re-injection only if the container already shows the correct item
   const existing = osdRoot.querySelector<HTMLElement>(`#${CONTAINER_ID}`);
@@ -174,45 +217,72 @@ async function updateOsdRating(): Promise<void> {
   if (existing) existing.remove();
 
   // Serve from cache if available (including null-rating to avoid refetch loops)
-  if (ratingCache.has(itemId)) {
-    const cached = ratingCache.get(itemId);
+  if (ratingCache.has(key)) {
+    const cached = ratingCache.get(key);
     if (cached && (cached.tmdb || cached.critic !== null)) injectRating(osdRoot, cached, itemId);
     return;
   }
 
   // Reuse in-flight fetch
-  if (pendingRatings.has(itemId)) {
-    const rating = await pendingRatings.get(itemId);
-    if (rating && (rating.tmdb || rating.critic !== null)) injectRating(osdRoot, rating, itemId);
+  if (pendingRatings.has(key)) {
+    const rating = await pendingRatings.get(key);
+    if (isActive(context, expectedGeneration) && rating && (rating.tmdb || rating.critic !== null)) {
+      injectRating(osdRoot, rating, itemId);
+    }
     return;
   }
 
   const promise = (async () => {
-    const rating = await fetchItemRatings(userId, itemId);
-    ratingCache.set(itemId, rating);
+    const rating = await fetchItemRatings(context, expectedGeneration, itemId);
+    if (isActive(context, expectedGeneration)) ratingCache.set(key, rating);
     return rating;
   })();
 
-  pendingRatings.set(itemId, promise);
+  pendingRatings.set(key, promise);
 
   try {
     const rating = await promise;
-    if (rating && (rating.tmdb || rating.critic !== null)) injectRating(osdRoot, rating, itemId);
+    if (isActive(context, expectedGeneration) && rating && (rating.tmdb || rating.critic !== null)) {
+      injectRating(osdRoot, rating, itemId);
+    }
   } finally {
-    pendingRatings.delete(itemId);
+    pendingRatings.delete(key);
   }
 }
 
-function scheduleUpdate(): void {
+function scheduleUpdate(context: IdentityContext, expectedGeneration: number): void {
   if (scheduledUpdate) return;
   scheduledUpdate = window.setTimeout(() => {
     scheduledUpdate = null;
-    if ((JC as any).isVideoPage()) void updateOsdRating();
+    if (isActive(context, expectedGeneration) && JC.isVideoPage?.()) {
+      void updateOsdRating(context, expectedGeneration);
+    }
   }, 200);
 }
 
-// Guards attachOsdObserver against overlapping waitForElement waits.
-let attachInFlight = false;
+function waitForPlayerContainer(attempt: AttachAttempt): Promise<Element | null> {
+  const existing = document.querySelector('.videoPlayerContainer');
+  if (existing) return Promise.resolve(existing);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let handle: { unsubscribe(): void } | null = null;
+    const settle = (element: Element | null): void => {
+      if (settled) return;
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      handle?.unsubscribe();
+      resolve(element);
+    };
+    attempt.cancel = () => settle(null);
+    handle = onBodyMutation(`osd-rating-player-${attempt.generation}`, () => {
+      const element = document.querySelector('.videoPlayerContainer');
+      if (element) settle(element);
+    });
+    timeoutId = setTimeout(() => settle(null), 20_000);
+  });
+}
 
 /**
  * Attaches the OSD observer, scoped to the player container.
@@ -222,24 +292,25 @@ let attachInFlight = false;
  * every page. It is now created lazily when a video page mounts and is torn
  * down on leave (see the onNavigate wiring in JC.initializeOsdRating).
  */
-async function attachOsdObserver(): Promise<void> {
-  if (osdObserver || attachInFlight) return;
-  attachInFlight = true;
+async function attachOsdObserver(context: IdentityContext, expectedGeneration: number): Promise<void> {
+  if (!isActive(context, expectedGeneration)) return;
+  if (osdObserver || attachAttempt) return;
+  const attempt: AttachAttempt = { generation: expectedGeneration, cancel() { /* assigned by waiter */ } };
+  attachAttempt = attempt;
   try {
     // The player container mounts shortly after navigation; wait for it via
     // the shared body observer instead of observing body ourselves.
-    const target = document.querySelector('.videoPlayerContainer')
-      || await waitForElement('.videoPlayerContainer', 20000);
+    const target = await waitForPlayerContainer(attempt);
     if (!target) return;
-    if (!(JC as any).isVideoPage()) return; // navigated away while waiting
+    if (!isActive(context, expectedGeneration) || !JC.isVideoPage?.()) return; // navigated/switched while waiting
     if (osdObserver) return;
     osdObserver = new MutationObserver(() => {
-      scheduleUpdate();
+      scheduleUpdate(context, expectedGeneration);
     });
     osdObserver.observe(target, { childList: true, subtree: true });
-    scheduleUpdate();
+    scheduleUpdate(context, expectedGeneration);
   } finally {
-    attachInFlight = false;
+    if (attachAttempt === attempt) attachAttempt = null;
   }
 }
 
@@ -255,21 +326,40 @@ function detachOsdObserver(): void {
   }
 }
 
+function reset(): void {
+  generation++;
+  detachOsdObserver();
+  navUnsubscribe?.();
+  navUnsubscribe = null;
+  attachAttempt?.cancel();
+  attachAttempt = null;
+  ratingCache.clear();
+  pendingRatings.clear();
+  document.querySelectorAll(`#${CONTAINER_ID}`).forEach((node) => node.remove());
+}
+
 JC.initializeOsdRating = function() {
+  reset();
   if (!isEnabled()) {
     console.log(`${logPrefix} Feature is disabled in settings.`);
     return;
   }
   try {
+    const context = JC.identity.capture();
+    if (!context) return;
+    const expectedGeneration = generation;
     const syncWithPage = (): void => {
-      if ((JC as any).isVideoPage()) {
-        void attachOsdObserver();
+      if (!isActive(context, expectedGeneration)) return;
+      if (JC.isVideoPage?.()) {
+        void attachOsdObserver(context, expectedGeneration);
       } else {
         detachOsdObserver();
       }
     };
-    onNavigate(syncWithPage);
+    navUnsubscribe = onNavigate(syncWithPage);
     syncWithPage(); // boot may happen while already on a video page
     console.log(`${logPrefix} Initialized successfully.`);
   } catch (e) { console.warn(`${logPrefix} Init failed`, e); }
 };
+
+JC.identity.registerReset('osd-rating', reset);

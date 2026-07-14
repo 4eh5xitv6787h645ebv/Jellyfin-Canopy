@@ -10,7 +10,7 @@
 // The pipeline handles all scanning, fetching, caching, and scheduling.
 
 import { JC } from '../globals';
-import type { TagPipelineLike } from '../types/jc';
+import type { IdentityContext, TagPipelineLike } from '../types/jc';
 import { addCSS, clearItemCache, getItemCached } from './helpers';
 import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate } from '../core/navigation';
@@ -325,15 +325,19 @@ let projectionResetPending = JC.pluginConfig?.TagCacheServerMode === true;
 // PERF(R9): per-element failure counter — a card whose data fetch failed is
 // un-marked from processedCards (so later mutation/nav passes retry it) up to
 // this cap, then stays marked so an unreachable server isn't hammered forever.
-const cardFetchFailures = new WeakMap<Element, number>();
+let cardFetchFailures = new WeakMap<Element, number>();
 const CARD_FETCH_MAX_FAILURES = 3;
 const firstEpisodeCache = new Map<string, Promise<any>>(); // seriesId → Promise<item|null>
 const parentSeriesCache = new Map<string, Promise<any>>(); // seriesId → Promise<item|null>
 let fetchTimer: number | null = null;
 let isProcessing = false;
+let processingGeneration = 0;
 let batchGeneration = 0; // Incremented on navigation to cancel stale in-flight batches
 let requestQueue: QueueEntry[] = []; // { el, itemId, itemType }
 let firstFetchAfterNav = true; // PERF(R7): shortens the debounce for the first batch of a navigation
+let processWired = false;
+let activeIdentityEpoch: number | null = null;
+let identityActivationGeneration = 0;
 
 // ── Pipeline-level exclusions ─────────────────────────────────────
 // Elements matching these selectors are skipped before any renderer runs.
@@ -841,6 +845,7 @@ function hasAnyEnabledRenderer(): boolean {
 }
 
 let scanScheduled = false;
+let scanScheduleGeneration = 0;
 // PERF(R8): 20 cards/chunk (was 5). Cache-resident renders are plain DOM writes;
 // the old 5-card chunks stretched a fully-cached page over many idle slices,
 // which read as tags trickling in long after the posters.
@@ -862,7 +867,9 @@ const scheduleIdle: (fn: () => void) => unknown = typeof requestIdleCallback ===
 function scheduleScan(): void {
     if (scanScheduled) return;
     scanScheduled = true;
+    const scheduledGeneration = scanScheduleGeneration;
     scheduleIdle(() => {
+        if (scheduledGeneration !== scanScheduleGeneration) return;
         scanScheduled = false;
         runScan();
     });
@@ -1066,6 +1073,33 @@ function resetServerProjection(clearDom: boolean): void {
     clearRendererProjectionState(clearDom);
     processedCards = new WeakSet();
     renderedItemByElement = new WeakMap();
+}
+
+/**
+ * Retire every identity-owned pipeline value synchronously. Renderer
+ * registrations and process wiring are bundle-lifetime and intentionally stay.
+ */
+function resetTagPipelineIdentity(): void {
+    identityActivationGeneration++;
+    activeIdentityEpoch = null;
+    if (fetchTimer !== null) {
+        clearTimeout(fetchTimer);
+        fetchTimer = null;
+    }
+    scanScheduleGeneration++;
+    scanScheduled = false;
+    scanGeneration++;
+    processingGeneration++;
+    isProcessing = false;
+    firstFetchAfterNav = true;
+    cardFetchFailures = new WeakMap<Element, number>();
+    JC._tagCachePrefetch = null;
+    resetServerProjection(true);
+    document.querySelectorAll(
+        '.jc-tag-host, .genre-overlay-container, .quality-overlay-container, ' +
+        '.language-overlay-container, .rating-overlay-container'
+    ).forEach((node) => node.remove());
+    document.body.classList.remove('jc-tags-hide-on-hover');
 }
 
 /**
@@ -1321,6 +1355,7 @@ const SERVER_BATCH_LIMIT = 200;
  */
 async function processQueue(): Promise<void> {
     if (isProcessing || requestQueue.length === 0) return;
+    const myProcessingGeneration = processingGeneration;
     isProcessing = true;
 
     try {
@@ -1333,12 +1368,16 @@ async function processQueue(): Promise<void> {
             await processBatch(batch, myGeneration);
         }
     } finally {
-        isProcessing = false;
-        // PERF(R9): cards queued while this run was in flight (a new page's
-        // scan during a stale batch — scheduleFetchIfQueued no-ops when
-        // isProcessing) would otherwise sit until the next mutation.
-        // Reschedule so the queue always drains.
-        if (requestQueue.length > 0) scheduleFetchIfQueued();
+        // Identity reset can allow B to start while an unsignalled ApiClient.ajax
+        // from A is still settling. A must not clear B's processing lock.
+        if (myProcessingGeneration === processingGeneration) {
+            isProcessing = false;
+            // PERF(R9): cards queued while this run was in flight (a new page's
+            // scan during a stale batch — scheduleFetchIfQueued no-ops when
+            // isProcessing) would otherwise sit until the next mutation.
+            // Reschedule so the queue always drains.
+            if (requestQueue.length > 0) scheduleFetchIfQueued();
+        }
     }
 }
 
@@ -1610,9 +1649,16 @@ function buildIndicatorOffsetCSS(): string {
 /**
  * Initialize the tag pipeline: register mutation observer, navigation handler, and inject base CSS.
  */
-function initialize(): void {
+async function initialize(
+    context: IdentityContext | null = JC.identity.capture(),
+): Promise<void> {
+    if (!context || !JC.identity.isCurrent(context)) return;
+    if (activeIdentityEpoch === context.epoch) return;
     const activeUserId = ApiClient.getCurrentUserId();
     const activeUserKey = normalizeProjectionKey(activeUserId);
+    if (!activeUserKey) return;
+    activeIdentityEpoch = context.epoch;
+    const activationGeneration = ++identityActivationGeneration;
     const serverMode = JC.pluginConfig?.TagCacheServerMode === true;
     tagCacheOwnerUserId = activeUserKey;
     projectionResetPending = serverMode;
@@ -1629,25 +1675,28 @@ function initialize(): void {
         beginBatchProjectionGeneration(activeUserId);
     }
 
-    // Register as body mutation subscriber at priority 0 (after hidden-content and prefetch).
-    // Only trigger scans when nodes were actually added to the DOM — ignore attribute
-    // changes, text changes, and hover/focus effects which cause jank if we scan on each.
-    onBodyMutation('tag-pipeline', (mutations) => {
-        for (let i = 0; i < mutations.length; i++) {
-            if (mutations[i].addedNodes.length > 0) {
-                // PERF(R1): cache-resident tags render synchronously in this same
-                // mutation batch — before the new cards' first paint (budget-
-                // guarded, see syncScanAddedCards). The async scan remains the
-                // catch-all for budget overflow and cache misses.
-                syncScanAddedCards(mutations);
-                scheduleScan();
-                return;
+    if (!processWired) {
+        processWired = true;
+        // Register as body mutation subscriber at priority 0 (after hidden-content and prefetch).
+        // Only trigger scans when nodes were actually added to the DOM — ignore attribute
+        // changes, text changes, and hover/focus effects which cause jank if we scan on each.
+        onBodyMutation('tag-pipeline', (mutations) => {
+            for (let i = 0; i < mutations.length; i++) {
+                if (mutations[i].addedNodes.length > 0) {
+                    // PERF(R1): cache-resident tags render synchronously in this same
+                    // mutation batch — before the new cards' first paint (budget-
+                    // guarded, see syncScanAddedCards). The async scan remains the
+                    // catch-all for budget overflow and cache misses.
+                    syncScanAddedCards(mutations);
+                    scheduleScan();
+                    return;
+                }
             }
-        }
-    }, { priority: 0 });
+        }, { priority: 0 });
 
-    // Also trigger on navigation
-    onNavigate(() => {
+        // Also trigger on navigation. This callback is process-lifetime; every
+        // branch reads the current identity/config at call time.
+        onNavigate(() => {
         // Invalidate any in-flight batch processing (don't reset isProcessing
         // directly — let stale batches finish naturally and discard results)
         batchGeneration++;
@@ -1677,7 +1726,8 @@ function initialize(): void {
         } else {
             scheduleScan();
         }
-    });
+        });
+    }
 
     // Inject CSS containment for all tag overlay containers.
     // This tells the browser these elements are independent from the rest of the
@@ -1742,6 +1792,7 @@ function initialize(): void {
         }
     `);
     // Apply the class based on current setting
+    document.body.classList.remove('jc-tags-hide-on-hover');
     if (JC.currentSettings?.tagsHideOnHover) {
         document.body.classList.add('jc-tags-hide-on-hover');
     }
@@ -1749,10 +1800,11 @@ function initialize(): void {
     // Load server cache then do initial scan.
     // Cards may have been processed during the async load (via mutation observer),
     // so clear processedCards after load to rescan with the server cache available.
-    void loadServerCache().then(() => {
-        processedCards = new WeakSet();
-        runScan();
-    });
+    await loadServerCache();
+    if (activationGeneration !== identityActivationGeneration
+        || !JC.identity.isCurrent(context)) return;
+    processedCards = new WeakSet();
+    runScan();
 
     console.log(`${logPrefix} Initialized`);
 }
@@ -1805,6 +1857,9 @@ const tagPipelineApi = {
     invalidateServerCache,
     refreshServerProjection,
 };
+
+JC.identity.registerReset('tag-pipeline', resetTagPipelineIdentity);
+JC.identity.registerActivate('tag-pipeline', (context) => initialize(context));
 
 // JEGlobal types tagPipeline as the narrow TagPipelineLike consumer view; the
 // real surface (this object) is a superset with null-able optional callbacks.

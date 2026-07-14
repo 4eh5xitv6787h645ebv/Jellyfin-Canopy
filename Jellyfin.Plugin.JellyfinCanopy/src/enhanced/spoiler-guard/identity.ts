@@ -21,17 +21,24 @@
 // refreshed on every load, so switching accounts updates it. Do NOT reintroduce
 // image-URL rewriting here.
 
+import { JC } from '../../globals';
+import type { IdentityContext } from '../../types/jc';
+
 const logPrefix = '🪼 Jellyfin Canopy [SpoilerGuard]:';
 
-/** Write the identity cookie for the current user, if one is available. */
-export function setIdentityCookie(): void {
+function clearIdentityCookie(): void {
     try {
-        const uid = (typeof ApiClient !== 'undefined' && typeof ApiClient.getCurrentUserId === 'function')
-            ? ApiClient.getCurrentUserId()
-            : null;
-        if (uid) {
-            document.cookie = `jc-spoiler-uid=${encodeURIComponent(uid)}; path=/; SameSite=Lax`;
-        }
+        document.cookie = 'jc-spoiler-uid=; path=/; SameSite=Lax; Max-Age=0';
+    } catch {
+        /* no document cookie surface */
+    }
+}
+
+/** Write the identity cookie for the captured current user, if available. */
+export function setIdentityCookie(context: IdentityContext | null = JC.identity.capture()): void {
+    try {
+        if (!context || !JC.identity.isCurrent(context)) return;
+        document.cookie = `jc-spoiler-uid=${encodeURIComponent(context.userId)}; path=/; SameSite=Lax`;
     } catch (e) {
         console.warn(`${logPrefix} identity cookie set failed:`, e);
     }
@@ -47,27 +54,52 @@ export function setIdentityCookie(): void {
 // with the new user's early image requests.
 const PRIME_INTERVAL_MS = 250;
 const PRIME_MAX_TRIES = 20;
-let primed = false;
+let primedEpoch: number | null = null;
+let primeInterval: number | null = null;
+
+function stopPriming(): void {
+    if (primeInterval !== null) {
+        clearInterval(primeInterval);
+        primeInterval = null;
+    }
+}
+
+/** Drop A's hint synchronously before any B image request can inherit it. */
+export function resetIdentityCookie(): void {
+    stopPriming();
+    primedEpoch = null;
+    clearIdentityCookie();
+}
 
 /** Write the cookie now, then retry briefly until a user id is available. */
-export function primeIdentityCookieEarly(): void {
-    if (primed) return;
-    primed = true;
-    setIdentityCookie();
+export function primeIdentityCookieEarly(context: IdentityContext | null = JC.identity.capture()): void {
+    if (!context || !JC.identity.isCurrent(context)) return;
+    if (primedEpoch === context.epoch) return;
+    stopPriming();
+    primedEpoch = context.epoch;
+    setIdentityCookie(context);
     let tries = 0;
     try {
-        const iv = setInterval(() => {
+        primeInterval = window.setInterval(() => {
+            if (!JC.identity.isCurrent(context)) {
+                stopPriming();
+                return;
+            }
             const uid = (typeof ApiClient !== 'undefined' && typeof ApiClient.getCurrentUserId === 'function')
                 ? ApiClient.getCurrentUserId()
                 : null;
-            if (uid) {
-                setIdentityCookie();
-                clearInterval(iv);
+            const normalizedUid = String(uid || '').replace(/-/g, '').toLowerCase();
+            if (normalizedUid === context.userId) {
+                setIdentityCookie(context);
+                stopPriming();
             } else if (++tries >= PRIME_MAX_TRIES) {
-                clearInterval(iv);
+                stopPriming();
             }
         }, PRIME_INTERVAL_MS);
     } catch {
         /* setInterval unavailable — init() still sets the cookie once. */
     }
 }
+
+JC.identity.registerReset('spoiler-identity-cookie', resetIdentityCookie);
+JC.identity.registerActivate('spoiler-identity-cookie', primeIdentityCookieEarly);

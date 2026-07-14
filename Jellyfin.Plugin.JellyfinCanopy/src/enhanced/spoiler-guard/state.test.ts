@@ -1,7 +1,9 @@
 // src/enhanced/spoiler-guard/state.test.ts
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { JC } from '../../globals';
 import {
-    applyPromoteResponse, applyRemoveResponse, type SpoilerCaches,
+    applyPromoteResponse, applyRemoveResponse, enableForSeries, isEnabledFor,
+    loadState, resetState, type SpoilerCaches,
 } from './state';
 
 function emptyCaches(): SpoilerCaches {
@@ -71,5 +73,55 @@ describe('spoiler-guard pending cache transitions', () => {
             applyRemoveResponse(c, 'movie:5', { removedFrom: 'movie', jellyfinId: 'EF-01' });
             expect(c.movies.has('ef01')).toBe(false);
         });
+    });
+});
+
+describe('spoiler-guard identity fencing', () => {
+    const originalApi = JC.core.api;
+
+    afterEach(() => {
+        JC.core.api = originalApi;
+        resetState();
+    });
+
+    it('does not publish A state after B has loaded', async () => {
+        const original = JC.identity.capture()!;
+        let resolveA!: (value: unknown) => void;
+        const plugin = vi.fn()
+            .mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }))
+            .mockResolvedValueOnce({ Series: { BBBB: true } });
+        JC.core.api = { plugin } as unknown as NonNullable<typeof JC.core.api>;
+
+        resetState();
+        const loadA = loadState();
+        const next = JC.identity.transition('server-b', 'user-b', 'spoiler-state-test')!;
+        const loadB = loadState();
+        await loadB;
+        expect(isEnabledFor('bbbb')).toBe(true);
+
+        resolveA({ Series: { AAAA: true } });
+        await loadA;
+        expect(isEnabledFor('aaaa')).toBe(false);
+        expect(isEnabledFor('bbbb')).toBe(true);
+
+        JC.identity.transition(original.serverId, original.userId, 'spoiler-state-test-restore');
+        void next;
+    });
+
+    it('rejects a late A mutation without changing B caches', async () => {
+        const original = JC.identity.capture()!;
+        let resolveA!: () => void;
+        JC.core.api = {
+            plugin: vi.fn(() => new Promise<void>((resolve) => { resolveA = resolve; })),
+        } as unknown as NonNullable<typeof JC.core.api>;
+
+        resetState();
+        const pending = enableForSeries('AAAA');
+        JC.identity.transition('server-b', 'user-b', 'spoiler-mutation-test');
+        resolveA();
+
+        await expect(pending).rejects.toThrow(/stale identity/i);
+        expect(isEnabledFor('aaaa')).toBe(false);
+        JC.identity.transition(original.serverId, original.userId, 'spoiler-mutation-test-restore');
     });
 });

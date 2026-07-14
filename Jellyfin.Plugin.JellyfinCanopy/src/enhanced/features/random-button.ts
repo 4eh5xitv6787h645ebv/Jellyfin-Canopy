@@ -7,6 +7,7 @@ import { JC } from '../../globals';
 import { toast } from '../../core/ui-kit';
 import { getHeaderRightContainer } from '../helpers';
 import { insertHeaderTrayButton, HeaderTrayOrder } from '../header-tray';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -14,8 +15,8 @@ import { insertHeaderTrayButton, HeaderTrayOrder } from '../header-tray';
  * Fetches a random item (Movie or Series) from the user's library.
  * @returns A promise that resolves to a random item or null.
  */
-async function getRandomItem(): Promise<any> {
-    const userId = ApiClient.getCurrentUserId();
+async function getRandomItem(context: IdentityContext): Promise<any> {
+    const userId = context.userId;
     if (!userId) {
         console.error("🪼 Jellyfin Canopy: User not logged in.");
         return null;
@@ -26,10 +27,20 @@ async function getRandomItem(): Promise<any> {
     if (JC.currentSettings!.randomIncludeShows) itemTypes.push('Series');
     const includeItemTypes = itemTypes.join(',');
 
-    const apiUrl = ApiClient.getUrl(`/Users/${userId}/Items?IncludeItemTypes=${includeItemTypes}&Recursive=true&SortBy=Random&Limit=100&Fields=ExternalUrls`);
+    const query = new URLSearchParams({
+        IncludeItemTypes: includeItemTypes,
+        Recursive: 'true',
+        SortBy: 'Random',
+        Limit: '100',
+        Fields: 'ExternalUrls',
+    });
 
     try {
-        const response: any = await ApiClient.ajax({ type: 'GET', url: apiUrl, dataType: 'json' });
+        const response: any = await JC.core.api!.jf(
+            `/Users/${userId}/Items?${query.toString()}`,
+            { skipCache: true },
+        );
+        if (!JC.identity.isCurrent(context)) return null;
         if (response && response.Items && response.Items.length > 0) {
             let items: any[] = response.Items;
 
@@ -56,6 +67,7 @@ async function getRandomItem(): Promise<any> {
         }
         throw new Error('No items found in selected libraries.');
     } catch (error) {
+        if (!JC.identity.isCurrent(context)) return null;
         console.error('🪼 Jellyfin Canopy: Error fetching random item:', error);
         toast(`${JC.icon!(JC.IconName!.ERROR)} ${JC.escapeHtml((error as any)?.message || 'Unknown error')}`, 2000);
         return null;
@@ -66,7 +78,8 @@ async function getRandomItem(): Promise<any> {
  * Navigates the browser to the details page of the given item.
  * @param item The item to navigate to.
  */
-function navigateToItem(item: any): void {
+function navigateToItem(context: IdentityContext, item: any): void {
+    if (!JC.identity.isCurrent(context)) return;
     if (item && item.Id) {
         const embyPage = window.Emby?.Page as { show?: (path: string) => void } | undefined;
         if (window.Emby && embyPage && typeof embyPage.show === 'function') {
@@ -94,25 +107,30 @@ function setGlyph(btn: HTMLElement, ligature: string): void {
 }
 
 /** Shared click handler: fetch a random item and navigate, with a spinner glyph. */
-function onRandomClick(randomButton: HTMLButtonElement): void {
+const randomResetTimers = new Set<number>();
+
+function onRandomClick(context: IdentityContext, randomButton: HTMLButtonElement): void {
+    if (!JC.identity.isCurrent(context)) return;
     void (async () => {
         randomButton.disabled = true;
         randomButton.classList.add('loading');
         setGlyph(randomButton, 'hourglass_empty');
 
         try {
-            const item = await getRandomItem();
-            if (item) {
-                navigateToItem(item);
+            const item = await getRandomItem(context);
+            if (item && JC.identity.isCurrent(context)) {
+                navigateToItem(context, item);
             }
         } finally {
-            setTimeout(() => {
-                if (document.getElementById(randomButton.id)) {
+            const timer = window.setTimeout(() => {
+                randomResetTimers.delete(timer);
+                if (JC.identity.isCurrent(context) && document.getElementById(randomButton.id)) {
                     randomButton.disabled = false;
                     randomButton.classList.remove('loading');
                     setGlyph(randomButton, 'casino');
                 }
             }, 500);
+            randomResetTimers.add(timer);
         }
     })();
 }
@@ -124,7 +142,7 @@ function onRandomClick(randomButton: HTMLButtonElement): void {
  * paper-icon-button-light markup so it matches that layout's own buttons.
  * @param anchor - The resolved header container (see getHeaderRightContainer).
  */
-function buildRandomButton(anchor: HTMLElement): HTMLDivElement {
+function buildRandomButton(context: IdentityContext, anchor: HTMLElement): HTMLDivElement {
     const buttonContainer = document.createElement('div');
     buttonContainer.id = 'randomItemButtonContainer';
 
@@ -152,7 +170,7 @@ function buildRandomButton(anchor: HTMLElement): HTMLDivElement {
         randomButton.appendChild(glyph);
     }
 
-    randomButton.addEventListener('click', () => onRandomClick(randomButton));
+    randomButton.addEventListener('click', () => onRandomClick(context, randomButton));
     buttonContainer.appendChild(randomButton);
     return buttonContainer;
 }
@@ -168,6 +186,8 @@ let randomButtonHandle: { run(): void; remove(): void } | null = null;
  * JC.core.dom.ensureInjected; disabling removes it.
  */
 JC.addRandomButton = (): void => {
+    const context = JC.identity.capture();
+    if (!context) return;
     if (!JC.currentSettings!.randomButtonEnabled) {
         randomButtonHandle?.remove();
         randomButtonHandle = null;
@@ -195,7 +215,8 @@ JC.addRandomButton = (): void => {
         'jc-random-button',
         () => getHeaderRightContainer(),
         (headerRight, ctx) => {
-            const container = buildRandomButton(headerRight);
+            if (!JC.identity.isCurrent(context)) return null;
+            const container = buildRandomButton(context, headerRight);
             insertHeaderTrayButton(headerRight, container, HeaderTrayOrder.randomButton);
             JC.core.ui!.expandIn(container, { instant: ctx?.prePaint === true || !firstBuild });
             firstBuild = false;
@@ -204,3 +225,12 @@ JC.addRandomButton = (): void => {
         { headerTray: true, prePaint: true }
     );
 };
+
+JC.identity.registerReset('random-button', () => {
+    for (const timer of randomResetTimers) clearTimeout(timer);
+    randomResetTimers.clear();
+    randomButtonHandle?.remove();
+    randomButtonHandle = null;
+    document.getElementById('randomItemButtonContainer')?.remove();
+});
+JC.identity.registerActivate('random-button', () => { JC.addRandomButton?.(); });

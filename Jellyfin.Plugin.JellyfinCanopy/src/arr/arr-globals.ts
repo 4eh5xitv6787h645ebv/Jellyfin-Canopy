@@ -102,7 +102,7 @@ export interface ExternalLinkOptions {
  * its runtime fallback.
  */
 export interface ArrLegacyHelpers {
-    getItemCached?: (itemId: string) => Promise<unknown>;
+    getItemCached?: (itemId: string, options?: { userId?: string }) => Promise<unknown>;
     escHtml?: (s: unknown) => string;
     createExternalLink?: (url: string, options?: ExternalLinkOptions) => HTMLAnchorElement;
     createObserver?: (

@@ -30,9 +30,11 @@ export async function openInteractiveSearch(itemId: string): Promise<void> {
     try {
         ctx = await fetchContext(itemId);
     } catch (e) {
+        if (!modal.isActive()) return;
         renderCentered(modal.body, message('error', errorMessage(e)));
         return;
     }
+    if (!modal.isActive()) return;
 
     modal.setSubtitle(headerSubtitle(ctx));
 
@@ -88,6 +90,7 @@ class ReleaseView {
     }
 
     mount(): void {
+        if (!this.modal.isActive()) return;
         this.modal.body.replaceChildren(this.buildToolbar(), this.countEl, this.listEl);
         void this.load();
     }
@@ -104,28 +107,44 @@ class ReleaseView {
                 select.appendChild(opt);
             }
             select.value = this.instanceName;
-            select.addEventListener('change', () => { this.instanceName = select.value; void this.load(); });
+            select.addEventListener('change', () => {
+                if (!this.modal.isActive()) return;
+                this.instanceName = select.value;
+                void this.load();
+            });
             bar.appendChild(labeled(JC.t!('arr_search_instance'), select));
         }
 
         const filter = el('input', 'jc-arr-filter');
         filter.type = 'search';
         filter.placeholder = JC.t!('arr_search_filter_placeholder');
-        filter.addEventListener('input', () => { this.filterText = filter.value.toLowerCase(); this.renderList(); });
+        filter.addEventListener('input', () => {
+            if (!this.modal.isActive()) return;
+            this.filterText = filter.value.toLowerCase();
+            this.renderList();
+        });
         bar.appendChild(filter);
 
         const sort = el('select', 'jc-arr-select');
         for (const [value, key] of [['default', 'arr_search_sort_default'], ['size', 'arr_search_sort_size'], ['age', 'arr_search_sort_age'], ['seeders', 'arr_search_sort_seeders'], ['score', 'arr_search_sort_score']] as const) {
             const opt = el('option'); opt.value = value; opt.textContent = JC.t!(key); sort.appendChild(opt);
         }
-        sort.addEventListener('change', () => { this.sortKey = sort.value as SortKey; this.renderList(); });
+        sort.addEventListener('change', () => {
+            if (!this.modal.isActive()) return;
+            this.sortKey = sort.value as SortKey;
+            this.renderList();
+        });
         bar.appendChild(labeled(JC.t!('arr_search_sort'), sort));
 
         const rejectLabel = el('label', 'jc-arr-check');
         const reject = el('input');
         reject.type = 'checkbox';
         reject.checked = this.hideRejected;
-        reject.addEventListener('change', () => { this.hideRejected = reject.checked; this.renderList(); });
+        reject.addEventListener('change', () => {
+            if (!this.modal.isActive()) return;
+            this.hideRejected = reject.checked;
+            this.renderList();
+        });
         rejectLabel.appendChild(reject);
         rejectLabel.appendChild(document.createTextNode(JC.t!('arr_search_hide_rejected')));
         bar.appendChild(rejectLabel);
@@ -134,19 +153,20 @@ class ReleaseView {
     }
 
     private async load(): Promise<void> {
+        if (!this.modal.isActive()) return;
         const seq = ++this.loadSeq;
         const instance = this.instanceName;
         renderCentered(this.listEl, spinner());
         this.countEl.textContent = '';
         try {
             const result = await fetchReleases(this.itemId, instance);
-            if (seq !== this.loadSeq) return; // a newer instance selection superseded this load
+            if (!this.modal.isActive() || seq !== this.loadSeq) return; // a newer instance selection superseded this load
             this.loadedInstance = instance;
             if (result.error) { renderCentered(this.listEl, message('error', result.error)); return; }
             this.releases = result.releases || [];
             this.renderList();
         } catch (e) {
-            if (seq !== this.loadSeq) return;
+            if (!this.modal.isActive() || seq !== this.loadSeq) return;
             renderCentered(this.listEl, message('error', errorMessage(e)));
         }
     }
@@ -166,6 +186,7 @@ class ReleaseView {
     }
 
     private renderList(): void {
+        if (!this.modal.isActive()) return;
         const list = this.visibleReleases();
         this.countEl.textContent = JC.t!('arr_search_release_count', { count: list.length, total: this.releases.length });
         if (list.length === 0) {
@@ -223,17 +244,19 @@ class ReleaseView {
     }
 
     private async grab(release: ArrRelease, grab: HTMLButtonElement, icon: HTMLElement): Promise<void> {
-        if (grab.disabled) return;
+        if (!this.modal.isActive() || grab.disabled) return;
         grab.disabled = true;
         icon.className = 'material-icons hourglass_empty';
         try {
             await grabRelease(this.service, this.loadedInstance, release.guid, release.indexerId);
+            if (!this.modal.isActive()) return;
             grab.classList.add('jc-arr-grabbed');
             icon.className = 'material-icons check';
             // Point the admin at the existing Downloads page for progress — never force-navigate
             // (that would yank them out of the picker mid-review) and never build a second view.
             toastSuccess(downloadsPageAvailable() ? JC.t!('arr_search_grab_sent_downloads') : JC.t!('arr_search_grab_sent'));
         } catch (e) {
+            if (!this.modal.isActive()) return;
             grab.disabled = false;
             icon.className = 'material-icons download';
             toastInfo(errorMessage(e));

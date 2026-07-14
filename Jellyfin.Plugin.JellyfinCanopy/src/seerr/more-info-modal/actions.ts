@@ -2,6 +2,7 @@
 // Action-area rendering: movie request buttons, requested chips, quota chip
 // and the renderActions orchestrator for the action/chip/download mounts.
 import { JC } from '../../globals';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 /* eslint-disable @typescript-eslint/no-misused-promises -- legacy async event listeners with fire-and-forget bodies; semantics preserved verbatim */
@@ -9,18 +10,56 @@ import { JC } from '../../globals';
 
 import { internal } from './internal';
 import { buildSeerrPendingToggle } from '../../enhanced/spoiler-guard/seerr-toggle';
-const state = internal.state;
+interface ActionModal extends HTMLElement {
+    _actionCleanups?: Set<() => void>;
+}
+
+const state: {
+    currentModal: ActionModal | null;
+    identity: IdentityContext | null;
+    openGeneration: number;
+} = internal.state;
 const logPrefix = '🪼 Jellyfin Canopy: Seerr More Info:';
 const escapeHtml = JC.escapeHtml;
 const DisplayStatus = JC.seerrStatus!.DISPLAY;
 
+function isLiveNode(node?: Node | null): boolean {
+    return !!state.identity
+        && JC.identity.isCurrent(state.identity)
+        && !!state.currentModal
+        && state.currentModal.isConnected
+        && (!node || (state.currentModal.contains(node)
+            && (!JC.identity.ownerOf(node) || JC.identity.isOwned(node, state.identity))));
+}
+
+function ownControl<T extends Node>(node: T): T {
+    return JC.identity.own(node, state.identity);
+}
+
+function trackModalCleanup(cleanup: () => void): void {
+    state.currentModal?._actionCleanups?.add(cleanup);
+}
+
+function scheduleModalFrame(callback: () => void): void {
+    const cleanups = state.currentModal?._actionCleanups;
+    let frame = 0;
+    const cancel = () => cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+        cleanups?.delete(cancel);
+        callback();
+    });
+    cleanups?.add(cancel);
+}
+
 function buildSingle4kButton(data: any) {
 const button = document.createElement('button');
+ownControl(button);
 button.className = 'seerr-request-button seerr-button-request';
 button.innerHTML = `${JC.seerrUIIcons?.request || '<span class="material-icons">download</span>'}<span>${JC.t!('seerr_btn_request_4k') || 'Request in 4K'}</span>`;
 button.addEventListener('click', async (e: any) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!isLiveNode(button)) return;
     if (JC.pluginConfig.SeerrShowAdvanced) {
         window.JellyfinCanopy?.seerrUI?.showMovieRequestModal?.(data.id, data.title || data.name, data, true);
         return;
@@ -29,11 +68,14 @@ button.addEventListener('click', async (e: any) => {
     button.innerHTML = `<span>${JC.t!('seerr_btn_requesting')}</span><span class="seerr-button-spinner"></span>`;
     try {
         await JC.seerrAPI!.requestMedia(data.id, 'movie', { is4k: true }, false, data);
+        if (!isLiveNode(button)) return;
         mountRequestedChip(data, 'movie', true);
     } catch (error: any) {
+        if (!isLiveNode(button)) return;
         // Quota errors get a themed dialog; restore button to idle.
         if (JC.seerrUI?.isQuotaError?.(error)) {
             await JC.seerrUI.showQuotaErrorDialog(error, 'movie');
+            if (!isLiveNode(button)) return;
             button.disabled = false;
             button.innerHTML = `${JC.seerrUIIcons?.request || '<span class="material-icons">download</span>'}<span>${JC.t!('seerr_btn_request_4k') || 'Request in 4K'}</span>`;
             return;
@@ -64,12 +106,14 @@ if (show4kOption) {
     buttonGroup.className = 'seerr-button-group jc-more-info-button-group';
 
     const mainButton = document.createElement('button');
+    ownControl(mainButton);
     mainButton.className = 'seerr-request-button seerr-split-main seerr-button-request';
     mainButton.innerHTML = `${JC.seerrUIIcons?.request || '<span class="material-icons">download</span>'}<span>${JC.t!('seerr_btn_request')}</span>`;
     mainButton.dataset.tmdbId = data.id;
     mainButton.dataset.mediaType = 'movie';
 
     const arrowButton = document.createElement('button');
+    ownControl(arrowButton);
     arrowButton.className = 'seerr-split-arrow';
     arrowButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M12.53 16.28a.75.75 0 01-1.06 0l-7.5-7.5a.75.75 0 011.06-1.06L12 14.69l6.97-6.97a.75.75 0 111.06 1.06l-7.5 7.5z" clip-rule="evenodd" /></svg>';
     arrowButton.title = 'Request in 4K';
@@ -79,6 +123,7 @@ if (show4kOption) {
     mainButton.addEventListener('click', async (e: any) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!isLiveNode(mainButton)) return;
         if (JC.pluginConfig.SeerrShowAdvanced) {
             window.JellyfinCanopy?.seerrUI?.showMovieRequestModal?.(data.id, data.title || data.name, data, false);
             return;
@@ -87,11 +132,14 @@ if (show4kOption) {
         mainButton.innerHTML = `<span>${JC.t!('seerr_btn_requesting')}</span><span class="seerr-button-spinner"></span>`;
         try {
             const response = await JC.seerrAPI!.requestMedia(data.id, 'movie', {}, false, data);
+            if (!isLiveNode(mainButton)) return;
             mountRequestedChip(data, 'movie', false, response);
         } catch (error: any) {
+            if (!isLiveNode(mainButton)) return;
             // Quota errors get a themed dialog; restore button to idle.
             if (JC.seerrUI?.isQuotaError?.(error)) {
                 await JC.seerrUI.showQuotaErrorDialog(error, 'movie');
+                if (!isLiveNode(mainButton)) return;
                 mainButton.disabled = false;
                 mainButton.innerHTML = `${JC.seerrUIIcons?.request || '<span class="material-icons">download</span>'}<span>${JC.t!('seerr_btn_request')}</span>`;
                 return;
@@ -113,6 +161,7 @@ const close4k = () => {
         document.removeEventListener('click', handleDocClick, true);
     }
 };
+trackModalCleanup(close4k);
 const handleDocClick = (ev: any) => {
     if (!open4k) return;
     if (!open4k.contains(ev.target) && !arrowButton.contains(ev.target)) {
@@ -123,13 +172,15 @@ const handleDocClick = (ev: any) => {
     arrowButton.addEventListener('click', (e: any) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!isLiveNode(arrowButton)) return;
     if (open4k) {
         close4k();
         return;
     }
     const menu = document.createElement('div');
     menu.className = 'jc-4k-popup';
-    const option = document.createElement('button');
+        const option = document.createElement('button');
+        ownControl(option);
     option.className = 'jc-4k-popup-item';
 
     const moviePopupDs4k = JC.seerrStatus!.resolveDisplayStatus(status4k, false);
@@ -151,6 +202,7 @@ const handleDocClick = (ev: any) => {
         option.addEventListener('click', async (ev: any) => {
             ev.preventDefault();
             ev.stopPropagation();
+            if (!isLiveNode(arrowButton)) return;
             if (JC.pluginConfig.SeerrShowAdvanced) {
                 close4k();
                 window.JellyfinCanopy?.seerrUI?.showMovieRequestModal?.(data.id, data.title || data.name, data, true);
@@ -160,12 +212,15 @@ const handleDocClick = (ev: any) => {
             option.textContent = JC.t!('seerr_btn_requesting');
             try {
                 const response = await JC.seerrAPI!.requestMedia(data.id, 'movie', { is4k: true }, false, data);
+                if (!isLiveNode(arrowButton)) return;
                 mountRequestedChip(data, 'movie', true, response);
                 close4k();
             } catch (error: any) {
+                if (!isLiveNode(arrowButton)) return;
                 // Quota errors get a themed dialog; restore option to idle.
                 if (JC.seerrUI?.isQuotaError?.(error)) {
                     await JC.seerrUI.showQuotaErrorDialog(error, 'movie');
+                    if (!isLiveNode(arrowButton)) return;
                     option.disabled = false;
                     option.textContent = 'Request in 4K';
                     return;
@@ -177,12 +232,16 @@ const handleDocClick = (ev: any) => {
     }
 
     menu.appendChild(option);
+    menu.dataset.jcIdentityOwned = 'true';
+    JC.identity.own(menu, state.identity);
     document.body.appendChild(menu);
     const rect = arrowButton.getBoundingClientRect();
     menu.style.position = 'fixed';
     menu.style.left = `${rect.left}px`;
     menu.style.top = `${rect.bottom + 6}px`;
-    requestAnimationFrame(() => menu.classList.add('show'));
+    scheduleModalFrame(() => {
+        if (isLiveNode(arrowButton) && open4k === menu) menu.classList.add('show');
+    });
     open4k = menu;
     document.addEventListener('click', handleDocClick, true);
 });
@@ -192,11 +251,13 @@ const handleDocClick = (ev: any) => {
     container.appendChild(buttonGroup);
 } else {
     const requestButton = document.createElement('button');
+    ownControl(requestButton);
     requestButton.className = 'seerr-request-button seerr-button-request';
     requestButton.innerHTML = `${JC.seerrUIIcons?.request || '<span class="material-icons">download</span>'}<span>${JC.t!('seerr_btn_request')}</span>`;
     requestButton.addEventListener('click', async (e: any) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!isLiveNode(requestButton)) return;
         if (JC.pluginConfig.SeerrShowAdvanced) {
             window.JellyfinCanopy?.seerrUI?.showMovieRequestModal?.(data.id, data.title || data.name, data, false);
             return;
@@ -205,11 +266,14 @@ const handleDocClick = (ev: any) => {
         requestButton.innerHTML = `<span>${JC.t!('seerr_btn_requesting')}</span><span class="seerr-button-spinner"></span>`;
         try {
             await JC.seerrAPI!.requestMedia(data.id, 'movie', {}, false, data);
+            if (!isLiveNode(requestButton)) return;
             mountRequestedChip(data, 'movie', false);
         } catch (error: any) {
+            if (!isLiveNode(requestButton)) return;
             // Quota errors get a themed dialog; restore button to idle.
             if (JC.seerrUI?.isQuotaError?.(error)) {
                 await JC.seerrUI.showQuotaErrorDialog(error, 'movie');
+                if (!isLiveNode(requestButton)) return;
                 requestButton.disabled = false;
                 requestButton.innerHTML = `${JC.seerrUIIcons?.request || '<span class="material-icons">download</span>'}<span>${JC.t!('seerr_btn_request')}</span>`;
                 return;
@@ -227,6 +291,7 @@ return container;
 }
 
 function mountRequestedChip(data: any, mediaType: any, is4k: any, response: any = null) {
+if (!isLiveNode()) return;
 const mediaInfo = data.mediaInfo = data.mediaInfo || {};
 if (mediaType === 'movie') {
     if (is4k) {
@@ -252,13 +317,15 @@ renderActions(data, mediaType);
 // Token guards against stale chip insertion when the user navigates between items.
 let _quotaRenderToken = 0;
 
-async function maybeRenderMoreInfoQuotaChip(actionMount: any, mediaType: any) {
-if (!actionMount) return;
+async function maybeRenderMoreInfoQuotaChip(actionMount: HTMLElement | null, mediaType: any) {
+if (!actionMount || !isLiveNode(actionMount)) return;
+const identity = state.identity;
 const myToken = ++_quotaRenderToken;
 actionMount.dataset.quotaRenderToken = String(myToken);
 
 try {
     const quota = await JC.seerrAPI?.fetchUserQuota?.();
+    if (!identity || !JC.identity.isCurrent(identity) || !isLiveNode(actionMount)) return;
     if (!actionMount.isConnected) return;
     if (actionMount.dataset.quotaRenderToken !== String(myToken)) return;
 
@@ -273,11 +340,15 @@ try {
 }
 
 function renderActions(data: any, mediaType: any) {
-if (!state.currentModal) return;
+if (!state.currentModal || !isLiveNode()) return;
+for (const cleanup of state.currentModal._actionCleanups || []) {
+    try { cleanup(); } catch { /* continue rendering */ }
+}
+state.currentModal._actionCleanups?.clear?.();
 
-const actionMount = state.currentModal.querySelector('[data-mount="jc-actions"]');
-const chipMount = state.currentModal.querySelector('[data-mount="jc-status-chip"]');
-const downloadsMount = state.currentModal.querySelector('[data-mount="jc-downloads"]');
+const actionMount = state.currentModal.querySelector<HTMLElement>('[data-mount="jc-actions"]');
+const chipMount = state.currentModal.querySelector<HTMLElement>('[data-mount="jc-status-chip"]');
+const downloadsMount = state.currentModal.querySelector<HTMLElement>('[data-mount="jc-downloads"]');
 if (actionMount) actionMount.innerHTML = '';
 if (chipMount) chipMount.innerHTML = '';
 if (downloadsMount) downloadsMount.innerHTML = '';
@@ -286,7 +357,7 @@ if (downloadsMount) downloadsMount.innerHTML = '';
 // primary Request CTA, independent of request status (pre-arm before request,
 // or register intent on a title someone else requested). Its own mount so the
 // actionMount.innerHTML resets above don't wipe it.
-const secondaryMount = state.currentModal.querySelector('[data-mount="jc-secondary-actions"]');
+const secondaryMount = state.currentModal.querySelector<HTMLElement>('[data-mount="jc-secondary-actions"]');
 if (secondaryMount) {
     secondaryMount.innerHTML = '';
     try {
@@ -415,6 +486,7 @@ if (mediaType === 'movie') {
             return;
         }
         void internal.checkForUnrequestedSeasons(data).then((hasUnrequestedSeasons: any) => {
+            if (!isLiveNode(actionMount)) return;
             if (hasUnrequestedSeasons && actionMount) {
                 const requestMoreButton = internal.buildTvRequestMoreButton(data, show4kTv, canRequest4k);
                 if (requestMoreButton) actionMount.appendChild(requestMoreButton);

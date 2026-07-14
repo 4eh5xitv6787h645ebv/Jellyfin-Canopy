@@ -8,21 +8,96 @@ import { escapeHtml, toast } from '../../core/ui-kit';
 import { getItemCached, debounce } from '../helpers';
 import { createObserver, disconnectObserver } from '../../core/dom-observer';
 import type { BookmarksApi } from './surface';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-if (!JC.pluginConfig?.BookmarksEnabled) {
-  console.log('🪼 Jellyfin Canopy: Bookmarks feature is disabled');
-} else {
+// Define the surface for the document lifetime. The enabled gate is evaluated
+// on every identity activation; an A-disabled/B-enabled SPA switch must still
+// be able to start the feature without re-executing the bundle.
+{
 
   const logPrefix = '🪼 Jellyfin Canopy: Bookmarks:';
+  let bookmarkGeneration = 0;
+  const activeModalDisposers = new Map<HTMLElement, () => void>();
+  const bookmarkTimers = new Set<number>();
+  let forceCleanupBookmarks: (() => void) | null = null;
+
+  interface BookmarkIdentityCapture {
+    readonly context: Readonly<IdentityContext> | null;
+    readonly generation: number;
+  }
+
+  function captureIdentity(): BookmarkIdentityCapture {
+    const context = JC.identity.capture();
+    return Object.freeze({
+      context: context ? Object.freeze({
+        serverId: context.serverId,
+        userId: context.userId,
+        epoch: context.epoch
+      }) : null,
+      generation: bookmarkGeneration
+    });
+  }
+
+  function isIdentityCurrent(captured: BookmarkIdentityCapture): boolean {
+    return captured.generation === bookmarkGeneration && JC.identity.isCurrent(captured.context);
+  }
+
+  function scheduleIdentityTask(
+    captured: BookmarkIdentityCapture,
+    callback: () => void,
+    delay: number
+  ): number {
+    const timer = window.setTimeout(() => {
+      bookmarkTimers.delete(timer);
+      if (isIdentityCurrent(captured)) callback();
+    }, delay);
+    bookmarkTimers.add(timer);
+    return timer;
+  }
+
+  function disposeActiveModals(): void {
+    for (const dispose of [...activeModalDisposers.values()]) dispose();
+    activeModalDisposers.clear();
+  }
+
+  function bookmarkRootFor(captured: BookmarkIdentityCapture, create = false): any {
+    if (!captured.context || !isIdentityCurrent(captured)) return null;
+    const userConfig = (JC as any).userConfig;
+    if (!userConfig || typeof userConfig !== 'object') return null;
+
+    const configOwner = JC.identity.ownerOf(userConfig);
+    if (configOwner && !JC.identity.isOwned(userConfig, captured.context)) return null;
+
+    let root = userConfig.bookmark;
+    if (!root && create) {
+      root = JC.identity.own({ bookmarks: {} }, captured.context);
+      userConfig.bookmark = root;
+    }
+    if (!root || typeof root !== 'object') return null;
+
+    const rootOwner = JC.identity.ownerOf(root);
+    if (rootOwner && !JC.identity.isOwned(root, captured.context)) return null;
+    if (!root.bookmarks && create) root.bookmarks = {};
+    return root.bookmarks && typeof root.bookmarks === 'object' ? root : null;
+  }
+
+  function isBookmarkRootCurrent(captured: BookmarkIdentityCapture, root: any): boolean {
+    if (!isIdentityCurrent(captured) || (JC.userConfig as any)?.bookmark !== root) return false;
+    const owner = JC.identity.ownerOf(root);
+    return !owner || (!!captured.context && JC.identity.isOwned(root, captured.context));
+  }
 
   // Notify other views (e.g., CustomTabs library) when bookmarks change
-  function emitBookmarksUpdated(reason = 'updated'): void {
+  function emitBookmarksUpdated(captured: BookmarkIdentityCapture, reason = 'updated'): boolean {
+    if (!isIdentityCurrent(captured)) return false;
     try {
       document.dispatchEvent(new CustomEvent('jc-bookmarks-updated', { detail: { reason } }));
+      return isIdentityCurrent(captured);
     } catch (e) {
-      console.warn(`${logPrefix} Failed to emit update event`, e);
+      if (isIdentityCurrent(captured)) console.warn(`${logPrefix} Failed to emit update event`, e);
+      return false;
     }
   }
 
@@ -64,29 +139,58 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
     }
   }
 
+  /**
+   * Async player work is owned by both the account generation and the exact
+   * media item that initiated it. A same-account SPA navigation does not
+   * advance the identity epoch, so the item ID must also still match before
+   * publishing markers or a modal.
+   */
+  function isMediaItemCurrent(captured: BookmarkIdentityCapture, itemId: string): boolean {
+    return isIdentityCurrent(captured) && getCurrentItemData()?.itemId === itemId;
+  }
+
   interface ItemDetailsCache {
     itemId: string | null;
     data: any;
     pending: Promise<any> | null;
+    epoch: number;
+    requestId: number;
   }
-  const itemDetailsCache: ItemDetailsCache = { itemId: null, data: null, pending: null };
+  const itemDetailsCache: ItemDetailsCache = {
+    itemId: null,
+    data: null,
+    pending: null,
+    epoch: -1,
+    requestId: 0
+  };
 
   /**
    * Fetch full item details including TMDB/TVDB IDs (cached per item for a few seconds)
    */
   async function fetchItemDetails(itemId: string): Promise<any> {
-    if (itemDetailsCache.itemId === itemId && itemDetailsCache.data) {
+    const captured = captureIdentity();
+    const context = captured.context;
+    if (!context) return null;
+    if (itemDetailsCache.epoch === context.epoch && itemDetailsCache.itemId === itemId && itemDetailsCache.data) {
       return itemDetailsCache.data;
     }
 
-    if (itemDetailsCache.pending && itemDetailsCache.itemId === itemId) {
+    if (itemDetailsCache.epoch === context.epoch && itemDetailsCache.pending && itemDetailsCache.itemId === itemId) {
       return itemDetailsCache.pending;
     }
 
-    const fetchPromise = (async () => {
+    const requestId = itemDetailsCache.requestId + 1;
+    itemDetailsCache.itemId = itemId;
+    itemDetailsCache.data = null;
+    itemDetailsCache.epoch = context.epoch;
+    itemDetailsCache.requestId = requestId;
+
+    // Begin on the next microtask so the cache owns the request before even a
+    // synchronously-throwing host ApiClient can reach the finally block.
+    const fetchPromise = Promise.resolve().then(async () => {
       try {
-        const userId = ApiClient.getCurrentUserId?.();
-        if (!userId) return null;
+        const userId = context.userId;
+        if (!isIdentityCurrent(captured)) return null;
 
         const result: any = await ApiClient.ajax({
           type: 'GET',
@@ -98,7 +202,7 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
         });
 
         const item = result?.Items?.[0];
-        if (!item) return null;
+        if (!item || !isIdentityCurrent(captured)) return null;
 
         // For episodes/seasons, also get series TMDB/TVDB
         let sourceItem = item;
@@ -113,7 +217,7 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
               dataType: 'json'
             });
             const seriesItem = seriesResult?.Items?.[0];
-            if (seriesItem) {
+            if (seriesItem && isIdentityCurrent(captured)) {
               // Merge: use series TMDB/TVDB but keep episode info
               sourceItem = {
                 ...item,
@@ -125,6 +229,7 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
               };
             }
           } catch (e) {
+            if (!isIdentityCurrent(captured)) return null;
             console.warn(`${logPrefix} Failed to fetch series info:`, e);
           }
         }
@@ -144,17 +249,23 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
           type: item.Type
         };
 
-        itemDetailsCache.data = details;
+        if (!isIdentityCurrent(captured)) return null;
+        if (itemDetailsCache.epoch === context.epoch
+          && itemDetailsCache.requestId === requestId
+          && itemDetailsCache.itemId === itemId) {
+          itemDetailsCache.data = details;
+        }
         return details;
       } catch (e) {
+        if (!isIdentityCurrent(captured)) return null;
         console.warn(`${logPrefix} Error fetching item details:`, e);
         return null;
       } finally {
-        itemDetailsCache.pending = null;
+        if (itemDetailsCache.epoch === context.epoch
+          && itemDetailsCache.requestId === requestId) itemDetailsCache.pending = null;
       }
-    })();
+    });
 
-    itemDetailsCache.itemId = itemId;
     itemDetailsCache.pending = fetchPromise;
     return fetchPromise;
   }
@@ -207,15 +318,19 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
    * Add a new bookmark
    */
   async function addBookmark(timestamp: number, label = ''): Promise<Record<string, unknown> | null> {
+    const captured = captureIdentity();
+    if (!captured.context) return null;
     const itemData = getCurrentItemData();
     if (!itemData) {
       toast(JC.t!('toast_bookmark_no_item'), 3000);
       return null;
     }
+    const requestedItemId = itemData.itemId;
 
     // Fetch full details
-    const details = await fetchItemDetails(itemData.itemId);
-    if (!details) {
+    const details = await fetchItemDetails(requestedItemId);
+    if (!isMediaItemCurrent(captured, requestedItemId)) return null;
+    if (!details || details.itemId !== requestedItemId) {
       toast(JC.t!('toast_bookmark_fetch_failed'), 3000);
       return null;
     }
@@ -236,24 +351,22 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
       syncedFrom: ''
     };
 
-    // Initialize bookmark structure if needed
-    if (!(JC.userConfig as any).bookmark) {
-      (JC.userConfig as any).bookmark = { bookmarks: {} };
-    }
-    if (!(JC.userConfig as any).bookmark.bookmarks) {
-      (JC.userConfig as any).bookmark.bookmarks = {};
-    }
-
-    (JC.userConfig as any).bookmark.bookmarks[bookmarkId] = bookmark;
+    const root = bookmarkRootFor(captured, true);
+    if (!root || !isMediaItemCurrent(captured, requestedItemId)) return null;
+    const store = root.bookmarks;
+    store[bookmarkId] = bookmark;
 
     try {
-      await JC.saveUserSettings!('bookmark.json', (JC.userConfig as any).bookmark);
+      await JC.saveUserSettings!('bookmark.json', root);
+      if (!isBookmarkRootCurrent(captured, root)
+        || !isMediaItemCurrent(captured, requestedItemId)) return null;
       console.log(`${logPrefix} Bookmark added:`, bookmarkId, bookmark);
-      emitBookmarksUpdated('add');
+      if (!emitBookmarksUpdated(captured, 'add')) return null;
       return { id: bookmarkId, ...bookmark };
     } catch (e) {
+      if (!isBookmarkRootCurrent(captured, root)) return null;
       console.error(`${logPrefix} Failed to save bookmark:`, e);
-      delete (JC.userConfig as any).bookmark.bookmarks[bookmarkId];
+      delete store[bookmarkId];
       throw e;
     }
   }
@@ -262,20 +375,24 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
    * Update an existing bookmark
    */
   async function updateBookmark(bookmarkId: string, updates: Record<string, unknown>): Promise<boolean> {
-    if (!(JC.userConfig as any)?.bookmark?.bookmarks?.[bookmarkId]) {
+    const captured = captureIdentity();
+    if (!captured.context) return false;
+    const root = bookmarkRootFor(captured);
+    if (!root?.bookmarks?.[bookmarkId]) {
       console.warn(`${logPrefix} Bookmark not found:`, bookmarkId);
       return false;
     }
 
-    const bookmark = (JC.userConfig as any).bookmark.bookmarks[bookmarkId];
+    const bookmark = root.bookmarks[bookmarkId];
     Object.assign(bookmark, updates, { updatedAt: new Date().toISOString() });
 
     try {
-      await JC.saveUserSettings!('bookmark.json', (JC.userConfig as any).bookmark);
+      await JC.saveUserSettings!('bookmark.json', root);
+      if (!isBookmarkRootCurrent(captured, root)) return false;
       console.log(`${logPrefix} Bookmark updated:`, bookmarkId);
-      emitBookmarksUpdated('update');
-      return true;
+      return emitBookmarksUpdated(captured, 'update');
     } catch (e) {
+      if (!isBookmarkRootCurrent(captured, root)) return false;
       console.error(`${logPrefix} Failed to update bookmark:`, e);
       return false;
     }
@@ -285,19 +402,23 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
    * Delete a bookmark
    */
   async function deleteBookmark(bookmarkId: string): Promise<boolean> {
-    if (!(JC.userConfig as any)?.bookmark?.bookmarks?.[bookmarkId]) {
+    const captured = captureIdentity();
+    if (!captured.context) return false;
+    const root = bookmarkRootFor(captured);
+    if (!root?.bookmarks?.[bookmarkId]) {
       console.warn(`${logPrefix} Bookmark not found:`, bookmarkId);
       return false;
     }
 
-    delete (JC.userConfig as any).bookmark.bookmarks[bookmarkId];
+    delete root.bookmarks[bookmarkId];
 
     try {
-      await JC.saveUserSettings!('bookmark.json', (JC.userConfig as any).bookmark);
+      await JC.saveUserSettings!('bookmark.json', root);
+      if (!isBookmarkRootCurrent(captured, root)) return false;
       console.log(`${logPrefix} Bookmark deleted:`, bookmarkId);
-      emitBookmarksUpdated('delete');
-      return true;
+      return emitBookmarksUpdated(captured, 'delete');
     } catch (e) {
+      if (!isBookmarkRootCurrent(captured, root)) return false;
       console.error(`${logPrefix} Failed to delete bookmark:`, e);
       return false;
     }
@@ -319,9 +440,13 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
    *      originals — duplicates the user can retry, never data loss).
    */
   async function syncBookmarks(oldBookmarks: any[], newItemDetails: any, timeOffset = 0, removeOldIds?: string[]): Promise<any[]> {
+    const captured = captureIdentity();
+    if (!captured.context) return [];
     const synced: any[] = [];
     const now = new Date().toISOString();
-    const store = (JC.userConfig as any).bookmark.bookmarks;
+    const root = bookmarkRootFor(captured);
+    if (!root) return [];
+    const store = root.bookmarks;
 
     // 1. Write the new copies into memory.
     for (const oldBookmark of oldBookmarks) {
@@ -347,9 +472,11 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
 
     // 2. Persist + verify the new copies BEFORE removing any originals.
     try {
-      await JC.saveUserSettings!('bookmark.json', (JC.userConfig as any).bookmark);
+      await JC.saveUserSettings!('bookmark.json', root);
+      if (!isBookmarkRootCurrent(captured, root)) return [];
       console.log(`${logPrefix} Synced ${synced.length} bookmarks to new item ID`);
     } catch (e) {
+      if (!isBookmarkRootCurrent(captured, root)) return [];
       console.error(`${logPrefix} Failed to sync bookmarks:`, e);
       // Roll back the new copies we added; the originals were never touched.
       synced.forEach(bm => delete store[bm.id]);
@@ -366,18 +493,21 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
         }
       }
       try {
-        await JC.saveUserSettings!('bookmark.json', (JC.userConfig as any).bookmark);
+        await JC.saveUserSettings!('bookmark.json', root);
+        if (!isBookmarkRootCurrent(captured, root)) return [];
       } catch (e) {
+        if (!isBookmarkRootCurrent(captured, root)) return [];
         console.error(`${logPrefix} Synced new copies but could not persist removal of originals:`, e);
         // Restore the originals in memory so state matches disk (new copies +
         // originals). At worst duplicates remain — never data loss.
         Object.assign(store, removed);
-        emitBookmarksUpdated('sync');
+        if (!emitBookmarksUpdated(captured, 'sync')) return [];
         throw e;
       }
     }
 
-    emitBookmarksUpdated('sync');
+    if (!isBookmarkRootCurrent(captured, root)) return [];
+    if (!emitBookmarksUpdated(captured, 'sync')) return [];
     return synced;
   }
 
@@ -385,7 +515,11 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
    * Delete bookmarks for items that no longer exist in Jellyfin
    */
   async function cleanupOrphanedBookmarks(): Promise<{ cleaned: number; errors: number }> {
-    const allBookmarks = (JC.userConfig as any)?.bookmark?.bookmarks || {};
+    const captured = captureIdentity();
+    if (!captured.context) return { cleaned: 0, errors: 0 };
+    const root = bookmarkRootFor(captured);
+    if (!root) return { cleaned: 0, errors: 0 };
+    const allBookmarks = root.bookmarks;
     const itemIds = new Set<string>();
     const toDelete: string[] = [];
 
@@ -395,8 +529,7 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
     }
 
     // Check which items still exist
-    const userId = ApiClient.getCurrentUserId?.();
-    if (!userId) return { cleaned: 0, errors: 0 };
+    const userId = captured.context.userId;
 
     let cleaned = 0;
     let errors = 0;
@@ -404,8 +537,10 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
     for (const itemId of itemIds) {
       try {
         await getItemCached(itemId, { userId });
+        if (!isIdentityCurrent(captured)) return { cleaned, errors };
         // Item exists, keep bookmarks
       } catch (e) {
+        if (!isBookmarkRootCurrent(captured, root)) return { cleaned, errors };
         // DATA-SAFETY: only an EXPLICIT 404 (item confirmed gone) may delete a
         // bookmark. A network blip, 5xx, timeout or any other failure must NOT
         // destroy data — keep the bookmark and surface a warning instead.
@@ -425,14 +560,19 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
 
     // Delete orphaned bookmarks (confirmed 404s only)
     for (const bookmarkId of toDelete) {
+      if (!isBookmarkRootCurrent(captured, root)) return { cleaned, errors };
       try {
-        await deleteBookmark(bookmarkId);
-        cleaned++;
+        const deleted = await deleteBookmark(bookmarkId);
+        if (!isBookmarkRootCurrent(captured, root)) return { cleaned, errors };
+        if (deleted) cleaned++;
+        else errors++;
       } catch (e) {
+        if (!isBookmarkRootCurrent(captured, root)) return { cleaned, errors };
         errors++;
       }
     }
 
+    if (!isBookmarkRootCurrent(captured, root)) return { cleaned, errors };
     console.log(`${logPrefix} Cleanup: ${cleaned} orphaned bookmarks removed, ${errors} kept/failed (non-404 or delete error)`);
     return { cleaned, errors };
   }
@@ -452,10 +592,15 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
   /**
    * Create visual bookmark markers in video OSD
    */
-  function createBookmarkMarkers(video: HTMLVideoElement, bookmarksList: any[]): void {
+  function createBookmarkMarkers(
+    video: HTMLVideoElement,
+    bookmarksList: any[],
+    captured: BookmarkIdentityCapture,
+    mediaItemId: string
+  ): void {
     console.log(`${logPrefix} createBookmarkMarkers called - video:`, !!video, 'bookmarks:', bookmarksList.length);
 
-    if (!video || !bookmarksList.length) {
+    if (!captured.context || !isIdentityCurrent(captured) || !video || !bookmarksList.length) {
       console.log(`${logPrefix} Early return - no video or no bookmarks`);
       return;
     }
@@ -504,6 +649,8 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
 
       const marker = document.createElement('div');
       marker.className = 'jc-bookmark-marker';
+      marker.dataset.jcIdentityOwned = 'true';
+      marker.dataset.jcIdentityEpoch = String(captured.context!.epoch);
       marker.style.cssText = `
         position: absolute;
         left: ${percent}%;
@@ -535,12 +682,13 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
 
       // Click to jump to bookmark
       marker.addEventListener('click', (e) => {
+        if (!isMediaItemCurrent(captured, mediaItemId)) return;
         e.stopPropagation();
         video.currentTime = bookmark.timestamp;
         toast(`${JC.t!('toast_jumped_to_bookmark')}: ${formatTimestamp(bookmark.timestamp)}`, 2000);
       });
 
-      sliderContainer.appendChild(marker);
+      if (isMediaItemCurrent(captured, mediaItemId)) sliderContainer.appendChild(marker);
     });
 
     console.log(`${logPrefix} ✓ Created ${bookmarksList.length} bookmark markers`);
@@ -551,6 +699,8 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
    * Update bookmark markers for current video
    */
   async function updateBookmarkMarkersForCurrentVideo(): Promise<void> {
+    const captured = captureIdentity();
+    if (!captured.context) return;
     console.log(`${logPrefix} updateBookmarkMarkersForCurrentVideo called`);
 
     const video = document.querySelector<HTMLVideoElement>('.videoPlayerContainer video');
@@ -565,9 +715,12 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
       return;
     }
 
-    console.log(`${logPrefix} Fetching details for item:`, itemData.itemId);
-    const details = await fetchItemDetails(itemData.itemId);
-    if (!details) {
+    const requestedItemId = itemData.itemId;
+    console.log(`${logPrefix} Fetching details for item:`, requestedItemId);
+    const details = await fetchItemDetails(requestedItemId);
+    if (!details
+      || details.itemId !== requestedItemId
+      || !isMediaItemCurrent(captured, requestedItemId)) {
       console.log(`${logPrefix} Failed to fetch item details`);
       return;
     }
@@ -580,13 +733,15 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
     );
 
     console.log(`${logPrefix} Found ${bookmarksList.length} bookmarks for this item`);
-    createBookmarkMarkers(video, bookmarksList);
+    createBookmarkMarkers(video, bookmarksList, captured, requestedItemId);
   }
 
   /**
    * Show bookmark management modal
    */
   async function showBookmarkModal(mode = 'add', existingBookmark: any = null): Promise<void> {
+    const captured = captureIdentity();
+    if (!captured.context) return;
     const video = document.querySelector<HTMLVideoElement>('.videoPlayerContainer video');
     const currentTime = video?.currentTime || 0;
 
@@ -596,11 +751,14 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
       return;
     }
 
-    const details = await fetchItemDetails(itemData.itemId);
+    const requestedItemId = itemData.itemId;
+    const details = await fetchItemDetails(requestedItemId);
+    if (!isMediaItemCurrent(captured, requestedItemId)) return;
     if (!details) {
       toast(JC.t!('toast_bookmark_fetch_failed'), 3000);
       return;
     }
+    if (details.itemId !== requestedItemId) return;
 
     const { bookmarks: existingBookmarks } = findBookmarksForItem(
       details.itemId,
@@ -958,6 +1116,8 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
     // Create custom modal
     const modal = document.createElement('div');
     modal.className = 'jc-bm-player-modal-overlay';
+    modal.dataset.jcIdentityOwned = 'true';
+    modal.dataset.jcIdentityEpoch = String(captured.context.epoch);
     modal.innerHTML = `
       <div class="jc-bm-player-modal-container">
         <button class="jc-bookmark-modal-close">×</button>
@@ -972,35 +1132,78 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
       </div>
     `;
 
+    if (!isIdentityCurrent(captured)) return;
     document.body.appendChild(modal);
 
-    // Prevent keyboard shortcuts and wheel events from affecting video player
-    modal.addEventListener('keydown', (e) => e.stopPropagation());
-    modal.addEventListener('keyup', (e) => e.stopPropagation());
-    modal.addEventListener('keypress', (e) => e.stopPropagation());
-    modal.addEventListener('wheel', (e) => e.stopPropagation());
+    const modalTimers = new Set<number>();
+    let removalTimer: number | null = null;
+    let removed = false;
+    let closing = false;
 
-    const closeDialog = () => {
-      modal.style.opacity = '0';
-      setTimeout(() => {
-        modal.remove();
-        // Remove navigation listener
-        document.removeEventListener('viewshow', closeDialog);
-      }, 200);
+    const scheduleModalTask = (callback: () => void, delay: number): void => {
+      const timer = window.setTimeout(() => {
+        modalTimers.delete(timer);
+        if (isIdentityCurrent(captured) && !removed) callback();
+      }, delay);
+      modalTimers.add(timer);
     };
 
+    const removeModalNow = (): void => {
+      if (removed) return;
+      removed = true;
+      for (const timer of modalTimers) clearTimeout(timer);
+      modalTimers.clear();
+      if (removalTimer !== null) clearTimeout(removalTimer);
+      removalTimer = null;
+      document.removeEventListener('viewshow', requestClose);
+      activeModalDisposers.delete(modal);
+      modal.remove();
+    };
+
+    const disposeModal = (immediate: boolean): void => {
+      if (removed) return;
+      if (immediate) {
+        removeModalNow();
+        return;
+      }
+      if (closing) return;
+      closing = true;
+      modal.style.opacity = '0';
+      removalTimer = window.setTimeout(removeModalNow, 200);
+    };
+
+    function requestClose(): void {
+      if (!isIdentityCurrent(captured)) return;
+      disposeModal(false);
+    }
+
+    const isModalOwnerCurrent = (): boolean =>
+      isMediaItemCurrent(captured, requestedItemId);
+
+    activeModalDisposers.set(modal, () => disposeModal(true));
+
+    // Prevent keyboard shortcuts and wheel events from affecting video player
+    modal.addEventListener('keydown', (e) => { if (isIdentityCurrent(captured)) e.stopPropagation(); });
+    modal.addEventListener('keyup', (e) => { if (isIdentityCurrent(captured)) e.stopPropagation(); });
+    modal.addEventListener('keypress', (e) => { if (isIdentityCurrent(captured)) e.stopPropagation(); });
+    modal.addEventListener('wheel', (e) => { if (isIdentityCurrent(captured)) e.stopPropagation(); });
+
     // Close modal when navigating away
-    document.addEventListener('viewshow', closeDialog);
+    document.addEventListener('viewshow', requestClose);
 
     // Close button
-    modal.querySelector('.jc-bookmark-modal-close')?.addEventListener('click', closeDialog);
-    modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);
+    modal.querySelector('.jc-bookmark-modal-close')?.addEventListener('click', requestClose);
+    modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', requestClose);
     modal.addEventListener('click', (e) => {
-      if (e.target === modal) closeDialog();
+      if (isIdentityCurrent(captured) && e.target === modal) requestClose();
     });
 
     // Focus label input after modal opens
-    setTimeout(() => {
+    scheduleModalTask(() => {
+      if (!isModalOwnerCurrent()) {
+        disposeModal(true);
+        return;
+      }
       const labelInput = modal.querySelector<HTMLInputElement>('#bookmark-label');
       if (labelInput) labelInput.focus();
       modal.style.opacity = '1';
@@ -1008,21 +1211,28 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
 
     // Submit
     modal.querySelector('.jc-bookmark-btn-submit')?.addEventListener('click', () => { void (async () => {
+      if (!isModalOwnerCurrent()) return;
       const labelInput = modal.querySelector<HTMLInputElement>('#bookmark-label')!.value.trim();
 
       try {
+        let saved: boolean | Record<string, unknown> | null;
         if (isEdit) {
-          await updateBookmark(existingBookmark.id, { label: labelInput });
-           toast(JC.t!('toast_bookmark_updated'), 2000);
+          saved = await updateBookmark(existingBookmark.id, { label: labelInput });
         } else {
-          await addBookmark(timestamp, labelInput);
-           toast(JC.t!('toast_bookmark_updated'), 2000);
+          saved = await addBookmark(timestamp, labelInput);
         }
+        if (!isModalOwnerCurrent()) return;
+        if (!saved) {
+          toast(JC.t!('toast_bookmark_save_failed'), 3000);
+          return;
+        }
+        toast(JC.t!('toast_bookmark_updated'), 2000);
 
         // Refresh markers
         void updateBookmarkMarkersForCurrentVideo();
-        closeDialog();
+        requestClose();
       } catch (e) {
+        if (!isModalOwnerCurrent()) return;
         toast(JC.t!('toast_bookmark_save_failed'), 3000);
       }
     })(); });
@@ -1030,12 +1240,13 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
     // Jump to bookmark buttons
     modal.querySelectorAll<HTMLElement>('.jc-bookmark-btn-jump').forEach(btn => {
       btn.addEventListener('click', () => {
+        if (!isModalOwnerCurrent()) return;
         const bookmarkId = btn.dataset.bookmarkId;
         const bookmark = existingBookmarks.find(bm => bm.id === bookmarkId);
         if (bookmark && video) {
           video.currentTime = bookmark.timestamp;
           toast(`${JC.t!('toast_jumped_to_bookmark')}: ${formatTimestamp(bookmark.timestamp)}`, 2000);
-          closeDialog();
+          requestClose();
         }
       });
     });
@@ -1043,13 +1254,21 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
     // Delete bookmark buttons
     modal.querySelectorAll<HTMLElement>('.jc-bookmark-btn-delete').forEach(btn => {
       btn.addEventListener('click', () => { void (async () => {
+        if (!isModalOwnerCurrent()) return;
         const bookmarkId = btn.dataset.bookmarkId!;
-        await deleteBookmark(bookmarkId);
+        const deleted = await deleteBookmark(bookmarkId);
+        if (!isModalOwnerCurrent()) return;
+        if (!deleted) {
+          toast(JC.t!('toast_bookmark_save_failed'), 3000);
+          return;
+        }
         toast(JC.t!('toast_bookmark_deleted'), 2000);
         void updateBookmarkMarkersForCurrentVideo();
-        closeDialog();
+        requestClose();
         // Reopen modal to show updated list
-        setTimeout(() => { void showBookmarkModal(mode, existingBookmark); }, 300);
+        scheduleIdentityTask(captured, () => {
+          if (isModalOwnerCurrent()) void showBookmarkModal(mode, existingBookmark);
+        }, 300);
       })(); });
     });
   }
@@ -1070,7 +1289,8 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
   /**
    * Add bookmark button to the video player OSD
    */
-  function addOsdBookmarkButton(): void {
+  function addOsdBookmarkButton(captured: BookmarkIdentityCapture = captureIdentity()): void {
+    if (!captured.context || !isIdentityCurrent(captured)) return;
     // Don't add if already exists
     if (document.getElementById('jcBookmarkBtn')) return;
 
@@ -1085,15 +1305,19 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
     bookmarkBtn.id = 'jcBookmarkBtn';
     bookmarkBtn.setAttribute('is', 'paper-icon-button-light');
     bookmarkBtn.className = 'autoSize paper-icon-button-light';
+    bookmarkBtn.dataset.jcIdentityOwned = 'true';
+    bookmarkBtn.dataset.jcIdentityEpoch = String(captured.context.epoch);
     bookmarkBtn.title = JC.t!('shortcut_BookmarkCurrentTime');
     bookmarkBtn.innerHTML = '<span class="largePaperIconButton material-icons" aria-hidden="true">bookmark_add</span>';
 
     bookmarkBtn.onclick = (e) => {
+      if (!isIdentityCurrent(captured)) return;
       e.stopPropagation();
       void showBookmarkModal('add');
     };
 
     // Insert before the settings button
+    if (!isIdentityCurrent(captured)) return;
     nativeSettingsButton.parentElement!.insertBefore(bookmarkBtn, nativeSettingsButton);
     console.log(`${logPrefix} ✓ Added OSD bookmark button`);
   }
@@ -1106,11 +1330,17 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
     let cleanupFunctions: (() => void)[] = [];
 
     return function() {
+      if (!JC.pluginConfig?.BookmarksEnabled) {
+        JC.cleanupBookmarks?.();
+        return;
+      }
       // Prevent multiple initializations
       if (initialized) {
         console.log(`${logPrefix} Already initialized, skipping...`);
         return;
       }
+      const activation = captureIdentity();
+      if (!activation.context || !isIdentityCurrent(activation)) return;
       initialized = true;
 
       console.log(`${logPrefix} Initializing enhanced bookmarks...`);
@@ -1127,6 +1357,7 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
 
       // Debounced OSD injection - prevents rapid re-injection
       const debouncedOsdInjection = debounce(() => {
+        if (!isIdentityCurrent(activation)) return;
         if (!(JC as any).isVideoPage()) return;
 
         const osdBottom = document.querySelector('.videoOsdBottom');
@@ -1136,7 +1367,8 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
         // Only inject if OSD exists and we haven't already injected for this video
         if (osdBottom && video && currentOsdKey !== lastInjectedOsdKey) {
           void updateBookmarkMarkersForCurrentVideo();
-          addOsdBookmarkButton();
+          addOsdBookmarkButton(activation);
+          if (!isIdentityCurrent(activation)) return;
           lastInjectedOsdKey = currentOsdKey;
           console.log(`${logPrefix} Injected markers/button for ${currentOsdKey}`);
         }
@@ -1144,6 +1376,7 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
 
       // Managed observer: only watches when on video page
       function ensureOsdObserver(): void {
+        if (!isIdentityCurrent(activation)) return;
         if (!(JC as any).isVideoPage()) {
           disconnectObserver(osdObserverId);
           return;
@@ -1160,18 +1393,21 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
 
       // Debounced handlers for video events
       const handlePlayingEvent = debounce((e: Event) => {
+        if (!isIdentityCurrent(activation)) return;
         if ((e.target as HTMLElement).tagName === 'VIDEO' && (JC as any).isVideoPage()) {
           debouncedOsdInjection();
         }
       }, 300);
 
       const handleMetadataEvent = debounce((e: Event) => {
+        if (!isIdentityCurrent(activation)) return;
         if ((e.target as HTMLElement).tagName === 'VIDEO' && (JC as any).isVideoPage()) {
           debouncedOsdInjection();
         }
       }, 300);
 
       const handleViewShow = () => {
+        if (!isIdentityCurrent(activation)) return;
         if ((JC as any).isVideoPage()) {
           lastInjectedOsdKey = null; // Reset for new page
           ensureOsdObserver();
@@ -1201,18 +1437,45 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
         debouncedOsdInjection();
       }
 
-      // Store cleanup function globally
-      JC.cleanupBookmarks = function() {
+      const cleanupActivation = (force = false): void => {
+        if (!force && !isIdentityCurrent(activation)) return;
         cleanupFunctions.forEach(fn => fn());
         cleanupFunctions = [];
         disconnectObserver(osdObserverId);
         disconnectObserver(videoObserverId);
+        for (const timer of bookmarkTimers) clearTimeout(timer);
+        bookmarkTimers.clear();
+        disposeActiveModals();
+        document.getElementById('jcBookmarkBtn')?.remove();
+        document.querySelectorAll('.jc-bookmark-marker, .jc-bm-player-modal-overlay').forEach((node) => node.remove());
         initialized = false;
         console.log(`${logPrefix} Cleaned up`);
       };
+      const forceCleanup = (): void => cleanupActivation(true);
+      forceCleanupBookmarks = forceCleanup;
+
+      // The public cleanup is identity-owned, so a retained A function cannot
+      // tear down B. The reset hook retains the private force variant.
+      JC.cleanupBookmarks = (): void => cleanupActivation(false);
 
       console.log(`${logPrefix} ✓ Initialized`);
     };
   })();
+
+  JC.identity.registerReset('bookmarks', () => {
+    bookmarkGeneration += 1;
+    for (const timer of bookmarkTimers) clearTimeout(timer);
+    bookmarkTimers.clear();
+    disposeActiveModals();
+    itemDetailsCache.itemId = null;
+    itemDetailsCache.data = null;
+    itemDetailsCache.pending = null;
+    itemDetailsCache.epoch = -1;
+    itemDetailsCache.requestId += 1;
+    forceCleanupBookmarks?.();
+    forceCleanupBookmarks = null;
+    document.getElementById('jcBookmarkBtn')?.remove();
+    document.querySelectorAll('.jc-bookmark-marker, .jc-bm-player-modal-overlay').forEach((node) => node.remove());
+  });
 
 }

@@ -72,6 +72,7 @@ describe('onHide full state reset', () => {
         state.adminUserName = 'Bob';
         state.adminUsers = [{ userId: 'user-1', userName: 'Bob', count: 3 }];
         state.adminUsersLoading = true;
+        state.adminIsAdmin = true;
         const tokenBefore = state.adminLoadToken;
 
         descriptor.onHide!();
@@ -86,6 +87,7 @@ describe('onHide full state reset', () => {
         expect(state.adminUserName).toBe('');
         expect(state.adminUsers).toBeNull();
         expect(state.adminUsersLoading).toBe(false);
+        expect(state.adminIsAdmin).toBeNull();
         // Invalidates any in-flight cross-user fetch.
         expect(state.adminLoadToken).toBe(tokenBefore + 1);
     });

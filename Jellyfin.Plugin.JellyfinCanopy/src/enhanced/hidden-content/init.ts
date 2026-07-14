@@ -45,6 +45,15 @@ import { addLibraryHideButtons, removeLibraryHideButtons } from './buttons';
 
 /** Initial filter delay after module initialization. */
 const INIT_FILTER_DELAY_MS = 150;
+let initialFilterTimeout: number | null = null;
+
+function cancelInitialFilter(): void {
+    if (initialFilterTimeout != null) clearTimeout(initialFilterTimeout);
+    initialFilterTimeout = null;
+    JC.hiddenContent = undefined;
+}
+
+JC.identity?.registerReset?.('hidden-content-init', cancelInitialFilter);
 
 // ============================================================
 // Initialization
@@ -55,12 +64,18 @@ const INIT_FILTER_DELAY_MS = 150;
  * injects CSS, sets up the MutationObserver, and exposes the public API.
  */
 JC.initializeHiddenContent = function (): void {
+    const context = JC.identity?.capture?.() || null;
+    if (context && !JC.identity.isCurrent(context)) return;
+    cancelInitialFilter();
     resetFromUserConfig();
     injectCSS();
     setupNativeObserver();
 
     if (getHiddenCount() > 0) {
-        setTimeout(filterAllNativeCards, INIT_FILTER_DELAY_MS);
+        initialFilterTimeout = window.setTimeout(() => {
+            initialFilterTimeout = null;
+            if (!context || JC.identity.isCurrent(context)) filterAllNativeCards();
+        }, INIT_FILTER_DELAY_MS);
     }
 
     // Expose public API

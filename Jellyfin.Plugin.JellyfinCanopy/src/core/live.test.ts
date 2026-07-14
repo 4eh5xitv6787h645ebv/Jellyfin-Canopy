@@ -8,14 +8,14 @@
 // import with a mocked subscribe.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
-import { dispatch, emit, getHandlerCount, LIVE, off, on } from './live';
-import { register, teardownAll } from './lifecycle';
+import { clearHandlersForTest, dispatch, emit, getHandlerCount, LIVE, off, on } from './live';
+import { teardownAll } from './lifecycle';
 import type { LiveMessage } from '../types/jc';
 
 describe('fan-out (on / emit / off)', () => {
     afterEach(() => {
         // Drain any handlers a test left registered so counts don't bleed across.
-        register('live').teardown();
+        clearHandlersForTest();
     });
 
     it('delivers an emitted event to every handler for that type', () => {
@@ -115,7 +115,7 @@ describe('fan-out (on / emit / off)', () => {
 
 describe('dispatch (SDK message → JC live event routing)', () => {
     afterEach(() => {
-        register('live').teardown();
+        clearHandlersForTest();
     });
 
     it('routes UserDataChanged to the user-data-changed event with its Data', () => {
@@ -217,7 +217,7 @@ describe('SDK-present wiring + teardown (fresh module)', () => {
         expect(h).toHaveBeenCalledWith({ ItemsAdded: ['x'] }, expect.anything());
     });
 
-    it('teardownAll disposes the SDK subscription and clears handlers', async () => {
+    it('teardownAll disposes the SDK subscription but preserves process-lifetime handlers', async () => {
         const unsub = vi.fn();
         (globalThis as { ApiClient: { subscribe?: unknown } }).ApiClient.subscribe = vi.fn(() => unsub);
 
@@ -229,7 +229,40 @@ describe('SDK-present wiring + teardown (fresh module)', () => {
         tearDownAll();
 
         expect(unsub).toHaveBeenCalledTimes(1);
-        expect(mod.getHandlerCount()).toBe(0);
+        expect(mod.getHandlerCount()).toBeGreaterThan(0);
+        mod.clearHandlersForTest();
+    });
+
+    it('unsubscribes A, ignores its queued callback, and subscribes B exactly once', async () => {
+        const callbacks: Array<(message: LiveMessage) => void> = [];
+        const unsubscribes: Array<ReturnType<typeof vi.fn>> = [];
+        const subscribe = vi.fn((_types: string[], callback: (message: LiveMessage) => void) => {
+            callbacks.push(callback);
+            const unsubscribe = vi.fn();
+            unsubscribes.push(unsubscribe);
+            return unsubscribe;
+        });
+        (globalThis as { ApiClient: { subscribe?: unknown } }).ApiClient.subscribe = subscribe;
+
+        const mod = await import('./live');
+        const handler = vi.fn();
+        mod.on(mod.LIVE.USER_DATA_CHANGED, handler);
+        const original = JC.identity.capture()!;
+
+        const next = JC.identity.transition('server-b', 'user-b', 'live-test')!;
+        expect(unsubscribes[0]).toHaveBeenCalledTimes(1);
+        callbacks[0]({ MessageType: 'UserDataChanged', Data: { UserId: original.userId } });
+        expect(handler).not.toHaveBeenCalled();
+
+        await JC.identity.activate(next);
+        await JC.identity.activate(next);
+        expect(subscribe).toHaveBeenCalledTimes(2);
+        callbacks[1]({ MessageType: 'UserDataChanged', Data: { UserId: next.userId } });
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(mod.getHandlerCount(mod.LIVE.USER_DATA_CHANGED)).toBe(1);
+
+        JC.identity.transition(original.serverId, original.userId, 'live-test-restore');
+        mod.clearHandlersForTest();
     });
 });
 

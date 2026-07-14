@@ -8,8 +8,28 @@
 
 import { JC as JEBase } from '../globals';
 import { flagPngUrl } from '../core/asset-urls';
+import { createBoundedCache, type BoundedCache } from '../core/bounded-cache';
 import { ensureMaterialSymbolsFont, injectCss } from '../core/ui-kit';
-import type { JELegacyHelpers, PluginConfig, UserSettings } from '../types/jc';
+import type { ApiApi, JELegacyHelpers, PluginConfig, UserSettings } from '../types/jc';
+
+interface PersonData {
+    isDeceased?: boolean;
+    ageAtDeath?: number | null;
+    currentAge?: number | null;
+    ageAtItemRelease?: number | null;
+    birthPlace?: string | null;
+}
+
+function parseRecord<T>(raw: string): Record<string, T> {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, T>
+        : {};
+}
+
+function isPersonData(value: unknown): value is PersonData {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
 
 /**
  * Local view of the shared namespace adding the public member this module
@@ -20,11 +40,30 @@ const JC = JEBase as typeof JEBase & {
     initializePeopleTags?: () => void;
     currentSettings: UserSettings & { peopleTagsEnabled?: boolean };
     pluginConfig: PluginConfig;
+    core: { api: ApiApi };
     helpers: JELegacyHelpers & {
-        debounce<T extends (...args: any[]) => void>(fn: T, wait: number): T;
-        createObserver(id: string, cb: MutationCallback, target: Node, config: MutationObserverInit): unknown;
+        createObserver(
+            id: string,
+            cb: MutationCallback,
+            target: Node,
+            config: MutationObserverInit
+        ): { disconnect?: () => void; unsubscribe?: () => void };
     };
 };
+
+let activePeopleTagsCleanup: ((clearPersistent: boolean) => void) | null = null;
+
+function teardownPeopleTags(clearPersistent: boolean): void {
+    const cleanup = activePeopleTagsCleanup;
+    activePeopleTagsCleanup = null;
+    try { cleanup?.(clearPersistent); } catch { /* continue */ }
+    document.querySelectorAll('.jc-people-age-container, .jc-people-place-banner').forEach((node) => node.remove());
+    document.querySelectorAll('.jc-deceased-poster').forEach((node) => node.classList.remove('jc-deceased-poster'));
+}
+
+function resetPeopleTagsIdentity(): void {
+    teardownPeopleTags(true);
+}
 
 /**
  * Effective people-tags cache TTL in milliseconds, derived from the
@@ -39,15 +78,34 @@ export function peopleTagsCacheTtlMs(cfg: PluginConfig | null | undefined): numb
 }
 
 JC.initializePeopleTags = function() {
+    // A same-user settings reinitialization should replace observers/timers
+    // without throwing away that user's valid persistent cache.
+    teardownPeopleTags(false);
     if (!JC.currentSettings.peopleTagsEnabled) {
         console.log('🪼 Jellyfin Canopy: People Tags: Feature is disabled in settings.');
         return;
     }
 
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return;
+    const isCurrent = (): boolean => JC.identity.isCurrent(context);
+    const timers = new Set<number>();
+    let observerHandle: { disconnect?: () => void; unsubscribe?: () => void } | null = null;
+
     const logPrefix = '🪼 Jellyfin Canopy: People Tags:';
     const CACHE_KEY = 'JellyfinCanopy-peopleTagsCache';
     const CACHE_TIMESTAMP_KEY = 'JellyfinCanopy-peopleTagsCacheTimestamp';
+    const CACHE_OWNER_KEY = 'JellyfinCanopy-peopleTagsCacheIdentityOwner';
     const CACHE_TTL = peopleTagsCacheTtlMs(JC.pluginConfig);
+
+    const schedule = (fn: () => void, delay: number): number => {
+        const timer = window.setTimeout(() => {
+            timers.delete(timer);
+            if (isCurrent()) fn();
+        }, delay);
+        timers.add(timer);
+        return timer;
+    };
 
     // Country mapping dictionary
     const COUNTRY_MAP: Record<string, string> = {
@@ -99,18 +157,53 @@ JC.initializePeopleTags = function() {
         'Papua New Guinea': 'PG', 'Fiji': 'FJ', 'Samoa': 'WS', 'Tonga': 'TO'
     };
 
-    const peopleCache: Record<string, any> = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
-    const peopleCacheTimestamp: Record<string, number> = JSON.parse(localStorage.getItem(CACHE_TIMESTAMP_KEY) || '{}');
+    const expectedCacheOwner = `${context.serverId}:${context.userId}`;
+    if (localStorage.getItem(CACHE_OWNER_KEY) !== expectedCacheOwner) {
+        // Older builds stored an unowned cache. It cannot safely be replayed
+        // after login as a different Jellyfin user.
+        localStorage.removeItem(CACHE_KEY);
+        localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+        localStorage.setItem(CACHE_OWNER_KEY, expectedCacheOwner);
+    }
+    let peopleCache: Record<string, PersonData> = {};
+    let peopleCacheTimestamp: Record<string, number> = {};
+    try {
+        peopleCache = parseRecord<PersonData>(localStorage.getItem(CACHE_KEY) || '{}');
+        peopleCacheTimestamp = parseRecord<number>(localStorage.getItem(CACHE_TIMESTAMP_KEY) || '{}');
+    } catch {
+        localStorage.removeItem(CACHE_KEY);
+        localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+    }
     const Hot = (JC._hotCache = JC._hotCache || { ttl: CACHE_TTL });
-    // Local handle keeps the shared bucket usable under HotCache's wide index
-    // type (Map | number | undefined) — same object as Hot.peopleTags.
-    const hotPeopleTags = (Hot.peopleTags = Hot.peopleTags || new Map()) as Map<string, { data: any; timestamp: number }>;
+    const previousHot = Hot.peopleTags as BoundedCache<string, unknown> | undefined;
+    previousHot?.clear?.();
+    const hotPeopleTags = createBoundedCache<string, { data: PersonData; timestamp: number }>({
+        maxEntries: 1000,
+        ttlMs: CACHE_TTL,
+    });
+    Hot.peopleTags = hotPeopleTags;
 
     let processedCastMembers = new WeakSet<Element>();
     let processedPersonIds = new Set<string>();
     let lastProcessedItemId: string | null = null;
     let peopleTagsComplete = false; // Set true after all cast members tagged for current item
     let isProcessing = false;
+
+    activePeopleTagsCleanup = (clearPersistent) => {
+        for (const timer of timers) clearTimeout(timer);
+        timers.clear();
+        if (observerHandle?.unsubscribe) observerHandle.unsubscribe();
+        else observerHandle?.disconnect?.();
+        observerHandle = null;
+        hotPeopleTags.clear();
+        peopleCache = {};
+        peopleCacheTimestamp = {};
+        if (clearPersistent) {
+            localStorage.removeItem(CACHE_KEY);
+            localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+            localStorage.removeItem(CACHE_OWNER_KEY);
+        }
+    };
 
     // Styles for deceased indicators, overlay positioning, and material-symbols-rounded font.
     // Shared @font-face lives in core/ui-kit (local asset cache), not here.
@@ -195,14 +288,15 @@ JC.initializePeopleTags = function() {
      * @param personId
      * @param itemId (optional, for calculating age at release)
      */
-    async function getPersonInfo(personId: string, itemId: string | null = null): Promise<any> {
+    async function getPersonInfo(personId: string, itemId: string | null = null): Promise<PersonData | null> {
+        if (!isCurrent()) return null;
         const cacheKey = itemId ? `${personId}-${itemId}` : personId;
         const now = Date.now();
 
         // Check in-memory cache first
         if (hotPeopleTags.has(cacheKey)) {
             const cached = hotPeopleTags.get(cacheKey)!;
-            if (now - cached.timestamp < CACHE_TTL) {
+            if (isCurrent() && now - cached.timestamp < CACHE_TTL) {
                 return cached.data;
             }
         }
@@ -210,7 +304,9 @@ JC.initializePeopleTags = function() {
         // Check localStorage cache
         if (peopleCache[cacheKey] && peopleCacheTimestamp[cacheKey]) {
             if (now - peopleCacheTimestamp[cacheKey] < CACHE_TTL) {
-                const data = peopleCache[cacheKey];
+                if (!isCurrent()) return null;
+                const data = JC.identity.own(peopleCache[cacheKey], context);
+                peopleCache[cacheKey] = data;
                 hotPeopleTags.set(cacheKey, { data, timestamp: now });
                 return data;
             }
@@ -218,27 +314,28 @@ JC.initializePeopleTags = function() {
 
         // Fetch from backend
         try {
-            const queryString = itemId ? `?itemId=${itemId}` : '';
-            const url = ApiClient.getUrl(`/JellyfinCanopy/person/${personId}${queryString}`);
-            const data = await ApiClient.ajax({
-                type: 'GET',
-                url: url,
-                dataType: 'json'
-            }) as any;
+            const queryString = itemId ? `?itemId=${encodeURIComponent(itemId)}` : '';
+            const data = await JC.core.api.plugin(`/person/${encodeURIComponent(personId)}${queryString}`, {
+                cacheKey: `people-tags:${cacheKey}`,
+            });
+            if (!isCurrent()) return null;
 
-            if (data) {
+            if (isPersonData(data)) {
                 // Cache it
-                peopleCache[cacheKey] = data;
+                const ownedData = JC.identity.own(data, context);
+                peopleCache[cacheKey] = ownedData;
                 peopleCacheTimestamp[cacheKey] = now;
-                hotPeopleTags.set(cacheKey, { data, timestamp: now });
+                hotPeopleTags.set(cacheKey, { data: ownedData, timestamp: now });
 
+                if (!isCurrent()) return null;
+                localStorage.setItem(CACHE_OWNER_KEY, expectedCacheOwner);
                 localStorage.setItem(CACHE_KEY, JSON.stringify(peopleCache));
                 localStorage.setItem(CACHE_TIMESTAMP_KEY, JSON.stringify(peopleCacheTimestamp));
 
-                return data;
+                return ownedData;
             }
         } catch (error) {
-            console.warn(`${logPrefix} Failed to fetch person info for ${personId}:`, error);
+            if (isCurrent()) console.warn(`${logPrefix} Failed to fetch person info for ${personId}:`, error);
         }
 
         return null;
@@ -285,10 +382,12 @@ JC.initializePeopleTags = function() {
      * Create people tag chips in top-left corner and birthplace banner at bottom
      * @returns Object with ageContainer and placeContainer elements
      */
-    function createPeopleTag(personData: any): { ageContainer: HTMLElement; placeContainer: HTMLElement } {
+    function createPeopleTag(personData: PersonData): { ageContainer: HTMLElement; placeContainer: HTMLElement } {
         // Age chips container (top-left)
         const ageContainer = document.createElement('div');
         ageContainer.className = 'jc-people-age-container';
+        ageContainer.dataset.jcIdentityOwned = 'true';
+        JC.identity.own(ageContainer, context);
         ageContainer.style.cssText = `
             position: absolute;
             top: 8px;
@@ -316,6 +415,8 @@ JC.initializePeopleTags = function() {
         // Birthplace banner (bottom of card)
         const placeContainer = document.createElement('div');
         placeContainer.className = 'jc-people-place-banner';
+        placeContainer.dataset.jcIdentityOwned = 'true';
+        JC.identity.own(placeContainer, context);
         placeContainer.style.cssText = `
             position: absolute;
             bottom: 0;
@@ -369,6 +470,7 @@ JC.initializePeopleTags = function() {
      * @param currentItemId - Current item ID from URL
      */
     async function processSingleCollapsible(collapsibleSelector: string, currentItemId: string): Promise<void> {
+        if (!isCurrent()) return;
         const collapsible = document.querySelector(`#itemDetailPage:not(.hide) ${collapsibleSelector}`);
         if (!collapsible) return;
 
@@ -378,6 +480,7 @@ JC.initializePeopleTags = function() {
         console.debug(`${logPrefix} Found ${castCards.length} cast members in ${collapsibleSelector}`);
 
         for (const card of castCards) {
+            if (!isCurrent()) return;
             if (processedCastMembers.has(card)) continue;
             processedCastMembers.add(card);
 
@@ -391,6 +494,8 @@ JC.initializePeopleTags = function() {
 
             try {
                 const personData = await getPersonInfo(personId, currentItemId);
+                const liveItemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
+                if (!isCurrent() || liveItemId !== currentItemId || !card.isConnected) return;
                 if (!personData) {
                     continue;
                 }
@@ -420,6 +525,7 @@ JC.initializePeopleTags = function() {
 
                 // Create and append age chips (top-left) and place banner (bottom)
                 const tags = createPeopleTag(personData);
+                if (!isCurrent() || !cardScalable.isConnected) return;
                 if (tags.ageContainer.children.length > 0) {
                     cardScalable.appendChild(tags.ageContainer);
                 }
@@ -437,7 +543,7 @@ JC.initializePeopleTags = function() {
      * Process cast and guest cast members in the current view
      */
     async function processCastMembers(): Promise<void> {
-        if (isProcessing) return;
+        if (!isCurrent() || isProcessing) return;
         isProcessing = true;
 
         try {
@@ -453,12 +559,13 @@ JC.initializePeopleTags = function() {
 
             // Process both cast and guest cast sections
             await processSingleCollapsible('#castCollapsible', currentItemId);
+            if (!isCurrent()) return;
             await processSingleCollapsible('#guestCastCollapsible', currentItemId);
 
         } catch (error) {
-            console.error(`${logPrefix} Error in processCastMembers:`, error);
+            if (isCurrent()) console.error(`${logPrefix} Error in processCastMembers:`, error);
         } finally {
-            isProcessing = false;
+            if (isCurrent()) isProcessing = false;
         }
     }
 
@@ -468,8 +575,11 @@ JC.initializePeopleTags = function() {
     function initialize(): void {
         console.debug(`${logPrefix} Initializing with managed observer pattern`);
 
-        // Handle item details page display with debounced observer (same pattern as features.js)
-        const handlePeopleTags = JC.helpers.debounce(() => {
+        // Handle item details page display with an identity-owned debounce.
+        // A helper-owned timeout cannot be cancelled synchronously on logout.
+        let debounceTimer: number | null = null;
+        const runPeopleTags = () => {
+            if (!isCurrent()) return;
             const castSection = document.querySelector('#itemDetailPage:not(.hide) #castCollapsible');
             const guestCastSection = document.querySelector('#itemDetailPage:not(.hide) #guestCastCollapsible');
 
@@ -499,8 +609,9 @@ JC.initializePeopleTags = function() {
                 // navigations don't mark the wrong item as done.
                 const processingItemId = itemId;
                 void processCastMembers().then(() => {
-                    setTimeout(() => {
-                        if (lastProcessedItemId === processingItemId) {
+                    if (!isCurrent()) return;
+                    schedule(() => {
+                        if (isCurrent() && lastProcessedItemId === processingItemId) {
                             peopleTagsComplete = true;
                         }
                     }, 2000);
@@ -508,15 +619,26 @@ JC.initializePeopleTags = function() {
             } catch (e) {
                 // Ignore errors (likely not on an item page)
             }
-        }, 100);
+        };
+        const handlePeopleTags = () => {
+            if (!isCurrent()) return;
+            if (debounceTimer !== null) {
+                clearTimeout(debounceTimer);
+                timers.delete(debounceTimer);
+            }
+            debounceTimer = schedule(() => {
+                debounceTimer = null;
+                runPeopleTags();
+            }, 100);
+        };
 
         // Create managed observer for people tags.
         // Only watches childList (not attributes) to avoid firing on every hover
         // class/style change. Cast sections appear via childList mutations.
-        JC.helpers.createObserver(
+        observerHandle = JC.helpers.createObserver(
             'people-tags',
             (mutations) => {
-                if (!JC.currentSettings?.peopleTagsEnabled) return;
+                if (!isCurrent() || !JC.currentSettings?.peopleTagsEnabled) return;
 
                 // Reset completion flag when navigating to a different item
                 // (must happen BEFORE the peopleTagsComplete check)
@@ -560,3 +682,5 @@ JC.initializePeopleTags = function() {
 
     initialize();
 };
+
+JC.identity.registerReset('people-tags', resetPeopleTagsIdentity);

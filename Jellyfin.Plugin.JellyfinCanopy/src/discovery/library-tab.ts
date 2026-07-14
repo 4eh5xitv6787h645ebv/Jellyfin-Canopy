@@ -18,6 +18,7 @@ import { renderFeed, type DiscoveryFeedHandle } from './feed';
 import { fetchGenres } from './data';
 import { getUserRowIds } from './prefs';
 import { openCustomize } from './customize';
+import type { IdentityContext } from '../types/jc';
 
 interface LibraryPageDef {
     id: string;
@@ -39,6 +40,10 @@ interface PaneState {
 
 const state = new Map<string, PaneState>();
 let injectPending = false;
+let injectFrame: number | null = null;
+let initialized = false;
+let activeContext: IdentityContext | null = null;
+const lifecycle = JC.core.lifecycle!.register('discovery-library-tab');
 
 function stateFor(id: string): PaneState {
     let s = state.get(id);
@@ -98,23 +103,32 @@ function closePane(def: LibraryPageDef): void {
 }
 
 /** (Re)renders the feed into the pane's feed host using the caller's current saved row prefs. */
-async function renderFeedHost(def: LibraryPageDef): Promise<void> {
+async function renderFeedHost(def: LibraryPageDef, context: IdentityContext): Promise<void> {
+    if (!JC.identity.isCurrent(context)) return;
     const s = stateFor(def.id);
     if (!s.feedHost) return;
+    const feedHost = s.feedHost;
     s.feed?.destroy();
-    s.feedHost.textContent = '';
-    const handle = await renderFeed(s.feedHost, def.mediaType, getUserRowIds(def.mediaType));
-    if (!s.active) { handle.destroy(); return; }
+    feedHost.textContent = '';
+    const handle = await renderFeed(feedHost, def.mediaType, getUserRowIds(def.mediaType));
+    if (!JC.identity.isCurrent(context)
+        || state.get(def.id) !== s
+        || !s.active
+        || s.feedHost !== feedHost) {
+        handle.destroy();
+        return;
+    }
     s.feed = handle;
 }
 
 /** Builds the pane toolbar with the per-user "Customize" button. */
-function buildToolbar(def: LibraryPageDef): HTMLElement {
+function buildToolbar(def: LibraryPageDef, context: IdentityContext): HTMLElement {
     const toolbar = document.createElement('div');
     toolbar.className = 'jc-discovery-toolbar';
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'jc-discovery-customize-btn';
+    JC.identity.own(btn, context);
     const icon = document.createElement('span');
     icon.className = 'material-icons';
     icon.setAttribute('aria-hidden', 'true');
@@ -123,15 +137,20 @@ function buildToolbar(def: LibraryPageDef): HTMLElement {
     lbl.textContent = JC.t!('discovery_customize_button');
     btn.append(icon, lbl);
     btn.addEventListener('click', () => {
+        if (!JC.identity.isCurrent(context)) return;
         void fetchGenres(def.mediaType).then((genres) => {
-            openCustomize(def.mediaType, genres, () => { void renderFeedHost(def); });
+            if (!JC.identity.isCurrent(context) || !btn.isConnected) return;
+            openCustomize(def.mediaType, genres, () => {
+                if (JC.identity.isCurrent(context)) void renderFeedHost(def, context);
+            });
         });
     });
     toolbar.appendChild(btn);
     return toolbar;
 }
 
-async function openPane(def: LibraryPageDef): Promise<void> {
+async function openPane(def: LibraryPageDef, context: IdentityContext): Promise<void> {
+    if (!JC.identity.isCurrent(context)) return;
     const pageEl = document.querySelector<HTMLElement>(def.pageSelector);
     if (!pageEl) return;
     const s = stateFor(def.id);
@@ -139,26 +158,38 @@ async function openPane(def: LibraryPageDef): Promise<void> {
     const pane = document.createElement('div');
     pane.className = 'jc-discovery-pane';
     pane.setAttribute('data-discovery-pane', def.id);
+    pane.setAttribute('data-jc-identity-owned', 'true');
+    JC.identity.own(pane, context);
     const feedHost = document.createElement('div');
-    pane.append(buildToolbar(def), feedHost);
+    pane.append(buildToolbar(def, context), feedHost);
     pageEl.appendChild(pane);
     pageEl.classList.add('jc-discovery-active');
     s.pane = pane;
     s.feedHost = feedHost;
     s.active = true;
     document.getElementById('jc-discovery-toggle-' + def.id)?.classList.add('is-active');
-    await renderFeedHost(def);
+    await renderFeedHost(def, context);
     // If we were torn down mid-render (nav away), discard the now-orphaned pane.
-    if (!s.active) { s.feed?.destroy(); s.feed = null; pane.remove(); s.pane = null; s.feedHost = null; }
+    if (!JC.identity.isCurrent(context) || state.get(def.id) !== s || !s.active) {
+        s.feed?.destroy();
+        s.feed = null;
+        pane.remove();
+        if (state.get(def.id) === s) {
+            s.pane = null;
+            s.feedHost = null;
+        }
+    }
 }
 
-function toggle(def: LibraryPageDef): void {
+function toggle(def: LibraryPageDef, context: IdentityContext): void {
+    if (!JC.identity.isCurrent(context)) return;
     const s = stateFor(def.id);
-    if (s.active) closePane(def); else void openPane(def);
+    if (s.active) closePane(def); else void openPane(def, context);
 }
 
 /** Ensures the Discovery toggle button is in the library header tray for the given page. */
-function ensureToggle(def: LibraryPageDef): void {
+function ensureToggle(def: LibraryPageDef, context: IdentityContext): void {
+    if (!JC.identity.isCurrent(context)) return;
     const btnId = 'jc-discovery-toggle-' + def.id;
     if (document.getElementById(btnId)) return;
     const headerRight = getHeaderRightContainer();
@@ -168,14 +199,17 @@ function ensureToggle(def: LibraryPageDef): void {
         icon: 'trending_up',
         title: JC.t!('discovery_tab_title'),
         className: 'headerButton headerButtonRight paper-icon-button-light jc-discovery-toggle',
-        onClick: () => toggle(def),
+        onClick: () => toggle(def, context),
     });
+    btn.setAttribute('data-jc-identity-owned', 'true');
+    JC.identity.own(btn, context);
     if (stateFor(def.id).active) btn.classList.add('is-active');
     headerRight.insertBefore(btn, headerRight.firstChild);
     JC.core.ui!.expandIn(btn, {});
 }
 
-function inject(): void {
+function inject(context: IdentityContext): void {
+    if (!JC.identity.isCurrent(context)) return;
     if (!enabled()) return;
     const def = currentPage();
     // Tear down panes/toggles for any page we've navigated away from.
@@ -185,27 +219,54 @@ function inject(): void {
         document.getElementById('jc-discovery-toggle-' + p.id)?.remove();
     }
     if (!def) return;
-    ensureToggle(def);
+    ensureToggle(def, context);
     // Survive React re-renders: re-assert the content-hiding class, and if the pane node was blown
     // away, re-mount it.
     const s = stateFor(def.id);
     if (s.active) {
         const pageEl = document.querySelector<HTMLElement>(def.pageSelector);
         pageEl?.classList.add('jc-discovery-active');
-        if (!s.pane || !s.pane.isConnected) { s.pane = null; void openPane(def); }
+        if (!s.pane || !s.pane.isConnected) { s.pane = null; void openPane(def, context); }
     }
 }
 
-function scheduleInject(): void {
+function scheduleInject(context: IdentityContext | null = activeContext): void {
+    if (!context || !JC.identity.isCurrent(context)) return;
     if (injectPending) return;
     injectPending = true;
-    requestAnimationFrame(() => { injectPending = false; inject(); });
+    injectFrame = requestAnimationFrame(() => {
+        injectFrame = null;
+        injectPending = false;
+        if (JC.identity.isCurrent(context)) inject(context);
+    });
 }
 
 /** Wires the library-page Discovery surface. Idempotent — safe to call once at init. */
 export function initLibraryTab(): void {
+    if (initialized) return;
+    const context = JC.identity.capture();
+    if (!context) return;
+    initialized = true;
+    activeContext = context;
     ensureCss();
-    JC.core.dom!.onBodyMutation('jc-discovery-library', scheduleInject);
-    onNavigate(scheduleInject);
-    scheduleInject();
+    lifecycle.track(JC.core.dom!.onBodyMutation('jc-discovery-library', () => scheduleInject(context)));
+    lifecycle.track(onNavigate(() => scheduleInject(context)));
+    scheduleInject(context);
 }
+
+function resetLibraryTab(): void {
+    if (injectFrame !== null) cancelAnimationFrame(injectFrame);
+    injectFrame = null;
+    injectPending = false;
+    lifecycle.teardown();
+    for (const def of PAGES) closePane(def);
+    state.clear();
+    document.querySelectorAll('.jc-discovery-pane, .jc-discovery-toggle').forEach((node) => node.remove());
+    document.querySelectorAll('#moviesPage.jc-discovery-active, #tvshowsPage.jc-discovery-active')
+        .forEach((node) => node.classList.remove('jc-discovery-active'));
+    activeContext = null;
+    initialized = false;
+}
+
+JC.identity.registerReset('discovery-library-tab', resetLibraryTab);
+JC.identity.registerActivate('discovery-library-tab', () => initLibraryTab());

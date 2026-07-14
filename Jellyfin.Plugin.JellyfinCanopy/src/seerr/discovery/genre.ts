@@ -163,7 +163,11 @@ const discovery = JC.discoveryBase!.createDiscovery({
     resolveFeeds,
     buildDiscoverPath: (kind: string, id: number) => kind === 'tv'
         ? `/JellyfinCanopy/seerr/discover/tv/genre/${id}`
-        : `/JellyfinCanopy/seerr/discover/movies/genre/${id}`
+        : `/JellyfinCanopy/seerr/discover/movies/genre/${id}`,
+    onCleanup: () => {
+        genreInfoCache.clear();
+        tmdbGenreCache = null;
+    }
 });
 
 discovery.start();

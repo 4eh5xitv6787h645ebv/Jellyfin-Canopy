@@ -26,9 +26,12 @@ const logPrefix = '🪼 Jellyfin Canopy: Live Rows:';
 let rescanTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleRescan(): void {
+    const context = JC.identity.capture();
+    if (!context) return;
     if (rescanTimer) return;
     rescanTimer = setTimeout(() => {
         rescanTimer = null;
+        if (!JC.identity.isCurrent(context)) return;
         try {
             JC.tagPipeline?.scheduleScan?.();
         } catch (err) {
@@ -57,5 +60,10 @@ on(LIVE.LIBRARY_CHANGED, scheduleRescan);
 // Watch-state / favourite / played changes → refresh watch-state-dependent
 // overlays (e.g. user-review / rating tags) to match the new state.
 on(LIVE.USER_DATA_CHANGED, handleUserDataChanged);
+
+JC.identity.registerReset('core-live-rows', () => {
+    if (rescanTimer) clearTimeout(rescanTimer);
+    rescanTimer = null;
+});
 
 console.log(`${logPrefix} initialized`);

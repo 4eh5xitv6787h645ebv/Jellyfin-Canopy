@@ -12,6 +12,7 @@ import {
     buildNativeActionSheetItem, setActionSheetItemIcon, fitActionSheetItem,
     closeOpenActionSheet, getActiveActionSheetScroller,
 } from '../../core/action-sheet';
+import type { IdentityContext } from '../../types/jc';
 
 // ── Multi-select / long-press menu ───────────────────────────────────────────
 // Touch devices have no per-item "…" button; a long-press opens Jellyfin's multi-select
@@ -61,8 +62,9 @@ let activeConfirmClose: ((result: boolean) => void) | null = null;
  * surface it will be removed from. Inline-styled so it works even when the Hidden Content
  * module (and its dialog CSS) isn't active. Resolves true to proceed, false to cancel.
  */
-function confirmMultiRemove(targets: { name: string; surface: string }[]): Promise<boolean> {
+function confirmMultiRemove(context: IdentityContext, targets: { name: string; surface: string }[]): Promise<boolean> {
     return new Promise((resolve) => {
+        if (!JC.identity.isCurrent(context)) { resolve(false); return; }
         // Cleanly tear down any confirm still open (resolve its promise + drop its listener)
         // before opening a new one, so we never orphan a pending Promise / keydown handler.
         if (activeConfirmClose) activeConfirmClose(false);
@@ -125,7 +127,7 @@ function confirmMultiRemove(targets: { name: string; surface: string }[]): Promi
         };
         activeConfirmClose = close;
         cancel.addEventListener('click', () => close(false));
-        ok.addEventListener('click', () => close(true));
+        ok.addEventListener('click', () => close(JC.identity.isCurrent(context)));
         overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
 
         overlay.appendChild(dialog);
@@ -146,12 +148,14 @@ function confirmMultiRemove(targets: { name: string; surface: string }[]): Promi
  * selection intact for a retry).
  * @returns how many were removed.
  */
-async function performMultiRemove(targets: { itemId: string; surface: string; card: HTMLElement }[]): Promise<number> {
+async function performMultiRemove(context: IdentityContext, targets: { itemId: string; surface: string; card: HTMLElement }[]): Promise<number> {
     let removed = 0;
     for (const t of targets) {
+        if (!JC.identity.isCurrent(context)) return removed;
         // Sequential — selections are small and this keeps the HC store writes ordered.
         if (await removeFromHomeSurface(t.itemId, t.surface, t.card)) removed++;
     }
+    if (!JC.identity.isCurrent(context)) return removed;
     if (removed > 0) {
         closeOpenActionSheet();
         exitSelectionMode();
@@ -179,7 +183,7 @@ function multiSelectRemoveLabel(targets: { surface: string }[]): string {
  * Removes every selected Continue Watching / Next Up card from its own surface.
  * @param scroller The multi-select menu's scroller.
  */
-function createMultiSelectRemoveButton(scroller: HTMLElement, targets: RemovableCardTarget[]): HTMLButtonElement {
+function createMultiSelectRemoveButton(context: IdentityContext, scroller: HTMLElement, targets: RemovableCardTarget[]): HTMLButtonElement {
     const button = buildNativeActionSheetItem(scroller, {
         dataId: 'jc-multiselect-remove',
         icon: 'visibility_off',
@@ -190,6 +194,7 @@ function createMultiSelectRemoveButton(scroller: HTMLElement, targets: Removable
     button.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!JC.identity.isCurrent(context)) return;
 
         void (async () => {
             // Recollect the selection at click time, not from the build-time closure: if the
@@ -201,9 +206,9 @@ function createMultiSelectRemoveButton(scroller: HTMLElement, targets: Removable
             // item and the surface it'll be removed from, so the action is never a surprise.
             if (current.length > 1) {
                 closeOpenActionSheet();
-                const confirmed = await confirmMultiRemove(current);
-                if (!confirmed) return; // selection kept so the user can adjust
-                await performMultiRemove(current);
+                const confirmed = await confirmMultiRemove(context, current);
+                if (!confirmed || !JC.identity.isCurrent(context)) return; // selection kept so the user can adjust
+                await performMultiRemove(context, current);
                 return;
             }
 
@@ -213,7 +218,8 @@ function createMultiSelectRemoveButton(scroller: HTMLElement, targets: Removable
             textEl.textContent = JC.t!('remove_button_removing');
             setActionSheetItemIcon(button, 'hourglass_empty');
 
-            await performMultiRemove(current);
+            await performMultiRemove(context, current);
+            if (!JC.identity.isCurrent(context)) return;
 
             button.disabled = false;
             textEl.textContent = originalText;
@@ -229,6 +235,8 @@ function createMultiSelectRemoveButton(scroller: HTMLElement, targets: Removable
  * least one selected card is in Continue Watching or Next Up. Idempotent per menu.
  */
 JC.addMultiSelectRemoveButton = (): void => {
+    const context = JC.identity.capture();
+    if (!context) return;
     if (!JC.currentSettings!.removeContinueWatchingEnabled) return;
 
     const scroller = getActiveActionSheetScroller();
@@ -240,7 +248,7 @@ JC.addMultiSelectRemoveButton = (): void => {
     const targets = collectSelectedRemovableCards();
     if (!targets.length) return;
 
-    const removeButton = createMultiSelectRemoveButton(scroller, targets);
+    const removeButton = createMultiSelectRemoveButton(context, scroller, targets);
     const anchor = scroller.querySelector('[data-id="refresh"]')
         || scroller.querySelector('[data-id="markunplayed"]')
         || scroller.querySelector('[data-id="markplayed"]');
@@ -251,3 +259,10 @@ JC.addMultiSelectRemoveButton = (): void => {
     }
     fitActionSheetItem(removeButton, scroller);
 };
+
+JC.identity.registerReset('remove-multiselect', () => {
+    activeConfirmClose?.(false);
+    activeConfirmClose = null;
+    document.querySelectorAll('.jc-remove-confirm-overlay, [data-id="jc-multiselect-remove"]')
+        .forEach((node) => node.remove());
+});

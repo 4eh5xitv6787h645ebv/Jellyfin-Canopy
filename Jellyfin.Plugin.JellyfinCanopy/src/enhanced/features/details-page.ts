@@ -9,9 +9,10 @@ import { JC } from '../../globals';
 import { getVisibleDetailsPage, isDetailsPageVisible } from '../../core/details-view';
 import { onBodyMutation } from '../../core/dom-observer';
 import { onNavigate, onViewPage } from '../../core/navigation';
-import { debounce, getItemCached } from '../helpers';
+import { getItemCached } from '../helpers';
 import { displayWatchProgress, displayItemSize, displayAudioLanguages } from './details-media-info';
 import { displayReleaseDate } from './release-dates';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -29,7 +30,10 @@ let itemTypeFetchInProgress: Promise<unknown> | null = null;
 // dispatcher runs may still probe while the page keeps mutating (debounced,
 // pre-existing behavior) — both stop once the type resolves or the item changes.
 let itemTypeFetchAttempts = 0;
+const itemTypeRetryTimers = new Set<number>();
 const ITEM_TYPE_FETCH_MAX_ATTEMPTS = 4;
+let detailsDispatchTimer: number | null = null;
+let detailsDispatchGeneration = 0;
 
 // Types that support file size and watch progress
 const FEATURES_SUPPORTED_TYPES = ['Episode', 'Season', 'Series', 'Movie', 'BoxSet', 'Playlist'];
@@ -46,18 +50,20 @@ const HIDE_SUPPORTED_TYPES = ['Movie', 'Series', 'Episode', 'Season'];
  * @param itemId The item's Jellyfin ID.
  * @param visiblePage The visible detail page element.
  */
-function addHideContentButton(itemId: string, visiblePage: Element): void {
+function addHideContentButton(context: IdentityContext, itemId: string, visiblePage: Element): void {
+    if (!JC.identity.isCurrent(context)) return;
     // JC.hiddenContent is another family's frozen surface (hidden-content-init),
     // read late-bound at every call site exactly like the legacy file did.
     if (!(JC as any).hiddenContent) return;
     const settings = (JC as any).hiddenContent.getSettings();
     if (!settings.enabled || !settings.showHideButtons) return;
-    const isPerson = lastDetailsItemType === 'Person';
+    const itemType = lastDetailsItemType;
+    const isPerson = itemType === 'Person';
     if (isPerson) {
         if (!settings.showButtonCast) return;
     } else {
         if (settings.showButtonDetails === false) return;
-        if (!HIDE_SUPPORTED_TYPES.includes(lastDetailsItemType as string)) return;
+        if (!HIDE_SUPPORTED_TYPES.includes(itemType as string)) return;
     }
 
     // Don't add duplicate
@@ -83,6 +89,14 @@ function addHideContentButton(itemId: string, visiblePage: Element): void {
     button.setAttribute('is', 'emby-button');
     button.className = 'button-flat detailButton emby-button jc-detail-hide-btn';
     button.type = 'button';
+    let mounted = false;
+
+    const isTargetCurrent = (): boolean => {
+        if (!JC.identity.isCurrent(context)) return false;
+        const current = getVisibleDetailsPage();
+        if (!current || current.page !== visiblePage || current.itemId !== itemId) return false;
+        return !mounted || button.isConnected;
+    };
 
     const hideLabel = JC.t!('hidden_content_hide_button') !== 'hidden_content_hide_button'
         ? JC.t!('hidden_content_hide_button')
@@ -114,26 +128,31 @@ function addHideContentButton(itemId: string, visiblePage: Element): void {
     }
 
     function setHiddenState(): void {
+        if (!isTargetCurrent()) return;
         button.classList.add('jc-already-hidden');
         button.setAttribute('aria-label', hiddenLabel);
         button.title = hiddenLabel;
         renderContent('', 'visibility_off');
 
         button.onmouseenter = () => {
+            if (!isTargetCurrent()) return;
             button.title = unhideLabel;
         };
         button.onmouseleave = () => {
+            if (!isTargetCurrent()) return;
             button.title = hiddenLabel;
         };
         button.onclick = (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (!isTargetCurrent()) return;
             (JC as any).hiddenContent.unhideItem(itemId);
             setHideState();
         };
     }
 
     function setHideState(): void {
+        if (!isTargetCurrent()) return;
         button.classList.remove('jc-already-hidden');
         button.setAttribute('aria-label', hideLabel);
         button.title = hideLabel;
@@ -143,6 +162,7 @@ function addHideContentButton(itemId: string, visiblePage: Element): void {
         button.onclick = (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (!isTargetCurrent()) return;
 
             void (async () => {
                 // Get item name from the page title
@@ -156,25 +176,28 @@ function addHideContentButton(itemId: string, visiblePage: Element): void {
                 let seasonNumber: number | null = null;
                 let episodeNumber: number | null = null;
                 try {
-                    const userId = ApiClient.getCurrentUserId();
-                    const item: any = await getItemCached(itemId, { userId });
+                    const item: any = await getItemCached(itemId, { userId: context.userId });
+                    if (!isTargetCurrent()) return;
                     tmdbId = item?.ProviderIds?.Tmdb || '';
                     seriesId = item?.SeriesId || '';
                     seriesName = item?.SeriesName || '';
                     seasonNumber = item?.ParentIndexNumber != null ? item.ParentIndexNumber : null;
                     episodeNumber = item?.IndexNumber != null ? item.IndexNumber : null;
                 } catch (err) {
+                    if (!isTargetCurrent()) return;
                     console.warn('🪼 Jellyfin Canopy: Could not fetch item metadata for hide button', err);
                 }
 
-                const isEpisode = lastDetailsItemType === 'Episode';
-                const isSeason = lastDetailsItemType === 'Season';
+                if (!isTargetCurrent()) return;
+
+                const isEpisode = itemType === 'Episode';
+                const isSeason = itemType === 'Season';
 
                 // Build base item data
                 const baseItemData = {
                     itemId,
                     name: itemName,
-                    type: lastDetailsItemType,
+                    type: itemType,
                     tmdbId,
                     seriesId,
                     seriesName,
@@ -185,19 +208,22 @@ function addHideContentButton(itemId: string, visiblePage: Element): void {
                 if (isEpisode && seriesId) {
                     // Episode on a detail page: show choice dialog
                     (JC as any).hiddenContent.confirmAndHide(baseItemData, () => {
-                        setHiddenState();
+                        if (isTargetCurrent()) setHiddenState();
                     }, {
                         showEpisodeChoice: true,
                         onChooseShow: async () => {
+                            if (!isTargetCurrent()) return;
                             // User chose to hide the entire show
                             let seriesTmdbId = '';
                             try {
-                                const userId = ApiClient.getCurrentUserId();
-                                const series: any = await ApiClient.getItem(userId, seriesId);
+                                const series: any = await ApiClient.getItem(context.userId, seriesId);
+                                if (!isTargetCurrent()) return;
                                 seriesTmdbId = series?.ProviderIds?.Tmdb || '';
                             } catch (err) {
+                                if (!isTargetCurrent()) return;
                                 console.warn('🪼 Jellyfin Canopy: Could not fetch series metadata for hide-show action', err);
                             }
+                            if (!isTargetCurrent()) return;
                             (JC as any).hiddenContent.hideItem({
                                 itemId: seriesId,
                                 name: seriesName || itemName,
@@ -211,12 +237,12 @@ function addHideContentButton(itemId: string, visiblePage: Element): void {
                 } else if (isSeason && seriesId) {
                     // Season: hide with series metadata
                     (JC as any).hiddenContent.confirmAndHide(baseItemData, () => {
-                        setHiddenState();
+                        if (isTargetCurrent()) setHiddenState();
                     });
                 } else {
                     // Movie or Series: standard hide
                     (JC as any).hiddenContent.confirmAndHide(baseItemData, () => {
-                        setHiddenState();
+                        if (isTargetCurrent()) setHiddenState();
                     });
                 }
             })();
@@ -236,9 +262,11 @@ function addHideContentButton(itemId: string, visiblePage: Element): void {
     } else {
         buttonContainer.appendChild(button);
     }
+    mounted = true;
 }
 
-const handleItemDetails = debounce(() => {
+function runHandleItemDetails(context: IdentityContext): void {
+    if (!JC.identity.isCurrent(context)) return;
     // Resolve the visible details view ONLY when it belongs to the current
     // URL's item. During a details→details push the outgoing page is still
     // the visible one when navigation callbacks fire — injecting there put
@@ -259,35 +287,50 @@ const handleItemDetails = debounce(() => {
         if (lastDetailsItemId !== itemId) {
             lastDetailsItemId = itemId;
             lastDetailsItemType = null;
+            itemTypeFetchInProgress = null;
             itemTypeFetchAttempts = 0;
+            for (const timer of itemTypeRetryTimers) clearTimeout(timer);
+            itemTypeRetryTimers.clear();
         }
 
         // Fetch item type once per item to decide applicability
         if (!lastDetailsItemType) {
             if (!itemTypeFetchInProgress) {
-                const userId = ApiClient.getCurrentUserId();
                 const fetchItemId = itemId;
-                itemTypeFetchInProgress = getItemCached(itemId, { userId })
+                const fetchPage = visiblePage;
+                const request = getItemCached(itemId, { userId: context.userId })
                     .then((item: any) => {
+                        if (itemTypeFetchInProgress !== request || !JC.identity.isCurrent(context)) return;
                         itemTypeFetchInProgress = null;
+                        const current = getVisibleDetailsPage();
+                        if (!current || current.page !== fetchPage || current.itemId !== fetchItemId) {
+                            scheduleHandleItemDetails(context);
+                            return;
+                        }
                         // The user navigated to a DIFFERENT item while this was in
                         // flight — discard the stale type (it belongs to the old
                         // item) and re-dispatch so the current item starts its own
                         // fetch instead of rendering with the wrong feature gates.
                         if (lastDetailsItemId !== fetchItemId) {
-                            handleItemDetails();
+                            scheduleHandleItemDetails(context);
                             return;
                         }
                         lastDetailsItemType = item?.Type || null;
                         itemTypeFetchAttempts = 0;
                         // Re-run once type is known to render features
-                        handleItemDetails();
+                        scheduleHandleItemDetails(context);
                     })
                     .catch(() => {
+                        if (itemTypeFetchInProgress !== request || !JC.identity.isCurrent(context)) return;
                         itemTypeFetchInProgress = null;
+                        const current = getVisibleDetailsPage();
+                        if (!current || current.page !== fetchPage || current.itemId !== fetchItemId) {
+                            scheduleHandleItemDetails(context);
+                            return;
+                        }
                         if (lastDetailsItemId !== fetchItemId) {
                             // Different item now — let it start its own fetch.
-                            handleItemDetails();
+                            scheduleHandleItemDetails(context);
                             return;
                         }
                         // PERF(R9): fail open — getItemCached drops failed entries,
@@ -298,20 +341,23 @@ const handleItemDetails = debounce(() => {
                         itemTypeFetchAttempts++;
                         if (itemTypeFetchAttempts < ITEM_TYPE_FETCH_MAX_ATTEMPTS) {
                             const delay = 1000 * Math.pow(2, itemTypeFetchAttempts - 1);
-                            window.setTimeout(() => {
-                                if (lastDetailsItemId === fetchItemId) {
-                                    handleItemDetails();
+                            const timer = window.setTimeout(() => {
+                                itemTypeRetryTimers.delete(timer);
+                                if (JC.identity.isCurrent(context) && lastDetailsItemId === fetchItemId) {
+                                    scheduleHandleItemDetails(context);
                                 }
                             }, delay);
+                            itemTypeRetryTimers.add(timer);
                         }
                     });
+                itemTypeFetchInProgress = request;
             }
             return;
         }
 
         // Add hide content button on detail pages (including Person pages)
         if ((JC as any).hiddenContent) {
-            addHideContentButton(itemId, visiblePage);
+            addHideContentButton(context, itemId, visiblePage);
         }
 
         // Spoiler Guard toggle on Series (blurs all unwatched episode images via
@@ -343,7 +389,18 @@ const handleItemDetails = debounce(() => {
     } catch (e) {
     console.warn('🪼 Jellyfin Canopy: Error in item details handler', e);
 }
-}, 100);
+}
+
+function scheduleHandleItemDetails(context = JC.identity.capture()): void {
+    if (!context || !JC.identity.isCurrent(context)) return;
+    const generation = ++detailsDispatchGeneration;
+    if (detailsDispatchTimer !== null) clearTimeout(detailsDispatchTimer);
+    detailsDispatchTimer = window.setTimeout(() => {
+        detailsDispatchTimer = null;
+        if (generation !== detailsDispatchGeneration || !JC.identity.isCurrent(context)) return;
+        runHandleItemDetails(context);
+    }, 100);
+}
 
 // PERF(R3): this used to be a dedicated body-wide MutationObserver with
 // attributes:['class','style'], firing on every hover/focus/style write on
@@ -360,7 +417,23 @@ const handleItemDetails = debounce(() => {
 // the chips when item data arrives) never ran.
 onBodyMutation('item-details-info', () => {
     if (!isDetailsPageVisible()) return;
-    handleItemDetails();
+    scheduleHandleItemDetails();
 });
-onNavigate(() => { handleItemDetails(); });
-onViewPage(() => { handleItemDetails(); });
+onNavigate(() => { scheduleHandleItemDetails(); });
+onViewPage(() => { scheduleHandleItemDetails(); });
+
+JC.identity.registerReset('details-page', () => {
+    detailsDispatchGeneration++;
+    if (detailsDispatchTimer !== null) {
+        clearTimeout(detailsDispatchTimer);
+        detailsDispatchTimer = null;
+    }
+    lastDetailsItemId = null;
+    lastDetailsItemType = null;
+    itemTypeFetchInProgress = null;
+    itemTypeFetchAttempts = 0;
+    for (const timer of itemTypeRetryTimers) clearTimeout(timer);
+    itemTypeRetryTimers.clear();
+    document.querySelectorAll('.jc-detail-hide-btn').forEach((node) => node.remove());
+});
+JC.identity.registerActivate('details-page', (context) => { scheduleHandleItemDetails(context); });

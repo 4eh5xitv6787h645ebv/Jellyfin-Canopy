@@ -8,8 +8,19 @@
 import { JC } from '../../globals';
 import { toast } from '../../core/ui-kit';
 import type { PanelContext } from './panel';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+const reloadTimers = new Set<number>();
+
+function scheduleReload(context: IdentityContext, delay: number): void {
+    const timer = window.setTimeout(() => {
+        reloadTimers.delete(timer);
+        if (JC.identity.isCurrent(context)) window.location.reload();
+    }, delay);
+    reloadTimers.add(timer);
+}
 
 /**
  * Wires the language dropdown and translation-cache controls.
@@ -17,16 +28,19 @@ import type { PanelContext } from './panel';
  */
 export function wireLanguageControls(ctx: PanelContext): void {
     const { resetAutoCloseTimer } = ctx;
+    const context = JC.identity.capture();
+    if (!context) return;
 
     // --- Language Settings ---
     const displayLanguageSelect = document.getElementById('displayLanguageSelect') as HTMLSelectElement | null;
     if (displayLanguageSelect) {
         // Get current user ID for localStorage key
-        const userId = ApiClient.getCurrentUserId();
+        const userId = context.userId;
         const languageKey = `${userId}-language`;
+        const scopedLanguageKey = `jc-display-language:${context.serverId}:${context.userId}`;
 
         // Get saved language from localStorage as well
-        const localStorageLang = localStorage.getItem(languageKey);
+        const localStorageLang = localStorage.getItem(scopedLanguageKey);
         const savedLanguage = (JC.currentSettings as any).displayLanguage || localStorageLang || '';
 
         console.log('🪼 Jellyfin Canopy: Current language setting:', {
@@ -53,9 +67,10 @@ export function wireLanguageControls(ctx: PanelContext): void {
                 // leaked the client IP, and hit GitHub's 60/hr anonymous rate limit
                 // (→ 403) — dropped entirely; no replacement needed.
                 const [localeCodes, cultures]: [any, any] = await Promise.all([
-                    ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('/JellyfinCanopy/locales'), dataType: 'json' }),
-                    ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('/Localization/Cultures'), dataType: 'json' })
+                    JC.core.api!.plugin('/locales'),
+                    JC.core.api!.jf('/Localization/Cultures'),
                 ]);
+                if (!JC.identity.isCurrent(context) || !displayLanguageSelect.isConnected) return;
 
                 const cultureMap: Record<string, any> = {};
                 cultures.forEach((c: any) => {
@@ -86,8 +101,11 @@ export function wireLanguageControls(ctx: PanelContext): void {
                     displayLanguageSelect.appendChild(option);
                 });
             } catch (err) {
+                if (!JC.identity.isCurrent(context)) return;
                 console.warn('🪼 Jellyfin Canopy: Failed to load language options:', err);
             }
+
+            if (!JC.identity.isCurrent(context) || !displayLanguageSelect.isConnected) return;
 
             // Normalize saved language code with region support (e.g., zh-HK) when available
             let normalizedLanguage = '';
@@ -111,6 +129,7 @@ export function wireLanguageControls(ctx: PanelContext): void {
 
         // Save language on change
         displayLanguageSelect.addEventListener('change', (e) => { void (async () => {
+            if (!JC.identity.isCurrent(context)) return;
             const newLang = (e.target as HTMLSelectElement).value;
 
             const normalizeLangCode = (code: string) => {
@@ -129,13 +148,21 @@ export function wireLanguageControls(ctx: PanelContext): void {
 
             // Save to settings.json (use base language code)
             (JC.currentSettings as any).displayLanguage = newLang;
-            await JC.saveUserSettings!('settings.json', JC.currentSettings);
+            try {
+                await JC.saveUserSettings!('settings.json', JC.currentSettings);
+            } catch (error) {
+                if (!JC.identity.isCurrent(context)) return;
+                throw error;
+            }
+            if (!JC.identity.isCurrent(context)) return;
 
             // Save to localStorage (use the same code)
             if (fullCultureCode) {
+                localStorage.setItem(scopedLanguageKey, fullCultureCode);
                 localStorage.setItem(languageKey, fullCultureCode);
             } else {
                 // Set empty value instead of removing key
+                localStorage.setItem(scopedLanguageKey, '');
                 localStorage.setItem(languageKey, '');
             }
 
@@ -144,7 +171,7 @@ export function wireLanguageControls(ctx: PanelContext): void {
             } else {
                 toast(JC.t!('toast_language_changed'));
             }
-            setTimeout(() => window.location.reload(), 1500);
+            scheduleReload(context, 1500);
         })(); });
     }
 
@@ -152,6 +179,7 @@ export function wireLanguageControls(ctx: PanelContext): void {
     const clearTranslationCacheButton = document.getElementById('clearTranslationCacheButton');
     if (clearTranslationCacheButton) {
         clearTranslationCacheButton.addEventListener('click', () => {
+            if (!JC.identity.isCurrent(context)) return;
             const cacheKeys = [];
             const CACHE_PREFIX = 'JC_translation_';
             const CACHE_TIMESTAMP_PREFIX = 'JC_translation_ts_';
@@ -166,8 +194,13 @@ export function wireLanguageControls(ctx: PanelContext): void {
             cacheKeys.forEach(key => localStorage.removeItem(key));
 
             toast(JC.t!('toast_translation_cache_cleared', { count: cacheKeys.length }));
-            setTimeout(() => window.location.reload(), 2000);
+            scheduleReload(context, 2000);
             resetAutoCloseTimer();
         });
     }
 }
+
+JC.identity.registerReset('settings-language', () => {
+    for (const timer of reloadTimers) clearTimeout(timer);
+    reloadTimers.clear();
+});

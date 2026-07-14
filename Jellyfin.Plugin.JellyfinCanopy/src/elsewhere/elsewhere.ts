@@ -43,11 +43,80 @@ const JC = JEBase as typeof JEBase & {
     };
 };
 
+let activeElsewhereCleanup: (() => void) | null = null;
+
+function resetElsewhereIdentity(): void {
+    activeElsewhereCleanup?.();
+    activeElsewhereCleanup = null;
+    document.getElementById('streaming-settings-modal')?.remove();
+    document.querySelectorAll('.streaming-lookup-container').forEach((node) => node.remove());
+}
+
+JC.identity?.registerReset?.('elsewhere', resetElsewhereIdentity);
+
 /**
  * Initializes the Jellyfin Elsewhere script.
  * It will only run if the server reports TMDB is configured.
  */
 JC.initializeElsewhereScript = function() {
+    // Every delayed callback created by this initializer belongs to this exact
+    // account epoch. In particular, a modal left over from A must tag its fresh
+    // settings object as A-owned even if the user clicks Save after B signs in.
+    const identityContext = JC.identity?.capture?.() || null;
+    resetElsewhereIdentity();
+    let disposed = false;
+    const timeoutHandles = new Set<number>();
+    const idleHandles = new Set<number>();
+    const subscriptions: Array<() => void> = [];
+    const isInitializerCurrent = (): boolean => !disposed
+        && (!identityContext || JC.identity.isCurrent(identityContext));
+    const rejectStaleEvent = (event?: Event): boolean => {
+        if (isInitializerCurrent()) return false;
+        event?.preventDefault();
+        event?.stopImmediatePropagation();
+        return true;
+    };
+    const fenceInteractiveRoot = <T extends HTMLElement>(root: T): T => {
+        if (identityContext) JC.identity.own(root, identityContext);
+        root.dataset.jcIdentityOwned = 'true';
+        // Keep this capture fence attached to the subtree after normal teardown.
+        // A host closure can retain a detached A control; its descendant listeners
+        // and native link actions must remain inert after B becomes current.
+        for (const eventName of ['click', 'input', 'change', 'keydown']) {
+            root.addEventListener(eventName, (event) => {
+                rejectStaleEvent(event);
+            }, true);
+        }
+        return root;
+    };
+    const scheduleTimeout = (callback: () => void, delay: number): void => {
+        const handle = window.setTimeout(() => {
+            timeoutHandles.delete(handle);
+            if (isInitializerCurrent()) callback();
+        }, delay);
+        timeoutHandles.add(handle);
+    };
+    const scheduleIdle = (callback: () => void, timeout: number, fallbackDelay = timeout): void => {
+        if (typeof requestIdleCallback !== 'undefined') {
+            const handle = requestIdleCallback(() => {
+                idleHandles.delete(handle);
+                if (isInitializerCurrent()) callback();
+            }, { timeout });
+            idleHandles.add(handle);
+        } else {
+            scheduleTimeout(callback, fallbackDelay);
+        }
+    };
+    activeElsewhereCleanup = () => {
+        disposed = true;
+        for (const handle of timeoutHandles) clearTimeout(handle);
+        timeoutHandles.clear();
+        if (typeof cancelIdleCallback === 'function') {
+            for (const handle of idleHandles) cancelIdleCallback(handle);
+        }
+        idleHandles.clear();
+        for (const unsubscribe of subscriptions.splice(0)) unsubscribe();
+    };
     if (!JC.pluginConfig.ElsewhereEnabled) {
         console.log('🪼 Jellyfin Canopy: 🎬 Jellyfin Elsewhere: Feature is disabled in plugin settings.');
         return;
@@ -92,6 +161,7 @@ JC.initializeElsewhereScript = function() {
         fetch(assetUrl('elsewhere/regions.txt'))
             .then(response => response.ok ? response.text() : Promise.reject(new Error(`HTTP ${response.status}`)))
             .then(text => {
+                if (!isInitializerCurrent()) return;
                 const lines = text.trim().split('\n');
                 lines.forEach(line => {
                     if (line.startsWith('#')) return;
@@ -102,6 +172,7 @@ JC.initializeElsewhereScript = function() {
                 });
             })
             .catch(() => {
+                if (!isInitializerCurrent()) return;
                 // Fallback to hardcoded regions
                 availableRegions = {
                     'US': 'United States', 'GB': 'United Kingdom', 'IN': 'India', 'CA': 'Canada',
@@ -116,10 +187,12 @@ JC.initializeElsewhereScript = function() {
         fetch(assetUrl('elsewhere/providers.txt'))
             .then(response => response.ok ? response.text() : Promise.reject(new Error(`HTTP ${response.status}`)))
             .then(text => {
+                if (!isInitializerCurrent()) return;
                 availableProviders = text.trim().split('\n')
                     .filter(line => !line.startsWith('#') && line.trim() !== '');
             })
             .catch(() => {
+                if (!isInitializerCurrent()) return;
                 availableProviders = [
                     // Fallback to hardcoded providers
                     'Netflix', 'Amazon Prime Video', 'Disney Plus', 'HBO Max',
@@ -145,6 +218,7 @@ JC.initializeElsewhereScript = function() {
         let debounceTimer: ReturnType<typeof setTimeout> | undefined;
         // Use helpers.debounce if available for consistent behavior
         const debouncedFilter = JC.helpers?.debounce ? JC.helpers.debounce((filterText: string) => {
+            if (!isInitializerCurrent()) return;
             const value = filterText.toLowerCase();
             if (value.length === 0) {
                 dropdown.style.display = 'none';
@@ -217,7 +291,8 @@ JC.initializeElsewhereScript = function() {
                 const remove = document.createElement('span');
                 remove.textContent = '×';
                 remove.style.cssText = 'cursor: pointer; font-weight: bold; font-size: 14px;';
-                remove.onclick = () => {
+                remove.onclick = (event) => {
+                    if (rejectStaleEvent(event)) return;
                     const index = selectedValues.indexOf(value);
                     if (index > -1) {
                         selectedValues.splice(index, 1);
@@ -257,7 +332,10 @@ JC.initializeElsewhereScript = function() {
                     item.style.background = '#1a1a1a';
                 };
 
-                item.onclick = () => selectOption(option);
+                item.onclick = (event) => {
+                    if (rejectStaleEvent(event)) return;
+                    selectOption(option);
+                };
                 dropdown.appendChild(item);
             });
         }
@@ -280,6 +358,7 @@ JC.initializeElsewhereScript = function() {
         }
 
         function selectOption(option: string): void {
+            if (!isInitializerCurrent()) return;
             if (!selectedValues.includes(option)) {
                 selectedValues.push(option);
                 updateSelected();
@@ -290,13 +369,15 @@ JC.initializeElsewhereScript = function() {
             selectedIndex = -1;
         }
 
-        input.oninput = () => {
+        input.oninput = (event) => {
+            if (rejectStaleEvent(event)) return;
             if (debouncedFilter) {
                 debouncedFilter(input.value);
             } else {
                 // Fallback to manual debounce if helpers not available
                 clearTimeout(debounceTimer);
                 debounceTimer = setTimeout(() => {
+                    if (!isInitializerCurrent()) return;
                     const value = input.value.toLowerCase();
                     if (value.length === 0) {
                         dropdown.style.display = 'none';
@@ -311,6 +392,7 @@ JC.initializeElsewhereScript = function() {
         };
 
         input.onkeydown = (e) => {
+            if (rejectStaleEvent(e)) return;
             if (dropdown.style.display === 'none') return;
 
             switch (e.key) {
@@ -337,9 +419,10 @@ JC.initializeElsewhereScript = function() {
             }
         };
 
-        input.onblur = () => {
+        input.onblur = (event) => {
+            if (rejectStaleEvent(event)) return;
             // Delay hiding to allow clicks on dropdown items
-            setTimeout(() => {
+            scheduleTimeout(() => {
                 if (!dropdown.contains(document.activeElement)) {
                     dropdown.style.display = 'none';
                 }
@@ -355,7 +438,9 @@ JC.initializeElsewhereScript = function() {
     }
     // Create settings modal
     function createSettingsModal(): void {
-        const modal = document.createElement('div');
+        if (!isInitializerCurrent()) return;
+        document.getElementById('streaming-settings-modal')?.remove();
+        const modal = fenceInteractiveRoot(document.createElement('div'));
         modal.id = 'streaming-settings-modal';
         modal.style.cssText = `
             position: fixed;
@@ -436,11 +521,13 @@ JC.initializeElsewhereScript = function() {
         );
         servicesContainer.appendChild(servicesAutocomplete);
 
-        document.getElementById('cancel-settings')!.onclick = () => {
+        document.getElementById('cancel-settings')!.onclick = (event) => {
+            if (rejectStaleEvent(event)) return;
             modal.style.display = 'none';
         };
 
-        document.getElementById('save-settings')!.onclick = () => {
+        document.getElementById('save-settings')!.onclick = (event) => {
+            if (rejectStaleEvent(event)) return;
             userRegion = (document.getElementById('region-select') as HTMLSelectElement).value;
 
             // Get selected regions from autocomplete
@@ -463,16 +550,17 @@ JC.initializeElsewhereScript = function() {
 
             modal.style.display = 'none';
 
-            const elsewhereSettings = {
+            const elsewhereSettings = JC.identity.own({
                 Region: userRegion,
                 Regions: userRegions,
                 Services: userServices
-            };
+            }, identityContext);
             void JC.saveUserSettings('elsewhere.json', elsewhereSettings);
         };
 
         // Close on backdrop click
         modal.onclick = (e) => {
+            if (rejectStaleEvent(e)) return;
             if (e.target === modal) {
                 modal.style.display = 'none';
             }
@@ -541,10 +629,14 @@ JC.initializeElsewhereScript = function() {
 
     // Fetch streaming data
     function fetchStreamingData(tmdbId: string, mediaType: string, callback: (error: string | null, data?: any) => void): void {
+        if (!isInitializerCurrent()) return;
         const url = ApiClient.getUrl(`/JellyfinCanopy/tmdb/${mediaType}/${tmdbId}/watch/providers`);
         JC.core.api.fetch(url)
-            .then(data => callback(null, data))
+            .then(data => {
+                if (isInitializerCurrent()) callback(null, data);
+            })
             .catch((error: unknown) => {
+                if (!isInitializerCurrent()) return;
                 let errorMessage;
                 const errorMessageText = (error as Error).message || '';
 
@@ -775,7 +867,8 @@ JC.initializeElsewhereScript = function() {
             settingsButton.style.background = 'rgba(255, 255, 255, 0.1)';
         };
 
-        settingsButton.onclick = () => {
+        settingsButton.onclick = (event) => {
+            if (rejectStaleEvent(event)) return;
             const modal = document.getElementById('streaming-settings-modal');
             if (modal) {
                 modal.style.display = 'flex';
@@ -827,7 +920,8 @@ JC.initializeElsewhereScript = function() {
         container.appendChild(resultContainer);
 
         // Add click handler for manual lookup (multiple regions)
-        searchButton.onclick = () => {
+        searchButton.onclick = (event) => {
+            if (rejectStaleEvent(event)) return;
             searchButton.disabled = true;
             searchButton.innerHTML = '';
             const loadingIcon = createMaterialIcon('refresh', '16px');
@@ -984,7 +1078,8 @@ JC.initializeElsewhereScript = function() {
             closeButton.style.borderColor = 'rgba(255, 255, 255, 0.2)';
         };
 
-        closeButton.onclick = () => {
+        closeButton.onclick = (event) => {
+            if (rejectStaleEvent(event)) return;
             container.remove();
         };
 
@@ -1085,7 +1180,8 @@ JC.initializeElsewhereScript = function() {
             closeButton.style.borderColor = 'rgba(255, 255, 255, 0.2)';
         };
 
-        closeButton.onclick = () => {
+        closeButton.onclick = (event) => {
+            if (rejectStaleEvent(event)) return;
             container.remove();
         };
 
@@ -1108,7 +1204,9 @@ JC.initializeElsewhereScript = function() {
     // Auto-load streaming data (default region only), filling the DETACHED
     // container and signalling readiness so the caller can insert it once.
     function autoLoadStreamingData(tmdbId: string, mediaType: string, container: HTMLElement, onReady: () => void): void {
+        if (!isInitializerCurrent()) return;
         fetchStreamingData(tmdbId, mediaType, (error, data) => {
+            if (!isInitializerCurrent()) return;
             if (error) {
                 const errorDiv = document.createElement('div');
                 errorDiv.style.cssText = 'font-size: 13px; margin-top: 8px; color: #ff6b6b;';
@@ -1133,6 +1231,7 @@ JC.initializeElsewhereScript = function() {
 
     // Add buttons to detail pages
     function addStreamingLookup(): void {
+        if (!isInitializerCurrent()) return;
         const detailSections = document.querySelectorAll('.detailSectionContent');
 
         detailSections.forEach(section => {
@@ -1152,7 +1251,7 @@ JC.initializeElsewhereScript = function() {
             const tmdbId = match[2];
 
             // Create container — held OFF-DOM until its content is ready.
-            const container = document.createElement('div');
+            const container = fenceInteractiveRoot(document.createElement('div'));
             container.className = 'streaming-lookup-container';
             container.style.cssText = 'margin: 16px 0;';
 
@@ -1165,6 +1264,7 @@ JC.initializeElsewhereScript = function() {
             pendingElsewhereSections.add(section);
             autoLoadStreamingData(tmdbId, mediaType, container, () => {
                 pendingElsewhereSections.delete(section);
+                if (!isInitializerCurrent()) return;
                 if (!section.isConnected) return; // user navigated away
                 if (section.querySelector('.streaming-lookup-container')) return; // dedupe race
                 if (container.childNodes.length === 0) return; // nothing to show
@@ -1183,29 +1283,17 @@ JC.initializeElsewhereScript = function() {
     loadRegionsAndProviders();
     loadSettings();
 
-    // Use deferred initialization with requestIdleCallback
-    if (typeof requestIdleCallback !== 'undefined') {
-        requestIdleCallback(() => createSettingsModal(), { timeout: 2000 });
-    } else {
-        setTimeout(createSettingsModal, 2000);
-    }
+    scheduleIdle(createSettingsModal, 2000);
 
     // Coalesced, idle-scheduled lookup pass shared by every trigger below.
     let processingElsewhere = false;
     function scheduleStreamingLookup(): void {
-        if (processingElsewhere) return;
+        if (!isInitializerCurrent() || processingElsewhere) return;
         processingElsewhere = true;
-        if (typeof requestIdleCallback !== 'undefined') {
-            requestIdleCallback(() => {
-                addStreamingLookup();
-                processingElsewhere = false;
-            }, { timeout: 500 });
-        } else {
-            setTimeout(() => {
-                addStreamingLookup();
-                processingElsewhere = false;
-            }, 100);
-        }
+        scheduleIdle(() => {
+            addStreamingLookup();
+            processingElsewhere = false;
+        }, 500, 100);
     }
 
     // PERF(R3): this used to be a dedicated body-wide MutationObserver with
@@ -1224,19 +1312,17 @@ JC.initializeElsewhereScript = function() {
     // TMDB external link this feature anchors on only mounts when the host
     // renders item data, so with the gate dead the lookup never ran at all
     // on a slow first visit (only the too-early nav/viewshow probes fired).
-    onBodyMutation('elsewhere', () => {
+    const bodyMutation = onBodyMutation('elsewhere', () => {
+        if (!isInitializerCurrent()) return;
         if (!isDetailsPageVisible()) return;
         scheduleStreamingLookup();
     });
-    onNavigate(() => scheduleStreamingLookup());
-    onViewPage(() => scheduleStreamingLookup());
+    subscriptions.push(() => bodyMutation.unsubscribe());
+    subscriptions.push(onNavigate(() => scheduleStreamingLookup()));
+    subscriptions.push(onViewPage(() => scheduleStreamingLookup()));
 
     // Initial check
-    if (typeof requestIdleCallback !== 'undefined') {
-        requestIdleCallback(() => addStreamingLookup(), { timeout: 1000 });
-    } else {
-        setTimeout(addStreamingLookup, 1000);
-    }
+    scheduleIdle(addStreamingLookup, 1000);
 
     console.log('🪼 Jellyfin Canopy: 🎬 Jellyfin Elsewhere loaded!');
 };

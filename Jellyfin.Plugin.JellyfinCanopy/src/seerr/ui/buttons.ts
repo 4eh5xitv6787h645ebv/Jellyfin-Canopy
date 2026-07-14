@@ -1,6 +1,7 @@
 // src/seerr/ui/buttons.ts
 // Request-button configuration for movie/TV/collection cards.
 import { JC } from '../../globals';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -12,6 +13,20 @@ const MediaStatus = JC.seerrStatus!.MEDIA;
 const DisplayStatus = JC.seerrStatus!.DISPLAY;
 const icons = internal.icons; // requires ui/icons.ts to be loaded first
 
+function resolveIdentity(node: unknown): IdentityContext | null {
+    const element = node instanceof Element ? node : null;
+    return JC.identity.ownerOf(node)
+        || JC.identity.ownerOf(element?.closest('.seerr-card'))
+        || JC.identity.capture();
+}
+
+function isLive(node: unknown, identity: IdentityContext | null | undefined): boolean {
+    const card = node instanceof Element ? node.closest('.seerr-card') : null;
+    return !!identity
+        && JC.identity.isCurrent(identity)
+        && (JC.identity.isOwned(node, identity) || (!!card && JC.identity.isOwned(card, identity)));
+}
+
 /**
  * Configures the request button based on item status and type.
  * @param {HTMLElement} button - Button element to configure.
@@ -20,6 +35,8 @@ const icons = internal.icons; // requires ui/icons.ts to be loaded first
  * @param {boolean} seerrUserFound - If the current user is linked.
  */
 function configureRequestButton(button: any, item: any, isSeerrActive: any, seerrUserFound: any) {
+    const identity = resolveIdentity(button);
+    JC.identity.own(button, identity);
     if (!isSeerrActive) {
         button.innerHTML = `<span>${JC.t!('seerr_btn_offline')}</span>${icons.cloud_off}`;
         button.disabled = true;
@@ -69,6 +86,8 @@ function configureCollectionButton(button: any, item: any) {
  * @param {Object} item - Media item data.
  */
 function configureTvShowButton(button: any, overallStatus: any, seasonAnalysis: any, item: any) {
+    const identity = resolveIdentity(button);
+    JC.identity.own(button, identity);
     const setButton = (text: any, icon: any, className: any, disabled: any = false, summary: any = seasonAnalysis?.statusSummary) => {
         button.innerHTML = `${icon || ''}<span>${text}</span>`;
         if (summary) button.innerHTML += `<div class="seerr-season-summary">${summary}</div>`;
@@ -97,14 +116,17 @@ function configureTvShowButton(button: any, overallStatus: any, seasonAnalysis: 
     if (show4KOption && !button.closest('.seerr-button-group')) {
         const buttonGroup = document.createElement('div');
         buttonGroup.className = 'seerr-button-group';
+        JC.identity.own(buttonGroup, identity);
 
         const mainButton = button.cloneNode(true);
+        JC.identity.own(mainButton, identity);
         mainButton.classList.add('seerr-split-main');
         mainButton.dataset.tmdbId = item.id;
         mainButton.dataset.mediaType = 'tv';
         mainButton.dataset.searchResultItem = JSON.stringify(item);
 
         const arrowButton = document.createElement('button');
+        JC.identity.own(arrowButton, identity);
         arrowButton.className = 'seerr-split-arrow';
         arrowButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M12.53 16.28a.75.75 0 01-1.06 0l-7.5-7.5a.75.75 0 011.06-1.06L12 14.69l6.97-6.97a.75.75 0 111.06 1.06l-7.5 7.5z" clip-rule="evenodd" /></svg>';
         arrowButton.dataset.tmdbId = item.id;
@@ -128,6 +150,7 @@ function configureTvShowButton(button: any, overallStatus: any, seasonAnalysis: 
 
         arrowButton.addEventListener('click', (e: any) => {
             e.stopPropagation();
+            if (!isLive(arrowButton, identity)) return;
             if (state.active4KPopup && state.active4KPopup.parentElement === buttonGroup) {
                 internal.hide4KPopup();
             } else {
@@ -143,6 +166,8 @@ function configureTvShowButton(button: any, overallStatus: any, seasonAnalysis: 
  * @param {Object} item - Movie item data.
  */
 function configureMovieButton(button: any, item: any) {
+    const identity = resolveIdentity(button);
+    JC.identity.own(button, identity);
     button.dataset.searchResultItem = JSON.stringify(item);
     const status = item.mediaInfo ? item.mediaInfo.status : 1;
     const status4k = item.mediaInfo ? item.mediaInfo.status4k : 1;
@@ -162,6 +187,7 @@ function configureMovieButton(button: any, item: any) {
         // Create button group
         const buttonGroup = document.createElement('div');
         buttonGroup.className = 'seerr-button-group';
+        JC.identity.own(buttonGroup, identity);
 
         const hasMainDownloads = item.mediaInfo?.downloadStatus?.length > 0 || item.mediaInfo?.downloadStatus4k?.length > 0;
         const mainDisplayStatus = JC.seerrStatus!.resolveDisplayStatus(status, hasMainDownloads);
@@ -171,6 +197,7 @@ function configureMovieButton(button: any, item: any) {
 
         // Main button
         const mainButton = document.createElement('button');
+        JC.identity.own(mainButton, identity);
         mainButton.className = `seerr-request-button seerr-split-main ${mainButtonClass}`;
         mainButton.disabled = mainButtonDisabled;
         mainButton.innerHTML = `${mainButtonIcon}<span>${mainButtonText}</span>${mainShowSpinner ? '<span class="seerr-button-spinner"></span>' : ''}`;
@@ -183,6 +210,7 @@ function configureMovieButton(button: any, item: any) {
         }
 
         const arrowButton = document.createElement('button');
+        JC.identity.own(arrowButton, identity);
         arrowButton.className = 'seerr-split-arrow';
         arrowButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M12.53 16.28a.75.75 0 01-1.06 0l-7.5-7.5a.75.75 0 011.06-1.06L12 14.69l6.97-6.97a.75.75 0 111.06 1.06l-7.5 7.5z" clip-rule="evenodd" /></svg>';
         arrowButton.dataset.tmdbId = item.id;
@@ -208,6 +236,7 @@ function configureMovieButton(button: any, item: any) {
             // eslint-disable-next-line @typescript-eslint/no-misused-promises -- legacy async listener; errors handled inside
             mainButton.addEventListener('click', async (e: any) => {
                 e.stopPropagation();
+                if (!isLive(mainButton, identity)) return;
                 if (JC.pluginConfig.SeerrShowAdvanced) {
                     ui.showMovieRequestModal(item.id, item.title || item.name, item, false);
                 } else {
@@ -215,16 +244,19 @@ function configureMovieButton(button: any, item: any) {
                     mainButton.innerHTML = `<span>${JC.t!('seerr_btn_requesting')}</span><span class="seerr-button-spinner"></span>`;
                     try {
                         await JC.seerrAPI!.requestMedia(item.id, 'movie', {}, false, item);
+                        if (!isLive(mainButton, identity)) return;
                         if (!item.mediaInfo) item.mediaInfo = {};
                         item.mediaInfo.status = 3;
                         mainButton.innerHTML = `<span>${JC.t!('seerr_btn_requested')}</span>${icons.requested}`;
                         mainButton.classList.remove('seerr-button-request');
                         mainButton.classList.add('seerr-button-pending');
                     } catch (error: any) {
+                        if (!isLive(mainButton, identity)) return;
                         mainButton.disabled = false;
                         // Quota errors get a themed dialog; restore button to idle.
                         if (ui.isQuotaError && ui.isQuotaError(error)) {
                             await ui.showQuotaErrorDialog(error, 'movie');
+                            if (!isLive(mainButton, identity)) return;
                             mainButton.innerHTML = `${icons.request}<span>${JC.t!('seerr_btn_request')}</span>`;
                             return;
                         }
@@ -248,6 +280,7 @@ function configureMovieButton(button: any, item: any) {
 
         arrowButton.addEventListener('click', (e: any) => {
             e.stopPropagation();
+            if (!isLive(arrowButton, identity)) return;
             if (state.active4KPopup && state.active4KPopup.parentElement === buttonGroup) {
                 internal.hide4KPopup();
             } else {
@@ -275,6 +308,7 @@ function configureMovieButton(button: any, item: any) {
         button.addEventListener('click', async (e: any) => {
             e.preventDefault();
             e.stopPropagation();
+            if (!isLive(button, identity)) return;
             if (JC.pluginConfig.SeerrShowAdvanced) {
                 ui.showMovieRequestModal(item.id, item.title || item.name, item, false);
             } else {
@@ -282,16 +316,19 @@ function configureMovieButton(button: any, item: any) {
                 button.innerHTML = `<span>${JC.t!('seerr_btn_requesting')}</span><span class="seerr-button-spinner"></span>`;
                 try {
                     await JC.seerrAPI!.requestMedia(item.id, 'movie', {}, false, item);
+                    if (!isLive(button, identity)) return;
                     if (!item.mediaInfo) item.mediaInfo = {};
                     item.mediaInfo.status = 3;
                     button.innerHTML = `<span>${JC.t!('seerr_btn_requested')}</span>${icons.requested}`;
                     button.classList.remove('seerr-button-request');
                     button.classList.add('seerr-button-pending');
                 } catch (error: any) {
+                    if (!isLive(button, identity)) return;
                     button.disabled = false;
                     // Quota errors get a themed dialog; restore button to idle.
                     if (ui.isQuotaError && ui.isQuotaError(error)) {
                         await ui.showQuotaErrorDialog(error, 'movie');
+                        if (!isLive(button, identity)) return;
                         button.innerHTML = `${icons.request}<span>${JC.t!('seerr_btn_request')}</span>`;
                         return;
                     }

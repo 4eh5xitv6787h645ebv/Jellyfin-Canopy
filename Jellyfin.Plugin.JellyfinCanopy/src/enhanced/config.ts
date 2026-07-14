@@ -7,6 +7,47 @@ import { JC } from '../globals';
 import type { UserSettings } from '../types/jc';
 import { adminDefaultsView } from '../core/config-resolve';
 
+function normalizeIdentityPart(value: unknown): string {
+    if (typeof value !== 'string' && typeof value !== 'number') return '';
+    return String(value).trim().replace(/-/g, '').toLowerCase();
+}
+
+const UNKNOWN_SERVER_ID = normalizeIdentityPart('unknown-server');
+
+function isResolvedServerId(value: unknown): boolean {
+    const normalized = normalizeIdentityPart(value);
+    return normalized !== '' && normalized !== UNKNOWN_SERVER_ID;
+}
+
+function liveApiClientServerId(): string {
+    const client = ApiClient as JellyfinApiClient & {
+        serverId?: string | (() => string);
+        serverInfo?: { Id?: string; ServerId?: string } | (() => { Id?: string; ServerId?: string });
+        _serverInfo?: { Id?: string; ServerId?: string };
+        serverAddress?: string | (() => string);
+    };
+    try {
+        const direct = typeof client.serverId === 'function'
+            ? client.serverId.call(client)
+            : client.serverId;
+        if (isResolvedServerId(direct)) return String(direct);
+    } catch { /* try server-info forms */ }
+    try {
+        const info = typeof client.serverInfo === 'function'
+            ? client.serverInfo.call(client)
+            : (client.serverInfo || client._serverInfo);
+        const fromInfo = info?.Id || info?.ServerId || '';
+        if (isResolvedServerId(fromInfo)) return fromInfo;
+    } catch { /* fall through to address */ }
+    try {
+        const address = typeof client.serverAddress === 'function'
+            ? client.serverAddress.call(client)
+            : (client.serverAddress || client.getUrl('/'));
+        if (isResolvedServerId(address)) return new URL(String(address), window.location.href).origin;
+    } catch { /* unknown-server below */ }
+    return '';
+}
+
 /**
  * Constants derived from the plugin configuration.
  */
@@ -37,24 +78,47 @@ JC.state = JC.state || {
 // Per-file cache of the last JSON string successfully sent to the server.
 const _lastSavedJson: Record<string, string> = {};
 
-JC.saveUserSettings = async (fileName: string, settings: unknown): Promise<void> => {
-    if (typeof ApiClient === 'undefined' || !ApiClient.getCurrentUserId) {
-        console.error("🪼 Jellyfin Canopy: ApiClient not available");
-        return;
-    }
-    try {
-        const userId = ApiClient.getCurrentUserId();
-        if (!userId) {
-            console.error("🪼 Jellyfin Canopy: User ID not available");
-            return;
-        }
+function clearSaveDeduplication(): void {
+    for (const key of Object.keys(_lastSavedJson)) delete _lastSavedJson[key];
+}
 
+// The loader installs identity before loading the bundle. Optional chaining is
+// retained for isolated module tests which provide only the old bootstrap stub.
+JC.identity?.registerReset?.('enhanced-config-writes', clearSaveDeduplication);
+
+JC.saveUserSettings = async (fileName: string, settings: unknown): Promise<void> => {
+    try {
         // Fail LOUDLY on a no-arg / bad-fileName save instead of silently no-oping.
         // A call like saveUserSettings() serializes `undefined` and — for non-
         // settings.json files — hits the dedup guard below and returns without ever
         // POSTing, which is exactly how the pause-screen delay silently lost writes.
         if (!fileName || typeof settings === 'undefined') {
             console.error('🪼 Jellyfin Canopy: saveUserSettings called without fileName/settings', { fileName });
+            return;
+        }
+
+        const owner = JC.identity?.ownerOf?.(settings);
+        if (!owner || !JC.identity.isCurrent(owner)) {
+            console.error(`🪼 Jellyfin Canopy: Refusing to save ${fileName}; settings have no current identity owner`);
+            return;
+        }
+
+        if (typeof ApiClient === 'undefined' || typeof ApiClient.getCurrentUserId !== 'function') {
+            console.error("🪼 Jellyfin Canopy: ApiClient not available");
+            return;
+        }
+        // The authentication hook normally transitions identity before the host
+        // changes this value. Keep this independent check so a missed/foreign
+        // ApiClient replacement still cannot send A's object with B's token.
+        if (normalizeIdentityPart(ApiClient.getCurrentUserId()) !== owner.userId) {
+            console.error(`🪼 Jellyfin Canopy: Refusing to save ${fileName}; live user does not own the settings`);
+            return;
+        }
+        const liveServerId = liveApiClientServerId();
+        if (!isResolvedServerId(owner.serverId)
+            || !isResolvedServerId(liveServerId)
+            || normalizeIdentityPart(liveServerId) !== normalizeIdentityPart(owner.serverId)) {
+            console.error(`🪼 Jellyfin Canopy: Refusing to save ${fileName}; live server does not own the settings`);
             return;
         }
 
@@ -71,7 +135,7 @@ JC.saveUserSettings = async (fileName: string, settings: unknown): Promise<void>
         }
 
         const serialized = JSON.stringify(dataToSave);
-        const cacheKey = `${userId}:${fileName}`;
+        const cacheKey = `${owner.serverId}:${owner.userId}:${fileName}`;
 
         // For non-settings files, skip the POST if nothing has changed.
         // settings.json is exempt: loadSettings() merges defaults so the first
@@ -81,16 +145,41 @@ JC.saveUserSettings = async (fileName: string, settings: unknown): Promise<void>
             return; // no-op — identical to last save
         }
 
-        await ApiClient.ajax({
-            type: 'POST',
-            url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${userId}/${fileName}`),
-            data: serialized,
-            contentType: 'application/json'
-        });
+        // No await occurs between this final owner check and ajax invocation.
+        // Therefore an identity transition cannot interleave and substitute B's
+        // authentication after we have authorized A's snapshot.
+        if (!JC.identity.isCurrent(owner) || !JC.identity.isOwned(settings, owner)) return;
 
-        // Update the cache on success so subsequent identical saves are skipped
-        _lastSavedJson[cacheKey] = serialized;
+        // Production writes use the central identity-owned transport so a
+        // transition aborts both queued and active A saves before B can run.
+        // The fallback preserves isolated config-module tests/legacy embedding
+        // where the core bundle has not installed JC.core.api yet.
+        if (JC.core.api?.plugin) {
+            await JC.core.api.plugin(`/user-settings/${owner.userId}/${fileName}`, {
+                method: 'POST',
+                body: serialized,
+                headers: { 'Content-Type': 'application/json' },
+                // Retrying a non-idempotent settings write can duplicate work.
+                skipRetry: true
+            });
+        } else {
+            await ApiClient.ajax({
+                type: 'POST',
+                url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${owner.userId}/${fileName}`),
+                data: serialized,
+                contentType: 'application/json'
+            });
+        }
+
+        // A may have logged out while its request was in flight. Never publish
+        // that acknowledgement into the new epoch's deduplication state.
+        if (JC.identity.isCurrent(owner) && JC.identity.isOwned(settings, owner)) {
+            _lastSavedJson[cacheKey] = serialized;
+        }
     } catch (e) {
+        // Identity/navigation teardown intentionally aborts the old owner's
+        // transport. It is a successful fence, not a user-visible save error.
+        if ((e as Error | null)?.name === 'AbortError') return;
         console.error(`🪼 Jellyfin Canopy: Failed to save ${fileName}:`, e);
     }
 };
@@ -99,7 +188,17 @@ JC.saveUserSettings = async (fileName: string, settings: unknown): Promise<void>
  * Loads and merges settings from user config, plugin defaults, and hardcoded fallbacks.
  */
 JC.loadSettings = (): UserSettings => {
-    const userSettings: Record<string, unknown> = JC.userConfig?.settings || {};
+    const context = JC.identity?.capture?.() || null;
+    const storedSettings = JC.userConfig?.settings || {};
+    // An owner-tagged object from a prior epoch must never seed B's merged
+    // settings. During legacy/test boot (no active context), retain the old
+    // behaviour so the pure default-resolution contract remains usable.
+    const storedOwner = JC.identity?.ownerOf?.(storedSettings) || null;
+    const userSettings: Record<string, unknown> = context && storedOwner
+        && !JC.identity.isOwned(storedSettings, context)
+        ? {}
+        : storedSettings;
+    if (context && !storedOwner) JC.identity.own(userSettings, context);
     const pluginDefaults: Record<string, unknown> = JC.pluginConfig || {};
     // JC.pluginConfig is PascalCase; the merge below iterates camelCase keys, so
     // the admin tier resolves through a camelCase VIEW (ENH-4). Without this the
@@ -176,7 +275,7 @@ JC.loadSettings = (): UserSettings => {
         mergedSettings.isAdmin = userSettings.isAdmin !== undefined ? userSettings.isAdmin : undefined;
     }
 
-    return mergedSettings;
+    return JC.identity?.own?.(mergedSettings, context) || mergedSettings;
 };
 
 /** Shape of a shortcut entry in plugin/user config. */
@@ -206,6 +305,7 @@ JC.initializeShortcuts = function (): void {
           }, {})
         : {};
 
-    JC.state!.activeShortcuts = JC.state!.activeShortcuts || {};
-    Object.assign(JC.state!.activeShortcuts, defaultShortcuts, userShortcuts);
+    // Replace the map instead of merging in place: keys belonging only to A
+    // must disappear when B initializes in the same SPA document.
+    JC.state!.activeShortcuts = { ...defaultShortcuts, ...userShortcuts };
 };

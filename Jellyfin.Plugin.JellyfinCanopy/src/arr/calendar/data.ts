@@ -12,7 +12,7 @@ import { renderPage } from './render-views';
 import { getEventDateKey } from './event-date';
 import { describeFetchError } from '../../core/fetch-error';
 import { IncompleteCollectionError, readCollectionItems } from '../../core/paged-collection';
-import type { ApiApi } from '../../types/jc';
+import type { ApiApi, IdentityContext } from '../../types/jc';
 
 const logPrefix = '🪼 Jellyfin Canopy: Calendar Page:';
 
@@ -97,13 +97,37 @@ interface CalendarErrorEntry {
     reason?: string;
 }
 
-const STORAGE_KEYS = {
-    showUnmonitored: 'jc.calendar.showUnmonitored',
-};
+const LEGACY_SHOW_UNMONITORED_KEY = 'jc.calendar.showUnmonitored';
+
+function currentIdentity(): IdentityContext | null {
+    const context = JC.identity.capture();
+    return context && JC.identity.isCurrent(context) ? context : null;
+}
+
+function showUnmonitoredStorageKey(context: IdentityContext): string {
+    return `${LEGACY_SHOW_UNMONITORED_KEY}:${context.serverId}:${context.userId}`;
+}
 
 function getStoredShowUnmonitored(): boolean | null {
+    const context = currentIdentity();
+    if (!context) return null;
     try {
-        const stored = window.localStorage?.getItem(STORAGE_KEYS.showUnmonitored);
+        const storage = window.localStorage;
+        const key = showUnmonitoredStorageKey(context);
+        let stored = storage?.getItem(key);
+
+        // Upgrade the old process-global preference exactly once. It has no
+        // identity metadata, so the only safe compatibility choice is to give
+        // it to the first authenticated identity that reads it, then remove it
+        // before another account/server can inherit the same value.
+        if (stored === null) {
+            const legacy = storage?.getItem(LEGACY_SHOW_UNMONITORED_KEY);
+            if (legacy === 'true' || legacy === 'false') {
+                storage?.setItem(key, legacy);
+                stored = legacy;
+            }
+        }
+        storage?.removeItem(LEGACY_SHOW_UNMONITORED_KEY);
         if (stored === null) return null;
         return stored === 'true';
     } catch {
@@ -112,8 +136,10 @@ function getStoredShowUnmonitored(): boolean | null {
 }
 
 export function setStoredShowUnmonitored(value: boolean): void {
+    const context = currentIdentity();
+    if (!context) return;
     try {
-        window.localStorage?.setItem(STORAGE_KEYS.showUnmonitored, String(!!value));
+        window.localStorage?.setItem(showUnmonitoredStorageKey(context), String(!!value));
     } catch {
         // ignore storage errors
     }
@@ -215,6 +241,8 @@ function toLocalDayKey(date: Date): string {
  * Fetch calendar events from backend
  */
 export async function fetchCalendarEvents(startDate: Date, endDate: Date, signal?: AbortSignal): Promise<unknown> {
+    const context = currentIdentity();
+    if (!context || signal?.aborted) return null;
     try {
         const query = new URLSearchParams({
             start: startDate.toISOString(),
@@ -228,6 +256,7 @@ export async function fetchCalendarEvents(startDate: Date, endDate: Date, signal
             endDay: toLocalDayKey(endDate),
         });
         const data = await api.plugin(`/arr/calendar?${query.toString()}`, { signal }) as { events?: CalendarEvent[]; errors?: CalendarErrorEntry[] };
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
         state.events = (data.events || []).filter((evt) => evt && evt.releaseDate);
         state.eventsError = false;
         // Surface per-instance errors from the backend envelope so a misconfigured or
@@ -237,7 +266,7 @@ export async function fetchCalendarEvents(startDate: Date, endDate: Date, signal
     } catch (error) {
         // Teardown, not failure: the adoption drained and aborted the request.
         // No state writes, no toast — the next adoption loads fresh.
-        if (signal?.aborted) return null;
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
         console.error(`${logPrefix} Failed to fetch calendar events:`, error);
         state.events = [];
         // A total failure has no per-instance errors[] envelope to surface, so
@@ -297,6 +326,8 @@ function surfaceCalendarErrors(errors: CalendarErrorEntry[] | undefined): void {
  * Uses POST endpoint to only check specific calendar events, not entire library
  */
 export async function fetchUserData(signal?: AbortSignal): Promise<void> {
+    const context = currentIdentity();
+    if (!context || signal?.aborted) return;
     if (!state.settings.highlightFavorites && !state.settings.highlightWatchedSeries) {
         state.userDataMap = new Map();
         return;
@@ -327,6 +358,7 @@ export async function fetchUserData(signal?: AbortSignal): Promise<void> {
             body: { events: eventsToCheck },
             signal,
         }) as { results?: { id: string; isFavorite?: boolean; isWatched?: boolean }[] };
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return;
 
         // Build Map for O(1) lookup by event ID
         state.userDataMap = new Map();
@@ -339,12 +371,14 @@ export async function fetchUserData(signal?: AbortSignal): Promise<void> {
     } catch {
         // Teardown leaves the map alone; a real error clears it (highlighting
         // is optional either way).
-        if (signal?.aborted) return;
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return;
         state.userDataMap = new Map();
     }
 }
 
 async function fetchUserRequests(signal?: AbortSignal): Promise<void> {
+    const context = currentIdentity();
+    if (!context || signal?.aborted) return;
     if (!JC.pluginConfig?.SeerrEnabled) {
         state.requestedItems = new Set();
         state.requestedLoaded = true;
@@ -360,7 +394,7 @@ async function fetchUserRequests(signal?: AbortSignal): Promise<void> {
         // rows from a filtered page are not a valid next offset, so the browser
         // consumes a single explicitly-complete, self-scoped snapshot instead.
         const snapshot = await api.plugin('/arr/request-snapshot?userOnly=true', { signal });
-        if (signal?.aborted) return;
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return;
         if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) {
             throw new IncompleteCollectionError('Request snapshot was not an object.');
         }
@@ -402,7 +436,7 @@ async function fetchUserRequests(signal?: AbortSignal): Promise<void> {
         state.requestedLoaded = true;
         state.requestedError = false;
     } catch (error) {
-        if (signal?.aborted) return;
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return;
         console.warn(`${logPrefix} Failed to fetch user requests:`, error);
         // Never retain an old or partial projection. Keep requestedLoaded false
         // so a later refresh or Requests-filter toggle can retry the snapshot.
@@ -413,14 +447,11 @@ async function fetchUserRequests(signal?: AbortSignal): Promise<void> {
             JC.toast('⚠ ' + esc(describeFetchError(error, JC.t?.('calendar_load_error') || 'Unable to load calendar')));
         }
     } finally {
-        if (!signal?.aborted) {
-            state.requestedLoading = false;
-            renderPage();
-        } else {
-            // Teardown: publish nothing; release the loading latch so the
-            // next adoption's ensureRequestData can run afresh.
-            state.requestedLoading = false;
-        }
+        if (!JC.identity.isCurrent(context)) return;
+        // Releasing the latch is required on same-identity page teardown so a
+        // later re-adoption can refetch. Only a live adoption may render.
+        state.requestedLoading = false;
+        if (!signal?.aborted) renderPage();
     }
 }
 
@@ -520,6 +551,8 @@ export function groupEventsByDate(events: CalendarEvent[]): Record<string, Calen
  * @returns Item ID or null if not found
  */
 export async function searchFromProviders(event: CalendarEvent, options: { preferSeries?: boolean } = {}): Promise<string | null> {
+    const context = currentIdentity();
+    if (!context) return null;
     const preferSeries = !!options.preferSeries;
     const episodeProviders: Record<string, string> = {};
     const seriesProviders: Record<string, string> = {};
@@ -542,8 +575,10 @@ export async function searchFromProviders(event: CalendarEvent, options: { prefe
 
             try {
                 const itemId = await api.plugin(`/items/by-providers?${params.toString()}`) as string | null;
+                if (!JC.identity.isCurrent(context)) return null;
                 return itemId || null;
             } catch (error) {
+                if (!JC.identity.isCurrent(context)) return null;
                 // An HTTP error (e.g. 404) means "not found" — fall through to the
                 // next provider lookup, matching the pre-core `!response.ok` path.
                 if ((error as { status?: number } | null)?.status) return null;
@@ -553,6 +588,7 @@ export async function searchFromProviders(event: CalendarEvent, options: { prefe
 
         if (hasEpisodeProviders && !preferSeries) {
             const episodeItemId = await lookup(episodeProviders);
+            if (!JC.identity.isCurrent(context)) return null;
             if (episodeItemId) return episodeItemId;
         }
 
@@ -562,7 +598,46 @@ export async function searchFromProviders(event: CalendarEvent, options: { prefe
 
         return null;
     } catch (error) {
+        if (!JC.identity.isCurrent(context)) return null;
         console.error(`${logPrefix} Provider search failed:`, error);
         return null;
     }
 }
+
+/** Drop every identity-derived projection before the transition returns. */
+function resetCalendarIdentityState(): void {
+    try { state.locationUnsubscribe?.(); } catch { /* continue synchronous reset */ }
+    Object.assign(state, {
+        events: [],
+        eventsError: false,
+        isLoading: false,
+        previousPage: null,
+        currentDate: new Date(),
+        viewMode: 'agenda',
+        rangeStart: null,
+        rangeEnd: null,
+        sidebarCollapsed: null,
+        settings: {
+            firstDayOfWeek: 'Monday',
+            timeFormat: '5pm/5:30pm',
+            highlightFavorites: false,
+            highlightWatchedSeries: false,
+            showUnmonitored: false,
+            showOnlyRequested: false,
+            forceOnlyRequested: false,
+        },
+        userDataMap: new Map<string, CalendarUserData>(),
+        activeFilters: new Set<string>(),
+        filterMatchMode: 'any',
+        filterInvert: false,
+        requestedItems: new Set<string>(),
+        requestedLoaded: false,
+        requestedLoading: false,
+        requestedError: false,
+        locationSignature: null,
+        locationUnsubscribe: null,
+    });
+    _toastedCalendarErrors.clear();
+}
+
+JC.identity.registerReset('arr-calendar-data', resetCalendarIdentityState);

@@ -35,12 +35,15 @@ class ManageView {
     constructor(private modal: ArrModalHandle, private itemId: string) {}
 
     async load(): Promise<void> {
+        if (!this.modal.isActive()) return;
         this.modal.body.replaceChildren(centered(spinner()));
         try {
             const [ctx, queue] = await Promise.all([fetchContext(this.itemId), fetchStatus(this.itemId).catch(() => [])]);
+            if (!this.modal.isActive()) return;
             this.ctx = ctx;
             this.queue = queue;
         } catch (e) {
+            if (!this.modal.isActive()) return;
             this.modal.body.replaceChildren(centered(message('error', errorMessage(e))));
             return;
         }
@@ -48,6 +51,7 @@ class ManageView {
     }
 
     private render(): void {
+        if (!this.modal.isActive()) return;
         const ctx = this.ctx!;
         this.modal.setSubtitle(ctx.name || '');
 
@@ -88,6 +92,7 @@ class ManageView {
     }
 
     private renderFooter(): void {
+        if (!this.modal.isActive()) return;
         const ctx = this.ctx!;
         const footer = this.modal.footer;
         footer.replaceChildren();
@@ -99,7 +104,11 @@ class ManageView {
         }
         if (downloadsPageAvailable() && this.queue.length > 0) {
             const dl = button('download', JC.t!('arr_search_view_downloads'), 'jc-arr-btn');
-            dl.addEventListener('click', () => { navigateToDownloads(); this.modal.close(); });
+            dl.addEventListener('click', () => {
+                if (!this.modal.isActive()) return;
+                navigateToDownloads();
+                this.modal.close();
+            });
             footer.appendChild(dl);
         }
     }
@@ -154,41 +163,50 @@ class ManageView {
     }
 
     private async toggleMonitor(instanceName: string, input: HTMLInputElement): Promise<void> {
+        if (!this.modal.isActive()) return;
         const wanted = input.checked;
         input.disabled = true;
         try {
             const result = await setMonitored(this.itemId, wanted, instanceName);
+            if (!this.modal.isActive()) return;
             if (result.errors.length > 0 && result.dispatched.length === 0) throw new Error(result.errors[0].reason);
             toastSuccess(wanted ? JC.t!('arr_search_monitor_on') : JC.t!('arr_search_monitor_off'));
         } catch (e) {
+            if (!this.modal.isActive()) return;
             input.checked = !wanted; // revert
             toastError(errorMessage(e));
         } finally {
-            input.disabled = false;
+            if (this.modal.isActive()) input.disabled = false;
         }
     }
 
     private async doAutoSearch(btn: HTMLButtonElement): Promise<void> {
+        if (!this.modal.isActive()) return;
         btn.disabled = true;
         try {
             const result = await autoSearch(this.itemId);
+            if (!this.modal.isActive()) return;
             reportDispatch(result.dispatched.length, result.errors.length);
         } catch (e) {
+            if (!this.modal.isActive()) return;
             toastError(errorMessage(e));
         } finally {
-            btn.disabled = false;
+            if (this.modal.isActive()) btn.disabled = false;
         }
     }
 
     private async openAddForm(service: ArrService, instanceName: string): Promise<void> {
+        if (!this.modal.isActive()) return;
         this.modal.body.replaceChildren(centered(spinner()));
         let options: ArrAddOptions;
         try {
             options = await fetchAddOptions(service, instanceName);
         } catch (e) {
+            if (!this.modal.isActive()) return;
             this.modal.body.replaceChildren(centered(message('error', errorMessage(e))));
             return;
         }
+        if (!this.modal.isActive()) return;
         if (options.error) { this.modal.body.replaceChildren(centered(message('error', options.error))); return; }
         new AddForm(this.modal, this.itemId, service, instanceName, options, () => void this.load()).render();
     }
@@ -206,6 +224,7 @@ class AddForm {
     ) {}
 
     render(): void {
+        if (!this.modal.isActive()) return;
         const form = el('div', 'jc-arr-add-form');
         form.appendChild(el('div', 'jc-arr-section-title', JC.t!('arr_search_add_to_named', { name: this.instanceName })));
 
@@ -232,7 +251,9 @@ class AddForm {
         const footer = this.modal.footer;
         footer.replaceChildren();
         const cancel = button('arrow_back', JC.t!('arr_search_cancel'), 'jc-arr-btn');
-        cancel.addEventListener('click', () => this.onDone());
+        cancel.addEventListener('click', () => {
+            if (this.modal.isActive()) this.onDone();
+        });
         const submit = button('add', JC.t!('arr_search_add'), 'jc-arr-btn-primary');
         submit.addEventListener('click', () => void this.submit(submit, {
             qualityProfileId: Number(quality.value),
@@ -246,13 +267,16 @@ class AddForm {
     }
 
     private async submit(btn: HTMLButtonElement, values: { qualityProfileId: number; rootFolderPath: string; monitored: boolean; searchOnAdd: boolean; minimumAvailability: string | null }): Promise<void> {
+        if (!this.modal.isActive()) return;
         if (!values.qualityProfileId || !values.rootFolderPath) { toastError(JC.t!('arr_search_add_missing_fields')); return; }
         btn.disabled = true;
         try {
             await addItem({ itemId: this.itemId, instanceName: this.instanceName, ...values });
+            if (!this.modal.isActive()) return;
             toastSuccess(JC.t!('arr_search_add_success', { name: this.instanceName }));
             this.onDone();
         } catch (e) {
+            if (!this.modal.isActive()) return;
             btn.disabled = false;
             toastError(errorMessage(e));
         }

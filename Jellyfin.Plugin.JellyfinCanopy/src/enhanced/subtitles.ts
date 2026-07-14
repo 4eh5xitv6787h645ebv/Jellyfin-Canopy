@@ -6,7 +6,7 @@
 import { JC } from '../globals';
 import { onBodyMutation } from '../core/dom-observer';
 import { cssColorOr } from '../core/css-safe';
-import type { BodySubscriberHandle } from '../types/jc';
+import type { BodySubscriberHandle, IdentityContext } from '../types/jc';
 
 interface SubtitleStyle {
     textColor?: string;
@@ -18,6 +18,7 @@ interface SubtitleStyle {
 
 let subtitleObserver: BodySubscriberHandle | null = null;
 let currentSubtitleStyle: SubtitleStyle = {};
+let activeSubtitleContext: IdentityContext | null = null;
 
 /**
  * Preset styles for subtitles.
@@ -62,7 +63,8 @@ JC.fontFamilyPresets = [
  * center of the text, so font size changes don't shift the visual position.
  * When disableCustomSubtitleStyles is true, removes JC position overrides entirely.
  */
-function applySubtitlePosition(): void {
+function applySubtitlePosition(context: IdentityContext | null = activeSubtitleContext): void {
+    if (context && !JC.identity.isCurrent(context)) return;
     const containers = document.querySelectorAll<HTMLElement>('.videoSubtitles');
     if (!containers.length) return;
 
@@ -139,8 +141,12 @@ JC.applySubtitlePosition = applySubtitlePosition;
  * Jellyfin renders subtitles into .videoSubtitlesInner DOM elements; inline
  * !important styles win over the client's own stylesheet.
  */
-function forceApplyInlineStyles(element: HTMLElement | null): void {
-    if (!element || JC.currentSettings?.disableCustomSubtitleStyles) return;
+function forceApplyInlineStyles(
+    element: HTMLElement | null,
+    context: IdentityContext | null = activeSubtitleContext
+): void {
+    if (!element || !context || !JC.identity.isCurrent(context)
+        || JC.currentSettings?.disableCustomSubtitleStyles) return;
 
     // Apply all custom styles directly to videoSubtitlesInner
     element.style.setProperty('background-color', currentSubtitleStyle.bgColor!, 'important');
@@ -168,22 +174,23 @@ function forceApplyInlineStyles(element: HTMLElement | null): void {
 /**
  * Watches for subtitle elements and applies styles to them as they appear.
  */
-function startSubtitleObserver(): void {
+function startSubtitleObserver(context: IdentityContext): void {
     if (subtitleObserver) subtitleObserver.unsubscribe();
     subtitleObserver = onBodyMutation('subtitles', (mutations) => {
+        if (!JC.identity.isCurrent(context)) return;
         for (const mutation of mutations) {
             for (const node of mutation.addedNodes) {
                 if (node.nodeType === 1) {
                     const el = node as HTMLElement;
                     if (el.classList.contains('videoSubtitlesInner')) {
-                        forceApplyInlineStyles(el);
+                        forceApplyInlineStyles(el, context);
                     } else if (el.querySelector) {
                         const inner = el.querySelector<HTMLElement>('.videoSubtitlesInner');
-                        if (inner) forceApplyInlineStyles(inner);
+                        if (inner) forceApplyInlineStyles(inner, context);
                     }
                     // Also reapply position whenever a subtitle container appears
                     if (el.classList.contains('videoSubtitles') || el.querySelector?.('.videoSubtitles')) {
-                        applySubtitlePosition();
+                        applySubtitlePosition(context);
                     }
                 }
             }
@@ -195,6 +202,9 @@ function startSubtitleObserver(): void {
  * Main function to apply styles. It sets the desired style and starts the process.
  */
 JC.applySubtitleStyles = (textColor: string, bgColor: string, fontSize: number, fontFamily: string, textShadow: string) => {
+    const context = JC.identity.capture();
+    if (!context) return;
+    activeSubtitleContext = context;
     // THEME-6: the video-page driver re-invokes this on every ~100ms tick with
     // the same resolved style. Skip the observer teardown/re-subscribe and the
     // ::cue rewrite when nothing changed and the pipeline is already live; only
@@ -207,7 +217,7 @@ JC.applySubtitleStyles = (textColor: string, bgColor: string, fontSize: number, 
     const cueSheetLive = !!(document.getElementById('jc-html-videoplayer-cuestyle') as HTMLStyleElement | null)?.sheet?.cssRules.length;
     if (unchanged && subtitleObserver && cueSheetLive) {
         // Position is cheap + idempotent — keep it; skip the rest.
-        applySubtitlePosition();
+        applySubtitlePosition(context);
         return;
     }
 
@@ -215,13 +225,14 @@ JC.applySubtitleStyles = (textColor: string, bgColor: string, fontSize: number, 
     currentSubtitleStyle = { textColor, bgColor, fontSize, fontFamily, textShadow };
 
     // Force-apply to any subtitle elements that might already exist
-    document.querySelectorAll<HTMLElement>('.videoSubtitlesInner').forEach(forceApplyInlineStyles);
+    document.querySelectorAll<HTMLElement>('.videoSubtitlesInner')
+        .forEach((element) => forceApplyInlineStyles(element, context));
 
     // Apply position to the container
-    applySubtitlePosition();
+    applySubtitlePosition(context);
 
     // Start the observer to catch any new subtitle elements
-    startSubtitleObserver();
+    startSubtitleObserver(context);
 
     // NATIVE cue rendering path: on Jellyfin 12, .videoSubtitlesInner only
     // exists when jellyfin-web's useCustomSubtitles() is true (Firefox/
@@ -231,7 +242,7 @@ JC.applySubtitleStyles = (textColor: string, bgColor: string, fontSize: number, 
     // override there, or every JC subtitle setting silently no-ops on the
     // most common browser. Position settings cannot apply to native cues
     // (::cue supports style properties only).
-    applyNativeCueStyles();
+    applyNativeCueStyles(context);
 };
 
 /**
@@ -241,7 +252,8 @@ JC.applySubtitleStyles = (textColor: string, bgColor: string, fontSize: number, 
  * the video-page observer re-invokes the style pipeline after that, so this
  * lands even when the track is picked mid-playback.
  */
-function applyNativeCueStyles(): void {
+function applyNativeCueStyles(context: IdentityContext): void {
+    if (!JC.identity.isCurrent(context)) return;
     const clientCueSheet = document.getElementById('htmlvideoplayer-cuestyle') as HTMLStyleElement | null;
     if (!clientCueSheet?.sheet) return;
 
@@ -249,6 +261,8 @@ function applyNativeCueStyles(): void {
     if (!styleElement?.sheet) {
         styleElement = document.createElement('style');
         styleElement.id = 'jc-html-videoplayer-cuestyle';
+        styleElement.setAttribute('data-jc-identity-owned', 'true');
+        JC.identity.own(styleElement, context);
         document.head.appendChild(styleElement);
     }
 
@@ -286,11 +300,12 @@ function applyNativeCueStyles(): void {
  * When custom styles are disabled, removes all JC-injected styles cleanly.
  */
 JC.applySavedStylesWhenReady = () => {
+    const context = JC.identity.capture();
+    if (!context) return;
+    activeSubtitleContext = context;
     if (!document.querySelector('video')) {
-        if (subtitleObserver) {
-            subtitleObserver.unsubscribe();
-            subtitleObserver = null;
-        }
+        removeInjectedStyles();
+        currentSubtitleStyle = {};
         return;
     }
 
@@ -318,3 +333,12 @@ JC.applySavedStylesWhenReady = () => {
         );
     }
 };
+
+function resetSubtitleIdentity(): void {
+    activeSubtitleContext = null;
+    currentSubtitleStyle = {};
+    removeInjectedStyles();
+}
+
+JC.identity.registerReset('enhanced-subtitles', resetSubtitleIdentity);
+JC.identity.registerActivate('enhanced-subtitles', () => JC.applySavedStylesWhenReady?.());

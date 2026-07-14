@@ -7,6 +7,7 @@
 import { JC } from '../../globals';
 import { getSettings, hideItem, unhideItem } from './data';
 import type { HideItemParams } from './data';
+import type { IdentityContext } from '../../types/jc';
 
 /** Options customising the hide-confirmation dialog variants. */
 export interface HideDialogOptions {
@@ -27,6 +28,79 @@ const SUPPRESS_DURATION_MS = 15 * 60 * 1000;
 /** LocalStorage key for "don't ask again" suppression timestamp. */
 const SUPPRESS_STORAGE_KEY = 'jc_hide_confirm_suppressed_until';
 
+interface DialogFence {
+    readonly generation: number;
+    readonly context: IdentityContext | null;
+}
+
+let dialogGeneration = 0;
+let activeUndoClose: (() => void) | null = null;
+let activeConfirmClose: (() => void) | null = null;
+const dialogTimeouts = new Set<number>();
+const dialogFrames = new Set<number>();
+
+function captureDialogFence(): DialogFence {
+    return {
+        generation: dialogGeneration,
+        context: JC.identity?.capture?.() || null,
+    };
+}
+
+function isDialogFenceCurrent(fence: DialogFence): boolean {
+    return fence.generation === dialogGeneration
+        && (!fence.context || JC.identity.isCurrent(fence.context));
+}
+
+function scheduleDialogTimeout(callback: () => void, delay: number): number {
+    const handle = window.setTimeout(() => {
+        dialogTimeouts.delete(handle);
+        callback();
+    }, delay);
+    dialogTimeouts.add(handle);
+    return handle;
+}
+
+function cancelDialogTimeout(handle: number | null): void {
+    if (handle == null) return;
+    clearTimeout(handle);
+    dialogTimeouts.delete(handle);
+}
+
+function scheduleDialogFrame(callback: () => void): number {
+    const handle = requestAnimationFrame(() => {
+        dialogFrames.delete(handle);
+        callback();
+    });
+    dialogFrames.add(handle);
+    return handle;
+}
+
+function cancelDialogFrame(handle: number | null): void {
+    if (handle == null) return;
+    cancelAnimationFrame(handle);
+    dialogFrames.delete(handle);
+}
+
+function resetDialogUi(): void {
+    dialogGeneration += 1;
+    activeUndoClose?.();
+    activeConfirmClose?.();
+    activeUndoClose = null;
+    activeConfirmClose = null;
+    for (const handle of dialogTimeouts) clearTimeout(handle);
+    for (const handle of dialogFrames) cancelAnimationFrame(handle);
+    dialogTimeouts.clear();
+    dialogFrames.clear();
+    document.querySelectorAll('.jc-undo-toast, .jc-hide-confirm-overlay').forEach((node) => node.remove());
+}
+
+JC.identity?.registerReset?.('hidden-content-dialogs', resetDialogUi);
+
+function suppressionStorageKey(context: IdentityContext | null): string {
+    if (!context) return SUPPRESS_STORAGE_KEY;
+    return `${SUPPRESS_STORAGE_KEY}:${encodeURIComponent(context.serverId)}:${encodeURIComponent(context.userId)}`;
+}
+
 // ============================================================
 // Undo toast
 // ============================================================
@@ -38,7 +112,9 @@ const SUPPRESS_STORAGE_KEY = 'jc_hide_confirm_suppressed_until';
  * @param itemId Storage key used to unhide if the user clicks Undo.
  */
 export function showUndoToast(itemName: string, itemId: string): void {
-    document.querySelectorAll('.jc-undo-toast').forEach(el => el.remove());
+    const fence = captureDialogFence();
+    if (!isDialogFenceCurrent(fence)) return;
+    activeUndoClose?.();
 
     const themeVars = JC.themer?.getThemeVariables?.() || {};
     const toastBg = themeVars.secondaryBg || 'linear-gradient(135deg, rgba(0,0,0,0.9), rgba(40,40,40,0.9))';
@@ -47,6 +123,7 @@ export function showUndoToast(itemName: string, itemId: string): void {
 
     const toast = document.createElement('div');
     toast.className = 'jc-undo-toast';
+    toast.dataset.jcIdentityOwned = 'true';
     Object.assign(toast.style, {
         background: toastBg,
         border: toastBorder,
@@ -67,21 +144,45 @@ export function showUndoToast(itemName: string, itemId: string): void {
         borderColor: accentColor
     });
     undoBtn.textContent = JC.t!('hidden_content_undo');
-    undoBtn.addEventListener('click', () => {
-        unhideItem(itemId);
+    let frameHandle: number | null = null;
+    let dismissHandle: number | null = null;
+    let removalHandle: number | null = null;
+    const dispose = (): void => {
+        cancelDialogFrame(frameHandle);
+        cancelDialogTimeout(dismissHandle);
+        cancelDialogTimeout(removalHandle);
+        frameHandle = null;
+        dismissHandle = null;
+        removalHandle = null;
+        toast.remove();
+        if (activeUndoClose === dispose) activeUndoClose = null;
+    };
+    const dismiss = (): void => {
+        if (!isDialogFenceCurrent(fence)) {
+            dispose();
+            return;
+        }
         toast.classList.remove('jc-visible');
-        setTimeout(() => toast.remove(), 300);
+        cancelDialogTimeout(removalHandle);
+        removalHandle = scheduleDialogTimeout(dispose, 300);
+    };
+    activeUndoClose = dispose;
+
+    undoBtn.addEventListener('click', () => {
+        if (!isDialogFenceCurrent(fence)) return;
+        unhideItem(itemId);
+        dismiss();
     });
     toast.appendChild(undoBtn);
 
     document.body.appendChild(toast);
-    requestAnimationFrame(() => toast.classList.add('jc-visible'));
-
-    setTimeout(() => {
-        if (toast.parentNode) {
-            toast.classList.remove('jc-visible');
-            setTimeout(() => toast.remove(), 300);
-        }
+    frameHandle = scheduleDialogFrame(() => {
+        frameHandle = null;
+        if (isDialogFenceCurrent(fence)) toast.classList.add('jc-visible');
+    });
+    dismissHandle = scheduleDialogTimeout(() => {
+        dismissHandle = null;
+        if (toast.parentNode) dismiss();
     }, UNDO_TOAST_DURATION);
 }
 
@@ -94,10 +195,13 @@ export function showUndoToast(itemName: string, itemId: string): void {
  * (either permanently via settings or temporarily via the 15-minute timer).
  * @returns `true` if the confirmation should be skipped.
  */
-function isConfirmationSuppressed(): boolean {
+function isConfirmationSuppressed(context: IdentityContext | null): boolean {
     const settings = getSettings();
     if (settings.showHideConfirmation === false) return true;
-    const until = localStorage.getItem(SUPPRESS_STORAGE_KEY);
+    // The legacy unscoped value must never flow into an authenticated session.
+    // Removing it is safer than guessing which server/user originally owned it.
+    if (context) localStorage.removeItem(SUPPRESS_STORAGE_KEY);
+    const until = localStorage.getItem(suppressionStorageKey(context));
     if (until && new Date(until) > new Date()) return true;
     return false;
 }
@@ -244,7 +348,7 @@ function createEpisodeChoiceButtons(closeDialog: () => void, onConfirm: () => vo
  * @param onConfirm Called when the user confirms hiding.
  * @returns A document fragment containing the options and buttons.
  */
-function createStandardConfirmButtons(closeDialog: () => void, onConfirm: () => void): DocumentFragment {
+function createStandardConfirmButtons(closeDialog: () => void, onConfirm: () => void, fence: DialogFence): DocumentFragment {
     const fragment = document.createDocumentFragment();
 
     const options = document.createElement('div');
@@ -271,9 +375,13 @@ function createStandardConfirmButtons(closeDialog: () => void, onConfirm: () => 
     hideBtn.className = 'jc-hide-confirm-hide';
     hideBtn.textContent = JC.t!('hidden_content_confirm_hide');
     hideBtn.addEventListener('click', () => {
+        if (!isDialogFenceCurrent(fence)) {
+            closeDialog();
+            return;
+        }
         if (suppress15Check.checked) {
             const until = new Date(Date.now() + SUPPRESS_DURATION_MS).toISOString();
-            localStorage.setItem(SUPPRESS_STORAGE_KEY, until);
+            localStorage.setItem(suppressionStorageKey(fence.context), until);
         }
         closeDialog();
         onConfirm();
@@ -292,10 +400,13 @@ function createStandardConfirmButtons(closeDialog: () => void, onConfirm: () => 
  * @param dialogOptions Options to customize the dialog.
  */
 function showHideConfirmation(itemName: string, onConfirm: () => void, dialogOptions: HideDialogOptions = {}): void {
-    document.querySelector('.jc-hide-confirm-overlay')?.remove();
+    const fence = captureDialogFence();
+    if (!isDialogFenceCurrent(fence)) return;
+    activeConfirmClose?.();
 
     const overlay = document.createElement('div');
     overlay.className = 'jc-hide-confirm-overlay';
+    overlay.dataset.jcIdentityOwned = 'true';
 
     const dialog = document.createElement('div');
     dialog.className = 'jc-hide-confirm-dialog';
@@ -322,14 +433,26 @@ function showHideConfirmation(itemName: string, onConfirm: () => void, dialogOpt
     const closeDialog = (): void => {
         overlay.remove();
         document.removeEventListener('keydown', escHandler);
+        if (activeConfirmClose === closeDialog) activeConfirmClose = null;
+    };
+    activeConfirmClose = closeDialog;
+
+    const guard = (callback: (() => void) | undefined): (() => void) | undefined => callback
+        ? () => { if (isDialogFenceCurrent(fence)) callback(); }
+        : undefined;
+    const guardedConfirm = guard(onConfirm)!;
+    const guardedOptions: HideDialogOptions = {
+        ...dialogOptions,
+        onChooseShow: guard(dialogOptions.onChooseShow),
+        onChooseScoped: guard(dialogOptions.onChooseScoped),
     };
 
     if (hasSurface) {
-        dialog.appendChild(createSurfaceDialogButtons(closeDialog, onConfirm, dialogOptions));
+        dialog.appendChild(createSurfaceDialogButtons(closeDialog, guardedConfirm, guardedOptions));
     } else if (hasEpisodeChoice) {
-        dialog.appendChild(createEpisodeChoiceButtons(closeDialog, onConfirm, dialogOptions));
+        dialog.appendChild(createEpisodeChoiceButtons(closeDialog, guardedConfirm, guardedOptions));
     } else {
-        dialog.appendChild(createStandardConfirmButtons(closeDialog, onConfirm));
+        dialog.appendChild(createStandardConfirmButtons(closeDialog, guardedConfirm, fence));
     }
 
     overlay.appendChild(dialog);
@@ -354,13 +477,16 @@ function showHideConfirmation(itemName: string, onConfirm: () => void, dialogOpt
  * @param dialogOptions Options passed to showHideConfirmation.
  */
 export function confirmAndHide(itemData: HideItemParams, onHidden?: (() => void) | null, dialogOptions: HideDialogOptions = {}): void {
-    if (!dialogOptions.showEpisodeChoice && !dialogOptions.surface && isConfirmationSuppressed()) {
+    const fence = captureDialogFence();
+    if (!isDialogFenceCurrent(fence)) return;
+    if (!dialogOptions.showEpisodeChoice && !dialogOptions.surface && isConfirmationSuppressed(fence.context)) {
         hideItem(itemData);
-        if (onHidden) onHidden();
+        if (isDialogFenceCurrent(fence) && onHidden) onHidden();
         return;
     }
     showHideConfirmation(itemData.name || 'Item', () => {
+        if (!isDialogFenceCurrent(fence)) return;
         hideItem(itemData);
-        if (onHidden) onHidden();
+        if (isDialogFenceCurrent(fence) && onHidden) onHidden();
     }, dialogOptions);
 }

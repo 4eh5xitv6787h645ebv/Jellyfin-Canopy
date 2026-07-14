@@ -11,6 +11,7 @@ import { JC } from '../../globals';
 import { getItemIdFromUrl } from '../../core/details-view';
 import { setCaptured, refineCapturedType, getDetailsType, cacheDetailsType } from './state';
 import { requestInject } from './menu';
+import type { IdentityContext } from '../../types/jc';
 
 interface ItemHelpers { getItemCached?(itemId: string, options?: { userId?: string }): Promise<unknown>; }
 
@@ -30,7 +31,8 @@ function captureFromCard(cardEl: Element | null): void {
  * Details more button: only the id is knowable synchronously (from the URL). Use the prefetched
  * details type if we have it; otherwise resolve it from the item cache and re-run the injector.
  */
-function captureFromDetails(): void {
+function captureFromDetails(context: IdentityContext): void {
+    if (!JC.identity.isCurrent(context)) return;
     const itemId = getItemIdFromUrl();
     if (!itemId) { setCaptured(null); return; }
 
@@ -41,6 +43,7 @@ function captureFromDetails(): void {
     const helpers = JC.helpers as ItemHelpers | undefined;
     helpers?.getItemCached?.(itemId, { userId: ApiClient.getCurrentUserId() })
         .then((item) => {
+            if (!JC.identity.isCurrent(context)) return;
             const type = (item as { Type?: string } | null)?.Type || null;
             cacheDetailsType(itemId, type);
             refineCapturedType(itemId, type);
@@ -52,14 +55,17 @@ function captureFromDetails(): void {
 /** Wires the capture-phase listeners. Returns an unregister function for lifecycle teardown. */
 export function installCapture(track: (unregister: () => void) => void): void {
     const onMousedown = (e: Event): void => {
+        const context = JC.identity.capture();
+        if (!context) return;
         const target = e.target as Element;
         const menuButton = target.closest?.('button[data-action="menu"]');
         if (menuButton) { captureFromCard(menuButton.closest('.card[data-id]') || menuButton.closest('[data-id]')); return; }
         // Details-page overflow button (legacy + modern share the class).
-        if (target.closest?.('.btnMoreCommands')) { captureFromDetails(); }
+        if (target.closest?.('.btnMoreCommands')) { captureFromDetails(context); }
     };
 
     const onContextMenu = (e: Event): void => {
+        if (!JC.identity.capture()) return;
         const target = e.target as Element;
         if (isInsideOpenMenu(target)) return;
         const card = target.closest?.('.card[data-id]');

@@ -12,6 +12,8 @@ import { ui, internal } from './internal';
 const MediaStatus = JC.seerrStatus!.MEDIA;
 const icons = internal.icons; // requires ui/icons.ts to be loaded first
 const escapeHtml = JC.escapeHtml;
+const cardTimers = new Set<ReturnType<typeof setTimeout>>();
+const outsideOverviewCleanups = new Set<() => void>();
 
 /**
  * Creates an individual Seerr result card.
@@ -21,6 +23,8 @@ const escapeHtml = JC.escapeHtml;
  * @returns {HTMLElement} - Card element.
  */
 function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
+    const identity = JC.identity.capture();
+    const isCurrent = () => !!identity && JC.identity.isCurrent(identity);
     const year = item.releaseDate?.substring(0, 4) || item.firstAirDate?.substring(0, 4) || 'N/A';
     // validate posterPath before interpolating into a CSS
     // url() context. Anything other than a leading-slash relative path
@@ -69,6 +73,8 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
 
     const card = document.createElement('div');
     card.className = `card overflowPortraitCard card-hoverable card-withuserdata seerr-card${isAvailable ? ' seerr-card-in-library' : ''}`;
+    card.dataset.jcIdentityOwned = 'true';
+    JC.identity.own(card, identity);
     card.innerHTML = `
         <div class="cardBox cardBox-bottompadded">
             <div class="cardScalable">
@@ -111,11 +117,12 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
     if (imageContainer && cardScalable) {
         imageContainer.classList.remove('itemAction');
 
-        let overview: any = null;
-        let button: any = null;
+        let overview: HTMLElement | null = null;
+        let button: HTMLButtonElement | null = null;
 
         // Create the overview element
         const createOverview = () => {
+            if (!isCurrent()) return;
             overview = document.createElement('div');
             overview.className = 'seerr-overview';
             overview.style.cursor = 'pointer';
@@ -130,19 +137,27 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
             `;
 
             cardScalable.appendChild(overview);
-            button = overview.querySelector('.seerr-request-button');
+            button = overview.querySelector<HTMLButtonElement>('.seerr-request-button');
+            if (!button) return;
+            JC.identity.own(button, identity);
             internal.configureRequestButton(button, item, isSeerrActive, seerrUserFound);
 
             // Click handler on overview to open modal
-            overview.addEventListener('click', (e: any) => {
-                if (e.target.closest('.seerr-request-button')) {
+            overview.addEventListener('click', (event: MouseEvent) => {
+                if (!isCurrent()) {
+                    event.preventDefault();
+                    event.stopPropagation();
                     return;
                 }
-                if (e.target.closest('.seerr-overview-link')) {
+                const target = event.target instanceof Element ? event.target : null;
+                if (target?.closest('.seerr-request-button')) {
                     return;
                 }
-                e.preventDefault();
-                e.stopPropagation();
+                if (target?.closest('.seerr-overview-link')) {
+                    return;
+                }
+                event.preventDefault();
+                event.stopPropagation();
 
                 if (item.mediaType === 'collection') {
                     ui.showCollectionRequestModal(item.id, item.name || item.title, item);
@@ -164,10 +179,15 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
                 button = null;
             }
             document.removeEventListener('click', handleOutsideClick);
+            outsideOverviewCleanups.delete(removeOverview);
         };
 
         // Helper to close overview if clicked outside
         const handleOutsideClick = (evt: any) => {
+            if (!isCurrent()) {
+                removeOverview();
+                return;
+            }
             if (!card.contains(evt.target)) {
                 removeOverview();
             }
@@ -175,6 +195,7 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
 
         // Desktop: hover to show/hide overview
         cardScalable.addEventListener('mouseenter', () => {
+            if (!isCurrent()) return;
             if (!overview) {
                 createOverview();
             }
@@ -188,6 +209,7 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
 
         // Use touchstart for mobile to create overview (prevents touchend from immediately opening modal)
         imageContainer.addEventListener('touchstart', (e: any) => {
+            if (!isCurrent()) return;
             if (e.target.closest('.seerr-overview') || e.target.closest('.seerr-request-button')) {
                 return;
             }
@@ -195,14 +217,20 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
             if (!overview) {
                 e.preventDefault();
                 createOverview();
-                setTimeout(() => {
-                    document.addEventListener('click', handleOutsideClick);
+                const timer = setTimeout(() => {
+                    cardTimers.delete(timer);
+                    if (isCurrent()) {
+                        document.addEventListener('click', handleOutsideClick);
+                        outsideOverviewCleanups.add(removeOverview);
+                    }
                 }, 0);
+                cardTimers.add(timer);
             }
         }, { passive: false });
 
         // Desktop: use click event
         imageContainer.addEventListener('click', (e: any) => {
+            if (!isCurrent()) return;
             // Skip if touch device (touchstart already handled it)
             if (e.type === 'click' && 'ontouchstart' in window) {
                 return;
@@ -216,16 +244,22 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
                 e.preventDefault();
                 e.stopPropagation();
                 createOverview();
-                setTimeout(() => {
-                    document.addEventListener('click', handleOutsideClick);
+                const timer = setTimeout(() => {
+                    cardTimers.delete(timer);
+                    if (isCurrent()) {
+                        document.addEventListener('click', handleOutsideClick);
+                        outsideOverviewCleanups.add(removeOverview);
+                    }
                 }, 0);
+                cardTimers.add(timer);
             }
         });
 
         imageContainer.setAttribute('tabindex', '0');
-        imageContainer.addEventListener('keydown', (e: any) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
+        imageContainer.addEventListener('keydown', (event: KeyboardEvent) => {
+            if (!isCurrent()) return;
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
                 if (!overview) {
                     createOverview();
                 } else {
@@ -233,6 +267,7 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
                 }
             }
         });
+
     }
     internal.addMediaTypeBadge(card, item);
     // If movie belongs to a collection, show a collection badge that opens the modal
@@ -242,9 +277,10 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
     const posterImage = card.querySelector<HTMLElement>('.seerr-poster-image');
     if (posterImage && useMoreInfoModal && JC.seerrMoreInfo) {
         posterImage.style.cursor = 'pointer';
-        posterImage.addEventListener('click', (e: any) => {
-            e.preventDefault();
-            e.stopPropagation();
+        posterImage.addEventListener('click', (event: MouseEvent) => {
+            if (!isCurrent()) return;
+            event.preventDefault();
+            event.stopPropagation();
             const tmdbId = parseInt(item.id);
             const mediaType = item.mediaType;
             if (tmdbId && mediaType) {
@@ -256,7 +292,11 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
     // Add click handler for the title link
     const moreInfoLink = card.querySelector<HTMLElement>('.seerr-more-info-link');
     if (moreInfoLink) {
-        moreInfoLink.addEventListener('click', (e: any) => {
+        moreInfoLink.addEventListener('click', (event: MouseEvent) => {
+            if (!isCurrent()) {
+                event.preventDefault();
+                return;
+            }
             // Check if this is a library item (href already set to jellyfin item)
             const href = moreInfoLink.getAttribute('href');
             const isLibraryLink = href && href.startsWith('#!/details?id=');
@@ -269,16 +309,16 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
 
             // If collection, open collection modal
             if (item.mediaType === 'collection') {
-                e.preventDefault();
-                e.stopPropagation();
+                event.preventDefault();
+                event.stopPropagation();
                 ui.showCollectionRequestModal(item.id, item.name || item.title, item);
                 return;
             }
 
             // If using modal, prevent default and open modal
             if (useMoreInfoModal && JC.seerrMoreInfo) {
-                e.preventDefault();
-                e.stopPropagation();
+                event.preventDefault();
+                event.stopPropagation();
                 const tmdbId = parseInt(moreInfoLink.dataset.tmdbId || "");
                 const mediaType = moreInfoLink.dataset.mediaType;
                 if (tmdbId && mediaType) {
@@ -288,7 +328,8 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
             }
 
             // For external Seerr links the <a> has is="emby-linkbutton" — let default run.
-            const isPlainLeftClick = e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
+            const isPlainLeftClick = event.button === 0
+                && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
             if (isExternalSeerrLink && isPlainLeftClick) {
                 return;
             }
@@ -338,6 +379,7 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
                 hideBtn.onclick = (e: any) => {
                     e.preventDefault();
                     e.stopPropagation();
+                    if (!isCurrent()) return;
                     JC.hiddenContent?.unhideItem(unhideKey);
                     setHideState();
                 };
@@ -355,6 +397,7 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
                 hideBtn.onclick = (e: any) => {
                     e.preventDefault();
                     e.stopPropagation();
+                    if (!isCurrent()) return;
                     // The hide button is only added when hidden-content is enabled,
                     // so JC.hiddenContent is present here; optional-chain to satisfy
                     // the type without changing behavior.
@@ -385,3 +428,11 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
 ui.createSeerrCard = createSeerrCard;
 
 internal.createSeerrCard = createSeerrCard;
+
+JC.identity.registerReset('seerr-cards', () => {
+    for (const timer of cardTimers) clearTimeout(timer);
+    cardTimers.clear();
+    for (const cleanup of [...outsideOverviewCleanups]) cleanup();
+    outsideOverviewCleanups.clear();
+    document.querySelectorAll('.seerr-card[data-jc-identity-owned="true"]').forEach((card) => card.remove());
+});

@@ -4,10 +4,121 @@
 // bundle loads — the window.JellyfinCanopy bootstrap namespace and the
 // jellyfin-web globals the core modules touch at import time.
 
-import type { JEGlobal } from '../types/jc';
+import type { IdentityApi, IdentityChange, IdentityContext, JEGlobal } from '../types/jc';
+
+let testIdentity: IdentityContext | null = Object.freeze({
+    serverId: 'test-server-id',
+    userId: 'test-user-id',
+    epoch: 1,
+});
+let testEpoch = 1;
+const owners = new WeakMap<object, IdentityContext>();
+const resetHandlers = new Map<string, (change: IdentityChange) => void>();
+interface TestActivateRecord {
+    fn: (context: IdentityContext) => void | Promise<void>;
+    epoch: number;
+    pendingEpoch: number;
+    pending: Promise<void> | null;
+}
+const activateHandlers = new Map<string, TestActivateRecord>();
+const coerceString: (value?: unknown) => string = String;
+
+const identity: IdentityApi = {
+    capture: () => testIdentity,
+    isCurrent: (context) => !!context && !!testIdentity
+        && context.epoch === testIdentity.epoch
+        && context.serverId === testIdentity.serverId
+        && context.userId === testIdentity.userId,
+    transition(serverId, userId, reason = 'test') {
+        const nextUser = coerceString(userId ?? '').replace(/-/g, '').toLowerCase();
+        const nextServer = nextUser
+            ? (coerceString(serverId ?? '').replace(/-/g, '').toLowerCase() || 'unknown-server')
+            : '';
+        if ((!testIdentity && !nextUser)
+            || (testIdentity?.serverId === nextServer && testIdentity?.userId === nextUser)) return testIdentity;
+        const previous = testIdentity;
+        testEpoch += 1;
+        testIdentity = nextUser ? Object.freeze({ serverId: nextServer, userId: nextUser, epoch: testEpoch }) : null;
+        const change = { previous, current: testIdentity, epoch: testEpoch, reason };
+        for (const handler of resetHandlers.values()) handler(change);
+        return testIdentity;
+    },
+    own<T>(value: T, context = testIdentity): T {
+        if (context && value !== null && (typeof value === 'object' || typeof value === 'function')) {
+            owners.set(value, context);
+        }
+        return value;
+    },
+    ownerOf(value) {
+        return value !== null && (typeof value === 'object' || typeof value === 'function')
+            ? owners.get(value) || null
+            : null;
+    },
+    isOwned(value, context = testIdentity) {
+        const owner = this.ownerOf(value);
+        return !!owner && !!context && owner.epoch === context.epoch
+            && owner.serverId === context.serverId && owner.userId === context.userId;
+    },
+    registerReset(name, handler) {
+        resetHandlers.set(name, handler);
+        return () => { if (resetHandlers.get(name) === handler) resetHandlers.delete(name); };
+    },
+    registerActivate(name, handler) {
+        const record: TestActivateRecord = {
+            fn: handler,
+            epoch: -1,
+            pendingEpoch: -1,
+            pending: null,
+        };
+        activateHandlers.set(name, record);
+        return () => { if (activateHandlers.get(name) === record) activateHandlers.delete(name); };
+    },
+    async activate(context = testIdentity) {
+        if (!context || !this.isCurrent(context)) return;
+        const work: Promise<void>[] = [];
+        for (const record of activateHandlers.values()) {
+            if (record.epoch === context.epoch) continue;
+            if (record.pendingEpoch === context.epoch && record.pending) {
+                work.push(record.pending);
+                continue;
+            }
+
+            const invocation = Promise.resolve()
+                .then(() => record.fn(context))
+                .then(() => {
+                    // Match the loader contract: a failed handler remains
+                    // retryable, and late older success cannot replace newer.
+                    if (record.epoch < context.epoch) record.epoch = context.epoch;
+                })
+                .finally(() => {
+                    if (record.pending === invocation) {
+                        record.pending = null;
+                        record.pendingEpoch = -1;
+                    }
+                });
+            record.pendingEpoch = context.epoch;
+            record.pending = invocation;
+            work.push(invocation);
+        }
+
+        const results = await Promise.allSettled(work);
+        const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+        if (failure) {
+            throw failure.reason instanceof Error
+                ? failure.reason
+                : new Error('Test identity activation failed', { cause: failure.reason });
+        }
+    },
+    getEpoch: () => testEpoch,
+    getResetHandlerCount: () => resetHandlers.size,
+    getActivateHandlerCount: () => activateHandlers.size,
+    getPendingInitializationCount: () => 0,
+    getInitializationControllerCount: () => 0,
+};
 
 const bootstrapJE = {
-    core: {},
+    core: { identity },
+    identity,
     pluginConfig: {},
     translations: {},
     pluginVersion: 'test',
@@ -22,6 +133,7 @@ window.Emby = { Page: {} };
 
 // Minimal ApiClient: only what the core modules call at import/test time.
 const apiClientStub = {
+    serverId: () => 'test-server-id',
     getUrl: (path: string) => `http://jellyfin.test${path}`,
     getCurrentUserId: () => 'test-user-id',
     accessToken: () => 'test-token',

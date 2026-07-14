@@ -63,8 +63,16 @@ function setStatusBadge(card: any, item: any) {
  * @param {string} mediaType - The type of media, either 'movie' or 'tv'.
  * @returns {Promise<void>} A promise that resolves when the icons have been fetched and added, or if the process fails.
  */
-async function fetchProviderIcons(container: any, tmdbId: any, mediaType: any) {
+async function fetchProviderIcons(container: HTMLElement | null, tmdbId: any, mediaType: any) {
     if (!container || !tmdbId || !mediaType) return;
+    const card = container.closest('.seerr-card');
+    const identity = JC.identity.ownerOf(card) || JC.identity.capture();
+    const isCurrent = () => !!identity
+        && JC.identity.isCurrent(identity)
+        && !!card
+        && JC.identity.isOwned(card, identity)
+        && container.isConnected;
+    if (!isCurrent()) return;
 
     // Early exit if TMDB is not configured - prevents slow/failing API calls
     if (!JC.pluginConfig?.TmdbEnabled) {
@@ -79,6 +87,7 @@ async function fetchProviderIcons(container: any, tmdbId: any, mediaType: any) {
         // Routed through the core API client (auth headers, retry, dedup);
         // non-OK responses throw and land in the catch below.
         const data: any = await JC.core.api!.plugin(`/tmdb/${mediaType}/${tmdbId}/watch/providers`);
+        if (!isCurrent()) return;
         let providers = data.results?.[DEFAULT_REGION]?.flatrate;
 
         if (providers && providers.length > 0) {
@@ -150,12 +159,15 @@ function addCollectionMembershipBadge(card: any, item: any) {
     const imageContainer = card.querySelector('.cardImageContainer');
     if (!imageContainer) return;
     const badge = document.createElement('div');
+    const identity = JC.identity.ownerOf(card) || JC.identity.capture();
+    JC.identity.own(badge, identity);
     badge.className = 'seerr-collection-badge';
     badge.innerHTML = `<span class="material-icons">collections</span><span>${escapeHtml(item.collection.name) || JC.t!('seerr_card_badge_collection')}</span>`; // collection name escaped
     badge.title = `Part of ${item.collection.name || 'collection'}`;
     badge.addEventListener('click', (e: any) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!identity || !JC.identity.isCurrent(identity) || !JC.identity.isOwned(card, identity)) return;
         ui.showCollectionRequestModal(item.collection.id, item.collection.name, item);
     });
     imageContainer.appendChild(badge);

@@ -9,10 +9,37 @@ import { JC } from '../../globals';
 import { toast } from '../../core/ui-kit';
 import { renderBookmarkItems } from './library-items';
 import { showDuplicatesSyncModal } from './library-modals';
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { IdentityContext } from '../../types/jc';
 
 const logPrefix = '🪼 Jellyfin Canopy: Bookmarks Library:';
+
+interface StoredBookmark {
+  itemId?: string;
+  tmdbId?: string;
+  tvdbId?: string;
+  mediaType?: string;
+  timestamp?: number;
+  [key: string]: unknown;
+}
+
+interface BookmarkConfig {
+  bookmarks: Record<string, StoredBookmark>;
+}
+
+interface BookmarkGroup {
+  details: StoredBookmark;
+  bookmarks: Array<StoredBookmark & { id: string }>;
+  type: string;
+}
+
+function bookmarkConfigOrEmpty(value: unknown): BookmarkConfig {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)
+      && 'bookmarks' in value && value.bookmarks !== null
+      && typeof value.bookmarks === 'object' && !Array.isArray(value.bookmarks)) {
+    return value as BookmarkConfig;
+  }
+  return { bookmarks: {} };
+}
 
 // The container the bookmarks library renders into, set by the pages-framework
 // descriptor (bookmarks/page.ts) for the lifetime of one adoption and cleared
@@ -21,16 +48,26 @@ const logPrefix = '🪼 Jellyfin Canopy: Bookmarks Library:';
 // '.sections.bookmarks' class scan that picked the LAST visible match — a
 // defect that mis-targeted stale/duplicate nodes.
 let activeContainer: HTMLElement | null = null;
+let activeContainerIdentity: IdentityContext | null = null;
 
 /** Set (or clear) the render target for the current page adoption. */
 export function setActiveContainer(container: HTMLElement | null): void {
   activeContainer = container;
+  activeContainerIdentity = container ? JC.identity.capture() : null;
 }
 
 // Coalesce bursts of refresh requests (e.g. the module's own
 // 'jc-bookmarks-updated' event plus an explicit post-write refresh in the same
 // tick) into a single render.
-let renderQueued = false;
+let renderQueueGeneration = 0;
+let queuedIdentity: IdentityContext | null = null;
+
+JC.identity.registerReset('bookmarks-library-render', () => {
+  renderQueueGeneration += 1;
+  queuedIdentity = null;
+  activeContainer = null;
+  activeContainerIdentity = null;
+});
 
 /**
  * Re-render the bookmarks library into the active container. No-op when the
@@ -38,28 +75,40 @@ let renderQueued = false;
  * entry point used by the 'jc-bookmarks-updated' event and every post-write
  * refresh — no DOM scanning, no stale-container guard.
  */
-export function renderActiveBookmarks(): void {
+export function renderActiveBookmarks(context: IdentityContext | null = JC.identity.capture()): void {
+  if (!context || !JC.identity.isCurrent(context)) return;
   if (!activeContainer || !activeContainer.isConnected) return;
-  if (renderQueued) return;
-  renderQueued = true;
+  if (!activeContainerIdentity || activeContainerIdentity.epoch !== context.epoch) return;
+  if (queuedIdentity?.epoch === context.epoch) return;
+  queuedIdentity = context;
+  const generation = ++renderQueueGeneration;
   queueMicrotask(() => {
-    renderQueued = false;
+    if (generation !== renderQueueGeneration) return;
+    queuedIdentity = null;
+    if (!JC.identity.isCurrent(context)) return;
     const container = activeContainer;
-    if (container && container.isConnected) void renderBookmarksLibrary(container);
+    if (container && container.isConnected && activeContainerIdentity?.epoch === context.epoch) {
+      void renderBookmarksLibrary(container, context);
+    }
   });
 }
 
 /**
  * Render bookmarks library content
  */
-export async function renderBookmarksLibrary(container: HTMLElement): Promise<void> {
+export async function renderBookmarksLibrary(
+  container: HTMLElement,
+  context: IdentityContext | null = JC.identity.capture()
+): Promise<void> {
+  if (!context || !JC.identity.isCurrent(context)) return;
   console.log(`${logPrefix} Rendering bookmarks library...`);
 
-  const bookmarks = (JC.userConfig as any).bookmark?.bookmarks || {};
-  const bookmarkEntries = Object.entries<any>(bookmarks);
+  const bookmarkConfig = bookmarkConfigOrEmpty(JC.userConfig?.bookmark);
+  const bookmarks = bookmarkConfig.bookmarks;
+  const bookmarkEntries = Object.entries(bookmarks);
 
   // Group by item
-  const groupedByItem: Record<string, any> = {};
+  const groupedByItem: Record<string, BookmarkGroup> = {};
   const typeCounts: Record<string, { items: number; bookmarks: number }> = {
     tv: { items: 0, bookmarks: 0 },
     movie: { items: 0, bookmarks: 0 }
@@ -85,8 +134,8 @@ export async function renderBookmarksLibrary(container: HTMLElement): Promise<vo
   }
 
   // Sort bookmarks within each group by timestamp
-  Object.values<any>(groupedByItem).forEach(group => {
-    group.bookmarks.sort((a: any, b: any) => a.timestamp - b.timestamp);
+  Object.values(groupedByItem).forEach(group => {
+    group.bookmarks.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
   });
 
   const totalBookmarks = bookmarkEntries.length;
@@ -144,19 +193,23 @@ export async function renderBookmarksLibrary(container: HTMLElement): Promise<vo
   const deleteAllBtn = container.querySelector<HTMLButtonElement>('.btnDeleteAllBookmarks');
 
   findDuplicatesBtn?.addEventListener('click', () => {
+    if (!JC.identity.isCurrent(context)) return;
     findDuplicatesBtn.disabled = true;
     const label = findDuplicatesBtn.querySelector('span:last-child')!;
     const origText = label.innerHTML;
     label.innerHTML = '<span class="material-icons" style="animation: spin 1s linear infinite;">refresh</span>';
 
     // Surface duplicate bookmark groups and offer merging
-    showDuplicatesSyncModal(bookmarks);
+    showDuplicatesSyncModal(bookmarks, context);
 
-    findDuplicatesBtn.disabled = false;
-    label.innerHTML = origText;
+    if (JC.identity.isCurrent(context)) {
+      findDuplicatesBtn.disabled = false;
+      label.innerHTML = origText;
+    }
   });
 
   cleanupBtn?.addEventListener('click', () => { void (async () => {
+    if (!JC.identity.isCurrent(context)) return;
     cleanupBtn.disabled = true;
     const label = cleanupBtn.querySelector('span:last-child');
     const origText = label?.innerHTML;
@@ -164,19 +217,25 @@ export async function renderBookmarksLibrary(container: HTMLElement): Promise<vo
 
     try {
       const result = await JC.bookmarks!.cleanupOrphaned();
+      if (!JC.identity.isCurrent(context)) return;
       toast(JC.t!('bookmark_cleanup_complete').replace('{count}', String(Number(result.cleaned) || 0)), 4000);
-      renderActiveBookmarks();
+      renderActiveBookmarks(context);
     } catch (error) {
+      if (!JC.identity.isCurrent(context)) return;
       console.error('Cleanup failed:', error);
       toast(JC.t!('bookmark_cleanup_failed'), 3000);
     } finally {
-      cleanupBtn.disabled = false;
-      if (label && origText) label.innerHTML = origText;
+      if (JC.identity.isCurrent(context)) {
+        cleanupBtn.disabled = false;
+        if (label && origText) label.innerHTML = origText;
+      }
     }
   })(); });
 
   deleteAllBtn?.addEventListener('click', () => { void (async () => {
+    if (!JC.identity.isCurrent(context)) return;
     if (!confirm(JC.t!('bookmark_delete_all_confirm'))) return;
+    if (!JC.identity.isCurrent(context)) return;
 
     deleteAllBtn.disabled = true;
     const label = deleteAllBtn.querySelector('span:last-child');
@@ -184,18 +243,24 @@ export async function renderBookmarksLibrary(container: HTMLElement): Promise<vo
     if (label) label.innerHTML = '<span class="material-icons" style="animation: spin 1s linear infinite;">refresh</span>';
 
     try {
-      (JC.userConfig as any).bookmark.bookmarks = {};
-      await JC.saveUserSettings!('bookmark.json', (JC.userConfig as any).bookmark);
+      // Mutate and persist the render's captured A-owned config object. Never
+      // re-read the live JC.userConfig after an authentication transition.
+      bookmarkConfig.bookmarks = {};
+      await JC.saveUserSettings!('bookmark.json', bookmarkConfig);
+      if (!JC.identity.isCurrent(context)) return;
       toast(JC.t!('bookmark_deleted_all'), 3000);
       // Direct store manipulation (no JC.bookmarks.* call) emits no update
       // event, so refresh explicitly.
-      renderActiveBookmarks();
+      renderActiveBookmarks(context);
     } catch (error) {
+      if (!JC.identity.isCurrent(context)) return;
       console.error('Delete failed:', error);
       toast(JC.t!('bookmark_delete_failed'), 3000);
     } finally {
-      deleteAllBtn.disabled = false;
-      if (label && origText) label.innerHTML = origText;
+      if (JC.identity.isCurrent(context)) {
+        deleteAllBtn.disabled = false;
+        if (label && origText) label.innerHTML = origText;
+      }
     }
   })(); });
 
@@ -203,17 +268,19 @@ export async function renderBookmarksLibrary(container: HTMLElement): Promise<vo
   if (totalBookmarks > 0) {
     const itemsContainer = container.querySelector<HTMLElement>('#bookmarks-items-container');
     if (itemsContainer) {
-      await renderBookmarkItems(itemsContainer, groupedByItem, currentTab);
+      await renderBookmarkItems(itemsContainer, groupedByItem, currentTab, context);
+      if (!JC.identity.isCurrent(context)) return;
 
       // Tab click handlers
       container.querySelectorAll<HTMLElement>('.jc-tab').forEach(btn => {
         btn.addEventListener('click', () => { void (async () => {
+          if (!JC.identity.isCurrent(context)) return;
           const tab = btn.dataset.tab!;
           container.dataset.currentTab = tab;
           container.querySelectorAll<HTMLElement>('.jc-tab').forEach(b => {
             b.classList.toggle('active', b.dataset.tab === tab);
           });
-          await renderBookmarkItems(itemsContainer, groupedByItem, tab);
+          await renderBookmarkItems(itemsContainer, groupedByItem, tab, context);
         })(); });
       });
     }
@@ -233,8 +300,8 @@ export function formatTimestamp(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-function normalizeMediaType(mediaType: string): string {
-  const type = (mediaType || '').toLowerCase();
+function normalizeMediaType(mediaType: unknown): string {
+  const type = typeof mediaType === 'string' ? mediaType.toLowerCase() : '';
   if (type === 'series' || type === 'episode' || type === 'tvshow' || type === 'tv') return 'tv';
   if (type === 'movie' || type === 'film' || type === 'musicvideo') return 'movie';
   return 'other';

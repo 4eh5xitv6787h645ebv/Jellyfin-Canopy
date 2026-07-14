@@ -181,48 +181,6 @@ const ALLOWLIST: AllowlistEntry[] = [
         why: 'pre-built HTML from formatFutureReleaseDate\'s { isHtml, text } payload — the template that constructs it is itself scanned in render-helpers.ts',
     },
     {
-        file: 'enhanced/bookmarks/library-items.ts',
-        expr: 'key',
-        line: 128,
-        why: 'Object.entries key over bookmark groups (server item ids); used symmetrically as a class fragment (L128) and querySelector (L162) — escaping one side would desync them',
-    },
-    {
-        file: 'enhanced/features/release-dates.ts',
-        expr: 'info.titleKey',
-        line: 303,
-        why: 'ReleaseInfo entries are built by this module: titleKey is a fixed translation key literal',
-    },
-    {
-        file: 'enhanced/features/release-dates.ts',
-        expr: 'info.icon',
-        line: 303,
-        why: 'ReleaseInfo entries are built by this module: icon is a Material Symbols glyph name literal',
-    },
-    {
-        file: 'enhanced/playback.ts',
-        expr: 'next.textContent',
-        line: 491,
-        why: 'label of the host client\'s own aspect-ratio OSD menu item (jellyfin-web UI string, not media metadata)',
-    },
-    {
-        file: 'enhanced/settings-panel/settings.ts',
-        expr: 'selectedPreset.name',
-        line: 481,
-        why: 'name of a plugin-defined subtitle preset (subtitlePresets table in the legacy js/ tree) shown in the style toast',
-    },
-    {
-        file: 'enhanced/settings-panel/settings.ts',
-        expr: 'selectedPreset.name',
-        line: 495,
-        why: 'name of a plugin-defined font-size preset (fontSizePresets table in the legacy js/ tree) shown in the size toast',
-    },
-    {
-        file: 'enhanced/settings-panel/settings.ts',
-        expr: 'selectedPreset.name',
-        line: 509,
-        why: 'name of a plugin-defined font-family preset (fontFamilyPresets table in the legacy js/ tree) shown in the font toast',
-    },
-    {
         file: 'enhanced/settings-panel/template.ts',
         expr: 'preset.size',
         line: 53,
@@ -233,12 +191,6 @@ const ALLOWLIST: AllowlistEntry[] = [
         expr: 'preset.family',
         line: 55,
         why: 'plugin-defined font-family preset tables (legacy js/ tree) — fixed font-family literals',
-    },
-    {
-        file: 'extras/theme-selector.ts',
-        expr: 'sessionStorage.getItem(\'jellyfin-theme-applied\')',
-        line: 200,
-        why: 'round-trip of this module\'s own sessionStorage value — a theme name from the plugin theme table, persisted across the reload it triggers',
     },
 ];
 

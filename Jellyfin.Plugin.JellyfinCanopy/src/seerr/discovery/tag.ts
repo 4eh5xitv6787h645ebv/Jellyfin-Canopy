@@ -108,7 +108,8 @@ const discovery = JC.discoveryBase!.createDiscovery({
     resolveFeeds,
     buildDiscoverPath: (kind: string, id: number) => kind === 'tv'
         ? `/JellyfinCanopy/seerr/discover/tv/keyword/${id}`
-        : `/JellyfinCanopy/seerr/discover/movies/keyword/${id}`
+        : `/JellyfinCanopy/seerr/discover/movies/keyword/${id}`,
+    onCleanup: () => keywordIdCache.clear()
 });
 
 discovery.start();

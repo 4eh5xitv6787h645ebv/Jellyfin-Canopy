@@ -1,5 +1,6 @@
 // src/seerr/issue-reporter.ts
 import { JC } from '../globals';
+import type { IdentityContext } from '../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -10,9 +11,9 @@ export interface SeerrIssueReporterApi {
     createReportButton: (container: any, tmdbId: any, itemName: string, mediaType: string, backdropUrl?: string | null, item?: any) => HTMLButtonElement | null;
     createUnavailableButton: (container: any, itemName: string, mediaType: string, reason?: string) => HTMLButtonElement | null;
     getTmdbIdFallback: (itemName: string, mediaType: string, item: any) => Promise<string | null>;
-    applyIssueIndicator: (button: any, tmdbId: any, mediaType: string, prefetched?: Promise<any> | null) => Promise<void>;
+    applyIssueIndicator: (button: HTMLElement, tmdbId: any, mediaType: string, prefetched?: Promise<any> | null) => Promise<void>;
     tryAddButton: () => Promise<boolean>;
-    initialize: () => Promise<void>;
+    initialize: () => void | Promise<void>;
 }
 
 declare module '../types/jc' {
@@ -28,6 +29,43 @@ const escapeHtml = JC.escapeHtml;
 
 // Cache for user permission to report
 let cachedUserCanReport: string | null = null;
+let cachedUserCanReportEpoch: number | null = null;
+let reporterListenerInstalled = false;
+let reporterViewGeneration = 0;
+let reporterInitialTimer: number | null = null;
+
+function captureReporterIdentity(): IdentityContext {
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) {
+        throw new Error('Issue reporter operation belongs to a stale identity');
+    }
+    return context;
+}
+
+function isReporterIdentityCurrent(context: IdentityContext): boolean {
+    return JC.identity.isCurrent(context);
+}
+
+function ownReporterElement<T extends HTMLElement>(element: T, context: IdentityContext): T {
+    JC.identity.own(element, context);
+    element.dataset.jcIdentityOwned = 'true';
+    return element;
+}
+
+function resetIssueReporterIdentity(): void {
+    cachedUserCanReport = null;
+    cachedUserCanReportEpoch = null;
+    reporterViewGeneration++;
+    if (reporterInitialTimer !== null) {
+        clearTimeout(reporterInitialTimer);
+        reporterInitialTimer = null;
+    }
+    document.querySelectorAll(
+        '[data-jc-identity-owned="true"], .seerr-report-issue-icon, .seerr-report-unavailable-icon, ' +
+        '.seerr-season-modal[data-jc-identity-owned="true"]'
+    ).forEach((node) => node.remove());
+    document.body.classList.remove('seerr-modal-is-open');
+}
 
 /**
  * Issue type definitions matching Seerr's 4 core issue types
@@ -47,11 +85,24 @@ const getIssueTypes = () => [
  * @returns {Promise<string>}
  */
 issueReporter.checkReportingAvailability = async function (item) {
+    const context = captureReporterIdentity();
     try {
         // Check Seerr status first
-        const statusUrl = ApiClient.getUrl('/JellyfinCanopy/seerr/status');
-        const statusRes: any = await ApiClient.ajax({ type: 'GET', url: statusUrl, dataType: 'json' });
-        const seerrActive = statusRes && statusRes.active === true;
+        let seerrActive: boolean;
+        if (cachedUserCanReportEpoch === context.epoch && cachedUserCanReport !== null) {
+            seerrActive = cachedUserCanReport === 'available';
+        } else {
+            const statusUrl = ApiClient.getUrl('/JellyfinCanopy/seerr/status');
+            const statusRes = await ApiClient.ajax({
+                type: 'GET',
+                url: statusUrl,
+                dataType: 'json'
+            }) as { active?: boolean } | null;
+            if (!isReporterIdentityCurrent(context)) throw new Error('stale identity');
+            seerrActive = statusRes?.active === true;
+            cachedUserCanReport = seerrActive ? 'available' : 'no-seerr';
+            cachedUserCanReportEpoch = context.epoch;
+        }
 
         // Resolve TMDB ID: direct, parent (for Season/Episode), or fallback search
         let tmdbId = item && (item.ProviderIds?.Tmdb || item.ProviderIds?.['Tmdb']);
@@ -66,6 +117,7 @@ issueReporter.checkReportingAvailability = async function (item) {
                     const parentItem: any = JC.helpers?.getItemCached
                         ? await JC.helpers.getItemCached(parentId, { userId })
                         : await ApiClient.getItem(userId, parentId);
+                    if (!isReporterIdentityCurrent(context)) throw new Error('stale identity');
                     tmdbId = parentItem?.ProviderIds?.Tmdb || parentItem?.ProviderIds?.['Tmdb'] || null;
                     if (tmdbId) {
                         console.debug(`${logPrefix} Availability check resolved TMDB via parent: ${tmdbId}`);
@@ -88,9 +140,11 @@ issueReporter.checkReportingAvailability = async function (item) {
         // Both available
         return 'available';
     } catch (error: any) {
+        if (!isReporterIdentityCurrent(context)) throw error;
         console.debug(`${logPrefix} Error checking reporting availability:`, error);
         // On error, assume available and let the actual request fail if needed
         cachedUserCanReport = 'available';
+        cachedUserCanReportEpoch = context.epoch;
         return 'available';
     }
 };
@@ -103,6 +157,8 @@ issueReporter.checkReportingAvailability = async function (item) {
  * @param {string} backdropUrl - Optional backdrop image URL (full URL from Jellyfin or TMDB)
  */
 issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropUrl = null, item: any = null) {
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return;
     // Create the form HTML
     const ISSUE_TYPES = getIssueTypes();
     const formHtml = `
@@ -165,6 +221,7 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
         backdropUrl: backdropUrl,
         buttonText: JC.t!('seerr_report_issue_submit'),
         onSave: async (modalEl, button, closeModal) => {
+            if (!isReporterIdentityCurrent(context) || !modalEl.isConnected) return;
             const issueType = modalEl.querySelector<HTMLInputElement>('input[name="issue-type"]:checked')?.value;
             const message = modalEl.querySelector<HTMLTextAreaElement>('#issue-message')!.value;
 
@@ -192,6 +249,7 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
 
                 // Pass only the contents of the description box to the API
                 const result = await JC.seerrAPI!.reportIssue(tmdbId, mediaType, issueType, message, problemSeason, problemEpisode);
+                if (!isReporterIdentityCurrent(context) || !modalEl.isConnected) return;
 
                 if (result) {
                     JC.toast!(JC.t!('seerr_report_issue_success'), 3000);
@@ -201,6 +259,7 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
                     throw new Error('No response from API');
                 }
             } catch (error: any) {
+                if (!isReporterIdentityCurrent(context) || !modalEl.isConnected) return;
                 console.error(`${logPrefix} Error reporting issue:`, error);
                 const errorMsg = error?.message || error?.toString() || '';
                 if (error?.status === 403) {
@@ -216,6 +275,8 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
         }
     });
 
+    ownReporterElement(modalElement, context);
+
     show();
 
     // Load existing issues/comments for this item
@@ -224,7 +285,9 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
         const loadingEl = modalElement.querySelector('#seerr-issues-loading');
 
         const renderEmpty = (msg = JC.t!('seerr_no_issues_yet')) => {
-            if (bodyEl) bodyEl.innerHTML = `<div class="seerr-issues-empty">${msg}</div>`;
+            if (bodyEl && isReporterIdentityCurrent(context) && modalElement.isConnected) {
+                bodyEl.innerHTML = `<div class="seerr-issues-empty">${msg}</div>`;
+            }
         };
 
         const issueTypeLabels: Record<string | number, string> = {
@@ -253,6 +316,7 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
         try {
             if (loadingEl) loadingEl.textContent = JC.t!('seerr_loading_issues');
             const res = await JC.seerrAPI!.fetchIssuesForMedia(tmdbId, mediaType, { take: 50, filter: 'all' });
+            if (!isReporterIdentityCurrent(context) || !modalElement.isConnected) return;
             let issues = res?.results || [];
 
             if (!issues.length) {
@@ -266,6 +330,7 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
                     return full || issue;
                 } catch (_: any) { return issue; }
             }));
+            if (!isReporterIdentityCurrent(context) || !modalElement.isConnected) return;
 
             issues = enriched;
 
@@ -337,9 +402,12 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
                     `;
                 }).join('');
 
-            if (bodyEl) bodyEl.innerHTML = sections;
+            if (bodyEl && isReporterIdentityCurrent(context) && modalElement.isConnected) {
+                bodyEl.innerHTML = sections;
+            }
 
         } catch (err: any) {
+            if (!isReporterIdentityCurrent(context) || !modalElement.isConnected) return;
             console.error(`${logPrefix} Failed to load existing issues:`, err);
             renderEmpty(JC.t!('seerr_load_issues_error'));
         }
@@ -349,6 +417,7 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
     if (mediaType === 'tv') {
         void (async () => {
             try {
+                if (!isReporterIdentityCurrent(context) || !modalElement.isConnected) return;
                 const placeholder = modalElement.querySelector('#seerr-tv-controls-placeholder');
                 if (!placeholder) return;
 
@@ -407,6 +476,7 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
                             }),
                             dataType: 'json'
                         });
+                        if (!isReporterIdentityCurrent(context) || !modalElement.isConnected) return;
 
                         const seasonsList = seasonsRes?.Items || [];
                         normalized = seasonsList.map((s: any) => ({
@@ -430,6 +500,7 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
                                     }),
                                     dataType: 'json'
                                 });
+                                if (!isReporterIdentityCurrent(context) || !modalElement.isConnected) return;
                                 const eps = epsRes?.Items || [];
                                 s.episodes = eps.map((ep: any) => ({ episodeNumber: parseInt(ep.IndexNumber || ep.ParentIndexNumber || ep.Index || 0) || 0, title: ep.Name || ep.Title || '' }));
                             } catch (e: any) {
@@ -570,7 +641,9 @@ issueReporter.createReportButton = function (container, tmdbId, itemName, mediaT
         return null;
     }
 
-    const button = document.createElement('button');
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return null;
+    const button = ownReporterElement(document.createElement('button'), context);
     button.setAttribute('is', 'emby-button');
     button.className = 'button-flat detailButton emby-button seerr-report-issue-icon';
     button.type = 'button';
@@ -585,6 +658,7 @@ issueReporter.createReportButton = function (container, tmdbId, itemName, mediaT
     button.addEventListener('click', (e: MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!isReporterIdentityCurrent(context)) return;
         issueReporter.showReportModal(tmdbId, itemName, mediaType, backdropUrl, item);
     });
 
@@ -600,7 +674,9 @@ issueReporter.createReportButton = function (container, tmdbId, itemName, mediaT
 issueReporter.createUnavailableButton = function (container, itemName, mediaType, reason = 'unavailable') {
     if (!container) return null;
 
-    const button = document.createElement('button');
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return null;
+    const button = ownReporterElement(document.createElement('button'), context);
     button.setAttribute('is', 'emby-button');
     button.className = 'button-flat detailButton emby-button seerr-report-unavailable-icon';
     button.type = 'button';
@@ -635,6 +711,7 @@ issueReporter.createUnavailableButton = function (container, itemName, mediaType
     button.addEventListener('click', (e: MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!isReporterIdentityCurrent(context)) return;
         if (reason === 'no-tmdb') {
             JC.toast!('TMDB ID not found for this item', 4000);
         } else if (reason === 'no-seerr') {
@@ -656,6 +733,8 @@ issueReporter.createUnavailableButton = function (container, itemName, mediaType
  * Uses OMDB API or other methods to find TMDB ID
  */
 issueReporter.getTmdbIdFallback = async function (itemName, mediaType, item) {
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return null;
     try {
         console.debug(`${logPrefix} Attempting fallback TMDB lookup for ${itemName}`);
 
@@ -712,6 +791,7 @@ issueReporter.getTmdbIdFallback = async function (itemName, mediaType, item) {
                 if (imdbId) {
                     console.debug(`${logPrefix} Trying Seerr search by IMDB ID: ${imdbId}`);
                     const res = await JC.seerrAPI.search(imdbId);
+                    if (!isReporterIdentityCurrent(context)) return null;
                     if (res && Array.isArray(res.results) && res.results.length > 0) {
                         // Prefer a result with matching mediaType
                         const match = res.results.find((r: any) => (r.mediaType === mediaType || (mediaType === 'tv' && r.mediaType === 'tv') || (mediaType === 'movie' && r.mediaType === 'movie')) && r.id);
@@ -732,6 +812,7 @@ issueReporter.getTmdbIdFallback = async function (itemName, mediaType, item) {
                 const titleQuery = `${item.Name}${year ? ' ' + year : ''}`;
                 console.debug(`${logPrefix} Trying Seerr search by title: "${titleQuery}"`);
                 const res2 = await JC.seerrAPI.search(titleQuery);
+                if (!isReporterIdentityCurrent(context)) return null;
                 if (res2 && Array.isArray(res2.results) && res2.results.length > 0) {
                     // Try to find best match: exact title and same year
                     const exact = res2.results.find((r: any) => {
@@ -775,10 +856,14 @@ issueReporter.getTmdbIdFallback = async function (itemName, mediaType, item) {
  */
 issueReporter.applyIssueIndicator = async function (button, tmdbId, mediaType, prefetched = null) {
     if (!JC.pluginConfig?.SeerrShowIssueIndicator) return;
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return;
+    ownReporterElement(button, context);
     try {
         const result = prefetched
             ? await prefetched
             : await JC.seerrAPI!.fetchIssuesForMedia(tmdbId, mediaType, { take: 50, filter: 'open' });
+        if (!isReporterIdentityCurrent(context) || !button.isConnected) return;
         const openIssues = result?.results || [];
         if (openIssues.length === 0) return;
 
@@ -824,6 +909,8 @@ issueReporter.applyIssueIndicator = async function (button, tmdbId, mediaType, p
  * Attempts to add the report issue button to the current detail page
  */
 issueReporter.tryAddButton = async function () {
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return false;
     const itemDetailPage = document.querySelector('#itemDetailPage:not(.hide)');
     if (!itemDetailPage) {
         return false;
@@ -870,6 +957,7 @@ issueReporter.tryAddButton = async function () {
         const item: any = JC.helpers?.getItemCached
             ? await JC.helpers.getItemCached(itemId, { userId })
             : await ApiClient.getItem(userId, itemId);
+        if (!isReporterIdentityCurrent(context)) return false;
         if (!item) {
             console.debug(`${logPrefix} Could not fetch item data`);
             return false;
@@ -914,6 +1002,7 @@ issueReporter.tryAddButton = async function () {
 
         // Check if reporting is available (item has TMDB ID and Seerr configured)
         const availability = await issueReporter.checkReportingAvailability(item);
+        if (!isReporterIdentityCurrent(context)) return false;
 
         // If services not available, show unavailable button — except when the
         // item itself simply has no TMDB ID (e.g. MusicVideo, or any other type
@@ -969,7 +1058,7 @@ issueReporter.tryAddButton = async function () {
                     // Stale-navigation guard (same as the active-button insert):
                     // don't pin the old item's disabled button onto a new page.
                     const currentUnavailItemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
-                    if (currentUnavailItemId !== itemId) {
+                    if (!isReporterIdentityCurrent(context) || currentUnavailItemId !== itemId) {
                         console.debug(`${logPrefix} Item changed during async work (${itemId} -> ${currentUnavailItemId}), discarding stale unavailable button`);
                         return false;
                     }
@@ -1005,6 +1094,7 @@ issueReporter.tryAddButton = async function () {
                         const parentItem: any = JC.helpers?.getItemCached
                             ? await JC.helpers.getItemCached(parentId, { userId: userId2 })
                             : await ApiClient.getItem(userId2, parentId);
+                        if (!isReporterIdentityCurrent(context)) return false;
                         if (parentItem) {
                             const parentTmdb = parentItem.ProviderIds?.Tmdb;
                             if (parentTmdb) {
@@ -1023,6 +1113,7 @@ issueReporter.tryAddButton = async function () {
         if (!tmdbId) {
             console.debug(`${logPrefix} No direct TMDB ID found for ${item.Name}, trying fallback...`);
             tmdbId = await issueReporter.getTmdbIdFallback(item.Name, mediaType, item);
+            if (!isReporterIdentityCurrent(context)) return false;
 
             if (!tmdbId) {
                 // No TMDB ID for this item, and the fallback search couldn't find one
@@ -1119,7 +1210,7 @@ issueReporter.tryAddButton = async function () {
             // page (and its dedup would block the correct button). Verify the
             // URL still points at the item this call resolved.
             const currentItemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
-            if (currentItemId !== itemId) {
+            if (!isReporterIdentityCurrent(context) || currentItemId !== itemId) {
                 console.debug(`${logPrefix} Item changed during async work (${itemId} -> ${currentItemId}), discarding stale button`);
                 return false;
             }
@@ -1148,91 +1239,49 @@ issueReporter.tryAddButton = async function () {
     return false;
 };
 
-/**
- * Initializes issue reporter on item detail pages
- */
-issueReporter.initialize = async function () {
+/** One bounded retry chain for the current view and identity. */
+async function handleReporterView(context: IdentityContext): Promise<void> {
+    const generation = ++reporterViewGeneration;
+    const retryDelaysMs = [100, 500, 1000, 2000, 4000];
+    for (const delay of retryDelaysMs) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        if (generation !== reporterViewGeneration || !isReporterIdentityCurrent(context)) return;
+        if (!JC.pluginConfig?.SeerrEnabled || !JC.pluginConfig?.SeerrShowReportButton) return;
+        try {
+            if (await issueReporter.tryAddButton()) return;
+        } catch (error: any) {
+            if (!isReporterIdentityCurrent(context)) return;
+            console.warn(`${logPrefix} Error in viewShow handler:`, error);
+        }
+    }
+}
+
+/** Initializes one process-lifetime listener; activation only schedules B's pass. */
+issueReporter.initialize = function () {
     if (!JC.pluginConfig?.SeerrEnabled || !JC.pluginConfig?.SeerrShowReportButton) {
         console.debug(`${logPrefix} Seerr integration or report-button feature disabled, skipping initialization`);
         return;
     }
-
+    const context = captureReporterIdentity();
     JC.seerrUI?.addMainStyles?.();
 
-    console.log(`${logPrefix} Initializing... (verifying Seerr status)`);
-
-    /** One status probe: 'active' | 'inactive' (a real server answer) | 'error' (transient). */
-    const verifyStatus = async (): Promise<'active' | 'inactive' | 'error'> => {
-        try {
-            const statusUrl = ApiClient.getUrl('/JellyfinCanopy/seerr/status');
-            const statusRes: any = await ApiClient.ajax({ type: 'GET', url: statusUrl, dataType: 'json' });
-            return statusRes && statusRes.active ? 'active' : 'inactive';
-        } catch (e: any) {
-            console.warn(`${logPrefix} Seerr status probe failed:`, e);
-            return 'error';
-        }
-    };
-
-    // PERF(R9): fail open — the old one-shot check disabled the report button
-    // for the ENTIRE session (until a hard reload) on a single transient
-    // failure at boot. Only a genuine "inactive" answer from the server skips
-    // init; transient errors retry with backoff and, if still failing, fall
-    // through to lazy re-verification on each view below.
-    let statusVerified = false;
-    const STATUS_RETRY_DELAYS_MS = [2000, 5000, 10000];
-    for (let i = 0; ; i++) {
-        const status = await verifyStatus();
-        if (status === 'active') { statusVerified = true; break; }
-        if (status === 'inactive') {
-            console.debug(`${logPrefix} Seerr status check returned inactive, skipping reporter init`);
-            return;
-        }
-        if (i >= STATUS_RETRY_DELAYS_MS.length) {
-            console.warn(`${logPrefix} Could not verify Seerr status at boot; will re-verify lazily per view`);
-            break;
-        }
-        await new Promise(r => setTimeout(r, STATUS_RETRY_DELAYS_MS[i]));
+    if (!reporterListenerInstalled) {
+        reporterListenerInstalled = true;
+        document.addEventListener('viewshow', () => {
+            const current = JC.identity.capture();
+            if (current) void handleReporterView(current);
+        });
     }
 
-    // Distinguishes view generations so a retry chain from a previous view
-    // stops as soon as a new view shows (and chains never stack up).
-    let viewGeneration = 0;
+    if (reporterInitialTimer !== null) clearTimeout(reporterInitialTimer);
+    reporterInitialTimer = window.setTimeout(() => {
+        reporterInitialTimer = null;
+        if (isReporterIdentityCurrent(context)) void handleReporterView(context);
+    }, 500);
 
-    const handleViewShow = async () => {
-        const generation = ++viewGeneration;
-        // PERF(R9): fail open — the old single 100ms shot lost the button
-        // whenever the page or its button row mounted later than that (routine
-        // on slow servers/connections). Bounded backoff retries instead,
-        // abandoned the moment another view shows; the synchronous dedup in
-        // tryAddButton keeps double-fires idempotent.
-        const RETRY_DELAYS_MS = [100, 500, 1000, 2000, 4000];
-        for (const delay of RETRY_DELAYS_MS) {
-            await new Promise(r => setTimeout(r, delay));
-            if (generation !== viewGeneration) return;
-            try {
-                if (!statusVerified) {
-                    const status = await verifyStatus();
-                    if (status === 'inactive') return;
-                    if (status === 'error') continue; // transient — try again next round
-                    statusVerified = true;
-                }
-                if (generation !== viewGeneration) return;
-                if (await issueReporter.tryAddButton()) return;
-            } catch (error: any) {
-                console.warn(`${logPrefix} Error in viewShow handler:`, error);
-            }
-        }
-    };
-
-    // Listen for Jellyfin's page navigation events
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- legacy async listener; errors handled inside
-    document.addEventListener('viewshow', handleViewShow);
-
-    // Also try on initial load
-    setTimeout(handleViewShow, 500);
-
-    console.log(`${logPrefix} ✓ Initialized issue reporter with viewshow listener`);
+    console.log(`${logPrefix} ✓ Initialized issue reporter with one viewshow listener`);
 };
 
 // Expose the module on the global JC object
 JC.seerrIssueReporter = issueReporter;
+JC.identity.registerReset('seerr-issue-reporter', resetIssueReporterIdentity);

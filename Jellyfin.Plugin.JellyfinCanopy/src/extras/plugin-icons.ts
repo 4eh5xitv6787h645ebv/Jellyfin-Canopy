@@ -3,7 +3,7 @@
 
 import { JC as JEBase } from '../globals';
 import { assetUrl } from '../core/asset-urls';
-import type { LifecycleApi, LifecycleHandle, NavigationApi } from '../types/jc';
+import type { IdentityContext, LifecycleApi, LifecycleHandle, NavigationApi } from '../types/jc';
 
 /** Icon override descriptor for a built-in plugin link. */
 interface IconConfig {
@@ -57,11 +57,17 @@ function injectCSS(): void {
 let isProcessing = false;
 let observer: { unsubscribe(): void } | null = null;
 let lifecycle: LifecycleHandle | null = null;
-let customPluginsCache: CustomPlugin[] | null = null;
-let lastProcessedPluginsCount = 0;
+let customPluginsCache: { context: IdentityContext; value: CustomPlugin[] } | null = null;
+let generation = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+const replacedIcons = new WeakMap<Element, Node>();
+
+function isActive(context: IdentityContext, expectedGeneration: number): boolean {
+    return generation === expectedGeneration && JC.identity.isCurrent(context);
+}
 
 // Get custom plugins from server configuration
-async function getCustomPlugins(): Promise<CustomPlugin[]> {
+async function getCustomPlugins(context: IdentityContext, expectedGeneration: number): Promise<CustomPlugin[]> {
     // Check for test data first (used by configuration page test button)
     const testLinks = (window as { testCustomPluginLinks?: Array<{ name: string; icon: string }> }).testCustomPluginLinks;
     if (testLinks) {
@@ -75,8 +81,8 @@ async function getCustomPlugins(): Promise<CustomPlugin[]> {
     }
 
     // Return cached data if available
-    if (customPluginsCache) {
-        return customPluginsCache;
+    if (customPluginsCache && JC.identity.isCurrent(customPluginsCache.context)) {
+        return customPluginsCache.value;
     }
 
     try {
@@ -89,9 +95,11 @@ async function getCustomPlugins(): Promise<CustomPlugin[]> {
         const pluginId = '9ffa12bc-f4b5-406c-ab1d-d575acbeea7b';
         const getPluginConfiguration = ApiClient.getPluginConfiguration as (id: string) => Promise<{ CustomPluginLinks?: string }>;
         const config = await getPluginConfiguration(pluginId);
+        if (!isActive(context, expectedGeneration)) return [];
         const customLinksText = config.CustomPluginLinks || '';
-        customPluginsCache = parseCustomPluginLinks(customLinksText);
-        return customPluginsCache;
+        const value = parseCustomPluginLinks(customLinksText);
+        customPluginsCache = { context, value };
+        return value;
     } catch (e) {
         console.warn('Failed to load custom plugins from server:', e);
     }
@@ -206,13 +214,19 @@ function replacePluginIcon(selector: string, iconConfig: IconConfig): boolean {
     }
 
     if (iconElement) {
+        iconElement.setAttribute('data-jc-plugin-icon-owned', 'true');
+        replacedIcons.set(iconElement, oldIcon.cloneNode(true));
         oldIcon.replaceWith(iconElement);
         return true;
     }
     return false;
 }
 
-async function processPluginIcons(): Promise<void> {
+async function processPluginIcons(
+    context = JC.identity.capture(),
+    expectedGeneration = generation
+): Promise<void> {
+    if (!context || !isActive(context, expectedGeneration)) return;
     if (isProcessing) return;
     isProcessing = true;
 
@@ -222,9 +236,6 @@ async function processPluginIcons(): Promise<void> {
         if (!pluginsSection) {
             return;
         }
-
-        // Count current plugins to detect changes
-        const currentPluginsCount = pluginsSection.querySelectorAll('a[href*="configurationpage"]').length;
 
         // Only clean up test links to avoid flickering
         const existingTestLinks = pluginsSection.querySelectorAll('[data-jellyfin-canopy-plugin-id^="test-"]');
@@ -295,21 +306,21 @@ async function processPluginIcons(): Promise<void> {
         });
 
         // Add custom user-defined plugins
-        const customPlugins = await getCustomPlugins();
+        const customPlugins = await getCustomPlugins(context, expectedGeneration);
+        if (!isActive(context, expectedGeneration)) return;
         customPlugins.forEach(plugin => {
             createCustomPluginLink(plugin);
         });
 
-        lastProcessedPluginsCount = currentPluginsCount;
     } finally {
-        isProcessing = false;
+        if (generation === expectedGeneration) isProcessing = false;
     }
 }
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Monitor for changes similar to KefinTweaks approach
-function startMonitoring(): void {
+function startMonitoring(context: IdentityContext, expectedGeneration: number): void {
     if (observer) return;
 
     const callback = (mutations: MutationRecord[]): void => {
@@ -343,7 +354,10 @@ function startMonitoring(): void {
         if (shouldProcess) {
             // Debounce the processing
             if (debounceTimer) clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => { void processPluginIcons(); }, 100);
+            debounceTimer = setTimeout(() => {
+                debounceTimer = null;
+                void processPluginIcons(context, expectedGeneration);
+            }, 100);
         }
     };
 
@@ -363,6 +377,11 @@ function stopMonitoring(): void {
     }
     if (debounceTimer) {
         clearTimeout(debounceTimer);
+        debounceTimer = null;
+    }
+    if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
     }
     if (lifecycle) {
         lifecycle.teardown();
@@ -373,39 +392,61 @@ function stopMonitoring(): void {
 // Handle page navigation via the shared deduplicated pipeline (covers
 // hashchange, popstate and pushState navs). Tracked through a lifecycle
 // handle so stopMonitoring() can remove it.
-function setupNavigationListener(): void {
+function setupNavigationListener(context: IdentityContext, expectedGeneration: number): void {
     lifecycle = JC.core.lifecycle.register('plugin-icons');
     lifecycle.track(JC.core.navigation.onNavigate(() => {
         const hash = window.location.hash;
         // Process plugin icons when navigating to dashboard, settings, or configuration pages
         if (hash.includes('#/dashboard') || hash.includes('#/settings') || hash.includes('#/configurationpage')) {
             if (debounceTimer) clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => { void processPluginIcons(); }, 300);
+            debounceTimer = setTimeout(() => {
+                debounceTimer = null;
+                void processPluginIcons(context, expectedGeneration);
+            }, 300);
         }
     }));
 }
 
+function restoreOwnedUi(): void {
+    document.querySelectorAll('[data-jc-plugin-icon-owned="true"]').forEach((icon) => {
+        const original = replacedIcons.get(icon);
+        if (original) icon.replaceWith(original);
+        else icon.remove();
+    });
+    document.querySelectorAll('[data-jellyfin-canopy-plugin-id]').forEach((link) => link.remove());
+}
+
 function initialize(): void {
+    stopMonitoring();
+    const context = JC.identity.capture();
+    if (!context) return;
+    const expectedGeneration = ++generation;
+    isProcessing = false;
+
     // Inject CSS for Material Icons
     injectCSS();
-    setupNavigationListener();
+    setupNavigationListener(context, expectedGeneration);
 
     // Wait for ApiClient to be available
     let retries = 0;
     const maxRetries = 10;
 
     const tryInitialize = async (): Promise<void> => {
+        if (!isActive(context, expectedGeneration)) return;
         if (typeof ApiClient !== 'undefined') {
-            await processPluginIcons();
-            startMonitoring();
+            await processPluginIcons(context, expectedGeneration);
+            if (isActive(context, expectedGeneration)) startMonitoring(context, expectedGeneration);
         } else if (retries < maxRetries) {
             retries++;
-            setTimeout(() => { void tryInitialize(); }, 500);
+            retryTimer = setTimeout(() => {
+                retryTimer = null;
+                void tryInitialize();
+            }, 500);
         } else {
             console.warn('ApiClient not available after retries, custom plugin links will not work');
             // Still set up the basic icon replacement and monitoring
-            await processPluginIcons();
-            startMonitoring();
+            await processPluginIcons(context, expectedGeneration);
+            if (isActive(context, expectedGeneration)) startMonitoring(context, expectedGeneration);
         }
     };
 
@@ -414,6 +455,14 @@ function initialize(): void {
 
 JC.initializePluginIcons = initialize;
 JC.stopPluginIconsMonitoring = stopMonitoring;
+
+JC.identity.registerReset('plugin-icons', () => {
+    generation++;
+    isProcessing = false;
+    customPluginsCache = null;
+    stopMonitoring();
+    restoreOwnedUi();
+});
 
 // Expose API for refreshing custom plugins
 JC.customPlugins = {

@@ -3,6 +3,9 @@
 
 import { JC as JEBase } from '../globals';
 import { themeCssUrl } from '../core/asset-urls';
+import { onBodyMutation } from '../core/dom-observer';
+import { escapeHtml } from '../core/ui-kit';
+import type { IdentityContext } from '../types/jc';
 
 /**
  * Local view of the shared namespace adding the public member this module
@@ -10,7 +13,6 @@ import { themeCssUrl } from '../core/asset-urls';
  */
 const JC = JEBase as typeof JEBase & {
     initializeThemeSelector?: () => void;
-    helpers?: { onBodyMutation?: (id: string, cb: () => void) => { unsubscribe(): void } };
 };
 
 const THEMES: Readonly<Record<string, string>> = Object.freeze({
@@ -39,16 +41,25 @@ const INIT_DELAY = 250;
 const NOTIFICATION_DELAY = 1000;
 const DEBOUNCE_DELAY = 100;
 const TRANSITION_DURATION = 300;
+const STORAGE_PREFIX = 'jc-theme:';
+const STORAGE_MIGRATION_KEY = 'jc-theme-storage-v2-migrated';
+const LEGACY_NOTIFICATION_KEY = 'jellyfin-theme-applied';
 
 // PERF(R6): no remote assets — Jellyfish theme CSS served from the local asset
 // cache (with its logo/background image urls rewritten to local copies).
 const getThemeImport = (filename: string): string => filename ? `@import url("${themeCssUrl(filename)}");` : '';
 
-const getStorageKey = (userId: string, key: string): string => `${userId}-${key}`;
+const getStorageKey = (context: IdentityContext, key: string): string =>
+    `${STORAGE_PREFIX}${context.serverId}:${context.userId}:${key}`;
 
-const getLocalStorageValue = (userId: string, key: string, defaultValue: string | null = null): string | null => {
+// Jellyfish consumes this compatibility key while booting its stylesheet. It
+// is only a mirror of the current server-scoped value; the canonical value
+// above prevents equal user ids on two Jellyfin servers from sharing a theme.
+const getCompatibilityKey = (context: IdentityContext, key: string): string => `${context.userId}-${key}`;
+
+const getLocalStorageValue = (context: IdentityContext, key: string, defaultValue: string | null = null): string | null => {
     try {
-        const value = localStorage.getItem(getStorageKey(userId, key));
+        const value = localStorage.getItem(getStorageKey(context, key));
         return value === null ? defaultValue : value;
     } catch (e) {
         console.error('🪼 Jellyfin Canopy: Theme selector storage read error', e);
@@ -56,9 +67,12 @@ const getLocalStorageValue = (userId: string, key: string, defaultValue: string 
     }
 };
 
-const setLocalStorageValue = (userId: string, key: string, value: string): boolean => {
+const setLocalStorageValue = (context: IdentityContext, key: string, value: string): boolean => {
     try {
-        localStorage.setItem(getStorageKey(userId, key), value);
+        localStorage.setItem(getStorageKey(context, key), value);
+        if (key === 'customCss' && JC.identity.isCurrent(context)) {
+            localStorage.setItem(getCompatibilityKey(context, key), value);
+        }
         return true;
     } catch (e) {
         console.error('🪼 Jellyfin Canopy: Theme selector storage write error', e);
@@ -66,9 +80,12 @@ const setLocalStorageValue = (userId: string, key: string, value: string): boole
     }
 };
 
-const removeLocalStorageValue = (userId: string, key: string): boolean => {
+const removeLocalStorageValue = (context: IdentityContext, key: string): boolean => {
     try {
-        localStorage.removeItem(getStorageKey(userId, key));
+        localStorage.removeItem(getStorageKey(context, key));
+        if (key === 'customCss' && JC.identity.isCurrent(context)) {
+            localStorage.removeItem(getCompatibilityKey(context, key));
+        }
         return true;
     } catch (e) {
         console.error('🪼🎨Jellyfish Theme Selector : localStorage remove error:', e);
@@ -77,19 +94,19 @@ const removeLocalStorageValue = (userId: string, key: string): boolean => {
 };
 
 // --- Random Theme Functions ---
-const isRandomThemeEnabled = (userId: string): boolean => {
-    const setting = getLocalStorageValue(userId, 'randomThemeEnabled');
+const isRandomThemeEnabled = (context: IdentityContext): boolean => {
+    const setting = getLocalStorageValue(context, 'randomThemeEnabled');
     return setting === null ? RANDOM_THEME_DEFAULT : setting === 'true';
 };
 
-const setRandomThemeEnabled = (userId: string, isEnabled: boolean): void => {
-    setLocalStorageValue(userId, 'randomThemeEnabled', String(isEnabled));
+const setRandomThemeEnabled = (context: IdentityContext, isEnabled: boolean): void => {
+    setLocalStorageValue(context, 'randomThemeEnabled', String(isEnabled));
 };
 
-const getLastRandomDate = (userId: string): string | null => getLocalStorageValue(userId, 'lastRandomThemeDate');
+const getLastRandomDate = (context: IdentityContext): string | null => getLocalStorageValue(context, 'lastRandomThemeDate');
 
-const setLastRandomDate = (userId: string, date: string): void => {
-    setLocalStorageValue(userId, 'lastRandomThemeDate', date);
+const setLastRandomDate = (context: IdentityContext, date: string): void => {
+    setLocalStorageValue(context, 'lastRandomThemeDate', date);
 };
 
 const getTodayDate = (): string => new Date().toISOString().split('T')[0];
@@ -153,29 +170,52 @@ const injectCustomCss = (): void => {
 
 
 
-// --- User ID Extraction ---
-const extractUserId = (): string | null => {
-    try {
-        const userId = window.ApiClient?.getCurrentUserId?.();
-        if (userId && userId.trim() !== '') return userId;
-    } catch (e) {
-        console.error('🪼🎨Jellyfish Theme Selector :  Error extracting user ID:', e);
-    }
-    console.error('🪼🎨Jellyfish Theme Selector :  Could not extract user ID');
-    return null;
-};
-
 // --- Theme Management ---
-const getCurrentTheme = (userId: string): string => getLocalStorageValue(userId, 'customCss', '') || '';
+const getCurrentTheme = (context: IdentityContext): string => getLocalStorageValue(context, 'customCss', '') || '';
 
-const setTheme = (userId: string, themeFilename: string, themeName = 'Default'): void => {
+const setTheme = (context: IdentityContext, themeFilename: string, themeName = 'Default'): void => {
+    if (!JC.identity.isCurrent(context)) return;
     const themeValue = getThemeImport(themeFilename);
     if (themeValue) {
-        setLocalStorageValue(userId, 'customCss', themeValue);
+        setLocalStorageValue(context, 'customCss', themeValue);
         console.log(`🪼🎨Jellyfish Theme Selector :  Theme set to: ${themeName}`);
     } else {
-        removeLocalStorageValue(userId, 'customCss');
+        removeLocalStorageValue(context, 'customCss');
         console.log('🪼🎨Jellyfish Theme Selector :  Theme cleared (default)');
+    }
+};
+
+const getNotificationKey = (context: IdentityContext): string =>
+    `${LEGACY_NOTIFICATION_KEY}:${context.serverId}:${context.userId}`;
+
+/**
+ * Adopt the old user-only keys once, for the identity active during upgrade.
+ * Every later identity uses server-scoped keys exclusively. This avoids an A
+ * compatibility mirror being mistaken for B's preference when user ids happen
+ * to match across servers.
+ */
+const migrateLegacyStorageOnce = (context: IdentityContext): void => {
+    try {
+        if (localStorage.getItem(STORAGE_MIGRATION_KEY) !== 'true') {
+            for (const key of ['customCss', 'randomThemeEnabled', 'lastRandomThemeDate']) {
+                const scopedKey = getStorageKey(context, key);
+                const legacyKey = getCompatibilityKey(context, key);
+                if (localStorage.getItem(scopedKey) === null) {
+                    const legacyValue = localStorage.getItem(legacyKey);
+                    if (legacyValue !== null) localStorage.setItem(scopedKey, legacyValue);
+                }
+            }
+            localStorage.setItem(STORAGE_MIGRATION_KEY, 'true');
+        }
+
+        // Keep Jellyfish's boot-time compatibility key synchronized with the
+        // current canonical value. A missing B value removes A's old mirror.
+        const currentTheme = getCurrentTheme(context);
+        const compatibilityKey = getCompatibilityKey(context, 'customCss');
+        if (currentTheme) localStorage.setItem(compatibilityKey, currentTheme);
+        else localStorage.removeItem(compatibilityKey);
+    } catch (e) {
+        console.error('Jellyfin Canopy: Theme selector storage migration error', e);
     }
 };
 
@@ -195,12 +235,22 @@ const showNotification = (message: string): void => {
     }
 };
 
-const checkPostRefreshNotification = (): void => {
+const checkPostRefreshNotification = (context: IdentityContext, expectedGeneration: number): void => {
     try {
-        const pendingNotification = sessionStorage.getItem('jellyfin-theme-applied');
+        const notificationKey = getNotificationKey(context);
+        let pendingNotification = sessionStorage.getItem(notificationKey);
+        // Compatibility with a reload initiated by a pre-upgrade bundle. The
+        // unscoped value is consumed once and cannot survive an SPA switch.
+        if (!pendingNotification) pendingNotification = sessionStorage.getItem('jellyfin-theme-applied');
+        sessionStorage.removeItem(LEGACY_NOTIFICATION_KEY);
         if (pendingNotification) {
-            sessionStorage.removeItem('jellyfin-theme-applied');
-            setTimeout(() => showNotification(`Theme applied: ${pendingNotification}`), NOTIFICATION_DELAY);
+            sessionStorage.removeItem(notificationKey);
+            notificationTimer = window.setTimeout(() => {
+                notificationTimer = null;
+                if (isActive(context, expectedGeneration)) {
+                    showNotification(`Theme applied: ${escapeHtml(pendingNotification)}`);
+                }
+            }, NOTIFICATION_DELAY);
         }
     } catch (e) {
         console.error('🪼🎨Jellyfish Theme Selector :  Session storage error:', e);
@@ -208,12 +258,11 @@ const checkPostRefreshNotification = (): void => {
 };
 
 // --- Random Theme Logic ---
-const applyRandomThemeIfNeeded = (): void => {
-    const userId = extractUserId();
-    if (!userId || !isRandomThemeEnabled(userId)) return;
+const applyRandomThemeIfNeeded = (context: IdentityContext, expectedGeneration: number): void => {
+    if (!isActive(context, expectedGeneration) || !isRandomThemeEnabled(context)) return;
 
     const today = getTodayDate();
-    const lastDate = getLastRandomDate(userId);
+    const lastDate = getLastRandomDate(context);
 
     if (today !== lastDate) {
         console.log('🪼🎨Jellyfish Theme Selector :  New day detected! Applying a random theme.');
@@ -221,15 +270,15 @@ const applyRandomThemeIfNeeded = (): void => {
         const randomThemeName = availableThemes[Math.floor(Math.random() * availableThemes.length)];
         const randomThemeFilename = THEMES[randomThemeName];
 
-        setTheme(userId, randomThemeFilename, randomThemeName);
-        setLastRandomDate(userId, today);
+        setTheme(context, randomThemeFilename, randomThemeName);
+        setLastRandomDate(context, today);
 
         try {
-            sessionStorage.setItem('jellyfin-theme-applied', `Random Daily (${randomThemeName})`);
+            sessionStorage.setItem(getNotificationKey(context), `Random Daily (${randomThemeName})`);
         } catch (e) {
             console.error('🪼🎨Jellyfish Theme Selector :  Could not set session storage:', e);
         }
-        window.location.reload();
+        if (isActive(context, expectedGeneration)) window.location.reload();
     } else {
         console.log('🪼🎨Jellyfish Theme Selector :  Random theme already applied for today.');
     }
@@ -244,7 +293,11 @@ const createIcon = (iconName: string, className = 'material-icons'): HTMLElement
     return icon;
 };
 
-const createThemeSelect = (userId: string, currentThemeValue: string): HTMLSelectElement => {
+const createThemeSelect = (
+    context: IdentityContext,
+    expectedGeneration: number,
+    currentThemeValue: string
+): HTMLSelectElement => {
     const select = document.createElement('select');
     select.setAttribute('is', 'emby-select');
     select.className = 'emby-select-withcolor emby-select';
@@ -272,6 +325,7 @@ const createThemeSelect = (userId: string, currentThemeValue: string): HTMLSelec
     select.addEventListener('change', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!isActive(context, expectedGeneration)) return;
 
         const newThemeName = (e.target as HTMLSelectElement).value;
         const newThemeFilename = THEMES[newThemeName];
@@ -285,17 +339,20 @@ const createThemeSelect = (userId: string, currentThemeValue: string): HTMLSelec
         document.body.classList.add('theme-applying');
 
         // Save to localStorage
-        setTheme(userId, newThemeFilename, newThemeName);
+        setTheme(context, newThemeFilename, newThemeName);
 
         // Store notification for after reload
         try {
-            sessionStorage.setItem('jellyfin-theme-applied', newThemeName);
+            sessionStorage.setItem(getNotificationKey(context), newThemeName);
         } catch (e) {
             console.error('🪼🎨Jellyfish Theme Selector :  Session storage error:', e);
         }
 
         // Wait for fade-out transition, then reload
-        setTimeout(() => {
+        if (reloadTimer) clearTimeout(reloadTimer);
+        reloadTimer = window.setTimeout(() => {
+            reloadTimer = null;
+            if (!isActive(context, expectedGeneration)) return;
             console.log(`🪼🎨Jellyfish Theme Selector :  Reloading to apply theme: ${newThemeName}`);
             window.location.reload();
         }, TRANSITION_DURATION);
@@ -304,7 +361,7 @@ const createThemeSelect = (userId: string, currentThemeValue: string): HTMLSelec
     return select;
 };
 
-const createRandomButton = (userId: string): HTMLButtonElement => {
+const createRandomButton = (context: IdentityContext, expectedGeneration: number): HTMLButtonElement => {
     const button = document.createElement('button');
     button.setAttribute('is', 'emby-button');
     button.className = 'emby-button';
@@ -317,7 +374,7 @@ const createRandomButton = (userId: string): HTMLButtonElement => {
     text.style.fontSize = '0.85em';
 
     const updateButtonState = (): void => {
-        const isEnabled = isRandomThemeEnabled(userId);
+        const isEnabled = isRandomThemeEnabled(context);
         button.classList.toggle('active', isEnabled);
         text.textContent = isEnabled ? 'Daily' : '';
         button.setAttribute('aria-pressed', isEnabled.toString());
@@ -328,21 +385,22 @@ const createRandomButton = (userId: string): HTMLButtonElement => {
     updateButtonState();
 
     button.addEventListener('click', () => {
-        const newState = !isRandomThemeEnabled(userId);
-        setRandomThemeEnabled(userId, newState);
+        if (!isActive(context, expectedGeneration)) return;
+        const newState = !isRandomThemeEnabled(context);
+        setRandomThemeEnabled(context, newState);
         showNotification(`Random daily theme turned ${newState ? 'ON' : 'OFF'}.`);
         console.log(`🪼🎨Jellyfish Theme Selector :  Random daily theme set to: ${newState}`);
         updateButtonState();
 
         if (newState) {
-            applyRandomThemeIfNeeded();
+            applyRandomThemeIfNeeded(context, expectedGeneration);
         }
     });
 
     return button;
 };
 
-const createThemeSelector = (userId: string): HTMLElement => {
+const createThemeSelector = (context: IdentityContext, expectedGeneration: number): HTMLElement => {
     const container = document.createElement('div');
     container.className = 'theme-selector-container listItem-border';
     container.id = SELECTOR_ID;
@@ -363,9 +421,9 @@ const createThemeSelector = (userId: string): HTMLElement => {
     textLabel.id = 'theme-selector-label';
     textLabel.textContent = 'Theme';
 
-    const currentThemeValue = getCurrentTheme(userId);
-    const select = createThemeSelect(userId, currentThemeValue);
-    const randomButton = createRandomButton(userId);
+    const currentThemeValue = getCurrentTheme(context);
+    const select = createThemeSelect(context, expectedGeneration, currentThemeValue);
+    const randomButton = createRandomButton(context, expectedGeneration);
 
     contentDiv.appendChild(textLabel);
     contentDiv.appendChild(randomButton);
@@ -378,19 +436,21 @@ const createThemeSelector = (userId: string): HTMLElement => {
 };
 
 // --- DOM Injection ---
-const injectThemeSelector = (): boolean => {
+const injectThemeSelector = (context: IdentityContext, expectedGeneration: number): boolean => {
     try {
+        if (!isActive(context, expectedGeneration)) return false;
         const targetDiv = document.querySelector('.verticalSection .headerUsername');
         if (!targetDiv) return false;
 
         const parentSection = targetDiv.closest('.verticalSection');
         if (!parentSection) return false;
 
-        const userId = extractUserId();
-        if (!userId) return false;
+        if (!isActive(context, expectedGeneration)) return false;
 
         console.log('🪼🎨Jellyfish Theme Selector :  Creating theme selector element...');
-        const themeSelector = createThemeSelector(userId);
+        const themeSelector = createThemeSelector(context, expectedGeneration);
+        themeSelector.dataset.jcIdentityOwned = 'true';
+        if (!isActive(context, expectedGeneration)) return false;
         parentSection.appendChild(themeSelector);
         console.log('🪼🎨Jellyfish Theme Selector :  Successfully injected!');
         return true;
@@ -410,10 +470,40 @@ const isOnPreferencesPage = (): boolean => {
 
 // --- Initialization ---
 let observerInstance: { unsubscribe(): void } | null = null;
-let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let initTimer: ReturnType<typeof setTimeout> | null = null;
+let notificationTimer: ReturnType<typeof setTimeout> | null = null;
+let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+let generation = 0;
 
-// ~25s at 250ms: enough for a slow ApiClient boot, then give up so a login page
-// left open (never authenticates) can't busy-loop the poller for the session.
+function isActive(context: IdentityContext, expectedGeneration: number): boolean {
+    return generation === expectedGeneration && JC.identity.isCurrent(context);
+}
+
+function isFeatureEnabled(): boolean {
+    return JC.pluginConfig?.ThemeSelectorEnabled === true;
+}
+
+function cleanup(): void {
+    observerInstance?.unsubscribe();
+    observerInstance = null;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    if (initTimer) clearTimeout(initTimer);
+    if (notificationTimer) clearTimeout(notificationTimer);
+    if (reloadTimer) clearTimeout(reloadTimer);
+    debounceTimer = null;
+    initTimer = null;
+    notificationTimer = null;
+    reloadTimer = null;
+    document.getElementById(SELECTOR_ID)?.remove();
+    document.body.classList.remove('theme-applying', 'theme-applied');
+}
+
+function reset(): void {
+    generation += 1;
+    cleanup();
+}
+
 // ~25s at 250ms: enough for a slow ApiClient boot, then give up so a login page
 // left open (never authenticates) can't busy-loop the poller for the session.
 const MAX_INIT_ATTEMPTS = 100;
@@ -421,20 +511,28 @@ const MAX_INIT_ATTEMPTS = 100;
 const initialize = (attempt = 0): void => {
     // Browser-only module — never reschedule in a non-DOM (SSR/test) context.
     if (typeof window === 'undefined') return;
+    if (attempt === 0) reset();
+    const context = JC.identity.capture();
+    if (!context || !isFeatureEnabled()) return;
+    const expectedGeneration = generation;
     if (typeof ApiClient === 'undefined' || typeof ApiClient.getCurrentUserId !== 'function') {
         if (attempt >= MAX_INIT_ATTEMPTS) {
             console.warn('🪼🎨Jellyfish Theme Selector :  ApiClient never became available; giving up.');
             return;
         }
         console.log('🪼🎨Jellyfish Theme Selector :  Waiting for ApiClient...');
-        setTimeout(() => initialize(attempt + 1), INIT_DELAY);
+        initTimer = window.setTimeout(() => {
+            initTimer = null;
+            if (isActive(context, expectedGeneration)) initialize(attempt + 1);
+        }, INIT_DELAY);
         return;
     }
 
     console.log('🪼🎨Jellyfish Theme Selector :  ApiClient is available. Starting persistent element monitoring.');
-    applyRandomThemeIfNeeded();
+    migrateLegacyStorageOnce(context);
+    applyRandomThemeIfNeeded(context, expectedGeneration);
     injectCustomCss();
-    checkPostRefreshNotification();
+    checkPostRefreshNotification(context, expectedGeneration);
 
     // Cleanup existing observer if present
     if (observerInstance) {
@@ -443,23 +541,37 @@ const initialize = (attempt = 0): void => {
     }
 
     const callback = (): void => {
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
+        if (!isActive(context, expectedGeneration) || !isFeatureEnabled()) return;
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = window.setTimeout(() => {
+            debounceTimer = null;
+            if (!isActive(context, expectedGeneration) || !isFeatureEnabled()) return;
             const selectorExists = document.getElementById(SELECTOR_ID);
             if (isOnPreferencesPage() && !selectorExists) {
                 console.log('🪼🎨Jellyfish Theme Selector :  Preferences page detected and selector is missing. Injecting...');
-                injectThemeSelector();
+                injectThemeSelector(context, expectedGeneration);
             }
         }, DEBOUNCE_DELAY);
     };
 
-    if (JC?.helpers?.onBodyMutation) {
-        observerInstance = JC.helpers.onBodyMutation('theme-selector', callback);
-    } else {
-        const mo = new MutationObserver(callback);
-        mo.observe(document.body, { childList: true, subtree: true });
-        observerInstance = { unsubscribe() { mo.disconnect(); } };
-    }
+    observerInstance = onBodyMutation('theme-selector', callback);
+    callback();
 };
 
+JC.identity.registerReset('theme-selector', (change) => {
+    reset();
+    try {
+        if (change.previous) {
+            localStorage.removeItem(getCompatibilityKey(change.previous, 'customCss'));
+            sessionStorage.removeItem(getNotificationKey(change.previous));
+        }
+        if (change.current) {
+            const currentTheme = getCurrentTheme(change.current);
+            const compatibilityKey = getCompatibilityKey(change.current, 'customCss');
+            if (currentTheme) localStorage.setItem(compatibilityKey, currentTheme);
+            else localStorage.removeItem(compatibilityKey);
+        }
+        sessionStorage.removeItem(LEGACY_NOTIFICATION_KEY);
+    } catch { /* storage may be blocked */ }
+});
 JC.initializeThemeSelector = initialize;

@@ -11,9 +11,15 @@
 
 /** The shared more-info modal helper bag (was JC.internals.moreInfoModal). */
 export interface MoreInfoModalInternal {
-    state: { currentModal: any };
+    state: {
+        currentModal: any;
+        identity: import('../../types/jc').IdentityContext | null;
+        openGeneration: number;
+    };
     [key: string]: any;
 }
 
 /** Singleton shared across the more-info-modal-* modules. */
-export const internal: MoreInfoModalInternal = { state: { currentModal: null } };
+export const internal: MoreInfoModalInternal = {
+    state: { currentModal: null, identity: null, openGeneration: 0 }
+};

@@ -6,6 +6,7 @@
 // (Converted from js/enhanced/hidden-content-data.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
+import type { IdentityContext } from '../../types/jc';
 // Cross-module references (defined in the later-loaded
 // hidden-content-save/dialogs/filter modules) — call-time only, so the
 // import cycles are safe.
@@ -71,6 +72,49 @@ export const hiddenIdSet = new Set<string>();
 const hiddenTmdbIdSet = new Set<string>();
 let hiddenData: HiddenContentData | null = null;
 
+function emptyHiddenData(): HiddenContentData {
+    return { items: {}, settings: {} };
+}
+
+function contextFor(data: HiddenContentData): IdentityContext | null {
+    const owner = JC.identity?.ownerOf?.(data) || null;
+    return owner && JC.identity.isCurrent(owner) ? owner : null;
+}
+
+/** Publish a replacement only while its captured owner is still current. */
+function replaceHiddenData(data: HiddenContentData, context: IdentityContext): boolean {
+    if (!JC.identity.isCurrent(context)) return false;
+    const userConfig = JC.userConfig;
+    if (!userConfig) return false;
+    const configOwner = JC.identity.ownerOf(userConfig);
+    if (configOwner && !JC.identity.isOwned(userConfig, context)) return false;
+    if (!configOwner) JC.identity.own(userConfig, context);
+
+    hiddenData = JC.identity.own(data, context);
+    userConfig.hiddenContent = hiddenData;
+    return true;
+}
+
+function commitHiddenData(data: HiddenContentData, previous: HiddenContentData): boolean {
+    const context = contextFor(previous);
+    if (context) return replaceHiddenData(data, context);
+    // Preserve the legacy/test-only no-session behaviour, but fail closed when
+    // an active identity exists and the previous blob was not owned by it.
+    if (JC.identity?.capture?.()) return false;
+    hiddenData = data;
+    JC.userConfig = JC.userConfig || {};
+    JC.userConfig.hiddenContent = hiddenData;
+    return true;
+}
+
+function clearIdentityData(): void {
+    hiddenData = null;
+    hiddenIdSet.clear();
+    hiddenTmdbIdSet.clear();
+}
+
+JC.identity?.registerReset?.('hidden-content-data', clearIdentityData);
+
 // ============================================================
 // Internal helpers
 // ============================================================
@@ -80,9 +124,27 @@ let hiddenData: HiddenContentData | null = null;
  * from `JC.userConfig.hiddenContent`.
  */
 export function getHiddenData(): HiddenContentData {
-    if (!hiddenData) {
-        hiddenData = (JC.userConfig?.hiddenContent as HiddenContentData | undefined) || { items: {}, settings: {} };
+    if (hiddenData) {
+        const owner = JC.identity?.ownerOf?.(hiddenData) || null;
+        if (!owner || JC.identity.isCurrent(owner)) return hiddenData;
+        hiddenData = null;
     }
+
+    const context = JC.identity?.capture?.() || null;
+    const configured = JC.userConfig?.hiddenContent as HiddenContentData | undefined;
+    if (!context) {
+        hiddenData = configured || emptyHiddenData();
+        return hiddenData;
+    }
+
+    // Never adopt an owner-tagged object from A. Unowned values are accepted
+    // only as the freshly loaded value for the current initialization and are
+    // immediately tagged before they can reach a save path.
+    const configuredOwner = JC.identity.ownerOf(configured);
+    hiddenData = configuredOwner && !JC.identity.isOwned(configured, context)
+        ? emptyHiddenData()
+        : (configured || emptyHiddenData());
+    JC.identity.own(hiddenData, context);
     return hiddenData;
 }
 
@@ -191,18 +253,28 @@ export function emitChange(): void {
 
 // Re-fetch from server and replace local cache. Don't call immediately after a server-direct write from THIS tab — use markScopedHidden().
 export async function refresh(): Promise<boolean> {
+    const context = JC.identity?.capture?.() || null;
+    if (context && !JC.identity.isCurrent(context)) return false;
     try {
-        const userId = ApiClient.getCurrentUserId();
+        const userId = context?.userId || ApiClient.getCurrentUserId();
         if (!userId) return false;
         const fresh = await ApiClient.ajax({
             type: 'GET',
             url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${userId}/hidden-content.json?_=${Date.now()}`),
             dataType: 'json'
         });
+        if (context && !JC.identity.isCurrent(context)) return false;
         const camelCased = (typeof (JC as any).toCamelCase === 'function') ? (JC as any).toCamelCase(fresh) : fresh;
-        JC.userConfig = JC.userConfig || {};
-        JC.userConfig.hiddenContent = camelCased || { items: {}, settings: {} };
-        hiddenData = JC.userConfig.hiddenContent as HiddenContentData;
+        const next = camelCased && typeof camelCased === 'object'
+            ? camelCased as HiddenContentData
+            : emptyHiddenData();
+        if (context) {
+            if (!replaceHiddenData(next, context)) return false;
+        } else {
+            JC.userConfig = JC.userConfig || {};
+            JC.userConfig.hiddenContent = next;
+            hiddenData = next;
+        }
         rebuildSets();
         emitChange();
         return true;
@@ -279,9 +351,7 @@ export function markScopedHidden(itemId: string, scope?: string): void {
     const nextItems = { ...items, [itemId]: merged };
     if (hyphenated !== itemId) delete nextItems[hyphenated];
     if (noHyphen !== itemId) delete nextItems[noHyphen];
-    hiddenData = { ...data, items: nextItems };
-    JC.userConfig = JC.userConfig || {};
-    JC.userConfig.hiddenContent = hiddenData;
+    if (!commitHiddenData({ ...data, items: nextItems }, data)) return;
     rebuildSets();
     emitChange();
 }
@@ -361,11 +431,11 @@ export function hideItem({ itemId, name, type, tmdbId, posterPath, seriesId, ser
         hideScope: hideScope || 'global'
     };
 
-    hiddenData = {
+    const nextData: HiddenContentData = {
         ...data,
         items: { ...data.items, [key]: newItem }
     };
-    JC.userConfig!.hiddenContent = hiddenData;
+    if (!commitHiddenData(nextData, data)) return;
     rebuildSets();
     debouncedSave();
     emitChange();
@@ -396,8 +466,7 @@ export function unhideItem(itemId: string): void {
         }
     }
 
-    hiddenData = { ...data, items: newItems };
-    JC.userConfig!.hiddenContent = hiddenData;
+    if (!commitHiddenData({ ...data, items: newItems }, data)) return;
     rebuildSets();
     debouncedSave();
     emitChange();
@@ -416,11 +485,11 @@ export function unhideItem(itemId: string): void {
  */
 export function updateSettings(partial: Record<string, unknown>): void {
     const data = getHiddenData();
-    hiddenData = {
+    const nextData: HiddenContentData = {
         ...data,
         settings: { ...data.settings, ...partial }
     };
-    JC.userConfig!.hiddenContent = hiddenData;
+    if (!commitHiddenData(nextData, data)) return;
     debouncedSave();
     emitChange();
     refreshNativeCardVisibility();
@@ -515,8 +584,7 @@ export function filterRequestItems(items: any[]): any[] {
 export function unhideAll(): void {
     const oldHiddenIds = new Set(hiddenIdSet);
     const data = getHiddenData();
-    hiddenData = { ...data, items: {} };
-    JC.userConfig!.hiddenContent = hiddenData;
+    if (!commitHiddenData({ ...data, items: {} }, data)) return;
     rebuildSets();
     debouncedSave();
     emitChange();
@@ -530,6 +598,17 @@ export function unhideAll(): void {
  * that owns the hiddenData closure variable.
  */
 export function resetFromUserConfig(): void {
-    hiddenData = (JC.userConfig?.hiddenContent as HiddenContentData | undefined) || { items: {}, settings: {} };
+    const context = JC.identity?.capture?.() || null;
+    const configured = (JC.userConfig?.hiddenContent as HiddenContentData | undefined) || emptyHiddenData();
+    if (context) {
+        const owner = JC.identity.ownerOf(configured);
+        hiddenData = owner && !JC.identity.isOwned(configured, context)
+            ? emptyHiddenData()
+            : configured;
+        JC.identity.own(hiddenData, context);
+        if (JC.userConfig) JC.userConfig.hiddenContent = hiddenData;
+    } else {
+        hiddenData = configured;
+    }
     rebuildSets();
 }

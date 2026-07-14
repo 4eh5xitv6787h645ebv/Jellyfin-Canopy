@@ -709,4 +709,101 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
         JC.pluginConfig = oldConfig;
         document.body.innerHTML = '';
     });
+
+    it('fully resets A, ignores its late cache load, and activates B without duplicate wiring', async () => {
+        document.body.innerHTML = '';
+        const itemId = '88888888888888888888888888888888';
+        const originalIdentity = JC.identity.capture()!;
+        const oldConfig = JC.pluginConfig;
+        const oldUi = JC.core.ui;
+        JC.pluginConfig = { ...oldConfig, TagCacheServerMode: true, SpoilerBlurEnabled: false };
+        JC.core.ui = { injectCss: vi.fn() } as unknown as NonNullable<typeof JC.core.ui>;
+        JC._tagCachePrefetch = null;
+
+        let activeUser = userA;
+        const currentUser = vi.spyOn(ApiClient, 'getCurrentUserId').mockImplementation(() => activeUser);
+        let resolveA!: (value: unknown) => void;
+        const ajax = vi.spyOn(ApiClient, 'ajax')
+            .mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }))
+            .mockResolvedValueOnce({
+                version: 1,
+                timestamp: 2,
+                items: { [itemId]: { Type: 'Movie', label: 'owner-b' } },
+                projectionUserId: userB,
+                projectionEpoch: 'process-b',
+                projectionRevision: 1,
+                projectionIds: [],
+                projectionReset: false,
+            });
+
+        JC.tagPipeline!.registerRenderer('identity-switch-projection-test', {
+            render: () => undefined,
+            isEnabled: () => true,
+            renderFromServerCache: (target: HTMLElement, entry: unknown) => {
+                const marker = document.createElement('span');
+                marker.className = `identity-${String((entry as { label?: string }).label)}`;
+                target.appendChild(marker);
+            },
+            invalidateCard: (target: HTMLElement) => {
+                target.querySelectorAll('[class^="identity-owner-"]').forEach((node) => node.remove());
+            },
+        });
+
+        const image = gridCardImage();
+        const card = image.closest<HTMLElement>('.card')!;
+        card.dataset.id = itemId;
+        card.dataset.type = 'Movie';
+        const staleHost = document.createElement('div');
+        staleHost.className = 'jc-tag-host';
+        staleHost.innerHTML = '<span class="identity-owner-a"></span>';
+        card.querySelector('.cardScalable')!.appendChild(staleHost);
+        document.body.appendChild(card);
+
+        const identityA = JC.identity.transition('server-a', userA, 'tag-pipeline-a')!;
+        const activationA = JC.identity.activate(identityA);
+        // Activation handlers begin in a promise microtask in the real loader.
+        // Prove A's cache read is actually held before accepting B; otherwise B
+        // can consume the first mock response and this is not a late-A race.
+        await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(1));
+
+        activeUser = userB;
+        const identityB = JC.identity.transition('server-b', userB, 'tag-pipeline-b')!;
+        expect(document.querySelector('.identity-owner-a')).toBeNull();
+        const subscriberCount = JC.core.dom!.getBodySubscriberCount();
+        await JC.identity.activate(identityB);
+        await vi.waitFor(() => expect(document.querySelector('.identity-owner-b')).not.toBeNull());
+
+        JC.tagPipeline!.initialize?.();
+        JC.tagPipeline!.initialize?.();
+        expect(JC.core.dom!.getBodySubscriberCount()).toBe(subscriberCount);
+        expect(ajax).toHaveBeenCalledTimes(2);
+
+        resolveA({
+            version: 1,
+            timestamp: 1,
+            items: { [itemId]: { Type: 'Movie', label: 'owner-a' } },
+            projectionUserId: userA,
+            projectionEpoch: 'process-a',
+            projectionRevision: 1,
+            projectionIds: [],
+            projectionReset: false,
+        });
+        await activationA;
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(document.querySelector('.identity-owner-a')).toBeNull();
+        expect(document.querySelector('.identity-owner-b')).not.toBeNull();
+
+        JC.pluginConfig = oldConfig;
+        activeUser = originalIdentity.userId;
+        const restored = JC.identity.transition(
+            originalIdentity.serverId,
+            originalIdentity.userId,
+            'tag-pipeline-restore',
+        );
+        if (restored) await JC.identity.activate(restored);
+        JC.core.ui = oldUi;
+        ajax.mockRestore();
+        currentUser.mockRestore();
+        document.body.innerHTML = '';
+    });
 });

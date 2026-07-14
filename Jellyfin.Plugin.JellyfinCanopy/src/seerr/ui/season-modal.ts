@@ -11,6 +11,7 @@ const escapeHtml = JC.escapeHtml;
 let refreshModalTimer: ReturnType<typeof setTimeout> | null = null;
 let refreshModalAbortController: AbortController | null = null;
 let refreshModalGeneration = 0;
+type IdentityCleanupElement = HTMLElement & { _jcIdentityCleanups?: Set<() => void> };
 
 function cancelSeasonModalRefresh(): void {
     refreshModalGeneration += 1;
@@ -33,9 +34,12 @@ function cancelSeasonModalRefresh(): void {
  */
 ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showTitle: any, searchResultItem: any = null, is4k: any = false) {
     if (mediaType !== 'tv') return;
+    const identity = JC.identity.capture();
+    if (!identity || !JC.identity.isCurrent(identity)) return;
     cancelSeasonModalRefresh();
     const modalGeneration = refreshModalGeneration;
-    const isCurrentGeneration = () => modalGeneration === refreshModalGeneration;
+    const isCurrentGeneration = () => modalGeneration === refreshModalGeneration
+        && JC.identity.isCurrent(identity);
 
 
     const { create, createAdvancedOptionsHTML, populateAdvancedOptions } = JC.seerrModal!;
@@ -107,6 +111,8 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
             if (isCurrentGeneration()) cancelSeasonModalRefresh();
         },
         onSave: async (modalEl: any, requestBtn: any, closeFn: any) => {
+            const liveModal = modalEl as IdentityCleanupElement;
+            if (!isCurrentGeneration() || !liveModal.isConnected) return;
             requestBtn.disabled = true;
             requestBtn.innerHTML = `${JC.t!('seerr_modal_requesting')}<span class="seerr-button-spinner"></span>`;
 
@@ -148,6 +154,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
                         return;
                     }
                     await requestTvSeasons(tmdbId, selectedSeasons, settings, searchResultItem, is4k);
+                    if (!isCurrentGeneration() || !liveModal.isConnected) return;
                     JC.toast!(JC.t!('seerr_modal_toast_request_success', { count: selectedSeasons.length, title: JC.escapeHtml(resolvedShowTitle) }), 4000);
                 } else {
                     // Partial requests disabled: request all non-special seasons to avoid locking specials
@@ -160,6 +167,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
                     } else {
                         await requestMedia(tmdbId, 'tv', settings, is4k, searchResultItem);
                     }
+                    if (!isCurrentGeneration() || !liveModal.isConnected) return;
 
                     JC.toast!(JC.t!('seerr_modal_toast_request_success', { count: 'all', title: JC.escapeHtml(resolvedShowTitle) }), 4000);
                 }
@@ -171,7 +179,8 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
                 internal.markCardRequested(tmdbId, 'tv', is4k);
 
                 closeFn();
-                setTimeout(() => {
+                const resultsRefreshTimer = setTimeout(() => {
+                    if (!isCurrentGeneration()) return;
                     const query = new URLSearchParams(window.location.hash.split('?')[1])?.get('query');
                     if (query) {
                         const mainController = JC.seerr;
@@ -180,7 +189,9 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
                         }
                     }
                 }, 1000);
+                liveModal._jcIdentityCleanups?.add(() => clearTimeout(resultsRefreshTimer));
             } catch (error: any) {
+                if (!isCurrentGeneration() || !liveModal.isConnected) return;
                 const resetLabel = is4k
                     ? (JC.t!('seerr_btn_request_4k') || 'Request in 4K')
                     : (partialRequestsEnabled ? JC.t!('seerr_modal_request_selected') : JC.t!('seerr_modal_request'));
@@ -201,6 +212,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
     const tvBodyEl = modalInstance.modalElement.querySelector('.seerr-modal-body');
     if (tvBodyEl) {
         JC.seerrAPI?.fetchUserQuota?.().then((quota: any) => {
+            if (!isCurrentGeneration()) return;
             const chip = internal.buildQuotaChip(quota, 'tv');
             if (chip && document.body.contains(modalInstance.modalElement)) {
                 tvBodyEl.insertBefore(chip, tvBodyEl.firstChild);
@@ -240,6 +252,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
         // Primary: fetch first episode air date from each season (Seerr/TheTVDB has these)
         const seasonFetches = seasonsNeedingDates.map((s: any) =>
             fetchTvSeasonDetails(tmdbId, s.seasonNumber).then((detail: any) => {
+                if (!isCurrentGeneration()) return;
                 const firstEp = detail?.episodes?.[0];
                 if (firstEp?.airDate && isValidDate(firstEp.airDate)) {
                     airDateCache[s.seasonNumber] = firstEp.airDate;
@@ -250,6 +263,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
         // Fallback: also try TMDB for any gaps (runs in parallel)
         const tmdbFetch = JC.pluginConfig?.TmdbEnabled
             ? fetchTmdbTvDetails(tmdbId).then((tmdbData: any) => {
+                if (!isCurrentGeneration()) return;
                 if (!tmdbData?.seasons) return;
                 tmdbData.seasons.forEach((s: any) => {
                     const date = s.air_date || '';
@@ -288,6 +302,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
 
             // Handle Select All checkbox click — only toggles regular seasons, not Specials
             selectAllCheckbox.addEventListener('change', () => {
+                if (!isCurrentGeneration()) return;
                 const allSeasonCheckboxes = seasonList.querySelectorAll(regularSeasonSelector);
                 allSeasonCheckboxes.forEach((checkbox: any) => {
                     checkbox.checked = selectAllCheckbox.checked;
@@ -296,6 +311,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
 
             // Add change listeners to individual season checkboxes
             seasonList.addEventListener('change', (e: any) => {
+                if (!isCurrentGeneration()) return;
                 if (e.target.classList.contains('seerr-season-checkbox') && e.target.id !== 'seerr-select-all-seasons') {
                     updateSelectAllState();
                 }
@@ -363,6 +379,8 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
         }
     }
 };
+
+JC.identity.registerReset('seerr-season-modal', cancelSeasonModalRefresh);
 
 function invalidateSeasonRequestState(seasonListElement: any): void {
     if (!seasonListElement) return;

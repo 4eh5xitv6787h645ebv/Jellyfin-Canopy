@@ -10,12 +10,26 @@ import { toast } from '../core/ui-kit';
 import { stampLayoutClass } from '../core/layout';
 import { migrateLegacyClientStorage } from './legacy-storage-migration';
 import { throttle } from './helpers';
+import type { IdentityContext } from '../types/jc';
+
+const shortcutTimers = new Set<number>();
+let actionSheetFrame: number | null = null;
+let wasVideoPage = false;
+
+function scheduleIdentityTimer(context: IdentityContext, callback: () => void, delay: number): void {
+    const timer = window.setTimeout(() => {
+        shortcutTimers.delete(timer);
+        if (JC.identity.isCurrent(context)) callback();
+    }, delay);
+    shortcutTimers.add(timer);
+}
 
 /**
  * An always-active key listener specifically for opening the panel.
  * @param e The keyboard event.
  */
 function panelKeyListener(e: KeyboardEvent): void {
+    if (!JC.identity.capture()) return;
     // INT-1: never open the panel through an open JC modal (`?` would otherwise
     // pop the panel up behind another dialog).
     if (isAnyModalOpen() || document.body.classList.contains('jc-modal-open')) return;
@@ -36,6 +50,10 @@ function panelKeyListener(e: KeyboardEvent): void {
  * @param e The keyboard event.
  */
 JC.keyListener = (e: KeyboardEvent) => {
+    const context = JC.identity.capture();
+    if (!context
+        || JC.pluginConfig?.DisableAllShortcuts
+        || JC.currentSettings?.disableAllShortcuts) return;
     // INT-1: suppress every global shortcut while any JC modal is open so a
     // configured key can't fire through the dialog and navigate the SPA away.
     if (isAnyModalOpen() || document.body.classList.contains('jc-modal-open')) return;
@@ -49,13 +67,15 @@ JC.keyListener = (e: KeyboardEvent) => {
                   (key.match(/^[a-zA-Z]$/) ? key.toUpperCase() : key);
 
     const video = document.querySelector('video');
-    const activeShortcuts = JC.state!.activeShortcuts;
+    const activeShortcuts = JC.state!.activeShortcuts || {};
 
     // --- Global Shortcuts ---
     if (combo === activeShortcuts.OpenSearch) {
         e.preventDefault();
         document.querySelector<HTMLElement>('button.headerSearchButton')?.click();
-        setTimeout(() => document.querySelector<HTMLInputElement>('input[type="search"]')?.focus(), 100);
+        scheduleIdentityTimer(context, () => {
+            document.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+        }, 100);
         toast(JC.t!('toast_search'));
     } else if (combo === activeShortcuts.GoToHome) {
         e.preventDefault();
@@ -106,7 +126,16 @@ JC.keyListener = (e: KeyboardEvent) => {
                 if (dialogContainer) dialogContainer.remove();
             } else {
                 // Stats menu is not open, open it
-                JC.openSettings!(() => document.querySelector<HTMLElement>('.actionSheetContent button[data-id="stats"]')?.click());
+                document.querySelector<HTMLElement>(
+                    '.videoOsdBottom .btnVideoOsdSettings, ' +
+                    '.videoOsdBottom button[title="Settings"], ' +
+                    '.videoOsdBottom button[aria-label="Settings"]'
+                )?.click();
+                scheduleIdentityTimer(context, () => {
+                    if (JC.identity.isCurrent(context)) {
+                        document.querySelector<HTMLElement>('.actionSheetContent button[data-id="stats"]')?.click();
+                    }
+                }, 120);
             }
             break;
         }
@@ -205,10 +234,9 @@ function setupDOMObserver(): void {
     // PERF(R8): track the video-page state across ticks so the leave-page teardown
     // (stopAutoSkip) runs once on the transition instead of on every mutation
     // batch of every non-video page.
-    let wasVideoPage = false;
-
     const runPageSpecificFunctions = () => {
-        if ((JC as any).isVideoPage()) {
+        if (!JC.identity.capture() || !JC.currentSettings) return;
+        if (JC.isVideoPage?.()) {
             wasVideoPage = true;
             (JC as any).addOsdSettingsButton();
             JC.initializeAutoSkipObserver!();
@@ -252,10 +280,9 @@ function setupDOMObserver(): void {
  * how many mutations fire, and the handlers early-return cheaply when no sheet is open.
  */
 function observeActionSheets(): void {
-    let scheduled = false;
-    const runInjection = () => {
-        scheduled = false;
-        if (!JC.currentSettings!.removeContinueWatchingEnabled) return;
+    const runInjection = (context: IdentityContext) => {
+        actionSheetFrame = null;
+        if (!JC.identity.isCurrent(context) || !JC.currentSettings?.removeContinueWatchingEnabled) return;
         if (typeof (JC as any).addRemoveButton === 'function') {
             (JC as any).addRemoveButton();
         } else {
@@ -271,9 +298,10 @@ function observeActionSheets(): void {
     createObserver(
         'action-sheets',
         () => {
-            if (scheduled) return;
-            scheduled = true;
-            requestAnimationFrame(runInjection);
+            if (actionSheetFrame !== null) return;
+            const context = JC.identity.capture();
+            if (!context) return;
+            actionSheetFrame = requestAnimationFrame(() => runInjection(context));
         },
         document.body,
         { childList: true, subtree: true }
@@ -312,7 +340,7 @@ function addContextMenuListener(): void {
 
     // Listen for three-dot menu button clicks
     document.body.addEventListener('mousedown', (e) => {
-        if (!JC.currentSettings!.removeContinueWatchingEnabled) return;
+        if (!JC.identity.capture() || !JC.currentSettings?.removeContinueWatchingEnabled) return;
 
         const menuButton = (e.target as Element).closest('button[data-action="menu"]');
         if (!menuButton) return;
@@ -323,7 +351,7 @@ function addContextMenuListener(): void {
 
     // Listen for right-click (contextmenu) / long-press on home cards
     document.body.addEventListener('contextmenu', (e) => {
-        if (!JC.currentSettings!.removeContinueWatchingEnabled) return;
+        if (!JC.identity.capture() || !JC.currentSettings?.removeContinueWatchingEnabled) return;
         if (isInsideOpenMenu(e.target as Element)) return;
 
         // Only real cards carry a removable home surface; ignore other [data-id] targets.
@@ -334,6 +362,98 @@ function addContextMenuListener(): void {
 /**
  * Initializes all event listeners for the core Jellyfin Canopy script.
  */
+let processListenersInstalled = false;
+
+function installProcessListeners(): void {
+    if (processListenersInstalled) return;
+    processListenersInstalled = true;
+
+    setupDOMObserver();
+    observeActionSheets();
+    addContextMenuListener();
+
+    // These wrappers deliberately survive account switches. They consult the
+    // current identity/settings at event time, so repeated A→B→A activation
+    // cannot stack handlers or retain an old user's feature gates.
+    document.addEventListener('keydown', panelKeyListener);
+    document.addEventListener('keydown', JC.keyListener!);
+
+    const videoPageCheck = (handlerName: string) => (e: Event) => {
+        if (!JC.identity.capture() || !JC.currentSettings?.longPress2xEnabled) return;
+        if (JC.isVideoPage?.()) {
+            // Don't interfere with clicks on OSD buttons / the pause screen overlay / Enhanced Panel
+            if (e.target && (e.target as Element).closest && (e.target as Element).closest('.osdControls, .pause-screen-active, .jellyfin-canopy-panel')) return;
+            const handler = (JC as unknown as Record<string, unknown>)[handlerName];
+            if (typeof handler === 'function') (handler as (event: Event) => void)(e);
+        }
+    };
+
+    document.addEventListener('mousedown', videoPageCheck('handleLongPressDown'), true);
+    document.addEventListener('mouseup', videoPageCheck('handleLongPressUp'), true);
+    document.addEventListener('mousemove', videoPageCheck('handleLongPressMove'), true);
+    document.addEventListener('click', videoPageCheck('handleLongPressClick'), true);
+    document.addEventListener('mouseleave', videoPageCheck('handleLongPressCancel'), true);
+    document.addEventListener('touchstart', videoPageCheck('handleLongPressDown'), { capture: true, passive: true });
+    document.addEventListener('touchmove', videoPageCheck('handleLongPressMove'), { capture: true, passive: true });
+    document.addEventListener('touchend', videoPageCheck('handleLongPressUp'), { capture: true, passive: false });
+    document.addEventListener('touchcancel', videoPageCheck('handleLongPressCancel'), { capture: true, passive: false });
+
+    // Visibility behaviour is likewise gated from the live B settings.
+    document.addEventListener('visibilitychange', () => {
+        const settings = JC.currentSettings;
+        if (!JC.identity.capture() || !settings) return;
+        const video = document.querySelector('video');
+        if (!video) return;
+
+        JC.attachSeekTracker!(video);
+
+        if (document.hidden) {
+            if (!video.paused && settings.autoPauseEnabled) {
+                video.pause();
+                video.dataset.wasPlayingBeforeHidden = 'true';
+            }
+            if (settings.autoPipEnabled && !document.pictureInPictureElement) {
+                video.requestPictureInPicture().catch(err => console.error("🪼 Jellyfin Canopy: Auto PiP Error:", err));
+            }
+        } else {
+            if (video.paused && video.dataset.wasPlayingBeforeHidden === 'true' && settings.autoResumeEnabled) {
+                void video.play();
+            }
+            delete video.dataset.wasPlayingBeforeHidden;
+            if (settings.autoPipEnabled && document.pictureInPictureElement) {
+                document.exitPictureInPicture().catch(err => console.error("🪼 Jellyfin Canopy: Auto PiP Error:", err));
+            }
+        }
+    });
+}
+
+JC.identity.registerReset('enhanced-events', () => {
+    if (JC.state) JC.state.removeContext = null;
+    wasVideoPage = false;
+    if (actionSheetFrame !== null) {
+        cancelAnimationFrame(actionSheetFrame);
+        actionSheetFrame = null;
+    }
+    for (const timer of shortcutTimers) clearTimeout(timer);
+    shortcutTimers.clear();
+    try { JC.handleLongPressCancel?.(new Event('identitychange')); } catch { /* best-effort teardown */ }
+    try { JC.stopAutoSkip?.(); } catch { /* best-effort teardown */ }
+    // These are identity-derived transient surfaces. Durable injectors rebuild
+    // them from B's settings during the next activation.
+    const panel = document.getElementById('jellyfin-canopy-panel');
+    const ownedPanel = panel as unknown as {
+        _identityCleanup?: () => void;
+        _a11y?: { release(): void };
+    } | null;
+    if (ownedPanel?._identityCleanup) ownedPanel._identityCleanup();
+    else {
+        ownedPanel?._a11y?.release();
+        panel?.remove();
+    }
+    document.getElementById('enhancedSettingsBtn')?.remove();
+    document.querySelectorAll('[data-speed-overlay="true"]').forEach((node) => node.remove());
+});
+
 JC.initializeCanopyScript = function() {
     // Rebrand migration: adopt state written by pre-2.0 "Jellyfin Elevate" builds.
     migrateLegacyClientStorage();
@@ -347,71 +467,13 @@ JC.initializeCanopyScript = function() {
     }
 
     // Initial UI setup
-    (JC as any).injectGlobalStyles();
+    JC.injectGlobalStyles?.();
     // Stamp the modern/legacy layout class on <html> now that the app has
     // booted (the header is normally rendered by this point). The stamp is
     // idempotent and self-retries on navigation until the layout resolves.
     stampLayoutClass();
-    (JC as any).addPluginMenuButton();
-    (JC as any).applySavedStylesWhenReady();
+    JC.addPluginMenuButton?.();
+    JC.applySavedStylesWhenReady?.();
 
-    // Setup persistent listeners and observers
-    setupDOMObserver();
-    observeActionSheets();
-    addContextMenuListener();
-
-    // Always listen for the panel-opening key
-    document.addEventListener('keydown', panelKeyListener);
-
-    // Conditionally listen for all other shortcuts
-    if (!JC.pluginConfig.DisableAllShortcuts) {
-        document.addEventListener('keydown', JC.keyListener!);
-    }
-
-    // Add Long Press listeners if enabled
-    if (JC.currentSettings!.longPress2xEnabled) {
-        const videoPageCheck = (handler: (e: Event) => void) => (e: Event) => {
-            if ((JC as any).isVideoPage()) {
-                // Don't interfere with clicks on OSD buttons / the pause screen overlay / Enhanced Panel
-                if (e.target && (e.target as Element).closest && (e.target as Element).closest('.osdControls, .pause-screen-active, .jellyfin-canopy-panel')) return;
-                handler(e);
-            }
-        };
-
-        document.addEventListener('mousedown', videoPageCheck(JC.handleLongPressDown!), true);
-        document.addEventListener('mouseup', videoPageCheck(JC.handleLongPressUp!), true);
-        document.addEventListener('mousemove', videoPageCheck(JC.handleLongPressMove!), true);
-        document.addEventListener('click', videoPageCheck(JC.handleLongPressClick!), true);
-        document.addEventListener('mouseleave', videoPageCheck(JC.handleLongPressCancel!), true);
-        document.addEventListener('touchstart', videoPageCheck(JC.handleLongPressDown!), { capture: true, passive: true });
-        document.addEventListener('touchmove', videoPageCheck(JC.handleLongPressMove!), { capture: true, passive: true });
-        document.addEventListener('touchend', videoPageCheck(JC.handleLongPressUp!), { capture: true, passive: false });
-        document.addEventListener('touchcancel', videoPageCheck(JC.handleLongPressCancel!), { capture: true, passive: false });
-    }
-
-    // Listeners for tab visibility (auto-pause/resume/PiP)
-    document.addEventListener('visibilitychange', () => {
-        const video = document.querySelector('video');
-        if (!video) return;
-
-        JC.attachSeekTracker!(video);
-
-        if (document.hidden) {
-            if (!video.paused && JC.currentSettings!.autoPauseEnabled) {
-                video.pause();
-                video.dataset.wasPlayingBeforeHidden = 'true';
-            }
-            if (JC.currentSettings!.autoPipEnabled && !document.pictureInPictureElement) {
-                video.requestPictureInPicture().catch(err => console.error("🪼 Jellyfin Canopy: Auto PiP Error:", err));
-            }
-        } else {
-            if (video.paused && video.dataset.wasPlayingBeforeHidden === 'true' && JC.currentSettings!.autoResumeEnabled) {
-                void video.play();
-            }
-            delete video.dataset.wasPlayingBeforeHidden;
-            if (JC.currentSettings!.autoPipEnabled && document.pictureInPictureElement) {
-                document.exitPictureInPicture().catch(err => console.error("🪼 Jellyfin Canopy: Auto PiP Error:", err));
-            }
-        }
-    });
+    installProcessListeners();
 };

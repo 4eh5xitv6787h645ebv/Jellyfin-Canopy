@@ -10,7 +10,7 @@
 import { JC } from '../arr-globals';
 import { renderPage } from './render';
 import { describeFetchError } from '../../core/fetch-error';
-import type { ApiApi } from '../../types/jc';
+import type { ApiApi, IdentityContext } from '../../types/jc';
 
 const logPrefix = '🪼 Jellyfin Canopy: Requests Page:';
 
@@ -186,6 +186,8 @@ export const state: RequestsPageState = {
 const issueMediaCache = new Map<string, IssueMediaDetails | null>();
 const avatarObjectUrlCache = new Map<string, string>();
 const avatarFetchPromises = new Map<string, Promise<string>>();
+const avatarAbortControllers = new Map<string, AbortController>();
+const avatarFetchTokens = new Map<string, object>();
 
 /**
  * Get API authentication headers.
@@ -211,7 +213,10 @@ export function clearAvatarObjectUrlCache(includeInFlight?: boolean): void {
     // Only clear in-flight promises on page teardown, not on re-render.
     // Clearing mid-flight would cause duplicate downloads for the same avatar.
     if (includeInFlight) {
+        avatarAbortControllers.forEach((controller) => controller.abort());
+        avatarAbortControllers.clear();
         avatarFetchPromises.clear();
+        avatarFetchTokens.clear();
     }
 }
 
@@ -269,26 +274,47 @@ async function resolveProtectedAvatarUrl(avatarUrl: string): Promise<string> {
         return avatarFetchPromises.get(avatarUrl) as Promise<string>;
     }
 
+    const context = JC.identity.capture();
+    if (!context) return '';
+    const controller = new AbortController();
+    const requestToken = {};
     const fetchPromise = (async () => {
         try {
-            const response = await fetch(ApiClient.getUrl(avatarUrl), { headers: getAuthHeaders() });
+            const response = await fetch(ApiClient.getUrl(avatarUrl), {
+                headers: getAuthHeaders(),
+                signal: controller.signal
+            });
+            if (!JC.identity.isCurrent(context)) return '';
             if (!response.ok) return '';
             const blob = await response.blob();
+            if (!JC.identity.isCurrent(context)) return '';
             const objectUrl = URL.createObjectURL(blob);
+            if (!JC.identity.isCurrent(context)) {
+                URL.revokeObjectURL(objectUrl);
+                return '';
+            }
             avatarObjectUrlCache.set(avatarUrl, objectUrl);
             return objectUrl;
         } catch {
             return '';
         } finally {
-            avatarFetchPromises.delete(avatarUrl);
+            if (avatarFetchTokens.get(avatarUrl) === requestToken) {
+                avatarFetchPromises.delete(avatarUrl);
+                avatarAbortControllers.delete(avatarUrl);
+                avatarFetchTokens.delete(avatarUrl);
+            }
         }
     })();
 
     avatarFetchPromises.set(avatarUrl, fetchPromise);
+    avatarAbortControllers.set(avatarUrl, controller);
+    avatarFetchTokens.set(avatarUrl, requestToken);
     return fetchPromise;
 }
 
 export function hydrateAvatarImages(container: HTMLElement): void {
+    const context = JC.identity.capture();
+    if (!context) return;
     const avatarImgs = container.querySelectorAll<HTMLImageElement>('img.jc-request-avatar[data-avatar-src]');
     avatarImgs.forEach((img) => {
         void (async () => {
@@ -299,7 +325,7 @@ export function hydrateAvatarImages(container: HTMLElement): void {
             }
 
             const resolvedUrl = await resolveProtectedAvatarUrl(sourceUrl);
-            if (!img.isConnected) return;
+            if (!JC.identity.isCurrent(context) || !img.isConnected) return;
 
             if (!resolvedUrl) {
                 img.style.display = 'none';
@@ -321,8 +347,11 @@ export function hydrateAvatarImages(container: HTMLElement): void {
  * Fetch download queue from backend
  */
 async function fetchDownloads(signal?: AbortSignal): Promise<unknown> {
+    const context = JC.identity.capture();
+    if (!context) return null;
     try {
         const data = await api.plugin('/arr/queue', { signal }) as { items?: DownloadItem[]; errors?: ArrErrorEntry[] };
+        if (!JC.identity.isCurrent(context)) return null;
         state.downloads = data.items || [];
         // Surface per-instance queue errors so a 401 / timeout / SSRF-reject on one
         // instance doesn't silently produce a "looks empty" downloads page.
@@ -330,7 +359,7 @@ async function fetchDownloads(signal?: AbortSignal): Promise<unknown> {
         return data;
     } catch (error) {
         // Teardown, not failure: the adoption drained and aborted the request.
-        if (signal?.aborted) return null;
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
         console.error(`${logPrefix} Failed to fetch downloads:`, error);
         state.downloads = [];
         // A total failure (the whole /arr/queue request rejected) has no
@@ -384,6 +413,8 @@ function surfaceDownloadsErrors(errors: ArrErrorEntry[] | undefined): void {
  * Fetch requests from backend
  */
 export async function fetchRequests(signal?: AbortSignal): Promise<unknown> {
+    const context = JC.identity.capture();
+    if (!context) return null;
     try {
         const skip = (state.requestsPage - 1) * 20;
         const filter = state.requestsFilter !== 'all' ? state.requestsFilter : '';
@@ -399,6 +430,7 @@ export async function fetchRequests(signal?: AbortSignal): Promise<unknown> {
             totalPages?: number;
             canApproveRequests?: boolean;
         };
+        if (!JC.identity.isCurrent(context)) return null;
 
         state.requests = data.requests || [];
         state.requestsTotalPages = data.totalPages || 1;
@@ -407,7 +439,7 @@ export async function fetchRequests(signal?: AbortSignal): Promise<unknown> {
 
         return data;
     } catch (error) {
-        if (signal?.aborted) return null;
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
         console.error(`${logPrefix} Failed to fetch requests:`, error);
         state.requests = [];
         // Distinguish a backend failure (e.g. the requests proxy's 502 when
@@ -454,25 +486,28 @@ function applyIssueMediaDetails(issue: IssueItem, details: IssueMediaDetails | n
     return issue;
 }
 
-async function fetchIssueMediaDetails(mediaType: string, tmdbId: number | string | null): Promise<IssueMediaDetails | null> {
+async function fetchIssueMediaDetails(
+    mediaType: string,
+    tmdbId: number | string | null,
+    signal: AbortSignal | undefined,
+    context: IdentityContext
+): Promise<IssueMediaDetails | null> {
     if (!mediaType || !tmdbId) return null;
+    if (!JC.identity.isCurrent(context)) return null;
     const cacheKey = `${mediaType}:${tmdbId}`;
     if (issueMediaCache.has(cacheKey)) return issueMediaCache.get(cacheKey) ?? null;
 
     const path = mediaType === 'tv'
-        ? `/JellyfinCanopy/seerr/tv/${tmdbId}`
-        : `/JellyfinCanopy/seerr/movie/${tmdbId}`;
+        ? `/seerr/tv/${tmdbId}`
+        : `/seerr/movie/${tmdbId}`;
 
     try {
-        const data = await richApiClient.ajax({
-            type: 'GET',
-            url: ApiClient.getUrl(path),
-            dataType: 'json',
-            headers: { 'X-Jellyfin-User-Id': ApiClient.getCurrentUserId() },
-        }) as IssueMediaDetails | null;
+        const data = await api.plugin(path, { signal }) as IssueMediaDetails | null;
+        if (!JC.identity.isCurrent(context)) return null;
         issueMediaCache.set(cacheKey, data || null);
         return data || null;
     } catch {
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
         issueMediaCache.set(cacheKey, null);
         return null;
     }
@@ -482,6 +517,8 @@ async function fetchIssueMediaDetails(mediaType: string, tmdbId: number | string
  * Fetch issues from Seerr
  */
 export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
+    const context = JC.identity.capture();
+    if (!context) return null;
     if (!JC.pluginConfig?.SeerrEnabled || !JC.pluginConfig?.DownloadsPageShowIssues) {
         state.issues = [];
         state.issuesTotalPages = 1;
@@ -494,23 +531,19 @@ export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
     try {
         const skip = (state.issuesPage - 1) * 20;
         const filter = state.issuesFilter || 'open';
-        const url = richApiClient.getUrl('/JellyfinCanopy/seerr/issue', {
-            take: 20,
-            skip: skip,
-            filter: filter,
+        const query = new URLSearchParams({
+            take: '20',
+            skip: String(skip),
+            filter,
             sort: 'added',
         });
 
-        const data = await richApiClient.ajax({
-            type: 'GET',
-            url: url,
-            dataType: 'json',
-            headers: { 'X-Jellyfin-User-Id': ApiClient.getCurrentUserId() },
-        }) as {
+        const data = await api.plugin(`/seerr/issue?${query.toString()}`, { signal }) as {
             results?: IssueItem[];
             pageInfo?: { pages?: number };
             totalPages?: number;
         } | null;
+        if (!JC.identity.isCurrent(context)) return null;
 
         let issues = data?.results || [];
         if (issues.length) {
@@ -518,7 +551,7 @@ export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
                 issues.map(async (issue) => {
                     const mediaType = getIssueMediaType(issue);
                     const tmdbId = getIssueTmdbId(issue);
-                    const details = await fetchIssueMediaDetails(mediaType, tmdbId);
+                    const details = await fetchIssueMediaDetails(mediaType, tmdbId, signal, context);
                     return applyIssueMediaDetails(issue, details, mediaType);
                 })
             );
@@ -526,13 +559,13 @@ export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
 
         // richApiClient.ajax has no abort plumbing; the drain contract is
         // still honored by refusing to publish anything post-abort.
-        if (signal?.aborted) return null;
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
         state.issues = issues;
         state.issuesTotalPages = data?.pageInfo?.pages || data?.totalPages || 1;
         state.issuesError = false;
         return data;
     } catch (error) {
-        if (signal?.aborted) return null;
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
         console.error(`${logPrefix} Failed to fetch issues:`, error);
         state.issues = [];
         state.issuesTotalPages = 1;
@@ -564,11 +597,13 @@ async function loadAllDataOnce(): Promise<void> {
     // Capture THIS run's signal: a new adoption replaces activeSignal, and
     // the old run must keep honoring its own (aborted) one.
     const runSignal = activeSignal;
+    const context = JC.identity.capture();
+    if (!context) return;
     state.isLoading = true;
     renderPage();
 
     await Promise.all([fetchDownloads(runSignal ?? undefined), fetchRequests(runSignal ?? undefined), fetchIssues(runSignal ?? undefined)]);
-    if (runSignal?.aborted) return;
+    if (runSignal?.aborted || !JC.identity.isCurrent(context)) return;
 
     state.isLoading = false;
     renderPage();
@@ -597,6 +632,9 @@ export function loadAllData(signal?: AbortSignal): Promise<void> {
 }
 
 export async function handleRequestAction(btn: HTMLButtonElement, action: 'approve' | 'decline'): Promise<void> {
+    const owner = JC.identity.ownerOf(btn);
+    const context = owner || JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return;
     const requestId = btn.getAttribute('data-request-id');
     const sourceToken = btn.getAttribute('data-source-token');
     if (!requestId || !sourceToken) return;
@@ -618,6 +656,7 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: 'appro
             method: 'POST',
             skipRetry: true,
         });
+        if (!JC.identity.isCurrent(context)) return;
         // Static, param-free localized strings (class (a)) — no interpolation
         // reaches toast()'s innerHTML, so no escaping is required here.
         if (typeof JC.toast === 'function') {
@@ -626,8 +665,10 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: 'appro
                 : (JC.t?.('requests_declined_toast') || 'Request declined'));
         }
         await fetchRequests();
+        if (!JC.identity.isCurrent(context)) return;
         renderPage();
     } catch (err) {
+        if (!JC.identity.isCurrent(context)) return;
         console.error(`${logPrefix} Failed to ${action} request ${requestId}:`, err);
         siblingButtons.forEach((b) => { b.disabled = false; });
         if (icon) icon.textContent = action === 'approve' ? 'check' : 'close';
@@ -636,3 +677,34 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: 'appro
         }
     }
 }
+
+function resetRequestsIdentityState(): void {
+    if (state.searchDebounceTimer) clearTimeout(state.searchDebounceTimer);
+    Object.assign(state, {
+        downloads: [],
+        requests: [],
+        requestsPage: 1,
+        requestsTotalPages: 1,
+        requestsFilter: 'all',
+        requestsError: false,
+        canApproveRequests: false,
+        issues: [],
+        issuesPage: 1,
+        issuesTotalPages: 1,
+        issuesError: false,
+        issuesFilter: 'open',
+        issuesPermissionDenied: undefined,
+        isLoading: false,
+        downloadsActiveTab: 'all',
+        downloadsSearchQuery: '',
+        downloadsSearchVisible: false,
+        searchDebounceTimer: null,
+    });
+    activeSignal = null;
+    loadQueued = false;
+    issueMediaCache.clear();
+    _toastedDownloadsErrors.clear();
+    clearAvatarObjectUrlCache(true);
+}
+
+JC.identity.registerReset('arr-requests-data', resetRequestsIdentityState);

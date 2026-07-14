@@ -43,6 +43,8 @@ export function setActiveContainer(container: HTMLElement | null): void {
 export function renderPage(): void {
     const container = activeContainer;
     if (!container || !container.isConnected) return;
+    const context = JC.identity.ownerOf(container);
+    if (!context || !JC.identity.isCurrent(context)) return;
 
     let html = '';
 
@@ -163,11 +165,11 @@ export function renderPage(): void {
 
         html += `
             <div class="jc-requests-tabs">
-              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'all' ? 'active' : ''}" onclick="window.JellyfinCanopy.downloadsPage.filterRequests('all')">${labelAll}</button>
-              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'pending' ? 'active' : ''}" onclick="window.JellyfinCanopy.downloadsPage.filterRequests('pending')">${labelPending}</button>
-              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'processing' ? 'active' : ''}" onclick="window.JellyfinCanopy.downloadsPage.filterRequests('processing')">${labelProcessing}</button>
-              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'comingsoon' ? 'active' : ''}" onclick="window.JellyfinCanopy.downloadsPage.filterRequests('comingsoon')">${labelComingSoon}</button>
-              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'available' ? 'active' : ''}" onclick="window.JellyfinCanopy.downloadsPage.filterRequests('available')">${labelAvailable}</button>
+              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'all' ? 'active' : ''}" data-requests-filter="all">${labelAll}</button>
+              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'pending' ? 'active' : ''}" data-requests-filter="pending">${labelPending}</button>
+              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'processing' ? 'active' : ''}" data-requests-filter="processing">${labelProcessing}</button>
+              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'comingsoon' ? 'active' : ''}" data-requests-filter="comingsoon">${labelComingSoon}</button>
+              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'available' ? 'active' : ''}" data-requests-filter="available">${labelAvailable}</button>
             </div>
           `;
 
@@ -213,9 +215,9 @@ export function renderPage(): void {
                 if (state.requestsTotalPages > 1) {
                     html += `
                         <div class="jc-pagination">
-                            <button is="emby-button" type="button" class="emby-button" onclick="window.JellyfinCanopy.downloadsPage.prevPage()" ${state.requestsPage <= 1 ? 'disabled' : ''}><span class="material-icons">chevron_left</span></button>
+                            <button is="emby-button" type="button" class="emby-button" data-requests-page="prev" ${state.requestsPage <= 1 ? 'disabled' : ''}><span class="material-icons">chevron_left</span></button>
                             <span>${Number(state.requestsPage) || 0} / ${Number(state.requestsTotalPages) || 0}</span>
-                            <button is="emby-button" type="button" class="emby-button" onclick="window.JellyfinCanopy.downloadsPage.nextPage()" ${state.requestsPage >= state.requestsTotalPages ? 'disabled' : ''}><span class="material-icons">chevron_right</span></button>
+                            <button is="emby-button" type="button" class="emby-button" data-requests-page="next" ${state.requestsPage >= state.requestsTotalPages ? 'disabled' : ''}><span class="material-icons">chevron_right</span></button>
                         </div>
                     `;
                 }
@@ -233,8 +235,8 @@ export function renderPage(): void {
         const labelResolved = (JC.t && JC.t('seerr_issue_resolved')) || 'Resolved';
         html += `
         <div class="jc-issues-tabs">
-          <button is="emby-button" type="button" class="jc-issues-tab emby-button ${state.issuesFilter === 'open' ? 'active' : ''}" onclick="window.JellyfinCanopy.downloadsPage.filterIssues('open')">${labelOpen}</button>
-          <button is="emby-button" type="button" class="jc-issues-tab emby-button ${state.issuesFilter === 'resolved' ? 'active' : ''}" onclick="window.JellyfinCanopy.downloadsPage.filterIssues('resolved')">${labelResolved}</button>
+          <button is="emby-button" type="button" class="jc-issues-tab emby-button ${state.issuesFilter === 'open' ? 'active' : ''}" data-issues-filter="open">${labelOpen}</button>
+          <button is="emby-button" type="button" class="jc-issues-tab emby-button ${state.issuesFilter === 'resolved' ? 'active' : ''}" data-issues-filter="resolved">${labelResolved}</button>
         </div>
       `;
 
@@ -262,9 +264,9 @@ export function renderPage(): void {
             if (state.issuesTotalPages > 1) {
                 html += `
             <div class="jc-pagination">
-              <button is="emby-button" type="button" class="emby-button" onclick="window.JellyfinCanopy.downloadsPage.prevIssuesPage()" ${state.issuesPage <= 1 ? 'disabled' : ''}><span class="material-icons">chevron_left</span></button>
+              <button is="emby-button" type="button" class="emby-button" data-issues-page="prev" ${state.issuesPage <= 1 ? 'disabled' : ''}><span class="material-icons">chevron_left</span></button>
               <span>${Number(state.issuesPage) || 0} / ${Number(state.issuesTotalPages) || 0}</span>
-              <button is="emby-button" type="button" class="emby-button" onclick="window.JellyfinCanopy.downloadsPage.nextIssuesPage()" ${state.issuesPage >= state.issuesTotalPages ? 'disabled' : ''}><span class="material-icons">chevron_right</span></button>
+              <button is="emby-button" type="button" class="emby-button" data-issues-page="next" ${state.issuesPage >= state.issuesTotalPages ? 'disabled' : ''}><span class="material-icons">chevron_right</span></button>
             </div>
           `;
             }
@@ -275,86 +277,14 @@ export function renderPage(): void {
 
     clearAvatarObjectUrlCache();
     container.innerHTML = html; // existing pattern from upstream — html built from escapeHtml'd values
+    container.querySelectorAll<HTMLElement>(
+        '.jc-request-approve-btn, .jc-request-decline-btn, .jc-request-watch-btn, .jc-issue-view-btn'
+    ).forEach((control) => JC.identity.own(control, context));
     hydrateAvatarImages(container);
 
-    // Add event listener for refresh button
-    const refreshBtn = container.querySelector<HTMLElement>('.jc-refresh-btn');
-    if (refreshBtn) {
-        refreshBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-
-            // Add visual feedback
-            const icon = refreshBtn.querySelector<HTMLElement>('.material-icons');
-            if (icon) {
-                icon.style.animation = 'spin 1s linear';
-                setTimeout(() => {
-                    icon.style.animation = '';
-                }, 1000);
-            }
-
-            void loadAllData();
-        });
-    }
-
-    // Add event listeners for download tabs
-    const downloadTabs = container.querySelectorAll('.jc-downloads-tab');
-    downloadTabs.forEach(tab => {
-        tab.addEventListener('click', (e) => {
-            e.preventDefault();
-            const tabName = tab.getAttribute('data-tab');
-            state.downloadsActiveTab = tabName ?? 'all';
-            renderPage();
-        });
-    });
-
-    // Add event listener for search toggle button
-    const searchToggle = container.querySelector('.jc-downloads-search-toggle');
-    if (searchToggle) {
-        searchToggle.addEventListener('click', (e) => {
-            e.preventDefault();
-            state.downloadsSearchVisible = !state.downloadsSearchVisible;
-            if (!state.downloadsSearchVisible) {
-                state.downloadsSearchQuery = '';
-            }
-            renderPage();
-        });
-    }
-
-    // Add event listener for search input with debouncing
-    const searchInput = container.querySelector<HTMLInputElement>('.jc-downloads-search-input');
-    if (searchInput) {
-        searchInput.addEventListener('input', (e) => {
-            const query = (e.target as HTMLInputElement).value;
-            state.downloadsSearchQuery = query;
-
-            // Clear existing timer
-            if (state.searchDebounceTimer) {
-                clearTimeout(state.searchDebounceTimer);
-            }
-
-            // Debounce rendering to avoid losing focus
-            state.searchDebounceTimer = setTimeout(() => {
-                const currentInput = document.querySelector<HTMLInputElement>('.jc-downloads-search-input');
-                const cursorPosition = currentInput ? currentInput.selectionStart : 0;
-
-                renderPage();
-
-                // Restore focus and cursor position
-                const newInput = document.querySelector<HTMLInputElement>('.jc-downloads-search-input');
-                if (newInput) {
-                    newInput.focus();
-                    newInput.setSelectionRange(cursorPosition, cursorPosition);
-                }
-            }, 300);
-        });
-    }
-
-    // Delegated card-action clicks are NOT bound here. renderPage() runs on
-    // initial load, every poll cycle, tab switches and search input; binding a
-    // delegated approve/decline listener per render would stack listeners and
-    // fire N approve POSTs per click. The framework descriptor (page.ts) binds
-    // handleRequestsClick ONCE per adoption on the host instead — a single
-    // listener per adoption, drained on teardown (duplicate-POST fix preserved).
+    // All controls are handled by the adoption-owned delegated listeners in
+    // page.ts. renderPage() runs repeatedly; attaching descendant listeners here
+    // would both stack work and leave detached A controls live after teardown.
 }
 
 /**
@@ -366,6 +296,14 @@ export function renderPage(): void {
  */
 export function handleRequestsClick(e: Event): void {
     const target = e.target as Element | null;
+    const ownerContainer = target?.closest<HTMLElement>('#jc-downloads-container');
+    const owner = ownerContainer ? JC.identity.ownerOf(ownerContainer) : null;
+    if (!owner || !JC.identity.isCurrent(owner)) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        return;
+    }
     const showItem = window.Emby?.Page?.showItem as ((id: string) => void) | undefined;
 
     // Handle play/watch button clicks

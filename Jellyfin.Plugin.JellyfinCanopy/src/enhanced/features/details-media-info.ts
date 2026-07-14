@@ -8,6 +8,7 @@ import { JC } from '../../globals';
 import { flagSvgUrl } from '../../core/asset-urls';
 import { createBoundedCache } from '../../core/bounded-cache';
 import { getItemCached } from '../helpers';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -37,6 +38,35 @@ interface WatchProgressEntry {
 const watchProgressCache = createBoundedCache<string, WatchProgressEntry & { ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: WATCHPROGRESS_CACHE_TTL }); // Map<itemId, { progress, totalPlaybackTicks, totalRuntimeTicks, ts }>
 const fileSizeCache = createBoundedCache<string, { size: number | null; unavailable: boolean; ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: FILESIZE_CACHE_TTL }); // Map<itemId, { size, unavailable, ts }>
 const audioLanguageCache = createBoundedCache<string, { languages: { name: string; code: string }[]; unavailable: boolean; ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: LANGUAGE_CACHE_TTL }); // Map<itemId, { languages, unavailable, ts }>
+const retryTimers = new Set<number>();
+
+function isActive(context: IdentityContext, placeholder?: HTMLElement): boolean {
+    return JC.identity.isCurrent(context) && (!placeholder || placeholder.isConnected);
+}
+
+function scheduleRetry(
+    context: IdentityContext,
+    placeholder: HTMLElement,
+    callback: () => void,
+    delay: number,
+): void {
+    const timer = window.setTimeout(() => {
+        retryTimers.delete(timer);
+        if (isActive(context, placeholder)) callback();
+    }, delay);
+    retryTimers.add(timer);
+}
+
+function resetDetailsMediaInfo(): void {
+    for (const timer of retryTimers) clearTimeout(timer);
+    retryTimers.clear();
+    watchProgressCache.clear();
+    fileSizeCache.clear();
+    audioLanguageCache.clear();
+    document.querySelectorAll(
+        '.mediaInfoItem-watchProgress, .mediaInfoItem-fileSize, .mediaInfoItem-audioLanguage',
+    ).forEach((node) => node.remove());
+}
 
 /** Effective read-side TTL: transient errors expire fast (PERF(R9)), real answers keep the full TTL. */
 function effectiveTtl(entry: { error?: boolean }, normalTtl: number): number {
@@ -63,6 +93,8 @@ function formatSize(bytes: number): string {
  * @param container The DOM element to append the info to.
  */
 export function displayWatchProgress(itemId: string, container: HTMLElement): void {
+    const context = JC.identity.capture();
+    if (!context) return;
     // show itemMiscInfo if hidden like on season pages
     if (container.classList.contains('hide')) {
         container.classList.remove('hide');
@@ -106,7 +138,7 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
     };
 
     const persistWatchProgressMode = (mode: string): void => {
-        if (!window.JellyfinCanopy) return;
+        if (!isActive(context, placeholder) || !window.JellyfinCanopy) return;
         window.JellyfinCanopy.currentSettings = window.JellyfinCanopy.currentSettings || {};
         window.JellyfinCanopy.currentSettings.watchProgressMode = mode;
         if (typeof window.JellyfinCanopy.saveUserSettings === 'function') {
@@ -122,11 +154,11 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
 
     // onClick handler to toggle between percentage and time-based display
     placeholder.addEventListener('click', () => {
+        if (!isActive(context, placeholder)) return;
         const watchProgress = watchProgressCache.get(itemId);
         if (!watchProgress) return;
 
-        const div = document.querySelector(`.mediaInfoItem-watchProgress[data-item-id="${itemId}"]`)!
-            .querySelector<HTMLElement>('.mediaInfoItem-watchProgress-value');
+        const div = placeholder.querySelector<HTMLElement>('.mediaInfoItem-watchProgress-value');
         if (!div) return;
 
         const currentMode = div.dataset.type || 'percentage';
@@ -223,16 +255,19 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
 
     // Helper to render the 0 state
     const renderUnavailable = (): void => {
+        if (!isActive(context, placeholder)) return;
         placeholder.innerHTML = getIconSpan(0);
         placeholder.appendChild(getWatchProgressValue({ progress: 0, totalPlaybackTicks: 0, totalRuntimeTicks: 0 }));
     };
 
     const performFetch = async (attempt = 1): Promise<void> => {
+        if (!isActive(context, placeholder)) return;
         // Check cache first to avoid repeated network calls (read inside so a
         // retry sees fresh state, not values captured before the first attempt).
         const now = Date.now();
         const cached = watchProgressCache.get(itemId);
         if (cached && (now - cached.ts) < effectiveTtl(cached, WATCHPROGRESS_CACHE_TTL)) {
+            if (!isActive(context, placeholder)) return;
             if (!cached.progress) {
                 renderUnavailable();
                 return;
@@ -243,11 +278,11 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
         }
 
         try {
-            const itemResult: any = await ApiClient.ajax({
-                type: 'GET',
-                url: ApiClient.getUrl(`/JellyfinCanopy/watch-progress/${ApiClient.getCurrentUserId()}/${itemId}`),
-                dataType: 'json'
-            });
+            const itemResult: any = await JC.core.api!.plugin(
+                `/watch-progress/${context.userId}/${encodeURIComponent(itemId)}`,
+                { skipCache: true },
+            );
+            if (!isActive(context, placeholder)) return;
 
             const watchProgress = {
                 progress: itemResult?.progress ?? 0,
@@ -260,6 +295,7 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
 
             watchProgressCache.set(itemId, watchProgress);
         } catch (error) {
+            if (!isActive(context, placeholder)) return;
             console.error('🪼 Jellyfin Canopy: Error fetching watch progress for ID %s:', itemId, error);
             // PERF(R9): fail open — render the 0 state now, but remember the
             // failure only briefly (ERROR_CACHE_TTL) and retry in place while
@@ -269,11 +305,9 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
             renderUnavailable();
             watchProgressCache.set(itemId, { progress: 0, totalPlaybackTicks: 0, totalRuntimeTicks: 0, ts: now, error: true });
             if (attempt < FETCH_MAX_ATTEMPTS) {
-                window.setTimeout(() => {
-                    if (placeholder.isConnected) {
-                        watchProgressCache.delete(itemId);
-                        void performFetch(attempt + 1);
-                    }
+                scheduleRetry(context, placeholder, () => {
+                    watchProgressCache.delete(itemId);
+                    void performFetch(attempt + 1);
                 }, RETRY_BASE_DELAY_MS * attempt);
             }
         }
@@ -292,6 +326,8 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
  * @param container The DOM element to append the info to.
  */
 export function displayItemSize(itemId: string, container: HTMLElement): void {
+    const context = JC.identity.capture();
+    if (!context) return;
     const existing = container.querySelector<HTMLElement>('.mediaInfoItem-fileSize');
     if (existing) {
         // If already rendered for this itemId, do nothing
@@ -317,15 +353,18 @@ export function displayItemSize(itemId: string, container: HTMLElement): void {
 
     // Helper to render a dash (no data) but keep the element
     const renderUnavailable = (): void => {
+        if (!isActive(context, placeholder)) return;
         placeholder.innerHTML = `<span class="material-icons" style="font-size: inherit; margin-right: 0.3em;">save</span> -`;
     };
 
     const performFetch = async (attempt = 1): Promise<void> => {
+        if (!isActive(context, placeholder)) return;
         // Check cache first to avoid repeated network calls (read inside so a
         // retry sees fresh state, not values captured before the first attempt).
         const now = Date.now();
         const cached = fileSizeCache.get(itemId);
         if (cached && (now - cached.ts) < effectiveTtl(cached, FILESIZE_CACHE_TTL)) {
+            if (!isActive(context, placeholder)) return;
             if (cached.unavailable || !cached.size) {
                 renderUnavailable();
                 return;
@@ -336,11 +375,11 @@ export function displayItemSize(itemId: string, container: HTMLElement): void {
         }
 
         try {
-            const itemResult: any = await ApiClient.ajax({
-                type: 'GET',
-                url: ApiClient.getUrl(`/JellyfinCanopy/file-size/${ApiClient.getCurrentUserId()}/${itemId}`),
-                dataType: 'json'
-            });
+            const itemResult: any = await JC.core.api!.plugin(
+                `/file-size/${context.userId}/${encodeURIComponent(itemId)}`,
+                { skipCache: true },
+            );
+            if (!isActive(context, placeholder)) return;
             const totalSize = itemResult?.size ?? 0;
 
             if (totalSize > 0) {
@@ -352,6 +391,7 @@ export function displayItemSize(itemId: string, container: HTMLElement): void {
                 fileSizeCache.set(itemId, { size: null, unavailable: true, ts: now });
             }
         } catch (error) {
+            if (!isActive(context, placeholder)) return;
             console.error('🪼 Jellyfin Canopy: Error fetching item size for ID %s:', itemId, error);
             // PERF(R9): fail open — show the dash now, but only remember the
             // failure briefly (ERROR_CACHE_TTL, not the 1h data TTL) and retry
@@ -360,11 +400,9 @@ export function displayItemSize(itemId: string, container: HTMLElement): void {
             renderUnavailable();
             fileSizeCache.set(itemId, { size: null, unavailable: true, ts: now, error: true });
             if (attempt < FETCH_MAX_ATTEMPTS) {
-                window.setTimeout(() => {
-                    if (placeholder.isConnected) {
-                        fileSizeCache.delete(itemId);
-                        void performFetch(attempt + 1);
-                    }
+                scheduleRetry(context, placeholder, () => {
+                    fileSizeCache.delete(itemId);
+                    void performFetch(attempt + 1);
                 }, RETRY_BASE_DELAY_MS * attempt);
             }
         }
@@ -400,20 +438,17 @@ const languageToCountryMap: Record<string, string> = {English:"gb",eng:"gb",Japa
  * @returns The first episode item, or null when the series genuinely has none.
  */
 async function fetchFirstEpisodeForLanguage(userId: string, parentId: string): Promise<any> {
-    const response: any = await ApiClient.ajax({
-        type: 'GET',
-        url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl('/Items', {
-            ParentId: parentId,
-            IncludeItemTypes: 'Episode',
-            Recursive: true,
-            SortBy: 'PremiereDate',
-            SortOrder: 'Ascending',
-            Limit: 1,
-            Fields: 'MediaStreams,MediaSources',
-            userId: userId
-        }),
-        dataType: 'json'
+    const query = new URLSearchParams({
+        ParentId: parentId,
+        IncludeItemTypes: 'Episode',
+        Recursive: 'true',
+        SortBy: 'PremiereDate',
+        SortOrder: 'Ascending',
+        Limit: '1',
+        Fields: 'MediaStreams,MediaSources',
+        UserId: userId,
     });
+    const response: any = await JC.core.api!.jf(`/Items?${query.toString()}`, { skipCache: true });
     return response.Items?.[0] || null;
 }
 
@@ -423,6 +458,8 @@ async function fetchFirstEpisodeForLanguage(userId: string, parentId: string): P
  * @param container The DOM element to append the info to.
  */
 export function displayAudioLanguages(itemId: string, container: HTMLElement): void {
+    const context = JC.identity.capture();
+    if (!context) return;
     // show itemMiscInfo if hidden like on season pages
     if (container.classList.contains('hide')) {
         container.classList.remove('hide');
@@ -472,12 +509,14 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
 
     // Helper to render unavailable/no data with dash
     const renderUnavailable = (): void => {
+        if (!isActive(context, placeholder)) return;
         applyLangStyles(placeholder);
         placeholder.innerHTML = `<span class="material-icons" style="font-size: inherit; margin-right: 0.3em;">translate</span> -`;
     };
 
     // Helper to render language items with proper DOM elements
     const renderLanguages = (languages: { name: string; code: string }[]): void => {
+        if (!isActive(context, placeholder)) return;
         // Clear the loading indicator
         placeholder.innerHTML = '';
         placeholder.style.display = 'flex';
@@ -577,10 +616,12 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
     };
 
     const performFetch = async (attempt = 1): Promise<void> => {
+        if (!isActive(context, placeholder)) return;
         // Check cache first
         const now = Date.now();
         const cached = audioLanguageCache.get(itemId);
         if (cached && (now - cached.ts) < effectiveTtl(cached, LANGUAGE_CACHE_TTL)) {
+            if (!isActive(context, placeholder)) return;
             if (cached.unavailable || !cached.languages || cached.languages.length === 0) {
                 renderUnavailable();
                 return;
@@ -591,14 +632,15 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
         }
 
         try {
-            const userId = ApiClient.getCurrentUserId();
-            const item: any = await getItemCached(itemId, { userId });
+            const item: any = await getItemCached(itemId, { userId: context.userId });
+            if (!isActive(context, placeholder)) return;
 
             let sourceItem = item;
 
             // For Series/Season, fetch the first episode to get language info
             if (item.Type === 'Series' || item.Type === 'Season') {
-                const episode = await fetchFirstEpisodeForLanguage(userId, item.Id);
+                const episode = await fetchFirstEpisodeForLanguage(context.userId, item.Id);
+                if (!isActive(context, placeholder)) return;
                 if (episode) {
                     sourceItem = episode;
                 } else {
@@ -634,6 +676,7 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
                 audioLanguageCache.set(itemId, { languages: [], unavailable: true, ts: Date.now() });
             }
         } catch (error) {
+            if (!isActive(context, placeholder)) return;
             console.error('🪼 Jellyfin Canopy: Error fetching audio languages for %s:', itemId, error);
             // PERF(R9): fail open — show the dash now, remember the failure only
             // briefly (ERROR_CACHE_TTL) and retry in place while the chip is on
@@ -641,11 +684,9 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
             renderUnavailable();
             audioLanguageCache.set(itemId, { languages: [], unavailable: true, ts: Date.now(), error: true });
             if (attempt < FETCH_MAX_ATTEMPTS) {
-                window.setTimeout(() => {
-                    if (placeholder.isConnected) {
-                        audioLanguageCache.delete(itemId);
-                        void performFetch(attempt + 1);
-                    }
+                scheduleRetry(context, placeholder, () => {
+                    audioLanguageCache.delete(itemId);
+                    void performFetch(attempt + 1);
                 }, RETRY_BASE_DELAY_MS * attempt);
             }
         }
@@ -655,3 +696,5 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
     // hits fill the chip in the same task as the insertion, one reflow total.
     void performFetch();
 }
+
+JC.identity.registerReset('details-media-info', resetDetailsMediaInfo);

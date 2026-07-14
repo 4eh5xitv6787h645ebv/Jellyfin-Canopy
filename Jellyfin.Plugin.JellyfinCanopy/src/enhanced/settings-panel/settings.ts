@@ -6,7 +6,7 @@
 // (Converted from js/enhanced/ui-panel-settings.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
-import { toast } from '../../core/ui-kit';
+import { escapeHtml, toast } from '../../core/ui-kit';
 import { showReleaseNotesNotification } from './release-notes';
 import type { PanelContext } from './panel';
 
@@ -18,7 +18,7 @@ import type { PanelContext } from './panel';
  * @param {object} ctx Shared panel context assembled in settings-panel/panel.ts.
  */
 export function wireSettingsListeners(ctx: PanelContext): void {
-    const { createToast, resetAutoCloseTimer } = ctx;
+    const { createToast, resetAutoCloseTimer, identityContext, registerCleanup } = ctx;
 
     const addSettingToggleListener = (id: string, settingKey: string, featureKey: string, requiresRefresh = false) => {
         document.getElementById(id)!.addEventListener('change', (e) => {
@@ -291,6 +291,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
 
     if (posGrid) {
         const updatePosition = (xPct: number, yPct: number) => {
+            if (!JC.identity.isCurrent(identityContext)) return;
             xPct = Math.max(2, Math.min(98, xPct));
             yPct = Math.max(2, Math.min(98, yPct));
             if (posPreview) {
@@ -315,43 +316,61 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         let dragging = false;
 
         posGrid.addEventListener('mousedown', (e) => {
+            if (!JC.identity.isCurrent(identityContext)) return;
             const { x, y } = getPctFromEvent(e);
             updatePosition(x, y);
             dragging = true;
             e.preventDefault();
         });
 
-        document.addEventListener('mousemove', (e) => {
+        const handlePositionMouseMove = (e: MouseEvent) => {
+            if (!JC.identity.isCurrent(identityContext)) return;
             if (!dragging) return;
             const { x, y } = getPctFromEvent(e);
             updatePosition(x, y);
             resetAutoCloseTimer();
-        });
+        };
 
-        document.addEventListener('mouseup', () => {
+        const handlePositionMouseUp = () => {
+            if (!JC.identity.isCurrent(identityContext)) return;
             if (!dragging) return;
             dragging = false;
             void JC.saveUserSettings!('settings.json', JC.currentSettings);
-        });
+        };
 
         posGrid.addEventListener('touchstart', (e) => {
+            if (!JC.identity.isCurrent(identityContext)) return;
             const { x, y } = getPctFromEvent(e);
             updatePosition(x, y);
             dragging = true;
             e.preventDefault();
         }, { passive: false });
 
-        document.addEventListener('touchmove', (e) => {
+        const handlePositionTouchMove = (e: TouchEvent) => {
+            if (!JC.identity.isCurrent(identityContext)) return;
             if (!dragging) return;
             const { x, y } = getPctFromEvent(e);
             updatePosition(x, y);
             resetAutoCloseTimer();
-        }, { passive: true });
+        };
 
-        document.addEventListener('touchend', () => {
+        const handlePositionTouchEnd = () => {
+            if (!JC.identity.isCurrent(identityContext)) return;
             if (!dragging) return;
             dragging = false;
             void JC.saveUserSettings!('settings.json', JC.currentSettings);
+        };
+
+        document.addEventListener('mousemove', handlePositionMouseMove);
+        document.addEventListener('mouseup', handlePositionMouseUp);
+        document.addEventListener('touchmove', handlePositionTouchMove, { passive: true });
+        document.addEventListener('touchend', handlePositionTouchEnd);
+        registerCleanup(() => {
+            dragging = false;
+            document.removeEventListener('mousemove', handlePositionMouseMove);
+            document.removeEventListener('mouseup', handlePositionMouseUp);
+            document.removeEventListener('touchmove', handlePositionTouchMove);
+            document.removeEventListener('touchend', handlePositionTouchEnd);
         });
     }
 
@@ -478,7 +497,7 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
                     const fontSize = (JC as any).fontSizePresets[fontSizeIndex].size;
                     const fontFamily = (JC as any).fontFamilyPresets[fontFamilyIndex].family;
                     (JC as any).applySubtitleStyles(selectedPreset.textColor, selectedPreset.bgColor, fontSize, fontFamily, selectedPreset.textShadow);
-                    toast(JC.t!('toast_subtitle_style', { style: selectedPreset.name }));
+                    toast(JC.t!('toast_subtitle_style', { style: escapeHtml(selectedPreset.name) }));
                 } else if (type === 'font-size') {
                     (JC.currentSettings as any).selectedFontSizePresetIndex = presetIndex;
                     const fontFamilyIndex = (JC.currentSettings as any).selectedFontFamilyPresetIndex ?? 0;
@@ -492,7 +511,7 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
                         : 'none';
 
                     (JC as any).applySubtitleStyles(textColor, bgColor, selectedPreset.size, fontFamily, textShadow);
-                    toast(JC.t!('toast_subtitle_size', { size: selectedPreset.name }));
+                    toast(JC.t!('toast_subtitle_size', { size: escapeHtml(selectedPreset.name) }));
                 } else if (type === 'font-family') {
                     (JC.currentSettings as any).selectedFontFamilyPresetIndex = presetIndex;
                     const fontSizeIndex = (JC.currentSettings as any).selectedFontSizePresetIndex ?? 2;
@@ -506,7 +525,7 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
                         : 'none';
 
                     (JC as any).applySubtitleStyles(textColor, bgColor, fontSize, selectedPreset.family, textShadow);
-                    toast(JC.t!('toast_subtitle_font', { font: selectedPreset.name }));
+                    toast(JC.t!('toast_subtitle_font', { font: escapeHtml(selectedPreset.name) }));
                 }
 
                 void JC.saveUserSettings!('settings.json', JC.currentSettings);

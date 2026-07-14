@@ -19,6 +19,17 @@ import type {
 
 JC.core = JC.core || {};
 
+const toastTimers = new Set<number>();
+
+function scheduleToastTask(callback: () => void, delay: number): void {
+    const context = JC.identity.capture();
+    const timer = window.setTimeout(() => {
+        toastTimers.delete(timer);
+        if (!context || JC.identity.isCurrent(context)) callback();
+    }, delay);
+    toastTimers.add(timer);
+}
+
 /**
  * Escapes HTML special characters to prevent XSS when interpolating into
  * HTML strings (innerHTML sinks, template literals, JC.toast, ...).
@@ -107,6 +118,7 @@ export function removeCss(id: string): boolean {
  * @param duration How long to show the toast, in ms.
  */
 export function toast(html: string, duration?: number): void {
+    const identity = JC.identity.capture();
     const ms = duration ?? (JC.CONFIG?.TOAST_DURATION || 1500);
 
     // Use the theme system to get appropriate colors
@@ -117,6 +129,7 @@ export function toast(html: string, duration?: number): void {
 
     const t = document.createElement('div');
     t.className = 'jellyfin-canopy-toast';
+    if (identity) t.dataset.jcIdentityOwned = 'true';
     Object.assign(t.style, {
         position: 'fixed',
         bottom: '20px',
@@ -138,12 +151,19 @@ export function toast(html: string, duration?: number): void {
     });
     t.innerHTML = html; // Note: the calling function should pass the localized string
     document.body.appendChild(t);
-    setTimeout(() => { t.style.transform = 'translateX(0)'; }, 10);
-    setTimeout(() => {
+    scheduleToastTask(() => { if (t.isConnected) t.style.transform = 'translateX(0)'; }, 10);
+    scheduleToastTask(() => {
+        if (!t.isConnected) return;
         t.style.transform = 'translateX(100%)';
-        setTimeout(() => t.remove(), 300);
+        scheduleToastTask(() => t.remove(), 300);
     }, ms);
 }
+
+JC.identity.registerReset('ui-toasts', () => {
+    for (const timer of toastTimers) clearTimeout(timer);
+    toastTimers.clear();
+    document.querySelectorAll('.jellyfin-canopy-toast').forEach((node) => node.remove());
+});
 
 // ── MUI component kit (v12 React/MUI markup match) ──────────────────────────
 //

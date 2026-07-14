@@ -8,12 +8,17 @@
 
 import { JC } from '../../globals';
 import { installModalA11y, type ModalA11yHandle } from '../../core/modal-a11y';
+import type { IdentityContext } from '../../types/jc';
 
 export interface ArrModalHandle {
     overlay: HTMLElement;
     dialog: HTMLElement;
     body: HTMLElement;
     footer: HTMLElement;
+    /** Immutable account/server epoch that owns this modal. */
+    identity: IdentityContext;
+    /** False after close or as soon as the authenticated identity changes. */
+    isActive(): boolean;
     /** Sets the header subtitle text (injection-safe). */
     setSubtitle(text: string): void;
     close(): void;
@@ -21,11 +26,15 @@ export interface ArrModalHandle {
     onClose(cb: () => void): void;
 }
 
+const openModals = new Set<ArrModalHandle>();
+
 /**
  * Builds and shows an arr modal. Closes on Escape (a11y), backdrop click and the header close
  * button. Returns handles for the caller to render into `body` and place buttons in `footer`.
  */
 export function createArrModal(opts: { title: string; subtitle?: string; icon?: string }): ArrModalHandle {
+    const identity = JC.identity.capture();
+    if (!identity) throw new Error('Cannot open an arr modal without an authenticated identity');
     const overlay = document.createElement('div');
     overlay.className = 'jc-arr-modal-overlay';
 
@@ -88,6 +97,7 @@ export function createArrModal(opts: { title: string; subtitle?: string; icon?: 
     const close = (): void => {
         if (closed) return;
         closed = true;
+        openModals.delete(handle);
         try { a11y?.release(); } catch { /* already released */ }
         overlay.remove();
         for (const cb of closeCbs) { try { cb(); } catch (e) { console.warn('🪼 Jellyfin Canopy: arr modal close cb failed', e); } }
@@ -102,13 +112,23 @@ export function createArrModal(opts: { title: string; subtitle?: string; icon?: 
         onEscape: close,
     });
 
-    return {
+    const handle: ArrModalHandle = {
         overlay,
         dialog,
         body,
         footer,
-        setSubtitle: (text: string) => { subtitleEl.textContent = text; },
+        identity,
+        isActive: () => !closed && JC.identity.isCurrent(identity),
+        setSubtitle: (text: string) => {
+            if (!closed && JC.identity.isCurrent(identity)) subtitleEl.textContent = text;
+        },
         close,
         onClose: (cb: () => void) => { closeCbs.push(cb); },
     };
+    openModals.add(handle);
+    return handle;
 }
+
+JC.identity.registerReset('arr-search-modals', () => {
+    for (const modal of Array.from(openModals)) modal.close();
+});

@@ -8,13 +8,49 @@ import { JC } from '../../globals';
 import { currentPageHandle } from '../pages/fallback-host';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { formatTimestamp, renderActiveBookmarks } from './library-render';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+const modalTimers = new Set<number>();
+
+function scheduleModalTask(context: IdentityContext, callback: () => void, delay: number): void {
+  const timer = window.setTimeout(() => {
+    modalTimers.delete(timer);
+    if (JC.identity.isCurrent(context)) callback();
+  }, delay);
+  modalTimers.add(timer);
+}
+
+function ownModal(modal: HTMLElement): void {
+  modal.dataset.jcIdentityOwned = 'true';
+  modal.dataset.jcBookmarkLibraryModal = 'true';
+}
+
+function closeModal(modal: HTMLElement): void {
+  if (!modal.isConnected) return;
+  modal.style.opacity = '0';
+  const timer = window.setTimeout(() => {
+    modalTimers.delete(timer);
+    modal.remove();
+  }, 200);
+  modalTimers.add(timer);
+}
+
+JC.identity.registerReset('bookmarks-library-modals', () => {
+  for (const timer of modalTimers) window.clearTimeout(timer);
+  modalTimers.clear();
+  document.querySelectorAll('[data-jc-bookmark-library-modal="true"]').forEach((modal) => modal.remove());
+});
 
 /**
  * Show modal to adjust time offset for synced bookmarks
  */
-export function showOffsetAdjustmentModal(group: any): void {
+export function showOffsetAdjustmentModal(
+  group: any,
+  context: IdentityContext | null = JC.identity.capture()
+): void {
+  if (!context || !JC.identity.isCurrent(context)) return;
   const syncedBookmarks = group.bookmarks.filter((bm: any) => bm.syncedFrom);
   if (syncedBookmarks.length === 0) {
     toast(JC.t!('bookmark_no_synced'), 2000);
@@ -23,6 +59,7 @@ export function showOffsetAdjustmentModal(group: any): void {
 
   const modal = document.createElement('div');
   modal.className = 'jc-bm-library-modal-overlay';
+  ownModal(modal);
   modal.innerHTML = `
     <div class="jc-bm-library-modal-container" style="max-width: 550px;">
       <button class="jc-bm-library-modal-close">×</button>
@@ -72,10 +109,7 @@ export function showOffsetAdjustmentModal(group: any): void {
 
   document.body.appendChild(modal);
 
-  const closeDialog = () => {
-    modal.style.opacity = '0';
-    setTimeout(() => modal.remove(), 200);
-  };
+  const closeDialog = () => closeModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.
   currentPageHandle()?.track(closeDialog);
 
@@ -87,6 +121,7 @@ export function showOffsetAdjustmentModal(group: any): void {
 
   // Apply offset button handler
   modal.querySelector('.btnApplyOffset')?.addEventListener('click', () => { void (async () => {
+    if (!JC.identity.isCurrent(context)) return;
     const offset = parseFloat(modal.querySelector<HTMLInputElement>('#offset-adjustment-input')!.value) || 0;
 
     const btn = modal.querySelector<HTMLButtonElement>('.btnApplyOffset')!;
@@ -98,11 +133,13 @@ export function showOffsetAdjustmentModal(group: any): void {
 
       // Update each synced bookmark
       for (const bm of syncedBookmarks) {
+        if (!JC.identity.isCurrent(context)) return;
         const newTimestamp = Math.max(0, bm.timestamp + offset);
         const ok = await JC.bookmarks!.update(bm.id, {
           timestamp: newTimestamp,
           syncedFrom: '' // Clear syncedFrom to remove the icon
         });
+        if (!JC.identity.isCurrent(context)) return;
         if (ok) updatedCount++;
       }
 
@@ -115,13 +152,14 @@ export function showOffsetAdjustmentModal(group: any): void {
 
         // Refresh the adopted host (the awaited updates already resolved — no
         // blind setTimeout needed).
-        renderActiveBookmarks();
+        renderActiveBookmarks(context);
       } else {
         toast(JC.t!('bookmark_update_failed'), 3000);
         btn.disabled = false;
         btn.querySelector('span:last-child')!.textContent = JC.t!('bookmark_apply_offset');
       }
     } catch (e) {
+      if (!JC.identity.isCurrent(context)) return;
       console.error('Failed to apply offset:', e);
       toast(JC.t!('bookmark_offset_failed'), 3000);
       btn.disabled = false;
@@ -130,7 +168,7 @@ export function showOffsetAdjustmentModal(group: any): void {
   })(); });
 
   // Fade in
-  setTimeout(() => modal.style.opacity = '1', 10);
+  scheduleModalTask(context, () => { if (modal.isConnected) modal.style.opacity = '1'; }, 10);
 }
 
 /**
@@ -174,7 +212,11 @@ function findDuplicateBookmarks(bookmarks: Record<string, any>): any[] {
 /**
  * Show modal to sync duplicate bookmarks
  */
-export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
+export function showDuplicatesSyncModal(
+  bookmarks: Record<string, any>,
+  context: IdentityContext | null = JC.identity.capture()
+): void {
+  if (!context || !JC.identity.isCurrent(context)) return;
   const duplicates = findDuplicateBookmarks(bookmarks);
 
   if (duplicates.length === 0) {
@@ -184,6 +226,7 @@ export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
 
   const modal = document.createElement('div');
   modal.className = 'jc-bm-library-modal-overlay';
+  ownModal(modal);
   modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s;';
   modal.innerHTML = `
     <div class="jc-bm-library-modal-container" style="max-width: 700px; background: #181818; border-radius: 12px; padding: 24px; position: relative; box-shadow: 0 8px 32px rgba(0,0,0,0.8); max-height: 85vh; overflow-y: auto;">
@@ -247,10 +290,7 @@ export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
 
   document.body.appendChild(modal);
 
-  const closeDialog = () => {
-    modal.style.opacity = '0';
-    setTimeout(() => modal.remove(), 200);
-  };
+  const closeDialog = () => closeModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.
   currentPageHandle()?.track(closeDialog);
 
@@ -263,6 +303,7 @@ export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
   // Adjust Offset button handlers
   modal.querySelectorAll<HTMLElement>('[data-sync-from]').forEach(btn => {
     btn.addEventListener('click', () => {
+      if (!JC.identity.isCurrent(context)) return;
       const dupIndex = parseInt(btn.dataset.dupIndex!);
       const versionIndex = parseInt(btn.dataset.syncFrom!);
       const dup = duplicates[dupIndex];
@@ -277,7 +318,7 @@ export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
         bookmarks: bookmarksForItem,
         details: { name: dup.name }
       };
-      showOffsetAdjustmentModal(groupObj);
+      showOffsetAdjustmentModal(groupObj, context);
     });
   });
 
@@ -286,6 +327,7 @@ export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
     if (!btn.dataset.dupIndex) return;
 
     btn.addEventListener('click', () => { void (async () => {
+      if (!JC.identity.isCurrent(context)) return;
       const dupIndex = parseInt(btn.dataset.dupIndex!);
       const dup = duplicates[dupIndex];
       const itemIds = Object.keys(dup.itemGroups);
@@ -301,6 +343,7 @@ export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
       if (!confirm(JC.t!('bookmark_merge_confirm').replace('{count}', String(oldBookmarks.length)))) {
         return;
       }
+      if (!JC.identity.isCurrent(context)) return;
 
       btn.disabled = true;
       btn.querySelector('span:last-child')!.innerHTML = '<span class="material-icons" style="animation: spin 1s linear infinite; font-size: 18px;">refresh</span>';
@@ -317,14 +360,16 @@ export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
 
         // Sync old bookmarks to primary
         const synced = await JC.bookmarks!.syncBookmarks(oldBookmarks, primaryDetails, 0);
+        if (!JC.identity.isCurrent(context)) return;
         toast(JC.t!('bookmark_merge_success').replace('{count}', String(synced.length)), 3000);
 
         closeDialog();
 
         // Refresh the adopted host (syncBookmarks already resolved — no blind
         // setTimeout needed).
-        renderActiveBookmarks();
+        renderActiveBookmarks(context);
       } catch (e) {
+        if (!JC.identity.isCurrent(context)) return;
         console.error('Merge failed:', e);
         toast(JC.t!('bookmark_merge_failed'), 3000);
         btn.disabled = false;
@@ -333,5 +378,5 @@ export function showDuplicatesSyncModal(bookmarks: Record<string, any>): void {
     })(); });
   });
 
-  setTimeout(() => modal.style.opacity = '1', 10);
+  scheduleModalTask(context, () => { if (modal.isConnected) modal.style.opacity = '1'; }, 10);
 }

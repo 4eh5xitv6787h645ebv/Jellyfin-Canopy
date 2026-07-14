@@ -11,6 +11,17 @@ const DisplayStatus = JC.seerrStatus!.DISPLAY;
 const state = internal.state;
 const escapeHtml = JC.escapeHtml;
 const icons = internal.icons; // requires ui-icons.js to be loaded first
+const popupTimers = new Set<ReturnType<typeof setTimeout>>();
+
+function hoverPopoverElement(): HTMLElement | null {
+    const value: unknown = state.seerrHoverPopover;
+    return value instanceof HTMLElement ? value : null;
+}
+
+function active4KPopupElement(): HTMLElement | null {
+    const value: unknown = state.active4KPopup;
+    return value instanceof HTMLElement ? value : null;
+}
 
 // ================================
 // DOWNLOAD PROGRESS POPOVER SYSTEM
@@ -21,12 +32,23 @@ const icons = internal.icons; // requires ui-icons.js to be loaded first
  * Used for showing download progress on hover/focus.
  */
 function ensureHoverPopover() {
-    if (!state.seerrHoverPopover) {
-        state.seerrHoverPopover = document.createElement('div');
-        state.seerrHoverPopover.className = 'seerr-hover-popover';
-        document.body.appendChild(state.seerrHoverPopover);
+    const identity = JC.identity.capture();
+    if (!identity) return null;
+    let popover = hoverPopoverElement();
+    if (popover && !JC.identity.isOwned(popover, identity)) {
+        popover.remove();
+        state.seerrHoverPopover = null;
+        popover = null;
     }
-    return state.seerrHoverPopover;
+    if (!popover) {
+        popover = document.createElement('div');
+        popover.className = 'seerr-hover-popover';
+        popover.dataset.jcIdentityOwned = 'true';
+        JC.identity.own(popover, identity);
+        document.body.appendChild(popover);
+        state.seerrHoverPopover = popover;
+    }
+    return popover;
 }
 
 /**
@@ -80,6 +102,7 @@ function fillHoverPopover(item: any) {
     }
 
     const popover = ensureHoverPopover();
+    if (!popover) return null;
     let popoverHTML = '';
 
     allDownloads.forEach((downloadStatus: any) => {
@@ -145,14 +168,16 @@ function positionHoverPopover(element: any, x: any, y: any) {
 /**
  * Hides the hover popover (respects mobile lock).
  */
-ui.hideHoverPopover = function () {
-    if (state.seerrHoverPopover && !state.seerrHoverLock) {
-        state.seerrHoverPopover.classList.remove('show');
-        delete state.seerrHoverPopover.dataset.tmdbId;
-        delete state.seerrHoverPopover.dataset.clientX;
-        delete state.seerrHoverPopover.dataset.clientY;
+function hideHoverPopover(): void {
+    const popover = hoverPopoverElement();
+    if (popover && !state.seerrHoverLock) {
+        popover.classList.remove('show');
+        delete popover.dataset.tmdbId;
+        delete popover.dataset.clientX;
+        delete popover.dataset.clientY;
     }
-};
+}
+ui.hideHoverPopover = hideHoverPopover;
 
 /**
  * Toggles the lock state for the hover popover, used for mobile tap interactions.
@@ -188,8 +213,9 @@ function createInlineProgress(downloadStatus: any) {
  * Hides any active 4K popup menu.
  */
 function hide4KPopup() {
-    if (state.active4KPopup) {
-        state.active4KPopup.remove();
+    const popup = active4KPopupElement();
+    if (popup) {
+        popup.remove();
         state.active4KPopup = null;
     }
 }
@@ -199,17 +225,23 @@ function hide4KPopup() {
  * @param {HTMLElement} buttonGroup - The split button container.
  * @param {Object} item - Media item data.
  */
-function show4KPopup(buttonGroup: any, item: any) {
+function show4KPopup(buttonGroup: HTMLElement, item: any) {
+    const identity = JC.identity.capture();
+    const ownerNode = buttonGroup.closest('.seerr-card') || buttonGroup;
+    if (!identity || !JC.identity.isCurrent(identity) || !JC.identity.isOwned(ownerNode, identity)) return;
     hide4KPopup();
 
     const popup = document.createElement('div');
     popup.className = 'seerr-4k-popup';
+    popup.dataset.jcIdentityOwned = 'true';
+    JC.identity.own(popup, identity);
 
     const status4k = item.mediaInfo ? item.mediaInfo.status4k : 1;
 
     // Create 4K button
     const request4KBtn = document.createElement('button');
     request4KBtn.className = 'seerr-4k-popup-item';
+    JC.identity.own(request4KBtn, identity);
 
     const popupDs4k = JC.seerrStatus!.resolveDisplayStatus(status4k, false);
     if (popupDs4k === DisplayStatus.AVAILABLE) {
@@ -243,9 +275,11 @@ function show4KPopup(buttonGroup: any, item: any) {
     popup.style.top = `${rect.bottom + 4}px`;
     popup.style.width = `${rect.width}px`;
 
-    setTimeout(() => {
-        popup.classList.add('show');
+    const timer = setTimeout(() => {
+        popupTimers.delete(timer);
+        if (JC.identity.isCurrent(identity) && state.active4KPopup === popup) popup.classList.add('show');
     }, 10);
+    popupTimers.add(timer);
 }
 
 /**
@@ -253,8 +287,12 @@ function show4KPopup(buttonGroup: any, item: any) {
  * @param {HTMLElement} button - Button element.
  * @param {Object} item - Media item with download status.
  */
-function addDownloadProgressHover(button: any, item: any) {
+function addDownloadProgressHover(button: HTMLElement, item: any) {
+    const identity = JC.identity.capture();
+    if (identity) JC.identity.own(button, identity);
+    const isCurrent = () => !!identity && JC.identity.isCurrent(identity) && JC.identity.isOwned(button, identity);
     const showPopover = (e: any) => {
+        if (!isCurrent()) return;
         const popover = fillHoverPopover(item);
         if (popover) {
             const clientX = e.clientX || (e.target.getBoundingClientRect().right);
@@ -269,19 +307,24 @@ function addDownloadProgressHover(button: any, item: any) {
 
     button.addEventListener('mouseenter', showPopover);
     button.addEventListener('mousemove', (e: any) => {
+        if (!isCurrent()) return;
         if (state.seerrHoverPopover?.classList.contains('show') && !state.seerrHoverLock) {
             state.seerrHoverPopover.dataset.clientX = e.clientX;
             state.seerrHoverPopover.dataset.clientY = e.clientY;
             positionHoverPopover(state.seerrHoverPopover, e.clientX, e.clientY);
         }
     });
-    button.addEventListener('mouseleave', ui.hideHoverPopover);
+    button.addEventListener('mouseleave', () => {
+        if (isCurrent()) hideHoverPopover();
+    });
     button.addEventListener('focus', showPopover);
     button.addEventListener('blur', () => {
+        if (!isCurrent()) return;
         ui.toggleHoverPopoverLock(false);
-        ui.hideHoverPopover();
+        hideHoverPopover();
     });
     button.addEventListener('touchstart', (e: any) => {
+        if (!isCurrent()) return;
         e.preventDefault();
         const popover = fillHoverPopover(item);
         if (popover) {
@@ -293,8 +336,8 @@ function addDownloadProgressHover(button: any, item: any) {
                 positionHoverPopover(popover, clientX, clientY);
                 popover.classList.add('show');
                 popover.dataset.tmdbId = item.id;
-                popover.dataset.clientX = clientX;
-                popover.dataset.clientY = clientY;
+                popover.dataset.clientX = String(clientX);
+                popover.dataset.clientY = String(clientY);
             } else {
                 popover.classList.remove('show');
             }
@@ -311,3 +354,13 @@ internal.createInlineProgress = createInlineProgress;
 internal.hide4KPopup = hide4KPopup;
 internal.show4KPopup = show4KPopup;
 internal.addDownloadProgressHover = addDownloadProgressHover;
+
+JC.identity.registerReset('seerr-popovers', () => {
+    for (const timer of popupTimers) clearTimeout(timer);
+    popupTimers.clear();
+    hoverPopoverElement()?.remove();
+    active4KPopupElement()?.remove();
+    state.seerrHoverPopover = null;
+    state.active4KPopup = null;
+    state.seerrHoverLock = false;
+});

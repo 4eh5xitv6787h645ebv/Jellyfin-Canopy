@@ -25,6 +25,7 @@ describe('requests page error state', () => {
 
     beforeEach(async () => {
         vi.resetModules();
+        document.body.innerHTML = '';
         plugin = vi.fn();
         toast = vi.fn();
         const JC = window.JellyfinCanopy as unknown as Record<string, unknown>;
@@ -48,6 +49,7 @@ describe('requests page error state', () => {
         data.state.isLoading = false;
         const container = document.createElement('div');
         document.body.appendChild(container);
+        window.JellyfinCanopy.identity.own(container);
         render.setActiveContainer(container);
         render.renderPage();
         render.setActiveContainer(null);
@@ -67,6 +69,7 @@ describe('requests page error state', () => {
         data.state.isLoading = false;
         const container = document.createElement('div');
         document.body.appendChild(container);
+        window.JellyfinCanopy.identity.own(container);
         render.setActiveContainer(container);
         render.renderPage();
         render.setActiveContainer(null);
@@ -85,5 +88,21 @@ describe('requests page error state', () => {
         expect(data.state.downloads.length).toBe(0);
         expect(toast).toHaveBeenCalledTimes(1);
         expect(String(toast.mock.calls[0][0])).toContain('downloads_load_error');
+    });
+
+    it('does not repaint a retained container owned by the previous identity', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<span>account-a-sentinel</span>';
+        document.body.appendChild(container);
+        window.JellyfinCanopy.identity.own(container);
+        render.setActiveContainer(container);
+
+        const epoch = window.JellyfinCanopy.identity.getEpoch();
+        window.JellyfinCanopy.identity.transition('requests-test-server', `requests-user-${epoch}`, 'test-account-switch');
+        render.renderPage();
+        render.setActiveContainer(null);
+
+        expect(container.innerHTML).toContain('account-a-sentinel');
+        expect(container.innerHTML).not.toContain('requests_no_requests_found');
     });
 });

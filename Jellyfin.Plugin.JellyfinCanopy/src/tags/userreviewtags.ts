@@ -6,7 +6,7 @@
 
 import { JC as JEBase } from '../globals';
 import { ensureMaterialSymbolsFont, injectCss } from '../core/ui-kit';
-import type { ApiApi } from '../types/jc';
+import type { ApiApi, IdentityContext } from '../types/jc';
 
 /**
  * Local view of the shared namespace adding the public members this module
@@ -25,7 +25,17 @@ const logPrefix = '🪼 Jellyfin Canopy: User Review Tags:';
 // Per-session cache: tmdbKey → rating (1-5 or null)
 const _reviewCache = new Map<string, number | null>();
 // In-flight deduplication
-const _inFlight = new Map<string, Promise<number | null>>();
+const _inFlight = new Map<string, { context: IdentityContext; promise: Promise<number | null> }>();
+
+function isCurrent(context: IdentityContext | null | undefined): context is IdentityContext {
+    return !!context && JC.identity.isCurrent(context);
+}
+
+function resetUserReviewTagsIdentity(): void {
+    _reviewCache.clear();
+    _inFlight.clear();
+    document.querySelectorAll('.jc-userreview-tag').forEach((node) => node.remove());
+}
 
 /**
  * Fetch the average rating across all users for a given tmdbKey.
@@ -33,14 +43,19 @@ const _inFlight = new Map<string, Promise<number | null>>();
  */
 async function fetchUserRating(tmdbKey: string, mediaType: string): Promise<number | null> {
     if (!JC.pluginConfig?.ShowUserReviews) return null;
+    const context = JC.identity.capture();
+    if (!isCurrent(context)) return null;
     if (_reviewCache.has(tmdbKey)) return _reviewCache.get(tmdbKey)!;
-    if (_inFlight.has(tmdbKey)) return _inFlight.get(tmdbKey)!;
+    const existing = _inFlight.get(tmdbKey);
+    if (existing && isCurrent(existing.context)) return existing.promise;
 
+    const record = { context, promise: null as unknown as Promise<number | null> };
     const promise = (async (): Promise<number | null> => {
         try {
             // Core throws on non-OK responses, which lands in the catch below —
             // same "cache null, return null" outcome as the old !response.ok branch.
             const data = await JC.core.api.plugin(`/reviews/${mediaType}/${tmdbKey}`) as any;
+            if (!isCurrent(context)) return null;
             const rated = (data.reviews || []).filter((r: any) => r.rating);
             if (rated.length === 0) {
                 _reviewCache.set(tmdbKey, null);
@@ -51,14 +66,15 @@ async function fetchUserRating(tmdbKey: string, mediaType: string): Promise<numb
             _reviewCache.set(tmdbKey, avg);
             return avg;
         } catch (e) {
-            _reviewCache.set(tmdbKey, null);
+            if (isCurrent(context)) _reviewCache.set(tmdbKey, null);
             return null;
         } finally {
-            _inFlight.delete(tmdbKey);
+            if (_inFlight.get(tmdbKey) === record) _inFlight.delete(tmdbKey);
         }
     })();
 
-    _inFlight.set(tmdbKey, promise);
+    record.promise = promise;
+    _inFlight.set(tmdbKey, record);
     return promise;
 }
 
@@ -67,7 +83,12 @@ async function fetchUserRating(tmdbKey: string, mediaType: string): Promise<numb
  * Uses the same .rating-tag + .rating-tag-critic structure as the tomato chip,
  * with a material icon instead of the SVG background.
  */
-function appendUserRatingChip(container: HTMLElement, rating: number | null): void {
+function appendUserRatingChip(
+    container: HTMLElement,
+    rating: number | null,
+    context: IdentityContext,
+): void {
+    if (!isCurrent(context)) return;
     container.querySelector('.jc-userreview-tag')?.remove();
 
     const showDash = JC.pluginConfig?.ShowUserRatingDash !== false;
@@ -81,6 +102,8 @@ function appendUserRatingChip(container: HTMLElement, rating: number | null): vo
 
     const tag = document.createElement('div');
     tag.className = 'rating-tag rating-tag-critic jc-userreview-tag';
+    tag.dataset.jcIdentityOwned = 'true';
+    JC.identity.own(tag, context);
 
     const icon = document.createElement('span');
     icon.className = 'jc-userreview-icon';
@@ -180,12 +203,15 @@ JC.appendUserRatingToContainer = async function(containerOrEl: HTMLElement, item
     if (!JC.pluginConfig?.ShowUserReviews) return;
     if (!JC.pluginConfig?.ShowUserRatingOnPosters) return;
     if (!JC.currentSettings?.ratingTagsEnabled) return;
+    const context = JC.identity.capture();
+    if (!isCurrent(context)) return;
 
     const resolved = resolveTmdbKey(item, extras);
     if (!resolved) return;
 
     const { tmdbKey, mediaType } = resolved;
     const rating = await fetchUserRating(tmdbKey, mediaType);
+    if (!isCurrent(context)) return;
 
     if (rating === null && JC.pluginConfig?.ShowUserRatingDash === false) return;
 
@@ -196,12 +222,14 @@ JC.appendUserRatingToContainer = async function(containerOrEl: HTMLElement, item
         if (!overlay) {
             overlay = document.createElement('div');
             overlay.className = 'rating-overlay-container';
+            overlay.dataset.jcIdentityOwned = 'true';
+            JC.identity.own(overlay, context);
             containerOrEl.appendChild(overlay);
         }
         container = overlay;
     }
 
-    appendUserRatingChip(container, rating);
+    appendUserRatingChip(container, rating, context);
 };
 
 /**
@@ -211,3 +239,5 @@ JC.invalidateUserReviewTagCache = function(tmdbKey?: string) {
     if (tmdbKey) _reviewCache.delete(tmdbKey);
     else _reviewCache.clear();
 };
+
+JC.identity.registerReset('user-review-tags', resetUserReviewTagsIdentity);

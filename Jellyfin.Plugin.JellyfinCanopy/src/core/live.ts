@@ -17,7 +17,7 @@
 
 import { JC } from '../globals';
 import { register } from './lifecycle';
-import type { LiveApi, LiveHandler, LiveMessage } from '../types/jc';
+import type { IdentityContext, LiveApi, LiveHandler, LiveMessage } from '../types/jc';
 
 JC.core = JC.core || {};
 
@@ -45,6 +45,18 @@ export const LIVE = {
 
 const handlers = new Map<string, Set<LiveHandler>>();
 let sdkUnsubscribe: (() => void) | null = null;
+
+/** Dispose only the SDK socket. Process-lifetime fan-out handlers survive. */
+function unsubscribeSdk(): void {
+    if (!sdkUnsubscribe) return;
+    const unsubscribe = sdkUnsubscribe;
+    sdkUnsubscribe = null;
+    try {
+        unsubscribe();
+    } catch {
+        /* never propagate */
+    }
+}
 
 /**
  * Fan an event out to all handlers registered for `type`. Snapshots the set so
@@ -129,8 +141,9 @@ export function dispatch(message: LiveMessage): void {
  * Subscribe once to the SDK socket. Fails soft (logs a warning, leaves
  * isConnected() false) when the subscribe API is unavailable or throws.
  */
-function subscribe(): void {
+function subscribe(context: IdentityContext | null = JC.identity.capture()): void {
     if (sdkUnsubscribe) return; // already subscribed
+    if (!context || !JC.identity.isCurrent(context)) return;
     const client = typeof ApiClient !== 'undefined' ? ApiClient : undefined;
     if (!client || typeof client.subscribe !== 'function') {
         console.warn(
@@ -141,6 +154,9 @@ function subscribe(): void {
     }
     try {
         sdkUnsubscribe = client.subscribe(NATIVE_TYPES, (message) => {
+            // unsubscribe() cannot recall a callback the SDK already queued.
+            // Never fan an A message into B's process-lifetime handlers.
+            if (!JC.identity.isCurrent(context)) return;
             try {
                 dispatch(message);
             } catch (err) {
@@ -159,17 +175,21 @@ function subscribe(): void {
 // A dedicated 'live' lifecycle handle owns that teardown.
 const handle = register('live');
 subscribe();
-handle.onTeardown(() => {
-    if (sdkUnsubscribe) {
-        try {
-            sdkUnsubscribe();
-        } catch {
-            /* never propagate */
-        }
-        sdkUnsubscribe = null;
-    }
-    handlers.clear();
+handle.onTeardown(unsubscribeSdk);
+
+// Identity reset runs through core lifecycle teardown first, but this explicit
+// participant also makes the ownership rule local and safe if reset ordering
+// changes. Handlers are deliberately process-lifetime: live-config, live-rows
+// and Spoiler Guard register once when the bundle executes.
+JC.identity.registerReset('core-live', unsubscribeSdk);
+JC.identity.registerActivate('core-live', (context) => {
+    subscribe(context);
 });
+
+/** @internal Test isolation only; identity/lifecycle teardown must never call it. */
+export function clearHandlersForTest(): void {
+    handlers.clear();
+}
 
 const live: LiveApi = {
     on,

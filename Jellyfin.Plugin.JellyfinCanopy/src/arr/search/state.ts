@@ -98,3 +98,10 @@ export function cacheDetailsType(itemId: string, type: string | null): void {
 export function getDetailsType(itemId: string): string | null {
     return detailsTypes.get(itemId) ?? null;
 }
+
+/** Drop every identity-derived decision/cache before another account activates. */
+export function resetArrSearchState(): void {
+    isAdmin = false;
+    captured = null;
+    detailsTypes.clear();
+}

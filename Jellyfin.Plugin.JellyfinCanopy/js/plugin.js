@@ -59,6 +59,19 @@
             forceSave() {
                 this.dirty = true;
                 this._flush();
+            },
+            // Drop an A-owned scheduled flush without unregistering the stable
+            // cache callbacks. Identity reset hooks clear/rebind the callbacks'
+            // mutable state before B is allowed to render or save.
+            cancelPending() {
+                if (this.scheduleId !== null) {
+                    try {
+                        if (typeof cancelIdleCallback === 'function') cancelIdleCallback(this.scheduleId);
+                    } catch (_) { /* not an idle-callback id */ }
+                    try { clearTimeout(this.scheduleId); } catch (_) { /* harmless */ }
+                }
+                this.scheduleId = null;
+                this.dirty = false;
             }
         },
         /**
@@ -116,6 +129,570 @@
     };
 
     const JC = window.JellyfinCanopy; // Alias for internal use
+
+    /**
+     * Create the document-lifetime identity owner. The controller is deliberately
+     * defined in this classic loader (rather than only in the later bundle):
+     * Jellyfin 12 can replace authentication before jc.bundle.js has finished
+     * loading, and invalidation must still happen synchronously in that window.
+     *
+     * @param {(change: {previous: object|null, current: object|null, epoch: number, reason: string}) => void} [finalizeTransition]
+     */
+    function createIdentitySession(finalizeTransition, diagnostics) {
+        let epoch = 0;
+        let current = null;
+        const owners = new WeakMap();
+        const resetHandlers = new Map();
+        const activateHandlers = new Map();
+        const rawUserIdsByEpoch = new Map();
+
+        const normalize = (value) => String(value ?? '').trim().replace(/-/g, '').toLowerCase();
+        const same = (a, b) => !!a && !!b
+            && a.epoch === b.epoch
+            && a.serverId === b.serverId
+            && a.userId === b.userId;
+
+        function capture() {
+            return current;
+        }
+
+        function isCurrent(context) {
+            return same(context, current);
+        }
+
+        /**
+         * Accept one host identity transition. All registered reset handlers and
+         * the loader finalizer run synchronously before this function returns.
+         */
+        function transition(serverId, userId, reason = 'unknown') {
+            const rawUserId = String(userId ?? '').trim();
+            const normalizedUserId = normalize(userId);
+            const normalizedServerId = normalizedUserId
+                ? (normalize(serverId) || 'unknown-server')
+                : '';
+
+            if ((!current && !normalizedUserId)
+                || (current
+                    && current.serverId === normalizedServerId
+                    && current.userId === normalizedUserId)) {
+                // Keep the first live raw spelling captured for this epoch. A
+                // later normalized monitor read must not erase its dashes/case.
+                if (current && rawUserId && !rawUserIdsByEpoch.has(current.epoch)) {
+                    rawUserIdsByEpoch.set(current.epoch, rawUserId);
+                }
+                return current;
+            }
+
+            const previous = current;
+            epoch += 1;
+            current = normalizedUserId
+                ? Object.freeze({ serverId: normalizedServerId, userId: normalizedUserId, epoch })
+                : null;
+            if (current) rawUserIdsByEpoch.set(epoch, rawUserId || normalizedUserId);
+            // Only the previous/current values are useful to transition cleanup.
+            for (const storedEpoch of [...rawUserIdsByEpoch.keys()]) {
+                if (storedEpoch !== previous?.epoch && storedEpoch !== current?.epoch) {
+                    rawUserIdsByEpoch.delete(storedEpoch);
+                }
+            }
+            const change = Object.freeze({ previous, current, epoch, reason: String(reason || 'unknown') });
+
+            for (const [name, handler] of [...resetHandlers.entries()]) {
+                if (epoch !== change.epoch) return current;
+                try {
+                    handler(change);
+                } catch (error) {
+                    console.error(`🪼 Jellyfin Canopy: identity reset handler "${name}" failed`, error);
+                }
+                // A reset handler may synchronously accept a newer host identity.
+                // Never continue the older handler snapshot or finalize its stale
+                // change after that nested transition has completed.
+                if (epoch !== change.epoch) return current;
+            }
+            if (epoch !== change.epoch) return current;
+            try {
+                finalizeTransition?.(change);
+            } catch (error) {
+                console.error('🪼 Jellyfin Canopy: identity transition finalizer failed', error);
+            }
+            return current;
+        }
+
+        function own(value, context = current) {
+            if (context && value !== null && (typeof value === 'object' || typeof value === 'function')) {
+                owners.set(value, context);
+            }
+            return value;
+        }
+
+        function ownerOf(value) {
+            if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return null;
+            return owners.get(value) || null;
+        }
+
+        function isOwned(value, context = current) {
+            const owner = ownerOf(value);
+            return !!owner && !!context && same(owner, context);
+        }
+
+        function registerReset(name, handler) {
+            if (!name || typeof handler !== 'function') return () => {};
+            resetHandlers.set(String(name), handler);
+            return () => {
+                if (resetHandlers.get(String(name)) === handler) resetHandlers.delete(String(name));
+            };
+        }
+
+        function registerActivate(name, handler) {
+            if (!name || typeof handler !== 'function') return () => {};
+            const key = String(name);
+            const record = { handler, lastEpoch: -1, pendingEpoch: -1, pending: null };
+            activateHandlers.set(key, record);
+            return () => {
+                if (activateHandlers.get(key) === record) activateHandlers.delete(key);
+            };
+        }
+
+        async function activate(context = current) {
+            if (!isCurrent(context)) return;
+            const work = [];
+            for (const [name, record] of [...activateHandlers.entries()]) {
+                if (record.lastEpoch === context.epoch) continue;
+                if (record.pendingEpoch === context.epoch && record.pending) {
+                    work.push(record.pending);
+                    continue;
+                }
+
+                const invocation = Promise.resolve()
+                    .then(() => record.handler(context))
+                    .then(() => {
+                        // A late older invocation must not overwrite a newer
+                        // epoch that has already activated successfully.
+                        if (record.lastEpoch < context.epoch) record.lastEpoch = context.epoch;
+                    })
+                    .catch((error) => {
+                        console.error(`🪼 Jellyfin Canopy: identity activate handler "${name}" failed`, error);
+                        throw error;
+                    })
+                    .finally(() => {
+                        if (record.pending === invocation) {
+                            record.pending = null;
+                            record.pendingEpoch = -1;
+                        }
+                    });
+                record.pendingEpoch = context.epoch;
+                record.pending = invocation;
+                work.push(invocation);
+            }
+            const results = await Promise.allSettled(work);
+            let failure = null;
+            for (const result of results) {
+                if (result.status === 'rejected') {
+                    console.error('🪼 Jellyfin Canopy: identity activate handler rejected', result.reason);
+                    failure ||= result.reason instanceof Error
+                        ? result.reason
+                        : new Error('Identity activation failed', { cause: result.reason });
+                }
+            }
+            if (failure) throw failure;
+        }
+
+        function getRawUserId(context = current) {
+            if (!context) return '';
+            return rawUserIdsByEpoch.get(context.epoch) || context.userId;
+        }
+
+        return Object.freeze({
+            capture,
+            isCurrent,
+            transition,
+            own,
+            ownerOf,
+            isOwned,
+            registerReset,
+            registerActivate,
+            activate,
+            getEpoch: () => epoch,
+            getRawUserId,
+            getResetHandlerCount: () => resetHandlers.size,
+            getActivateHandlerCount: () => activateHandlers.size,
+            // Read-only loader diagnostics. The indirection lets the immutable
+            // identity surface be installed before initialization machinery is
+            // declared later in this classic script.
+            getPendingInitializationCount: () => Number(diagnostics?.getPendingInitializationCount?.() || 0),
+            getInitializationControllerCount: () => Number(diagnostics?.getInitializationControllerCount?.() || 0)
+        });
+    }
+
+    // Assigned after all loader helpers have been declared. Identity transitions
+    // can nevertheless call through this slot safely during normal host use.
+    let initializationRegistry = null;
+    const loaderDiagnostics = {
+        getPendingInitializationCount: () => initializationRegistry?.getPendingCount?.() || 0,
+        getInitializationControllerCount: () => initializationRegistry?.getControllerCount?.() || 0
+    };
+
+    function emptyUserConfig() {
+        return {
+            settings: {},
+            shortcuts: { Shortcuts: [] },
+            bookmark: { bookmarks: {} },
+            elsewhere: {},
+            hiddenContent: { items: {}, settings: {} }
+        };
+    }
+
+    /**
+     * Last synchronous phase of every identity change. Feature reset handlers
+     * run first so they can inspect/tear down their old state; only then are the
+     * shared globals replaced with owner-tagged empty state.
+     */
+    function finalizeIdentityTransition(change) {
+        // Abort and logically drain every older loader initialization before any
+        // B-owned global is published. Raw host ajax implementations sometimes
+        // ignore AbortSignal; the registry cancellation race still settles and
+        // evicts their old epoch synchronously.
+        initializationRegistry?.cancelExcept?.(change.current?.epoch ?? null, change.epoch);
+        // Jellyfin's compatibility language key is user-only. Remove A's live
+        // projection synchronously; B republishes it from a server+user scoped
+        // Canopy key after its settings file is loaded.
+        try {
+            for (const userId of identityStorageUserIdVariants(change.previous)) {
+                localStorage.removeItem(`${userId}-language`);
+            }
+        } catch (_) { /* storage can be disabled */ }
+        JC._cacheManager?.cancelPending?.();
+        JC.initialized = false;
+        JC._tagCachePrefetch = null;
+        JC.currentUser = null;
+        JC.currentSettings = undefined;
+        JC.pluginConfig = {};
+        JC.translations = {};
+        JC.pluginVersion = 'unknown';
+
+        if (JC.state) {
+            JC.state.activeShortcuts = {};
+            JC.state.removeContext = null;
+            if (JC.state.pauseScreenClickTimer != null) {
+                clearTimeout(JC.state.pauseScreenClickTimer);
+                JC.state.pauseScreenClickTimer = null;
+            }
+        }
+
+        const nextUserConfig = emptyUserConfig();
+        identity.own(nextUserConfig, change.current);
+        for (const value of Object.values(nextUserConfig)) identity.own(value, change.current);
+        JC.userConfig = nextUserConfig;
+
+        // The image filter consumes this cookie before JavaScript-backed UI can
+        // repaint. Rewrite/delete it inside the synchronous transition itself so
+        // B's first image request can never carry A's identity hint.
+        try {
+            const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+            if (change.current?.userId) {
+                document.cookie = `jc-spoiler-uid=${encodeURIComponent(change.current.userId)}; path=/; SameSite=Lax${secure}`;
+            } else {
+                document.cookie = `jc-spoiler-uid=; path=/; Max-Age=0; SameSite=Lax${secure}`;
+            }
+        } catch (_) { /* cookies can be disabled */ }
+    }
+
+    const identity = createIdentitySession(finalizeIdentityTransition, loaderDiagnostics);
+    JC.identity = identity;
+    JC.core.identity = identity;
+
+    /** All compatibility-key spellings associated with one canonical owner. */
+    function identityStorageUserIdVariants(context) {
+        if (!context?.userId) return [];
+        const canonical = String(context.userId);
+        const raw = String(identity.getRawUserId?.(context) || canonical).trim();
+        const dashed = /^[0-9a-f]{32}$/i.test(canonical)
+            ? `${canonical.slice(0, 8)}-${canonical.slice(8, 12)}-${canonical.slice(12, 16)}-${canonical.slice(16, 20)}-${canonical.slice(20)}`
+            : '';
+        return [...new Set([canonical, raw, dashed].filter(Boolean))];
+    }
+
+    /** Resolve the stable server half of the canonical identity. */
+    function getClientServerId(client) {
+        if (!client) return '';
+        try {
+            const direct = typeof client.serverId === 'function' ? client.serverId() : client.serverId;
+            if (direct) return direct;
+        } catch (_) { /* try the server-info forms */ }
+        try {
+            const info = typeof client.serverInfo === 'function' ? client.serverInfo() : client._serverInfo;
+            if (info?.Id || info?.ServerId) return info.Id || info.ServerId;
+        } catch (_) { /* fall through to address */ }
+        try {
+            const address = typeof client.serverAddress === 'function'
+                ? client.serverAddress()
+                : client.getUrl?.('/');
+            if (address) return new URL(address, window.location.href).origin;
+        } catch (_) { /* unknown server is still fenced by epoch/user */ }
+        return '';
+    }
+
+    const AUTH_WRAPPED = '__jcIdentityAuthenticationWrapped';
+    let identityMonitorId = null;
+    let pendingActivation = null;
+    let apiClientPropertyHookInstalled = false;
+
+    /** Preserve the host setter exactly while bracketing it with identity work. */
+    function createAuthenticationWrapper(original, before, after, onError) {
+        return function(accessKey, userId) {
+            const beforeResult = before.call(this, accessKey, userId);
+            let result;
+            try {
+                result = original.apply(this, arguments);
+            } catch (error) {
+                // Reconcile synchronously while the host still exposes whatever
+                // authentication state its failed setter retained. Never replace
+                // the host's original exception with a reconciliation failure.
+                try { onError?.call(this, beforeResult, error, accessKey, userId); }
+                catch (_) { /* preserve the original host throw */ }
+                throw error;
+            }
+            after.call(this, beforeResult, accessKey, userId);
+            return result;
+        };
+    }
+
+    /**
+     * Replace a configurable host property with a publication fence while
+     * retaining its enumerability, configurability, getter/setter `this` value,
+     * and assignment failure behaviour. A configurable writable data property
+     * necessarily becomes an accessor, but normal host reads/writes retain the
+     * same value semantics. Non-configurable/read-only properties are left
+     * untouched so the polling bridge can remain the graceful fallback.
+     */
+    function installPropertyPublicationFence(target, propertyName, beforePublish, afterPublish) {
+        if (!target || !propertyName) return false;
+        const descriptor = Object.getOwnPropertyDescriptor(target, propertyName);
+        if (!descriptor) {
+            // Do not reserve an absent global: jellyfin-web may install it later
+            // with a descriptor whose semantics we must preserve. Readiness/monitor
+            // retries call this helper again once the real property exists.
+            return false;
+        }
+        if (!descriptor.configurable) return false;
+
+        const isData = Object.prototype.hasOwnProperty.call(descriptor, 'value');
+        if (isData && !descriptor.writable) return false;
+        if (!isData && typeof descriptor.set !== 'function') return false;
+
+        let currentValue = isData ? descriptor.value : undefined;
+        const originalGet = descriptor.get;
+        const originalSet = descriptor.set;
+        const readCurrent = function(receiver) {
+            return isData ? currentValue : originalGet?.call(receiver);
+        };
+        const runBefore = function(receiver, next, previous) {
+            try { return beforePublish?.call(receiver, next, previous); }
+            catch (_) { return undefined; }
+        };
+        const runAfter = function(receiver, next, prepared, error) {
+            try { afterPublish?.call(receiver, next, prepared, error); }
+            catch (_) { /* a fence must never break the host's assignment */ }
+        };
+
+        try {
+            Object.defineProperty(target, propertyName, {
+                configurable: descriptor.configurable,
+                enumerable: descriptor.enumerable,
+                get: function() {
+                    return readCurrent(this);
+                },
+                set: function(next) {
+                    // Match OrdinarySetWithOwnDescriptor for a writable data
+                    // property used with a different Reflect.set receiver.
+                    if (isData && this !== target) {
+                        if (this !== null && (typeof this === 'object' || typeof this === 'function')) {
+                            Object.defineProperty(this, propertyName, {
+                                configurable: true,
+                                enumerable: descriptor.enumerable,
+                                writable: true,
+                                value: next
+                            });
+                        }
+                        return;
+                    }
+
+                    const previous = readCurrent(this);
+                    const prepared = this === target
+                        ? runBefore(this, next, previous)
+                        : undefined;
+                    try {
+                        if (isData) currentValue = next;
+                        else originalSet.call(this, next);
+                    } catch (error) {
+                        if (this === target) runAfter(this, previous, prepared, error);
+                        throw error;
+                    }
+                    if (this === target) runAfter(this, readCurrent(this), prepared, null);
+                }
+            });
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function scheduleInitializationForClient(client, context) {
+        if (!context || !identity.isCurrent(context)) return;
+        pendingActivation = { client, context };
+        pumpPendingActivation();
+    }
+
+    function pumpPendingActivation() {
+        const pending = pendingActivation;
+        if (!pending || !identity.isCurrent(pending.context)) {
+            pendingActivation = null;
+            return;
+        }
+        let liveUserId = '';
+        try { liveUserId = pending.client?.getCurrentUserId?.() || ''; } catch (_) { /* wait */ }
+        const normalizedLiveUser = String(liveUserId).replace(/-/g, '').toLowerCase();
+        const rawLiveServer = String(getClientServerId(pending.client) || '');
+        const normalizedLiveServer = rawLiveServer
+            ? rawLiveServer.trim().replace(/-/g, '').toLowerCase()
+            : 'unknown-server';
+        if (window.ApiClient !== pending.client
+            || normalizedLiveUser !== pending.context.userId
+            || normalizedLiveServer !== pending.context.serverId) return;
+        pendingActivation = null;
+        void startInitialization(pending.context, pending.client);
+    }
+
+    /** Patch the common ApiClient owner once; every server instance shares it. */
+    function installAuthenticationHook(client) {
+        if (!client) return false;
+        let owner = client;
+        while (owner && !Object.prototype.hasOwnProperty.call(owner, 'setAuthenticationInfo')) {
+            owner = Object.getPrototypeOf(owner);
+        }
+        const original = owner?.setAuthenticationInfo;
+        if (!owner || typeof original !== 'function') return false;
+        if (original[AUTH_WRAPPED]) return true;
+
+        const wrapped = createAuthenticationWrapper(
+            original,
+            function(_accessKey, userId) {
+                // Invalidate A before the host mutates its token/user. This
+                // closes the B-auth/A-snapshot window, including sync handlers.
+                return identity.transition(getClientServerId(this), userId, 'setAuthenticationInfo');
+            },
+            function(next, _accessKey, userId) {
+                if (userId && next) scheduleInitializationForClient(this, next);
+                else pendingActivation = null;
+            },
+            function(_attempted, _error) {
+                let liveUserId = '';
+                try { liveUserId = this.getCurrentUserId?.() || ''; } catch (_) { /* signed out */ }
+                const restored = identity.transition(
+                    getClientServerId(this),
+                    liveUserId,
+                    'setAuthenticationInfo-failed'
+                );
+                if (liveUserId && restored) scheduleInitializationForClient(this, restored);
+                else pendingActivation = null;
+            }
+        );
+        Object.defineProperty(wrapped, AUTH_WRAPPED, { value: true });
+        Object.defineProperty(wrapped, '__jcOriginal', { value: original });
+        try {
+            const descriptor = Object.getOwnPropertyDescriptor(owner, 'setAuthenticationInfo');
+            // A mixed accessor+value descriptor is invalid by definition. Only
+            // patch a writable/configurable data property directly; accessors use
+            // the instance fallback below.
+            if (descriptor
+                && Object.prototype.hasOwnProperty.call(descriptor, 'value')
+                && descriptor.writable !== false) {
+                Object.defineProperty(owner, 'setAuthenticationInfo', { ...descriptor, value: wrapped });
+                return true;
+            }
+        } catch (_) {
+            // Try the instance fallback below.
+        }
+        try {
+            client.setAuthenticationInfo = wrapped;
+            return client.setAuthenticationInfo === wrapped;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function prepareApiClientPublication(client) {
+        installAuthenticationHook(client);
+        let userId = '';
+        try { userId = client?.getCurrentUserId?.() || ''; } catch (_) { /* signed out */ }
+        const context = identity.transition(getClientServerId(client), userId, 'ApiClient-replacement');
+        return { client, context, userId };
+    }
+
+    function completeApiClientPublication(publishedClient, prepared, error) {
+        if (error) {
+            // An opaque host setter may reject after the pre-publication fence.
+            // Reconcile the value it actually retained without swallowing or
+            // changing the original exception.
+            try { reconcileCurrentIdentity('ApiClient-replacement-failed'); } catch (_) { /* monitor will retry */ }
+            return;
+        }
+        if (!prepared || publishedClient !== prepared.client) {
+            // An accessor may canonicalize the assigned value. Its setter was
+            // fenced against the candidate; now reconcile the effective value.
+            try { reconcileCurrentIdentity('ApiClient-replacement-effective'); } catch (_) { /* monitor will retry */ }
+            return;
+        }
+        if (prepared.context && prepared.userId) {
+            scheduleInitializationForClient(publishedClient, prepared.context);
+        } else {
+            pendingActivation = null;
+        }
+    }
+
+    function installApiClientReplacementHook() {
+        if (apiClientPropertyHookInstalled) return true;
+        apiClientPropertyHookInstalled = installPropertyPublicationFence(
+            window,
+            'ApiClient',
+            prepareApiClientPublication,
+            completeApiClientPublication
+        );
+        return apiClientPropertyHookInstalled;
+    }
+
+    function reconcileCurrentIdentity(reason = 'monitor') {
+        const client = window.ApiClient;
+        if (!client) return null;
+        installAuthenticationHook(client);
+        let userId = '';
+        try { userId = client.getCurrentUserId?.() || ''; } catch (_) { /* signed out */ }
+        const context = identity.transition(getClientServerId(client), userId, reason);
+        if (context && userId) scheduleInitializationForClient(client, context);
+        return context;
+    }
+
+    function ensureIdentityBridge() {
+        // This configurable-property path fences an already-authenticated B
+        // synchronously, before the assignment makes B globally observable.
+        // The interval below remains for non-configurable globals and foreign
+        // replacements that redefine the property descriptor entirely.
+        installApiClientReplacementHook();
+        const client = window.ApiClient;
+        if (client) installAuthenticationHook(client);
+        if (identityMonitorId === null) {
+            // Belt-and-braces for a future host that gives each server a distinct
+            // ApiClient implementation. The setter hook is the synchronous paved
+            // road; this single document-lifetime monitor installs on replacements.
+            identityMonitorId = window.setInterval(() => {
+                try {
+                    installApiClientReplacementHook();
+                    reconcileCurrentIdentity('identity-monitor');
+                    pumpPendingActivation();
+                } catch (_) { /* host is between clients */ }
+            }, 250);
+        }
+    }
 
     /**
      * Converts PascalCase object keys to camelCase recursively.
@@ -284,18 +861,22 @@
      * Loads the translation module and exposes JC.loadTranslations.
      * @returns {Promise<void>}
      */
-    async function loadTranslationsModule() {
+    let translationsModulePromise = null;
+    async function loadTranslationsModule(client = ApiClient) {
         if (typeof JC.loadTranslations === 'function') return;
-        await new Promise((resolve) => {
+        if (translationsModulePromise) return translationsModulePromise;
+        translationsModulePromise = new Promise((resolve) => {
             const script = document.createElement('script');
-            script.src = ApiClient.getUrl(`/JellyfinCanopy/dist/translations.js?v=${getScriptVersion()}`);
+            script.src = client.getUrl(`/JellyfinCanopy/dist/translations.js?v=${getScriptVersion()}`);
             script.onload = () => resolve();
             script.onerror = (e) => {
                 console.error('🪼 Jellyfin Canopy: Failed to load translations module', e);
+                translationsModulePromise = null;
                 resolve();
             };
             document.head.appendChild(script);
         });
+        await translationsModulePromise;
     }
 
     /**
@@ -315,21 +896,27 @@
      * Fetches plugin configuration and version from the server.
      * @returns {Promise<[object, string]>} A promise that resolves with config and version.
      */
-     function loadPluginData() {
-        const configPromise = ApiClient.ajax({
+     function loadPluginData(client = ApiClient, scope = null) {
+        const configRequest = client.ajax({
             type: 'GET',
-            url: ApiClient.getUrl('/JellyfinCanopy/public-config'),
-            dataType: 'json'
-        }).catch((e) => {
+            url: client.getUrl('/JellyfinCanopy/public-config'),
+            dataType: 'json',
+            signal: scope?.signal
+        });
+        const configPromise = (scope ? scope.race(configRequest) : configRequest).catch((e) => {
+            if (scope?.signal?.aborted) return {};
             console.error("🪼 Jellyfin Canopy: Failed to fetch public config", e);
             return {}; // Return empty object on error
         });
 
-        const versionPromise = ApiClient.ajax({
+        const versionRequest = client.ajax({
             type: 'GET',
-            url: ApiClient.getUrl('/JellyfinCanopy/version'),
-            dataType: 'text'
-        }).catch((e) => {
+            url: client.getUrl('/JellyfinCanopy/version'),
+            dataType: 'text',
+            signal: scope?.signal
+        });
+        const versionPromise = (scope ? scope.race(versionRequest) : versionRequest).catch((e) => {
+            if (scope?.signal?.aborted) return 'unknown';
              console.error("🪼 Jellyfin Canopy: Failed to fetch version", e);
             return 'unknown'; // Return placeholder on error
         });
@@ -344,14 +931,17 @@
      * JC.pluginConfig once that object exists.
      * @returns {Promise<object|null>} The private config, or null on failure.
      */
-    async function loadPrivateConfig() {
+    async function loadPrivateConfig(client = ApiClient, scope = null) {
         try {
-            return await ApiClient.ajax({
+            const request = client.ajax({
                 type: 'GET',
-                url: ApiClient.getUrl('/JellyfinCanopy/private-config'),
-                dataType: 'json'
+                url: client.getUrl('/JellyfinCanopy/private-config'),
+                dataType: 'json',
+                signal: scope?.signal
             });
+            return await (scope ? scope.race(request) : request);
         } catch (error) {
+            if (scope?.signal?.aborted) return null;
             console.warn('🪼 Jellyfin Canopy: Could not load private configuration. Some features may be limited.', error);
             return null; // Don't merge anything if it fails
         }
@@ -367,11 +957,13 @@
      * cache-buster, and with a sourcemap for real-file stack traces).
      * @returns {Promise<boolean>} true when the bundle loaded, false on failure.
      */
-    function loadBundle() {
-        return new Promise((resolve) => {
+    let bundleLoadPromise = null;
+    function loadBundle(client = ApiClient) {
+        if (bundleLoadPromise) return bundleLoadPromise;
+        bundleLoadPromise = new Promise((resolve) => {
             const script = document.createElement('script');
             script.async = false;
-            script.src = ApiClient.getUrl(`/JellyfinCanopy/dist/jc.bundle.js?v=${getScriptVersion()}`);
+            script.src = client.getUrl(`/JellyfinCanopy/dist/jc.bundle.js?v=${getScriptVersion()}`);
             script.onload = () => resolve(true);
             script.onerror = (e) => {
                 console.error(
@@ -382,10 +974,12 @@
                     e
                 );
                 script.remove();
+                bundleLoadPromise = null;
                 resolve(false);
             };
             document.head.appendChild(script);
         });
+        return bundleLoadPromise;
     }
 
      /**
@@ -700,9 +1294,9 @@
     let readyRetryCount = 0;
     // Cap the ApiClient-readiness poll so a login page left open unauthenticated
     // does not busy-loop (and re-parse jellyfin_credentials) forever. ~10*50ms +
-    // 590*250ms ≈ 2.5 min — generous enough for a real user typing credentials;
-    // on login Jellyfin full-reloads, discarding the loop, so this only bites the
-    // never-authenticated idle case.
+    // 590*250ms ≈ 2.5 min — generous enough for a real user typing credentials.
+    // The identity setter hook remains installed after this readiness poll stops,
+    // so a later no-reload login still starts its own epoch initialization.
     const MAX_READY_RETRIES = 600;
 
     /**
@@ -718,106 +1312,265 @@
     }
 
     /**
-     * Main initialization function.
+     * Per-epoch loader work registry. `AbortController` gives cooperative host
+     * transports a real cancellation signal; the cancellation promise also
+     * settles the logical work immediately when an older host ajax ignores it.
+     * Old entries are synchronously removed by cancelExcept(), so indefinitely
+     * held raw promises cannot grow either diagnostic map across switches.
      */
-    async function initialize() {
-        // Check for server ID mismatch - stop retrying if credentials are stale
-        if (hasServerIdMismatch()) {
-            mismatchRetryCount++;
-            if (mismatchRetryCount >= MAX_MISMATCH_RETRIES) {
-                console.warn('🪼 Jellyfin Canopy: Server ID mismatch detected - stopping to allow re-authentication');
-                JC?.hideSplashScreen?.();
-                return;
-            }
-            setTimeout(initialize, 300);
-            return;
+    function createInitializationRegistry(makeCancellationError = () => new Error('Initialization cancelled')) {
+        const workByEpoch = new Map();
+        const scopesByEpoch = new Map();
+        let cancelledThroughEpoch = 0;
+        let latestTransitionEpoch = 0;
+
+        function createScope(epoch) {
+            const controller = new AbortController();
+            let cancelled = false;
+            let cancellationError = null;
+            let rejectCancellation;
+            const cancellation = new Promise((_, reject) => { rejectCancellation = reject; });
+            const scope = {
+                epoch,
+                signal: controller.signal,
+                race(promise) {
+                    if (cancelled) return Promise.reject(cancellationError);
+                    return Promise.race([Promise.resolve(promise), cancellation]);
+                },
+                cancel() {
+                    if (cancelled) return;
+                    cancelled = true;
+                    cancellationError = makeCancellationError();
+                    controller.abort();
+                    rejectCancellation(cancellationError);
+                }
+            };
+            return scope;
         }
 
-        // Normal retry logic (no mismatch)
-        if (typeof ApiClient === 'undefined' || !ApiClient.getCurrentUserId?.()) {
-            if (readyRetryCount >= MAX_READY_RETRIES) {
-                console.warn('🪼 Jellyfin Canopy: ApiClient not ready after max retries - stopping poll');
-                JC?.hideSplashScreen?.();
-                return;
+        function start(epoch, run) {
+            if (epoch <= cancelledThroughEpoch) {
+                return Promise.reject(makeCancellationError());
             }
-            setTimeout(initialize, nextReadyPollDelay());
-            return;
+            const existing = workByEpoch.get(epoch);
+            if (existing) return existing;
+            let scope = scopesByEpoch.get(epoch);
+            if (!scope) {
+                scope = createScope(epoch);
+                scopesByEpoch.set(epoch, scope);
+            }
+            let produced;
+            try { produced = run(scope); }
+            catch (error) { produced = Promise.reject(error); }
+            const work = scope.race(produced).finally(() => {
+                if (workByEpoch.get(epoch) === work) workByEpoch.delete(epoch);
+            });
+            workByEpoch.set(epoch, work);
+            return work;
         }
 
-        // Reset mismatch counter on success
-        mismatchRetryCount = 0;
-
-        try {
-            // PERF: single parallel fetch wave. Every boot request that only
-            // needs auth/userId starts immediately instead of one-per-await —
-            // the old chain was four network round-trips deep (public config →
-            // private config → /Plugins → 5 user-settings files) even though
-            // none of those responses feed the next request.
-            const userId = ApiClient.getCurrentUserId();
-
-            // Prefetch full user object once (needed for admin check in arr-links etc.)
-            // Fire-and-forget alongside the fetch wave; result available as JC.currentUser
-            ApiClient.getCurrentUser().then(u => { JC.currentUser = u; }).catch(() => {});
-
-            const fetchPromises = [
-                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${userId}/settings.json?_=${Date.now()}`), dataType: 'json' })
-                         .then(data => ({ name: 'settings', status: 'fulfilled', value: data }))
-                         .catch(e => ({ name: 'settings', status: 'rejected', reason: e })),
-                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${userId}/shortcuts.json?_=${Date.now()}`), dataType: 'json' })
-                         .then(data => ({ name: 'shortcuts', status: 'fulfilled', value: data }))
-                         .catch(e => ({ name: 'shortcuts', status: 'rejected', reason: e })),
-                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${userId}/bookmark.json?_=${Date.now()}`), dataType: 'json' })
-                         .then(data => ({ name: 'bookmark', status: 'fulfilled', value: data }))
-                         .catch(e => ({ name: 'bookmark', status: 'rejected', reason: e })),
-                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${userId}/elsewhere.json?_=${Date.now()}`), dataType: 'json' })
-                         .then(data => ({ name: 'elsewhere', status: 'fulfilled', value: data }))
-                         .catch(e => ({ name: 'elsewhere', status: 'rejected', reason: e })),
-                ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${userId}/hidden-content.json?_=${Date.now()}`), dataType: 'json' })
-                         .then(data => ({ name: 'hiddenContent', status: 'fulfilled', value: data }))
-                         .catch(e => ({ name: 'hiddenContent', status: 'rejected', reason: e }))
-            ];
-            // Use allSettled to get results even if some fetches fail
-            const userSettingsPromise = Promise.allSettled(fetchPromises);
-
-            // Stage 1: Load base configs and translations
-            await loadTranslationsModule();
-            const [[config, version], translations, privateConfig] = await Promise.all([
-                loadPluginData(),
-                loadTranslations(), // Load translations first
-                loadPrivateConfig()
-            ]);
-
-            JC.pluginConfig = config && typeof config === 'object' ? config : {};
-            JC.pluginVersion = version || 'unknown';
-            JC.translations = translations || {};
-            JC.t = window.JellyfinCanopy.t; // Ensure the real function is assigned
-            // Merge the sensitive keys into the main config object
-            if (privateConfig && typeof privateConfig === 'object') {
-                Object.assign(JC.pluginConfig, privateConfig);
+        function cancelExcept(keepEpoch, transitionEpoch = keepEpoch) {
+            const transitionNumber = Number(transitionEpoch) || 0;
+            // A stale outer transition must not cancel scopes owned by a newer
+            // nested transition. Identity epochs are monotonic document-wide.
+            if (transitionNumber < latestTransitionEpoch) return;
+            latestTransitionEpoch = transitionNumber;
+            cancelledThroughEpoch = Math.max(
+                cancelledThroughEpoch,
+                keepEpoch == null ? transitionNumber : Number(keepEpoch) - 1
+            );
+            for (const [epoch, scope] of [...scopesByEpoch.entries()]) {
+                if (epoch === keepEpoch) continue;
+                if (transitionNumber && epoch > transitionNumber) continue;
+                scope.cancel();
+                scopesByEpoch.delete(epoch);
             }
+            // Evict synchronously. Each work promise will also self-check in its
+            // finally, so a late A settlement cannot delete a newer entry.
+            for (const epoch of [...workByEpoch.keys()]) {
+                if (epoch !== keepEpoch && (!transitionNumber || epoch <= transitionNumber)) {
+                    workByEpoch.delete(epoch);
+                }
+            }
+        }
 
-            // PERF(R7): warm the server tag-cache fetch NOW — its only gates are
-            // auth/userId and the TagCacheServerMode flag, which public config
-            // (this stage) just delivered. Cold-boot first tags used to wait for
-            // bundle download + full feature init before the tag pipeline even
-            // STARTED this request; handing the in-flight promise to
-            // src/enhanced/tag-pipeline.ts (which falls back to its own fetch
-            // when absent) takes the whole bundle-boot serialization out of the
-            // first-tag latency. Resolves null on failure so the pipeline's
-            // fallback path handles errors exactly as before.
-            if (JC.pluginConfig?.TagCacheServerMode) {
-                JC._tagCachePrefetch = ApiClient.ajax({
+        return Object.freeze({
+            start,
+            cancelExcept,
+            getPendingCount: () => workByEpoch.size,
+            getControllerCount: () => scopesByEpoch.size
+        });
+    }
+
+    initializationRegistry = createInitializationRegistry(identityChangedError);
+    let initializedEpoch = -1;
+    let cacheUnloadInstalled = false;
+
+    function identityChangedError() {
+        const error = new Error('Identity changed during Jellyfin Canopy initialization');
+        error.name = 'IdentityChangedError';
+        return error;
+    }
+
+    function requireCurrentIdentity(context) {
+        if (!identity.isCurrent(context)) throw identityChangedError();
+    }
+
+    function defaultUserFile(name) {
+        if (name === 'shortcuts') return { Shortcuts: [] };
+        if (name === 'bookmark') return { bookmarks: {} };
+        if (name === 'hiddenContent') return { items: {}, settings: {} };
+        return {};
+    }
+
+    /** Jellyfin host/ajax error shapes seen across web-client versions. */
+    function isNotFoundError(error) {
+        if (!error || (typeof error !== 'object' && typeof error !== 'function')) return false;
+        const candidates = [
+            error.status,
+            error.statusCode,
+            error.response?.status,
+            error.xhr?.status,
+            error.target?.status
+        ];
+        return candidates.some((value) => Number(value) === 404);
+    }
+
+    /** Fetch all five owner files once and build a local, unpublished snapshot. */
+    async function fetchUserConfig(client, context, scope) {
+        const files = [
+            ['settings', 'settings.json'],
+            ['shortcuts', 'shortcuts.json'],
+            ['bookmark', 'bookmark.json'],
+            ['elsewhere', 'elsewhere.json'],
+            ['hiddenContent', 'hidden-content.json']
+        ];
+        const results = await Promise.all(files.map(async ([name, file]) => {
+            try {
+                const request = client.ajax({
                     type: 'GET',
-                    url: ApiClient.getUrl(`/JellyfinCanopy/tag-cache/${userId}`),
-                    dataType: 'json'
-                }).catch(() => null);
+                    url: client.getUrl(`/JellyfinCanopy/user-settings/${encodeURIComponent(context.userId)}/${file}?_=${Date.now()}`),
+                    dataType: 'json',
+                    signal: scope.signal
+                });
+                const value = await scope.race(request);
+                return { name, value, missing: false };
+            } catch (reason) {
+                if (isNotFoundError(reason)) return { name, value: null, missing: true };
+                // Authentication, transport, server, cancellation, and malformed
+                // success failures must abort this initialization. Publishing a
+                // fabricated empty owner snapshot would erase real preferences.
+                throw reason;
             }
+        }));
+        requireCurrentIdentity(context);
 
-            // Check if server has triggered a translation cache clear
-            const serverTranslationClearTs = JC.pluginConfig.ClearTranslationCacheTimestamp || 0;
+        const snapshot = emptyUserConfig();
+        for (const result of results) {
+            const { name, value, missing } = result;
+            if (missing) {
+                snapshot[name] = defaultUserFile(name);
+            } else if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                throw new Error(`Invalid ${name} user-settings response`);
+            } else if (name === 'bookmark') {
+                snapshot[name] = toCamelCase(value, { preserveKey: (key) => /^bm_/i.test(key) });
+            } else if (name === 'settings' || name === 'hiddenContent') {
+                snapshot[name] = toCamelCase(value);
+            } else {
+                snapshot[name] = value;
+            }
+        }
+        return snapshot;
+    }
+
+    function publishIdentitySnapshot(context, snapshot) {
+        requireCurrentIdentity(context);
+        const userConfig = identity.own(snapshot.userConfig, context);
+        for (const value of Object.values(userConfig)) identity.own(value, context);
+
+        JC.pluginConfig = identity.own(snapshot.pluginConfig, context);
+        JC.pluginVersion = snapshot.version || 'unknown';
+        JC.translations = identity.own(snapshot.translations || {}, context);
+        JC.currentUser = snapshot.currentUser ? identity.own(snapshot.currentUser, context) : null;
+        JC.userConfig = userConfig;
+        JC.t = window.JellyfinCanopy.t;
+    }
+
+    function installCacheUnloadOnce() {
+        if (cacheUnloadInstalled) return;
+        cacheUnloadInstalled = true;
+        window.addEventListener('beforeunload', () => {
+            if (identity.capture()) JC._cacheManager?.forceSave?.();
+        });
+    }
+
+    /** Stage-6 activation. Old-epoch teardown always ran before these gates. */
+    function activateFeatures(context) {
+        requireCurrentIdentity(context);
+        if (typeof JC.initializeCanopyScript === 'function') JC.initializeCanopyScript();
+        if (typeof JC.initializeElsewhereScript === 'function' && JC.pluginConfig?.ElsewhereEnabled) JC.initializeElsewhereScript();
+        if (typeof JC.initializeSeerrScript === 'function' && JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowSearchResults !== false) JC.initializeSeerrScript();
+        if (typeof JC.seerrIssueReporter?.initialize === 'function' && JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowReportButton) JC.seerrIssueReporter.initialize();
+        if (typeof JC.initializePauseScreen === 'function') JC.initializePauseScreen();
+        if (typeof JC.initializeBookmarks === 'function') JC.initializeBookmarks();
+        if (typeof JC.initializeQualityTags === 'function' && JC.currentSettings?.qualityTagsEnabled) JC.initializeQualityTags();
+        if (typeof JC.initializeGenreTags === 'function' && JC.currentSettings?.genreTagsEnabled) JC.initializeGenreTags();
+        if (typeof JC.initializeRatingTags === 'function' && JC.currentSettings?.ratingTagsEnabled) JC.initializeRatingTags();
+        if (typeof JC.initializeUserReviewTags === 'function' && JC.pluginConfig?.ShowUserReviews && JC.pluginConfig?.ShowUserRatingOnPosters && JC.currentSettings?.ratingTagsEnabled) JC.initializeUserReviewTags();
+        if (typeof JC.initializeArrLinksScript === 'function' && JC.pluginConfig?.ArrLinksEnabled) JC.initializeArrLinksScript();
+        if (typeof JC.initializeArrTagLinksScript === 'function' && JC.pluginConfig?.ArrTagsShowAsLinks) JC.initializeArrTagLinksScript();
+        if (typeof JC.initializeLetterboxdLinksScript === 'function' && JC.pluginConfig?.LetterboxdEnabled) JC.initializeLetterboxdLinksScript();
+        if (typeof JC.initializeReviewsScript === 'function' && (JC.pluginConfig?.ShowReviews || JC.pluginConfig?.ShowUserReviews)) JC.initializeReviewsScript();
+        if (typeof JC.initializeLanguageTags === 'function' && JC.currentSettings?.languageTagsEnabled) JC.initializeLanguageTags();
+        if (typeof JC.initializePeopleTags === 'function' && JC.currentSettings?.peopleTagsEnabled) JC.initializePeopleTags();
+        if (typeof JC.tagPipeline?.initialize === 'function') JC.tagPipeline.initialize();
+        if (typeof JC.initializeOsdRating === 'function') JC.initializeOsdRating();
+        if (typeof JC.initializeHiddenContent === 'function' && JC.pluginConfig?.HiddenContentEnabled) JC.initializeHiddenContent();
+        if (JC.pluginConfig?.ColoredRatingsEnabled && typeof JC.initializeColoredRatings === 'function') JC.initializeColoredRatings();
+        if (JC.pluginConfig?.ThemeSelectorEnabled && typeof JC.initializeThemeSelector === 'function') JC.initializeThemeSelector();
+        if (JC.pluginConfig?.ColoredActivityIconsEnabled && typeof JC.initializeActivityIcons === 'function') JC.initializeActivityIcons();
+        if (JC.pluginConfig?.PluginIconsEnabled && typeof JC.initializePluginIcons === 'function') JC.initializePluginIcons();
+        if (JC.pluginConfig?.ActiveStreamsEnabled && typeof JC.activeStreams?.initialize === 'function') JC.activeStreams.initialize();
+        if (typeof JC.initializePagesFramework === 'function') JC.initializePagesFramework();
+    }
+
+    async function runInitialization(context, client, scope) {
+        try {
+            requireCurrentIdentity(context);
+
+            // Start every independent owner read in one wave. Nothing is
+            // published until all values belong to this still-current epoch.
+            const userConfigPromise = fetchUserConfig(client, context, scope);
+            // A failed owner read is not equivalent to an absent owner. Let the
+            // initialization fail so the monitor retries without publishing a
+            // partial B snapshot.
+            const currentUserPromise = scope.race(client.getCurrentUser());
+            const pluginDataPromise = loadPluginData(client, scope);
+            const privateConfigPromise = loadPrivateConfig(client, scope);
+
+            await scope.race(loadTranslationsModule(client));
+            requireCurrentIdentity(context);
+            const translationsPromise = scope.race(loadTranslations());
+
+            const [userConfig, currentUser, pluginData, privateConfig, translations] = await Promise.all([
+                userConfigPromise,
+                currentUserPromise,
+                pluginDataPromise,
+                privateConfigPromise,
+                translationsPromise
+            ]);
+            requireCurrentIdentity(context);
+
+            const [publicConfig, version] = pluginData;
+            const pluginConfig = publicConfig && typeof publicConfig === 'object'
+                ? { ...publicConfig }
+                : {};
+            if (privateConfig && typeof privateConfig === 'object') Object.assign(pluginConfig, privateConfig);
+
+            let nextTranslations = translations || {};
+            const serverTranslationClearTs = pluginConfig.ClearTranslationCacheTimestamp || 0;
             const localTranslationClearTs = parseInt(localStorage.getItem('JC_translation_clear_ts') || '0', 10);
             if (serverTranslationClearTs > localTranslationClearTs) {
-                console.log(`🪼 Jellyfin Canopy: Server-triggered translation cache clear (${new Date(serverTranslationClearTs).toISOString()})`);
                 for (let i = localStorage.length - 1; i >= 0; i--) {
                     const key = localStorage.key(i);
                     if (key && (key.startsWith('JC_translation_') || key.startsWith('JC_translation_ts_'))) {
@@ -825,194 +1578,140 @@
                     }
                 }
                 localStorage.setItem('JC_translation_clear_ts', serverTranslationClearTs.toString());
-                // Reload translations with fresh data
-                JC.translations = await loadTranslations() || {};
-                JC.t = window.JellyfinCanopy.t;
+                nextTranslations = await scope.race(loadTranslations()) || {};
+                requireCurrentIdentity(context);
             }
 
-            // Inject metadata icons CSS if enabled
-            try {
-                injectMetadataIcons(!!JC.pluginConfig?.MetadataIconsEnabled);
-            } catch (e) {
-                console.warn('🪼 Jellyfin Canopy: Failed to inject Metadata icons CSS', e);
-            }
-
-            // Stage 2: Collect the user-specific settings started in the
-            // parallel fetch wave above.
-            const results = await userSettingsPromise;
-
-            JC.userConfig = { settings: {}, shortcuts: { Shortcuts: [] }, bookmark: { bookmarks: {} }, elsewhere: {}, hiddenContent: { items: {}, settings: {} } };
-            results.forEach(result => {
-                if (result.status === 'fulfilled' && result.value) {
-                    const data = result.value;
-                    if (data.status === 'fulfilled' && data.value && typeof data.value === 'object') {
-                        // *** CONVERT PASCALCASE TO CAMELCASE ***
-                        if (data.name === 'bookmark') {
-                            // Preserve the bookmark ID dictionary keys (`Bm_…`) so
-                            // the server-generated id case is not mangled to `bm_…`.
-                            JC.userConfig[data.name] = toCamelCase(data.value, { preserveKey: (k) => /^bm_/i.test(k) });
-                        } else if (data.name === 'settings' || data.name === 'hiddenContent') {
-                            JC.userConfig[data.name] = toCamelCase(data.value);
-                        } else {
-                            JC.userConfig[data.name] = data.value;
-                        }
-                    } else if (data.status === 'rejected') {
-                        if (data.name === 'shortcuts') JC.userConfig.shortcuts = { Shortcuts: [] };
-                        else if (data.name === 'bookmark') JC.userConfig.bookmark = { bookmarks: {} };
-                        else if (data.name === 'elsewhere') JC.userConfig.elsewhere = {};
-                        else if (data.name === 'hiddenContent') JC.userConfig.hiddenContent = { items: {}, settings: {} };
-                        else JC.userConfig[data.name] = {};
-                    } else {
-                        if (data.name === 'shortcuts') JC.userConfig.shortcuts = { Shortcuts: [] };
-                        else if (data.name === 'bookmark') JC.userConfig.bookmark = { bookmarks: {} };
-                        else if (data.name === 'elsewhere') JC.userConfig.elsewhere = {};
-                        else if (data.name === 'hiddenContent') JC.userConfig.hiddenContent = { items: {}, settings: {} };
-                        else JC.userConfig[data.name] = {};
-                    }
-                } else {
-                    const name = result.value?.name || result.reason?.name || '';
-                    if (name === 'shortcuts') JC.userConfig.shortcuts = { Shortcuts: [] };
-                    else if (name === 'bookmark') JC.userConfig.bookmark = { bookmarks: {} };
-                    else if (name === 'elsewhere') JC.userConfig.elsewhere = {};
-                    else if (name === 'hiddenContent') JC.userConfig.hiddenContent = { items: {}, settings: {} };
-                    else if (name) JC.userConfig[name] = {};
-                }
+            publishIdentitySnapshot(context, {
+                pluginConfig,
+                version,
+                translations: nextTranslations,
+                currentUser,
+                userConfig
             });
 
-
-            // Warm the icon fonts while the bundle is still downloading, so
-            // glyphs are ready before the first injected icon paints (see
-            // preloadIconFonts for the PERF(R1)/PERF(R6) reasoning).
-            preloadIconFonts();
-
-            // Initialize splash screen
-            if (typeof JC.initializeSplashScreen === 'function') {
-                JC.initializeSplashScreen();
+            if (pluginConfig.TagCacheServerMode) {
+                const tagCacheRequest = client.ajax({
+                    type: 'GET',
+                    url: client.getUrl(`/JellyfinCanopy/tag-cache/${encodeURIComponent(context.userId)}`),
+                    dataType: 'json',
+                    signal: scope.signal
+                });
+                JC._tagCachePrefetch = scope.race(tagCacheRequest)
+                    .then((value) => identity.isCurrent(context) ? value : null)
+                    .catch(() => null);
             }
 
-            // Stage 3: Load the client bundle (every component, one script).
-            //
-            // The entire feature tree — core layer (navigation detection,
-            // lifecycle registry, shared body observer, fetch layer, base UI
-            // primitives) plus every feature module — lives in the TypeScript
-            // tree (entry src/main.ts) and ships as a single bundle built by
-            // scripts/build-bundle.js. Import edges in src/ define execution
-            // order; there is no longer a runtime or build-time component list.
-            //
-            // One bundle for every mode. Production serves it immutable behind a
-            // versioned URL; DevMode serves the same route with no-store + a fresh
-            // cache-buster per load (getScriptVersion() returns Date.now() in dev)
-            // and the linked sourcemap keeps stack traces on real source files.
-            const bundleLoaded = await loadBundle();
+            try { injectMetadataIcons(!!pluginConfig.MetadataIconsEnabled); }
+            catch (error) { console.warn('🪼 Jellyfin Canopy: Failed to inject Metadata icons CSS', error); }
+            preloadIconFonts();
+            JC.initializeSplashScreen?.();
+
+            // The process bundle executes once per document. B reuses its module
+            // graph and only re-runs the owner activation phase below.
+            const bundleLoaded = await scope.race(loadBundle(client));
+            requireCurrentIdentity(context);
             if (!bundleLoaded) {
-                if (typeof JC.hideSplashScreen === 'function') JC.hideSplashScreen();
+                JC.hideSplashScreen?.();
                 return;
             }
-            console.log('🪼 Jellyfin Canopy: All component scripts loaded.');
 
-            // Stage 4: Initialize core settings/shortcuts using potentially defined functions
-            if (typeof JC.loadSettings === 'function' && typeof JC.initializeShortcuts === 'function') {
-                JC.currentSettings = JC.loadSettings(); // This happens AFTER config.js is loaded
-                JC.initializeShortcuts();
-            } else {
-                 console.error("🪼 Jellyfin Canopy: FATAL - config.js functions not defined after script loading.");
-                 if (typeof JC.hideSplashScreen === 'function') JC.hideSplashScreen();
-                 return;
+            if (typeof JC.loadSettings !== 'function' || typeof JC.initializeShortcuts !== 'function') {
+                throw new Error('config.js functions not defined after bundle loading');
             }
+            JC.currentSettings = identity.own(JC.loadSettings(), context);
+            JC.initializeShortcuts();
 
-            if (userId) {
-                const languageKey = `${userId}-language`;
-                // Only seed the admin's default language if the user has no language set yet.
-                // This prevents overwriting the user's own language choice on every page load.
-                if (localStorage.getItem(languageKey) === null) {
-                    const desiredLanguage = (JC.currentSettings?.displayLanguage || '').trim();
-                    if (desiredLanguage) {
-                        const normalizeLangCode = (code) => {
-                            if (!code) return '';
-                            const parts = code.split('-');
-                            if (parts.length === 1) return parts[0].toLowerCase();
-                            if (parts.length === 2) return `${parts[0].toLowerCase()}-${parts[1].toUpperCase()}`;
-                            return code;
-                        };
-                        localStorage.setItem(languageKey, normalizeLangCode(desiredLanguage));
-                    }
-                }
-            }
+            const capturedRawUserId = String(identity.getRawUserId?.(context) || context.userId).trim();
+            const normalizedRawUserId = capturedRawUserId.replace(/-/g, '').toLowerCase();
+            const compatibilityUserId = normalizedRawUserId === context.userId
+                ? capturedRawUserId
+                : context.userId;
+            const languageKey = `${compatibilityUserId}-language`;
+            const scopedLanguageKey = `jc-display-language:${context.serverId}:${context.userId}`;
+            const desiredLanguage = String(JC.currentSettings?.displayLanguage || '').trim();
+            const parts = desiredLanguage.split('-');
+            const normalizedLanguage = !desiredLanguage
+                ? ''
+                : (parts.length === 1
+                    ? parts[0].toLowerCase()
+                    : (parts.length === 2 ? `${parts[0].toLowerCase()}-${parts[1].toUpperCase()}` : desiredLanguage));
+            localStorage.setItem(scopedLanguageKey, normalizedLanguage);
+            localStorage.setItem(languageKey, normalizedLanguage);
 
-            // Stage 5: Initialize theme system first
-            if (typeof JC.themer?.init === 'function') {
-                JC.themer.init();
-                console.log('🪼 Jellyfin Canopy: Theme system initialized.');
-            }
+            if (typeof JC.themer?.init === 'function') JC.themer.init();
+            installCacheUnloadOnce();
 
-            // Register unified cache save on page unload
-            window.addEventListener('beforeunload', () => {
-                JC._cacheManager.forceSave();
-            });
+            // Bundle participants that self-wire (live socket, identity caches)
+            // activate once per epoch before the legacy Stage-6 feature calls.
+            await identity.activate(context);
+            requireCurrentIdentity(context);
+            activateFeatures(context);
+            requireCurrentIdentity(context);
 
-            // Stage 6: Initialize feature modules
-            if (typeof JC.initializeCanopyScript === 'function') JC.initializeCanopyScript();
-            if (typeof JC.initializeElsewhereScript === 'function' && JC.pluginConfig?.ElsewhereEnabled) JC.initializeElsewhereScript();
-            if (typeof JC.initializeSeerrScript === 'function' && JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowSearchResults !== false) JC.initializeSeerrScript();
-            if (typeof JC.seerrIssueReporter?.initialize === 'function' && JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowReportButton) JC.seerrIssueReporter.initialize();
-            if (typeof JC.initializePauseScreen === 'function') JC.initializePauseScreen();
-            if (typeof JC.initializeBookmarks === 'function') JC.initializeBookmarks();
-            if (typeof JC.initializeQualityTags === 'function' && JC.currentSettings?.qualityTagsEnabled) JC.initializeQualityTags();
-            if (typeof JC.initializeGenreTags === 'function' && JC.currentSettings?.genreTagsEnabled) JC.initializeGenreTags();
-            if (typeof JC.initializeRatingTags === 'function' && JC.currentSettings?.ratingTagsEnabled) JC.initializeRatingTags();
-            if (typeof JC.initializeUserReviewTags === 'function' && JC.pluginConfig?.ShowUserReviews && JC.pluginConfig?.ShowUserRatingOnPosters && JC.currentSettings?.ratingTagsEnabled) JC.initializeUserReviewTags();
-            if (typeof JC.initializeArrLinksScript === 'function' && JC.pluginConfig?.ArrLinksEnabled) JC.initializeArrLinksScript();
-            if (typeof JC.initializeArrTagLinksScript === 'function' && JC.pluginConfig?.ArrTagsShowAsLinks) JC.initializeArrTagLinksScript();
-            if (typeof JC.initializeLetterboxdLinksScript === 'function' && JC.pluginConfig?.LetterboxdEnabled) JC.initializeLetterboxdLinksScript();
-            if (typeof JC.initializeReviewsScript === 'function' && (JC.pluginConfig?.ShowReviews || JC.pluginConfig?.ShowUserReviews)) JC.initializeReviewsScript();
-            if (typeof JC.initializeLanguageTags === 'function' && JC.currentSettings?.languageTagsEnabled) JC.initializeLanguageTags();
-            if (typeof JC.initializePeopleTags === 'function' && JC.currentSettings?.peopleTagsEnabled) JC.initializePeopleTags();
-            // Initialize the unified tag pipeline AFTER all tag renderers have registered
-            if (typeof JC.tagPipeline?.initialize === 'function') JC.tagPipeline.initialize();
-            if (typeof JC.initializeOsdRating === 'function') JC.initializeOsdRating();
-            // Skip hidden content initialization when feature is disabled server-wide — JC.hiddenContent stays undefined, safely disabling all downstream consumers
-            if (typeof JC.initializeHiddenContent === 'function' && JC.pluginConfig?.HiddenContentEnabled) JC.initializeHiddenContent();
-
-            if (JC.pluginConfig?.ColoredRatingsEnabled && typeof JC.initializeColoredRatings === 'function') {
-                JC.initializeColoredRatings();
-            }
-            if (JC.pluginConfig?.ThemeSelectorEnabled && typeof JC.initializeThemeSelector === 'function') {
-                JC.initializeThemeSelector();
-            }
-            if (JC.pluginConfig?.ColoredActivityIconsEnabled && typeof JC.initializeActivityIcons === 'function') {
-                JC.initializeActivityIcons();
-            }
-            if (JC.pluginConfig?.PluginIconsEnabled && typeof JC.initializePluginIcons === 'function') {
-                JC.initializePluginIcons();
-            }
-            if (JC.pluginConfig?.ActiveStreamsEnabled && typeof JC.activeStreams?.initialize === 'function') {
-                JC.activeStreams.initialize();
-            }
-            // Pages framework: one init wires the fallback-host hooks, the
-            // entry points, and the cold-start (deep-link) adoption for ALL
-            // pages — per-page availability is gated live inside the registry.
-            if (typeof JC.initializePagesFramework === 'function') {
-                JC.initializePagesFramework();
-            }
-
-            console.log('🪼 Jellyfin Canopy: All components initialized successfully.');
-
-            // Programmatic boot-complete marker: every component script has executed
-            // and every enabled initializeX() has run. Automation (E2E) waits on this
-            // instead of racing individual JC.* properties that appear mid-boot.
+            initializedEpoch = context.epoch;
             JC.initialized = true;
-
-            // Final Stage: Hide splash screen
-            if (typeof JC.hideSplashScreen === 'function') {
-                JC.hideSplashScreen();
-            }
-
+            document.dispatchEvent(new CustomEvent('jc:identityactivated', { detail: context }));
+            JC.hideSplashScreen?.();
+            console.log(`🪼 Jellyfin Canopy: identity epoch ${context.epoch} initialized successfully.`);
         } catch (error) {
-            console.error('🪼 Jellyfin Canopy: CRITICAL INITIALIZATION FAILURE:', error);
-             if (typeof JC.hideSplashScreen === 'function') {
-                JC.hideSplashScreen();
+            if (error?.name === 'IdentityChangedError') return;
+            if (identity.isCurrent(context)) {
+                console.error('🪼 Jellyfin Canopy: CRITICAL INITIALIZATION FAILURE:', error);
+                JC.hideSplashScreen?.();
             }
         }
+    }
+
+    function startInitialization(context, client) {
+        if (!context || !identity.isCurrent(context)) return Promise.resolve();
+        if (initializedEpoch === context.epoch && JC.initialized) return Promise.resolve();
+        return initializationRegistry.start(
+            context.epoch,
+            (scope) => runInitialization(context, client, scope)
+        ).catch((error) => {
+            // Cancellation is the expected completion path for an old epoch.
+            if (error?.name === 'IdentityChangedError' || error?.name === 'AbortError') return;
+            if (identity.isCurrent(context)) {
+                console.error('🪼 Jellyfin Canopy: initialization registry failure', error);
+            }
+        });
+    }
+
+    /** Initial readiness path; subsequent sign-ins enter through the host hook. */
+    async function initialize() {
+        ensureIdentityBridge();
+        if (hasServerIdMismatch()) {
+            mismatchRetryCount++;
+            if (mismatchRetryCount >= MAX_MISMATCH_RETRIES) {
+                console.warn('🪼 Jellyfin Canopy: Server ID mismatch detected - waiting for a valid host identity');
+                JC.hideSplashScreen?.();
+                return;
+            }
+            setTimeout(initialize, 300);
+            return;
+        }
+
+        if (typeof ApiClient === 'undefined' || !ApiClient.getCurrentUserId?.()) {
+            identity.transition('', null, 'initialize-signed-out');
+            if (readyRetryCount >= MAX_READY_RETRIES) {
+                console.warn('🪼 Jellyfin Canopy: ApiClient not ready after max retries - identity hook remains active');
+                JC.hideSplashScreen?.();
+                return;
+            }
+            setTimeout(initialize, nextReadyPollDelay());
+            return;
+        }
+
+        mismatchRetryCount = 0;
+        readyRetryCount = 0;
+        const client = ApiClient;
+        const context = identity.transition(
+            getClientServerId(client),
+            client.getCurrentUserId(),
+            'initialization'
+        );
+        await startInitialization(context, client);
     }
 
     // Load splash screen immediately (before main initialization)

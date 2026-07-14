@@ -47,6 +47,8 @@ export interface CacheManager {
     unregister(saveCallback: () => void): void;
     markDirty(): void;
     forceSave(): void;
+    /** Cancel a scheduled identity-owned flush without dropping stable callbacks. */
+    cancelPending(): void;
 }
 
 /**
@@ -74,6 +76,50 @@ export interface HotCache {
 }
 
 // ── Core surface contracts (frozen until the facade phase) ─────────────────
+
+/** Immutable owner of one authenticated Jellyfin client epoch. */
+export interface IdentityContext {
+    readonly serverId: string;
+    readonly userId: string;
+    readonly epoch: number;
+}
+
+/** Synchronous transition delivered to identity reset participants. */
+export interface IdentityChange {
+    readonly previous: IdentityContext | null;
+    readonly current: IdentityContext | null;
+    readonly epoch: number;
+    readonly reason: string;
+}
+
+/**
+ * Document-lifetime identity controller created by js/plugin.js before the
+ * bundle loads. Objects that can later be persisted are explicitly owner-tagged
+ * so an A snapshot cannot be serialized under B's live authentication.
+ */
+export interface IdentityApi {
+    capture(): IdentityContext | null;
+    isCurrent(context: IdentityContext | null | undefined): boolean;
+    transition(serverId: unknown, userId: unknown, reason?: string): IdentityContext | null;
+    own<T>(value: T, context?: IdentityContext | null): T;
+    ownerOf(value: unknown): IdentityContext | null;
+    isOwned(value: unknown, context?: IdentityContext | null): boolean;
+    registerReset(name: string, handler: (change: IdentityChange) => void): () => void;
+    registerActivate(
+        name: string,
+        handler: (context: IdentityContext) => void | Promise<void>
+    ): () => void;
+    activate(context?: IdentityContext | null): Promise<void>;
+    getEpoch(): number;
+    /** Raw dashed/cased host user id captured for compatibility storage keys. */
+    getRawUserId?(context?: IdentityContext | null): string;
+    getResetHandlerCount(): number;
+    getActivateHandlerCount(): number;
+    /** Loader work still logically awaiting completion for the current epoch. */
+    getPendingInitializationCount(): number;
+    /** Abort scopes retained by the loader (bounded to the current epoch). */
+    getInitializationControllerCount(): number;
+}
 
 export type NavigateCallback = (event?: Event) => void;
 
@@ -530,6 +576,7 @@ export interface LiveApi {
 // ── The JC global ───────────────────────────────────────────────────────────
 
 export interface JECore {
+    identity?: IdentityApi;
     navigation?: NavigationApi;
     lifecycle?: LifecycleApi;
     dom?: DomApi;
@@ -561,6 +608,8 @@ export interface JELegacyHelpers {
  */
 export interface JEGlobal extends JellyfinCanopyPublicApi {
     core: JECore;
+    /** Canonical account/server/epoch owner installed by the classic loader. */
+    identity: IdentityApi;
     pluginConfig: PluginConfig;
     currentSettings?: UserSettings;
     translations: Record<string, string>;

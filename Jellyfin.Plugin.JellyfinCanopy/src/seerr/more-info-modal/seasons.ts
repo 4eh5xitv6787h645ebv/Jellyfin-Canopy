@@ -2,12 +2,17 @@
 // Season-level logic: metadata backfill from TMDB, Jellyfin season links,
 // availability chips, unrequested-season detection and the seasons section.
 import { JC } from '../../globals';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
 
 import { internal } from './internal';
-const state = internal.state;
+const state: {
+    currentModal: HTMLElement | null;
+    identity: IdentityContext | null;
+    openGeneration: number;
+} = internal.state;
 const logPrefix = '🪼 Jellyfin Canopy: Seerr More Info:';
 const escapeHtml = JC.escapeHtml;
 const MediaStatus = JC.seerrStatus!.MEDIA;
@@ -38,6 +43,13 @@ return Number.isInteger(normalized) && normalized >= 0 ? normalized : null;
 async function backfillSeasonMetadata(tmdbId: any, data: any) {
 try {
     if (!state.currentModal || !data?.seasons) return;
+    const modal = state.currentModal;
+    const identity = JC.identity.ownerOf(modal);
+    const isCurrent = () => !!identity
+        && JC.identity.isCurrent(identity)
+        && state.currentModal === modal
+        && modal.isConnected;
+    if (!isCurrent()) return;
 
     const api = JC.seerrAPI;
     const seasonsMissingData = data.seasons.filter((s: any) => s.episodeCount > 0 && (!s.airDate || !s.posterPath || !s.overview));
@@ -57,6 +69,7 @@ try {
         : [];
 
     const [tmdbData, ...episodeResults] = await Promise.all([tmdbPromise, ...episodePromises]);
+    if (!isCurrent()) return;
 
     // Build TMDB season lookup
     const tmdbMap: any = {};
@@ -73,12 +86,12 @@ try {
     });
 
     // Bail if modal was closed/replaced during async fetch
-    if (!state.currentModal || String(state.currentModal.dataset?.tmdbId) !== String(tmdbId)) return;
+    if (!isCurrent() || String(modal.dataset?.tmdbId) !== String(tmdbId)) return;
 
     // Update each season card in the DOM
     data.seasons.forEach((season: any) => {
         const sNum = season.seasonNumber;
-        const card = state.currentModal.querySelector(`.season-card[data-season-number="${CSS.escape(String(sNum))}"]`);
+        const card = modal.querySelector(`.season-card[data-season-number="${CSS.escape(String(sNum))}"]`);
         if (!card) return;
 
         const tmdbSeason = tmdbMap[sNum];
@@ -196,20 +209,25 @@ return `<div class="season-links">${pills.join('')}</div>`;
 }
 
 async function fetchJellyfinSeasonMap(seriesId: any) {
-const userId = ApiClient.getCurrentUserId?.();
-if (!userId || !seriesId) return {};
+const identity = JC.identity.capture();
+if (!identity || !seriesId) return {};
 
 try {
-    const response: any = await ApiClient.ajax({
-        type: 'GET',
-        url: ApiClient.getUrl(`/Users/${userId}/Items`, {
-            ParentId: seriesId,
-            IncludeItemTypes: 'Season',
-            Recursive: false,
-            Fields: 'ParentIndexNumber,IndexNumber,Name'
-        }),
-        dataType: 'json'
+    const query = new URLSearchParams({
+        ParentId: String(seriesId),
+        IncludeItemTypes: 'Season',
+        Recursive: 'false',
+        Fields: 'ParentIndexNumber,IndexNumber,Name'
     });
+    const path = `/Users/${encodeURIComponent(identity.userId)}/Items?${query.toString()}`;
+    const response: any = JC.core.api
+        ? await JC.core.api.jf(path)
+        : await ApiClient.ajax({
+            type: 'GET',
+            url: ApiClient.getUrl(`/Users/${identity.userId}/Items`, Object.fromEntries(query)),
+            dataType: 'json'
+        });
+    if (!JC.identity.isCurrent(identity)) return {};
 
     const map: any = {};
     const items = Array.isArray(response?.Items) ? response.Items : [];
@@ -226,8 +244,17 @@ try {
 }
 }
 
-async function enrichSeasonCardsWithJellyfinLinks(data: any, modal: any = state.currentModal) {
+async function enrichSeasonCardsWithJellyfinLinks(
+    data: any,
+    modal: HTMLElement | null = state.currentModal
+) {
 if (!modal || data?.mediaType === 'movie') return;
+const identity = JC.identity.ownerOf(modal);
+const isCurrent = () => !!identity
+    && JC.identity.isCurrent(identity)
+    && state.currentModal === modal
+    && modal.isConnected;
+if (!isCurrent()) return;
 
 const cards = modal.querySelectorAll('[data-season-number]');
 if (!cards.length) return;
@@ -237,6 +264,7 @@ if (!seriesId) return;
 
 if (!data._jellyfinSeasonIdMap) {
     data._jellyfinSeasonIdMap = await fetchJellyfinSeasonMap(seriesId);
+    if (!isCurrent()) return;
 }
 
 cards.forEach((card: any) => {

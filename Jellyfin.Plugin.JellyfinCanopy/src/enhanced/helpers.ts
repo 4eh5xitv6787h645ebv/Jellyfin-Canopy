@@ -10,7 +10,7 @@
 
 import { JC } from '../globals';
 import { onNavigate } from '../core/navigation';
-import type { NavigateCallback, ViewPageCallback, ViewPageOptions } from '../types/jc';
+import type { IdentityContext, NavigateCallback, ViewPageCallback, ViewPageOptions } from '../types/jc';
 
 // Tracks whether the MUI-toolbar button-sizing CSS fix has been injected (see
 // getHeaderRightContainer below) so it's only added once.
@@ -28,6 +28,9 @@ interface ItemCacheEntry {
     item: unknown;
     ts: number;
     promise: Promise<unknown> | null;
+    owner: IdentityContext;
+    userId: string;
+    itemId: string;
 }
 
 // Shared cache for item payloads to deduplicate cross-module ApiClient.getItem calls
@@ -44,14 +47,13 @@ export function clearItemCache(userId?: string, itemIds?: string[]): void {
         itemCache.clear();
         return;
     }
-    const prefix = `${userId}:`;
+    const normalizedUserId = userId.replace(/-/g, '').toLowerCase();
     const selected = itemIds && itemIds.length > 0
         ? new Set(itemIds.map((id) => id.replace(/-/g, '').toLowerCase()))
         : null;
-    for (const key of itemCache.keys()) {
-        if (!key.startsWith(prefix)) continue;
-        const itemId = key.slice(prefix.length).replace(/-/g, '').toLowerCase();
-        if (!selected || selected.has(itemId)) itemCache.delete(key);
+    for (const [key, entry] of itemCache) {
+        if (entry.userId !== normalizedUserId) continue;
+        if (!selected || selected.has(entry.itemId)) itemCache.delete(key);
     }
 }
 
@@ -68,13 +70,17 @@ export interface GetItemCachedOptions {
 export async function getItemCached(itemId: string, options: GetItemCachedOptions = {}): Promise<unknown> {
     if (!itemId) return null;
 
+    const context = JC.identity.capture();
+    if (!context) return null;
     const ttlMs = Number.isFinite(options.ttlMs) ? (options.ttlMs as number) : ITEM_CACHE_TTL_MS;
     const userId = options.userId || ApiClient.getCurrentUserId();
-    const key = `${userId}:${itemId}`;
+    const normalizedUserId = String(userId).replace(/-/g, '').toLowerCase();
+    const normalizedItemId = itemId.replace(/-/g, '').toLowerCase();
+    const key = `${context.serverId}:${normalizedUserId}:${normalizedItemId}`;
     const now = Date.now();
     const entry = itemCache.get(key);
 
-    if (!options.forceRefresh && entry) {
+    if (!options.forceRefresh && entry && JC.identity.isCurrent(entry.owner)) {
         if (entry.promise) {
             return entry.promise;
         }
@@ -85,22 +91,40 @@ export async function getItemCached(itemId: string, options: GetItemCachedOption
 
     const promise = ApiClient.getItem(userId, itemId)
         .then((item) => {
+            if (!JC.identity.isCurrent(context)) return null;
             // A privacy reset or newer forced fetch may retire this request while
             // it is in flight. Only the promise that still owns the key may publish.
             if (itemCache.get(key)?.promise === promise) {
-                itemCache.set(key, { item, ts: Date.now(), promise: null });
+                itemCache.set(key, {
+                    item,
+                    ts: Date.now(),
+                    promise: null,
+                    owner: context,
+                    userId: normalizedUserId,
+                    itemId: normalizedItemId
+                });
             }
             return item;
         })
         .catch((err: unknown) => {
             // Likewise, an older rejection must not delete a newer request/value.
             if (itemCache.get(key)?.promise === promise) itemCache.delete(key);
+            if (!JC.identity.isCurrent(context)) return null;
             throw err;
         });
 
-    itemCache.set(key, { item: null, ts: now, promise });
+    itemCache.set(key, {
+        item: null,
+        ts: now,
+        promise,
+        owner: context,
+        userId: normalizedUserId,
+        itemId: normalizedItemId
+    });
     return promise;
 }
+
+JC.identity.registerReset('enhanced-item-cache', () => itemCache.clear());
 
 /**
  * Debounce a function call

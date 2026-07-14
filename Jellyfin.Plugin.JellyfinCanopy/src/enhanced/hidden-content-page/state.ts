@@ -9,6 +9,7 @@
 
 import { JC } from '../../globals';
 import { currentPageHandle } from '../pages/fallback-host';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -56,6 +57,76 @@ export const state: HiddenContentPageState = {
     adminLoadToken: 0,           // increments per fetch so stale responses are ignored
 };
 
+/** Owner captured by page controls, requests, and delayed UI work. */
+export interface HiddenContentPageFence {
+    readonly generation: number;
+    readonly context: IdentityContext | null;
+}
+
+let pageGeneration = 0;
+const pageTimeouts = new Set<number>();
+let activeUnhideClose: (() => void) | null = null;
+
+export function capturePageFence(): HiddenContentPageFence {
+    return {
+        generation: pageGeneration,
+        context: JC.identity?.capture?.() || null,
+    };
+}
+
+export function isPageFenceCurrent(fence: HiddenContentPageFence): boolean {
+    return fence.generation === pageGeneration
+        && (!fence.context || JC.identity.isCurrent(fence.context));
+}
+
+/** Schedule page-owned delayed work and discard it on drain/account switch. */
+export function schedulePageTimeout(
+    callback: () => void,
+    delay: number,
+    fence: HiddenContentPageFence = capturePageFence(),
+): number {
+    const handle = window.setTimeout(() => {
+        pageTimeouts.delete(handle);
+        if (isPageFenceCurrent(fence)) callback();
+    }, delay);
+    pageTimeouts.add(handle);
+    return handle;
+}
+
+export function cancelPageTimeout(handle: number | null): void {
+    if (handle == null) return;
+    clearTimeout(handle);
+    pageTimeouts.delete(handle);
+}
+
+/**
+ * Drain every identity/adoption-owned page resource and reset all view state.
+ * The generation bump fences promises that cannot be physically cancelled.
+ */
+export function resetHiddenContentPageState(): void {
+    pageGeneration += 1;
+    for (const handle of pageTimeouts) clearTimeout(handle);
+    pageTimeouts.clear();
+    activeUnhideClose?.();
+    activeUnhideClose = null;
+    document.querySelectorAll('[data-jc-hidden-page-owner="true"]').forEach((node) => node.remove());
+
+    state.searchQuery = '';
+    state.adminLoadToken += 1;
+    state.adminIsAdmin = null;
+    state.selectedAdminUserId = null;
+    state.adminEditMode = false;
+    state.adminItems = null;
+    state.adminItemsUserId = null;
+    state.adminLoadError = false;
+    state.adminUserName = '';
+    state.scopedOnly = false;
+    state.adminUsers = null;
+    state.adminUsersLoading = false;
+}
+
+JC.identity?.registerReset?.('hidden-content-page-state', resetHiddenContentPageState);
+
 export function scopeBadgeText(scope: string | undefined): string {
     const s = (scope || '').toLowerCase();
     if (s === 'continuewatching') return JC.t!('hidden_content_scope_cw_label');
@@ -82,10 +153,14 @@ export const POSTER_MAX_WIDTH = 300;
  * @param itemName Optional item name to show below the heading.
  */
 export function showUnhideConfirmation(message: string, onConfirm: () => void, itemName?: string): void {
-    document.querySelector('.jc-hide-confirm-overlay')?.remove();
+    const fence = capturePageFence();
+    if (!isPageFenceCurrent(fence)) return;
+    activeUnhideClose?.();
 
     const overlay = document.createElement('div');
     overlay.className = 'jc-hide-confirm-overlay';
+    overlay.dataset.jcIdentityOwned = 'true';
+    const pageHandle = currentPageHandle();
 
     const dialog = document.createElement('div');
     dialog.className = 'jc-hide-confirm-dialog';
@@ -103,7 +178,10 @@ export function showUnhideConfirmation(message: string, onConfirm: () => void, i
     const closeDialog = (): void => {
         overlay.remove();
         document.removeEventListener('keydown', escHandler);
+        pageHandle?.untrack(closeDialog);
+        if (activeUnhideClose === closeDialog) activeUnhideClose = null;
     };
+    activeUnhideClose = closeDialog;
 
     const buttons = document.createElement('div');
     buttons.className = 'jc-hide-confirm-buttons';
@@ -119,7 +197,7 @@ export function showUnhideConfirmation(message: string, onConfirm: () => void, i
     confirmBtn.textContent = JC.t!('hidden_content_unhide') || 'Unhide';
     confirmBtn.addEventListener('click', () => {
         closeDialog();
-        onConfirm();
+        if (isPageFenceCurrent(fence)) onConfirm();
     });
     buttons.appendChild(confirmBtn);
 
@@ -138,5 +216,5 @@ export function showUnhideConfirmation(message: string, onConfirm: () => void, i
     document.body.appendChild(overlay);
     // Body-level overlay: navigating away must never strand it — the page's
     // dispose bag closes it on drain (closeDialog is idempotent).
-    currentPageHandle()?.track(closeDialog);
+    pageHandle?.track(closeDialog);
 }

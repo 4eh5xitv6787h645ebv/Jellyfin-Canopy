@@ -53,10 +53,14 @@ function defaultRowIds(genres: Map<number, string>): string[] {
  */
 export function openCustomize(mt: DiscoveryMediaType, genres: Map<number, string>, onSave: (ids: string[] | null) => void): void {
     if (activeClose) activeClose();
+    const context = JC.identity.capture();
+    if (!context) return;
     const items = buildItems(mt, genres);
 
     const overlay = document.createElement('div');
     overlay.className = 'jc-discovery-customize-overlay';
+    overlay.setAttribute('data-jc-identity-owned', 'true');
+    JC.identity.own(overlay, context);
     overlay.style.cssText = 'position:fixed;inset:0;z-index:1000001;background:rgba(0,0,0,0.75);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;';
 
     const dialog = document.createElement('div');
@@ -86,7 +90,9 @@ export function openCustomize(mt: DiscoveryMediaType, genres: Map<number, string
             cb.type = 'checkbox';
             cb.checked = item.checked;
             cb.setAttribute('aria-label', item.label);
-            cb.addEventListener('change', () => { item.checked = cb.checked; });
+            cb.addEventListener('change', () => {
+                if (JC.identity.isCurrent(context)) item.checked = cb.checked;
+            });
 
             const name = document.createElement('span');
             name.textContent = item.label;
@@ -108,11 +114,14 @@ export function openCustomize(mt: DiscoveryMediaType, genres: Map<number, string
         b.setAttribute('aria-label', label);
         b.disabled = disabled;
         b.style.cssText = `background:rgba(255,255,255,0.08);border:none;color:#fff;border-radius:4px;width:30px;height:30px;cursor:${disabled ? 'default' : 'pointer'};opacity:${disabled ? 0.3 : 1};font-size:11px;`;
-        if (!disabled) b.addEventListener('click', onClick);
+        if (!disabled) b.addEventListener('click', () => {
+            if (JC.identity.isCurrent(context)) onClick();
+        });
         return b;
     }
 
     function swap(a: number, b: number): void {
+        if (!JC.identity.isCurrent(context)) return;
         if (b < 0 || b >= items.length) return;
         [items[a], items[b]] = [items[b], items[a]];
         render();
@@ -138,12 +147,18 @@ export function openCustomize(mt: DiscoveryMediaType, genres: Map<number, string
     activeClose = close;
     cancel.addEventListener('click', close);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-    reset.addEventListener('click', () => { clearUserRowIds(mt); close(); onSave(null); });
+    reset.addEventListener('click', () => {
+        if (!JC.identity.isCurrent(context)) return;
+        clearUserRowIds(mt);
+        close();
+        if (JC.identity.isCurrent(context)) onSave(null);
+    });
     save.addEventListener('click', () => {
+        if (!JC.identity.isCurrent(context)) return;
         const ids = items.filter((it) => it.checked).map((it) => it.id);
         setUserRowIds(mt, ids);
         close();
-        onSave(ids);
+        if (JC.identity.isCurrent(context)) onSave(ids);
     });
 
     render();
@@ -151,6 +166,8 @@ export function openCustomize(mt: DiscoveryMediaType, genres: Map<number, string
     document.body.appendChild(overlay);
     a11y = installModalA11y(dialog, { labelledBy: 'jc-discovery-customize-title', initialFocus: save, onEscape: close });
 }
+
+JC.identity.registerReset('discovery-customize', () => activeClose?.());
 
 function mkTextButton(text: string, bg: string): HTMLButtonElement {
     const b = document.createElement('button');

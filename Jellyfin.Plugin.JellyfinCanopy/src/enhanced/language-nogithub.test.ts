@@ -21,12 +21,9 @@ describe('language control locale source', () => {
         JC.currentSettings = {};
         JC.t = (k: string) => k;
 
-        const ajax = vi.fn((opts: { url: string }) => {
-            if (opts.url.includes('/JellyfinCanopy/locales')) return Promise.resolve(['en', 'fr', 'de']);
-            if (opts.url.includes('/Localization/Cultures')) return Promise.resolve([]);
-            return Promise.resolve({});
-        });
-        (globalThis as Record<string, any>).ApiClient.ajax = ajax;
+        const plugin = vi.fn().mockResolvedValue(['en', 'fr', 'de']);
+        const jf = vi.fn().mockResolvedValue([]);
+        JC.core.api = { plugin, jf };
 
         const fetchSpy = vi.fn((_url?: unknown) => Promise.resolve({ ok: false, json: () => Promise.resolve([]) }));
         (globalThis as Record<string, any>).fetch = fetchSpy;
@@ -38,6 +35,7 @@ describe('language control locale source', () => {
         const githubCalls = fetchSpy.mock.calls.filter((c) => String(c[0]).includes('api.github.com'));
         expect(githubCalls.length).toBe(0);
         // The server locale endpoint WAS used.
-        expect(ajax.mock.calls.some((c) => c[0].url.includes('/JellyfinCanopy/locales'))).toBe(true);
+        expect(plugin).toHaveBeenCalledWith('/locales');
+        expect(jf).toHaveBeenCalledWith('/Localization/Cultures');
     });
 });

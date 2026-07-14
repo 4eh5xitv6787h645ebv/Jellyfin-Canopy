@@ -6,6 +6,8 @@
 // unavailable (pre-init, post-logout transient) we treat the request as
 // "never snoozed; never persist" rather than collapsing into a shared bucket.
 
+import { JC } from '../../globals';
+
 const logPrefix = '🪼 Jellyfin Canopy [SpoilerGuard]:';
 
 export const SNOOZE_MS = 15 * 60 * 1000;
@@ -46,9 +48,23 @@ export function snoozeUid(): string | null {
     return null;
 }
 
-/** Per-user localStorage key for the snooze expiry. */
+/** Per-server/per-user localStorage key for the snooze expiry. */
 export function snoozeStorageKey(uid: string): string {
-    return `jc-spoiler-disable-snooze:${uid}`;
+    const normalizedUid = uid.replace(/-/g, '').toLowerCase();
+    const context = JC.identity?.capture?.() || null;
+    let serverId = context && context.userId === normalizedUid ? context.serverId : '';
+    if (!serverId) {
+        try {
+            const extendedClient = ApiClient as unknown as { serverId?: () => unknown };
+            const raw = typeof extendedClient.serverId === 'function'
+                ? extendedClient.serverId()
+                : '';
+            if (typeof raw === 'string' || typeof raw === 'number') {
+                serverId = String(raw).replace(/-/g, '').toLowerCase();
+            }
+        } catch { /* use unknown-server */ }
+    }
+    return `jc-spoiler-disable-snooze:${serverId || 'unknown-server'}:${normalizedUid}`;
 }
 
 /** True when the disable-confirm dialog is currently snoozed for this user. */
@@ -57,6 +73,12 @@ export function isDisableSnoozed(): boolean {
     if (!uid) return false;
     const key = snoozeStorageKey(uid);
     try {
+        const legacyKey = `jc-spoiler-disable-snooze:${uid}`;
+        if (localStorage.getItem(key) === null) {
+            const legacy = localStorage.getItem(legacyKey);
+            if (legacy !== null) localStorage.setItem(key, legacy);
+        }
+        localStorage.removeItem(legacyKey);
         const raw = localStorage.getItem(key);
         if (!raw) return false;
         const verdict = classifySnoozeExpiry(Number(raw), Date.now());

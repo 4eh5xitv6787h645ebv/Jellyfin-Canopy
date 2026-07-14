@@ -8,10 +8,11 @@
 import { JC } from '../../globals';
 import { getItemIdFromUrl } from '../../core/details-view';
 import { LIVE, on } from '../../core/live';
-import { setAdmin, searchEnabled, cacheDetailsType, getDetailsType } from './state';
+import { setAdmin, searchEnabled, cacheDetailsType, getDetailsType, resetArrSearchState } from './state';
 import { injectArrSearchStyles } from './styles';
 import { installCapture } from './capture';
-import { requestInject, injectSearchItems } from './menu';
+import { requestInject, resetSearchItems } from './menu';
+import type { IdentityContext } from '../../types/jc';
 
 /** Public surface exposed as window.JellyfinCanopy.arrSearch. */
 export interface ArrSearchApi {
@@ -34,10 +35,11 @@ let installed = false;
 interface UserWithPolicy { Policy?: { IsAdministrator?: boolean }; }
 
 /** Resolves the caller's admin flag once (cached in currentSettings, like arr-links). */
-async function resolveAdmin(): Promise<boolean> {
+async function resolveAdmin(context: IdentityContext): Promise<boolean> {
     if (JC.currentSettings?.isAdmin === true) { setAdmin(true); return true; }
     try {
         const user = await ApiClient.getCurrentUser() as UserWithPolicy;
+        if (!JC.identity.isCurrent(context)) return false;
         const admin = user?.Policy?.IsAdministrator === true;
         setAdmin(admin);
         return admin;
@@ -49,18 +51,25 @@ async function resolveAdmin(): Promise<boolean> {
 interface ItemHelpers { getItemCached?(itemId: string, options?: { userId?: string }): Promise<unknown>; }
 
 /** Caches the current details item's type so the details "…" menu can gate without a round-trip. */
-function prefetchDetailsType(): void {
+function prefetchDetailsType(context: IdentityContext): void {
+    if (!JC.identity.isCurrent(context)) return;
     const itemId = getItemIdFromUrl();
     if (!itemId || getDetailsType(itemId)) return;
     const helpers = JC.helpers as ItemHelpers | undefined;
     helpers?.getItemCached?.(itemId, { userId: ApiClient.getCurrentUserId() })
-        .then((item) => cacheDetailsType(itemId, (item as { Type?: string } | null)?.Type || null))
+        .then((item) => {
+            if (JC.identity.isCurrent(context)) {
+                cacheDetailsType(itemId, (item as { Type?: string } | null)?.Type || null);
+            }
+        })
         .catch(() => { /* details more menu simply resolves the type on demand */ });
 }
 
 async function install(): Promise<void> {
     if (installed || !searchEnabled()) return;
-    if (!await resolveAdmin()) return; // non-admins never see the items; skip the listeners entirely
+    const context = JC.identity.capture();
+    if (!context) return;
+    if (!await resolveAdmin(context) || !JC.identity.isCurrent(context)) return; // non-admins never see the items; skip the listeners entirely
     if (installed) return; // re-entrancy guard across the await
 
     installed = true;
@@ -71,8 +80,8 @@ async function install(): Promise<void> {
     lifecycle.track(JC.core.dom!.onBodyMutation('jc-arr-search-actionsheet', () => requestInject()));
 
     // Prefetch details type on every navigation (cheap, cached).
-    lifecycle.track(JC.core.navigation!.onNavigate(() => prefetchDetailsType()));
-    prefetchDetailsType();
+    lifecycle.track(JC.core.navigation!.onNavigate(() => prefetchDetailsType(context)));
+    prefetchDetailsType(context);
 }
 
 function initialize(): void {
@@ -82,15 +91,18 @@ function initialize(): void {
 function teardown(): void {
     lifecycle.teardown();
     installed = false;
+    resetArrSearchState();
+    resetSearchItems();
 }
 
 // Always listen for config hot-reload so enabling the feature mid-session installs it, and a
 // disable is reflected immediately (the injector also reads the live flag each pass).
-lifecycle.track(on(LIVE.CONFIG_CHANGED, () => {
-    if (searchEnabled()) initialize(); else injectSearchItems();
-}));
+on(LIVE.CONFIG_CHANGED, () => {
+    if (searchEnabled()) initialize(); else teardown();
+});
 
 JC.arrSearch = { initialize, teardown };
-initialize();
+JC.identity.registerReset('arr-search', teardown);
+JC.identity.registerActivate('arr-search', () => initialize());
 
 console.log('🪼 Jellyfin Canopy: arr Search: module loaded');

@@ -4,10 +4,12 @@ import {
     classifySnoozeExpiry, isDisableSnoozed, setDisableSnooze,
     snoozeStorageKey, SNOOZE_MS, MAX_SNOOZE_FUTURE_MS,
 } from './snooze';
+import { JC } from '../../globals';
 
 const UID = 'test-user-id'; // the setup.ts ApiClient stub returns this
 
 afterEach(() => {
+    JC.identity.transition('test-server-id', UID, 'snooze-test-cleanup');
     localStorage.clear();
     vi.restoreAllMocks();
 });
@@ -61,6 +63,14 @@ describe('spoiler-guard/snooze', () => {
             const stored = Number(localStorage.getItem(snoozeStorageKey(UID)));
             expect(stored).toBeGreaterThanOrEqual(before + SNOOZE_MS - 50);
             expect(stored).toBeLessThanOrEqual(Date.now() + SNOOZE_MS + 50);
+        });
+
+        it('does not replay a snooze for the same user id on another server', () => {
+            setDisableSnooze();
+            expect(isDisableSnoozed()).toBe(true);
+
+            JC.identity.transition('other-server', UID, 'server-switch');
+            expect(isDisableSnoozed()).toBe(false);
         });
     });
 });
