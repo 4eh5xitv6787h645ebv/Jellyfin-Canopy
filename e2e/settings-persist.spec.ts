@@ -37,6 +37,19 @@ function settingsSaved(page: any): Promise<unknown> {
     );
 }
 
+/** Update and save the loader-owned settings object, matching the real panel. */
+async function saveDelay(page: any, value: number): Promise<void> {
+    await page.evaluate(async (nextValue: number) => {
+        const JC = (window as any).JellyfinCanopy;
+        const settings = JC.currentSettings;
+        if (!settings || !JC.identity?.isOwned?.(settings)) {
+            throw new Error('current settings are not owned by the active identity');
+        }
+        settings.pauseScreenDelaySeconds = nextValue;
+        await JC.saveUserSettings('settings.json', settings);
+    }, value);
+}
+
 test.describe('per-user settings persistence', () => {
     test('a per-user setting persists across reload (write → persist → reload → re-read)', async ({ page, consoleErrors }) => {
         await loginAs(page, 'user', consoleErrors);
@@ -49,10 +62,7 @@ test.describe('per-user settings persistence', () => {
             // settings.json — and wait for the POST to actually resolve.
             await Promise.all([
                 settingsSaved(page),
-                page.evaluate(async (value: number) => {
-                    const JC = (window as any).JellyfinCanopy;
-                    await JC.saveUserSettings('settings.json', { ...JC.currentSettings, pauseScreenDelaySeconds: value });
-                }, target),
+                saveDelay(page, target),
             ]);
 
             await page.reload({ waitUntil: 'domcontentloaded' });
@@ -62,10 +72,7 @@ test.describe('per-user settings persistence', () => {
         } finally {
             await Promise.all([
                 settingsSaved(page).catch(() => { /* restore is best effort */ }),
-                page.evaluate(async (value: number) => {
-                    const JC = (window as any).JellyfinCanopy;
-                    await JC.saveUserSettings('settings.json', { ...JC.currentSettings, pauseScreenDelaySeconds: value });
-                }, original),
+                saveDelay(page, original),
             ]);
         }
         assertNoRuntimeErrors(consoleErrors);
@@ -115,10 +122,7 @@ test.describe('per-user settings persistence', () => {
         } finally {
             await Promise.all([
                 settingsSaved(page).catch(() => { /* best effort */ }),
-                page.evaluate(async (value: number) => {
-                    const JC = (window as any).JellyfinCanopy;
-                    await JC.saveUserSettings('settings.json', { ...JC.currentSettings, pauseScreenDelaySeconds: value });
-                }, original),
+                saveDelay(page, original),
             ]);
         }
         assertNoRuntimeErrors(consoleErrors);
