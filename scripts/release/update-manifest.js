@@ -13,14 +13,14 @@
  *   {
  *     "changelog":  <text from --changelog-file, verbatim>,
  *     "targetAbi":  <the asset's ABI, e.g. "12.0.0.0">,
- *     "version":    <tag normalized to 4 parts, e.g. "11.13.0.0">,
+ *     "version":    <plugin tag normalized to 4 parts, e.g. "2.0.1.0">,
  *     "sourceUrl":  https://github.com/<repo>/releases/download/<tag>/<zip>,
  *     "checksum":   <uppercase MD5 of the zip — Jellyfin manifests use MD5>,
  *     "timestamp":  <current UTC, "YYYY-MM-DDTHH:MM:SS", no timezone>
  *   }
  *
  * Guard rails:
- *   - the tag must be v-prefixed or bare dotted numbers (v11.13.0, 11.13.0.0)
+ *   - the tag must be a version in the configured Canopy 2.x plugin line
  *   - the new version must be strictly greater than every version already in
  *     the manifest (monotonic — prevents accidentally re-tagging lower)
  *   - each zip must exist and be named Jellyfin.Plugin.JellyfinCanopy_<abi
@@ -31,13 +31,13 @@
  * Usage:
  *   node scripts/release/update-manifest.js \
  *     --manifest manifest.json \
- *     --tag 12.0.0.0 \
+ *     --tag 2.0.1.0 \
  *     --repo 4eh5xitv6787h645ebv/Jellyfin-Canopy \
  *     --changelog-file /tmp/changelog.txt \
  *     --asset 12.0.0.0=dist/Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip
  *
- * New releases carry only the Jellyfin 12 asset (targetAbi 12.0.0.0); the
- * manifest's existing 10.11.0.0 entries are frozen history and stay as-is.
+ * New releases carry only the Jellyfin 12 asset (targetAbi 12.0.0.0). The
+ * catalog has no Jellyfin 10.11 stream.
  *
  * The generated entries are printed to stdout as JSON for use in workflow
  * summaries.
@@ -45,10 +45,15 @@
 
 const fs = require('fs');
 
-const { validateManifest, compareVersions, expectedZipName } = require('./validate-manifest.js');
+const { validateManifest, expectedZipName } = require('./validate-manifest.js');
+const {
+    normalizePluginVersion,
+    readVersionPolicy,
+    requireNewPluginVersion,
+    requirePluginReleaseLine,
+} = require('./version-policy.js');
 const { computeZipChecksum } = require('../lib/md5.js');
 
-const TAG_RE = /^v?\d+\.\d+\.\d+(\.\d+)?$/;
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 
 function fail(message) {
@@ -85,16 +90,6 @@ function parseArgs(argv) {
     return options;
 }
 
-/** Normalizes a git tag ("v11.13.0" / "11.13.0.0") to a 4-part manifest version. */
-function tagToVersion(tag) {
-    if (!TAG_RE.test(tag)) {
-        fail(`tag "${tag}" must look like v11.13.0 or 11.13.0.0`);
-    }
-    const parts = tag.replace(/^v/, '').split('.');
-    while (parts.length < 4) parts.push('0');
-    return parts.join('.');
-}
-
 /** Current UTC time in the manifest's "YYYY-MM-DDTHH:MM:SS" format. */
 function manifestTimestamp() {
     return new Date().toISOString().slice(0, 19);
@@ -104,7 +99,15 @@ function main() {
     const options = parseArgs(process.argv.slice(2));
     if (!REPO_RE.test(options.repo)) fail(`--repo "${options.repo}" must be owner/name`);
 
-    const version = tagToVersion(options.tag);
+    let version;
+    let policy;
+    try {
+        policy = readVersionPolicy();
+        version = normalizePluginVersion(options.tag);
+        requirePluginReleaseLine(version, policy);
+    } catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+    }
     const changelog = fs.readFileSync(options.changelogFile, 'utf8').trim();
     if (changelog.length === 0) fail(`changelog file ${options.changelogFile} is empty`);
 
@@ -117,20 +120,22 @@ function main() {
     }
     const plugin = data[0];
 
-    // Monotonic guard: the new version must beat everything already published.
-    for (const existing of plugin.versions) {
-        if (compareVersions(version, existing.version) <= 0) {
-            fail(
-                `new version ${version} is not greater than existing ${existing.version} ` +
-                `(targetAbi ${existing.targetAbi}) — releases must be monotonic`
-            );
-        }
+    try {
+        requireNewPluginVersion(version, data);
+    } catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
     }
 
     const timestamp = manifestTimestamp();
     const newEntries = options.assets.map(({ targetAbi, zipPath }) => {
         if (!/^\d+\.\d+\.\d+\.\d+$/.test(targetAbi)) {
             fail(`asset targetAbi "${targetAbi}" is not a 4-part dotted version`);
+        }
+        if (targetAbi !== policy.targetAbi) {
+            fail(
+                `asset targetAbi ${targetAbi} does not match the configured Jellyfin target ABI ` +
+                `${policy.targetAbi}`
+            );
         }
         if (!fs.existsSync(zipPath)) fail(`asset zip not found: ${zipPath}`);
 

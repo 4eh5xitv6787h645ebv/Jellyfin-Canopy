@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const { computeZipChecksum } = require('../lib/md5.js');
 const { expectedDllFromZipName, inspectZipLayout } = require('../lib/zip-layout.js');
 const { validateManifest } = require('./validate-manifest.js');
+const { normalizePluginVersion } = require('./version-policy.js');
 
 const ACTIONS = Object.freeze({
     CREATE_DRAFT: 'create-draft',
@@ -36,12 +37,11 @@ class ReleaseStateError extends Error {
 
 /** @param {string} tag */
 function tagToVersion(tag) {
-    if (!/^v?\d+\.\d+\.\d+(?:\.\d+)?$/.test(tag)) {
+    try {
+        return normalizePluginVersion(tag);
+    } catch {
         throw new ReleaseStateError(`tag ${tag} is not a supported release version`);
     }
-    const parts = tag.replace(/^v/, '').split('.');
-    while (parts.length < 4) parts.push('0');
-    return parts.join('.');
 }
 
 /**
