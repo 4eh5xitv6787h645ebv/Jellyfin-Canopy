@@ -5,8 +5,8 @@ name: Release
 # installed copy polls for updates — a mistake there bricks in-app updates)
 # was hand-edited.
 #
-# Push a version tag (existing convention: bare "12.0.0.0"; "v12.0.0" also
-# works) and this workflow:
+# Push the next Canopy plugin-version tag (for example "2.0.1.0"; "v2.0.1"
+# also works) and this workflow:
 #   1. runs the full quality gates (plugin build, unit tests, JS syntax/type
 #      checks) and reports ESLint findings/cap breaches as advisory; every
 #      non-lint failure and any broken lint invocation aborts the release,
@@ -21,9 +21,8 @@ name: Release
 #      and opens the manifest PR. A valid rerun is a verified no-op; neither
 #      release bytes/notes nor reviewer commits are overwritten.
 #
-# New releases publish only targetAbi 12.0.0.0 manifest entries; the
-# existing 10.11.0.0 entries in manifest.json are frozen history that keeps
-# serving the final 10.11-compatible release line.
+# New releases publish only targetAbi 12.0.0.0 manifest entries. This catalog
+# has no Jellyfin 10.11-compatible stream.
 #
 # Note: because the PR is opened with the built-in GITHUB_TOKEN, GitHub does
 # not trigger the Build & Test workflow on it. The manifest is fully
@@ -61,6 +60,15 @@ jobs:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           fetch-depth: 0
+
+      - name: Validate plugin version and Jellyfin ABI policy
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: >-
+          node scripts/release/version-policy.js
+          --tag "${RELEASE_TAG}"
+          --manifest manifest.json
+          --project Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj
 
       - name: Fetch reviewed default branch
         env:
@@ -130,22 +138,19 @@ jobs:
           node-version: 22
           cache: npm
 
-      # $GITHUB_REF_NAME is used via the environment everywhere below —
-      # never interpolated into scripts — so a crafted ref cannot inject
-      # commands. This step also rejects anything that is not a version tag.
+      # Keep the plugin version and Jellyfin target ABI as separate outputs.
+      # The same policy already ran in the provenance job, before the reusable
+      # quality gates and protected release environment.
       - name: Derive version from tag
         id: version
-        run: |
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-            echo "::error::Tag '$GITHUB_REF_NAME' is not a release version tag (expected 11.13.0.0 or v11.13.0)"
-            exit 1
-          fi
-          bare="${GITHUB_REF_NAME#v}"
-          IFS='.' read -ra parts <<< "$bare"
-          while [ "${#parts[@]}" -lt 4 ]; do parts+=("0"); done
-          version="$(IFS='.'; echo "${parts[*]}")"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Releasing version $version from tag $GITHUB_REF_NAME"
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: >-
+          node scripts/release/version-policy.js
+          --tag "${RELEASE_TAG}"
+          --manifest manifest.json
+          --project Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj
+          --github-output "${GITHUB_OUTPUT}"
 
       - name: Record approved source provenance
         env:
@@ -209,6 +214,7 @@ jobs:
       - name: Build & package
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          TARGET_ABI: ${{ steps.version.outputs.target_abi }}
         run: |
           mkdir -p dist
           # Jellyfin 12 / net10.0
@@ -222,7 +228,8 @@ jobs:
           # bytes are immutable regardless; determinism is diagnostic aid only.
           source_date_epoch="$(git log -1 --format=%ct "refs/tags/$GITHUB_REF_NAME^{commit}")"
           touch -d "@$source_date_epoch" "$dll"
-          TZ=UTC zip -X -j dist/Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip "$dll"
+          abi_asset="${TARGET_ABI%.*}"
+          TZ=UTC zip -X -j "dist/Jellyfin.Plugin.JellyfinCanopy_${abi_asset}.zip" "$dll"
           ls -l dist/
 
       # Query the REST collection once so API failures are blocking and so two
@@ -293,8 +300,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
+          TARGET_ABI: ${{ steps.version.outputs.target_abi }}
         run: |
-          zip_name=Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip
+          zip_name="Jellyfin.Plugin.JellyfinCanopy_${TARGET_ABI%.*}.zip"
           default_branch="$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)"
           branch="release/manifest-$VERSION"
 
@@ -304,7 +312,7 @@ jobs:
           args=(
             --repo "$GITHUB_REPOSITORY"
             --tag "$GITHUB_REF_NAME"
-            --target-abi 12.0.0.0
+            --target-abi "$TARGET_ABI"
             --zip-name "$zip_name"
             --built-asset "dist/$zip_name"
             --main-manifest "$RUNNER_TEMP/main-manifest.json"
@@ -352,8 +360,9 @@ jobs:
           ACTION: ${{ steps.release_state.outputs.action }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
+          TARGET_ABI: ${{ steps.version.outputs.target_abi }}
         run: |
-          zip_name=Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip
+          zip_name="Jellyfin.Plugin.JellyfinCanopy_${TARGET_ABI%.*}.zip"
           require_existing_draft() {
             current="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)"
             if [ "$current" != true ]; then
@@ -393,8 +402,9 @@ jobs:
           steps.release_state.outputs.action != 'resume-published-proposal'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_ABI: ${{ steps.version.outputs.target_abi }}
         run: |
-          zip_name=Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip
+          zip_name="Jellyfin.Plugin.JellyfinCanopy_${TARGET_ABI%.*}.zip"
           mkdir -p "$RUNNER_TEMP/final-assets"
           gh release download "$GITHUB_REF_NAME" \
             --pattern "$zip_name" --dir "$RUNNER_TEMP/final-assets"
@@ -405,14 +415,17 @@ jobs:
           steps.release_state.outputs.action != 'noop-main' &&
           steps.release_state.outputs.action != 'resume-published-proposal' &&
           steps.release_state.outputs.action != 'resume-draft-proposal'
+        env:
+          TARGET_ABI: ${{ steps.version.outputs.target_abi }}
         run: |
+          zip_name="Jellyfin.Plugin.JellyfinCanopy_${TARGET_ABI%.*}.zip"
           cp "$RUNNER_TEMP/main-manifest.json" "$RUNNER_TEMP/generated-manifest.json"
           node scripts/release/update-manifest.js \
             --manifest "$RUNNER_TEMP/generated-manifest.json" \
             --tag "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --changelog-file changelog.txt \
-            --asset "12.0.0.0=$RUNNER_TEMP/final-assets/Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip" \
+            --asset "$TARGET_ABI=$RUNNER_TEMP/final-assets/$zip_name" \
             > "$RUNNER_TEMP/new-entries.json"
           node scripts/release/validate-manifest.js \
             "$RUNNER_TEMP/generated-manifest.json" --assets-dir "$RUNNER_TEMP/final-assets"

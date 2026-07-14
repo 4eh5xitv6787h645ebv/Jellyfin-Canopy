@@ -127,6 +127,7 @@ test('a malformed new package blocks every state before remote mutation', () => 
 test('v-prefixed and four-part aliases normalize to one version/branch identity', () => {
     assert.equal(tagToVersion('v12.0.0'), '12.0.0.0');
     assert.equal(tagToVersion('12.0.0.0'), '12.0.0.0');
+    assert.throws(() => tagToVersion('012.0.0.0'), /not a supported release version/);
     assert.throws(() => tagToVersion('release-12'), /not a supported release version/);
 });
 

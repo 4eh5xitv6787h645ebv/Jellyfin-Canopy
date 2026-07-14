@@ -10,12 +10,14 @@ updates, and a malformed entry bricks in-app updates for all users.
 1. Merge the release source through a pull request and make sure every
    required **Build & Test** and **Security Scan** check is green on the
    current default branch. Direct pushes to the default branch are blocked.
-2. Tag that reviewed default-branch commit and push the tag. The existing convention is a bare
-   4-part version (a `v` prefix with 3 parts also works):
+2. Tag that reviewed default-branch commit with the **next plugin version** and
+   push the tag. Canopy is currently on its 2.x plugin release line; the
+   Jellyfin target ABI is separately fixed at `12.0.0.0`. The tag convention
+   is a bare 4-part plugin version (a `v` prefix with 3 parts also works):
 
    ```bash
-   git tag 12.0.0.0
-   git push origin 12.0.0.0
+   git tag 2.0.1.0
+   git push origin 2.0.1.0
    ```
 
    Only the repository maintainer can create a matching release tag. Once
@@ -105,12 +107,13 @@ your notes as the body) *before* pushing the tag, or push the tag from the
 release UI. When a release for the tag already exists, the workflow reuses
 its body as the manifest changelog and only attaches the ZIPs.
 
-### Manifest ABI streams
+### Plugin versions and the manifest ABI stream
 
-New releases publish only `targetAbi: 12.0.0.0` manifest entries. The
-manifest's existing `targetAbi: 10.11.0.0` entries are frozen history: they
-keep serving the final Jellyfin 10.11-compatible release line and must never
-be edited or removed.
+The git tag, assembly version, and manifest `version` are the Canopy plugin
+version. The package name and manifest `targetAbi` describe Jellyfin
+compatibility and remain `12.0.0` / `12.0.0.0` independently. This catalog
+contains only Jellyfin 12 entries; Jellyfin 10.11 users must use the original
+Jellyfin Enhanced repository instead.
 
 ## Tooling (`scripts/release/`)
 
