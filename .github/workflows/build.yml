@@ -350,6 +350,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -361,4 +363,23 @@ jobs:
       # No dependencies needed; the validator is a self-contained Node script.
       - name: Validate manifest.json
         run: node scripts/release/validate-manifest.js manifest.json
+
+      # Syntax and checksum shape are not enough: Jellyfin has no GitHub
+      # credentials, so each new or changed asset must work anonymously.
+      # Frozen history stays out of unrelated PRs' live-network dependency.
+      - name: Verify public catalog and release assets
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          args=(
+            manifest.json
+            --manifest-url
+            https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/main/manifest.json
+          )
+          if [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+              && git cat-file -e "${BASE_SHA}:manifest.json" 2>/dev/null; then
+            git show "${BASE_SHA}:manifest.json" > "$RUNNER_TEMP/base-manifest.json"
+            args+=(--base-manifest "$RUNNER_TEMP/base-manifest.json")
+          fi
+          node scripts/release/verify-manifest-remote.js "${args[@]}"
 # Registered for Jellyfin Canopy CI (no functional change).

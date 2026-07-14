@@ -34,10 +34,10 @@
  *   node scripts/release/validate-manifest.js [path/to/manifest.json]
  *   node scripts/release/validate-manifest.js manifest.json --assets-dir dist
  *
- * With --assets-dir the checksum of every entry whose zip is present under that
- * directory is re-verified against the actual bytes (checksum CORRECTNESS, not
- * just format); entries without a local asset are skipped. Without the flag the
- * run is format-only (the CI-on-PR path, where the zips aren't present).
+ * With --assets-dir each newly built zip is matched to the newest manifest
+ * entry carrying its stable per-ABI filename, then its checksum and exact
+ * one-root-DLL layout are verified. Entries without a local asset are skipped.
+ * Without the flag the run is format-only.
  *
  * Also exports validateManifest(data) and verifyChecksums(data, assetsDir) for
  * reuse by update-manifest.js and the tests.
@@ -47,6 +47,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { computeZipChecksum } = require('../lib/md5.js');
+const { expectedDllFromZipName, inspectZipLayout } = require('../lib/zip-layout.js');
 
 const VERSION_RE = /^\d+\.\d+\.\d+\.\d+$/;
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -98,6 +99,10 @@ function validateManifest(data) {
         }
         if (typeof plugin.guid !== 'string' || !GUID_RE.test(plugin.guid)) {
             errors.push(`${where}: "guid" must be a UUID`);
+        }
+        if (plugin.imageUrl !== undefined
+            && (typeof plugin.imageUrl !== 'string' || !plugin.imageUrl.startsWith('https://'))) {
+            errors.push(`${where}: "imageUrl" must be an HTTPS URL when present`);
         }
         // An empty array is valid: it is the pre-first-release state of a fresh
         // repo (the release workflow prepends the first entry). Only a missing
@@ -199,12 +204,14 @@ function entryZipName(entry) {
 }
 
 /**
- * Verify each version entry's checksum against the ACTUAL asset bytes, for any
- * asset present under assetsDir. This closes the gap validateManifest leaves —
+ * Verify each newly built asset's checksum and one-root-DLL layout against the
+ * newest matching manifest entry. This closes the gap validateManifest leaves —
  * it only checks the checksum FORMAT, so a well-formed but wrong MD5 (a
  * hand-edited manifest, or a zip rebuilt after generation) would still ship and
  * brick in-app updates. Entries whose asset is not present locally (frozen
- * history; CI-on-PR has no zips) are skipped, not errored.
+ * history; CI-on-PR has no zips) are skipped, not errored. Historical entries
+ * can legitimately reuse the stable per-ABI filename at a different tag, so a
+ * local asset is checked once against the newest entry carrying that name.
  * @param {unknown} data Parsed manifest.
  * @param {string} assetsDir Directory that may hold the release zips.
  * @returns {{ errors: string[] }}
@@ -213,21 +220,35 @@ function verifyChecksums(data, assetsDir) {
     const errors = [];
     if (!Array.isArray(data)) return { errors };
 
+    // Release filenames are intentionally stable per target ABI, so multiple
+    // historical entries can point at different tags carrying the same name.
+    // dist/ contains only the newly built asset: validate it against the first
+    // (newest) matching manifest entry, never against frozen older checksums.
+    const verifiedZipNames = new Set();
+
     data.forEach((plugin, pi) => {
         if (typeof plugin !== 'object' || plugin === null || !Array.isArray(plugin.versions)) return;
         plugin.versions.forEach((entry, vi) => {
             const at = `plugin[${pi}].versions[${vi}]`;
             const zipName = entryZipName(entry);
-            if (zipName === null) return;
+            if (zipName === null || verifiedZipNames.has(zipName)) return;
 
             const assetPath = path.join(assetsDir, zipName);
             if (!fs.existsSync(assetPath)) return; // frozen history — no local asset to verify
+            verifiedZipNames.add(zipName);
 
             const actual = computeZipChecksum(assetPath);
             if (typeof entry.checksum === 'string' && entry.checksum.toUpperCase() !== actual) {
                 errors.push(
                     `${at}: checksum ${entry.checksum} does not match ${zipName} (actual ${actual})`
                 );
+            }
+            const expectedDll = typeof entry.targetAbi === 'string'
+                ? expectedDllFromZipName(zipName, entry.targetAbi)
+                : null;
+            const layout = inspectZipLayout(fs.readFileSync(assetPath), expectedDll);
+            if (!layout.ok) {
+                errors.push(`${at}: ${zipName} ${layout.error}`);
             }
         });
     });
@@ -277,7 +298,8 @@ function main() {
     const { errors, warnings } = validateManifest(data);
 
     // Opt-in: when --assets-dir is passed (the release path, after packaging),
-    // verify checksum CORRECTNESS against the actual zips, not just format.
+    // verify checksum CORRECTNESS and exact root-DLL layout against the actual
+    // new zips, not just manifest field format.
     if (assetsDir) {
         const { errors: checksumErrors } = verifyChecksums(data, assetsDir);
         errors.push(...checksumErrors);
