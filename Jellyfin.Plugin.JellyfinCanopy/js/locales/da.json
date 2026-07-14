@@ -381,6 +381,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Kunne ikke gemme bogmærke",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Sprang til bogmærke",
   "bookmark_cleanup_complete": "Oprydning fuldført: fjernede {count} forældreløse bogmærker",
+  "bookmark_cleanup_uncertain_summary": "Beholdt som usikre: {retained}; fejl: {errors}",
   "bookmark_cleanup_failed": "Oprydning mislykkedes",
   "bookmark_delete_all_confirm": "Slet ALLE bogmærker? Dette kan ikke fortrydes!",
   "bookmark_deleted_all": "Alle bogmærker slettet",

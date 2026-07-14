@@ -381,6 +381,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Nepodarilo sa uložiť záložku",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Preskočené na záložku",
   "bookmark_cleanup_complete": "Čistenie dokončené: odstránených {count} osirelých záložiek",
+  "bookmark_cleanup_uncertain_summary": "Ponechané ako neisté: {retained}; chyby: {errors}",
   "bookmark_cleanup_failed": "Čistenie zlyhalo",
   "bookmark_delete_all_confirm": "Vymazať VŠETKY záložky? Toto nie je možné vrátiť späť!",
   "bookmark_deleted_all": "Všetky záložky vymazané",

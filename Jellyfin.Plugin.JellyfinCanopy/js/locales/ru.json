@@ -380,6 +380,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Не удалось сохранить закладку",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Переход к закладке",
   "bookmark_cleanup_complete": "Очистка завершена: удалено {count} потерянных закладок",
+  "bookmark_cleanup_uncertain_summary": "Сохранено как неопределённое: {retained}; ошибок: {errors}",
   "bookmark_cleanup_failed": "Очистка не удалась",
   "bookmark_delete_all_confirm": "Удалить ВСЕ закладки? Это действие нельзя отменить!",
   "bookmark_deleted_all": "Все закладки удалены",

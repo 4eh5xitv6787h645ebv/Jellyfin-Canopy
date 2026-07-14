@@ -1,10 +1,9 @@
 // Unit tests for the two bookmarks data-safety fixes shipped with the pages
 // cutover:
 //
-//  1. cleanup-orphans / orphan-detection deletes a bookmark ONLY when the item
-//     fetch fails with an explicit 404. Any other failure (5xx, network, etc.)
-//     keeps the bookmark.
-//  2. sync/cleanup use one revisioned server transaction and rebase on conflict.
+//  1. cleanup-orphans delegates existence classification to one bounded,
+//     revisioned server transaction and adopts only its committed state.
+//  2. transport/auth failures preserve the exact prior bookmark state.
 //
 // The functions under test live inside bookmarks.ts's `if (BookmarksEnabled)`
 // closure and are reached through the frozen JC.bookmarks facade, so each test
@@ -53,9 +52,18 @@ describe('bookmarks data-safety', () => {
             ]));
         };
         JC.toCamelCase = camel;
-        plugin = vi.fn((_path: string, options: AnyRec) => {
-            const payload = options.body as { revision: number; operations: AnyRec[] };
+        plugin = vi.fn((path: string, options: AnyRec) => {
             const current = JC.userConfig.bookmark;
+            if (path.endsWith('/cleanup')) {
+                return Promise.resolve({
+                    revision: current.revision,
+                    bookmarks: structuredClone(current.bookmarks),
+                    deleted: 0,
+                    retainedUncertain: 0,
+                    errors: 0
+                });
+            }
+            const payload = options.body as { revision: number; operations: AnyRec[] };
             if (payload.revision !== current.revision) throw httpError(409);
             const next = structuredClone(current.bookmarks);
             for (const operation of payload.operations) {
@@ -91,8 +99,8 @@ describe('bookmarks data-safety', () => {
         vi.restoreAllMocks();
     });
 
-    describe('cleanupOrphaned: delete only on explicit 404', () => {
-        it('removes bookmarks for 404 items and KEEPS bookmarks whose fetch failed for any other reason', async () => {
+    describe('cleanupOrphaned: authoritative server transaction', () => {
+        it('adopts a mixed cleanup result and reports deleted, retained-uncertain, and errors separately', async () => {
             const store: AnyRec = {
                 a: { itemId: 'gone', timestamp: 1 },
                 b: { itemId: 'flaky', timestamp: 2 },
@@ -100,39 +108,109 @@ describe('bookmarks data-safety', () => {
                 d: { itemId: 'ok', timestamp: 4 },
             };
             const api = await loadModule(store);
-
-            getItem.mockImplementation((_u: string, itemId: string) => {
-                if (itemId === 'gone') return Promise.reject(httpError(404));
-                if (itemId === 'flaky') return Promise.reject(httpError(500));
-                return Promise.resolve({ Id: itemId });
+            plugin.mockResolvedValueOnce({
+                revision: 1,
+                bookmarks: {
+                    b: store.b,
+                    d: store.d
+                },
+                deleted: 2,
+                retainedUncertain: 1,
+                errors: 1
             });
 
             const result = await api.cleanupOrphaned();
 
-            // Only the confirmed-404 item's bookmarks are deleted.
-            expect(result.cleaned).toBe(2);
-            expect(result.errors).toBe(1); // the 5xx item was kept, counted
+            expect(result).toEqual({ deleted: 2, retainedUncertain: 1, errors: 1 });
             const remaining = JC.userConfig.bookmark.bookmarks;
             expect(Object.keys(remaining).sort()).toEqual(['b', 'd']);
-            expect(remaining.b.itemId).toBe('flaky'); // transient failure -> kept
+            expect(remaining.b.itemId).toBe('flaky');
             expect(plugin).toHaveBeenCalledTimes(1);
-            expect(plugin.mock.calls[0][1].body.operations).toHaveLength(2);
+            expect(plugin).toHaveBeenCalledWith(
+                '/user-settings/u1/bookmark.json/cleanup',
+                { method: 'POST', body: { revision: 0 }, skipRetry: true }
+            );
+            expect(getItem).not.toHaveBeenCalled();
         });
 
-        it('deletes nothing when every item fetch fails transiently', async () => {
+        it.each([
+            ['401', httpError(401)],
+            ['403', httpError(403)],
+            ['429', httpError(429)],
+            ['500', httpError(500)],
+            ['503', httpError(503)],
+            ['network', new TypeError('Failed to fetch')],
+            ['abort', Object.assign(new Error('aborted'), { name: 'AbortError' })]
+        ])('preserves exact state when the cleanup request fails with %s', async (_label, failure) => {
             const store: AnyRec = {
                 a: { itemId: 'x', timestamp: 1 },
                 b: { itemId: 'y', timestamp: 2 },
             };
             const api = await loadModule(store);
-            getItem.mockRejectedValue(httpError(503));
+            plugin.mockRejectedValue(failure);
 
-            const result = await api.cleanupOrphaned();
+            await expect(api.cleanupOrphaned()).rejects.toBe(failure);
 
-            expect(result.cleaned).toBe(0);
-            expect(result.errors).toBe(2);
             expect(Object.keys(JC.userConfig.bookmark.bookmarks).sort()).toEqual(['a', 'b']);
-            expect(plugin).not.toHaveBeenCalled();
+            expect(JC.userConfig.bookmark.revision).toBe(0);
+        });
+
+        it('rebases a 409 cleanup on authoritative state without dropping a concurrent bookmark', async () => {
+            const store: AnyRec = {
+                gone: { itemId: 'gone', timestamp: 1 },
+                keep: { itemId: 'keep', timestamp: 2 }
+            };
+            const api = await loadModule(store);
+            const concurrent = { itemId: 'concurrent', timestamp: 3 };
+            plugin
+                .mockRejectedValueOnce(Object.assign(httpError(409), {
+                    responseJSON: {
+                        revision: 1,
+                        bookmarks: { ...store, concurrent }
+                    }
+                }))
+                .mockResolvedValueOnce({
+                    revision: 2,
+                    bookmarks: { keep: store.keep, concurrent },
+                    deleted: 1,
+                    retainedUncertain: 0,
+                    errors: 0
+                });
+
+            await expect(api.cleanupOrphaned()).resolves.toEqual({
+                deleted: 1,
+                retainedUncertain: 0,
+                errors: 0
+            });
+            expect(JC.userConfig.bookmark.bookmarks).toEqual({ keep: store.keep, concurrent });
+            expect(plugin.mock.calls[1][1].body.revision).toBe(1);
+        });
+
+        it('uses exact GET evidence after response loss and reports the committed deletions once', async () => {
+            const store: AnyRec = {
+                gone: { itemId: 'gone', timestamp: 1 },
+                keep: { itemId: 'keep', timestamp: 2 }
+            };
+            const api = await loadModule(store);
+            plugin
+                .mockRejectedValueOnce(new TypeError('Failed to fetch after commit'))
+                .mockResolvedValueOnce({ revision: 1, bookmarks: { keep: store.keep } })
+                .mockResolvedValueOnce({
+                    revision: 1,
+                    bookmarks: { keep: store.keep },
+                    deleted: 0,
+                    retainedUncertain: 0,
+                    errors: 0
+                });
+
+            await expect(api.cleanupOrphaned()).resolves.toEqual({
+                deleted: 1,
+                retainedUncertain: 0,
+                errors: 0
+            });
+            expect(JC.userConfig.bookmark.bookmarks).toEqual({ keep: store.keep });
+            expect(plugin).toHaveBeenCalledTimes(3);
+            expect(plugin.mock.calls[1][0]).toBe('/user-settings/u1/bookmark.json');
         });
     });
 
@@ -321,8 +399,7 @@ describe('bookmarks data-safety', () => {
         ));
         expect(JC.userConfig.bookmark.bookmarks).toEqual(initial);
 
-        getItem.mockRejectedValue(httpError(404));
-        await expect(api.cleanupOrphaned()).resolves.toEqual({ cleaned: 0, errors: 2 });
+        await expectTypedRejection(api.cleanupOrphaned());
         expect(JC.userConfig.bookmark.bookmarks).toEqual(initial);
 
         await expectTypedRejection(api.deleteAll());

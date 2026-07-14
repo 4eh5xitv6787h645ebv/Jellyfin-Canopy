@@ -380,6 +380,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Nie udało się zapisać zakładki",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Przeskoczono do zakładki",
   "bookmark_cleanup_complete": "Czyszczenie zakończone: usunięto {count} osieroconych zakładek",
+  "bookmark_cleanup_uncertain_summary": "Zachowane jako niepewne: {retained}; błędy: {errors}",
   "bookmark_cleanup_failed": "Czyszczenie nie powiodło się",
   "bookmark_delete_all_confirm": "Usunąć WSZYSTKIE zakładki? Nie można tego cofnąć!",
   "bookmark_deleted_all": "Wszystkie zakładki usunięte",

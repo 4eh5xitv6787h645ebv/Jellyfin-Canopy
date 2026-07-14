@@ -381,6 +381,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Impossibile salvare il segnalibro",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Saltato al segnalibro",
   "bookmark_cleanup_complete": "Pulizia completata: rimossi {count} segnalibri orfani",
+  "bookmark_cleanup_uncertain_summary": "Conservati perché incerti: {retained}; errori: {errors}",
   "bookmark_cleanup_failed": "Pulizia fallita",
   "bookmark_delete_all_confirm": "Eliminare TUTTI i segnalibri? Questa azione non può essere annullata!",
   "bookmark_deleted_all": "Tutti i segnalibri eliminati",

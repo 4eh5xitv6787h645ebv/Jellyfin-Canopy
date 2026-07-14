@@ -381,6 +381,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} Fehler beim Speichern des Lesezeichens",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} Zu Lesezeichen gesprungen",
   "bookmark_cleanup_complete": "Bereinigung abgeschlossen: {count} verwaiste Lesezeichen entfernt",
+  "bookmark_cleanup_uncertain_summary": "Unsichere beibehalten: {retained}; Fehler: {errors}",
   "bookmark_cleanup_failed": "Bereinigung fehlgeschlagen",
   "bookmark_delete_all_confirm": "ALLE Lesezeichen löschen? Dies kann nicht rückgängig gemacht werden!",
   "bookmark_deleted_all": "Alle Lesezeichen gelöscht",

@@ -9,6 +9,12 @@ import type { JEGlobal } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+export interface BookmarkCleanupResult {
+    deleted: number;
+    retainedUncertain: number;
+    errors: number;
+}
+
 /** Public bookmarks API attached to JC.bookmarks by enhanced/bookmarks. */
 export interface BookmarksApi {
     add(timestamp: number, label?: string): Promise<Record<string, unknown> | null>;
@@ -30,7 +36,7 @@ export interface BookmarksApi {
     // `removeOldIds` migrates (deletes the originals) rather than merely
     // duplicating; copies and removals share one revisioned server transaction.
     syncBookmarks(oldBookmarks: any[], newItemDetails: any, timeOffset?: number, removeOldIds?: string[]): Promise<any[]>;
-    cleanupOrphaned(): Promise<{ cleaned: number; errors: number }>;
+    cleanupOrphaned(): Promise<BookmarkCleanupResult>;
     /** Delete the loaded bookmark set in one revisioned server transaction. */
     deleteAll(): Promise<number>;
 }

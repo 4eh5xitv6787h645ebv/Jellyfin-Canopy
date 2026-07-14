@@ -381,6 +381,7 @@
   "toast_bookmark_save_failed": "{{icon:error}} 储存书签失败",
   "toast_jumped_to_bookmark": "{{icon:bookmark}} 已跳至书签",
   "bookmark_cleanup_complete": "清理完成：已移除 {count} 个孤立书签",
+  "bookmark_cleanup_uncertain_summary": "因状态不确定而保留：{retained}；错误：{errors}",
   "bookmark_cleanup_failed": "清理失败",
   "bookmark_delete_all_confirm": "确定要删除所有书签？此操作无法复原！",
   "bookmark_deleted_all": "已删除所有书签",

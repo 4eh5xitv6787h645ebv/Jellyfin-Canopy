@@ -180,6 +180,7 @@
   "seerr_modal_toast_request_fail": "{{icon:error}} Failed to request seasons",
   "seerr_discover_all": "All",
   "bookmark_cleanup_complete": "Cleanup complete: removed {count} orphaned bookmarks",
+  "bookmark_cleanup_uncertain_summary": "נשמרו בשל אי-ודאות: {retained}; שגיאות: {errors}",
   "seerr_btn_error": "Error",
   "bookmark_merge_success": "{{icon:success}} Merged {count} bookmark(s) to primary version",
   "seerr_select_all_movies": "Select All Movies",

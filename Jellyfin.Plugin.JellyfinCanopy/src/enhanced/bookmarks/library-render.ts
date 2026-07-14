@@ -6,7 +6,7 @@
 // (Converted from js/enhanced/bookmarks-library-render.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
-import { toast } from '../../core/ui-kit';
+import { escapeHtml, toast } from '../../core/ui-kit';
 import { renderBookmarkItems } from './library-items';
 import { showDuplicatesSyncModal } from './library-modals';
 import type { IdentityContext } from '../../types/jc';
@@ -218,7 +218,16 @@ export async function renderBookmarksLibrary(
     try {
       const result = await JC.bookmarks!.cleanupOrphaned();
       if (!JC.identity.isCurrent(context)) return;
-      toast(JC.t!('bookmark_cleanup_complete').replace('{count}', String(Number(result.cleaned) || 0)), 4000);
+      const deletedCount = Number(result.deleted) || 0;
+      const retainedCount = Number(result.retainedUncertain) || 0;
+      const errorCount = Number(result.errors) || 0;
+      const removed = JC.t!('bookmark_cleanup_complete').replace('{count}', String(deletedCount));
+      const details = retainedCount > 0 || errorCount > 0
+        ? JC.t!('bookmark_cleanup_uncertain_summary')
+          .replace('{retained}', String(retainedCount))
+          .replace('{errors}', String(errorCount))
+        : '';
+      toast([removed, details].filter(Boolean).map(escapeHtml).join(' · '), 5000);
       renderActiveBookmarks(context);
     } catch (error) {
       if (!JC.identity.isCurrent(context)) return;
