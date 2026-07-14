@@ -7,22 +7,21 @@
 #   4. create the Movies + Shows libraries and the two test users the specs
 #      expect,
 #   5. enable the plugin features the specs exercise (tags, random button,
-#      hidden content, Spoiler Guard), wait for the scan, seed episode
-#      titles/overviews, and mark S01E01 played for the non-admin user.
+#      hidden content, Spoiler Guard), wait for the scan, seed movie/episode
+#      metadata plus an incomplete TMDB-anchored BoxSet, and mark S01E01 played
+#      for the non-admin user.
 #
 # Idempotent: every run starts from a wiped config/cache/media state.
-# Requirements: docker (compose v2), curl, jq. ffmpeg is used from the host
-# when available, otherwise from jellyfin-ffmpeg inside the pulled image.
+# Requirements: docker (compose v2), curl, jq, and openssl. ffmpeg is used from
+# the host when available, otherwise from jellyfin-ffmpeg inside the image.
 #
-# Optional Seerr/TMDB seeding (bare by default — no secrets in the repo/CI
-# unless supplied): export any of these before running to also wire the
-# TMDB and Seerr integration the security specs exercise. When unset the
-# seed is bare and those specs SKIP (see e2e/fixtures/seerr.ts):
+# Seerr/TMDB/Radarr are hermetic by default through the Compose fixture. Local
+# exploratory runs may override these values with real services explicitly:
 #   TMDB_API_KEY               a TMDB v3 API key            -> TmdbEnabled
 #   SEERR_URL             a reachable Seerr URL    \
 #   SEERR_API_KEY         its API key                   > SeerrEnabled
 #   SEERR_RESPECT_PARENTAL  true|false (default true) — parental gating
-#   JF_IMAGE              compose image override (default jellyfin:12.0-rc2)
+#   JF_IMAGE              compose image override (required default is digest-pinned)
 #   JF_LAYOUT_ENFORCEMENT None|ForceExperimental|ForceLegacy (default None)
 #   JF_E2E_PROJECT        validated Compose namespace (default docker)
 #   JF_E2E_STATE_DIR      marker-owned config/cache/media root (default HERE)
@@ -37,7 +36,7 @@
 #
 # Usage:
 #   dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release
-#   bash e2e/docker/seed.sh                # default port 8100 (bare)
+#   bash e2e/docker/seed.sh                # default port 8100 (hermetic)
 #   TMDB_API_KEY=... SEERR_URL=... SEERR_API_KEY=... bash e2e/docker/seed.sh
 #   JF_BASE_URL=http://127.0.0.1:8100 npm run e2e
 #   docker compose -f e2e/docker/compose.yml down -v
@@ -47,7 +46,8 @@ umask 077
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HERE}/../.." && pwd)"
 FIXTURE_CONTRACT="${REPO_ROOT}/e2e/fixtures/media-fixtures.json"
-export JF_IMAGE="${JF_IMAGE:-jellyfin/jellyfin:12.0-rc2}"
+export JF_IMAGE="${JF_IMAGE:-jellyfin/jellyfin:unstable@sha256:9040e988eca1e53cd90679d16edf7bd842cc661bf85da124431e25452b4abeb5}"
+export JF_MOCK_IMAGE="${JF_MOCK_IMAGE:-node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2}"
 IMAGE="${JF_IMAGE}"
 
 DEFAULT_ADMIN_USER="jc_arradmin"
@@ -88,6 +88,7 @@ fail() { echo "[seed] ERROR: $*" >&2; exit 1; }
 [ -f "${PLUGIN_DLL}" ] || fail "plugin DLL not found at ${PLUGIN_DLL} — build Release first"
 command -v jq >/dev/null || fail "jq is required"
 command -v curl >/dev/null || fail "curl is required"
+command -v openssl >/dev/null || fail "openssl is required"
 [ -f "${FIXTURE_CONTRACT}" ] || fail "fixture contract not found at ${FIXTURE_CONTRACT}"
 
 [[ "${E2E_PROJECT}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] \
@@ -211,15 +212,17 @@ fi
 CONFIG_DIR="${STATE_DIR}/config"
 CACHE_DIR="${STATE_DIR}/cache"
 MEDIA_DIR="${STATE_DIR}/media"
+MOCK_STATE_DIR="${STATE_DIR}/mock-state"
 SEED_RESULT="${STATE_DIR}/seed-result.json"
 SEED_RESULT_TMP="${STATE_DIR}/seed-result.json.tmp"
-for OWNED_PATH in "${CONFIG_DIR}" "${CACHE_DIR}" "${MEDIA_DIR}" "${SEED_RESULT}" "${SEED_RESULT_TMP}"; do
+for OWNED_PATH in "${CONFIG_DIR}" "${CACHE_DIR}" "${MEDIA_DIR}" "${MOCK_STATE_DIR}" "${SEED_RESULT}" "${SEED_RESULT_TMP}"; do
     [ ! -L "${OWNED_PATH}" ] \
         || fail "refusing to reset symlinked E2E state path: ${OWNED_PATH}"
 done
 export JF_CONFIG_DIR="${CONFIG_DIR}"
 export JF_CACHE_DIR="${CACHE_DIR}"
 export JF_MEDIA_DIR="${MEDIA_DIR}"
+export JF_MOCK_STATE_DIR="${MOCK_STATE_DIR}"
 export JF_E2E_PROJECT="${E2E_PROJECT}"
 COMPOSE=(docker compose --project-name "${E2E_PROJECT}" --file "${HERE}/compose.yml")
 
@@ -246,15 +249,35 @@ AUTOSKIP_RELATIVE_PATH="${AUTOSKIP_RELATIVE_DIR}/${AUTOSKIP_FILENAME}"
 AUTOSKIP_CONTAINER_PATH="/media/${AUTOSKIP_RELATIVE_PATH}"
 
 # ── 1. clean state + plugin install ─────────────────────────────────────────
-log "resetting project ${E2E_PROJECT} state under ${STATE_DIR} (config/cache/media)"
+log "resetting project ${E2E_PROJECT} state under ${STATE_DIR} (config/cache/media/mock)"
 if ! "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1; then
     fail "could not tear down Compose project ${E2E_PROJECT}; refusing to reset its state"
 fi
-rm -rf -- "${CONFIG_DIR}" "${CACHE_DIR}" "${MEDIA_DIR}"
+rm -rf -- "${CONFIG_DIR}" "${CACHE_DIR}" "${MEDIA_DIR}" "${MOCK_STATE_DIR}"
 rm -f -- "${SEED_RESULT}" "${SEED_RESULT_TMP}"
-mkdir -p -- "${CONFIG_DIR}/plugins/JellyfinCanopy_e2e" "${CACHE_DIR}" "${MEDIA_DIR}"
+mkdir -p -- "${CONFIG_DIR}/plugins/JellyfinCanopy_e2e" "${CACHE_DIR}" "${MEDIA_DIR}" "${MOCK_STATE_DIR}"
 cp -- "${PLUGIN_DLL}" "${CONFIG_DIR}/plugins/JellyfinCanopy_e2e/"
 log "installed plugin DLL into the isolated config volume"
+
+# Generate a fresh CA and leaf certificate for the test-only TMDB hostname on
+# every seed. No reusable private key is stored in source control, and only the
+# disposable Jellyfin container trusts this CA.
+CERT_DIR="${MOCK_STATE_DIR}/certs"
+mkdir -m 700 -- "${CERT_DIR}"
+openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 2 \
+    -subj "/CN=Jellyfin Canopy E2E CA" \
+    -keyout "${CERT_DIR}/ca-key.pem" -out "${CERT_DIR}/ca.pem" >/dev/null 2>&1
+openssl req -newkey rsa:2048 -nodes -sha256 \
+    -subj "/CN=api.themoviedb.org" \
+    -keyout "${CERT_DIR}/server-key.pem" -out "${CERT_DIR}/server.csr" >/dev/null 2>&1
+printf '%s\n' 'subjectAltName=DNS:api.themoviedb.org' 'extendedKeyUsage=serverAuth' > "${CERT_DIR}/server-ext.cnf"
+openssl x509 -req -sha256 -days 2 \
+    -in "${CERT_DIR}/server.csr" \
+    -CA "${CERT_DIR}/ca.pem" -CAkey "${CERT_DIR}/ca-key.pem" -CAcreateserial \
+    -extfile "${CERT_DIR}/server-ext.cnf" -out "${CERT_DIR}/server.pem" >/dev/null 2>&1
+openssl verify -CAfile "${CERT_DIR}/ca.pem" "${CERT_DIR}/server.pem" >/dev/null \
+    || fail "could not verify the generated hermetic TMDB certificate"
+log "generated a per-run CA for the hermetic TMDB fixture"
 
 # ── 2. tiny valid media (h264/aac so the Playwright Chromium can play them) ──
 if command -v ffmpeg >/dev/null; then
@@ -428,15 +451,33 @@ log "creating the seeded non-admin user"
 api POST /Users/New "$(jq -nc --arg name "${USER_NAME}" --arg password "${USER_PASS}" \
     '{Name: $name, Password: $password}')" >/dev/null
 
-# ── 5. plugin feature flags (+ optional TMDB/Seerr) + scan wait ──────────────
-log "enabling the plugin features the specs exercise"
+# Bind the hermetic Seerr identities to the exact freshly-created Jellyfin
+# users before enabling the integration. The fixture reads this file on every
+# request, so no credential or mutable third-party account is involved.
+ADMIN_ID="$(api GET /Users | jq -r --arg name "${ADMIN_USER}" '.[] | select(.Name == $name) | .Id')"
+USER_ID="$(api GET /Users | jq -r --arg name "${USER_NAME}" '.[] | select(.Name == $name) | .Id')"
+[ -n "${ADMIN_ID}" ] && [ "${ADMIN_ID}" != null ] || fail "could not resolve seeded admin id"
+[ -n "${USER_ID}" ] && [ "${USER_ID}" != null ] || fail "could not resolve seeded non-admin id"
+jq -n \
+    --arg adminId "${ADMIN_ID}" --arg adminName "${ADMIN_USER}" \
+    --arg userId "${USER_ID}" --arg userName "${USER_NAME}" \
+    '{users: [
+        {id: 1, jellyfinUserId: $adminId, username: $adminName, displayName: $adminName, permissions: 1051642},
+        {id: 2, jellyfinUserId: $userId, username: $userName, displayName: $userName, permissions: 790560}
+    ]}' > "${MOCK_STATE_DIR}/config.json"
 
-# Optional Seerr/TMDB integration — bare unless the env vars are supplied
-# (never hardcode a key; CI passes these as secrets when it wants the security
-# specs to RUN rather than SKIP). See e2e/fixtures/seerr.ts for the gate.
-TMDB_API_KEY="${TMDB_API_KEY:-}"
-SEERR_URL="${SEERR_URL:-}"
-SEERR_API_KEY="${SEERR_API_KEY:-}"
+# ── 5. plugin feature flags (+ optional TMDB/Seerr) + scan wait ──────────────
+log "enabling plugin features and hermetic integrations"
+
+# The deterministic fixture is the required default. Explicit environment
+# overrides remain available for exploratory local integration runs.
+TMDB_API_KEY="${TMDB_API_KEY:-jc-e2e-tmdb}"
+SEERR_URL="${SEERR_URL:-http://integrations:5055}"
+SEERR_API_KEY="${SEERR_API_KEY:-jc-e2e-seerr}"
+RADARR_INSTANCES="${RADARR_INSTANCES:-}"
+if [ -z "${RADARR_INSTANCES}" ]; then
+    RADARR_INSTANCES="$(jq -nc '[{Name:"E2E Radarr",Url:"http://integrations:7878",ApiKey:"jc-e2e-arr",Enabled:true}]')"
+fi
 case "${SEERR_RESPECT_PARENTAL:-true}" in
     false|FALSE|0|no) SEERR_RESPECT_PARENTAL=false ;;
     *) SEERR_RESPECT_PARENTAL=true ;;
@@ -446,6 +487,7 @@ PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration" \
     | jq --arg tmdb "${TMDB_API_KEY}" \
          --arg seerrUrl "${SEERR_URL}" \
          --arg seerrKey "${SEERR_API_KEY}" \
+         --arg radarrInstances "${RADARR_INSTANCES}" \
          --arg layout "${LAYOUT_ENFORCEMENT}" \
          --argjson seerrParental "${SEERR_RESPECT_PARENTAL}" \
         '.QualityTagsEnabled = true
@@ -459,6 +501,11 @@ PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration" \
         | .SpoilerBlurEnabled = true
         | .ShowFileSizes = true
         | .ShowWatchProgress = true
+        | .RequestApprovalsEnabled = true
+        | .SeerrShowReportButton = true
+        | .ArrSearchEnabled = true
+        | .ArrSearchManageEnabled = true
+        | .RadarrInstances = $radarrInstances
         | .LayoutEnforcement = $layout
         | (if $tmdb != "" then .TMDB_API_KEY = $tmdb else . end)
         | (if ($seerrUrl != "" and $seerrKey != "")
@@ -470,16 +517,9 @@ PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration" \
 api POST "/Plugins/${PLUGIN_ID}/Configuration" "${PLUGIN_CONFIG}" >/dev/null
 log "layout enforcement: ${LAYOUT_ENFORCEMENT}"
 
-if [ -n "${TMDB_API_KEY}" ]; then
-    log "optional: TMDB configured (TmdbEnabled)"
-else
-    log "optional: TMDB not configured — TMDB/reviews specs will SKIP"
-fi
-if [ -n "${SEERR_URL}" ] && [ -n "${SEERR_API_KEY}" ]; then
-    log "optional: Seerr configured (${SEERR_URL}, respectParental=${SEERR_RESPECT_PARENTAL})"
-else
-    log "optional: Seerr not configured — Seerr specs will SKIP"
-fi
+log "TMDB configured (${TMDB_API_KEY:+key present})"
+log "Seerr configured (${SEERR_URL}, respectParental=${SEERR_RESPECT_PARENTAL})"
+log "Radarr configured for the hermetic arr context contract"
 
 log "waiting for the library scan to index all movies and the exact Auto-Skip path"
 ADMIN_ID="$(api GET /Users | jq -r --arg name "${ADMIN_USER}" '.[] | select(.Name == $name) | .Id')"
@@ -571,7 +611,7 @@ done
 # rating-tags renderers had nothing to stamp (only quality + language, which
 # come from the media itself, tagged). Give each movie real Genres and a
 # CommunityRating via the item-update API so the per-family tag assertions in
-# tags.spec.ts / non-admin.spec.ts stay meaningful on this bare seed.
+# tags.spec.ts / non-admin.spec.ts stay meaningful on the hermetic seed.
 log "seeding genre + rating metadata so every tag family renders"
 MOVIE_IDS="$(api GET "/Items?IncludeItemTypes=Movie&Recursive=true&userId=${ADMIN_ID}" | jq -r '.Items[].Id')"
 i=0
@@ -579,15 +619,54 @@ for MID in ${MOVIE_IDS}; do
     # Rotate a genre set and vary the community rating a little per movie; jq
     # picks both from the loop index so no fragile shell array-splitting.
     DTO="$(api GET "/Users/${ADMIN_ID}/Items/${MID}")"
+    case "${i}" in
+        0) TMDB_ID=550 ;;
+        1) TMDB_ID=603 ;;
+        2) TMDB_ID=862 ;;
+        3) TMDB_ID=10333 ;;
+        *) TMDB_ID=10334 ;;
+    esac
     PATCHED="$(printf '%s' "${DTO}" | jq \
         --argjson idx "$((i % 4))" \
+        --arg tmdb "${TMDB_ID}" \
         '([["Action","Adventure"],["Comedy","Drama"],["Science Fiction","Thriller"],["Documentary"]][$idx]) as $g
          | .Genres = $g
-         | .CommunityRating = (6.5 + ($idx * 0.5))')"
+         | .CommunityRating = (6.5 + ($idx * 0.5))
+         | .ProviderIds = (.ProviderIds // {})
+         | .ProviderIds.Tmdb = $tmdb')"
     api POST "/Items/${MID}" "${PATCHED}" >/dev/null || fail "could not update metadata for item ${MID}"
     i=$((i + 1))
 done
 log "updated metadata on ${i} movies (genres + community rating; audio lang baked at encode)"
+
+# A long-lived, seed-owned BoxSet removes the first-use collection-index race
+# from the mobile Missing-from layout test. The dynamic test fallback remains
+# useful for exploratory servers, but required CI always receives this exact
+# TMDB collection anchor and verifies the feature-facing endpoint before seed
+# success is published.
+log "creating the TMDB-anchored incomplete collection fixture"
+BOXSET_SEED_IDS="$(api GET "/Items?IncludeItemTypes=Movie&Recursive=true&userId=${ADMIN_ID}&Limit=2" \
+    | jq -er '[.Items[].Id] | if length == 2 then join(",") else empty end')"
+BOXSET_CREATED="$(api POST "/Collections?Name=JC%20E2E%20Fixture%20Collection&Ids=${BOXSET_SEED_IDS}")"
+BOXSET_ID="$(printf '%s' "${BOXSET_CREATED}" | jq -er '.Id // empty')"
+BOXSET_DTO="$(api GET "/Users/${ADMIN_ID}/Items/${BOXSET_ID}?Fields=ProviderIds,Path")"
+BOXSET_PATCHED="$(printf '%s' "${BOXSET_DTO}" | jq \
+    '.ProviderIds = (.ProviderIds // {}) | .ProviderIds.Tmdb = "10"')"
+api POST "/Items/${BOXSET_ID}" "${BOXSET_PATCHED}" >/dev/null \
+    || fail "could not anchor BoxSet ${BOXSET_ID} to TMDB collection 10"
+BOXSET_VISIBLE_TMDB=""
+for _ in $(seq 1 60); do
+    BOXSET_VISIBLE_TMDB="$(api GET "/JellyfinCanopy/boxset/${BOXSET_ID}" 2>/dev/null \
+        | jq -r '.tmdbId // empty' || true)"
+    [ "${BOXSET_VISIBLE_TMDB}" = 10 ] && break
+    sleep 1
+done
+[ "${BOXSET_VISIBLE_TMDB}" = 10 ] \
+    || fail "BoxSet ${BOXSET_ID} never exposed TMDB collection 10 through the plugin endpoint"
+api GET "/JellyfinCanopy/seerr/collection/10" \
+    | jq -e '.parts | length >= 2 and any(.[]; ((.mediaInfo.status // 1) != 5))' >/dev/null \
+    || fail "hermetic Seerr collection 10 has no missing movie fixture"
+log "collection fixture ready: ID=${BOXSET_ID}, TMDB=10, missing parts available"
 
 # ── 7. episode titles + overviews so the strip filter has spoiler-y text ─────
 # The naming resolver names each episode "Guard Test Show S0xE0y" on disk, which
@@ -652,6 +731,7 @@ jq -n \
     --arg id "${AUTOSKIP_ID}" \
     --arg name "${AUTOSKIP_NAME}" \
     --arg path "${AUTOSKIP_CONTAINER_PATH}" \
+    --arg boxSetId "${BOXSET_ID}" \
     --argjson durationSeconds "${AUTOSKIP_ACTUAL_SECONDS}" \
     --argjson requiredMinimumSeconds "${AUTOSKIP_MIN_DURATION}" \
     '{
@@ -671,9 +751,13 @@ jq -n \
             path: $path,
             durationSeconds: $durationSeconds,
             requiredMinimumSeconds: $requiredMinimumSeconds
+        },
+        collection: {
+            id: $boxSetId,
+            tmdbId: "10"
         }
     }' > "${SEED_RESULT_TMP}"
 mv -- "${SEED_RESULT_TMP}" "${SEED_RESULT}"
 
-log "ready: ${BASE} (project=${E2E_PROJECT}, cpus=${JF_CPUS}, ${MOVIES} movies, series '${SHOW_NAME}' with ${EPISODES} episodes, Spoiler Guard enabled)"
+log "ready: ${BASE} (project=${E2E_PROJECT}, cpus=${JF_CPUS}, ${MOVIES} movies, one incomplete collection, series '${SHOW_NAME}' with ${EPISODES} episodes, Spoiler Guard enabled)"
 log "run the suite with: JF_BASE_URL=${BASE} npm run e2e"

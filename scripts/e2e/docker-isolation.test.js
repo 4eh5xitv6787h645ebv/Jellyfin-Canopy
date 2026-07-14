@@ -13,9 +13,13 @@ const ROOT = path.resolve(__dirname, '../..');
 const COMPOSE_FILE = path.join(ROOT, 'e2e/docker/compose.yml');
 const SEED_FILE = path.join(ROOT, 'e2e/docker/seed.sh');
 const PLAYWRIGHT_FILE = path.join(ROOT, 'e2e/playwright.config.ts');
+const E2E_GITIGNORE_FILE = path.join(ROOT, 'e2e/.gitignore');
+const MOCK_SERVER_FILE = path.join(ROOT, 'e2e/mock-integrations/server.js');
 const compose = fs.readFileSync(COMPOSE_FILE, 'utf8');
 const seed = fs.readFileSync(SEED_FILE, 'utf8');
 const playwright = fs.readFileSync(PLAYWRIGHT_FILE, 'utf8');
+const e2eGitignore = fs.readFileSync(E2E_GITIGNORE_FILE, 'utf8');
+const mockServer = fs.readFileSync(MOCK_SERVER_FILE, 'utf8');
 
 function seedPrerequisitesAvailable() {
     return ['bash', 'curl', 'jq', 'realpath'].every(
@@ -40,6 +44,8 @@ function runSeed(overrides = {}) {
         'JF_FFMPEG_THREADS',
         'JF_IMAGE',
         'JF_LAYOUT_ENFORCEMENT',
+        'JF_MOCK_IMAGE',
+        'JF_MOCK_STATE_DIR',
         'JF_PORT',
     ]) {
         delete env[name];
@@ -62,6 +68,23 @@ test('Compose isolates names, state, loopback publication, and the two-CPU defau
     assert.match(compose, /source: "\$\{JF_CONFIG_DIR:-\.\/config\}"/);
     assert.match(compose, /source: "\$\{JF_CACHE_DIR:-\.\/cache\}"/);
     assert.match(compose, /source: "\$\{JF_MEDIA_DIR:-\.\/media\}"/);
+    assert.match(compose, /jellyfin\/jellyfin:unstable@sha256:[0-9a-f]{64}/);
+    assert.match(compose, /node:22-alpine@sha256:[0-9a-f]{64}/);
+    assert.match(compose, /api\.themoviedb\.org/);
+    assert.match(compose, /SSL_CERT_FILE: \/e2e-certs\/ca\.pem/);
+});
+
+test('hermetic integrations use only disposable per-seed TLS keys and state', () => {
+    assert.match(seed, /CERT_DIR="\$\{MOCK_STATE_DIR\}\/certs"/);
+    assert.match(seed, /openssl req -x509/);
+    assert.match(seed, /openssl verify -CAfile/);
+    assert.match(seed, /MOCK_STATE_DIR="\$\{STATE_DIR\}\/mock-state"/);
+    assert.doesNotMatch(compose, /mock-integrations\/certs\/server-key/);
+    assert.doesNotMatch(seed, /jc-e2e-(?:tmdb|seerr|arr).*https?:\/\/(?!integrations)/);
+    assert.match(e2eGitignore, /^docker\/mock-state\/$/m);
+    assert.match(mockServer, /return id \? userById\(id\) : null/);
+    assert.match(mockServer, /missing or unknown x-api-user fixture identity/);
+    assert.doesNotMatch(mockServer, /requestedBy[\s\S]{0,250}users\[0\]/);
 });
 
 test('seed owns one validated Compose project through an argument array', () => {
@@ -295,6 +318,7 @@ test('rendered Compose config keeps an ephemeral custom shard isolated', (t) => 
             JF_CONFIG_DIR: path.join(state, 'config'),
             JF_CACHE_DIR: path.join(state, 'cache'),
             JF_MEDIA_DIR: path.join(state, 'media'),
+            JF_MOCK_STATE_DIR: path.join(state, 'mock-state'),
         };
         const rendered = spawnSync(
             'docker',
@@ -320,6 +344,7 @@ test('rendered Compose config keeps an ephemeral custom shard isolated', (t) => 
                 { source: path.join(state, 'config'), target: '/config', read_only: false },
                 { source: path.join(state, 'cache'), target: '/cache', read_only: false },
                 { source: path.join(state, 'media'), target: '/media', read_only: true },
+                { source: path.join(state, 'mock-state/certs/ca.pem'), target: '/e2e-certs/ca.pem', read_only: true },
             ]
         );
     } finally {

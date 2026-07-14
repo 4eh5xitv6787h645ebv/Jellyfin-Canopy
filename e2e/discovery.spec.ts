@@ -1,8 +1,8 @@
 // E2E for the Discovery / Trending library placement.
 //
-// The Discovery feed needs a data source (Seerr and/or a TMDB key). The dockerized CI seed is bare,
-// so this spec SKIPS there — like the Seerr specs — and runs against a configured server
-// (jellyfin-12-discovery). It asserts the library toggle, that the pane renders real shelves, and
+// The Discovery feed needs a data source (Seerr and/or a TMDB key). Required CI
+// supplies both hermetically; the readiness skip is only for exploratory runs
+// against arbitrary unconfigured servers. It asserts the library toggle, that the pane renders real shelves, and
 // that the per-user Customize modal opens; it never triggers a request (no indexer/side effects).
 import { test, expect, loginAs } from './fixtures/auth';
 import type { Page } from 'playwright/test';
@@ -21,7 +21,7 @@ test.describe('Discovery / Trending — library placement', () => {
         await loginAs(page, 'admin', consoleErrors);
         await page.goto('/web/#/movies');
         await page.waitForTimeout(3000);
-        test.skip(!(await discoveryAvailable(page)), 'no Discovery data source configured (bare seed)');
+        test.skip(!(await discoveryAvailable(page)), 'no Discovery data source configured on this exploratory server');
 
         const toggle = page.locator('#jc-discovery-toggle-movies');
         await expect(toggle).toBeVisible({ timeout: 20_000 });

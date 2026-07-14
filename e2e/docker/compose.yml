@@ -8,23 +8,58 @@
 #   JF_BASE_URL=http://127.0.0.1:8100 npm run e2e
 #   docker compose -f e2e/docker/compose.yml down -v
 #
-# The reproducible CI default remains pinned. Compatibility runs can override
-# it without editing source, for example JF_IMAGE=jellyfin/jellyfin:unstable.
-# (Do NOT use 12.0-rc1 — it hangs on the splash logo in headless Chromium.)
+# The required CI default follows Jellyfin's unstable/nightly channel but is
+# pinned to one immutable multi-platform digest so a required run is
+# reproducible. The advisory compatibility lane overrides it with the mutable
+# unstable tag to probe newer nightlies without changing this evidence lane.
 # Preserve Compose's historical project name for the documented single-server
 # flow so an upgrade can tear down an older disposable stack before resetting
 # its bind-mounted state. The local shard runner always supplies a random name.
 name: "${JF_E2E_PROJECT:-docker}"
 
 services:
+  integrations:
+    image: "${JF_MOCK_IMAGE:-node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2}"
+    command: ["node", "/mock/server.js"]
+    environment:
+      JC_E2E_MOCK_STATE: /state/config.json
+      JC_E2E_MOCK_CERT_DIR: /state/certs
+    volumes:
+      - type: bind
+        source: ../mock-integrations
+        target: /mock
+        read_only: true
+      - type: bind
+        source: "${JF_MOCK_STATE_DIR:-./mock-state}"
+        target: /state
+    networks:
+      default:
+        aliases:
+          # The plugin deliberately uses TMDB's production hostname. Docker's
+          # test-only network resolves it to the TLS fixture instead.
+          - api.themoviedb.org
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5055/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
   jellyfin:
-    image: "${JF_IMAGE:-jellyfin/jellyfin:12.0-rc2}"
+    image: "${JF_IMAGE:-jellyfin/jellyfin:unstable@sha256:9040e988eca1e53cd90679d16edf7bd842cc661bf85da124431e25452b4abeb5}"
+    depends_on:
+      integrations:
+        condition: service_healthy
     # Run as the invoking user so seed.sh can clean config/cache without sudo.
     user: "${JF_UID:-1000}:${JF_GID:-1000}"
     # Keep parity with the two-core Actions-sized environment by default. A
     # local orchestrator can run several isolated two-core servers instead of
     # letting one mutable server consume the whole host.
     cpus: "${JF_CPUS:-2}"
+    environment:
+      # Trust the per-run test CA for the api.themoviedb.org network alias.
+      # This affects the disposable E2E container, never production.
+      SSL_CERT_FILE: /e2e-certs/ca.pem
     ports:
       - target: 8096
         published: "${JF_PORT:-8100}"
@@ -40,6 +75,10 @@ services:
       - type: bind
         source: "${JF_MEDIA_DIR:-./media}"
         target: /media
+        read_only: true
+      - type: bind
+        source: "${JF_MOCK_STATE_DIR:-./mock-state}/certs/ca.pem"
+        target: /e2e-certs/ca.pem
         read_only: true
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8096/health"]

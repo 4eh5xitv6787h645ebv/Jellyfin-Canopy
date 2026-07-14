@@ -1,13 +1,10 @@
 // Readiness probes for the Seerr / TMDB integration specs.
 //
-// The reproducible docker seed (e2e/docker/seed.sh) boots WITHOUT a TMDB key or
-// a Seerr connection unless the optional TMDB_API_KEY / SEERR_* env
-// vars are supplied at seed time. The parental / reviews / requests specs need
-// a live TMDB or Seerr backend, so they read the plugin's OWN public-config
-// (the TmdbEnabled / SeerrEnabled projections) to decide whether to run:
-//   - a deliberately-bare env SKIPS cleanly instead of timing out on a
-//     precondition that can never be met, and
-//   - a configured CI/dev run RUNS the guard.
+// The required docker seed supplies hermetic TMDB/Seerr services, so every
+// readiness-gated test runs and the required inventory rejects any skip. These
+// probes remain useful when developers point the suite at an arbitrary server:
+// an intentionally unconfigured exploratory target can skip cleanly instead of
+// timing out on a precondition that can never be met.
 //
 // Probes must be called AFTER loginAs — public-config lands on
 // window.JellyfinCanopy.pluginConfig once the plugin has booted.

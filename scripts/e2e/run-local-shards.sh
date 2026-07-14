@@ -30,6 +30,8 @@ ADMIN_USER=''
 ADMIN_PASS=''
 USER_NAME=''
 USER_PASS=''
+INVENTORY_HEAD_SHA=''
+INVENTORY_RUN_ID=''
 CLEANUP_STARTED=0
 
 declare -a PROJECTS=()
@@ -139,7 +141,7 @@ require_command() {
 
 preflight() {
     local command_name
-    for command_name in awk cat date docker dotnet ffmpeg find grep jq mktemp npm od realpath sed setsid stat timeout tr uname; do
+    for command_name in awk cat date docker dotnet ffmpeg find git grep jq mktemp node npm od openssl realpath sed setsid stat timeout tr uname; do
         require_command "${command_name}"
     done
     [[ "$(uname -s)" == Linux ]] || die "local sharding is Linux-only (GNU setsid/timeout are required)"
@@ -172,6 +174,13 @@ initialize_run() {
         RUN_ID=''
     done
     [[ -n "${RUN_ID}" ]] || die "could not allocate a unique result directory"
+    INVENTORY_HEAD_SHA="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null)" \
+        || die "could not resolve the local E2E source SHA"
+    [[ "${INVENTORY_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]] \
+        || die "local E2E source SHA is not a full commit id"
+    INVENTORY_RUN_ID="$(date -u +%s%N)"
+    [[ "${INVENTORY_RUN_ID}" =~ ^[1-9][0-9]*$ ]] \
+        || die "could not allocate a numeric inventory run id"
 
     STATE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/jc-e2e-${RUN_ID}.XXXXXX")" \
         || die "could not allocate an isolated state root"
@@ -207,12 +216,15 @@ initialize_run() {
 }
 
 sanitize_external_environment() {
+    # Local parity always uses the same digest-pinned containers as required
+    # CI. Mutable-image probing has its own isolated compatibility workflow.
+    unset JF_IMAGE JF_MOCK_IMAGE
     (( ALLOW_EXTERNAL_INTEGRATIONS == 0 )) || return 0
 
     local name
     while IFS= read -r name; do
         unset "${name}"
-    done < <(compgen -A variable TMDB_; compgen -A variable SEERR_)
+    done < <(compgen -A variable TMDB_; compgen -A variable SEERR_; compgen -A variable RADARR_)
 }
 
 host_cpu_count() {
@@ -652,6 +664,15 @@ start_test_jobs() {
             export JF_E2E_STATE_DIR="${STATE_DIRS[shard]}"
             export JF_E2E_OUTPUT_DIR="${output_dir}"
             export JF_E2E_TRACE=off
+            if (( ALLOW_EXTERNAL_INTEGRATIONS == 0 )); then
+                export JF_E2E_REQUIRED=true
+                export JF_E2E_INVENTORY_FILE="${RESULT_DIRS[shard]}/shard-${shard}.inventory"
+                export JF_E2E_SHARD="${shard}"
+                export JF_E2E_SHARD_TOTAL="${SHARDS}"
+                export JF_E2E_HEAD_SHA="${INVENTORY_HEAD_SHA}"
+                export JF_E2E_RUN_ID="${INVENTORY_RUN_ID}"
+                export JF_E2E_RUN_ATTEMPT=1
+            fi
             exec setsid --wait npm --prefix "${REPO_ROOT}" run e2e -- \
                 --shard="${shard}/${SHARDS}" --output="${output_dir}"
         ) > "${RESULT_DIRS[shard]}/playwright.log" 2>&1 &
@@ -760,11 +781,26 @@ validate_shard_markers() {
     done
 }
 
+validate_required_inventory() {
+    (( ALLOW_EXTERNAL_INTEGRATIONS == 0 )) || return 0
+    node "${REPO_ROOT}/scripts/e2e/required-inventory.js" aggregate \
+        --directory "${RESULT_ROOT}" \
+        --expected "${REPO_ROOT}/e2e/required-test-inventory.json" \
+        --total "${SHARDS}" \
+        --sha "${INVENTORY_HEAD_SHA}" \
+        --run-id "${INVENTORY_RUN_ID}" \
+        --run-attempt 1
+}
+
 write_summary() {
     local overall=0 shard test_display
     local summary_tmp="${RESULT_ROOT}/summary.txt.tmp"
     local summary="${RESULT_ROOT}/summary.txt"
     validate_shard_markers || overall=1
+    validate_required_inventory || {
+        overall=1
+        warn "required E2E inventory was skipped, incomplete, duplicated, or different from the committed contract"
+    }
     for (( shard = 1; shard <= SHARDS; shard++ )); do
         if (( SEED_STATUS[shard] != 0 || TEST_STATUS[shard] != 0 )); then
             overall=1

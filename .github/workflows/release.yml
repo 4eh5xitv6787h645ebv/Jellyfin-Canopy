@@ -43,8 +43,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  quality-gates:
+    name: Required source-SHA quality gates
+    uses: ./.github/workflows/build.yml
+    permissions:
+      actions: read
+      contents: read
+
   release:
     name: Build, test, package & publish
+    needs: quality-gates
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the release + push the manifest branch

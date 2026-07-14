@@ -21,11 +21,9 @@ import { tmdbReady } from './fixtures/seerr';
 
 const CONFIG_HASH = '#/configurationpage?name=Jellyfin%20Canopy';
 
-// The reproducible docker seed is bare: with no TMDB key the config page never
-// populates TMDB_API_KEY, so this scenario's precondition can't be met and the
-// old 60s waitForFunction would time out rather than guard anything. Skip
-// cleanly when TMDB is unconfigured (set TMDB_API_KEY at seed time to run).
-const NEEDS_TMDB = 'TMDB not configured — set TMDB_API_KEY at seed time to run';
+// Required CI always supplies hermetic TMDB. The skip protects only exploratory
+// runs against arbitrary servers whose config page cannot meet the precondition.
+const NEEDS_TMDB = 'TMDB not configured on this exploratory server';
 
 // Match the config page's narrowly documented Jellyfin-dashboard chrome
 // exceptions. The adapter leaves every 5xx and every unrelated error visible

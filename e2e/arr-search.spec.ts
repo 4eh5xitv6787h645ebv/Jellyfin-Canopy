@@ -4,9 +4,8 @@
 // the modern and legacy layouts, and no detail-page chrome (so this feature's test stays decoupled
 // from unrelated detail-page features). The items appear for an admin when an enabled instance of
 // the matching service is configured (Radarr for movies, Sonarr for series), independent of whether
-// the item is tracked yet. The dockerized CI seed is deliberately BARE (no Sonarr/Radarr), so the
-// admin test SKIPS there — exactly like the Seerr specs skip without a Seerr connection — and runs
-// against a configured server (jellyfin-12). The spec never triggers an automatic or interactive
+// the item is tracked yet. Required CI supplies a hermetic Radarr context; the
+// readiness skip remains only for exploratory unconfigured servers. The spec never triggers an automatic or interactive
 // search — those hit live indexers (slow + quota).
 import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
 import type { Page } from 'playwright/test';
@@ -36,7 +35,7 @@ async function openMovieCardMenu(page: Page): Promise<void> {
 test.describe('arr Search — action-sheet items', () => {
     test('admin sees Search / Interactive / Manage, and Manage opens its modal', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
-        test.skip(!(await arrConfigured(page)), 'no Sonarr/Radarr instance configured (bare seed) — the arr Search items require one');
+        test.skip(!(await arrConfigured(page)), 'no Sonarr/Radarr instance configured on this exploratory server');
         await openMovieCardMenu(page);
 
         const sheet = page.locator('.actionSheetScroller').last();
