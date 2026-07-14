@@ -63,7 +63,10 @@ describe('identity-owned user settings', () => {
 
     it('allows a save when getUrl supplies the concrete server fallback', async () => {
         const owner = startSession('test-user-id', 'http://jellyfin.test');
-        const payload = JC.identity.own({ Revision: 0, Shortcuts: [] }, owner);
+        const payload = JC.identity.own({
+            Revision: 0,
+            Shortcuts: [] as Array<{ Name: string; Key: string }>
+        }, owner);
         JC.rememberUserSettingsSnapshot!('shortcuts.json', payload);
         payload.Shortcuts.push({ Name: 'A', Key: 'a' });
         const liveClient = ApiClient as JellyfinApiClient & { serverId: () => string };

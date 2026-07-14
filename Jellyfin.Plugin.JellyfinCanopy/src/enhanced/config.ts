@@ -137,6 +137,13 @@ interface SaveQueue {
     latestSeq: number;
 }
 
+// TypeScript retains the synchronous `queue.pending = null` narrowing across
+// an `await`, even though another save can enqueue while the request is in
+// flight. Read through a function so the post-await value is checked afresh.
+function currentPending(queue: SaveQueue): SaveIntent | null {
+    return queue.pending;
+}
+
 const SUPPORTED_USER_FILES = new Set(['settings.json', 'shortcuts.json', 'elsewhere.json']);
 const _ackedWire = new Map<string, Record<string, unknown>>();
 const _ackedSerialized = new Map<string, string>();
@@ -536,17 +543,18 @@ async function drainQueue(queue: SaveQueue): Promise<void> {
                 _ackedWire.set(intent.cacheKey, cloneRecord(ack.data));
                 _ackedSerialized.set(intent.cacheKey, canonical(withoutRevision(ack.data)));
                 _ackedHash.set(intent.cacheKey, ack.contentHash);
-                if (queue.pending) {
+                const pending = currentPending(queue);
+                if (pending) {
                     // The pending intent was edited while this write was in
                     // flight.  Its logical base is the state just acknowledged,
                     // not the pre-write revision copied from the live object.
                     // Advancing both snapshots avoids a manufactured 409 and
                     // makes the final coalesced edit a true sequential commit.
-                    queue.pending.baseWire = cloneRecord(ack.data);
-                    queue.pending.desiredWire['Revision'] = ack.revision;
-                    delete queue.pending.desiredWire['revision'];
+                    pending.baseWire = cloneRecord(ack.data);
+                    pending.desiredWire['Revision'] = ack.revision;
+                    delete pending.desiredWire['revision'];
                 }
-                if (!queue.pending && queue.latestSeq === intent.seq) {
+                if (!currentPending(queue) && queue.latestSeq === intent.seq) {
                     _latestIntentWire.set(intent.cacheKey, cloneRecord(ack.data));
                     restoreTarget(intent, ack.data);
                 }
@@ -564,26 +572,27 @@ async function drainQueue(queue: SaveQueue): Promise<void> {
                 // Settle callers before any best-effort DOM conversion, event,
                 // or toast code can itself fail.
                 intent.waiters.forEach(waiter => waiter.reject(error));
-                if (queue.pending) {
+                const pending = currentPending(queue);
+                if (pending) {
                     // A never-acknowledged intent cannot become the logical
                     // base for the next edit. Rebase the queued payload from
                     // the last server-confirmed snapshot (or force a fresh
                     // evidence read when none exists) so failed fields cannot
                     // disappear from changedKeys() and resolve as false success.
                     const acknowledged = _ackedWire.get(intent.cacheKey);
-                    queue.pending.baseWire = acknowledged ? cloneRecord(acknowledged) : null;
+                    pending.baseWire = acknowledged ? cloneRecord(acknowledged) : null;
                     if (acknowledged) {
                         const revision = revisionOf(acknowledged);
                         if (revision !== null) {
-                            queue.pending.desiredWire.Revision = revision;
-                            delete queue.pending.desiredWire.revision;
+                            pending.desiredWire.Revision = revision;
+                            delete pending.desiredWire.revision;
                         }
                     } else {
-                        delete queue.pending.desiredWire.Revision;
-                        delete queue.pending.desiredWire.revision;
+                        delete pending.desiredWire.Revision;
+                        delete pending.desiredWire.revision;
                     }
                 }
-                if (!queue.pending && queue.latestSeq === intent.seq) {
+                if (!currentPending(queue) && queue.latestSeq === intent.seq) {
                     try {
                         if (error.kind === 'conflict') _conflictedKeys.add(intent.cacheKey);
                         const rollback = error.authoritative || _ackedWire.get(intent.cacheKey);

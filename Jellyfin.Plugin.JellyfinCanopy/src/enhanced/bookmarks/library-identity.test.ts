@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import type { ApiApi } from '../../types/jc';
+import type { UserSettingsSaveResult } from '../config';
 import { renderBookmarksLibrary } from './library-render';
 
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
@@ -24,7 +25,7 @@ function bookmarkStore(): Record<string, any> {
 
 describe('bookmarks library identity ownership', () => {
   let deleteBookmark: ReturnType<typeof vi.fn>;
-  let saveUserSettings: ReturnType<typeof vi.fn<(fileName: string, settings: unknown) => Promise<void>>>;
+  let saveUserSettings: ReturnType<typeof vi.fn<(fileName: string, settings: unknown) => Promise<UserSettingsSaveResult>>>;
   let getItem: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -35,7 +36,13 @@ describe('bookmarks library identity ownership', () => {
     JC.userConfig = { bookmark: { bookmarks: bookmarkStore() } };
 
     deleteBookmark = vi.fn().mockResolvedValue(true);
-    saveUserSettings = vi.fn<(fileName: string, settings: unknown) => Promise<void>>().mockResolvedValue(undefined);
+    saveUserSettings = vi.fn<(fileName: string, settings: unknown) => Promise<UserSettingsSaveResult>>().mockResolvedValue({
+      acknowledged: true,
+      deduplicated: false,
+      file: 'settings.json',
+      revision: 1,
+      contentHash: 'a'.repeat(64)
+    });
     JC.bookmarks = {
       delete: deleteBookmark,
       update: vi.fn().mockResolvedValue(true),
