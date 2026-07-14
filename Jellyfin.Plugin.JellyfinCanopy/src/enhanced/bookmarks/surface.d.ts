@@ -28,8 +28,7 @@ export interface BookmarksApi {
     updateMarkers(): Promise<void> | void;
     formatTimestamp(seconds: number): string;
     // `removeOldIds` migrates (deletes the originals) rather than merely
-    // duplicating — the originals are removed only after the new copies are
-    // written AND verified on disk (see syncBookmarks in bookmarks.ts).
+    // duplicating; copies and removals share one revisioned server transaction.
     syncBookmarks(oldBookmarks: any[], newItemDetails: any, timeOffset?: number, removeOldIds?: string[]): Promise<any[]>;
     cleanupOrphaned(): Promise<{ cleaned: number; errors: number }>;
     /** Delete the loaded bookmark set in one revisioned server transaction. */

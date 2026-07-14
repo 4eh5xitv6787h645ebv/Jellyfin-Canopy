@@ -153,6 +153,25 @@ import type { IdentityContext } from '../../types/jc';
     return fields.every(field => (left[field] ?? '') === (right[field] ?? ''));
   }
 
+  function bookmarkOperationsApplied(
+    state: BookmarkCommittedState,
+    operations: BookmarkOperation[]
+  ): boolean {
+    return operations.every(operation => {
+      const existing = state.bookmarks[operation.bookmarkId];
+      if (operation.type === 'delete') return !existing;
+      return !!existing && !!operation.bookmark && sameBookmark(existing, operation.bookmark);
+    });
+  }
+
+  function isAmbiguousBookmarkTransportError(error: unknown): boolean {
+    if (httpStatus(error) !== undefined || !error || typeof error !== 'object') return false;
+    const shaped = error as { name?: string; message?: string };
+    return shaped.name === 'AbortError'
+      || error instanceof TypeError
+      || /network|failed to fetch/i.test(shaped.message || '');
+  }
+
   /**
    * Commit one atomic server-side transaction. A stale revision is not a
    * failure by itself: adopt the authoritative state returned with 409, rebuild
@@ -185,6 +204,30 @@ import type { IdentityContext } from '../../types/jc';
         if (!committed) throw new Error('Bookmark server returned an invalid committed state');
         return adoptCommittedState(captured, root, committed) ? committed : null;
       } catch (error) {
+        if (isAmbiguousBookmarkTransportError(error)) {
+          if (!isBookmarkRootCurrent(captured, root)) return null;
+          try {
+            const response = await plugin(
+              `/user-settings/${encodeURIComponent(captured.context.userId)}/bookmark.json`,
+              { method: 'GET', skipRetry: true }
+            );
+            const evidence = committedState(response);
+            if (!evidence) throw new Error('Bookmark evidence response was invalid');
+            if (bookmarkOperationsApplied(evidence, operations)) {
+              return adoptCommittedState(captured, root, evidence) ? evidence : null;
+            }
+            if (evidence.revision === base.revision) {
+              // A caller-initiated abort must never be turned into a new write.
+              // A network loss may retry the same stable operation IDs safely.
+              if ((error as { name?: string }).name === 'AbortError') throw error;
+              continue;
+            }
+            if (!adoptCommittedState(captured, root, evidence)) return null;
+            continue;
+          } catch {
+            throw error;
+          }
+        }
         if (httpStatus(error) !== 409) throw error;
         const latest = conflictState(error);
         if (!latest) throw new Error('Bookmark conflict response omitted authoritative state');

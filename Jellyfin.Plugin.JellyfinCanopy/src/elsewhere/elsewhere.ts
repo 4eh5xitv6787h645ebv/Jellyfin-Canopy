@@ -25,7 +25,8 @@ interface ExternalLinkOptions {
 const JC = JEBase as typeof JEBase & {
     initializeElsewhereScript?: () => void;
     t: (key: string, params?: Record<string, unknown>) => string;
-    saveUserSettings: (fileName: string, data: unknown) => void;
+    saveUserSettings: (fileName: string, data: unknown) => Promise<unknown>;
+    rememberUserSettingsSnapshot?: (fileName: string, data: unknown) => void;
     userConfig: Record<string, any>;
     core: { api: ApiApi };
     pluginConfig: PluginConfig & {
@@ -528,7 +529,8 @@ JC.initializeElsewhereScript = function() {
 
         document.getElementById('save-settings')!.onclick = (event) => {
             if (rejectStaleEvent(event)) return;
-            userRegion = (document.getElementById('region-select') as HTMLSelectElement).value;
+            const saveButton = document.getElementById('save-settings') as HTMLButtonElement;
+            const nextRegion = (document.getElementById('region-select') as HTMLSelectElement).value;
 
             // Get selected regions from autocomplete
             const selectedRegions: string[] = [];
@@ -539,23 +541,28 @@ JC.initializeElsewhereScript = function() {
                     selectedRegions.push(match[1]);
                 }
             });
-            userRegions = selectedRegions;
-
             // Get selected services from autocomplete
             const selectedServices: string[] = [];
             servicesContainer.querySelectorAll('.selected-tag').forEach(tag => {
                 selectedServices.push(tag.textContent.replace('×', '').trim());
             });
-            userServices = selectedServices;
-
-            modal.style.display = 'none';
-
             const elsewhereSettings = JC.identity.own({
-                Region: userRegion,
-                Regions: userRegions,
-                Services: userServices
+                Revision: Number(JC.userConfig.elsewhere?.Revision) || 0,
+                Region: nextRegion,
+                Regions: selectedRegions,
+                Services: selectedServices
             }, identityContext);
-            void JC.saveUserSettings('elsewhere.json', elsewhereSettings);
+            saveButton.disabled = true;
+            void JC.saveUserSettings('elsewhere.json', elsewhereSettings).then(() => {
+                if (!isInitializerCurrent()) return;
+                userRegion = nextRegion;
+                userRegions = selectedRegions;
+                userServices = selectedServices;
+                JC.userConfig.elsewhere = elsewhereSettings;
+                modal.style.display = 'none';
+            }).catch(() => undefined).finally(() => {
+                if (isInitializerCurrent()) saveButton.disabled = false;
+            });
         };
 
         // Close on backdrop click
@@ -570,6 +577,7 @@ JC.initializeElsewhereScript = function() {
     // Load saved settings
     function loadSettings(): void {
         const settings = JC.userConfig.elsewhere;
+        JC.rememberUserSettingsSnapshot?.('elsewhere.json', settings);
         userRegion = settings.Region || DEFAULT_REGION;
         userRegions = settings.Regions || [];
         userServices = settings.Services || [];

@@ -37,6 +37,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             // UserSettingsController.GetUserSettingsSettings; no admin default exists today.
             [nameof(UserSettings.CalendarDisplayMode)] = "per-user view preference; seeded hardcoded to \"list\"",
             [nameof(UserSettings.CalendarDefaultViewMode)] = "per-user view preference; seeded hardcoded to \"agenda\"",
+
+            // Persistence protocol/compatibility metadata, not user-facing settings.
+            [nameof(UserSettings.Revision)] = "optimistic-concurrency protocol revision",
+            [nameof(UserSettings.IsAdmin)] = "cached server-derived user role used by client feature gates",
+            [nameof(UserSettings.ExtensionData)] = "forward-compatible unknown-field preservation",
         };
 
         [Fact]

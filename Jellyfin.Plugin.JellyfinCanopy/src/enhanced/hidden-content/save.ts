@@ -55,10 +55,8 @@ export function debouncedSave(): void {
             pendingDebounceContext = null;
             if (!isUsableContext(scheduledContext)) return;
             try {
-                // Route through directSaveHiddenContent (not JC.saveUserSettings) so a successful save can
-                // reconcile against any in-flight retry and a failure can re-enter the retry ladder.
-                // JC.saveUserSettings swallows errors, which would leave a pending retry firing later and
-                // clobbering server state.
+                // Hidden Content has its own merge/retry protocol and server-side
+                // promoter reconciliation, so keep it on the dedicated transport.
                 const sent = await directSaveHiddenContent(scheduledContext);
                 reconcileAfterSave(sent, scheduledContext);
             } catch (e) {
@@ -177,7 +175,8 @@ export async function adminHideForUser(targetUserId: string, items: HiddenItem[]
     }
 }
 
-// Direct bypass of JC.saveUserSettings (which swallows errors) so callers can react to failure.
+// Dedicated Hidden Content transport; its payload/state machine is distinct from
+// the revisioned settings/shortcuts/elsewhere writer.
 // Returns the JSON snapshot that was sent so the caller can compare it to current state and decide
 // whether the success acknowledgement still represents the latest local intent.
 async function directSaveHiddenContent(context: IdentityContext): Promise<string> {

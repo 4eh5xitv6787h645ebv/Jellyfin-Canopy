@@ -13,6 +13,7 @@ import '../config'; // registers the real JC.saveUserSettings
 
 // Captured before any test overrides JC.saveUserSettings with a spy.
 const realSaveUserSettings = JC.saveUserSettings!;
+const realShowEnhancedPanel = JC.showEnhancedPanel;
 
 // Every element wireSettingsListeners() touches synchronously at wiring time is
 // an addSettingToggleListener target (`getElementById(id)!.addEventListener`),
@@ -59,6 +60,7 @@ describe('pause-screen delay persistence (ENH-1)', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         JC.saveUserSettings = realSaveUserSettings;
+        JC.showEnhancedPanel = realShowEnhancedPanel;
     });
 
     it('POSTs settings.json with the new delay when the delay input changes', () => {
@@ -77,6 +79,27 @@ describe('pause-screen delay persistence (ENH-1)', () => {
             expect.objectContaining({ pauseScreenDelaySeconds: 12 }),
         );
     });
+
+    it('coalesces failed-write reconciliation and rebuilds the open panel from rollback state', async () => {
+        const delayInput = buildSettingsDom();
+        const panel = document.createElement('div');
+        panel.id = 'jellyfin-canopy-panel';
+        document.body.appendChild(panel);
+        JC.currentSettings = { pauseScreenDelaySeconds: 5 };
+        JC.saveUserSettings = vi.fn(() => {
+            JC.currentSettings!.pauseScreenDelaySeconds = 5;
+            return Promise.reject(new Error('rejected'));
+        });
+        const rebuild = vi.fn(() => Promise.resolve());
+        JC.showEnhancedPanel = rebuild;
+
+        wireSettingsListeners(makeCtx());
+        delayInput.value = '12';
+        delayInput.dispatchEvent(new Event('change'));
+
+        await vi.waitFor(() => expect(rebuild).toHaveBeenCalledTimes(2));
+        expect(JC.currentSettings.pauseScreenDelaySeconds).toBe(5);
+    });
 });
 
 describe('saveUserSettings no-arg guard (ENH-1 class)', () => {
@@ -84,23 +107,23 @@ describe('saveUserSettings no-arg guard (ENH-1 class)', () => {
         vi.restoreAllMocks();
     });
 
-    it('does not POST and logs an error when called without a fileName', async () => {
+    it('does not POST and rejects when called without a fileName', async () => {
         const ajaxSpy = vi.spyOn(ApiClient, 'ajax');
-        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-        await realSaveUserSettings(undefined as unknown as string, {});
+        await expect(realSaveUserSettings(undefined as unknown as string, {})).rejects.toMatchObject({
+            kind: 'validation'
+        });
 
         expect(ajaxSpy).not.toHaveBeenCalled();
-        expect(errorSpy).toHaveBeenCalled();
     });
 
-    it('does not POST and logs an error when called with undefined settings', async () => {
+    it('does not POST and rejects when called with undefined settings', async () => {
         const ajaxSpy = vi.spyOn(ApiClient, 'ajax');
-        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-        await realSaveUserSettings('settings.json', undefined);
+        await expect(realSaveUserSettings('settings.json', undefined)).rejects.toMatchObject({
+            kind: 'validation'
+        });
 
         expect(ajaxSpy).not.toHaveBeenCalled();
-        expect(errorSpy).toHaveBeenCalled();
     });
 });

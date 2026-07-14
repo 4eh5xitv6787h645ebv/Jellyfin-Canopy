@@ -29,7 +29,7 @@ const USER_FILES = [
 
 const ACCOUNT_SWITCH_PATH = /\/JellyfinCanopy\/user-settings\/([^/?]+)\/([^/?]+)(?:\?|$)/i;
 const EXPECTED_IDENTITY_ABORT =
-    /Failed to save settings\.json.*(?:IdentityStaleError|AbortError|identity|Request was aborted)/i;
+    /Failed to save settings\.json.*(?:IdentityStaleError|AbortError|Request was aborted)/i;
 // Jellyfin Web's TanStack query layer logs its own cancellation stack when
 // Dashboard.logout() revokes the active query client. Scope this to the exact
 // host bundle; a CancelledError with any Canopy frame remains a failure.
@@ -750,6 +750,7 @@ function assertOnlyHostLogoutNoise(
         response.status === 400 && /\/SyncPlay\/List(?:\?|$)/i.test(response.url));
     const unexpectedDetails = consoleErrors.realDetails().filter((detail) =>
         !HOST_LOGOUT_NOISE.test(detail.text)
+        && !EXPECTED_IDENTITY_ABORT.test(detail.text)
         && !(syncPlay400 && /Failed to load resource:.*status of 400 \(Bad Request\)/i.test(detail.text)));
     expect(
         unexpectedDetails.map(({ text, url, source }) => ({ text, url, source })),
@@ -902,8 +903,11 @@ test.describe('no-reload account identity switching', () => {
             const originalPluginFetch = JC.core.api.plugin;
             const observedPluginFetch = function(path: string, options: any): Promise<unknown> {
                 const transport = originalPluginFetch.call(JC.core.api, path, options);
+                const serializedBody = typeof options?.body === 'string'
+                    ? options.body
+                    : JSON.stringify(options?.body ?? '');
                 if (/\/user-settings\/.+\/settings\.json$/i.test(path)
-                    && /AccountSwitchRaceSentinel/i.test(String(options?.body || ''))) {
+                    && /AccountSwitchRaceSentinel/i.test(serializedBody)) {
                     (window as any).__jcHeldSaveTransportOutcome = 'pending';
                     void transport.then(
                         () => { (window as any).__jcHeldSaveTransportOutcome = 'resolved'; },

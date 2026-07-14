@@ -93,10 +93,12 @@ export function setViewMode(mode: string): void {
     state.viewMode = mode;
     syncPageModeClasses();
 
-    JC.currentSettings = JC.currentSettings || JC.loadSettings?.() || {};
-    JC.currentSettings.calendarDefaultViewMode = mode;
+    const settings = JC.currentSettings || JC.loadSettings?.();
+    if (!settings) return;
+    JC.currentSettings = settings;
+    settings.calendarDefaultViewMode = mode;
     if (typeof JC.saveUserSettings === 'function') {
-        void JC.saveUserSettings('settings.json', JC.currentSettings);
+        void JC.saveUserSettings('settings.json', settings).catch(() => undefined);
     }
 
     void loadAllData();
@@ -106,10 +108,12 @@ export function setDisplayMode(mode: string): void {
     if (!mode || state.settings.displayMode === mode) return;
     state.settings.displayMode = mode;
     syncPageModeClasses();
-    JC.currentSettings = JC.currentSettings || JC.loadSettings?.() || {};
-    JC.currentSettings.calendarDisplayMode = mode;
+    const settings = JC.currentSettings || JC.loadSettings?.();
+    if (!settings) return;
+    JC.currentSettings = settings;
+    settings.calendarDisplayMode = mode;
     if (typeof JC.saveUserSettings === 'function') {
-        void JC.saveUserSettings('settings.json', JC.currentSettings);
+        void JC.saveUserSettings('settings.json', settings).catch(() => undefined);
     }
 
     if (state.viewMode === 'agenda') {

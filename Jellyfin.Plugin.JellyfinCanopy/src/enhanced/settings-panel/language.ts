@@ -42,6 +42,7 @@ export function wireLanguageControls(ctx: PanelContext): void {
         // Get saved language from localStorage as well
         const localStorageLang = localStorage.getItem(scopedLanguageKey);
         const savedLanguage = (JC.currentSettings as any).displayLanguage || localStorageLang || '';
+        let acknowledgedDisplayLanguage = String(savedLanguage);
 
         console.log('🪼 Jellyfin Canopy: Current language setting:', {
             fromSettings: (JC.currentSettings as any).displayLanguage,
@@ -124,6 +125,7 @@ export function wireLanguageControls(ctx: PanelContext): void {
             if (normalizedLanguage) {
                 displayLanguageSelect.value = normalizedLanguage;
             }
+            acknowledgedDisplayLanguage = displayLanguageSelect.value;
             console.log('🪼 Jellyfin Canopy: Set language dropdown to:', savedLanguage || 'Auto', 'Normalized to:', normalizedLanguage, 'Select element value is now:', displayLanguageSelect.value);
         })();
 
@@ -131,6 +133,7 @@ export function wireLanguageControls(ctx: PanelContext): void {
         displayLanguageSelect.addEventListener('change', (e) => { void (async () => {
             if (!JC.identity.isCurrent(context)) return;
             const newLang = (e.target as HTMLSelectElement).value;
+            const previousLang = acknowledgedDisplayLanguage;
 
             const normalizeLangCode = (code: string) => {
                 if (!code) return code;
@@ -152,9 +155,11 @@ export function wireLanguageControls(ctx: PanelContext): void {
                 await JC.saveUserSettings!('settings.json', JC.currentSettings);
             } catch (error) {
                 if (!JC.identity.isCurrent(context)) return;
-                throw error;
+                (e.target as HTMLSelectElement).value = previousLang;
+                return;
             }
             if (!JC.identity.isCurrent(context)) return;
+            acknowledgedDisplayLanguage = newLang;
 
             // Save to localStorage (use the same code)
             if (fullCultureCode) {

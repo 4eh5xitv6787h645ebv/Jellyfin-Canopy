@@ -6,6 +6,7 @@
 import { JC } from '../globals';
 import type { UserSettings } from '../types/jc';
 import { adminDefaultsView } from '../core/config-resolve';
+import { escapeHtml, toast } from '../core/ui-kit';
 
 function normalizeIdentityPart(value: unknown): string {
     if (typeof value !== 'string' && typeof value !== 'number') return '';
@@ -67,120 +68,659 @@ JC.state = JC.state || {
     pauseScreenClickTimer: null
 };
 
-/**
- * Saves user settings to the server.
- * For files other than settings.json, skips the POST if the data is identical
- * to the last saved value (prevents redundant writes for bookmarks, shortcuts etc.).
- * settings.json is always allowed through on the first save per session because
- * loadSettings() merges server data with defaults, so the merged result legitimately
- * differs from the raw stored value and must be written back.
- */
-// Per-file cache of the last JSON string successfully sent to the server.
-const _lastSavedJson: Record<string, string> = {};
+type PersistenceErrorKind = 'validation' | 'authorization' | 'conflict' | 'unavailable' | 'cancelled' | 'protocol';
 
-function clearSaveDeduplication(): void {
-    for (const key of Object.keys(_lastSavedJson)) delete _lastSavedJson[key];
+export interface UserSettingsSaveResult {
+    acknowledged: true;
+    deduplicated: boolean;
+    file: string;
+    revision: number;
+    contentHash: string;
 }
 
-// The loader installs identity before loading the bundle. Optional chaining is
-// retained for isolated module tests which provide only the old bootstrap stub.
-JC.identity?.registerReset?.('enhanced-config-writes', clearSaveDeduplication);
+export class UserSettingsPersistenceError extends Error {
+    readonly kind: PersistenceErrorKind;
+    readonly status?: number;
+    readonly retryable: boolean;
+    readonly ambiguous: boolean;
+    readonly authoritative?: Record<string, unknown>;
 
-JC.saveUserSettings = async (fileName: string, settings: unknown): Promise<void> => {
+    constructor(message: string, options: {
+        kind: PersistenceErrorKind;
+        status?: number;
+        retryable?: boolean;
+        ambiguous?: boolean;
+        authoritative?: Record<string, unknown>;
+        cause?: unknown;
+    }) {
+        super(message, { cause: options.cause });
+        this.name = 'UserSettingsPersistenceError';
+        this.kind = options.kind;
+        this.status = options.status;
+        this.retryable = options.retryable === true;
+        this.ambiguous = options.ambiguous === true;
+        this.authoritative = options.authoritative;
+    }
+}
+
+interface SaveAcknowledgement {
+    success: boolean;
+    conflict?: boolean;
+    message?: string;
+    file: string;
+    revision: number;
+    contentHash: string;
+    data: Record<string, unknown>;
+}
+
+interface SaveWaiter {
+    resolve: (result: UserSettingsSaveResult) => void;
+    reject: (reason: unknown) => void;
+}
+
+interface SaveIntent {
+    seq: number;
+    cacheKey: string;
+    fileName: string;
+    owner: NonNullable<ReturnType<NonNullable<typeof JC.identity>['capture']>>;
+    target: Record<string, unknown>;
+    baseWire: Record<string, unknown> | null;
+    desiredWire: Record<string, unknown>;
+    serialized: string;
+    waiters: SaveWaiter[];
+}
+
+interface SaveQueue {
+    running: boolean;
+    active: SaveIntent | null;
+    pending: SaveIntent | null;
+    latestSeq: number;
+}
+
+// TypeScript retains the synchronous `queue.pending = null` narrowing across
+// an `await`, even though another save can enqueue while the request is in
+// flight. Read through a function so the post-await value is checked afresh.
+function currentPending(queue: SaveQueue): SaveIntent | null {
+    return queue.pending;
+}
+
+const SUPPORTED_USER_FILES = new Set(['settings.json', 'shortcuts.json', 'elsewhere.json']);
+const _ackedWire = new Map<string, Record<string, unknown>>();
+const _ackedSerialized = new Map<string, string>();
+const _ackedHash = new Map<string, string>();
+const _latestIntentWire = new Map<string, Record<string, unknown>>();
+const _queues = new Map<string, SaveQueue>();
+const _conflictedKeys = new Set<string>();
+const _lastErrorToastAt = new Map<string, number>();
+let saveSequence = 0;
+
+function clearSaveState(): void {
+    _ackedWire.clear();
+    _ackedSerialized.clear();
+    _ackedHash.clear();
+    _latestIntentWire.clear();
+    _queues.clear();
+    _conflictedKeys.clear();
+    _lastErrorToastAt.clear();
+}
+
+JC.identity?.registerReset?.('enhanced-config-writes', clearSaveState);
+
+function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
+    return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function wireValue(fileName: string, settings: unknown): Record<string, unknown> {
+    let value = settings;
+    if (fileName === 'settings.json' && typeof window.JellyfinCanopy?.toPascalCase === 'function') {
+        value = window.JellyfinCanopy.toPascalCase(settings);
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new UserSettingsPersistenceError(`Invalid ${fileName} payload`, { kind: 'validation' });
+    }
+    return cloneRecord(value as Record<string, unknown>);
+}
+
+function localValue(fileName: string, wire: Record<string, unknown>): Record<string, unknown> {
+    if (fileName === 'settings.json' && typeof (window.JellyfinCanopy as any)?.toCamelCase === 'function') {
+        return (window.JellyfinCanopy as any).toCamelCase(cloneRecord(wire)) as Record<string, unknown>;
+    }
+    return cloneRecord(wire);
+}
+
+function revisionOf(value: Record<string, unknown>): number | null {
+    const revision = Number(value.Revision ?? value.revision);
+    return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+}
+
+function withoutRevision(value: Record<string, unknown>): Record<string, unknown> {
+    const clone = cloneRecord(value);
+    delete clone.Revision;
+    delete clone.revision;
+    return clone;
+}
+
+function canonical(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+    if (value && typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${canonical(record[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value);
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+    return canonical(left) === canonical(right);
+}
+
+function withoutServerManaged(value: Record<string, unknown>): Record<string, unknown> {
+    const clone = withoutRevision(value);
+    delete clone.IsAdmin;
+    delete clone.isAdmin;
+    return clone;
+}
+
+function sameContent(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+    return sameValue(withoutServerManaged(left), withoutServerManaged(right));
+}
+
+function cacheKeyFor(owner: SaveIntent['owner'], fileName: string): string {
+    return `${owner.serverId}:${owner.userId}:${fileName}`;
+}
+
+function statusOf(error: unknown): number | undefined {
+    if (!error || typeof error !== 'object') return undefined;
+    const shaped = error as { status?: number; statusCode?: number; response?: { status?: number } };
+    const status = Number(shaped.status ?? shaped.statusCode ?? shaped.response?.status);
+    return Number.isFinite(status) && status > 0 ? status : undefined;
+}
+
+function responseJson(error: unknown): Record<string, unknown> | undefined {
+    if (!error || typeof error !== 'object') return undefined;
+    const value = (error as { responseJSON?: unknown }).responseJSON;
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : undefined;
+}
+
+function classifyPersistenceError(error: unknown): UserSettingsPersistenceError {
+    if (error instanceof UserSettingsPersistenceError) return error;
+    const status = statusOf(error);
+    const response = responseJson(error);
+    const responseData = response?.data ?? response?.Data;
+    const authoritative = responseData && typeof responseData === 'object' && !Array.isArray(responseData)
+        ? responseData as Record<string, unknown>
+        : undefined;
+    const responseMessage = response?.message ?? response?.Message;
+    const message = typeof responseMessage === 'string'
+        ? responseMessage
+        : ((error as Error | null)?.message || 'User settings write failed');
+    const name = (error as Error | null)?.name;
+    if (name === 'AbortError' || name === 'IdentityChangedError') {
+        return new UserSettingsPersistenceError(message, { kind: 'cancelled', ambiguous: true, cause: error });
+    }
+    if (status === 400 || status === 413 || status === 428) {
+        return new UserSettingsPersistenceError(message, { kind: 'validation', status, cause: error });
+    }
+    if (status === 401 || status === 403) {
+        return new UserSettingsPersistenceError(message, { kind: 'authorization', status, cause: error });
+    }
+    if (status === 409) {
+        return new UserSettingsPersistenceError(message, {
+            kind: 'conflict', status, retryable: true, authoritative, cause: error
+        });
+    }
+    if (status === 429 || (status !== undefined && status >= 500)) {
+        return new UserSettingsPersistenceError(message, {
+            kind: 'unavailable', status, retryable: true, cause: error
+        });
+    }
+    if (status === undefined) {
+        return new UserSettingsPersistenceError(message, {
+            kind: 'unavailable', retryable: true, ambiguous: true, cause: error
+        });
+    }
+    return new UserSettingsPersistenceError(message, { kind: 'protocol', status, cause: error });
+}
+
+function parseAcknowledgement(value: unknown, fileName: string): SaveAcknowledgement {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new UserSettingsPersistenceError('Server returned a malformed save acknowledgement', { kind: 'protocol' });
+    }
+    const record = value as Record<string, unknown>;
+    const data = record.data ?? record.Data;
+    const revision = Number(record.revision ?? record.Revision);
+    const rawContentHash = record.contentHash ?? record.ContentHash;
+    const contentHash = typeof rawContentHash === 'string' ? rawContentHash : '';
+    const success = record.success ?? record.Success;
+    const responseFile = record.file ?? record.File;
+    const conflict = record.conflict ?? record.Conflict;
+    const responseMessage = record.message ?? record.Message;
+    if (success !== true || responseFile !== fileName
+        || !Number.isSafeInteger(revision) || revision < 0
+        || !/^[0-9a-f]{64}$/i.test(contentHash)
+        || !data || typeof data !== 'object' || Array.isArray(data)
+        || revisionOf(data as Record<string, unknown>) !== revision) {
+        throw new UserSettingsPersistenceError('Server did not acknowledge the exact user settings revision', { kind: 'protocol' });
+    }
+    return {
+        success: true,
+        conflict: conflict === true,
+        message: typeof responseMessage === 'string' ? responseMessage : undefined,
+        file: fileName,
+        revision,
+        contentHash,
+        data: cloneRecord(data as Record<string, unknown>)
+    };
+}
+
+async function pluginRequest(path: string, options: { method?: string; body?: unknown; headers?: Record<string, string> }): Promise<unknown> {
+    if (JC.core.api?.plugin) {
+        return JC.core.api.plugin(path, { ...options, skipRetry: true });
+    }
+    const method = options.method || 'GET';
+    return ApiClient.ajax({
+        type: method,
+        url: ApiClient.getUrl(`/JellyfinCanopy${path}`),
+        data: options.body === undefined ? undefined : JSON.stringify(options.body),
+        contentType: options.body === undefined ? undefined : 'application/json',
+        dataType: 'json',
+        headers: options.headers
+    });
+}
+
+async function readEvidence(intent: SaveIntent): Promise<SaveAcknowledgement> {
+    const raw = await pluginRequest(
+        `/user-settings/${encodeURIComponent(intent.owner.userId)}/${encodeURIComponent(intent.fileName)}/evidence`,
+        { method: 'GET' }
+    );
+    return parseAcknowledgement(raw, intent.fileName);
+}
+
+function changedKeys(base: Record<string, unknown>, desired: Record<string, unknown>): string[] {
+    const keys = new Set([...Object.keys(base), ...Object.keys(desired)]);
+    keys.delete('Revision');
+    keys.delete('revision');
+    return [...keys].filter(key => !sameValue(base[key], desired[key]));
+}
+
+function safeRebase(intent: SaveIntent, authoritative: Record<string, unknown>): Record<string, unknown> | null {
+    if (!intent.baseWire) return null;
+    const rebased = cloneRecord(authoritative);
+    for (const key of changedKeys(intent.baseWire, intent.desiredWire)) {
+        const remote = authoritative[key];
+        const base = intent.baseWire[key];
+        const desired = intent.desiredWire[key];
+        if (!sameValue(remote, base) && !sameValue(remote, desired)) return null;
+        if (typeof desired === 'undefined') delete rebased[key];
+        else rebased[key] = cloneRecord({ value: desired }).value;
+    }
+    return rebased;
+}
+
+async function postCandidate(intent: SaveIntent, candidate: Record<string, unknown>): Promise<SaveAcknowledgement> {
+    const revision = revisionOf(candidate);
+    if (revision === null) {
+        throw new UserSettingsPersistenceError('User settings revision is missing', { kind: 'validation' });
+    }
+    const raw = await pluginRequest(`/user-settings/${encodeURIComponent(intent.owner.userId)}/${intent.fileName}`, {
+        method: 'POST',
+        body: candidate,
+        headers: { 'If-Match': `"${revision}"` }
+    });
+    const ack = parseAcknowledgement(raw, intent.fileName);
+    if (!sameContent(ack.data, candidate)) {
+        throw new UserSettingsPersistenceError('Server acknowledged different user settings content', { kind: 'protocol' });
+    }
+    return ack;
+}
+
+async function executeIntent(intent: SaveIntent): Promise<SaveAcknowledgement> {
+    if (!JC.identity.isCurrent(intent.owner) || !JC.identity.isOwned(intent.target, intent.owner)) {
+        throw new UserSettingsPersistenceError('Identity changed before user settings could be saved', {
+            kind: 'cancelled', ambiguous: false
+        });
+    }
+    if (_conflictedKeys.has(intent.cacheKey)) {
+        throw new UserSettingsPersistenceError('Reload before saving this user settings file again', {
+            kind: 'conflict', status: 409, retryable: false
+        });
+    }
+
+    let candidate = cloneRecord(intent.desiredWire);
+    if (!intent.baseWire || revisionOf(intent.baseWire) === null) {
+        const evidence = await readEvidence(intent);
+        intent.baseWire = evidence.data;
+        // The evidence read establishes the only valid conditional-write base.
+        // Never retain a stale revision copied from a failed predecessor.
+        candidate.Revision = evidence.revision;
+        delete candidate.revision;
+    }
+    if (revisionOf(candidate) === null) {
+        const baseRevision = intent.baseWire ? revisionOf(intent.baseWire) : null;
+        if (baseRevision === null) {
+            throw new UserSettingsPersistenceError('Server evidence omitted the user settings revision', { kind: 'protocol' });
+        }
+        candidate.Revision = baseRevision;
+    }
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+            return await postCandidate(intent, candidate);
+        } catch (rawError) {
+            const error = classifyPersistenceError(rawError);
+            if (!JC.identity.isCurrent(intent.owner)) throw error;
+
+            if (error.ambiguous) {
+                try {
+                    const evidence = await readEvidence(intent);
+                    if (sameContent(evidence.data, candidate)) return evidence;
+                    if (evidence.revision === revisionOf(candidate)) {
+                        if (error.kind === 'cancelled') throw error;
+                        if (attempt === 0) continue;
+                        throw new UserSettingsPersistenceError(
+                            'The server remained unchanged after repeated unverified save attempts',
+                            { kind: 'unavailable', retryable: true, ambiguous: true, authoritative: evidence.data, cause: error }
+                        );
+                    }
+                    throw new UserSettingsPersistenceError(
+                        'The save outcome is uncertain and the server has different content; reload before retrying',
+                        { kind: 'conflict', status: 409, ambiguous: true, authoritative: evidence.data, cause: error }
+                    );
+                } catch (evidenceError) {
+                    if (evidenceError instanceof UserSettingsPersistenceError
+                        && (evidenceError.kind === 'conflict'
+                            || evidenceError.kind === 'cancelled'
+                            || (evidenceError.kind === 'unavailable' && evidenceError.ambiguous))) {
+                        throw evidenceError;
+                    }
+                    throw new UserSettingsPersistenceError(
+                        'The save outcome could not be verified; changes remain unsaved until reload',
+                        { kind: 'unavailable', retryable: true, ambiguous: true, cause: evidenceError }
+                    );
+                }
+            }
+
+            if (error.kind !== 'conflict' || !error.authoritative) throw error;
+            if (sameContent(error.authoritative, candidate)) {
+                const evidence = await readEvidence(intent);
+                if (sameContent(evidence.data, candidate)) return evidence;
+            }
+            const rebased = safeRebase(intent, error.authoritative);
+            if (!rebased) throw error;
+            candidate = rebased;
+        }
+    }
+    throw new UserSettingsPersistenceError('User settings kept changing; reload and retry', {
+        kind: 'conflict', status: 409, retryable: true
+    });
+}
+
+function restoreTarget(intent: SaveIntent, wire: Record<string, unknown>): void {
+    if (!JC.identity.isCurrent(intent.owner) || !JC.identity.isOwned(intent.target, intent.owner)) return;
+    const desired = localValue(intent.fileName, intent.desiredWire);
+    const restored = localValue(intent.fileName, wire);
+    const keys = new Set([...Object.keys(desired), ...Object.keys(restored)]);
+    keys.delete('Revision');
+    keys.delete('revision');
+    for (const key of keys) {
+        // A newer unsaved edit may have happened after this intent was
+        // captured but before it settled. Restore only fields that still equal
+        // this intent's value; preserve later edits for their next save.
+        if (!sameValue(intent.target[key], desired[key])) continue;
+        if (Object.prototype.hasOwnProperty.call(restored, key)) {
+            intent.target[key] = cloneRecord({ value: restored[key] }).value;
+        } else {
+            delete intent.target[key];
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(restored, 'revision')) {
+        intent.target.revision = restored.revision;
+        delete intent.target.Revision;
+    } else if (Object.prototype.hasOwnProperty.call(restored, 'Revision')) {
+        intent.target.Revision = restored.Revision;
+        delete intent.target.revision;
+    }
+}
+
+function persistenceFailureMessage(error: UserSettingsPersistenceError, rollbackApplied: boolean): string {
+    return error.kind === 'conflict'
+        ? 'These settings changed elsewhere. Reload before retrying.'
+        : error.kind === 'authorization'
+            ? 'Your session is not authorized to save these settings.'
+            : error.ambiguous
+                ? 'The save could not be verified. Reload before making more changes.'
+                : rollbackApplied
+                    ? 'Changes could not be saved. The last confirmed settings were restored.'
+                    : 'Changes could not be saved; no write was acknowledged.';
+}
+
+function emitPersistenceFailure(
+    fileName: string,
+    cacheKey: string,
+    error: UserSettingsPersistenceError,
+    rollbackApplied = false
+): void {
+    document.dispatchEvent(new CustomEvent('jc:user-settings-save-error', {
+        detail: { file: fileName, kind: error.kind, status: error.status, retryable: error.retryable, ambiguous: error.ambiguous }
+    }));
+    const now = Date.now();
+    if (now - (_lastErrorToastAt.get(cacheKey) || 0) < 2000) return;
+    _lastErrorToastAt.set(cacheKey, now);
+    toast(`{{icon:error}} ${escapeHtml(persistenceFailureMessage(error, rollbackApplied))}`, 5000);
+}
+
+function notifyPersistenceFailure(
+    intent: SaveIntent,
+    error: UserSettingsPersistenceError,
+    rollbackApplied: boolean
+): void {
+    console.error(`🪼 Jellyfin Canopy: Failed to save ${intent.fileName}:`, error);
+    if (!JC.identity.isCurrent(intent.owner)) return;
+    emitPersistenceFailure(intent.fileName, intent.cacheKey, error, rollbackApplied);
+}
+
+function notifyImmediatePersistenceFailure(fileName: string, error: UserSettingsPersistenceError): void {
+    console.error(`🪼 Jellyfin Canopy: Refused to save ${fileName}:`, error);
+    emitPersistenceFailure(fileName, `immediate:${fileName}`, error);
+}
+
+async function drainQueue(queue: SaveQueue): Promise<void> {
+    if (queue.running) return;
+    queue.running = true;
     try {
-        // Fail LOUDLY on a no-arg / bad-fileName save instead of silently no-oping.
-        // A call like saveUserSettings() serializes `undefined` and — for non-
-        // settings.json files — hits the dedup guard below and returns without ever
-        // POSTing, which is exactly how the pause-screen delay silently lost writes.
-        if (!fileName || typeof settings === 'undefined') {
-            console.error('🪼 Jellyfin Canopy: saveUserSettings called without fileName/settings', { fileName });
-            return;
+        while (queue.pending) {
+            const intent = queue.pending;
+            queue.pending = null;
+            queue.active = intent;
+            try {
+                const ack = await executeIntent(intent);
+                if (!JC.identity.isCurrent(intent.owner)) {
+                    throw new UserSettingsPersistenceError('Identity changed after save acknowledgement', {
+                        kind: 'cancelled', ambiguous: false
+                    });
+                }
+                _ackedWire.set(intent.cacheKey, cloneRecord(ack.data));
+                _ackedSerialized.set(intent.cacheKey, canonical(withoutRevision(ack.data)));
+                _ackedHash.set(intent.cacheKey, ack.contentHash);
+                const pending = currentPending(queue);
+                if (pending) {
+                    // The pending intent was edited while this write was in
+                    // flight.  Its logical base is the state just acknowledged,
+                    // not the pre-write revision copied from the live object.
+                    // Advancing both snapshots avoids a manufactured 409 and
+                    // makes the final coalesced edit a true sequential commit.
+                    pending.baseWire = cloneRecord(ack.data);
+                    pending.desiredWire['Revision'] = ack.revision;
+                    delete pending.desiredWire['revision'];
+                }
+                if (!currentPending(queue) && queue.latestSeq === intent.seq) {
+                    _latestIntentWire.set(intent.cacheKey, cloneRecord(ack.data));
+                    restoreTarget(intent, ack.data);
+                }
+                const result: UserSettingsSaveResult = {
+                    acknowledged: true,
+                    deduplicated: false,
+                    file: intent.fileName,
+                    revision: ack.revision,
+                    contentHash: ack.contentHash
+                };
+                intent.waiters.forEach(waiter => waiter.resolve(result));
+            } catch (rawError) {
+                const error = classifyPersistenceError(rawError);
+                let rollbackApplied = false;
+                // Settle callers before any best-effort DOM conversion, event,
+                // or toast code can itself fail.
+                intent.waiters.forEach(waiter => waiter.reject(error));
+                const pending = currentPending(queue);
+                if (pending) {
+                    // A never-acknowledged intent cannot become the logical
+                    // base for the next edit. Rebase the queued payload from
+                    // the last server-confirmed snapshot (or force a fresh
+                    // evidence read when none exists) so failed fields cannot
+                    // disappear from changedKeys() and resolve as false success.
+                    const acknowledged = _ackedWire.get(intent.cacheKey);
+                    pending.baseWire = acknowledged ? cloneRecord(acknowledged) : null;
+                    if (acknowledged) {
+                        const revision = revisionOf(acknowledged);
+                        if (revision !== null) {
+                            pending.desiredWire.Revision = revision;
+                            delete pending.desiredWire.revision;
+                        }
+                    } else {
+                        delete pending.desiredWire.Revision;
+                        delete pending.desiredWire.revision;
+                    }
+                }
+                if (!currentPending(queue) && queue.latestSeq === intent.seq) {
+                    try {
+                        if (error.kind === 'conflict') _conflictedKeys.add(intent.cacheKey);
+                        const rollback = error.authoritative || _ackedWire.get(intent.cacheKey);
+                        if (!error.ambiguous && rollback) {
+                            restoreTarget(intent, rollback);
+                            rollbackApplied = true;
+                        }
+                        _latestIntentWire.set(intent.cacheKey, cloneRecord(rollback || intent.desiredWire));
+                    } catch (rollbackError) {
+                        console.error(`🪼 Jellyfin Canopy: Failed to restore ${intent.fileName} after rejection:`, rollbackError);
+                    }
+                }
+                try { notifyPersistenceFailure(intent, error, rollbackApplied); } catch (notifyError) {
+                    console.error(`🪼 Jellyfin Canopy: Failed to report ${intent.fileName} rejection:`, notifyError);
+                }
+            } finally {
+                queue.active = null;
+            }
         }
+    } finally {
+        queue.running = false;
+    }
+}
 
+JC.rememberUserSettingsSnapshot = (fileName: string, settings: unknown): void => {
+    if (!SUPPORTED_USER_FILES.has(fileName) || !settings || typeof settings !== 'object') return;
+    const owner = JC.identity.ownerOf(settings) || JC.identity.capture();
+    if (!owner || !JC.identity.isCurrent(owner)) return;
+    const wire = wireValue(fileName, settings);
+    const key = cacheKeyFor(owner, fileName);
+    const serialized = canonical(withoutRevision(wire));
+    // A normal GET is authoritative baseline state, but it does not carry the
+    // exact write-evidence hash.  Keep it for rollback/rebase while requiring
+    // the first save (including a no-op save) to obtain a structured server
+    // acknowledgement before the write-dedup cache can advance.
+    if (_ackedSerialized.get(key) !== serialized) {
+        _ackedSerialized.delete(key);
+        _ackedHash.delete(key);
+    }
+    _ackedWire.set(key, wire);
+    _latestIntentWire.set(key, cloneRecord(wire));
+    _conflictedKeys.delete(key);
+};
+
+JC.saveUserSettings = (fileName: string, settings: unknown): Promise<UserSettingsSaveResult> => {
+    try {
+        if (!SUPPORTED_USER_FILES.has(fileName) || !settings || typeof settings !== 'object' || Array.isArray(settings)) {
+            throw new UserSettingsPersistenceError('saveUserSettings requires a supported file and object payload', { kind: 'validation' });
+        }
         const owner = JC.identity?.ownerOf?.(settings);
-        if (!owner || !JC.identity.isCurrent(owner)) {
-            console.error(`🪼 Jellyfin Canopy: Refusing to save ${fileName}; settings have no current identity owner`);
-            return;
+        if (!owner || !JC.identity.isCurrent(owner) || !JC.identity.isOwned(settings, owner)) {
+            throw new UserSettingsPersistenceError(`Refusing to save ${fileName}; payload has no current identity owner`, {
+                kind: 'cancelled'
+            });
         }
-
         if (typeof ApiClient === 'undefined' || typeof ApiClient.getCurrentUserId !== 'function') {
-            console.error("🪼 Jellyfin Canopy: ApiClient not available");
-            return;
+            throw new UserSettingsPersistenceError('ApiClient is unavailable', { kind: 'unavailable', retryable: true });
         }
-        // The authentication hook normally transitions identity before the host
-        // changes this value. Keep this independent check so a missed/foreign
-        // ApiClient replacement still cannot send A's object with B's token.
         if (normalizeIdentityPart(ApiClient.getCurrentUserId()) !== owner.userId) {
-            console.error(`🪼 Jellyfin Canopy: Refusing to save ${fileName}; live user does not own the settings`);
-            return;
+            throw new UserSettingsPersistenceError(`Refusing to save ${fileName}; live user does not own the payload`, {
+                kind: 'authorization'
+            });
         }
         const liveServerId = liveApiClientServerId();
         if (!isResolvedServerId(owner.serverId)
             || !isResolvedServerId(liveServerId)
             || normalizeIdentityPart(liveServerId) !== normalizeIdentityPart(owner.serverId)) {
-            console.error(`🪼 Jellyfin Canopy: Refusing to save ${fileName}; live server does not own the settings`);
-            return;
+            throw new UserSettingsPersistenceError(`Refusing to save ${fileName}; live server does not own the payload`, {
+                kind: 'authorization'
+            });
         }
 
-        // Convert data back to PascalCase for server C# deserialization
-        let dataToSave: unknown = settings;
-        if (typeof window.JellyfinCanopy?.toPascalCase === 'function') {
-            if (fileName === 'bookmark.json') {
-                // Mirror the load-side key preservation so bookmark ids (`Bm_…`)
-                // keep their case on disk (save-side symmetry of LOADER-8).
-                dataToSave = window.JellyfinCanopy.toPascalCase(settings, { preserveKey: (k: string) => /^bm_/i.test(k) });
-            } else if (fileName === 'settings.json') {
-                dataToSave = window.JellyfinCanopy.toPascalCase(settings);
+        const target = settings as Record<string, unknown>;
+        const desiredWire = wireValue(fileName, settings);
+        const key = cacheKeyFor(owner, fileName);
+        const serialized = canonical(withoutRevision(desiredWire));
+        const revision = revisionOf(_ackedWire.get(key) || desiredWire) || 0;
+        let queue = _queues.get(key);
+        const acknowledgedHash = _ackedHash.get(key);
+        if (!queue?.active && !queue?.pending
+            && !_conflictedKeys.has(key)
+            && _ackedSerialized.get(key) === serialized && acknowledgedHash) {
+            return Promise.resolve({
+                acknowledged: true,
+                deduplicated: true,
+                file: fileName,
+                revision,
+                contentHash: acknowledgedHash
+            });
+        }
+
+        if (!queue) {
+            queue = { running: false, active: null, pending: null, latestSeq: 0 };
+            _queues.set(key, queue);
+        }
+        const saveQueue = queue;
+
+        return new Promise<UserSettingsSaveResult>((resolve, reject) => {
+            const waiter = { resolve, reject };
+            if (saveQueue.active?.serialized === serialized) {
+                saveQueue.active.waiters.push(waiter);
+                return;
             }
-        }
-
-        const serialized = JSON.stringify(dataToSave);
-        const cacheKey = `${owner.serverId}:${owner.userId}:${fileName}`;
-
-        // For non-settings files, skip the POST if nothing has changed.
-        // settings.json is exempt: loadSettings() merges defaults so the first
-        // save per session will always differ from the raw server value — that
-        // write-back is intentional and must not be suppressed.
-        if (fileName !== 'settings.json' && _lastSavedJson[cacheKey] === serialized) {
-            return; // no-op — identical to last save
-        }
-
-        // No await occurs between this final owner check and ajax invocation.
-        // Therefore an identity transition cannot interleave and substitute B's
-        // authentication after we have authorized A's snapshot.
-        if (!JC.identity.isCurrent(owner) || !JC.identity.isOwned(settings, owner)) return;
-
-        // Production writes use the central identity-owned transport so a
-        // transition aborts both queued and active A saves before B can run.
-        // The fallback preserves isolated config-module tests/legacy embedding
-        // where the core bundle has not installed JC.core.api yet.
-        if (JC.core.api?.plugin) {
-            await JC.core.api.plugin(`/user-settings/${owner.userId}/${fileName}`, {
-                method: 'POST',
-                body: serialized,
-                headers: { 'Content-Type': 'application/json' },
-                // Retrying a non-idempotent settings write can duplicate work.
-                skipRetry: true
-            });
-        } else {
-            await ApiClient.ajax({
-                type: 'POST',
-                url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${owner.userId}/${fileName}`),
-                data: serialized,
-                contentType: 'application/json'
-            });
-        }
-
-        // A may have logged out while its request was in flight. Never publish
-        // that acknowledgement into the new epoch's deduplication state.
-        if (JC.identity.isCurrent(owner) && JC.identity.isOwned(settings, owner)) {
-            _lastSavedJson[cacheKey] = serialized;
-        }
-    } catch (e) {
-        // Identity/navigation teardown intentionally aborts the old owner's
-        // transport. It is a successful fence, not a user-visible save error.
-        if ((e as Error | null)?.name === 'AbortError') return;
-        console.error(`🪼 Jellyfin Canopy: Failed to save ${fileName}:`, e);
+            if (saveQueue.pending?.serialized === serialized) {
+                saveQueue.pending.waiters.push(waiter);
+                return;
+            }
+            const baseWire = _latestIntentWire.get(key) || _ackedWire.get(key) || null;
+            const intent: SaveIntent = {
+                seq: ++saveSequence,
+                cacheKey: key,
+                fileName,
+                owner,
+                target,
+                baseWire: baseWire ? cloneRecord(baseWire) : null,
+                desiredWire,
+                serialized,
+                waiters: saveQueue.pending ? [...saveQueue.pending.waiters, waiter] : [waiter]
+            };
+            saveQueue.pending = intent;
+            saveQueue.latestSeq = intent.seq;
+            _latestIntentWire.set(key, cloneRecord(desiredWire));
+            void drainQueue(saveQueue);
+        });
+    } catch (error) {
+        const classified = classifyPersistenceError(error);
+        try { notifyImmediatePersistenceFailure(fileName, classified); } catch { /* rejection remains observable */ }
+        return Promise.reject(classified);
     }
 };
 
@@ -275,7 +815,9 @@ JC.loadSettings = (): UserSettings => {
         mergedSettings.isAdmin = userSettings.isAdmin !== undefined ? userSettings.isAdmin : undefined;
     }
 
-    return JC.identity?.own?.(mergedSettings, context) || mergedSettings;
+    const ownedSettings = JC.identity?.own?.(mergedSettings, context) || mergedSettings;
+    JC.rememberUserSettingsSnapshot?.('settings.json', ownedSettings);
+    return ownedSettings;
 };
 
 /** Shape of a shortcut entry in plugin/user config. */
@@ -290,6 +832,7 @@ interface ShortcutEntry {
 JC.initializeShortcuts = function (): void {
     const pluginDefaults = JC.pluginConfig || {};
     const userShortcutsConfig = JC.userConfig?.shortcuts || {};
+    JC.rememberUserSettingsSnapshot?.('shortcuts.json', userShortcutsConfig);
 
     const defaultShortcuts = Array.isArray(pluginDefaults.Shortcuts)
         ? (pluginDefaults.Shortcuts as ShortcutEntry[]).reduce<Record<string, string>>((acc, s) => {

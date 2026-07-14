@@ -12,6 +12,58 @@ import type { PanelContext } from './panel';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+let reconcileInFlight: Promise<void> | null = null;
+
+function reapplyAcknowledgedSideEffects(): void {
+    for (const name of [
+        'reinitializeQualityTags',
+        'reinitializeGenreTags',
+        'reinitializeLanguageTags',
+        'reinitializeRatingTags',
+        'initializePeopleTags',
+        'addRandomButton',
+        'applySavedStylesWhenReady',
+        'applySubtitlePosition',
+    ]) {
+        const callback = (JC as any)[name];
+        if (typeof callback === 'function') callback();
+    }
+}
+
+/** Rebuild the open panel from the rolled-back snapshot and undo optimistic page effects. */
+function reconcileSettingsPanelAfterFailure(): Promise<void> {
+    if (reconcileInFlight) return reconcileInFlight;
+    const context = JC.identity.capture();
+    const panel = document.getElementById('jellyfin-canopy-panel');
+    if (!context || !panel || typeof JC.showEnhancedPanel !== 'function') return Promise.resolve();
+
+    reconcileInFlight = (async () => {
+        try {
+            // showEnhancedPanel is a toggle. The first call refreshes and closes
+            // the stale optimistic controls; the second builds them again from
+            // the authoritative snapshot restored by the persistence queue.
+            await JC.showEnhancedPanel!();
+            if (!JC.identity.isCurrent(context)) return;
+            await JC.showEnhancedPanel!();
+            if (!JC.identity.isCurrent(context)) return;
+            reapplyAcknowledgedSideEffects();
+        } finally {
+            reconcileInFlight = null;
+        }
+    })();
+    return reconcileInFlight;
+}
+
+function persistSettings(): Promise<boolean> {
+    return Promise.resolve(JC.saveUserSettings!('settings.json', JC.currentSettings)).then(
+        () => true,
+        async () => {
+            await reconcileSettingsPanelAfterFailure();
+            return false;
+        }
+    );
+}
+
 /**
  * Wires the feature toggles, quality-tag category controls and subtitle
  * styling/position controls of the Settings tab.
@@ -23,7 +75,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     const addSettingToggleListener = (id: string, settingKey: string, featureKey: string, requiresRefresh = false) => {
         document.getElementById(id)!.addEventListener('change', (e) => {
             (JC.currentSettings as any)[settingKey] = (e.target as HTMLInputElement).checked;
-            void JC.saveUserSettings!('settings.json', JC.currentSettings);
+            const save = persistSettings();
             let toastMessage = createToast!(featureKey, (e.target as HTMLInputElement).checked);
 
             // Handle tag features with dynamic re-initialization
@@ -81,7 +133,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             if (requiresRefresh) {
                 toastMessage += ".<br> Refresh page to apply.";
             }
-            toast(toastMessage);
+            void save.then(saved => { if (saved) toast(toastMessage); });
             if (id === 'randomButtonToggle') (JC as any).addRandomButton();
             if (id === 'showWatchProgressToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-watchProgress').forEach(el => el.remove());
             if (id === 'showFileSizesToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-fileSize').forEach(el => el.remove());
@@ -104,14 +156,14 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             if (modeSel) {
                 modeSel.addEventListener('change', (e) => {
                     (JC.currentSettings as any).watchProgressMode = (e.target as HTMLSelectElement).value;
-                    void JC.saveUserSettings!('settings.json', JC.currentSettings);
+                    void persistSettings();
                     resetAutoCloseTimer();
                 });
             }
             if (fmtSel) {
                 fmtSel.addEventListener('change', (e) => {
                     (JC.currentSettings as any).watchProgressTimeFormat = (e.target as HTMLSelectElement).value;
-                    void JC.saveUserSettings!('settings.json', JC.currentSettings);
+                    void persistSettings();
                     resetAutoCloseTimer();
                 });
             }
@@ -155,7 +207,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             const settingKey = row.dataset.catKey;
             if (!settingKey) return;
             (JC.currentSettings as any)[settingKey] = target.checked;
-            void JC.saveUserSettings!('settings.json', JC.currentSettings);
+            void persistSettings();
             if (typeof (JC as any).reinitializeQualityTags === 'function' && JC.currentSettings!.qualityTagsEnabled) {
                 (JC as any).reinitializeQualityTags();
             }
@@ -186,7 +238,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
                 const orderKey = r.dataset.orderKey;
                 if (orderKey) (JC.currentSettings as any)[orderKey] = idx + 1;
             });
-            void JC.saveUserSettings!('settings.json', JC.currentSettings);
+            void persistSettings();
 
             refreshQualityCatArrowStates(qualitySubGroup);
             if (typeof (JC as any).reinitializeQualityTags === 'function' && JC.currentSettings!.qualityTagsEnabled) {
@@ -228,7 +280,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             const val = Math.max(1, Math.min(60, parseInt(pauseScreenDelayInput.value, 10) || 5));
             pauseScreenDelayInput.value = String(val);
             (JC.currentSettings as any).pauseScreenDelaySeconds = val;
-            void JC.saveUserSettings!('settings.json', JC.currentSettings);
+            void persistSettings();
         });
     }
     addSettingToggleListener('languageTagsToggle', 'languageTagsEnabled', 'feature_language_tags', true);
@@ -274,7 +326,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             preview.style.backgroundColor = bgColor;
         }
 
-        void JC.saveUserSettings!('settings.json', JC.currentSettings);
+        void persistSettings();
         (JC as any).applySavedStylesWhenReady();
         resetAutoCloseTimer();
     };
@@ -335,7 +387,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             if (!JC.identity.isCurrent(identityContext)) return;
             if (!dragging) return;
             dragging = false;
-            void JC.saveUserSettings!('settings.json', JC.currentSettings);
+            void persistSettings();
         };
 
         posGrid.addEventListener('touchstart', (e) => {
@@ -358,7 +410,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             if (!JC.identity.isCurrent(identityContext)) return;
             if (!dragging) return;
             dragging = false;
-            void JC.saveUserSettings!('settings.json', JC.currentSettings);
+            void persistSettings();
         };
 
         document.addEventListener('mousemove', handlePositionMouseMove);
@@ -380,7 +432,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             (JC.currentSettings as any).subtitleVerticalPosition = 85;
             if (posPreview) { posPreview.style.left = '50%'; posPreview.style.top = '85%'; }
             if (typeof (JC as any).applySubtitlePosition === 'function') (JC as any).applySubtitlePosition();
-            void JC.saveUserSettings!('settings.json', JC.currentSettings);
+            void persistSettings();
             resetAutoCloseTimer();
         });
     }
@@ -394,8 +446,25 @@ export function wireSettingsListeners(ctx: PanelContext): void {
 export function wireMiscSettingsControls(ctx: PanelContext): void {
     const { help, primaryAccentColor, resetAutoCloseTimer } = ctx;
 
-    document.getElementById('randomIncludeMovies')!.addEventListener('change', (e) => { if (!(e.target as HTMLInputElement).checked && !(document.getElementById('randomIncludeShows') as HTMLInputElement).checked) { (e.target as HTMLInputElement).checked = true; toast(JC.t!('toast_at_least_one_item_type')); return; } (JC.currentSettings as any).randomIncludeMovies = (e.target as HTMLInputElement).checked; void JC.saveUserSettings!('settings.json', JC.currentSettings); toast(JC.t!('toast_random_selection_status', { item_type: 'Movies', status: (e.target as HTMLInputElement).checked ? JC.t!('selection_included') : JC.t!('selection_excluded') })); resetAutoCloseTimer(); });
-    document.getElementById('randomIncludeShows')!.addEventListener('change', (e) => { if (!(e.target as HTMLInputElement).checked && !(document.getElementById('randomIncludeMovies') as HTMLInputElement).checked) { (e.target as HTMLInputElement).checked = true; toast(JC.t!('toast_at_least_one_item_type')); return; } (JC.currentSettings as any).randomIncludeShows = (e.target as HTMLInputElement).checked; void JC.saveUserSettings!('settings.json', JC.currentSettings); toast(JC.t!('toast_random_selection_status', { item_type: 'Shows', status: (e.target as HTMLInputElement).checked ? JC.t!('selection_included') : JC.t!('selection_excluded') })); resetAutoCloseTimer(); });
+    const wireRandomType = (id: string, otherId: string, settingKey: string, label: string) => {
+        document.getElementById(id)!.addEventListener('change', (e) => {
+            const target = e.target as HTMLInputElement;
+            if (!target.checked && !(document.getElementById(otherId) as HTMLInputElement).checked) {
+                target.checked = true;
+                toast(JC.t!('toast_at_least_one_item_type'));
+                return;
+            }
+            (JC.currentSettings as any)[settingKey] = target.checked;
+            const successMessage = JC.t!('toast_random_selection_status', {
+                item_type: label,
+                status: target.checked ? JC.t!('selection_included') : JC.t!('selection_excluded')
+            });
+            void persistSettings().then(saved => { if (saved) toast(successMessage); });
+            resetAutoCloseTimer();
+        });
+    };
+    wireRandomType('randomIncludeMovies', 'randomIncludeShows', 'randomIncludeMovies', 'Movies');
+    wireRandomType('randomIncludeShows', 'randomIncludeMovies', 'randomIncludeShows', 'Shows');
 
     document.getElementById('releaseNotesBtn')!.addEventListener('click', () => { void (async () => { await showReleaseNotesNotification(); resetAutoCloseTimer(); })(); });
 
@@ -427,7 +496,7 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
 
             const newPos = cell.dataset.pos;
             (JC.currentSettings as any)[settingKey] = newPos;
-            void JC.saveUserSettings!('settings.json', JC.currentSettings);
+            const save = persistSettings();
             updateHighlight();
 
             // Reinitialize tags dynamically based on which position changed
@@ -449,7 +518,7 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
                 }
             }
 
-            toast(`Position updated!`);
+            void save.then(saved => { if (saved) toast('Position updated!'); });
             resetAutoCloseTimer();
         });
     });
@@ -466,6 +535,7 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
             const selectedPreset = presets[presetIndex];
 
             if (selectedPreset) {
+                let successMessage = '';
                 if (type === 'style') {
                     (JC.currentSettings as any).selectedStylePresetIndex = presetIndex;
                     (JC.currentSettings as any).usingCustomColors = false;
@@ -497,7 +567,7 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
                     const fontSize = (JC as any).fontSizePresets[fontSizeIndex].size;
                     const fontFamily = (JC as any).fontFamilyPresets[fontFamilyIndex].family;
                     (JC as any).applySubtitleStyles(selectedPreset.textColor, selectedPreset.bgColor, fontSize, fontFamily, selectedPreset.textShadow);
-                    toast(JC.t!('toast_subtitle_style', { style: escapeHtml(selectedPreset.name) }));
+                    successMessage = JC.t!('toast_subtitle_style', { style: escapeHtml(selectedPreset.name) });
                 } else if (type === 'font-size') {
                     (JC.currentSettings as any).selectedFontSizePresetIndex = presetIndex;
                     const fontFamilyIndex = (JC.currentSettings as any).selectedFontFamilyPresetIndex ?? 0;
@@ -511,7 +581,7 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
                         : 'none';
 
                     (JC as any).applySubtitleStyles(textColor, bgColor, selectedPreset.size, fontFamily, textShadow);
-                    toast(JC.t!('toast_subtitle_size', { size: escapeHtml(selectedPreset.name) }));
+                    successMessage = JC.t!('toast_subtitle_size', { size: escapeHtml(selectedPreset.name) });
                 } else if (type === 'font-family') {
                     (JC.currentSettings as any).selectedFontFamilyPresetIndex = presetIndex;
                     const fontSizeIndex = (JC.currentSettings as any).selectedFontSizePresetIndex ?? 2;
@@ -525,10 +595,12 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
                         : 'none';
 
                     (JC as any).applySubtitleStyles(textColor, bgColor, fontSize, selectedPreset.family, textShadow);
-                    toast(JC.t!('toast_subtitle_font', { font: escapeHtml(selectedPreset.name) }));
+                    successMessage = JC.t!('toast_subtitle_font', { font: escapeHtml(selectedPreset.name) });
                 }
 
-                void JC.saveUserSettings!('settings.json', JC.currentSettings);
+                void persistSettings().then(saved => {
+                    if (saved && successMessage) toast(successMessage);
+                });
                 container.querySelectorAll<HTMLElement>('.preset-box').forEach(box => {
                     box.style.border = '2px solid transparent';
                 });

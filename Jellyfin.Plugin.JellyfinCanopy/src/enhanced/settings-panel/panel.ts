@@ -348,7 +348,7 @@ JC.showEnhancedPanel = async () => {
             syncLayerFocus(persist);
             if (persist) {
                 (JC.currentSettings as any).lastOpenedTab = pane.dataset.pane;
-                void JC.saveUserSettings!('settings.json', JC.currentSettings);
+                void JC.saveUserSettings!('settings.json', JC.currentSettings).catch(() => undefined);
             }
             resetAutoCloseTimer();
         };

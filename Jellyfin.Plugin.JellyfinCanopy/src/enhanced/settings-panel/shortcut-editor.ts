@@ -57,17 +57,17 @@ export function wireShortcutEditor(ctx: PanelContext): void {
                         (JC.userConfig as any).shortcuts.Shortcuts.splice(shortcutIndex, 1);
                     }
 
-                    void JC.saveUserSettings!('shortcuts.json', (JC.userConfig as any).shortcuts);
-
-                    // Update the active shortcuts in memory and what's shown on screen
-                    JC.state!.activeShortcuts[action] = defaultKey;
-                    keyElement.textContent = defaultKey;
-
-                    const indicator = labelWrapper?.querySelector('.modified-indicator');
-                    if (indicator) {
-                        indicator.remove();
-                    }
-                    keyElement.blur(); // Exit the "Listening..." mode
+                    void JC.saveUserSettings!('shortcuts.json', (JC.userConfig as any).shortcuts).then(() => {
+                        if (!isCurrent()) return;
+                        // Publish the shortcut and success UI only after the
+                        // server acknowledges the matching revision.
+                        JC.state!.activeShortcuts[action] = defaultKey;
+                        keyElement.textContent = defaultKey;
+                        labelWrapper?.querySelector('.modified-indicator')?.remove();
+                        keyElement.blur();
+                    }).catch(() => {
+                        if (isCurrent()) keyElement.blur();
+                    });
                     return;
                 }
 
@@ -100,22 +100,22 @@ export function wireShortcutEditor(ctx: PanelContext): void {
                     const defaultConfig = pluginShortcuts.find((s: any) => s.Name === action);
                     (JC.userConfig as any).shortcuts.Shortcuts.push({ ...defaultConfig, Key: combo });
                 }
-                void JC.saveUserSettings!('shortcuts.json', (JC.userConfig as any).shortcuts);
-
-                // Update active shortcuts
-                JC.state!.activeShortcuts[action] = combo;
-
-                // Update the UI and exit edit mode
-                keyElement.textContent = combo;
-                if (labelWrapper && !labelWrapper.querySelector('.modified-indicator')) {
-                    const indicator = document.createElement('span');
-                    indicator.className = 'modified-indicator';
-                    indicator.title = 'Modified by user';
-                    indicator.style.cssText = `color:${primaryAccentColor}; font-size: 20px; line-height: 1;`;
-                    indicator.textContent = '•';
-                    labelWrapper.prepend(indicator);
-                }
-                keyElement.blur(); // Triggers the blur event to clean up styles
+                void JC.saveUserSettings!('shortcuts.json', (JC.userConfig as any).shortcuts).then(() => {
+                    if (!isCurrent()) return;
+                    JC.state!.activeShortcuts[action] = combo;
+                    keyElement.textContent = combo;
+                    if (labelWrapper && !labelWrapper.querySelector('.modified-indicator')) {
+                        const indicator = document.createElement('span');
+                        indicator.className = 'modified-indicator';
+                        indicator.title = 'Modified by user';
+                        indicator.style.cssText = `color:${primaryAccentColor}; font-size: 20px; line-height: 1;`;
+                        indicator.textContent = '•';
+                        labelWrapper.prepend(indicator);
+                    }
+                    keyElement.blur();
+                }).catch(() => {
+                    if (isCurrent()) keyElement.blur();
+                });
             });
         });
     }
