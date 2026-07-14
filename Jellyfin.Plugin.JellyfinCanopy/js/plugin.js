@@ -1456,7 +1456,11 @@
                 const value = await scope.race(request);
                 return { name, value, missing: false };
             } catch (reason) {
-                if (isNotFoundError(reason)) return { name, value: null, missing: true };
+                // The bookmark controller represents a genuinely missing file
+                // as a valid revision-0 state. A 404 therefore means the
+                // versioned endpoint itself was unavailable; never fabricate a
+                // mutation-capable empty bookmark snapshot from it.
+                if (isNotFoundError(reason) && name !== 'bookmark') return { name, value: null, missing: true };
                 // Authentication, transport, server, cancellation, and malformed
                 // success failures must abort this initialization. Publishing a
                 // fabricated empty owner snapshot would erase real preferences.
@@ -1473,7 +1477,13 @@
             } else if (!value || typeof value !== 'object' || Array.isArray(value)) {
                 throw new Error(`Invalid ${name} user-settings response`);
             } else if (name === 'bookmark') {
-                snapshot[name] = toCamelCase(value, { preserveKey: (key) => /^bm_/i.test(key) });
+                const converted = toCamelCase(value, { preserveKey: (key) => /^bm_/i.test(key) });
+                if (!Number.isSafeInteger(converted?.revision) || converted.revision < 0
+                    || !converted.bookmarks || typeof converted.bookmarks !== 'object'
+                    || Array.isArray(converted.bookmarks)) {
+                    throw new Error('Invalid versioned bookmark user-settings response');
+                }
+                snapshot[name] = converted;
             } else if (name === 'settings' || name === 'hiddenContent') {
                 snapshot[name] = toCamelCase(value);
             } else {

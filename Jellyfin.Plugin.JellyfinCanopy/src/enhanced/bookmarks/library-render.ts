@@ -243,15 +243,13 @@ export async function renderBookmarksLibrary(
     if (label) label.innerHTML = '<span class="material-icons" style="animation: spin 1s linear infinite;">refresh</span>';
 
     try {
-      // Mutate and persist the render's captured A-owned config object. Never
-      // re-read the live JC.userConfig after an authentication transition.
-      bookmarkConfig.bookmarks = {};
-      await JC.saveUserSettings!('bookmark.json', bookmarkConfig);
+      // The server commits the entire delete set under one revision/lock. A
+      // stale tab rebases on conflict; a failed transaction removes nothing.
+      await JC.bookmarks!.deleteAll();
       if (!JC.identity.isCurrent(context)) return;
       toast(JC.t!('bookmark_deleted_all'), 3000);
-      // Direct store manipulation (no JC.bookmarks.* call) emits no update
-      // event, so refresh explicitly.
-      renderActiveBookmarks(context);
+      // deleteAll emits the shared update event after adopting committed state;
+      // that event owns the coalesced library refresh.
     } catch (error) {
       if (!JC.identity.isCurrent(context)) return;
       console.error('Delete failed:', error);

@@ -32,6 +32,8 @@ export interface BookmarksApi {
     // written AND verified on disk (see syncBookmarks in bookmarks.ts).
     syncBookmarks(oldBookmarks: any[], newItemDetails: any, timeOffset?: number, removeOldIds?: string[]): Promise<any[]>;
     cleanupOrphaned(): Promise<{ cleaned: number; errors: number }>;
+    /** Delete the loaded bookmark set in one revisioned server transaction. */
+    deleteAll(): Promise<number>;
 }
 
 declare global {
