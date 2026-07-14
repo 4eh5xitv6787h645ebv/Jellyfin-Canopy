@@ -28,15 +28,18 @@ import { orderedPages, pageAvailable, resolvePage } from './registry';
 import { openPage } from './router-bridge';
 import { refreshCurrent } from './fallback-host';
 import type { PageDescriptor } from './types';
+import type { IdentityContext } from '../../types/jc';
 
 const PAGES_TRAY_ORDER_BASE = 30;
+let initialized = false;
 
 function pageTitle(descriptor: PageDescriptor): string {
     return JC.t?.(descriptor.titleKey) || descriptor.titleFallback;
 }
 
-function activate(descriptor: PageDescriptor, event: Event): void {
+function activate(descriptor: PageDescriptor, event: Event, context: IdentityContext): void {
     event.preventDefault();
+    if (!JC.identity.isCurrent(context)) return;
     if (resolvePage() === descriptor) {
         refreshCurrent();
         return;
@@ -85,12 +88,14 @@ function drawerLinkId(descriptor: PageDescriptor): string {
     return `jcPageLink-${descriptor.id}`;
 }
 
-function buildDrawerLink(descriptor: PageDescriptor): HTMLAnchorElement {
+function buildDrawerLink(descriptor: PageDescriptor, context: IdentityContext): HTMLAnchorElement {
     const link = document.createElement('a');
     link.setAttribute('is', 'emby-linkbutton');
     link.className = 'lnkMediaFolder navMenuOption emby-button';
     link.href = `#${descriptor.route}`;
     link.id = drawerLinkId(descriptor);
+    link.setAttribute('data-jc-identity-owned', 'true');
+    JC.identity.own(link, context);
     const icon = document.createElement('span');
     icon.className = 'material-icons navMenuOptionIcon';
     icon.setAttribute('aria-hidden', 'true');
@@ -99,12 +104,14 @@ function buildDrawerLink(descriptor: PageDescriptor): HTMLAnchorElement {
     label.className = 'sectionName navMenuOptionText';
     label.textContent = pageTitle(descriptor);
     link.append(icon, label);
-    link.addEventListener('click', (e) => activate(descriptor, e));
+    link.addEventListener('click', (e) => activate(descriptor, e, context));
     return link;
 }
 
 /** Reconcile the drawer entries with the live registry state. */
 function reconcileDrawer(): void {
+    const context = JC.identity.capture();
+    if (!context) return;
     const sidebar = getSidebarContainer();
     if (!sidebar) return;
     const section = ensureCanopySection(sidebar);
@@ -117,8 +124,12 @@ function reconcileDrawer(): void {
             continue;
         }
         let link = existing;
+        if (link && !JC.identity.isOwned(link, context)) {
+            link.remove();
+            link = null;
+        }
         if (!link) {
-            link = buildDrawerLink(descriptor);
+            link = buildDrawerLink(descriptor, context);
         }
         // Deterministic order regardless of injection timing: place each
         // entry right after the previous one (header first).
@@ -137,6 +148,8 @@ function trayButtonId(descriptor: PageDescriptor): string {
 }
 
 function reconcileTray(): void {
+    const context = JC.identity.capture();
+    if (!context) return;
     // The tray is the modern layout's surface; the legacy header has the
     // drawer instead. getHeaderRightContainer resolves per layout — on the
     // legacy layout the drawer covers discovery, so skip the tray there.
@@ -144,7 +157,11 @@ function reconcileTray(): void {
     const tray = getHeaderRightContainer();
     if (!tray) return;
     orderedPages().forEach((descriptor, index) => {
-        const existing = document.getElementById(trayButtonId(descriptor));
+        let existing = document.getElementById(trayButtonId(descriptor));
+        if (existing && !JC.identity.isOwned(existing, context)) {
+            existing.remove();
+            existing = null;
+        }
         if (!pageAvailable(descriptor)) {
             existing?.remove();
             return;
@@ -155,13 +172,15 @@ function reconcileTray(): void {
         button.type = 'button';
         button.setAttribute('is', 'paper-icon-button-light');
         button.className = 'headerButton headerButtonRight paper-icon-button-light';
+        button.setAttribute('data-jc-identity-owned', 'true');
+        JC.identity.own(button, context);
         button.title = pageTitle(descriptor);
         const icon = document.createElement('span');
         icon.className = 'material-icons';
         icon.setAttribute('aria-hidden', 'true');
         icon.textContent = descriptor.icon;
         button.appendChild(icon);
-        button.addEventListener('click', (e) => activate(descriptor, e));
+        button.addEventListener('click', (e) => activate(descriptor, e, context));
         insertHeaderTrayButton(tray, button, PAGES_TRAY_ORDER_BASE + index);
     });
 }
@@ -173,12 +192,18 @@ function prefsLinkId(descriptor: PageDescriptor): string {
 }
 
 function reconcilePrefsMenu(): void {
+    const context = JC.identity.capture();
+    if (!context) return;
     const page = document.getElementById('myPreferencesMenuPage');
     if (!page || page.classList.contains('hide')) return;
     const menuContainer = page.querySelector('.verticalSection');
     if (!menuContainer) return;
     for (const descriptor of orderedPages()) {
-        const existing = document.getElementById(prefsLinkId(descriptor));
+        let existing = document.getElementById(prefsLinkId(descriptor));
+        if (existing && !JC.identity.isOwned(existing, context)) {
+            existing.remove();
+            existing = null;
+        }
         if (!pageAvailable(descriptor)) {
             existing?.remove();
             continue;
@@ -190,6 +215,8 @@ function reconcilePrefsMenu(): void {
         link.setAttribute('data-ripple', 'false');
         link.href = `#${descriptor.route}`;
         link.className = 'listItem-border emby-button';
+        link.setAttribute('data-jc-identity-owned', 'true');
+        JC.identity.own(link, context);
         link.style.display = 'block';
         link.style.padding = '0';
         link.style.margin = '0';
@@ -206,13 +233,15 @@ function reconcilePrefsMenu(): void {
         body.appendChild(text);
         item.append(icon, body);
         link.appendChild(item);
-        link.addEventListener('click', (e) => activate(descriptor, e));
+        link.addEventListener('click', (e) => activate(descriptor, e, context));
         menuContainer.appendChild(link);
     }
 }
 
 /** Wire all surfaces off the shared observers/events (no private pollers). */
 export function initEntryPoints(): void {
+    if (initialized) return;
+    initialized = true;
     onBodyMutation('jc-pages-entries', () => {
         reconcileDrawer();
         reconcileTray();
@@ -228,3 +257,18 @@ export function initEntryPoints(): void {
     reconcileDrawer();
     reconcileTray();
 }
+
+function resetEntryPoints(): void {
+    document.querySelectorAll<HTMLElement>(
+        '[id^="jcPageLink-"], [id^="jcPageTray-"], [id^="jcPagePrefs-"]'
+    ).forEach((entry) => entry.remove());
+}
+
+function activateEntryPoints(): void {
+    reconcileDrawer();
+    reconcileTray();
+    reconcilePrefsMenu();
+}
+
+JC.identity.registerReset('pages-entry-points', resetEntryPoints);
+JC.identity.registerActivate('pages-entry-points', activateEntryPoints);

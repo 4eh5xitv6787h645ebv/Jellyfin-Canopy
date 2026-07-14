@@ -15,7 +15,12 @@ import { registerPage } from '../pages/registry';
 import { openPage } from '../pages/router-bridge';
 import { injectStyles } from './styles';
 import { renderPage, setActiveContainer } from './render';
-import { state } from './state';
+import {
+    capturePageFence,
+    resetHiddenContentPageState,
+    schedulePageTimeout,
+    state,
+} from './state';
 import type { PageContext } from '../pages/types';
 
 function render({ host, handle }: PageContext): void {
@@ -23,6 +28,8 @@ function render({ host, handle }: PageContext): void {
 
     const content = document.createElement('div');
     content.setAttribute('data-role', 'content');
+    content.dataset.jcIdentityOwned = 'true';
+    content.dataset.jcHiddenPageOwner = 'true';
     const primary = document.createElement('div');
     primary.className = 'content-primary jc-hidden-content-page';
     const container = document.createElement('div');
@@ -39,6 +46,15 @@ function render({ host, handle }: PageContext): void {
 
     setActiveContainer(container);
     handle.track(() => setActiveContainer(null));
+
+    // Identity activation re-adopts a still-mounted route before Stage 6
+    // recreates JC.hiddenContent. Retry exactly once on the next task; Stage 6
+    // is synchronous after activation, and the page-owned timer drains if the
+    // route/account changes first.
+    if (!JC.hiddenContent) {
+        const fence = capturePageFence();
+        schedulePageTimeout(() => renderPage(), 0, fence);
+    }
 
     // Repaint on the user's own hidden-content changes. Registered through the
     // per-adoption dispose bag so it drains with the page — no permanent window
@@ -71,17 +87,7 @@ function render({ host, handle }: PageContext): void {
  * has been left; clearing adminUsersLoading frees the next open to re-fetch.
  */
 function onHide(): void {
-    state.searchQuery = '';
-    state.adminLoadToken++;
-    state.selectedAdminUserId = null;
-    state.adminEditMode = false;
-    state.adminItems = null;
-    state.adminItemsUserId = null;
-    state.adminLoadError = false;
-    state.adminUserName = '';
-    state.scopedOnly = false;
-    state.adminUsers = null;
-    state.adminUsersLoading = false;
+    resetHiddenContentPageState();
 }
 
 registerPage({

@@ -11,11 +11,14 @@
 import { JC } from '../globals';
 import { injectCss } from '../core/ui-kit';
 import type { DiscoveryMediaType, DiscoveryRowSpec } from './rows';
+import type { IdentityContext } from '../types/jc';
 import { resolveRows, genreRowsEnabled } from './rows';
 import { fetchRow, fetchGenres } from './data';
 
 const CSS_ID = 'jc-discovery-feed-css';
 const FEED_CLASS = 'jc-discovery-feed';
+const activeControllers = new Set<AbortController>();
+const activeDestroyers = new Set<() => void>();
 
 function ensureCss(): void {
     injectCss(CSS_ID, `
@@ -57,10 +60,18 @@ function buildShelf(spec: DiscoveryRowSpec): { row: HTMLElement; itemsContainer:
 }
 
 /** Fills a shelf's cards from its data; hides the shelf if it resolves empty. */
-async function fillShelf(spec: DiscoveryRowSpec, mt: DiscoveryMediaType, row: HTMLElement, itemsContainer: HTMLElement, signal: AbortSignal): Promise<void> {
+async function fillShelf(
+    spec: DiscoveryRowSpec,
+    mt: DiscoveryMediaType,
+    row: HTMLElement,
+    itemsContainer: HTMLElement,
+    signal: AbortSignal,
+    context: IdentityContext,
+    scheduleFrame: (callback: FrameRequestCallback) => void
+): Promise<void> {
     try {
         const results = await fetchRow(spec, mt, signal);
-        if (signal.aborted) return;
+        if (signal.aborted || !JC.identity.isCurrent(context)) return;
         const fragment = JC.discoveryFilter?.createCardsFragment?.(results, { cardClass: 'overflowPortraitCard' });
         if (!fragment || fragment.childElementCount === 0) {
             row.classList.add('jc-discovery-row--empty');
@@ -68,9 +79,11 @@ async function fillShelf(spec: DiscoveryRowSpec, mt: DiscoveryMediaType, row: HT
         }
         itemsContainer.appendChild(fragment);
         // R7: content is in place before we reveal it; fade in (opacity only, no reflow).
-        requestAnimationFrame(() => itemsContainer.classList.add('jc-in'));
+        scheduleFrame(() => {
+            if (!signal.aborted && JC.identity.isCurrent(context)) itemsContainer.classList.add('jc-in');
+        });
     } catch (e) {
-        if ((e as Error)?.name === 'AbortError') return;
+        if ((e as Error)?.name === 'AbortError' || signal.aborted || !JC.identity.isCurrent(context)) return;
         row.classList.add('jc-discovery-row--empty');
     }
 }
@@ -87,12 +100,47 @@ export interface DiscoveryFeedHandle {
  */
 export async function renderFeed(container: HTMLElement, mt: DiscoveryMediaType, userRowIds: string[] | null = null): Promise<DiscoveryFeedHandle> {
     ensureCss();
+    const context = JC.identity.capture();
     const abort = new AbortController();
+    activeControllers.add(abort);
     const feed = document.createElement('div');
     feed.className = FEED_CLASS;
     feed.setAttribute('data-media-type', mt);
+    feed.setAttribute('data-jc-identity-owned', 'true');
+    if (context) JC.identity.own(feed, context);
+
+    let observer: IntersectionObserver | null = null;
+    let destroyed = false;
+    const frames = new Set<number>();
+    const scheduleFrame = (callback: FrameRequestCallback): void => {
+        const frame = requestAnimationFrame((time) => {
+            frames.delete(frame);
+            callback(time);
+        });
+        frames.add(frame);
+    };
+    const destroy = (): void => {
+        if (destroyed) return;
+        destroyed = true;
+        abort.abort();
+        activeControllers.delete(abort);
+        observer?.disconnect();
+        frames.forEach((frame) => cancelAnimationFrame(frame));
+        frames.clear();
+        activeDestroyers.delete(destroy);
+    };
+    activeDestroyers.add(destroy);
+
+    if (!context) {
+        destroy();
+        return { element: feed, destroy };
+    }
 
     const genres = await fetchGenres(mt, abort.signal);
+    if (abort.signal.aborted || !JC.identity.isCurrent(context)) {
+        destroy();
+        return { element: feed, destroy };
+    }
     let specs = resolveRows(userRowIds, genres);
     if (!userRowIds && genreRowsEnabled()) {
         // Enrich the default feed with a few real genre rows so it's rich out of the box.
@@ -107,30 +155,40 @@ export async function renderFeed(container: HTMLElement, mt: DiscoveryMediaType,
         msg.textContent = JC.t!('discovery_empty');
         feed.appendChild(msg);
         container.appendChild(feed);
-        return { element: feed, destroy: () => abort.abort() };
+        return { element: feed, destroy };
     }
 
     // Lazy-load: build every shelf shell (height reserved), fill each only when it nears the viewport.
-    const observer = new IntersectionObserver((entries) => {
+    const feedObserver = new IntersectionObserver((entries) => {
+        if (abort.signal.aborted || !JC.identity.isCurrent(context)) return;
         for (const entry of entries) {
             if (!entry.isIntersecting) continue;
             const el = entry.target as HTMLElement;
-            observer.unobserve(el);
+            feedObserver.unobserve(el);
             const spec = specs.find((s) => s.id === el.getAttribute('data-discovery-row'));
             const items = el.querySelector<HTMLElement>('.jc-discovery-row-cards');
-            if (spec && items) void fillShelf(spec, mt, el, items, abort.signal);
+            if (spec && items) void fillShelf(spec, mt, el, items, abort.signal, context, scheduleFrame);
         }
     }, { rootMargin: '400px 0px' });
+    observer = feedObserver;
 
     for (const spec of specs) {
         const { row } = buildShelf(spec);
         feed.appendChild(row);
-        observer.observe(row);
+        feedObserver.observe(row);
     }
 
     container.appendChild(feed);
     return {
         element: feed,
-        destroy: () => { abort.abort(); observer.disconnect(); },
+        destroy,
     };
 }
+
+JC.identity.registerReset('discovery-feeds', () => {
+    for (const destroy of [...activeDestroyers]) destroy();
+    for (const controller of [...activeControllers]) controller.abort();
+    activeControllers.clear();
+    document.querySelectorAll('[data-jc-identity-owned="true"].jc-discovery-feed')
+        .forEach((node) => node.remove());
+});

@@ -6,13 +6,30 @@
 // identical; the JC.internals.hiddenContentPage bag is now real module imports.)
 
 import { JC } from '../../globals';
-import { scopeBadgeText, scopeUnhideText, showUnhideConfirmation, POSTER_MAX_WIDTH } from './state';
+import {
+    capturePageFence,
+    isPageFenceCurrent,
+    schedulePageTimeout,
+    scopeBadgeText,
+    scopeUnhideText,
+    showUnhideConfirmation,
+    POSTER_MAX_WIDTH,
+} from './state';
+import type { HiddenContentPageFence } from './state';
 import { handleUnhide, handleUnhideMany } from './admin';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /** Delay before removing a card after unhide animation. */
 const UNHIDE_FADE_DELAY_MS = 200;
+
+function fenceLink(link: HTMLElement, fence: HiddenContentPageFence): void {
+    link.addEventListener('click', (event) => {
+        if (isPageFenceCurrent(fence)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    });
+}
 
 // ============================================================
 // Rendering Functions
@@ -43,11 +60,13 @@ function formatEpisodeLabel(item: any): string {
  * @returns The poster link element.
  */
 function createGroupPoster(group: any, tmdbId: string): HTMLElement {
+    const fence = capturePageFence();
     const hasJellyfinId = !!group.seriesId;
     const hasTmdbId = !!tmdbId;
 
     const posterLink = document.createElement('a');
     posterLink.className = 'jc-hidden-group-poster-link';
+    fenceLink(posterLink, fence);
     if (hasJellyfinId) {
         posterLink.href = `#/details?id=${group.seriesId}`;
     } else if (hasTmdbId) {
@@ -60,6 +79,7 @@ function createGroupPoster(group: any, tmdbId: string): HTMLElement {
     if (hasJellyfinId) {
         img.src = `${(ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl('/Items/' + group.seriesId + '/Images/Primary', { maxWidth: POSTER_MAX_WIDTH })}`;
         img.onerror = function (this: HTMLImageElement) {
+            if (!isPageFenceCurrent(fence)) return;
             // eslint-disable-next-line @typescript-eslint/no-this-alias -- nested error handlers reference the outer <img>; verbatim from the legacy code
             const self = this;
             // Signal the card that Jellyfin item is gone
@@ -69,29 +89,37 @@ function createGroupPoster(group: any, tmdbId: string): HTMLElement {
             // Item removed from Jellyfin — fall back to TMDB poster
             if (hasTmdbId && fallbackPosterPath) {
                 self.src = `https://image.tmdb.org/t/p/w${POSTER_MAX_WIDTH}${fallbackPosterPath}`;
-                self.onerror = function (this: HTMLImageElement) { this.style.display = 'none'; };
+                self.onerror = function (this: HTMLImageElement) {
+                    if (isPageFenceCurrent(fence)) this.style.display = 'none';
+                };
             } else if (hasTmdbId && (JC as any).seerrAPI) {
                 // No posterPath stored — fetch it from Seerr
-                self.onerror = function (this: HTMLImageElement) { this.style.display = 'none'; };
+                self.onerror = function (this: HTMLImageElement) {
+                    if (isPageFenceCurrent(fence)) this.style.display = 'none';
+                };
                 const mainItem = group.items[0];
                 const mediaType = (mainItem && mainItem.type === 'Series') ? 'tv' : 'movie';
                 const fetchFn = mediaType === 'tv'
                     ? (JC as any).seerrAPI.fetchTvShowDetails
                     : (JC as any).seerrAPI.fetchMovieDetails;
                 fetchFn(parseInt(tmdbId, 10)).then(function (details: any) {
+                    if (!isPageFenceCurrent(fence)) return;
                     const path = details && (details.posterPath || details.poster_path);
                     if (path) {
                         self.src = `https://image.tmdb.org/t/p/w${POSTER_MAX_WIDTH}${path}`;
                     } else {
                         self.style.display = 'none';
                     }
-                }).catch(function () { self.style.display = 'none'; });
+                }).catch(function () {
+                    if (isPageFenceCurrent(fence)) self.style.display = 'none';
+                });
             } else if (group.seriesName && (JC as any).seerrAPI && (JC as any).seerrMoreInfo) {
                 // No TMDB id stored (e.g. an episode hidden from Next Up) and the Jellyfin media is gone.
                 // Resolve the show via a Seerr search by name so the card can still open the more-info
                 // modal — instead of leaving a blank poster and a dead "#/details" link.
                 self.style.display = 'none';
                 (JC as any).seerrAPI.search(group.seriesName).then(function (res: any) {
+                    if (!isPageFenceCurrent(fence)) return;
                     const results = (res && res.results) || [];
                     const hit = results.find(function (r: any) { return r.mediaType === 'tv'; }) || results[0];
                     if (hit && hit.id) {
@@ -103,7 +131,9 @@ function createGroupPoster(group: any, tmdbId: string): HTMLElement {
                         if (p) {
                             self.src = `https://image.tmdb.org/t/p/w${POSTER_MAX_WIDTH}${p}`;
                             self.style.display = '';
-                            self.onerror = function (this: HTMLImageElement) { this.style.display = 'none'; };
+                            self.onerror = function (this: HTMLImageElement) {
+                                if (isPageFenceCurrent(fence)) this.style.display = 'none';
+                            };
                         }
                     }
                 }).catch(function () {});
@@ -113,10 +143,14 @@ function createGroupPoster(group: any, tmdbId: string): HTMLElement {
         };
     } else if (fallbackPosterPath) {
         img.src = `https://image.tmdb.org/t/p/w${POSTER_MAX_WIDTH}${fallbackPosterPath}`;
-        img.onerror = function (this: HTMLImageElement) { this.style.display = 'none'; };
+        img.onerror = function (this: HTMLImageElement) {
+            if (isPageFenceCurrent(fence)) this.style.display = 'none';
+        };
     } else if (group.items[0]?.itemId) {
         img.src = `${(ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl('/Items/' + group.items[0].itemId + '/Images/Primary', { maxWidth: POSTER_MAX_WIDTH })}`;
-        img.onerror = function (this: HTMLImageElement) { this.style.display = 'none'; };
+        img.onerror = function (this: HTMLImageElement) {
+            if (isPageFenceCurrent(fence)) this.style.display = 'none';
+        };
     }
     img.alt = '';
     img.loading = 'lazy';
@@ -134,6 +168,7 @@ function createGroupPoster(group: any, tmdbId: string): HTMLElement {
  * @returns The info container element.
  */
 function createGroupInfo(group: any, mainItem: any, totalItems: number, hasEpisodes: boolean, tmdbId: string): { info: HTMLElement; nameEl: HTMLElement } {
+    const fence = capturePageFence();
     const hasJellyfinId = !!group.seriesId;
     const hasTmdbId = !!tmdbId;
 
@@ -144,6 +179,7 @@ function createGroupInfo(group: any, mainItem: any, totalItems: number, hasEpiso
         ? document.createElement('a')
         : document.createElement('div');
     nameEl.className = 'jc-hidden-group-name';
+    fenceLink(nameEl, fence);
     nameEl.textContent = group.seriesName || JC.t!('hidden_content_unknown_show');
     nameEl.title = group.seriesName || '';
     if (hasJellyfinId) {
@@ -181,6 +217,7 @@ function createGroupInfo(group: any, mainItem: any, totalItems: number, hasEpiso
  * @returns A document fragment with the detail and unhide button.
  */
 function createSingleItemDisplay(group: any, mainItem: any, hasEpisodes: boolean): DocumentFragment {
+    const fence = capturePageFence();
     const fragment = document.createDocumentFragment();
 
     if (hasEpisodes) {
@@ -189,6 +226,7 @@ function createSingleItemDisplay(group: any, mainItem: any, hasEpisodes: boolean
 
         const label = document.createElement('a');
         label.className = 'jc-hidden-group-item-label';
+        fenceLink(label, fence);
         label.textContent = formatEpisodeLabel(mainItem);
         label.title = mainItem.name || '';
         if (mainItem.itemId) {
@@ -213,14 +251,16 @@ function createSingleItemDisplay(group: any, mainItem: any, hasEpisodes: boolean
     unhideBtn.className = 'jc-hidden-group-unhide';
     unhideBtn.textContent = scopeUnhideText(mainItem.hideScope);
     unhideBtn.addEventListener('click', () => {
+        if (!isPageFenceCurrent(fence)) return;
         const itemLabel = hasEpisodes
             ? (group.seriesName || '') + ' – ' + formatEpisodeLabel(mainItem)
             : (group.seriesName || mainItem.name || 'this item');
         showUnhideConfirmation(JC.t!('hidden_content_unhide_confirm') || 'Unhide this item?', () => {
+            if (!isPageFenceCurrent(fence)) return;
             (unhideBtn.closest('.jc-hidden-group-card') as HTMLElement).style.opacity = '0.3';
-            setTimeout(() => {
+            schedulePageTimeout(() => {
                 handleUnhide(mainItem._key || mainItem.itemId);
-            }, UNHIDE_FADE_DELAY_MS);
+            }, UNHIDE_FADE_DELAY_MS, fence);
         }, itemLabel);
     });
     fragment.appendChild(unhideBtn);
@@ -237,6 +277,7 @@ function createSingleItemDisplay(group: any, mainItem: any, hasEpisodes: boolean
  * @returns A document fragment containing expand button, items list, and unhide-all.
  */
 function createExpandableItemsList(group: any, displayItems: any[], totalItems: number): DocumentFragment {
+    const fence = capturePageFence();
     const fragment = document.createDocumentFragment();
 
     // Expand/collapse button
@@ -267,6 +308,7 @@ function createExpandableItemsList(group: any, displayItems: any[], totalItems: 
 
         const label = document.createElement('a');
         label.className = 'jc-hidden-group-item-label';
+        fenceLink(label, fence);
         label.textContent = item._label;
         label.title = item.name || '';
         if (item.itemId) {
@@ -290,12 +332,14 @@ function createExpandableItemsList(group: any, displayItems: any[], totalItems: 
         unhideBtn.textContent = scopeUnhideText(item.hideScope);
         unhideBtn.addEventListener('click', (e) => {
             e.preventDefault();
+            if (!isPageFenceCurrent(fence)) return;
             const rowLabel = (group.seriesName || '') + ' – ' + formatEpisodeLabel(item);
             showUnhideConfirmation(JC.t!('hidden_content_unhide_confirm') || 'Unhide this item?', () => {
+                if (!isPageFenceCurrent(fence)) return;
                 row.style.opacity = '0.3';
-                setTimeout(() => {
+                schedulePageTimeout(() => {
                     handleUnhide(item._key || item.itemId);
-                }, UNHIDE_FADE_DELAY_MS);
+                }, UNHIDE_FADE_DELAY_MS, fence);
             }, rowLabel);
         });
         row.appendChild(unhideBtn);
@@ -309,7 +353,9 @@ function createExpandableItemsList(group: any, displayItems: any[], totalItems: 
     unhideAllBtn.className = 'jc-hidden-group-unhide-all';
     unhideAllBtn.textContent = JC.t!('hidden_content_unhide_all_show');
     unhideAllBtn.addEventListener('click', () => {
+        if (!isPageFenceCurrent(fence)) return;
         showUnhideConfirmation(JC.t!('hidden_content_unhide_all_confirm') || 'Unhide all items for this show?', () => {
+            if (!isPageFenceCurrent(fence)) return;
             handleUnhideMany(group.items.map((item: any) => item._key || item.itemId));
         }, group.seriesName || 'this show');
     });
@@ -317,6 +363,7 @@ function createExpandableItemsList(group: any, displayItems: any[], totalItems: 
 
     // Toggle expand/collapse
     expandBtn.addEventListener('click', () => {
+        if (!isPageFenceCurrent(fence)) return;
         const isExpanded = itemsList.classList.toggle('expanded');
         expandBtn.classList.toggle('expanded', isExpanded);
         unhideAllBtn.classList.toggle('expanded', isExpanded);
@@ -331,8 +378,10 @@ function createExpandableItemsList(group: any, displayItems: any[], totalItems: 
  * @returns The group card element.
  */
 export function createGroupCard(group: any): HTMLElement {
+    const fence = capturePageFence();
     const card = document.createElement('div');
     card.className = 'jc-hidden-group-card';
+    card.dataset.jcIdentityOwned = 'true';
 
     const seriesItems = group.items.filter((i: any) => i.type === 'Series');
     const episodeItems = group.items.filter((i: any) => i.type !== 'Series');
@@ -358,6 +407,10 @@ export function createGroupCard(group: any): HTMLElement {
         const posterLink = card.querySelector<HTMLElement>('.jc-hidden-group-poster-link');
         const baseMediaType = mainItem.type === 'Series' ? 'tv' : 'movie';
         const openSeerr = (e?: Event): void => {
+            if (!isPageFenceCurrent(fence)) {
+                e?.preventDefault();
+                return;
+            }
             const id = tmdbId || (posterLink && posterLink.dataset.resolvedTmdbId);
             if (!id) return;
             const mediaType = tmdbId ? baseMediaType : (posterLink!.dataset.resolvedMediaType || 'tv');
@@ -413,6 +466,7 @@ export function createGroupCard(group: any): HTMLElement {
  * @returns The section element.
  */
 export function createSection(titleKey: string, content: HTMLElement, options: { expandable?: boolean } = {}): HTMLElement {
+    const fence = capturePageFence();
     const section = document.createElement('div');
     section.className = 'jc-hidden-group-section';
 
@@ -431,6 +485,7 @@ export function createSection(titleKey: string, content: HTMLElement, options: {
         let allExpanded = false;
 
         toggleBtn.addEventListener('click', () => {
+            if (!isPageFenceCurrent(fence)) return;
             allExpanded = !allExpanded;
             toggleBtn.textContent = allExpanded
                 ? JC.t!('hidden_content_collapse_all')

@@ -10,15 +10,29 @@ import { getItemCached } from '../helpers';
 import { formatTimestamp, parseTimestampInput, renderActiveBookmarks } from './library-render';
 import { findAndOfferReplacement } from './library-replacements';
 import { showOffsetAdjustmentModal } from './library-modals';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const logPrefix = '🪼 Jellyfin Canopy: Bookmarks Library:';
 
+const playbackTimers = new Set<number>();
+
+JC.identity.registerReset('bookmarks-library-playback', () => {
+  for (const timer of playbackTimers) window.clearTimeout(timer);
+  playbackTimers.clear();
+});
+
 /**
  * Render bookmark items with posters
  */
-export async function renderBookmarkItems(container: HTMLElement, groupedByItem: Record<string, any>, currentTab: string): Promise<void> {
+export async function renderBookmarkItems(
+  container: HTMLElement,
+  groupedByItem: Record<string, any>,
+  currentTab: string,
+  context: IdentityContext | null = JC.identity.capture()
+): Promise<void> {
+  if (!context || !JC.identity.isCurrent(context)) return;
   container.innerHTML = '';
   const apiClient: any = window.ApiClient || (window as any).ConnectionManager?.currentApiClient();
   if (!apiClient) {
@@ -26,7 +40,7 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
     return;
   }
 
-  const userId = apiClient.getCurrentUserId();
+  const userId = context.userId;
   const itemPromises: Promise<any>[] = [];
 
   // Fetch all items
@@ -56,6 +70,7 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
   }
 
   const results = await Promise.all(itemPromises);
+  if (!JC.identity.isCurrent(context)) return;
 
   // Apply tab filter
   const filtered = results.filter(({ group }) => {
@@ -125,7 +140,7 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
           </button>
         ` : ''}
       </div>
-      <div class="jc-bookmarks-list bookmarks-list-${key}"></div>
+      <div class="jc-bookmarks-list"></div>
     `;
 
     itemCard.innerHTML = headerHtml;
@@ -135,7 +150,8 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
     const findBtn = itemCard.querySelector<HTMLButtonElement>('.btnFindReplacement');
     if (findBtn) {
       findBtn.addEventListener('click', () => { void (async () => {
-        await findAndOfferReplacement(group, findBtn);
+        if (!JC.identity.isCurrent(context)) return;
+        await findAndOfferReplacement(group, findBtn, context);
       })(); });
     }
 
@@ -143,7 +159,8 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
     const offsetBtn = itemCard.querySelector<HTMLElement>('.btnAdjustOffset');
     if (offsetBtn) {
       offsetBtn.addEventListener('click', () => {
-        showOffsetAdjustmentModal(group);
+        if (!JC.identity.isCurrent(context)) return;
+        showOffsetAdjustmentModal(group, context);
       });
     }
 
@@ -151,6 +168,7 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
     const poster = itemCard.querySelector<HTMLElement>('.jc-bookmark-item-poster');
     if (poster) {
       poster.addEventListener('click', () => {
+        if (!JC.identity.isCurrent(context)) return;
         const itemId = poster.dataset.itemId;
         if (itemId) {
           (window.Emby?.Page as { show?: (path: string) => void } | undefined)?.show?.(`/details?id=${itemId}`);
@@ -159,7 +177,7 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
     }
 
     // Render bookmarks for this item
-    const bookmarksList = itemCard.querySelector<HTMLElement>(`.bookmarks-list-${key}`);
+    const bookmarksList = itemCard.querySelector<HTMLElement>('.jc-bookmarks-list');
     if (bookmarksList) {
       group.bookmarks.forEach((bm: any) => {
         const bmEl = document.createElement('div');
@@ -247,9 +265,10 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
         const playBtn = actions.querySelector<HTMLElement>('.btnPlayBookmark');
         if (playBtn) {
           playBtn.addEventListener('click', () => { void (async () => {
+            if (!JC.identity.isCurrent(context)) return;
             const itemId = playBtn.dataset.itemId!;
             const time = parseFloat(playBtn.dataset.time!);
-            await playItemAtTime(itemId, time);
+            await playItemAtTime(itemId, time, context);
           })(); });
         }
 
@@ -257,6 +276,7 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
         const editBtn = actions.querySelector<HTMLButtonElement>('.btnEditBookmark');
         if (editBtn) {
           editBtn.addEventListener('click', () => {
+            if (!JC.identity.isCurrent(context)) return;
             editRow.classList.toggle('show');
             if (editRow.classList.contains('show')) {
               timeInput.focus();
@@ -265,12 +285,14 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
         }
 
         cancelBtn.addEventListener('click', () => {
+          if (!JC.identity.isCurrent(context)) return;
           editRow.classList.remove('show');
           timeInput.value = formatTimestamp(bm.timestamp);
           labelInput.value = bm.label || '';
         });
 
         saveBtn.addEventListener('click', () => { void (async () => {
+          if (!JC.identity.isCurrent(context)) return;
           const parsedTime = parseTimestampInput(timeInput.value);
           if (parsedTime === null) {
             toast(JC.t!('bookmark_time_format_hint'), 3000);
@@ -284,37 +306,50 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
               timestamp: parsedTime,
               label: labelInput.value.trim()
             });
+            if (!JC.identity.isCurrent(context)) return;
             if (ok) {
               toast(JC.t!('toast_bookmark_updated'), 2000);
-              renderActiveBookmarks();
+              renderActiveBookmarks(context);
             } else {
               toast(JC.t!('toast_bookmark_save_failed'), 3000);
             }
           } catch (err) {
+            if (!JC.identity.isCurrent(context)) return;
             console.error('Bookmark update failed', err);
             toast(JC.t!('toast_bookmark_save_failed'), 3000);
           } finally {
-            saveBtn.disabled = false;
-            if (editBtn) editBtn.disabled = false;
+            if (JC.identity.isCurrent(context)) {
+              saveBtn.disabled = false;
+              if (editBtn) editBtn.disabled = false;
+            }
           }
         })(); });
 
         // Delete button handler
         deleteBtn.addEventListener('click', () => { void (async () => {
+          if (!JC.identity.isCurrent(context)) return;
           const bookmarkId = deleteBtn.dataset.bookmarkId!;
-          await JC.bookmarks!.delete(bookmarkId);
-          toast(JC.t!('toast_bookmark_deleted'), 2000);
+          try {
+            await JC.bookmarks!.delete(bookmarkId);
+            if (!JC.identity.isCurrent(context)) return;
+            toast(JC.t!('toast_bookmark_deleted'), 2000);
 
-          // Re-render into the adopted host (the delete already emitted
-          // 'jc-bookmarks-updated'; this coalesces with that refresh).
-          renderActiveBookmarks();
+            // Re-render into the adopted host (the delete already emitted
+            // 'jc-bookmarks-updated'; this coalesces with that refresh).
+            renderActiveBookmarks(context);
+          } catch (error) {
+            if (!JC.identity.isCurrent(context)) return;
+            console.error('Bookmark delete failed', error);
+            toast(JC.t!('bookmark_delete_failed'), 3000);
+          }
         })(); });
 
         // Timestamp click-to-play
         const ts = info.querySelector<HTMLElement>('.jc-bm-time');
         ts?.addEventListener('click', () => { void (async () => {
+          if (!JC.identity.isCurrent(context)) return;
           const t = parseFloat(ts.dataset.time!);
-          await playItemAtTime(ts.dataset.itemId!, t);
+          await playItemAtTime(ts.dataset.itemId!, t, context);
         })(); });
       });
     }
@@ -324,7 +359,12 @@ export async function renderBookmarkItems(container: HTMLElement, groupedByItem:
 /**
  * Play item at specific time
  */
-async function playItemAtTime(itemId: string, startTime: number): Promise<void> {
+async function playItemAtTime(
+  itemId: string,
+  startTime: number,
+  context: IdentityContext | null = JC.identity.capture()
+): Promise<void> {
+  if (!context || !JC.identity.isCurrent(context)) return;
   try {
     console.log(`${logPrefix} Attempting playback: itemId=${itemId}, startTime=${startTime}`);
 
@@ -341,17 +381,17 @@ async function playItemAtTime(itemId: string, startTime: number): Promise<void> 
     console.log(`${logPrefix} Device ID: ${deviceId}`);
 
     // Query sessions to find our current session
-    const sessionsUrl = apiClient.getUrl('Sessions');
-    const sessions = await apiClient.ajax({
-      type: 'GET',
-      url: sessionsUrl,
-      dataType: 'json'
+    const sessions = await JC.core.api!.jf('/Sessions', {
+      skipCache: true
     });
+    if (!JC.identity.isCurrent(context)) return;
 
     console.log(`${logPrefix} Available sessions:`, sessions);
 
     // Find our session by device ID
-    const currentSession = sessions.find((s: any) => s.DeviceId === deviceId);
+    const currentSession = Array.isArray(sessions)
+      ? sessions.find((s: any) => s.DeviceId === deviceId)
+      : null;
 
     if (!currentSession) {
       console.warn(`${logPrefix} Could not find current session`);
@@ -368,23 +408,29 @@ async function playItemAtTime(itemId: string, startTime: number): Promise<void> 
 
     console.log(`${logPrefix} Sending playback request:`, url);
 
-    await apiClient.ajax({
-      type: 'POST',
-      url: apiClient.getUrl(url)
+    if (!JC.identity.isCurrent(context)) return;
+    await JC.core.api!.jf(`/${url}`, {
+      method: 'POST',
+      skipRetry: true
     });
+    if (!JC.identity.isCurrent(context)) return;
 
     console.log(`${logPrefix} Playback started successfully`);
     toast(JC.t!('toast_playing'), 2000);
 
     // Wait for navigation to complete, then trigger bookmark marker update
-    setTimeout(() => {
+    const timer = window.setTimeout(() => {
+      playbackTimers.delete(timer);
+      if (!JC.identity.isCurrent(context)) return;
       if ((window.JC as any)?.isVideoPage?.() && typeof window.JC?.bookmarks?.updateMarkers === 'function') {
         console.log(`${logPrefix} Triggering bookmark marker update after playback start`);
         void window.JC.bookmarks.updateMarkers();
       }
     }, 1500);
+    playbackTimers.add(timer);
 
   } catch (e) {
+    if (!JC.identity.isCurrent(context)) return;
     console.error(`${logPrefix} Failed to play item:`, e);
     toast(JC.t!('toast_playback_failed').replace('{error}', JC.escapeHtml((e as any).message || 'Unknown error')), 3000);
   }

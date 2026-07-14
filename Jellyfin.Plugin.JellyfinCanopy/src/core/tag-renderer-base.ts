@@ -21,7 +21,13 @@
 import { JC } from '../globals';
 import { injectCss as uiInjectCss } from './ui-kit';
 import { createBoundedCache, type BoundedCache } from './bounded-cache';
-import type { TagPosition, TagRendererApi, TagRendererContext, TagSpec } from '../types/jc';
+import type {
+    IdentityContext,
+    TagPosition,
+    TagRendererApi,
+    TagRendererContext,
+    TagSpec,
+} from '../types/jc';
 
 JC.core = JC.core || {};
 
@@ -49,8 +55,10 @@ const STANDARD_IGNORE_SELECTORS: string[] = [
 
 interface TagInstance {
     ctx: TagRendererContext;
+    getContext(): TagRendererContext;
     initialize(): void;
     reinitialize(): void;
+    resetIdentity(): void;
 }
 
 /** name → tag instance */
@@ -104,6 +112,7 @@ function createTag(name: string, spec: TagSpec): TagInstance {
     const logPrefix = spec.logPrefix;
     const containerClass = spec.containerClass;
     const TAGGED_ATTR = spec.taggedAttr;
+    const ownerStorageKey = spec.cache ? `${spec.cache.key}:identity-owner` : '';
 
     const state = {
         /** persistent (localStorage-backed) cache */
@@ -115,7 +124,21 @@ function createTag(name: string, spec: TagSpec): TagInstance {
         ignoreSelectors: null as string[] | null,
         saveRegistered: false,
         unloadRegistered: false,
+        context: null as IdentityContext | null,
     };
+
+    function isContextCurrent(context: IdentityContext | null | undefined): context is IdentityContext {
+        return !!context
+            && !!state.context
+            && context.epoch === state.context.epoch
+            && context.serverId === state.context.serverId
+            && context.userId === state.context.userId
+            && JC.identity.isCurrent(context);
+    }
+
+    function ownerValue(context: IdentityContext): string {
+        return `${context.serverId}:${context.userId}`;
+    }
 
     // ── Ignore / tagged helpers ────────────────────────────────────
 
@@ -172,9 +195,29 @@ function createTag(name: string, spec: TagSpec): TagInstance {
             JC.pluginConfig?.EnableTagsLocalStorageFallback === true;
         state.cacheTtl = (JC.pluginConfig?.TagsCacheTtlDays || 30) * 24 * 60 * 60 * 1000;
         if (!spec.cache) return;
-        state.cache = state.localStorageEnabled
-            ? ((JSON.parse(localStorage.getItem(spec.cache.key) || '{}') || {}) as Record<string, unknown>)
-            : {};
+        const context = state.context;
+        if (!isContextCurrent(context)) {
+            state.cache = {};
+            state.hot?.clear();
+            return;
+        }
+        if (state.localStorageEnabled) {
+            const expectedOwner = ownerValue(context);
+            if (localStorage.getItem(ownerStorageKey) !== expectedOwner) {
+                // Legacy entries had no owner. Treat them as untrusted rather
+                // than exposing one user's projection to the next login.
+                localStorage.removeItem(spec.cache.key);
+                localStorage.setItem(ownerStorageKey, expectedOwner);
+            }
+            try {
+                state.cache = (JSON.parse(localStorage.getItem(spec.cache.key) || '{}') || {}) as Record<string, unknown>;
+            } catch {
+                state.cache = {};
+                localStorage.removeItem(spec.cache.key);
+            }
+        } else {
+            state.cache = {};
+        }
         if (spec.cache.hotBucket) {
             const Hot = (JC._hotCache = JC._hotCache || { ttl: state.cacheTtl });
             Hot[spec.cache.hotBucket] = Hot[spec.cache.hotBucket] ||
@@ -185,7 +228,8 @@ function createTag(name: string, spec: TagSpec): TagInstance {
 
     /** Persist the cache to localStorage (registered with JC._cacheManager). */
     function saveCache(): void {
-        if (!spec.cache || !state.localStorageEnabled) return;
+        const context = state.context;
+        if (!spec.cache || !state.localStorageEnabled || !isContextCurrent(context)) return;
         try {
             if (spec.cache.pruneOnSave) {
                 const now = Date.now();
@@ -195,6 +239,7 @@ function createTag(name: string, spec: TagSpec): TagInstance {
                     }
                 }
             }
+            localStorage.setItem(ownerStorageKey, ownerValue(context));
             localStorage.setItem(spec.cache.key, JSON.stringify(state.cache));
         } catch (e) {
             console.warn(`${logPrefix} Failed to save cache`, e);
@@ -264,6 +309,21 @@ function createTag(name: string, spec: TagSpec): TagInstance {
         uiInjectCss(spec.styleId, spec.buildCss(ctx));
     }
 
+    function guardedHot(context: IdentityContext): BoundedCache<string, unknown> | null {
+        if (!state.hot) return null;
+        const hot = state.hot;
+        return {
+            get: (key) => isContextCurrent(context) ? hot.get(key) : undefined,
+            set: (key, value) => { if (isContextCurrent(context)) hot.set(key, value); },
+            has: (key) => isContextCurrent(context) && hot.has(key),
+            delete: (key) => isContextCurrent(context) && hot.delete(key),
+            clear: () => { if (isContextCurrent(context)) hot.clear(); },
+            get size() { return isContextCurrent(context) ? hot.size : 0; },
+            keys: () => isContextCurrent(context) ? hot.keys() : new Map<string, unknown>().keys(),
+            values: () => isContextCurrent(context) ? hot.values() : new Map<string, unknown>().values(),
+        };
+    }
+
     // ── Context handed to spec callbacks ───────────────────────────
 
     const ctx: TagRendererContext = {
@@ -272,7 +332,10 @@ function createTag(name: string, spec: TagSpec): TagInstance {
         containerClass,
         taggedAttr: TAGGED_ATTR,
         /** shared hot cache bucket */
-        get hot() { return state.hot; },
+        get hot() {
+            const context = state.context;
+            return context && isContextCurrent(context) ? guardedHot(context) : null;
+        },
         /** cache TTL in ms */
         get cacheTtl() { return state.cacheTtl; },
         /** whether localStorage fallback is active */
@@ -280,22 +343,26 @@ function createTag(name: string, spec: TagSpec): TagInstance {
         /**
          * @returns the persistent cache entry (raw, module-defined shape)
          */
-        getPersistent(itemId: string): unknown { return state.cache[itemId]; },
+        getPersistent(itemId: string): unknown {
+            return isContextCurrent(state.context) ? state.cache[itemId] : undefined;
+        },
         /**
          * Store a persistent cache entry and schedule a save.
          */
         setPersistent(itemId: string, value: unknown): void {
+            if (!isContextCurrent(state.context)) return;
             state.cache[itemId] = value;
             if (JC._cacheManager) JC._cacheManager.markDirty();
         },
-        isTagged,
-        markTagged,
-        shouldIgnore,
-        injectCss,
+        isTagged: (el) => isContextCurrent(state.context) && isTagged(el),
+        markTagged: (el) => { if (isContextCurrent(state.context)) markTagged(el); },
+        shouldIgnore: (el) => !isContextCurrent(state.context) || shouldIgnore(el),
+        injectCss: () => { if (isContextCurrent(state.context)) injectCss(); },
         /**
          * Remove an existing overlay container from el, if present.
          */
         removeExistingOverlay(el: HTMLElement): void {
+            if (!isContextCurrent(state.context)) return;
             const existing = el.querySelector(`.${containerClass}`);
             if (existing) existing.remove();
         },
@@ -304,12 +371,47 @@ function createTag(name: string, spec: TagSpec): TagInstance {
          * @returns true if the overlay was attached
          */
         commitOverlay(el: HTMLElement, overlay: HTMLElement): boolean {
+            if (!isContextCurrent(state.context)) return false;
             if (overlay.children.length === 0) return false;
+            overlay.dataset.jcIdentityOwned = 'true';
             el.appendChild(overlay);
             markTagged(el);
             return true;
         },
     };
+
+    function scopedContext(context: IdentityContext): TagRendererContext {
+        return {
+            name,
+            logPrefix,
+            containerClass,
+            taggedAttr: TAGGED_ATTR,
+            get hot() { return guardedHot(context); },
+            get cacheTtl() { return state.cacheTtl; },
+            get localStorageEnabled() { return state.localStorageEnabled; },
+            getPersistent: (itemId) => isContextCurrent(context) ? state.cache[itemId] : undefined,
+            setPersistent: (itemId, value) => {
+                if (!isContextCurrent(context)) return;
+                state.cache[itemId] = value;
+                JC._cacheManager?.markDirty();
+            },
+            isTagged: (el) => isContextCurrent(context) && isTagged(el),
+            markTagged: (el) => { if (isContextCurrent(context)) markTagged(el); },
+            shouldIgnore: (el) => !isContextCurrent(context) || shouldIgnore(el),
+            injectCss: () => { if (isContextCurrent(context)) injectCss(); },
+            removeExistingOverlay: (el) => {
+                if (!isContextCurrent(context)) return;
+                el.querySelector(`.${containerClass}`)?.remove();
+            },
+            commitOverlay: (el, overlay) => {
+                if (!isContextCurrent(context) || overlay.children.length === 0) return false;
+                overlay.dataset.jcIdentityOwned = 'true';
+                el.appendChild(overlay);
+                markTagged(el);
+                return true;
+            },
+        };
+    }
 
     // ── Lifecycle ──────────────────────────────────────────────────
 
@@ -319,6 +421,9 @@ function createTag(name: string, spec: TagSpec): TagInstance {
      * renderer (fresh settings) without duplicating save hooks.
      */
     function initialize(): void {
+        const context = JC.identity.capture();
+        if (!context || !JC.identity.isCurrent(context)) return;
+        state.context = context;
         loadCacheSettings();
         state.ignoreSelectors = buildIgnoreSelectors();
         cleanupOldCaches();
@@ -341,18 +446,35 @@ function createTag(name: string, spec: TagSpec): TagInstance {
             return;
         }
         JC.tagPipeline.registerRenderer(name, {
-            render: (el: HTMLElement, item: unknown, extras?: unknown) => p.render(ctx, el, item, extras),
+            render: (el: HTMLElement, item: unknown, extras?: unknown) => {
+                const renderContext = state.context;
+                if (!isContextCurrent(renderContext)) return;
+                p.render(scopedContext(renderContext), el, item, extras);
+            },
             renderFromCache: p.renderFromCache
-                ? (el: HTMLElement, itemId: string) => p.renderFromCache!(ctx, el, itemId)
+                ? (el: HTMLElement, itemId: string) => {
+                    const renderContext = state.context;
+                    return isContextCurrent(renderContext)
+                        ? p.renderFromCache!(scopedContext(renderContext), el, itemId)
+                        : false;
+                }
                 : undefined,
             renderFromServerCache: p.renderFromServerCache
-                ? (el: HTMLElement, entry: unknown, itemId: string) => p.renderFromServerCache!(ctx, el, entry, itemId)
+                ? (el: HTMLElement, entry: unknown, itemId: string) => {
+                    const renderContext = state.context;
+                    if (isContextCurrent(renderContext)) {
+                        p.renderFromServerCache!(scopedContext(renderContext), el, entry, itemId);
+                    }
+                }
                 : undefined,
             onServerCacheRefresh: (updatedIds: string[] | null) => {
+                const renderContext = state.context;
+                if (!isContextCurrent(renderContext)) return;
                 invalidateCachedEntries(updatedIds);
-                if (p.onServerCacheRefresh) p.onServerCacheRefresh(ctx, updatedIds);
+                if (p.onServerCacheRefresh) p.onServerCacheRefresh(scopedContext(renderContext), updatedIds);
             },
             invalidateCard: (el: HTMLElement) => {
+                if (!isContextCurrent(state.context)) return;
                 ctx.removeExistingOverlay(el);
                 const card = el.closest<HTMLElement>('.card');
                 if (card) delete card.dataset[TAGGED_ATTR];
@@ -393,7 +515,28 @@ function createTag(name: string, spec: TagSpec): TagInstance {
         JC.tagPipeline?.scheduleScan?.();
     }
 
-    return { ctx, initialize, reinitialize };
+    function resetIdentity(): void {
+        state.context = null;
+        state.cache = {};
+        state.hot?.clear();
+        if (spec.cache) {
+            // The frozen cache key stays unchanged, but an unscoped snapshot is
+            // never allowed to survive an authenticated identity transition.
+            localStorage.removeItem(spec.cache.key);
+            localStorage.removeItem(ownerStorageKey);
+        }
+        document.querySelectorAll(`.${containerClass}`).forEach((el) => el.remove());
+        document.querySelectorAll<HTMLElement>(`[data-${toKebab(TAGGED_ATTR)}]`).forEach((el) => {
+            delete el.dataset[TAGGED_ATTR];
+        });
+    }
+
+    function getContext(): TagRendererContext {
+        const context = state.context;
+        return context && isContextCurrent(context) ? scopedContext(context) : ctx;
+    }
+
+    return { ctx, getContext, initialize, reinitialize, resetIdentity };
 }
 
 /**
@@ -417,7 +560,7 @@ function getOrCreate(name: string, spec: TagSpec): TagInstance {
 export function register(name: string, spec: TagSpec): TagRendererContext {
     const tag = getOrCreate(name, spec);
     tag.initialize();
-    return tag.ctx;
+    return tag.getContext();
 }
 
 /**
@@ -437,5 +580,9 @@ const tagRenderer: TagRendererApi = {
 };
 
 JC.core.tagRenderer = tagRenderer;
+
+JC.identity.registerReset('tag-renderer-base', () => {
+    for (const tag of tags.values()) tag.resetIdentity();
+});
 
 console.log('🪼 Jellyfin Canopy: Tag renderer core initialized');

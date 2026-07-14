@@ -12,6 +12,7 @@ const MediaStatus = JC.seerrStatus!.MEDIA;
 const logPrefix = '🪼 Jellyfin Canopy: Seerr UI:';
 const escapeHtml = JC.escapeHtml;
 const icons = internal.icons; // requires ui-icons.js to be loaded first
+type IdentityCleanupElement = HTMLElement & { _jcIdentityCleanups?: Set<() => void> };
 
 /**
  * Shows the advanced request modal for movies.
@@ -20,6 +21,8 @@ const icons = internal.icons; // requires ui-icons.js to be loaded first
  * @param {Object|null} searchResultItem - Original search result data.
  */
 ui.showMovieRequestModal = async function (tmdbId: any, title: any, searchResultItem: any, is4k: any = false) {
+    const identity = JC.identity.capture();
+    if (!identity || !JC.identity.isCurrent(identity)) return;
     const { create, createAdvancedOptionsHTML, populateAdvancedOptions } = JC.seerrModal!;
     const { requestMedia, fetchAdvancedRequestData, fetchUserQuota } = JC.seerrAPI!;
 
@@ -29,12 +32,14 @@ ui.showMovieRequestModal = async function (tmdbId: any, title: any, searchResult
         subtitle: title,
         bodyHtml,
         backdropPath: searchResultItem?.backdropPath,
-        onSave: async (modalEl: any, requestBtn: any, closeFn: any) => {
-            const serverSelect = modalEl.querySelector('#movie-server');
-            const qualitySelect = modalEl.querySelector('#movie-quality');
-            const folderSelect = modalEl.querySelector('#movie-folder');
+        onSave: async (modalEl: HTMLElement, requestBtn: HTMLButtonElement, closeFn: () => void) => {
+            const isCurrent = () => JC.identity.isCurrent(identity) && modalEl.isConnected;
+            if (!isCurrent()) return;
+            const serverSelect = modalEl.querySelector<HTMLSelectElement>('#movie-server');
+            const qualitySelect = modalEl.querySelector<HTMLSelectElement>('#movie-quality');
+            const folderSelect = modalEl.querySelector<HTMLSelectElement>('#movie-folder');
 
-            if (!serverSelect.value || !qualitySelect.value || !folderSelect.value) {
+            if (!serverSelect?.value || !qualitySelect?.value || !folderSelect?.value) {
                 JC.toast!(JC.t!('seerr_modal_toast_options_missing'), 3000);
                 return;
             }
@@ -45,15 +50,19 @@ ui.showMovieRequestModal = async function (tmdbId: any, title: any, searchResult
 
             try {
                 await requestMedia(tmdbId, 'movie', settings, is4k, searchResultItem);
+                if (!isCurrent()) return;
                 // Manually update the original button on the card
-                const originalButton = document.querySelector(`.seerr-request-button[data-tmdb-id="${tmdbId}"]`);
-                if (originalButton) {
+                const originalButton = document.querySelector<HTMLButtonElement>(
+                    `.seerr-request-button[data-tmdb-id="${tmdbId}"]`
+                );
+                if (originalButton && JC.identity.isOwned(originalButton, identity)) {
                     originalButton.innerHTML = `<span>${JC.t!('seerr_btn_requested')}</span>${icons.requested}`;
                     originalButton.classList.remove('seerr-button-request');
                     originalButton.classList.add('seerr-button-pending');
                 }
                 closeFn();
             } catch (error: any) {
+                if (!isCurrent()) return;
                 await internal.handleRequestError(error, 'movie', requestBtn, JC.t!('seerr_modal_request'));
             }
         }
@@ -64,6 +73,7 @@ ui.showMovieRequestModal = async function (tmdbId: any, title: any, searchResult
     const bodyEl = modalElement.querySelector('.seerr-modal-body');
     if (bodyEl) {
         fetchUserQuota().then((quota: any) => {
+            if (!JC.identity.isCurrent(identity)) return;
             const chip = internal.buildQuotaChip(quota, 'movie');
             if (chip && document.body.contains(modalElement)) {
                 bodyEl.insertBefore(chip, bodyEl.firstChild);
@@ -73,8 +83,10 @@ ui.showMovieRequestModal = async function (tmdbId: any, title: any, searchResult
 
     try {
         const data = await fetchAdvancedRequestData('movie');
+        if (!JC.identity.isCurrent(identity) || !modalElement.isConnected) return;
         populateAdvancedOptions(modalElement, data, 'movie');
     } catch (error: any) {
+        if (!JC.identity.isCurrent(identity) || !modalElement.isConnected) return;
         console.error(`${logPrefix} Failed to load advanced options:`, error);
         JC.toast!(JC.t!('seerr_err_load_server_options'), 3000);
     }
@@ -128,6 +140,8 @@ function describeCollectionRowStatus(status: number, hasActiveDownloads: boolean
  * @param {object} searchResultItem - Optional search result item data.
  */
 ui.showCollectionRequestModal = async function (collectionId: any, collectionName: any, searchResultItem: any = null) {
+    const identity = JC.identity.capture();
+    if (!identity || !JC.identity.isCurrent(identity)) return;
     const { create, createAdvancedOptionsHTML, populateAdvancedOptions } = JC.seerrModal!;
     const { fetchCollectionDetails, requestMedia, fetchAdvancedRequestData } = JC.seerrAPI!;
 
@@ -135,7 +149,9 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
     let collectionDetails;
     try {
         collectionDetails = await fetchCollectionDetails(collectionId);
+        if (!JC.identity.isCurrent(identity)) return;
     } catch (error: any) {
+        if (!JC.identity.isCurrent(identity)) return;
         JC.toast!(JC.t!('seerr_toast_collection_fetch_failed'), 4000);
         return;
     }
@@ -222,17 +238,23 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
         bodyHtml,
         backdropPath: collectionDetails.backdrop_path || collectionDetails.backdropPath,
         buttonText: JC.t!('seerr_modal_request_selected_movies') || 'Request Selected Movies',
-        onSave: async (modalEl: any, requestBtn: any, closeFn: any) => {
+        onSave: async (
+            modalEl: IdentityCleanupElement,
+            requestBtn: HTMLButtonElement,
+            closeFn: () => void
+        ) => {
+            const isCurrent = () => JC.identity.isCurrent(identity) && modalEl.isConnected;
+            if (!isCurrent()) return;
             requestBtn.disabled = true;
             requestBtn.innerHTML = `${JC.t!('seerr_modal_requesting') || 'Requesting'}<span class="seerr-button-spinner"></span>`;
 
-            const is4k = !!(modalEl.querySelector('#seerr-collection-4k') as HTMLInputElement | null)?.checked;
+            const is4k = !!modalEl.querySelector<HTMLInputElement>('#seerr-collection-4k')?.checked;
 
             let settings = {};
             if (showAdvanced) {
-                const server = modalEl.querySelector('#movie-server').value;
-                const quality = modalEl.querySelector('#movie-quality').value;
-                const folder = modalEl.querySelector('#movie-folder').value;
+                const server = modalEl.querySelector<HTMLSelectElement>('#movie-server')?.value;
+                const quality = modalEl.querySelector<HTMLSelectElement>('#movie-quality')?.value;
+                const folder = modalEl.querySelector<HTMLSelectElement>('#movie-folder')?.value;
                 if (!server || !quality || !folder) {
                     JC.toast!(JC.t!('seerr_modal_toast_options_missing') || 'Please select all options', 3000);
                     requestBtn.disabled = false;
@@ -243,8 +265,9 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
             }
 
             try {
-                const selectedMovies = Array.from(modalEl.querySelectorAll('.seerr-collection-movie-row .seerr-collection-checkbox:checked:not(:disabled)'))
-                    .map((cb: any) => parseInt(cb.dataset.tmdbId));
+                const selectedMovies = Array.from(modalEl.querySelectorAll<HTMLInputElement>(
+                    '.seerr-collection-movie-row .seerr-collection-checkbox:checked:not(:disabled)'
+                )).map((checkbox) => Number.parseInt(checkbox.dataset.tmdbId || '', 10));
 
                 if (selectedMovies.length === 0) {
                     JC.toast!(JC.t!('seerr_modal_toast_select_movie') || 'Please select at least one movie', 3000);
@@ -257,8 +280,10 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
                 let otherFailures = 0;
                 let quotaHitError: any = null;
                 for (const tmdbId of selectedMovies) {
+                    if (!isCurrent()) return;
                     try {
                         await requestMedia(tmdbId, 'movie', settings, is4k, searchResultItem);
+                        if (!isCurrent()) return;
                         successCount++;
                     } catch (error: any) {
                         // Once quota is hit every remaining request will also fail — break.
@@ -281,11 +306,13 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
                 JC.toast!(toastText, 4000);
                 if (quotaHitError) {
                     await ui.showQuotaErrorDialog(quotaHitError, 'movie');
+                    if (!isCurrent()) return;
                 }
                 closeFn();
 
                 // Refresh search results
-                setTimeout(() => {
+                const refreshTimer = setTimeout(() => {
+                    if (!JC.identity.isCurrent(identity)) return;
                     const query = new URLSearchParams(window.location.hash.split('?')[1])?.get('query');
                     if (query) {
                         const mainController = JC.seerr;
@@ -294,7 +321,9 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
                         }
                     }
                 }, 1000);
+                modalEl._jcIdentityCleanups?.add(() => clearTimeout(refreshTimer));
             } catch (error: any) {
+                if (!isCurrent()) return;
                 JC.toast!(JC.t!('seerr_modal_toast_request_fail') || 'Request failed', 4000);
                 requestBtn.disabled = false;
                 requestBtn.textContent = JC.t!('seerr_modal_request_selected_movies') || 'Request Selected Movies';
@@ -306,12 +335,15 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
     if (showAdvanced) {
         try {
             const advancedData = await fetchAdvancedRequestData('movie');
+            if (!JC.identity.isCurrent(identity)) return;
             populateAdvancedOptions(modalInstance.modalElement, advancedData, 'movie');
         } catch (error: any) {
+            if (!JC.identity.isCurrent(identity)) return;
             console.error('Failed to load advanced options:', error);
         }
     }
 
+    if (!JC.identity.isCurrent(identity)) return;
     modalInstance.show();
 
     // Add Select All checkbox functionality
@@ -327,6 +359,7 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
         };
 
         selectAllCheckbox.addEventListener('change', () => {
+            if (!JC.identity.isCurrent(identity)) return;
             const allCheckboxes = movieList.querySelectorAll('.seerr-collection-movie-row .seerr-collection-checkbox:not(:disabled)');
             allCheckboxes.forEach((checkbox: any) => {
                 checkbox.checked = selectAllCheckbox.checked;
@@ -334,6 +367,7 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
         });
 
         movieList.addEventListener('change', (e: any) => {
+            if (!JC.identity.isCurrent(identity)) return;
             if (e.target.classList.contains('seerr-collection-checkbox') && e.target.id !== 'seerr-select-all-movies') {
                 updateSelectAllState();
             }
@@ -344,6 +378,7 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
         const fourKToggle = modalInstance.modalElement.querySelector<HTMLInputElement>('#seerr-collection-4k');
         if (fourKToggle) {
             fourKToggle.addEventListener('change', () => {
+                if (!JC.identity.isCurrent(identity)) return;
                 const is4k = fourKToggle.checked;
                 movieList.querySelectorAll<HTMLElement>('.seerr-collection-movie-row').forEach((row) => {
                     const checkbox = row.querySelector<HTMLInputElement>('.seerr-collection-checkbox');

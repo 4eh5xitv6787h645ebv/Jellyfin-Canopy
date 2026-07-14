@@ -4,7 +4,7 @@
 import { JC as JEBase } from '../globals';
 import { describeFetchError } from '../core/fetch-error';
 import { insertHeaderTrayButton, HeaderTrayOrder } from '../enhanced/header-tray';
-import type { ApiApi, LifecycleApi, LifecycleHandle, NavigationApi, PluginConfig, UiApi } from '../types/jc';
+import type { ApiApi, IdentityContext, LifecycleApi, LifecycleHandle, NavigationApi, PluginConfig, UiApi } from '../types/jc';
 
 /**
  * Local view of the shared namespace adding the public member this module
@@ -110,6 +110,26 @@ let _visListener: (() => void) | null = null;
 let _nudgeTimer: ReturnType<typeof setTimeout> | null = null;
 // Monotonic refresh counter — see updateCounter's request-ordering guard.
 let _refreshSeq = 0;
+let _identityContext: IdentityContext | null = null;
+
+const isCurrentContext = (context: IdentityContext | null): context is IdentityContext =>
+    !!context
+    && _identityContext?.epoch === context.epoch
+    && _identityContext.serverId === context.serverId
+    && _identityContext.userId === context.userId
+    && JC.identity.isCurrent(context);
+
+/** Freeze a value snapshot even when a host/test identity implementation does not. */
+const immutableOwner = (context: IdentityContext | null): IdentityContext | null => context
+    ? Object.freeze({ serverId: context.serverId, userId: context.userId, epoch: context.epoch })
+    : null;
+
+const stampOwner = <T extends HTMLElement>(element: T, context: IdentityContext): T => {
+    element.dataset.jcIdentityEpoch = String(context.epoch);
+    element.dataset.jcIdentityServer = context.serverId;
+    element.dataset.jcIdentityUser = context.userId;
+    return element;
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 const ticksToTime = (ticks: number): string => {
@@ -131,7 +151,8 @@ const getAccentColor = (): string => {
     }
 };
 
-const applyThemeVars = (): void => {
+const applyThemeVars = (context?: IdentityContext): void => {
+    if (context && !isCurrentContext(context)) return;
     document.documentElement.style.setProperty('--jc-as-accent', getAccentColor());
 };
 
@@ -653,11 +674,13 @@ const isVisible = (): boolean => {
 };
 
 // ── API — uses plugin proxy so non-admins don't need Sessions permission ─
-const fetchSessions = async (): Promise<SessionView[] | null> => {
+const fetchSessions = async (context: IdentityContext): Promise<SessionView[] | null> => {
+    if (!isCurrentContext(context)) return null;
     try {
         // Core throws on non-OK responses — caught below, returning null
         // exactly like the old !resp.ok branch.
-        return await JC.core.api.plugin('/active-streams/sessions') as SessionView[];
+        const sessions = await JC.core.api.plugin('/active-streams/sessions') as SessionView[];
+        return isCurrentContext(context) ? sessions : null;
     } catch (_) {
         return null;
     }
@@ -725,7 +748,12 @@ const buildBadgeElements = (session: SessionView): HTMLElement[] => {
 };
 
 // ── Session card builder ─────────────────────────────────────────────────
-const buildSessionCard = (session: SessionView, index?: number, restore?: CardUiState): HTMLElement => {
+const buildSessionCard = (
+    session: SessionView,
+    context: IdentityContext,
+    index?: number,
+    restore?: CardUiState,
+): HTMLElement => {
     // Caller (renderPanel) only passes sessions with a NowPlayingItem.
     const item = session.NowPlayingItem as SessionNowPlaying;
     const ps: SessionPlayState = session.PlayState || {};
@@ -740,7 +768,7 @@ const buildSessionCard = (session: SessionView, index?: number, restore?: CardUi
     const dur = item.RunTimeTicks || 0;
     const pct = dur ? Math.min(100, (pos / dur) * 100).toFixed(1) : 0;
 
-    const card = document.createElement('div');
+    const card = stampOwner(document.createElement('div'), context);
     card.className = 'jc-as-card jc-as-card-with-poster';
     // Stable key + structural signature for in-place live updates — see
     // applyLiveUpdate / panelMatchesSessions.
@@ -760,7 +788,10 @@ const buildSessionCard = (session: SessionView, index?: number, restore?: CardUi
         poster.alt = '';
         poster.loading = 'lazy';
         poster.src = (ApiClient as any).getImageUrl(posterId, { type: 'Primary', tag: posterTag, height: 120, quality: 80 });
-        poster.addEventListener('error', () => { poster.replaceWith(placeholder()); });
+        poster.addEventListener('error', () => {
+            if (!isCurrentContext(context)) return;
+            poster.replaceWith(placeholder());
+        });
         card.appendChild(poster);
     } else {
         card.appendChild(placeholder());
@@ -793,6 +824,7 @@ const buildSessionCard = (session: SessionView, index?: number, restore?: CardUi
         link.textContent = title;
         link.href = '#';
         link.addEventListener('click', (e) => {
+            if (!isCurrentContext(context)) return;
             e.preventDefault();
             try {
                 if (typeof Emby !== 'undefined' && (Emby as any).Page?.showItem) {
@@ -880,6 +912,7 @@ const buildSessionCard = (session: SessionView, index?: number, restore?: CardUi
         fallback.style.display = 'none';
 
         img.addEventListener('error', () => {
+            if (!isCurrentContext(context)) return;
             img.style.display = 'none';
             fallback.style.display = 'inline';
         });
@@ -903,7 +936,7 @@ const buildSessionCard = (session: SessionView, index?: number, restore?: CardUi
     // Admin session-control actions (stop / targeted message). Only offered to
     // admins on sessions the client can actually remote-control.
     if (isAdmin() && session.SupportsRemoteControl && session.Id) {
-        main.appendChild(buildSessionActions(session, restore));
+        main.appendChild(buildSessionActions(session, context, restore));
     }
 
     // RemoteEndPoint — null for non-admins (stripped server-side)
@@ -933,7 +966,7 @@ const messagePresets = (): string[] => [
 ];
 
 /** A row of preset chips; clicking one fills the target textarea. */
-const buildPresetRow = (target: HTMLTextAreaElement): HTMLElement => {
+const buildPresetRow = (target: HTMLTextAreaElement, context: IdentityContext): HTMLElement => {
     const row = document.createElement('div');
     row.className = 'jc-as-presets';
     for (const preset of messagePresets()) {
@@ -942,6 +975,7 @@ const buildPresetRow = (target: HTMLTextAreaElement): HTMLElement => {
         chip.className = 'jc-as-preset';
         chip.textContent = preset;
         chip.addEventListener('click', (e) => {
+            if (!isCurrentContext(context)) return;
             e.stopPropagation();
             target.value = preset;
             target.focus();
@@ -952,16 +986,19 @@ const buildPresetRow = (target: HTMLTextAreaElement): HTMLElement => {
 };
 
 // ── Per-session admin actions ──────────────────────────────────────────────
-const sendSessionStop = async (sessionId: string): Promise<void> => {
+const sendSessionStop = async (sessionId: string, context: IdentityContext): Promise<void> => {
+    if (!isCurrentContext(context)) return;
     try {
         // skipRetry: stopping is not idempotent-safe to auto-repeat.
         await JC.core.api.plugin(`/active-streams/sessions/${encodeURIComponent(sessionId)}/stop`, {
             method: 'POST',
             skipRetry: true,
         });
+        if (!isCurrentContext(context)) return;
         notify(JC.t?.('session_control_stopped') || 'Stream stopped');
-        void updateCounter({ live: true });
+        void updateCounter({ live: true }, context);
     } catch (err) {
+        if (!isCurrentContext(context)) return;
         notify(JC.t?.('session_control_stop_failed') || 'Failed to stop the stream');
         console.warn(`${LOG} stop session failed:`, err);
     }
@@ -972,16 +1009,20 @@ const sendSessionMessage = async (
     text: string,
     timeoutMs: number,
     resultEl: HTMLElement,
+    context: IdentityContext,
 ): Promise<void> => {
+    if (!isCurrentContext(context)) return;
     try {
         await JC.core.api.plugin(`/active-streams/sessions/${encodeURIComponent(sessionId)}/message`, {
             method: 'POST',
             body: { text, timeoutMs },
             skipRetry: true,
         });
+        if (!isCurrentContext(context)) return;
         resultEl.className = 'jc-as-broadcast-result jc-as-broadcast-ok';
         resultEl.textContent = JC.t?.('session_control_message_sent') || 'Message sent';
     } catch (err) {
+        if (!isCurrentContext(context)) return;
         resultEl.className = 'jc-as-broadcast-result jc-as-broadcast-err';
         resultEl.textContent = JC.t?.('session_control_message_failed') || 'Failed to send message';
         console.warn(`${LOG} message session failed:`, err);
@@ -989,9 +1030,13 @@ const sendSessionMessage = async (
 };
 
 /** The stop + message action row (with an inline per-session message form). */
-const buildSessionActions = (session: SessionView, restore?: CardUiState): HTMLElement => {
+const buildSessionActions = (
+    session: SessionView,
+    context: IdentityContext,
+    restore?: CardUiState,
+): HTMLElement => {
     const sessionId = String(session.Id);
-    const wrap = document.createElement('div');
+    const wrap = stampOwner(document.createElement('div'), context);
 
     const row = document.createElement('div');
     row.className = 'jc-as-actions';
@@ -1010,6 +1055,7 @@ const buildSessionActions = (session: SessionView, restore?: CardUiState): HTMLE
 
     let confirmTimer: ReturnType<typeof setTimeout> | null = null;
     const resetStop = (): void => {
+        if (!isCurrentContext(context)) return;
         stopBtn.classList.remove('jc-as-confirming');
         stopLabel.textContent = JC.t?.('session_control_stop') || 'Stop';
         if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null; }
@@ -1018,6 +1064,7 @@ const buildSessionActions = (session: SessionView, restore?: CardUiState): HTMLE
     // always (re)starting the 4s auto-reset timer so a restored confirm can't
     // stay armed forever.
     const armConfirm = (): void => {
+        if (!isCurrentContext(context)) return;
         stopBtn.classList.add('jc-as-confirming');
         stopLabel.textContent = JC.t?.('session_control_stop_confirm') || 'Confirm stop?';
         if (confirmTimer) clearTimeout(confirmTimer);
@@ -1025,6 +1072,7 @@ const buildSessionActions = (session: SessionView, restore?: CardUiState): HTMLE
     };
     // eslint-disable-next-line @typescript-eslint/no-misused-promises -- async click handler
     stopBtn.addEventListener('click', async (e) => {
+        if (!isCurrentContext(context)) return;
         e.stopPropagation();
         if (!stopBtn.classList.contains('jc-as-confirming')) {
             armConfirm();
@@ -1032,7 +1080,8 @@ const buildSessionActions = (session: SessionView, restore?: CardUiState): HTMLE
         }
         resetStop();
         stopBtn.disabled = true;
-        await sendSessionStop(sessionId);
+        await sendSessionStop(sessionId, context);
+        if (!isCurrentContext(context)) return;
         stopBtn.disabled = false;
     });
 
@@ -1061,7 +1110,7 @@ const buildSessionActions = (session: SessionView, restore?: CardUiState): HTMLE
     textArea.placeholder = JC.t?.('session_control_message_placeholder') || 'Message to this session…';
     textArea.maxLength = 1000;
 
-    const presets = buildPresetRow(textArea);
+    const presets = buildPresetRow(textArea, context);
 
     const resultEl = document.createElement('div');
     resultEl.className = 'jc-as-broadcast-result';
@@ -1086,27 +1135,35 @@ const buildSessionActions = (session: SessionView, restore?: CardUiState): HTMLE
     wrap.appendChild(form);
 
     const closeForm = (): void => {
+        if (!isCurrentContext(context)) return;
         msgBtn.classList.remove('jc-as-action-active');
         form.classList.remove('jc-as-msg-form-open');
         resultEl.className = 'jc-as-broadcast-result';
         resultEl.textContent = '';
     };
     msgBtn.addEventListener('click', (e) => {
+        if (!isCurrentContext(context)) return;
         e.stopPropagation();
         const open = form.classList.toggle('jc-as-msg-form-open');
         msgBtn.classList.toggle('jc-as-action-active', open);
         if (open) { resultEl.textContent = ''; resultEl.className = 'jc-as-broadcast-result'; textArea.focus(); }
     });
-    cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); closeForm(); });
+    cancelBtn.addEventListener('click', (e) => {
+        if (!isCurrentContext(context)) return;
+        e.stopPropagation();
+        closeForm();
+    });
     // eslint-disable-next-line @typescript-eslint/no-misused-promises -- async click handler
     sendBtn.addEventListener('click', async (e) => {
+        if (!isCurrentContext(context)) return;
         e.stopPropagation();
         const text = textArea.value.trim();
         if (!text) { textArea.focus(); return; }
         sendBtn.disabled = true;
         resultEl.className = 'jc-as-broadcast-result';
         resultEl.textContent = '';
-        await sendSessionMessage(sessionId, text, 10000, resultEl);
+        await sendSessionMessage(sessionId, text, 10000, resultEl, context);
+        if (!isCurrentContext(context)) return;
         sendBtn.disabled = false;
     });
 
@@ -1163,7 +1220,8 @@ export const sessionSig = (s: SessionView): string => {
 const activeSessions = (sessions: SessionView[] | null): SessionView[] => (sessions || []).filter(s => s.NowPlayingItem);
 
 /** Update the panel title to reflect the current active-stream count. */
-const updatePanelTitle = (active: SessionView[]): void => {
+const updatePanelTitle = (active: SessionView[], context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
     const titleEl = document.querySelector('#jc-active-streams-panel .jc-as-panel-title');
     if (!titleEl) return;
     if (active.length) {
@@ -1178,7 +1236,8 @@ const updatePanelTitle = (active: SessionView[]): void => {
 };
 
 /** Update (creating if needed) the "last updated" footer. */
-const updateFooter = (): void => {
+const updateFooter = (context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
     const panel = document.getElementById('jc-active-streams-panel');
     if (!panel) return;
     let footer = panel.querySelector('.jc-as-panel-footer');
@@ -1210,7 +1269,8 @@ export const panelMatchesSessions = (sessions: SessionView[]): boolean => {
 };
 
 /** Update progress bars / play-state in place, leaving card structure intact. */
-const applyLiveUpdate = (sessions: SessionView[]): void => {
+const applyLiveUpdate = (sessions: SessionView[], context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
     const body = document.querySelector('#jc-active-streams-panel .jc-as-panel-body');
     if (!body) return;
     const byId = new Map<string | null, Element>();
@@ -1246,8 +1306,8 @@ const applyLiveUpdate = (sessions: SessionView[]): void => {
                 : (JC.t?.('toast_playing') || 'Playing');
         }
     });
-    updatePanelTitle(active);
-    updateFooter();
+    updatePanelTitle(active, context);
+    updateFooter(context);
 };
 
 // ── Card UI-state preservation across structural rebuilds ──────────────────
@@ -1272,7 +1332,8 @@ const captureCardUiState = (body: Element): Map<string, CardUiState> => {
 };
 
 // ── Panel renderer ───────────────────────────────────────────────────────
-const renderPanel = (sessions: SessionView[] | null): void => {
+const renderPanel = (sessions: SessionView[] | null, context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
     const panel = document.getElementById('jc-active-streams-panel');
     if (!panel) return;
 
@@ -1295,7 +1356,7 @@ const renderPanel = (sessions: SessionView[] | null): void => {
     }
 
     const active = activeSessions(sessions);
-    updatePanelTitle(active);
+    updatePanelTitle(active, context);
 
     const body = panel.querySelector('.jc-as-panel-body');
     if (!body) return;
@@ -1311,14 +1372,20 @@ const renderPanel = (sessions: SessionView[] | null): void => {
         empty.textContent = JC.t?.('active_streams_none') || 'No active streams';
         body.appendChild(empty);
     } else {
-        active.forEach((session, i) => body.appendChild(buildSessionCard(session, i, prevState.get(sessionCardKey(session, i)))));
+        active.forEach((session, i) => body.appendChild(buildSessionCard(
+            session,
+            context,
+            i,
+            prevState.get(sessionCardKey(session, i)),
+        )));
     }
 
-    updateFooter();
+    updateFooter(context);
 };
 
 // ── Counter updater ──────────────────────────────────────────────────────
-const updateHeaderButton = (sessions: SessionView[] | null): void => {
+const updateHeaderButton = (sessions: SessionView[] | null, context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
     const btn = document.getElementById('jc-active-streams');
     if (!btn) return;
 
@@ -1367,23 +1434,29 @@ const updateHeaderButton = (sessions: SessionView[] | null): void => {
 // Fetch sessions once, then update the header badge and (if open) the panel.
 // A `live` refresh updates progress/state in place when the session set is
 // unchanged (R2/R7); a structural change rebuilds the card list.
-const updateCounter = async (opts?: { live?: boolean }): Promise<void> => {
+const updateCounter = async (
+    opts?: { live?: boolean },
+    requestedContext: IdentityContext | null = _identityContext,
+): Promise<void> => {
+    const context = requestedContext;
+    if (!isCurrentContext(context)) return;
     // Request-ordering guard: ws nudges, the fallback interval, manual refresh
     // and post-action refreshes can overlap. Drop a response that a newer
     // request has already superseded so a slow reply can't roll back the panel.
     const seq = ++_refreshSeq;
-    const sessions = await fetchSessions();
-    if (seq !== _refreshSeq) return;
+    const sessions = await fetchSessions(context);
+    if (seq !== _refreshSeq || !isCurrentContext(context)) return;
     _lastUpdated = new Date();
-    updateHeaderButton(sessions);
+    updateHeaderButton(sessions, context);
     if (!_panelOpen) return;
-    if (opts?.live && sessions && panelMatchesSessions(sessions)) applyLiveUpdate(sessions);
-    else renderPanel(sessions);
+    if (opts?.live && sessions && panelMatchesSessions(sessions)) applyLiveUpdate(sessions, context);
+    else renderPanel(sessions, context);
 };
 
 // ── Fetch on demand (no background polling) ──────────────────────────────
-const startPolling = (): void => {
-    void updateCounter(); // initial fetch only; panel open & refresh button drive updates
+const startPolling = (context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
+    void updateCounter(undefined, context); // initial fetch only; panel open & refresh button drive updates
 };
 
 const stopPolling = (): void => {
@@ -1393,21 +1466,22 @@ const stopPolling = (): void => {
 // ── Live updates (active only while the panel is open) ─────────────────────
 // Debounced nudge: coalesce a burst of core `Sessions` websocket pushes into a
 // single live refresh. Not self-rescheduling — the timer fires once and clears.
-const nudgeLive = (): void => {
-    if (!_panelOpen || _nudgeTimer) return;
+const nudgeLive = (context: IdentityContext): void => {
+    if (!isCurrentContext(context) || !_panelOpen || _nudgeTimer) return;
     _nudgeTimer = setTimeout(() => {
         _nudgeTimer = null;
-        if (_panelOpen) void updateCounter({ live: true });
+        if (isCurrentContext(context) && _panelOpen) void updateCounter({ live: true }, context);
     }, LIVE_NUDGE_DEBOUNCE_MS);
 };
 
-const startLive = (): void => {
+const startLive = (context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
     // Push channel: the core `Sessions` websocket message (same one the native
     // dashboard's live-sessions view subscribes to). Best-effort — fails soft
     // when the SDK socket bridge is unavailable (older hosts / jsdom).
     if (!_liveUnsub && typeof ApiClient !== 'undefined' && typeof ApiClient.subscribe === 'function') {
         try {
-            _liveUnsub = ApiClient.subscribe(['Sessions'], () => nudgeLive());
+            _liveUnsub = ApiClient.subscribe(['Sessions'], () => nudgeLive(context));
         } catch (_) {
             _liveUnsub = null;
         }
@@ -1418,15 +1492,18 @@ const startLive = (): void => {
     // its pushes plus the on-focus refresh below.
     if (!_liveUnsub && !_liveTimer) {
         _liveTimer = setInterval(() => {
+            if (!isCurrentContext(context)) return;
             if (document.visibilityState === 'hidden') return;
-            void updateCounter({ live: true });
+            void updateCounter({ live: true }, context);
         }, LIVE_FALLBACK_MS);
     }
     // Refresh immediately when the tab regains focus (the interval skipped
     // hidden ticks, so the panel could be stale on return).
     if (!_visListener) {
         _visListener = (): void => {
-            if (_panelOpen && document.visibilityState === 'visible') void updateCounter({ live: true });
+            if (isCurrentContext(context) && _panelOpen && document.visibilityState === 'visible') {
+                void updateCounter({ live: true }, context);
+            }
         };
         document.addEventListener('visibilitychange', _visListener);
     }
@@ -1440,7 +1517,8 @@ const stopLive = (): void => {
 };
 
 // Close the panel and tear down its live-update resources.
-const closePanel = (panel: HTMLElement): void => {
+const closePanel = (panel: HTMLElement, context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
     _panelOpen = false;
     panel.classList.remove('jc-as-panel-open');
     stopLive();
@@ -1450,8 +1528,8 @@ const closePanel = (panel: HTMLElement): void => {
 let _broadcastFormOpen = false;
 let _broadcastCollapseTimer: ReturnType<typeof setTimeout> | null = null;
 
-const injectBroadcastButton = (panel: HTMLElement): void => {
-    if (!panel) return;
+const injectBroadcastButton = (panel: HTMLElement, context: IdentityContext): void => {
+    if (!isCurrentContext(context) || !panel) return;
     if (panel.querySelector('.jc-as-broadcast-btn')) return;
 
     const header = panel.querySelector('.jc-as-panel-header');
@@ -1523,7 +1601,7 @@ const injectBroadcastButton = (panel: HTMLElement): void => {
     form.appendChild(headerInput);
     form.appendChild(messageLabel);
     form.appendChild(textArea);
-    form.appendChild(buildPresetRow(textArea));
+    form.appendChild(buildPresetRow(textArea, context));
     form.appendChild(headerNote);
     form.appendChild(timeoutRow);
     form.appendChild(resultEl);
@@ -1550,17 +1628,20 @@ const injectBroadcastButton = (panel: HTMLElement): void => {
 
     // ── Event wiring ─────────────────────────────────────────────────────
     broadcastBtn.addEventListener('click', (e) => {
+        if (!isCurrentContext(context)) return;
         e.stopPropagation();
-        toggleBroadcastForm(broadcastBtn, form, resultEl, textArea, headerInput, timeoutInput);
+        toggleBroadcastForm(broadcastBtn, form, resultEl, textArea, headerInput, timeoutInput, context);
     });
 
     cancelBtn.addEventListener('click', (e) => {
+        if (!isCurrentContext(context)) return;
         e.stopPropagation();
-        collapseBroadcastForm(broadcastBtn, form, resultEl, textArea, headerInput, timeoutInput);
+        collapseBroadcastForm(broadcastBtn, form, resultEl, textArea, headerInput, timeoutInput, context);
     });
 
     // eslint-disable-next-line @typescript-eslint/no-misused-promises -- async click handler, matches the pre-conversion behavior
     sendBtn.addEventListener('click', async (e) => {
+        if (!isCurrentContext(context)) return;
         e.stopPropagation();
         const text = textArea.value.trim();
         if (!text) {
@@ -1575,19 +1656,22 @@ const injectBroadcastButton = (panel: HTMLElement): void => {
         resultEl.className = 'jc-as-broadcast-result';
         resultEl.textContent = '';
 
-        await sendBroadcast(header, text, timeoutMs, resultEl);
+        await sendBroadcast(header, text, timeoutMs, resultEl, context);
 
+        if (!isCurrentContext(context)) return;
         sendBtn.disabled = false;
 
         // Auto-collapse after 3 s
         if (_broadcastCollapseTimer) clearTimeout(_broadcastCollapseTimer);
         _broadcastCollapseTimer = setTimeout(() => {
-            collapseBroadcastForm(broadcastBtn, form, resultEl, textArea, headerInput, timeoutInput);
+            if (!isCurrentContext(context)) return;
+            collapseBroadcastForm(broadcastBtn, form, resultEl, textArea, headerInput, timeoutInput, context);
         }, 3000);
     });
 };
 
-const toggleBroadcastForm = (btn: HTMLElement, form: HTMLElement, resultEl: HTMLElement, textArea: HTMLTextAreaElement, headerInput: HTMLInputElement, timeoutInput: HTMLInputElement): void => {
+const toggleBroadcastForm = (btn: HTMLElement, form: HTMLElement, resultEl: HTMLElement, textArea: HTMLTextAreaElement, headerInput: HTMLInputElement, timeoutInput: HTMLInputElement, context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
     _broadcastFormOpen = !_broadcastFormOpen;
     btn.classList.toggle('jc-as-broadcast-active', _broadcastFormOpen);
     form.classList.toggle('jc-as-broadcast-form-open', _broadcastFormOpen);
@@ -1601,7 +1685,8 @@ const toggleBroadcastForm = (btn: HTMLElement, form: HTMLElement, resultEl: HTML
     }
 };
 
-const collapseBroadcastForm = (btn: HTMLElement, form: HTMLElement, resultEl: HTMLElement, textArea: HTMLTextAreaElement, headerInput: HTMLInputElement, timeoutInput: HTMLInputElement): void => {
+const collapseBroadcastForm = (btn: HTMLElement, form: HTMLElement, resultEl: HTMLElement, textArea: HTMLTextAreaElement, headerInput: HTMLInputElement, timeoutInput: HTMLInputElement, context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
     _broadcastFormOpen = false;
     btn.classList.remove('jc-as-broadcast-active');
     form.classList.remove('jc-as-broadcast-form-open');
@@ -1612,7 +1697,8 @@ const collapseBroadcastForm = (btn: HTMLElement, form: HTMLElement, resultEl: HT
     timeoutInput.value = '10';
 };
 
-const sendBroadcast = async (header: string | undefined, text: string, timeoutMs: number, resultEl: HTMLElement): Promise<void> => {
+const sendBroadcast = async (header: string | undefined, text: string, timeoutMs: number, resultEl: HTMLElement, context: IdentityContext): Promise<void> => {
+    if (!isCurrentContext(context)) return;
     try {
         // skipRetry: broadcasting is not idempotent — never auto-repeat it.
         const data = await JC.core.api.plugin('/active-streams/broadcast', {
@@ -1620,10 +1706,12 @@ const sendBroadcast = async (header: string | undefined, text: string, timeoutMs
             body: { header: header || null, text, timeoutMs },
             skipRetry: true
         }) as any;
+        if (!isCurrentContext(context)) return;
         const errNote = data.errors?.length ? ` (${data.errors.length} error${data.errors.length > 1 ? 's' : ''})` : '';
         resultEl.className = 'jc-as-broadcast-result jc-as-broadcast-ok';
         resultEl.textContent = `Sent to ${data.sent} of ${data.sent + data.skipped} sessions${errNote}`;
     } catch (err: any) {
+        if (!isCurrentContext(context)) return;
         resultEl.className = 'jc-as-broadcast-result jc-as-broadcast-err';
         if (err && err.status) {
             // HTTP error: surface a sanitized upstream message (never a raw
@@ -1636,19 +1724,21 @@ const sendBroadcast = async (header: string | undefined, text: string, timeoutMs
 };
 
 // ── Panel ────────────────────────────────────────────────────────────────
-const togglePanel = (): void => {
+const togglePanel = (context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
     const panel = document.getElementById('jc-active-streams-panel');
     if (!panel) return;
     _panelOpen = !_panelOpen;
     panel.classList.toggle('jc-as-panel-open', _panelOpen);
-    if (_panelOpen) { void updateCounter(); startLive(); }
+    if (_panelOpen) { void updateCounter(undefined, context); startLive(context); }
     else stopLive();
 };
 
-const injectPanel = (): void => {
+const injectPanel = (context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
     if (document.getElementById('jc-active-streams-panel')) return;
 
-    const panel = document.createElement('div');
+    const panel = stampOwner(document.createElement('div'), context);
     panel.id = 'jc-active-streams-panel';
 
     const header = document.createElement('div');
@@ -1667,8 +1757,9 @@ const injectPanel = (): void => {
     closeIcon.textContent = 'close';
     closeBtn.appendChild(closeIcon);
     closeBtn.addEventListener('click', (e) => {
+        if (!isCurrentContext(context)) return;
         e.stopPropagation();
-        closePanel(panel);
+        closePanel(panel, context);
     });
 
     header.appendChild(titleEl);
@@ -1705,39 +1796,44 @@ const injectPanel = (): void => {
     refreshIcon.textContent = 'refresh';
     refreshBtn.appendChild(refreshIcon);
     refreshBtn.addEventListener('click', (e) => {
+        if (!isCurrentContext(context)) return;
         e.stopPropagation();
         refreshBtn.classList.add('jc-as-refreshing');
-        refreshBtn.addEventListener('animationend', () => refreshBtn.classList.remove('jc-as-refreshing'), { once: true });
-        void updateCounter();
+        refreshBtn.addEventListener('animationend', () => {
+            if (isCurrentContext(context)) refreshBtn.classList.remove('jc-as-refreshing');
+        }, { once: true });
+        void updateCounter(undefined, context);
     });
     header.insertBefore(refreshBtn, closeBtn);
 
     // Inject broadcast button for admins only
     if (JC?.currentUser?.Policy?.IsAdministrator === true) {
-        injectBroadcastButton(panel);
+        injectBroadcastButton(panel, context);
     }
 
     _outsideClickListener = (e) => {
+        if (!isCurrentContext(context)) return;
         const btn = document.getElementById('jc-active-streams');
         if (_panelOpen && !panel.contains(e.target as Node) && btn && !btn.contains(e.target as Node)) {
-            closePanel(panel);
+            closePanel(panel, context);
         }
     };
     document.addEventListener('click', _outsideClickListener);
 };
 
 // ── Header button ────────────────────────────────────────────────────────
-const tryInjectHeader = (attempts = 0): void => {
+const tryInjectHeader = (attempts: number, context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
     if (document.getElementById('jc-active-streams')) return;
     if (attempts > 20) return;
 
     const headerRight = JC.helpers.getHeaderRightContainer();
     if (!headerRight) {
-        _headerRetryTimer = setTimeout(() => tryInjectHeader(attempts + 1), 500);
+        _headerRetryTimer = setTimeout(() => tryInjectHeader(attempts + 1, context), 500);
         return;
     }
 
-    const btn = document.createElement('button');
+    const btn = stampOwner(document.createElement('button'), context);
     btn.id = 'jc-active-streams';
     btn.type = 'button';
     btn.setAttribute('is', 'paper-icon-button-light');
@@ -1755,7 +1851,11 @@ const tryInjectHeader = (attempts = 0): void => {
 
     btn.appendChild(icon);
     btn.appendChild(sup);
-    btn.addEventListener('click', (e) => { e.stopPropagation(); togglePanel(); });
+    btn.addEventListener('click', (e) => {
+        if (!isCurrentContext(context)) return;
+        e.stopPropagation();
+        togglePanel(context);
+    });
 
     insertHeaderTrayButton(headerRight, btn, HeaderTrayOrder.activeStreams);
     // PERF(R1, doctrine: reserved-space entrance + pre-paint re-mounts): the
@@ -1767,16 +1867,18 @@ const tryInjectHeader = (attempts = 0): void => {
     // its first paint — so they attach instantly with no animation.
     JC.core?.ui?.expandIn(btn, { instant: _headerInjectedOnce });
     _headerInjectedOnce = true;
-    injectPanel();
-    applyThemeVars();
-    startPolling();
+    injectPanel(context);
+    applyThemeVars(context);
+    startPolling(context);
 };
 
 // ── Observer ─────────────────────────────────────────────────────────────
-const startObserver = (): void => {
+const startObserver = (context: IdentityContext): void => {
+    if (!isCurrentContext(context)) return;
     if (_observer) return;
     const callback = (): void => {
-        if (!document.getElementById('jc-active-streams')) tryInjectHeader(0);
+        if (!isCurrentContext(context)) return;
+        if (!document.getElementById('jc-active-streams')) tryInjectHeader(0, context);
     };
     if (JC?.helpers?.onBodyMutation) {
         _observer = JC.helpers.onBodyMutation('active-streams', callback);
@@ -1797,6 +1899,11 @@ const stopObserver = (): void => {
 // ── Public API ───────────────────────────────────────────────────────────
 JC.activeStreams = {
     initialize() {
+        // Re-entry is allowed after an identity/config activation. Always drain
+        // the prior controller before evaluating the new user's visibility gate.
+        if (_observer || _pollTimer || _lifecycle || document.getElementById('jc-active-streams')) {
+            JC.activeStreams!.destroy();
+        }
         if (!JC?.pluginConfig?.ActiveStreamsEnabled) {
             return;
         }
@@ -1804,15 +1911,18 @@ JC.activeStreams = {
             console.log(`${LOG} Active Streams: skipping — not visible for this user.`);
             return;
         }
+        _identityContext = immutableOwner(JC.identity.capture());
+        if (!_identityContext) return;
+        const context = _identityContext;
         console.log(`${LOG} Active Streams: initializing.`);
         injectStyles();
-        startObserver();
-        tryInjectHeader(0);
+        startObserver(context);
+        tryInjectHeader(0, context);
         // Re-apply theme vars on every navigation (hashchange, popstate
         // and pushState — the old raw hashchange listener missed the
         // latter). Tracked via a lifecycle handle so destroy() removes it.
         _lifecycle = JC.core.lifecycle.register('active-streams');
-        _lifecycle.track(JC.core.navigation.onNavigate(() => applyThemeVars()));
+        _lifecycle.track(JC.core.navigation.onNavigate(() => applyThemeVars(context)));
     },
 
     destroy() {
@@ -1830,5 +1940,10 @@ JC.activeStreams = {
         _panelOpen = false;
         _broadcastFormOpen = false;
         _headerInjectedOnce = false; // next enable cycle re-animates its boot injection
+        _refreshSeq++;
+        _lastUpdated = null;
+        _identityContext = null;
     }
 };
+
+JC.identity.registerReset('active-streams', () => JC.activeStreams?.destroy());

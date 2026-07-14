@@ -10,20 +10,33 @@ import { escapeHtml, toast } from '../../core/ui-kit';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 export const GITHUB_REPO = '4eh5xitv6787h645ebv/Jellyfin-Canopy';
+const releaseControllers = new Set<AbortController>();
+const releaseTimers = new Set<number>();
 
 /**
  * Fetches the latest GitHub release notes and displays them in a notification panel.
  */
 export async function showReleaseNotesNotification(): Promise<void> {
+    const context = JC.identity.capture();
+    if (!context) return;
+    const controller = new AbortController();
+    releaseControllers.add(controller);
     let release: any;
     try {
-        const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`);
+        const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
+            signal: controller.signal
+        });
+        if (!JC.identity.isCurrent(context)) return;
         if (!response.ok) throw new Error('Failed to fetch release data');
         release = await response.json();
+        if (!JC.identity.isCurrent(context)) return;
     } catch (error) {
+        if (controller.signal.aborted || !JC.identity.isCurrent(context)) return;
         console.error('🪼 Jellyfin Canopy: Failed to fetch release notes:', error);
         toast(JC.icon!(JC.IconName!.ERROR) + ' Could not load release notes.');
         return;
+    } finally {
+        releaseControllers.delete(controller);
     }
 
     const notificationId = 'jellyfin-release-notes-notification';
@@ -32,6 +45,8 @@ export async function showReleaseNotesNotification(): Promise<void> {
 
     const notification = document.createElement('div');
     notification.id = notificationId;
+    notification.setAttribute('data-jc-identity-owned', 'true');
+    JC.identity.own(notification, context);
 
     // --- Release notes autoclose ---
     let autoCloseTimer: number | null = null;
@@ -41,24 +56,41 @@ export async function showReleaseNotesNotification(): Promise<void> {
     const closePanel = () => {
         if (document.getElementById(notificationId)) {
             notification.style.transform = 'translateY(-50%) translateX(100%)';
-            setTimeout(() => notification.remove(), 300);
+            const timer = window.setTimeout(() => {
+                releaseTimers.delete(timer);
+                notification.remove();
+            }, 300);
+            releaseTimers.add(timer);
         }
     };
 
     const resetAutoCloseTimer = () => {
-        if (autoCloseTimer) clearTimeout(autoCloseTimer);
+        if (autoCloseTimer) {
+            clearTimeout(autoCloseTimer);
+            releaseTimers.delete(autoCloseTimer);
+        }
         autoCloseTimer = window.setTimeout(() => {
+            releaseTimers.delete(autoCloseTimer!);
+            autoCloseTimer = null;
+            if (!JC.identity.isCurrent(context)) return;
             if (!isMouseInside) {
                 closePanel();
             }
         }, AUTOCLOSE_DELAY);
+        releaseTimers.add(autoCloseTimer);
     };
 
     notification.addEventListener('mouseenter', () => {
+        if (!JC.identity.isCurrent(context)) return;
         isMouseInside = true;
-        if (autoCloseTimer) clearTimeout(autoCloseTimer);
+        if (autoCloseTimer) {
+            clearTimeout(autoCloseTimer);
+            releaseTimers.delete(autoCloseTimer);
+            autoCloseTimer = null;
+        }
     });
     notification.addEventListener('mouseleave', () => {
+        if (!JC.identity.isCurrent(context)) return;
         isMouseInside = false;
         resetAutoCloseTimer();
     });
@@ -169,7 +201,19 @@ export async function showReleaseNotesNotification(): Promise<void> {
         `;
 
     document.body.appendChild(notification);
-    setTimeout(() => { notification.style.transform = 'translateY(-50%) translateX(0)'; }, 10);
+    const enterTimer = window.setTimeout(() => {
+        releaseTimers.delete(enterTimer);
+        if (JC.identity.isCurrent(context)) notification.style.transform = 'translateY(-50%) translateX(0)';
+    }, 10);
+    releaseTimers.add(enterTimer);
 
     resetAutoCloseTimer();
 }
+
+JC.identity.registerReset('settings-release-notes', () => {
+    for (const controller of releaseControllers) controller.abort();
+    releaseControllers.clear();
+    for (const timer of releaseTimers) clearTimeout(timer);
+    releaseTimers.clear();
+    document.getElementById('jellyfin-release-notes-notification')?.remove();
+});

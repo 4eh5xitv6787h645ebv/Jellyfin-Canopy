@@ -10,6 +10,40 @@ import { hiddenIdSet, getSettings, hideItem, unhideItem } from './data';
 import type { HideItemParams } from './data';
 import { getCardSurface, getCardItemId } from './filter';
 import { confirmAndHide } from './dialogs';
+import type { IdentityContext } from '../../types/jc';
+
+interface ButtonFence {
+    readonly generation: number;
+    readonly context: IdentityContext | null;
+}
+
+let buttonGeneration = 0;
+
+function captureButtonFence(): ButtonFence {
+    return { generation: buttonGeneration, context: JC.identity?.capture?.() || null };
+}
+
+function isButtonFenceCurrent(fence: ButtonFence): boolean {
+    return fence.generation === buttonGeneration
+        && (!fence.context || JC.identity.isCurrent(fence.context));
+}
+
+function removeButtonsAndRestorePosition(): void {
+    document.querySelectorAll<HTMLElement>('.jc-hide-btn').forEach((btn) => {
+        const cardBox = btn.parentElement;
+        if (cardBox && btn.dataset.jcHidePreviousPosition !== undefined) {
+            cardBox.style.position = btn.dataset.jcHidePreviousPosition;
+        }
+        btn.remove();
+    });
+}
+
+function resetButtonUi(): void {
+    buttonGeneration += 1;
+    removeButtonsAndRestorePosition();
+}
+
+JC.identity?.registerReset?.('hidden-content-buttons', resetButtonUi);
 
 // ============================================================
 // Library hide buttons
@@ -23,8 +57,12 @@ import { confirmAndHide } from './dialogs';
  * @param itemId The Jellyfin item ID.
  */
 function createLibraryHideButton(cardBox: HTMLElement, card: HTMLElement, itemId: string, isPerson: boolean): void {
+    const fence = captureButtonFence();
+    if (!isButtonFenceCurrent(fence)) return;
+    const previousPosition = cardBox.style.position;
     cardBox.style.position = 'relative';
     const btn = document.createElement('button');
+    btn.dataset.jcHidePreviousPosition = previousPosition;
 
     const hideLabel = JC.t!('hidden_content_hide_button') !== 'hidden_content_hide_button' ? JC.t!('hidden_content_hide_button') : 'Hide';
     const hiddenLabel = JC.t!('hidden_content_already_hidden') !== 'hidden_content_already_hidden' ? JC.t!('hidden_content_already_hidden') : 'Hidden';
@@ -45,6 +83,7 @@ function createLibraryHideButton(cardBox: HTMLElement, card: HTMLElement, itemId
 
     /** Configures the button for "already hidden" state — click to unhide. */
     function setHiddenState(): void {
+        if (!isButtonFenceCurrent(fence)) return;
         btn.className = 'jc-hide-btn jc-already-hidden';
         btn.title = hiddenLabel;
         renderIcon('visibility_off');
@@ -53,6 +92,7 @@ function createLibraryHideButton(cardBox: HTMLElement, card: HTMLElement, itemId
         btn.onclick = (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (!isButtonFenceCurrent(fence)) return;
             unhideItem(itemId);
             setHideState();
         };
@@ -60,6 +100,7 @@ function createLibraryHideButton(cardBox: HTMLElement, card: HTMLElement, itemId
 
     /** Configures the button for "visible" state — click to hide. */
     function setHideState(): void {
+        if (!isButtonFenceCurrent(fence)) return;
         btn.className = 'jc-hide-btn';
         btn.title = hideLabel;
         renderIcon('visibility');
@@ -69,16 +110,18 @@ function createLibraryHideButton(cardBox: HTMLElement, card: HTMLElement, itemId
             void (async () => {
                 e.preventDefault();
                 e.stopPropagation();
+                if (!isButtonFenceCurrent(fence)) return;
 
                 const cardName = card.querySelector('.cardText')?.textContent || '';
                 const surface = getCardSurface(card);
 
                 if (surface === 'nextup' || surface === 'continuewatching') {
-                    await handleScopedCardHide(card, itemId, cardName, surface, setHiddenState);
+                    await handleScopedCardHide(card, itemId, cardName, surface, setHiddenState, fence);
                 } else {
                     const itemData: HideItemParams = { itemId, name: cardName };
                     if (isPerson) itemData.type = 'Person';
                     confirmAndHide(itemData, () => {
+                        if (!isButtonFenceCurrent(fence)) return;
                         card.classList.add('jc-hidden');
                     });
                 }
@@ -103,7 +146,15 @@ function createLibraryHideButton(cardBox: HTMLElement, card: HTMLElement, itemId
  * @param surface The detected surface ('nextup' or 'continuewatching').
  * @param setHiddenState Callback to switch the button to "hidden" state.
  */
-async function handleScopedCardHide(card: HTMLElement, itemId: string, cardName: string, surface: string, setHiddenState: () => void): Promise<void> {
+async function handleScopedCardHide(
+    card: HTMLElement,
+    itemId: string,
+    cardName: string,
+    surface: string,
+    setHiddenState: () => void,
+    fence: ButtonFence,
+): Promise<void> {
+    if (!isButtonFenceCurrent(fence)) return;
     const itemData: HideItemParams = { itemId, name: cardName };
     // Pass surface through so the hideScope stays bound to the row the user clicked.
     const dialogOpts: {
@@ -116,6 +167,7 @@ async function handleScopedCardHide(card: HTMLElement, itemId: string, cardName:
     try {
         const userId = ApiClient.getCurrentUserId();
         const item: any = await getItemCached(itemId, { userId });
+        if (!isButtonFenceCurrent(fence)) return;
         const itemType = item?.Type || '';
         const seriesId = item?.SeriesId || '';
         const seriesName = item?.SeriesName || '';
@@ -131,18 +183,23 @@ async function handleScopedCardHide(card: HTMLElement, itemId: string, cardName:
         if ((itemType === 'Episode' || itemType === 'Season') && seriesId) {
             dialogOpts.showEpisodeChoice = true;
             dialogOpts.onChooseScoped = () => {
+                if (!isButtonFenceCurrent(fence)) return;
                 hideItem({ ...itemData, hideScope: surface });
                 card.classList.add('jc-hidden');
             };
             dialogOpts.onChooseShow = () => {
                 void (async () => {
+                    if (!isButtonFenceCurrent(fence)) return;
                     let seriesTmdbId = '';
                     try {
                         const series: any = await getItemCached(seriesId, { userId });
+                        if (!isButtonFenceCurrent(fence)) return;
                         seriesTmdbId = series?.ProviderIds?.Tmdb || '';
                     } catch (err) {
+                        if (!isButtonFenceCurrent(fence)) return;
                         console.warn('🪼 Jellyfin Canopy: Failed to fetch series TMDB ID', err);
                     }
+                    if (!isButtonFenceCurrent(fence)) return;
                     hideItem({
                         itemId: seriesId,
                         name: seriesName || cardName,
@@ -154,19 +211,24 @@ async function handleScopedCardHide(card: HTMLElement, itemId: string, cardName:
             };
         } else {
             dialogOpts.onChooseScoped = () => {
+                if (!isButtonFenceCurrent(fence)) return;
                 hideItem({ ...itemData, hideScope: surface });
                 card.classList.add('jc-hidden');
             };
         }
     } catch (err) {
+        if (!isButtonFenceCurrent(fence)) return;
         console.warn('🪼 Jellyfin Canopy: Failed to fetch item data for scoped hide', err);
         dialogOpts.onChooseScoped = () => {
+            if (!isButtonFenceCurrent(fence)) return;
             hideItem({ itemId, name: cardName, hideScope: surface });
             card.classList.add('jc-hidden');
         };
     }
 
+    if (!isButtonFenceCurrent(fence)) return;
     confirmAndHide(itemData, () => {
+        if (!isButtonFenceCurrent(fence)) return;
         card.classList.add('jc-hidden');
     }, dialogOpts);
 }
@@ -177,6 +239,8 @@ async function handleScopedCardHide(card: HTMLElement, itemId: string, cardName:
  * Skips cards that already have a `.jc-hide-btn` to avoid duplicates.
  */
 export function addLibraryHideButtons(): void {
+    const fence = captureButtonFence();
+    if (!isButtonFenceCurrent(fence)) return;
     const s = getSettings();
     if (!s.enabled || !s.showHideButtons) return;
     // At least one of library or cast buttons must be enabled
@@ -186,6 +250,7 @@ export function addLibraryHideButtons(): void {
 
     const cards = document.querySelectorAll<HTMLElement>('.card[data-id] .cardBox, .card[data-itemid] .cardBox');
     for (let i = 0; i < cards.length; i++) {
+        if (!isButtonFenceCurrent(fence)) return;
         const cardBox = cards[i];
         if (cardBox.querySelector('.jc-hide-btn')) continue;
 
@@ -227,8 +292,5 @@ export function addLibraryHideButtons(): void {
  * Called when the `showButtonLibrary` setting is toggled off.
  */
 export function removeLibraryHideButtons(): void {
-    const btns = document.querySelectorAll('.card[data-id] .jc-hide-btn, .card[data-itemid] .jc-hide-btn');
-    for (let i = 0; i < btns.length; i++) {
-        btns[i].remove();
-    }
+    resetButtonUi();
 }

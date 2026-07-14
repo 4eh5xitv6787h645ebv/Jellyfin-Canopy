@@ -15,7 +15,8 @@ import type { PanelContext } from './panel';
  * @param {object} ctx Shared panel context assembled in settings-panel/panel.ts.
  */
 export function wireShortcutEditor(ctx: PanelContext): void {
-    const { help, pluginShortcuts, primaryAccentColor, kbdBackground } = ctx;
+    const { help, pluginShortcuts, primaryAccentColor, kbdBackground, identityContext, trackTimer } = ctx;
+    const isCurrent = () => JC.identity.isCurrent(identityContext);
 
     // --- Shortcut Key Binding Logic ---
     if (!JC.pluginConfig.DisableAllShortcuts) {
@@ -23,15 +24,17 @@ export function wireShortcutEditor(ctx: PanelContext): void {
         shortcutKeys.forEach(keyElement => {
             const getOriginalKey = () => JC.state!.activeShortcuts[keyElement.dataset.action!];
 
-            keyElement.addEventListener('click', () => keyElement.focus());
+            keyElement.addEventListener('click', () => { if (isCurrent()) keyElement.focus(); });
 
             keyElement.addEventListener('focus', () => {
+                if (!isCurrent()) return;
                 keyElement.textContent = JC.t!('panel_shortcuts_listening');
                 keyElement.style.borderColor = primaryAccentColor;
                 keyElement.style.width = '100px';
             });
 
             keyElement.addEventListener('blur', () => {
+                if (!isCurrent()) return;
                 keyElement.textContent = getOriginalKey();
                 keyElement.style.borderColor = 'transparent';
                 keyElement.style.width = 'auto';
@@ -40,6 +43,7 @@ export function wireShortcutEditor(ctx: PanelContext): void {
             keyElement.addEventListener('keydown', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                if (!isCurrent()) return;
 
                 const labelWrapper = keyElement.nextElementSibling;
                 const action = keyElement.dataset.action!;
@@ -76,12 +80,14 @@ export function wireShortcutEditor(ctx: PanelContext): void {
                 if (existingAction && existingAction !== action) {
                     keyElement.style.background = 'rgb(255 0 0 / 60%)';
                     keyElement.classList.add('shake-error');
-                    setTimeout(() => {
+                    const timer = window.setTimeout(() => {
+                        if (!isCurrent()) return;
                         keyElement.classList.remove('shake-error');
                         if (document.activeElement === keyElement) {
                             keyElement.style.background = kbdBackground;
                         }
                     }, 500);
+                    trackTimer(timer);
                         // Reject the new keybinding and stop the function
                     return;
                 }

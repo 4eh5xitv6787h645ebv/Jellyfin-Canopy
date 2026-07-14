@@ -4,6 +4,7 @@
 // Series detail pages when the show has unrequested seasons in Seerr.
 import { JC } from '../globals';
 import { getItemIdFromUrl, getVisibleDetailsPage } from '../core/details-view';
+import type { IdentityContext } from '../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -23,6 +24,11 @@ const REQUEST_MORE_BTN_CLASS = 'jc-series-request-more-btn';
 // check (and vice versa) when the user navigates between detail pages.
 let currentAbortController: AbortController | null = null;
 let requestMoreAbortController: AbortController | null = null;
+const pendingFrames = new Set<number>();
+
+function isCurrent(context: IdentityContext | null, signal?: AbortSignal): context is IdentityContext {
+    return !!context && !signal?.aborted && JC.identity.isCurrent(context);
+}
 
 /**
  * Gets the TMDB ID from a Jellyfin item
@@ -30,20 +36,20 @@ let requestMoreAbortController: AbortController | null = null;
  * @param {AbortSignal} [signal] - Optional abort signal
  * @returns {Promise<{tmdbId: number|null, type: string|null}>}
  */
-async function getTmdbIdFromItem(itemId: string, signal?: AbortSignal): Promise<{ tmdbId: number | null; type: string | null }> {
+async function getTmdbIdFromItem(itemId: string, context: IdentityContext, signal?: AbortSignal): Promise<{ tmdbId: number | null; type: string | null }> {
     try {
         // Check for abort before making request
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
 
-        const userId = ApiClient.getCurrentUserId();
+        const userId = context.userId;
         const item: any = JC.helpers?.getItemCached
             ? await JC.helpers.getItemCached(itemId, { userId })
             : await ApiClient.getItem(userId, itemId);
 
         // Check for abort after request
-        if (signal?.aborted) {
+        if (!isCurrent(context, signal)) {
             throw new DOMException('Aborted', 'AbortError');
         }
 
@@ -180,7 +186,8 @@ function waitForDetailPageReady(itemId: string, signal?: AbortSignal): Promise<a
  * @param {string} title - Section title (already translated)
  * @returns {HTMLElement} - Section element
  */
-function createSeerrSection(results: any[], title: string): HTMLElement | null {
+function createSeerrSection(results: any[], title: string, context: IdentityContext): HTMLElement | null {
+    if (!isCurrent(context)) return null;
     if (!results || results.length === 0) {
         return null;
     }
@@ -202,6 +209,8 @@ function createSeerrSection(results: any[], title: string): HTMLElement | null {
 
     const section = document.createElement('div');
     section.className = 'verticalSection emby-scroller-container seerr-details-section';
+    section.dataset.jcIdentityOwned = 'true';
+    JC.identity.own(section, context);
     section.setAttribute('data-seerr-section', 'true');
 
     const titleElement = document.createElement('h2');
@@ -270,6 +279,8 @@ function createSeerrSection(results: any[], title: string): HTMLElement | null {
  * @param {string} itemId - Jellyfin item ID
  */
 async function renderSimilarAndRecommended(itemId: string) {
+    const context = JC.identity.capture();
+    if (!context) return;
     // Prevent duplicate renders (check only - add after success)
     if (processedItems.has(itemId)) {
         return;
@@ -299,7 +310,7 @@ async function renderSimilarAndRecommended(itemId: string) {
 
         // Check if Seerr is active
         const status = await JC.seerrAPI!.checkUserStatus();
-        if (signal.aborted) return;
+        if (!isCurrent(context, signal)) return;
 
         if (!status || !status.active) {
             console.debug(`${logPrefix} Seerr is not active, skipping`);
@@ -307,8 +318,8 @@ async function renderSimilarAndRecommended(itemId: string) {
         }
 
         // Get TMDB ID and type
-        const { tmdbId, type } = await getTmdbIdFromItem(itemId, signal);
-        if (signal.aborted) return;
+        const { tmdbId, type } = await getTmdbIdFromItem(itemId, context, signal);
+        if (!isCurrent(context, signal)) return;
 
         if (!tmdbId || !type) {
             console.debug(`${logPrefix} No valid TMDB ID found for item, skipping`);
@@ -347,7 +358,7 @@ async function renderSimilarAndRecommended(itemId: string) {
             waitForDetailPageReady(itemId, signal)
         ]);
 
-        if (signal.aborted) return;
+        if (!isCurrent(context, signal)) return;
 
         const similarResults = similarData?.results || [];
         const recommendedResults = recommendedData?.results || [];
@@ -387,7 +398,7 @@ async function renderSimilarAndRecommended(itemId: string) {
         }
 
         // Final abort check before DOM manipulation
-        if (signal.aborted) return;
+        if (!isCurrent(context, signal)) return;
 
         // Remove any existing Seerr sections to avoid duplicates
         detailPageContent.querySelectorAll('.seerr-details-section').forEach((el: Element) => el.remove());
@@ -400,7 +411,8 @@ async function renderSimilarAndRecommended(itemId: string) {
             const recommendedTitle = JC.t ? (JC.t('seerr_recommended_title') || 'Recommended') : 'Recommended';
             const recommendedSection = createSeerrSection(
                 filteredRecommendedResults.slice(0, 20),
-                recommendedTitle
+                recommendedTitle,
+                context
             );
             if (recommendedSection) {
                 moreLikeThisSection.after(recommendedSection);
@@ -412,7 +424,8 @@ async function renderSimilarAndRecommended(itemId: string) {
             const similarTitle = JC.t ? (JC.t('seerr_similar_title') || 'Similar') : 'Similar';
             const similarSection = createSeerrSection(
                 filteredSimilarResults.slice(0, 20),
-                similarTitle
+                similarTitle,
+                context
             );
             if (similarSection) {
                 const lastSeerrSection = detailPageContent.querySelector('.seerr-details-section:last-of-type');
@@ -579,7 +592,7 @@ function waitForChecker(signal?: AbortSignal): Promise<any> {
  * @param {object} tvDetails - TV show details from Seerr
  * @returns {HTMLButtonElement}
  */
-function buildSeriesRequestMoreButton(tvDetails: any): HTMLButtonElement {
+function buildSeriesRequestMoreButton(tvDetails: any, context: IdentityContext): HTMLButtonElement {
     // Defensive: i18n table may not be initialized yet on first navigation;
     // match the fallback pattern used elsewhere in this file.
     const labelText = (JC.t && JC.t('seerr_btn_request_more')) || 'Request More';
@@ -587,6 +600,8 @@ function buildSeriesRequestMoreButton(tvDetails: any): HTMLButtonElement {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `seerr-request-button seerr-button-request ${REQUEST_MORE_BTN_CLASS}`;
+    button.dataset.jcIdentityOwned = 'true';
+    JC.identity.own(button, context);
     button.title = labelText;
     // Inline overrides so the button sits comfortably next to the h2 text
     // without inheriting the heading's font size or block layout.
@@ -613,6 +628,7 @@ function buildSeriesRequestMoreButton(tvDetails: any): HTMLButtonElement {
     button.addEventListener('click', (e: MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!isCurrent(context)) return;
         if (JC.seerrUI?.showSeasonSelectionModal) {
             JC.seerrUI.showSeasonSelectionModal(
                 tvDetails.id,
@@ -634,6 +650,8 @@ function buildSeriesRequestMoreButton(tvDetails: any): HTMLButtonElement {
  * @param {string} itemId - Jellyfin item ID
  */
 async function renderSeriesRequestMoreButton(itemId: string) {
+    const context = JC.identity.capture();
+    if (!context) return;
     if (processedRequestMoreItems.has(itemId)) return;
 
     // Cancel any in-flight Request More check from a previous navigation.
@@ -648,15 +666,19 @@ async function renderSeriesRequestMoreButton(itemId: string) {
         if (JC.pluginConfig?.SeerrShowRequestMoreOnSeries === false) return;
 
         const status = await JC.seerrAPI!.checkUserStatus();
-        if (signal.aborted) return;
+        if (!isCurrent(context, signal)) return;
         if (!status?.active) return;
 
-        const { tmdbId, type } = await getTmdbIdFromItem(itemId, signal);
-        if (signal.aborted) return;
+        const { tmdbId, type } = await getTmdbIdFromItem(itemId, context, signal);
+        if (!isCurrent(context, signal)) return;
         if (!tmdbId || type !== 'tv') return;
 
-        const tvDetails = await JC.seerrAPI!.fetchTvShowDetails(tmdbId);
-        if (signal.aborted) return;
+        const tvDetails = await JC.seerrAPI!.fetchTvShowDetails(tmdbId, { signal }) as unknown as {
+            name?: string;
+            title?: string;
+            [key: string]: any;
+        };
+        if (!isCurrent(context, signal)) return;
         if (!tvDetails) return;
 
         // PERF(R7): resolve the Seasons heading in parallel with the checker and
@@ -667,8 +689,10 @@ async function renderSeriesRequestMoreButton(itemId: string) {
         // heading's first painted state, and the later button append displaces
         // nothing but trailing free space.
         const headingPromise = waitForSeasonsHeading(itemId, signal);
-        void headingPromise.then((h: any) => {
-            if (h && !signal.aborted) h.classList.add('jc-series-request-more-heading');
+        void headingPromise.then((heading: unknown) => {
+            if (heading instanceof HTMLElement && isCurrent(context, signal)) {
+                heading.classList.add('jc-series-request-more-heading');
+            }
         });
 
         // Wait for the checker to become available — the Seerr
@@ -678,13 +702,13 @@ async function renderSeriesRequestMoreButton(itemId: string) {
         // where the button would otherwise never appear until the user
         // navigates away and back.
         const checker = await waitForChecker(signal);
-        if (signal.aborted) return;
+        if (!isCurrent(context, signal)) return;
         if (!checker) {
             console.warn(`${requestMoreLogPrefix} checkForUnrequestedSeasons unavailable after 3s, skipping`);
             return;
         }
         const hasUnrequested = await checker(tvDetails);
-        if (signal.aborted) return;
+        if (!isCurrent(context, signal)) return;
         if (!hasUnrequested) {
             // Dedupe negative results too. Each call to checker() runs an
             // HTTP request to /JellyfinCanopy/seerr/request, so we
@@ -696,7 +720,7 @@ async function renderSeriesRequestMoreButton(itemId: string) {
         }
 
         const heading = await headingPromise;
-        if (signal.aborted) return;
+        if (!isCurrent(context, signal)) return;
         if (!heading) {
             console.debug(`${requestMoreLogPrefix} Seasons heading not found, skipping`);
             return;
@@ -712,7 +736,7 @@ async function renderSeriesRequestMoreButton(itemId: string) {
         // headingPromise above). PERF(R7): appending at the heading's flow end
         // displaces nothing but trailing free space — single insert, content
         // fully built (no empty-shell insert).
-        const button = buildSeriesRequestMoreButton(tvDetails);
+        const button = buildSeriesRequestMoreButton(tvDetails, context);
         heading.appendChild(button);
 
         processedRequestMoreItems.add(itemId);
@@ -730,6 +754,8 @@ async function renderSeriesRequestMoreButton(itemId: string) {
  * Handles item details page navigation
  */
 function handleItemDetailsPage() {
+    const context = JC.identity.capture();
+    if (!context) return;
     // Details route on either layout: the legacy layout keeps it in the hash
     // (#/details?id=X), the modern layout in the path + search
     // (/web/details?id=X with an empty hash). The old hash-only check meant
@@ -742,12 +768,17 @@ function handleItemDetailsPage() {
 
     const itemId = getItemIdFromUrl();
     if (itemId) {
+        for (const pending of pendingFrames) cancelAnimationFrame(pending);
+        pendingFrames.clear();
         // Use requestAnimationFrame instead of fixed timeout
         // This ensures we're in sync with the rendering cycle
-        requestAnimationFrame(() => {
+        const frame = requestAnimationFrame(() => {
+            pendingFrames.delete(frame);
+            if (!isCurrent(context)) return;
             void renderSimilarAndRecommended(itemId);
             void renderSeriesRequestMoreButton(itemId);
         });
+        pendingFrames.add(frame);
     }
 }
 
@@ -755,6 +786,8 @@ function handleItemDetailsPage() {
  * Cleanup function for navigation
  */
 function cleanup() {
+    for (const frame of pendingFrames) cancelAnimationFrame(frame);
+    pendingFrames.clear();
     // Abort any in-flight requests
     if (currentAbortController) {
         currentAbortController.abort();
@@ -767,6 +800,10 @@ function cleanup() {
     // Clear processed items caches
     processedItems.clear();
     processedRequestMoreItems.clear();
+    document.querySelectorAll('.seerr-details-section, .' + REQUEST_MORE_BTN_CLASS).forEach((node) => node.remove());
+    document.querySelectorAll('.jc-series-request-more-heading').forEach((node) => {
+        node.classList.remove('jc-series-request-more-heading');
+    });
 }
 
 /**
@@ -816,3 +853,8 @@ if (document.readyState === 'loading') {
 } else {
     initialize();
 }
+
+JC.identity.registerReset('seerr-item-details-identity', cleanup);
+JC.identity.registerActivate('seerr-item-details-identity', () => {
+    handleItemDetailsPage();
+});

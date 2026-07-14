@@ -8,7 +8,7 @@ import { createObserver } from '../core/dom-observer';
 import { resolveArrLinkBase } from './url-resolve';
 import { JC } from './arr-globals';
 import type { ExternalLinkOptions } from './arr-globals';
-import type { ApiApi, ObserverProxy } from '../types/jc';
+import type { ApiApi, IdentityContext, ObserverProxy } from '../types/jc';
 
 interface ResolvedInstance {
     name: string;
@@ -67,13 +67,69 @@ interface DropdownItem {
     tip: string;
 }
 
+let arrLinksGeneration = 0;
+let arrLinksTimer: ReturnType<typeof setTimeout> | null = null;
+let arrLinksWaitResolve: (() => void) | null = null;
+let arrLinksObserver: MutationObserver | ObserverProxy | null = null;
+let arrLinksOutsideClick: ((event: MouseEvent) => void) | null = null;
+
+function removeArrLinksUi(): void {
+    document.querySelectorAll('.arr-dropdown').forEach((node) => {
+        if (node.previousSibling?.nodeType === Node.TEXT_NODE) node.previousSibling.remove();
+        node.remove();
+    });
+    document.querySelectorAll('.arr-link').forEach((node) => {
+        if (node.previousSibling?.nodeType === Node.TEXT_NODE) node.previousSibling.remove();
+        node.remove();
+    });
+}
+
+function resetArrLinks(): void {
+    arrLinksGeneration++;
+    if (arrLinksTimer) clearTimeout(arrLinksTimer);
+    arrLinksTimer = null;
+    arrLinksWaitResolve?.();
+    arrLinksWaitResolve = null;
+    arrLinksObserver?.disconnect();
+    arrLinksObserver = null;
+    JC._arrLinksObserver = null;
+    if (arrLinksOutsideClick) document.removeEventListener('click', arrLinksOutsideClick);
+    arrLinksOutsideClick = null;
+    removeArrLinksUi();
+}
+
+function isActive(context: IdentityContext, expectedGeneration: number): boolean {
+    return arrLinksGeneration === expectedGeneration && JC.identity.isCurrent(context);
+}
+
+function waitForRetry(context: IdentityContext, expectedGeneration: number, delay: number): Promise<void> {
+    return new Promise((resolve) => {
+        const finish = (): void => {
+            if (arrLinksWaitResolve === finish) arrLinksWaitResolve = null;
+            arrLinksTimer = null;
+            resolve();
+        };
+        arrLinksWaitResolve = finish;
+        arrLinksTimer = setTimeout(finish, delay);
+        if (!isActive(context, expectedGeneration)) finish();
+    });
+}
+
 JC.initializeArrLinksScript = async function () {
     const logPrefix = '🪼 Jellyfin Canopy: Arr Links:';
+
+    resetArrLinks();
 
     if (!JC?.pluginConfig?.ArrLinksEnabled) {
         console.log(`${logPrefix} Integration disabled in plugin settings.`);
         return;
     }
+
+    const capturedIdentity = JC.identity.capture();
+    if (!capturedIdentity) return;
+    const context: IdentityContext = capturedIdentity;
+    const expectedGeneration = arrLinksGeneration;
+    const client = ApiClient;
 
     // JC.core.api is assigned by src/core/api-client.ts, which the bundle
     // executes before any arr module.
@@ -92,13 +148,15 @@ JC.initializeArrLinksScript = async function () {
         const RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 8000, 8000, 8000, 8000, 8000, 8000];
         for (let i = 0; !user && i <= RETRY_DELAYS_MS.length; i++) {
             try {
-                user = await ApiClient.getCurrentUser() as typeof user;
+                user = await client.getCurrentUser() as typeof user;
+                if (!isActive(context, expectedGeneration)) return;
                 if (user) break;
             } catch {
                 // swallow error, retry
             }
             if (i < RETRY_DELAYS_MS.length) {
-                await new Promise(r => setTimeout(r, RETRY_DELAYS_MS[i]));
+                await waitForRetry(context, expectedGeneration, RETRY_DELAYS_MS[i]);
+                if (!isActive(context, expectedGeneration)) return;
             }
         }
     }
@@ -116,6 +174,7 @@ JC.initializeArrLinksScript = async function () {
         if (JC?.currentSettings && JC.currentSettings.isAdmin !== isAdmin && typeof JC.saveUserSettings === 'function') {
             JC.currentSettings.isAdmin = isAdmin;
             await JC.saveUserSettings('settings.json', JC.currentSettings);
+            if (!isActive(context, expectedGeneration)) return;
             console.log(`${logPrefix} Updated admin status in settings.json: ${isAdmin}`);
         } else if (JC?.currentSettings) {
             JC.currentSettings.isAdmin = isAdmin;
@@ -145,8 +204,6 @@ JC.initializeArrLinksScript = async function () {
     }
 
     let isAddingLinks = false; // Lock to prevent concurrent runs
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    let observer: MutationObserver | ObserverProxy | null = null;
     // Cache Sonarr titleSlugs + Radarr instance matches by ID. Per-session only;
     // admin must hard-reload the web client after changing instance config for
     // this cache to drop (same constraint every other JC module has today).
@@ -423,6 +480,7 @@ JC.initializeArrLinksScript = async function () {
                 // Core throws Error('HTTP <status>') on non-OK responses, which the
                 // catch below surfaces exactly like the old !resp.ok branch did.
                 const data = await api.plugin(`/arr/series-slugs?tvdbId=${encodeURIComponent(tvdbId)}`) as ArrLookupResponse;
+                if (!isActive(context, expectedGeneration)) return [];
                 // Reset the once-per-session toast guards on successful fetch so a transient
                 // failure that has since cleared up isn't permanently silenced for real
                 // future failures.
@@ -441,6 +499,7 @@ JC.initializeArrLinksScript = async function () {
                 slugCache.set(cacheKey, results);
                 return results;
             } catch (e) {
+                if (!isActive(context, expectedGeneration)) return [];
                 surfaceGlobalFailure('Sonarr', e);
                 return [];
             }
@@ -466,6 +525,7 @@ JC.initializeArrLinksScript = async function () {
                 // Core throws Error('HTTP <status>') on non-OK responses — handled
                 // by the catch below, same as the old !resp.ok branch.
                 const data = await api.plugin(`/arr/movie-instances?tmdbId=${encodeURIComponent(tmdbId)}`) as ArrLookupResponse;
+                if (!isActive(context, expectedGeneration)) return [];
                 _toastedGlobalFailure.radarr = false;  // reset on success; see Sonarr version above
                 surfaceInstanceErrors('Radarr', data.errors);
                 const matches = Array.isArray(data.matches) ? data.matches : [];
@@ -479,12 +539,14 @@ JC.initializeArrLinksScript = async function () {
                 slugCache.set(cacheKey, results);
                 return results;
             } catch (e) {
+                if (!isActive(context, expectedGeneration)) return [];
                 surfaceGlobalFailure('Radarr', e);
                 return [];
             }
         }
 
         async function addArrLinks(): Promise<void> {
+            if (!isActive(context, expectedGeneration)) return;
             if (isAddingLinks) {
                 return;
             }
@@ -515,7 +577,8 @@ JC.initializeArrLinksScript = async function () {
             // the user already left or to a different item.
             const hashAtStart = window.location.hash;
             const isStillValidTarget = (): boolean =>
-                document.contains(anchorElement)
+                isActive(context, expectedGeneration)
+                && document.contains(anchorElement)
                 && !anchorElement.closest('#itemDetailPage.hide')
                 && window.location.hash === hashAtStart;
 
@@ -531,8 +594,8 @@ JC.initializeArrLinksScript = async function () {
                 if (!itemId) return;
 
                 const item = (JC.helpers?.getItemCached
-                    ? await JC.helpers.getItemCached(itemId)
-                    : await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId)) as {
+                    ? await JC.helpers.getItemCached(itemId, { userId: context.userId })
+                    : await client.getItem(client.getCurrentUserId(), itemId)) as {
                         Type?: string;
                         Name?: string;
                         ProviderIds?: Record<string, string | undefined>;
@@ -727,6 +790,7 @@ JC.initializeArrLinksScript = async function () {
             toggle.addEventListener('click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
+                if (!isActive(context, expectedGeneration)) return;
                 document.querySelectorAll('.arr-dropdown.open').forEach(d => {
                     if (d !== wrapper) d.classList.remove('open');
                 });
@@ -776,28 +840,32 @@ JC.initializeArrLinksScript = async function () {
         }
 
         // Single delegated listener for closing all arr dropdowns on outside click.
-        document.addEventListener('click', function(e) {
+        arrLinksOutsideClick = function(e: MouseEvent) {
+            if (!isActive(context, expectedGeneration)) return;
             if (!(e.target as Element | null)?.closest('.arr-dropdown')) {
                 document.querySelectorAll('.arr-dropdown.open').forEach(d => d.classList.remove('open'));
             }
-        });
+        };
+        document.addEventListener('click', arrLinksOutsideClick);
 
-        observer = createObserver('arr-links', () => {
+        arrLinksObserver = createObserver('arr-links', () => {
+            if (!isActive(context, expectedGeneration)) return;
             if (!JC?.pluginConfig?.ArrLinksEnabled) {
-                if (observer) {
-                    observer.disconnect();
+                if (arrLinksObserver) {
+                    arrLinksObserver.disconnect();
                     console.log(`${logPrefix} Observer disconnected — feature disabled`);
                 }
                 return;
             }
 
             // Debounce to avoid excessive processing on rapid DOM changes
-            if (debounceTimer) {
-                clearTimeout(debounceTimer);
+            if (arrLinksTimer) {
+                clearTimeout(arrLinksTimer);
             }
 
-            debounceTimer = setTimeout(() => {
-                void addArrLinks();
+            arrLinksTimer = setTimeout(() => {
+                arrLinksTimer = null;
+                if (isActive(context, expectedGeneration)) void addArrLinks();
             }, 100); // Wait 100ms after last mutation before processing
         }, document.body, {
             // childList + subtree is enough — Jellyfin re-renders the detail page children
@@ -809,10 +877,12 @@ JC.initializeArrLinksScript = async function () {
         });
 
         // Store observer reference for potential cleanup
-        JC._arrLinksObserver = observer;
+        JC._arrLinksObserver = arrLinksObserver;
 
         console.log(`${logPrefix} Initialized successfully`);
     } catch (err) {
         console.error(`${logPrefix} Failed to initialize`, err);
     }
 };
+
+JC.identity.registerReset('arr-links', resetArrLinks);

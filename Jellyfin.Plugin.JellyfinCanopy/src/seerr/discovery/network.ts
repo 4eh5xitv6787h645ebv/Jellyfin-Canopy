@@ -227,7 +227,11 @@ const discovery = JC.discoveryBase!.createDiscovery({
     resolveFeeds,
     buildDiscoverPath: (kind: string, id: number) => kind === 'tv'
         ? `/JellyfinCanopy/seerr/discover/tv/network/${id}`
-        : `/JellyfinCanopy/seerr/discover/movies/studio/${id}`
+        : `/JellyfinCanopy/seerr/discover/movies/studio/${id}`,
+    onCleanup: () => {
+        networkIdCache.clear();
+        studioInfoCache.clear();
+    }
 });
 
 discovery.start();

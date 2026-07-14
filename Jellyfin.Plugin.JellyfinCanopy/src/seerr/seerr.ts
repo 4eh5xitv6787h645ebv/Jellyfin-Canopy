@@ -1,12 +1,81 @@
 // src/seerr/seerr.ts
 import { JC } from '../globals';
+import type { IdentityContext } from '../types/jc';
 
+interface SeerrSearchRuntime {
+    context: IdentityContext;
+    cleanups: Array<() => void>;
+    timers: Set<number>;
+    cleanupState?: () => void;
+}
+
+interface SeerrUserStatus {
+    active: boolean;
+    userFound: boolean;
+}
+
+function asElement(target: EventTarget | null): Element | null {
+    return target instanceof Element ? target : null;
+}
+
+function hasUnsubscribe(value: unknown): value is { unsubscribe: () => void } {
+    if (!value || typeof value !== 'object' || !('unsubscribe' in value)) return false;
+    return typeof (value as { unsubscribe?: unknown }).unsubscribe === 'function';
+}
+
+let activeRuntime: SeerrSearchRuntime | null = null;
+
+function runtimeIsCurrent(runtime: SeerrSearchRuntime): boolean {
+    return activeRuntime === runtime && JC.identity.isCurrent(runtime.context);
+}
+
+function scheduleRuntime(runtime: SeerrSearchRuntime, fn: () => void, delay: number): number {
+    const timer = window.setTimeout(() => {
+        runtime.timers.delete(timer);
+        if (runtimeIsCurrent(runtime)) fn();
+    }, delay);
+    runtime.timers.add(timer);
+    return timer;
+}
+
+function listenRuntime(
+    runtime: SeerrSearchRuntime,
+    target: EventTarget,
+    type: string,
+    listener: EventListener,
+    options?: boolean | AddEventListenerOptions,
+): void {
+    target.addEventListener(type, listener, options);
+    runtime.cleanups.push(() => target.removeEventListener(type, listener, options));
+}
+
+function resetSeerrSearchIdentity(): void {
+    const resultsUi = JC.seerrUI as { resetResultsIdentity?: () => void } | undefined;
+    resultsUi?.resetResultsIdentity?.();
+    const runtime = activeRuntime;
+    activeRuntime = null;
+    if (runtime) {
+        for (const timer of runtime.timers) clearTimeout(timer);
+        runtime.timers.clear();
+        try { runtime.cleanupState?.(); } catch { /* continue */ }
+        for (const cleanup of runtime.cleanups.splice(0).reverse()) {
+            try { cleanup(); } catch { /* continue */ }
+        }
+    }
+    document.querySelectorAll(
+        '.seerr-section, .seerr-4k-popup, #seerr-placeholder, .seerr-season-modal'
+    ).forEach((node) => node.remove());
+    document.querySelectorAll('.section-hidden').forEach((node) => node.classList.remove('section-hidden'));
+}
+
+JC.identity.registerReset('seerr-search', resetSeerrSearchIdentity);
 
 /**
  * Main initialization function for Seerr search integration.
  * This function sets up the state, observers, and event listeners.
  */
 JC.initializeSeerrScript = function() {
+    resetSeerrSearchIdentity();
     // Early exit if Seerr integration or search results are disabled in plugin settings
     if (!JC.pluginConfig.SeerrEnabled) {
         console.log('🪼 Jellyfin Canopy: Seerr Search: Integration is disabled in plugin settings.');
@@ -17,6 +86,12 @@ JC.initializeSeerrScript = function() {
         return;
     }
 
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return;
+    const runtime: SeerrSearchRuntime = { context, cleanups: [], timers: new Set<number>() };
+    activeRuntime = runtime;
+    const isCurrent = (): boolean => runtimeIsCurrent(runtime);
+
     const logPrefix = '🪼 Jellyfin Canopy: Seerr:';
     const escapeHtml = JC.escapeHtml;
     console.log(`${logPrefix} Initializing...`);
@@ -25,11 +100,11 @@ JC.initializeSeerrScript = function() {
     // STATE MANAGEMENT VARIABLES
     // ================================
     let lastProcessedQuery: string | null = null;
-    let debounceTimeout: any = null;
+    let debounceTimeout: number | null = null;
     let isSeerrActive = false;
     let seerrUserFound = false;
     let isSeerrOnlyMode = false;
-    let hiddenSections: any[] = [];
+    let hiddenSections: Element[] = [];
     let seerrOriginalPosition: HTMLElement | null = null;
 
     // Infinite scroll pagination state
@@ -39,6 +114,8 @@ JC.initializeSeerrScript = function() {
     let searchHasMore = false;
     const searchScrollState: any = {};
     let searchDeduplicator: any = null;
+    let pageObserverInitialized = false;
+    const wiredAlphaPickers = new WeakSet<Element>();
 
 
     // Destructure modules for easy access
@@ -49,6 +126,20 @@ JC.initializeSeerrScript = function() {
         showCollectionRequestModal, hideHoverPopover, toggleHoverPopoverLock, updateSeerrResults,
         createSeerrCard
     } = JC.seerrUI!;
+    const hideRuntimePopover = hideHoverPopover as unknown as () => void;
+    const setRuntimePopoverLock = toggleHoverPopoverLock as unknown as (locked?: boolean) => void;
+
+    runtime.cleanupState = () => {
+        if (debounceTimeout !== null) {
+            clearTimeout(debounceTimeout);
+            debounceTimeout = null;
+        }
+        JC.seamlessScroll?.cleanupInfiniteScroll(searchScrollState);
+        hiddenSections.forEach((section) => section.classList.remove('section-hidden'));
+        seerrOriginalPosition?.remove();
+        hiddenSections = [];
+        seerrOriginalPosition = null;
+    };
 
     /**
      * Toggles between showing all search results vs only Seerr results.
@@ -121,11 +212,13 @@ JC.initializeSeerrScript = function() {
      * @param {string} query The search query.
      */
     async function fetchAndRenderResults(query: string, options: any = {}) {
+        if (!isCurrent()) return;
         const { skipCache = false } = options;
         resetSearchPagination();
         searchDeduplicator = JC.seamlessScroll?.createDeduplicator() || null;
 
         const data = await search(query, 1, { skipCache });
+        if (!isCurrent() || lastProcessedQuery !== query) return;
         let results = data.results || [];
         searchCurrentPage = data.page || 1;
         searchTotalPages = data.totalPages || 1;
@@ -139,7 +232,7 @@ JC.initializeSeerrScript = function() {
 
             // Enrich with collections in the background, then re-render
             prepareResultsWithCollections(results).then((enrichedResults: any[]) => {
-                if (lastProcessedQuery !== query) return;
+                if (!isCurrent() || lastProcessedQuery !== query) return;
                 if (JC.hiddenContent) enrichedResults = JC.hiddenContent.filterSeerrResults(enrichedResults, 'search');
                 if (enrichedResults.length > results.length) {
                     renderSeerrResults(enrichedResults, query, isSeerrOnlyMode, isSeerrActive, seerrUserFound);
@@ -162,14 +255,14 @@ JC.initializeSeerrScript = function() {
      * @param {string} query The current search query.
      */
     async function loadMoreSearchResults(query: string) {
-        if (searchIsLoading || !searchHasMore || lastProcessedQuery !== query) return;
+        if (!isCurrent() || searchIsLoading || !searchHasMore || lastProcessedQuery !== query) return;
 
         searchIsLoading = true;
         const nextPage = searchCurrentPage + 1;
 
         try {
             const data = await search(query, nextPage);
-            if (lastProcessedQuery !== query) return; // query changed during fetch
+            if (!isCurrent() || lastProcessedQuery !== query) return; // query/identity changed during fetch
 
             let results = data.results || [];
             searchCurrentPage = data.page || nextPage;
@@ -191,6 +284,7 @@ JC.initializeSeerrScript = function() {
                 }
             }
         } catch (error: any) {
+            if (!isCurrent()) return;
             if (error.name !== 'AbortError') {
                 console.warn(`${logPrefix} Failed to load more search results:`, error);
                 // Roll back page on failure
@@ -198,7 +292,7 @@ JC.initializeSeerrScript = function() {
             }
             throw error; // Re-throw for seamlessScroll retry handling
         } finally {
-            searchIsLoading = false;
+            if (isCurrent()) searchIsLoading = false;
         }
     }
 
@@ -224,6 +318,7 @@ JC.initializeSeerrScript = function() {
      * @returns {Promise<Array>} Enriched results including collections and badges.
      */
     async function prepareResultsWithCollections(rawResults: any[]) {
+        if (!isCurrent()) return [];
         let results = rawResults || [];
         if (JC.pluginConfig.ShowCollectionsInSearch === false) {
             return results;
@@ -231,6 +326,7 @@ JC.initializeSeerrScript = function() {
 
         try {
             results = await JC.seerrAPI!.addCollections(results);
+            if (!isCurrent()) return [];
         } catch (e: any) {
             console.debug(`${logPrefix} Collection addition failed:`, e);
         }
@@ -282,6 +378,7 @@ JC.initializeSeerrScript = function() {
      */
     // Manual refresh handler
     async function manualRefreshSeerrData(query: string | null) {
+        if (!isCurrent()) return;
         const section = document.querySelector('.seerr-section');
         const itemsContainer = section?.querySelector('.itemsContainer');
         if (!query || !itemsContainer) return;
@@ -292,7 +389,9 @@ JC.initializeSeerrScript = function() {
             searchDeduplicator = JC.seamlessScroll?.createDeduplicator() || null;
 
             const data = await search(query, 1);
+            if (!isCurrent() || lastProcessedQuery !== query) return;
             let results = await prepareResultsWithCollections(data.results || []);
+            if (!isCurrent() || lastProcessedQuery !== query) return;
             if (JC.hiddenContent) results = JC.hiddenContent.filterSeerrResults(results, 'search');
 
             searchCurrentPage = data.page || 1;
@@ -311,6 +410,7 @@ JC.initializeSeerrScript = function() {
                 setupSearchInfiniteScroll(query);
             }
         } catch (error: any) {
+            if (!isCurrent()) return;
             console.warn(`${logPrefix} Failed to refresh Seerr data:`, error);
         }
     }
@@ -319,14 +419,18 @@ JC.initializeSeerrScript = function() {
      * Sets up DOM observation for search page changes.
      */
     function initializePageObserver() {
+        if (pageObserverInitialized || !isCurrent()) return;
+        pageObserverInitialized = true;
         const handleSearch = () => {
+            if (!isCurrent()) return;
             const searchInput = document.querySelector<HTMLInputElement>('#searchPage #searchTextInput');
             const isSearchPage = searchInput !== null;
             const currentQuery = isSearchPage ? searchInput.value : null;
 
             if (isSearchPage && currentQuery?.trim()) {
-                clearTimeout(debounceTimeout);
-                debounceTimeout = setTimeout(() => {
+                if (debounceTimeout !== null) clearTimeout(debounceTimeout);
+                debounceTimeout = scheduleRuntime(runtime, () => {
+                    debounceTimeout = null;
                     if (!isSeerrActive) {
                         document.querySelectorAll('.seerr-section').forEach(el => el.remove());
                         return;
@@ -346,7 +450,8 @@ JC.initializeSeerrScript = function() {
                     void fetchAndRenderResults(latestQuery);
                 }, 300);
             } else {
-                clearTimeout(debounceTimeout);
+                if (debounceTimeout !== null) clearTimeout(debounceTimeout);
+                debounceTimeout = null;
                 lastProcessedQuery = null;
                 isSeerrOnlyMode = false;
                 resetSearchPagination();
@@ -365,6 +470,7 @@ JC.initializeSeerrScript = function() {
         let lastIconState: string | null = null;
 
         function tryAttachSearchListener() {
+            if (!isCurrent()) return;
             // PERF(R8): this runs on every structural body-mutation batch — gate on
             // a cheap search-page probe first, and only touch the icon when its
             // state changed or the icon got detached (page rebuild). The old
@@ -382,15 +488,17 @@ JC.initializeSeerrScript = function() {
             const searchInput = searchPage.querySelector<HTMLInputElement>('#searchTextInput');
             if (searchInput && !searchInput.dataset.seerrListener) {
                 console.debug(`${logPrefix} Search input found, attaching listener.`);
-                searchInput.addEventListener('input', handleSearch);
+                listenRuntime(runtime, searchInput, 'input', handleSearch);
                 searchInput.dataset.seerrListener = 'true';
+                runtime.cleanups.push(() => { delete searchInput.dataset.seerrListener; });
 
                 // Add a click listener for the alphabet picker
                 const alphaPicker = document.querySelector('.alphaPicker');
-                if (alphaPicker) {
-                    alphaPicker.addEventListener('click', () => {
+                if (alphaPicker && !wiredAlphaPickers.has(alphaPicker)) {
+                    wiredAlphaPickers.add(alphaPicker);
+                    listenRuntime(runtime, alphaPicker, 'click', () => {
                         // Use a short delay to ensure the input value has updated before we read it
-                        setTimeout(handleSearch, 100);
+                        scheduleRuntime(runtime, handleSearch, 100);
                     });
                 }
 
@@ -400,13 +508,18 @@ JC.initializeSeerrScript = function() {
         }
 
         // Listen for manual refresh events from the UI
-        document.addEventListener('seerr-manual-refresh', function(e) {
+        const handleManualRefresh = () => {
+            if (!isCurrent()) return;
             const searchInput = document.querySelector<HTMLInputElement>('#searchPage #searchTextInput');
             const query = searchInput ? searchInput.value : null;
             void manualRefreshSeerrData(query);
-        });
+        };
+        listenRuntime(runtime, document, 'seerr-manual-refresh', handleManualRefresh);
 
-        JC.helpers!.onBodyMutation!('seerr-search-listener', tryAttachSearchListener);
+        const bodyHandle: unknown = JC.helpers!.onBodyMutation!('seerr-search-listener', tryAttachSearchListener);
+        if (hasUnsubscribe(bodyHandle)) {
+            runtime.cleanups.push(() => bodyHandle.unsubscribe());
+        }
 
         // Immediately check if the search page is already rendered (handles the
         // case where the observer was set up after the search page loaded, e.g.
@@ -418,14 +531,17 @@ JC.initializeSeerrScript = function() {
         // Uses the shared jc:navigate event (from helpers.js) which already
         // patches pushState/replaceState, plus popstate and hashchange.
         if (JC.helpers?.onNavigate) {
-            JC.helpers.onNavigate(() => setTimeout(tryAttachSearchListener, 200));
+            const unsubscribe = JC.helpers.onNavigate(() => {
+                scheduleRuntime(runtime, tryAttachSearchListener, 200);
+            });
+            if (typeof unsubscribe === 'function') runtime.cleanups.push(unsubscribe);
         } else {
             // Fallback if helpers.js hasn't loaded yet — may double-fire with
             // onNavigate if helpers loads later, but tryAttachSearchListener is
             // idempotent (guarded by dataset.seerrListener) so this is safe.
-            const onNav = () => setTimeout(tryAttachSearchListener, 200);
-            window.addEventListener('popstate', onNav);
-            window.addEventListener('hashchange', onNav);
+            const onNav = () => { scheduleRuntime(runtime, tryAttachSearchListener, 200); };
+            listenRuntime(runtime, window, 'popstate', onNav);
+            listenRuntime(runtime, window, 'hashchange', onNav);
         }
     }
 
@@ -437,9 +553,19 @@ JC.initializeSeerrScript = function() {
         const timeout = 20000;
 
         const checkForUser = async () => {
+            if (!isCurrent()) return;
             if (ApiClient.getCurrentUserId() && ApiClient.accessToken()) {
                 console.log(`${logPrefix} User session found. Initializing...`);
-                const status = await checkUserStatus();
+                let status: SeerrUserStatus;
+                try {
+                    status = await checkUserStatus();
+                } catch (error) {
+                    if (!isCurrent()) return;
+                    console.warn(`${logPrefix} User status check failed; keeping page observer retryable:`, error);
+                    initializePageObserver();
+                    return;
+                }
+                if (!isCurrent()) return;
                 isSeerrActive = status.active;
                 seerrUserFound = status.userFound;
                 console.debug(`${logPrefix} Status: active=${isSeerrActive}, userFound=${seerrUserFound}`);
@@ -450,13 +576,15 @@ JC.initializeSeerrScript = function() {
                     Promise.all([
                         JC.discoveryFilter?.fetchWithManagedRequest?.('/JellyfinCanopy/tmdb/genres/tv', 'genre', {})?.catch(() => {}),
                         JC.discoveryFilter?.fetchWithManagedRequest?.('/JellyfinCanopy/tmdb/genres/movie', 'genre', {})?.catch(() => {})
-                    ]).catch(() => {});
+                    ]).then(() => {
+                        if (!isCurrent()) return;
+                    }).catch(() => {});
                 }
             } else if (Date.now() - startTime > timeout) {
                 console.warn(`${logPrefix} Timed out waiting for user session. Features may be limited.`);
                 initializePageObserver();
             } else {
-                setTimeout(checkForUser, 300);
+                scheduleRuntime(runtime, () => { void checkForUser(); }, 300);
             }
         };
         void checkForUser();
@@ -471,24 +599,30 @@ JC.initializeSeerrScript = function() {
     waitForUserAndInitialize();
 
     // Hide popover when touching outside request buttons or scrolling
-    document.addEventListener('touchstart', (e: any) => {
-        if (!e.target.closest('.seerr-request-button')) {
-            toggleHoverPopoverLock(false);
-            hideHoverPopover();
+    listenRuntime(runtime, document, 'touchstart', (event: Event) => {
+        if (!isCurrent()) return;
+        if (!asElement(event.target)?.closest('.seerr-request-button')) {
+            setRuntimePopoverLock(false);
+            hideRuntimePopover();
         }
     }, { passive: true });
-    document.addEventListener('scroll', () => hideHoverPopover(), true);
+    listenRuntime(runtime, document, 'scroll', () => {
+        if (isCurrent()) hideRuntimePopover();
+    }, true);
 
     // Remove touch overlay when touching outside cards
-    document.body.addEventListener('touchstart', (e: any) => {
-        if (!e.target.closest('.seerr-card')) {
+    listenRuntime(runtime, document.body, 'touchstart', (event: Event) => {
+        if (!isCurrent()) return;
+        if (!asElement(event.target)?.closest('.seerr-card')) {
             document.querySelectorAll('.seerr-card.is-touch').forEach(card => card.classList.remove('is-touch'));
         }
     }, { passive: true });
 
     // Close 4K popup when clicking outside
-    document.body.addEventListener('click', (e: any) => {
-        if (!e.target.closest('.seerr-button-group') && !e.target.closest('.seerr-4k-popup')) {
+    listenRuntime(runtime, document.body, 'click', (event: Event) => {
+        if (!isCurrent()) return;
+        const target = asElement(event.target);
+        if (!target?.closest('.seerr-button-group') && !target?.closest('.seerr-4k-popup')) {
             const popup = document.querySelector('.seerr-4k-popup');
             if (popup) popup.remove();
         }
@@ -496,10 +630,15 @@ JC.initializeSeerrScript = function() {
 
     // Main click handler for request buttons and 4K popup items
     // eslint-disable-next-line @typescript-eslint/no-misused-promises -- legacy async listener; errors are handled inside the handler
-    document.body.addEventListener('click', async function(event: any) {
+    const handleRequestClick = async function(event: Event) {
+        if (!isCurrent()) return;
+        const target = asElement(event.target);
+        if (!target) return;
         // Handle 4K popup item clicks
-        if (event.target.closest('.seerr-4k-popup-item')) {
-            const item = event.target.closest('.seerr-4k-popup-item');
+        if (target.closest('.seerr-4k-popup-item')) {
+            const item = target.closest<HTMLButtonElement>('.seerr-4k-popup-item');
+            if (!item) return;
+            if (!JC.identity.isOwned(item, runtime.context)) return;
             const action = item.dataset.action;
             const tmdbId = item.dataset.tmdbId;
             const mediaType = String(item.dataset.mediaType || 'movie').toLowerCase();
@@ -510,8 +649,8 @@ JC.initializeSeerrScript = function() {
                 item.innerHTML = `<span>Requesting...</span><span class="seerr-button-spinner"></span>`;
 
                 // Find the original item data from the card
-                const card = event.target.closest('.seerr-card');
-                const button = card?.querySelector('.seerr-request-button');
+                const card = target.closest<HTMLElement>('.seerr-card');
+                const button = card?.querySelector<HTMLButtonElement>('.seerr-request-button');
                 const searchResultItem = button?.dataset.searchResultItem ? JSON.parse(button.dataset.searchResultItem) : null;
                 const titleText = card?.querySelector('.cardText-first bdi')?.textContent
                     || searchResultItem?.name
@@ -533,6 +672,7 @@ JC.initializeSeerrScript = function() {
                         showMovieRequestModal(tmdbId, titleText, searchResultItem, true);
                     } else {
                         const response = await requestMedia(tmdbId, 'movie', {}, true, searchResultItem); // true for 4K, pass searchResultItem for override rules
+                        if (!isCurrent()) return;
                         console.debug(`${logPrefix} Seerr 4K request response:`, response);
                         if (searchResultItem) {
                             if (!searchResultItem.mediaInfo) searchResultItem.mediaInfo = {};
@@ -544,10 +684,13 @@ JC.initializeSeerrScript = function() {
                         // Refresh the results to update the UI
                         const query = new URLSearchParams(window.location.hash.split('?')[1])?.get('query');
                         if (query) {
-                            setTimeout(() => fetchAndRenderResults(query, { skipCache: true }), 1000);
+                            scheduleRuntime(runtime, () => {
+                                void fetchAndRenderResults(query, { skipCache: true });
+                            }, 1000);
                         }
                     }
                 } catch (error: any) {
+                    if (!isCurrent()) return;
                     // Quota errors get a themed dialog with usage + reset info.
                     if (JC.seerrUI?.isQuotaError?.(error)) {
                         await JC.seerrUI.showQuotaErrorDialog(error, 'movie');
@@ -568,14 +711,17 @@ JC.initializeSeerrScript = function() {
             return;
         }
 
-        const button = event.target.closest('.seerr-request-button');
+        const button = target.closest<HTMLButtonElement>('.seerr-request-button');
         if (!button || button.disabled) return;
+        const ownerNode = button.closest('.seerr-card') || button;
+        if (!JC.identity.isOwned(button, runtime.context)
+            && !JC.identity.isOwned(ownerNode, runtime.context)) return;
 
         const mediaType = button.dataset.mediaType;
         const tmdbId = button.dataset.tmdbId;
         const collectionId = button.dataset.collectionId;
         const searchResultItem = button.dataset.searchResultItem ? JSON.parse(button.dataset.searchResultItem) : null;
-        const card = button.closest('.seerr-card');
+        const card = button.closest<HTMLElement>('.seerr-card');
         const titleText = card?.querySelector('.cardText-first bdi')?.textContent
             || searchResultItem?.name
             || searchResultItem?.title
@@ -601,10 +747,12 @@ JC.initializeSeerrScript = function() {
                 button.innerHTML = `<span>${JC.t!('seerr_btn_requesting')}</span><span class="seerr-button-spinner"></span>`;
                 try {
                     await requestMedia(tmdbId, mediaType, {}, false, searchResultItem); // Pass searchResultItem for override rules
+                    if (!isCurrent() || !button.isConnected) return;
                     button.innerHTML = `<span>${JC.t!('seerr_btn_requested')}</span>${JC.seerrUI!.icons.requested}`;
                     button.classList.remove('seerr-button-request');
                     button.classList.add('seerr-button-pending');
                 } catch (error: any) {
+                    if (!isCurrent() || !button.isConnected) return;
                     button.disabled = false;
                     // Quota errors get a themed dialog; restore button to idle.
                     if (JC.seerrUI?.isQuotaError?.(error)) {
@@ -626,6 +774,9 @@ JC.initializeSeerrScript = function() {
                 }
             }
         }
+    };
+    listenRuntime(runtime, document.body, 'click', (event: Event) => {
+        void handleRequestClick(event);
     });
 
     console.log(`${logPrefix} Initialization complete.`);

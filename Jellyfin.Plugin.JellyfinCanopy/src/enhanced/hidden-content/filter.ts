@@ -13,12 +13,57 @@ import { JC } from '../../globals';
 import { debounce } from '../helpers';
 import { onViewPage } from '../../core/navigation';
 import { onBodyMutation } from '../../core/dom-observer';
+import type { BodySubscriberHandle, IdentityContext } from '../../types/jc';
 import { hiddenIdSet, getSettings, shouldFilterSurface, shouldProcessNativeSurface, getHiddenData, getHiddenCount } from './data';
 import { addLibraryHideButtons } from './buttons';
 
 const parentSeriesCache = new Map<string, string | null>();
 const parentSeriesRequestMap = new Map<string, Promise<string | null>>();
-const sectionSurfaceCache = new WeakMap<Element, string | null>();
+let sectionSurfaceCache = new WeakMap<Element, string | null>();
+let filterGeneration = 0;
+let viewPageUnsubscribe: (() => void) | null = null;
+let bodyMutationHandle: BodySubscriberHandle | null = null;
+const detailRescanHandles = new Set<number>();
+
+interface FilterFence {
+    generation: number;
+    context: IdentityContext | null;
+}
+
+function captureFilterFence(): FilterFence {
+    return { generation: filterGeneration, context: JC.identity?.capture?.() || null };
+}
+
+function isFilterFenceCurrent(fence: FilterFence): boolean {
+    return fence.generation === filterGeneration
+        && (!fence.context || JC.identity.isCurrent(fence.context));
+}
+
+function clearFilterIdentityState(): void {
+    filterGeneration += 1;
+    parentSeriesCache.clear();
+    parentSeriesRequestMap.clear();
+    sectionSurfaceCache = new WeakMap<Element, string | null>();
+    viewPageUnsubscribe?.();
+    viewPageUnsubscribe = null;
+    bodyMutationHandle?.unsubscribe();
+    bodyMutationHandle = null;
+    for (const handle of detailRescanHandles) clearTimeout(handle);
+    detailRescanHandles.clear();
+
+    // Remove only visibility markers owned by this feature. Other users of the
+    // generic jc-hidden class are left untouched.
+    document.querySelectorAll<HTMLElement>(`[${HIDDEN_PARENT_ATTR}], [${HIDDEN_DIRECT_ATTR}]`).forEach((card) => {
+        card.classList.remove('jc-hidden');
+        card.removeAttribute(HIDDEN_PARENT_ATTR);
+        card.removeAttribute(HIDDEN_DIRECT_ATTR);
+    });
+    document.querySelectorAll<HTMLElement>(`[${PROCESSED_ATTR}]`).forEach((card) => {
+        card.removeAttribute(PROCESSED_ATTR);
+    });
+}
+
+JC.identity?.registerReset?.('hidden-content-filter', clearFilterIdentityState);
 
 /** Delay for first detail-page rescan (async episode loading). */
 const DETAIL_RESCAN_DELAY_MS = 500;
@@ -51,26 +96,32 @@ async function getParentSeriesId(itemId: string): Promise<string | null> {
     if (parentSeriesRequestMap.has(itemId)) {
         return parentSeriesRequestMap.get(itemId)!;
     }
+    const fence = captureFilterFence();
     const request = (async () => {
         try {
-            const userId = ApiClient.getCurrentUserId();
+            const userId = fence.context?.userId || ApiClient.getCurrentUserId();
             const item: any = await ApiClient.ajax({
                 type: 'GET',
                 url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl(`/Users/${userId}/Items/${itemId}`, { Fields: 'SeriesId' }),
                 dataType: 'json'
             });
+            if (!isFilterFenceCurrent(fence)) return null;
             const seriesId = item?.SeriesId || null;
             parentSeriesCache.set(itemId, seriesId);
             return seriesId;
         } catch (e) {
+            if (!isFilterFenceCurrent(fence)) return null;
             console.warn('🪼 Jellyfin Canopy: Failed to fetch parent series for', itemId, e);
             parentSeriesCache.set(itemId, null);
             return null;
-        } finally {
-            parentSeriesRequestMap.delete(itemId);
         }
     })();
     parentSeriesRequestMap.set(itemId, request);
+    void request.finally(() => {
+        if (parentSeriesRequestMap.get(itemId) === request) {
+            parentSeriesRequestMap.delete(itemId);
+        }
+    });
     return request;
 }
 
@@ -162,7 +213,9 @@ function checkAndHideByParentSeries(card: HTMLElement, itemId: string): void {
     if (!getSettings().enabled || !shouldFilterSurface(getCurrentNativeSurface())) return;
     if (hiddenIdSet.size === 0) return;
 
+    const fence = captureFilterFence();
     getParentSeriesId(itemId).then((seriesId) => {
+        if (!isFilterFenceCurrent(fence)) return;
         if (!seriesId) return;
         if (!card.isConnected) return;
         if (!getSettings().enabled || !shouldFilterSurface(getCurrentNativeSurface())) return;
@@ -189,6 +242,7 @@ async function batchCheckParentSeries(cardEntries: Array<{ card: HTMLElement; it
     if (!cardEntries || cardEntries.length === 0) return;
     if (!getSettings().enabled || !shouldFilterSurface(getCurrentNativeSurface())) return;
     if (hiddenIdSet.size === 0) return;
+    const fence = captureFilterFence();
 
     // Separate cached from uncached
     const cached: Array<{ card: HTMLElement; itemId: string; seriesId: string | null }> = [];
@@ -205,6 +259,7 @@ async function batchCheckParentSeries(cardEntries: Array<{ card: HTMLElement; it
     // Process cached entries immediately
     if (cached.length > 0) {
         requestAnimationFrame(() => {
+            if (!isFilterFenceCurrent(fence)) return;
             for (let i = 0; i < cached.length; i++) {
                 const { card, seriesId } = cached[i];
                 if (!card.isConnected || !seriesId) continue;
@@ -221,7 +276,7 @@ async function batchCheckParentSeries(cardEntries: Array<{ card: HTMLElement; it
     if (uncached.length === 0) return;
 
     const BATCH_SIZE = 50;
-    const userId = ApiClient.getCurrentUserId();
+    const userId = fence.context?.userId || ApiClient.getCurrentUserId();
 
     for (let start = 0; start < uncached.length; start += BATCH_SIZE) {
         const chunk = uncached.slice(start, start + BATCH_SIZE);
@@ -233,6 +288,7 @@ async function batchCheckParentSeries(cardEntries: Array<{ card: HTMLElement; it
                 url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl(`/Users/${userId}/Items`, { Ids: ids, Fields: 'SeriesId' }),
                 dataType: 'json'
             });
+            if (!isFilterFenceCurrent(fence)) return;
 
             const itemsById = new Map<string, string | null>();
             const responseItems = result?.Items || [];
@@ -251,6 +307,7 @@ async function batchCheckParentSeries(cardEntries: Array<{ card: HTMLElement; it
 
             // Batch apply hiding
             requestAnimationFrame(() => {
+                if (!isFilterFenceCurrent(fence)) return;
                 for (let i = 0; i < chunk.length; i++) {
                     const { card, itemId } = chunk[i];
                     if (!card.isConnected) continue;
@@ -263,6 +320,7 @@ async function batchCheckParentSeries(cardEntries: Array<{ card: HTMLElement; it
                 }
             });
         } catch (e) {
+            if (!isFilterFenceCurrent(fence)) return;
             console.warn('🪼 Jellyfin Canopy: Batch parent series check failed', e);
             // Fall back to individual lookups for this chunk
             for (let i = 0; i < chunk.length; i++) {
@@ -306,7 +364,9 @@ export function refreshNativeCardVisibility(): void {
         restoreNativeCardsForIds(hiddenIdSet);
         return;
     }
+    const fence = captureFilterFence();
     requestAnimationFrame(() => {
+        if (!isFilterFenceCurrent(fence)) return;
         filterAllNativeCards();
         if (typeof (JC as any).hideEmptyHomeSections === 'function') {
             (JC as any).hideEmptyHomeSections();
@@ -377,7 +437,9 @@ export function filterNativeCards(syncApply = false): void {
 
     // Batch apply visibility changes
     if (toHide.length > 0 || toShow.length > 0) {
+        const fence = captureFilterFence();
         const applyVisibility = (): void => {
+            if (!isFilterFenceCurrent(fence)) return;
             for (let i = 0; i < toHide.length; i++) toHide[i].classList.add('jc-hidden');
             for (let i = 0; i < toShow.length; i++) toShow[i].classList.remove('jc-hidden');
         };
@@ -445,7 +507,9 @@ export function filterAllNativeCards(): void {
 
     // Batch apply visibility changes
     if (toHide.length > 0 || toShow.length > 0) {
+        const fence = captureFilterFence();
         requestAnimationFrame(() => {
+            if (!isFilterFenceCurrent(fence)) return;
             for (let i = 0; i < toHide.length; i++) toHide[i].classList.add('jc-hidden');
             for (let i = 0; i < toShow.length; i++) toShow[i].classList.remove('jc-hidden');
         });
@@ -468,23 +532,36 @@ const debouncedFilterNative = debounce(() => { requestAnimationFrame(() => filte
  * filtering and button injection when new cards appear in the DOM.
  */
 export function setupNativeObserver(): void {
+    viewPageUnsubscribe?.();
+    bodyMutationHandle?.unsubscribe();
+    const setupFence = captureFilterFence();
     // Use onViewPage for page navigation — much cheaper than a body MutationObserver
-    onViewPage(() => {
+    viewPageUnsubscribe = onViewPage(() => {
+        if (!isFilterFenceCurrent(setupFence)) return;
         // Detail pages load episodes asynchronously — staggered re-scans catch late-rendered cards
         if (getCurrentNativeSurface() === 'details') {
             const rescan = (): void => {
+                if (!isFilterFenceCurrent(setupFence)) return;
                 refreshNativeCardVisibility();
                 if (getSettings().showButtonLibrary) addLibraryHideButtons();
             };
-            setTimeout(rescan, DETAIL_RESCAN_DELAY_MS);
-            setTimeout(rescan, DETAIL_FINAL_RESCAN_DELAY_MS);
+            const scheduleRescan = (delay: number): void => {
+                const handle = window.setTimeout(() => {
+                    detailRescanHandles.delete(handle);
+                    rescan();
+                }, delay);
+                detailRescanHandles.add(handle);
+            };
+            scheduleRescan(DETAIL_RESCAN_DELAY_MS);
+            scheduleRescan(DETAIL_FINAL_RESCAN_DELAY_MS);
         }
     });
 
     // Lightweight observer for card/list containers
     // Priority 10: hidden-content must run before other subscribers (tags, bookmarks, etc.)
     // so it can filter/hide cards before other modules waste time processing them
-    onBodyMutation('hidden-content', (mutations) => {
+    bodyMutationHandle = onBodyMutation('hidden-content', (mutations) => {
+        if (!isFilterFenceCurrent(setupFence)) return;
         const settings = getSettings();
         if (!settings.enabled) return;
         const shouldFilter = getHiddenCount() > 0;

@@ -6,15 +6,10 @@
 // (Converted from js/enhanced/pausescreen.js — bodies semantically identical.)
 
 import { JC } from '../globals';
-import type { BodySubscriberHandle } from '../types/jc';
+import type { BodySubscriberHandle, IdentityContext } from '../types/jc';
 import { onBodyMutation } from '../core/dom-observer';
 
 JC.initializePauseScreen = function() {
-  // Only run if the feature is enabled in the user's settings
-  if (!JC.currentSettings?.pauseScreenEnabled) {
-      console.log('🪼 Jellyfin Canopy: Custom Pause Screen is disabled.');
-      return;
-  }
   // Singleton: a prior instance (Stage-6 re-invokes this on config hot-reload /
   // account switch) must be torn down before constructing a new one, or its
   // overlay/style/document listeners stack. The boot below now retains the
@@ -25,6 +20,12 @@ JC.initializePauseScreen = function() {
       try { prevInstance.destroy(); }
       catch (e) { console.warn('🪼 Jellyfin Canopy: pause-screen destroy failed', e); }
       JC._pauseScreenInstance = undefined;
+  }
+  // Tear down A before evaluating B's gate. Otherwise A-enabled → B-disabled
+  // leaves A's overlay/listeners/token-bearing instance alive indefinitely.
+  if (!JC.currentSettings?.pauseScreenEnabled) {
+      console.log('🪼 Jellyfin Canopy: Custom Pause Screen is disabled.');
+      return;
   }
     class JellyfinPauseScreen {
       // State
@@ -39,6 +40,7 @@ JC.initializePauseScreen = function() {
       itemCache = new Map<string, { item: any; domain: string }>();
       fetchAbort: AbortController | null = null;
       observer: BodySubscriberHandle | null = null;
+      identityContext: IdentityContext | null = null;
       prevFocused: Element | null = null;
 
       // Pause screen delay state
@@ -75,6 +77,7 @@ JC.initializePauseScreen = function() {
         this.itemCache = new Map();
         this.fetchAbort = null;
         this.observer = null;
+        this.identityContext = JC.identity.capture();
         this.prevFocused = null;
 
         // Pause screen delay state
@@ -117,13 +120,16 @@ JC.initializePauseScreen = function() {
         this.setupInteractionListeners();
       }
 
+      isIdentityCurrent(): boolean {
+        return JC.identity.isCurrent(this.identityContext);
+      }
+
       getCredentials(): { token: string; userId: string } | null {
-        const creds = localStorage.getItem("jellyfin_credentials");
-        if (!creds) return null;
         try {
-          const parsed = JSON.parse(creds);
-          const server = parsed.Servers?.[0];
-          return server ? { token: server.AccessToken, userId: server.UserId } : null;
+          const context = this.identityContext;
+          if (!context || !JC.identity.isCurrent(context)) return null;
+          const token = ApiClient.accessToken?.();
+          return token ? { token, userId: context.userId } : null;
         } catch {
           return null;
         }
@@ -633,6 +639,7 @@ JC.initializePauseScreen = function() {
       }
 
       async handleVideoChange(video: HTMLVideoElement) {
+        if (!this.isIdentityCurrent()) return;
         this.clearState();
         this.currentVideo = video;
         this.cleanupListeners = this.attachVideoListeners(video);
@@ -651,6 +658,7 @@ JC.initializePauseScreen = function() {
         if (itemId) {
           this.currentItemId = itemId;
           await this.fetchItemInfo(itemId);
+          if (!this.isIdentityCurrent()) return;
         }
       }
 
@@ -748,6 +756,7 @@ JC.initializePauseScreen = function() {
       }
 
       async fetchItemInfo(itemId: string) {
+        if (!this.isIdentityCurrent()) return;
           this.clearDisplayData();
           this.fetchAbort?.abort();
           this.fetchAbort = new AbortController();
@@ -759,6 +768,7 @@ JC.initializePauseScreen = function() {
                   headers: { "Authorization": 'MediaBrowser Token="' + this.token + '"', "Accept": "application/json" },
                   signal: this.fetchAbort.signal
               });
+              if (!this.isIdentityCurrent()) return;
               record = { item: itemResp, domain: (ApiClient as any).serverAddress() };
               this.itemCache.set(itemId, record);
               }
@@ -774,10 +784,13 @@ JC.initializePauseScreen = function() {
       async fetchWithRetry(url: string, options: RequestInit, maxRetries = 2): Promise<any> {
         for (let i = 0; i <= maxRetries; i++) {
           try {
+            if (!this.isIdentityCurrent()) throw new DOMException('Identity changed', 'AbortError');
             const response = await fetch(url, options);
+            if (!this.isIdentityCurrent()) throw new DOMException('Identity changed', 'AbortError');
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return await response.json();
           } catch (error) {
+            if ((error as Error)?.name === 'AbortError') throw error;
             if (i === maxRetries) throw error;
             await new Promise(r => setTimeout(r, 1000 * (i + 1)));
           }
@@ -785,6 +798,7 @@ JC.initializePauseScreen = function() {
       }
 
       async displayItemInfo(item: any, domain: string, itemId: string) {
+        if (!this.isIdentityCurrent()) return;
         // Details
         const year = item.ProductionYear || "";
         const rating = item.OfficialRating || "";
@@ -807,6 +821,7 @@ JC.initializePauseScreen = function() {
           this.firstAvailableBlobURL(discUrls),
           this.firstAvailableBlobURL(backdropUrls)
         ]);
+        if (!this.isIdentityCurrent()) return;
 
         if (logoURL) this.overlayLogo.src = logoURL;
         if (discURL) this.overlayDisc.src = discURL;
@@ -870,6 +885,7 @@ JC.initializePauseScreen = function() {
       // ------- Image helpers (blob cache) -------
       async firstAvailableBlobURL(urls: string[]): Promise<string | null> {
         for (const url of urls) {
+          if (!this.isIdentityCurrent()) return null;
           if (!url) continue;
           const ok = await this.probeImage(url);
           if (!ok) continue;
@@ -879,6 +895,7 @@ JC.initializePauseScreen = function() {
         return null;
       }
       async probeImage(url: string, timeoutMs = 2500): Promise<boolean> {
+        if (!this.isIdentityCurrent()) return false;
         if (this.imgProbeCache.has(url)) return this.imgProbeCache.get(url)!;
         try {
           const ctl = new AbortController();
@@ -889,6 +906,7 @@ JC.initializePauseScreen = function() {
             signal: ctl.signal
           });
           clearTimeout(t);
+          if (!this.isIdentityCurrent()) return false;
           const ok = res.ok;
           this.imgProbeCache.set(url, ok);
           return ok;
@@ -898,6 +916,7 @@ JC.initializePauseScreen = function() {
         }
       }
       async toBlobURL(url: string, timeoutMs = 5000): Promise<string | null> {
+        if (!this.isIdentityCurrent()) return null;
         if (this.imgBlobCache.has(url)) return this.imgBlobCache.get(url)!;
         try {
           const ctl = new AbortController();
@@ -907,8 +926,9 @@ JC.initializePauseScreen = function() {
             signal: ctl.signal
           });
           clearTimeout(t);
-          if (!res.ok) return null;
+          if (!res.ok || !this.isIdentityCurrent()) return null;
           const blob = await res.blob();
+          if (!this.isIdentityCurrent()) return null;
           const obj = URL.createObjectURL(blob);
           this.imgBlobCache.set(url, obj);
           return obj;
@@ -986,3 +1006,15 @@ JC.initializePauseScreen = function() {
     JC._pauseScreenInstance = new JellyfinPauseScreen();
       console.log('🪼 Jellyfin Canopy: Custom Pause Screen initialized.');
   };
+
+JC.identity.registerReset('pause-screen', () => {
+  const instance = JC._pauseScreenInstance;
+  if (instance) {
+    try { instance.destroy(); } catch { /* complete the shared reset */ }
+    JC._pauseScreenInstance = undefined;
+  }
+  if (JC.state?.pauseScreenClickTimer != null) {
+    clearTimeout(JC.state.pauseScreenClickTimer);
+    JC.state.pauseScreenClickTimer = null;
+  }
+});

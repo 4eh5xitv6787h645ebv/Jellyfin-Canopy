@@ -9,6 +9,7 @@
 
 import { JC } from '../../globals';
 import { normalizeId, pendingKey } from './ids';
+import type { IdentityContext } from '../../types/jc';
 
 const logPrefix = '🪼 Jellyfin Canopy [SpoilerGuard]:';
 
@@ -83,9 +84,36 @@ let userPrefs: SpoilerUserPrefs = {};
 let loaded = false;
 let loadOk = false;
 let statePromise: Promise<void> | null = null;
+let stateGeneration = 0;
+
+function staleIdentityError(): Error {
+    return new Error('Spoiler Guard operation belongs to a stale identity');
+}
+
+function ownsCurrentState(context: IdentityContext, generation: number): boolean {
+    return generation === stateGeneration && JC.identity.isCurrent(context);
+}
+
+/** Run one request under the current state generation and reject stale results. */
+function runOwned<T>(request: (context: IdentityContext) => Promise<T>): Promise<T> {
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return Promise.reject(staleIdentityError());
+    const generation = stateGeneration;
+    let pending: Promise<T>;
+    try {
+        pending = request(context);
+    } catch (error) {
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    return pending.then((value) => {
+        if (!ownsCurrentState(context, generation)) throw staleIdentityError();
+        return value;
+    });
+}
 
 /** Reset all in-memory state (used on re-init / account switch). */
 export function resetState(): void {
+    stateGeneration++;
     caches.series.clear();
     caches.movies.clear();
     caches.collections.clear();
@@ -100,8 +128,13 @@ export function resetState(): void {
 
 /** Fetch the user's guarded-id lists + override prefs from the server. */
 export function loadState(): Promise<void> {
+    if (statePromise) return statePromise;
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return Promise.resolve();
+    const generation = stateGeneration;
     statePromise = JC.core.api!.plugin('/spoiler-blur/series')
         .then((data: unknown) => {
+            if (!ownsCurrentState(context, generation)) return;
             const d = (data ?? {}) as {
                 Series?: Record<string, unknown>;
                 Movies?: Record<string, unknown>;
@@ -128,6 +161,7 @@ export function loadState(): Promise<void> {
             loadOk = true;
         })
         .catch((err: unknown) => {
+            if (!ownsCurrentState(context, generation)) return;
             // Mark `loaded` so whenLoaded() unblocks, but DON'T set loadOk:
             // the cache is unreliable, so save/strip callers fail-closed.
             console.error(`${logPrefix} Failed to load spoiler-blur state; downstream consumers will fail-closed:`, err);
@@ -197,7 +231,7 @@ export function fetchMovieScope(movieId: string): Promise<MovieScopeResult | nul
     if (!n) return Promise.resolve(null);
     const hit = scopeCache.get(n);
     if (hit && Date.now() - hit.ts < SCOPE_TTL_MS) return Promise.resolve(hit.value);
-    return JC.core.api!.plugin(`/spoiler-blur/scope/movie/${encodeURIComponent(n)}`)
+    return runOwned(() => JC.core.api!.plugin(`/spoiler-blur/scope/movie/${encodeURIComponent(n)}`))
         .then((resp: unknown) => {
             const r = (resp ?? {}) as Partial<MovieScopeResult>;
             const value: MovieScopeResult = { inScope: r.inScope === true, played: r.played === true };
@@ -214,30 +248,30 @@ export function fetchMovieScope(movieId: string): Promise<MovieScopeResult | nul
 
 export function enableForSeries(seriesId: string): Promise<void> {
     const n = normalizeId(seriesId);
-    return JC.core.api!.plugin(`/spoiler-blur/series/${encodeURIComponent(n)}`, { method: 'POST' })
+    return runOwned(() => JC.core.api!.plugin(`/spoiler-blur/series/${encodeURIComponent(n)}`, { method: 'POST' }))
         .then(() => { caches.series.add(n); });
 }
 export function disableForSeries(seriesId: string): Promise<void> {
     const n = normalizeId(seriesId);
-    return JC.core.api!.plugin(`/spoiler-blur/series/${encodeURIComponent(n)}`, { method: 'DELETE' })
+    return runOwned(() => JC.core.api!.plugin(`/spoiler-blur/series/${encodeURIComponent(n)}`, { method: 'DELETE' }))
         .then(() => { caches.series.delete(n); });
 }
 export function enableForMovie(movieId: string, movieName?: string): Promise<void> {
     const n = normalizeId(movieId);
-    return JC.core.api!.plugin(`/spoiler-blur/movies/${encodeURIComponent(n)}`, {
-        method: 'POST', body: { MovieName: movieName || '' },
-    }).then(() => { caches.movies.add(n); });
+    return runOwned((context) => JC.core.api!.plugin(`/spoiler-blur/movies/${encodeURIComponent(n)}`, {
+        method: 'POST', body: JC.identity.own({ MovieName: movieName || '' }, context),
+    })).then(() => { caches.movies.add(n); });
 }
 export function disableForMovie(movieId: string): Promise<void> {
     const n = normalizeId(movieId);
-    return JC.core.api!.plugin(`/spoiler-blur/movies/${encodeURIComponent(n)}`, { method: 'DELETE' })
+    return runOwned(() => JC.core.api!.plugin(`/spoiler-blur/movies/${encodeURIComponent(n)}`, { method: 'DELETE' }))
         .then(() => { caches.movies.delete(n); });
 }
 export function enableForCollection(collectionId: string, collectionName?: string): Promise<void> {
     const n = normalizeId(collectionId);
-    return JC.core.api!.plugin(`/spoiler-blur/collections/${encodeURIComponent(n)}`, {
-        method: 'POST', body: { CollectionName: collectionName || '' },
-    }).then(() => {
+    return runOwned((context) => JC.core.api!.plugin(`/spoiler-blur/collections/${encodeURIComponent(n)}`, {
+        method: 'POST', body: JC.identity.own({ CollectionName: collectionName || '' }, context),
+    })).then(() => {
         caches.collections.add(n);
         // Collection membership changes movie scope — cached scope answers
         // (keyed by movie id only) are now stale, so drop them all.
@@ -246,7 +280,7 @@ export function enableForCollection(collectionId: string, collectionName?: strin
 }
 export function disableForCollection(collectionId: string): Promise<void> {
     const n = normalizeId(collectionId);
-    return JC.core.api!.plugin(`/spoiler-blur/collections/${encodeURIComponent(n)}`, { method: 'DELETE' })
+    return runOwned(() => JC.core.api!.plugin(`/spoiler-blur/collections/${encodeURIComponent(n)}`, { method: 'DELETE' }))
         .then(() => {
             caches.collections.delete(n);
             scopeCache.clear();
@@ -311,7 +345,7 @@ export function enableForTmdb(mediaType: string, tmdbId: string, displayName?: s
     const i = String(tmdbId || '').trim();
     if (!i || (t !== 'tv' && t !== 'movie')) return Promise.reject(new Error('invalid mediaType/tmdbId'));
     const query = displayName ? `?displayName=${encodeURIComponent(displayName)}` : '';
-    return JC.core.api!.plugin(`/spoiler-blur/pending/${t}/${encodeURIComponent(i)}${query}`, { method: 'POST' })
+    return runOwned(() => JC.core.api!.plugin(`/spoiler-blur/pending/${t}/${encodeURIComponent(i)}${query}`, { method: 'POST' }))
         .then((resp: unknown) => {
             const r = (resp ?? {}) as PromoteResponse;
             applyPromoteResponse(caches, pendingKey(t, i), r);
@@ -323,7 +357,7 @@ export function disableForTmdb(mediaType: string, tmdbId: string): Promise<Remov
     const t = String(mediaType || '').toLowerCase();
     const i = String(tmdbId || '').trim();
     if (!i || (t !== 'tv' && t !== 'movie')) return Promise.reject(new Error('invalid mediaType/tmdbId'));
-    return JC.core.api!.plugin(`/spoiler-blur/pending/${t}/${encodeURIComponent(i)}`, { method: 'DELETE' })
+    return runOwned(() => JC.core.api!.plugin(`/spoiler-blur/pending/${t}/${encodeURIComponent(i)}`, { method: 'DELETE' }))
         .then((resp: unknown) => {
             const r = (resp ?? {}) as RemoveResponse;
             applyRemoveResponse(caches, pendingKey(t, i), r);
@@ -344,10 +378,10 @@ export function getUserPrefs(): SpoilerUserPrefs {
  * server (inherit admin). Returns the saved prefs on success.
  */
 export function setUserPrefs(next: SpoilerUserPrefs): Promise<SpoilerUserPrefs> {
-    const payload = next || {};
-    return JC.core.api!.plugin('/spoiler-blur/user-prefs', {
-        method: 'POST', body: payload, skipRetry: true,
-    }).then((res: unknown) => {
+    const payload = { ...(next || {}) };
+    return runOwned((context) => JC.core.api!.plugin('/spoiler-blur/user-prefs', {
+        method: 'POST', body: JC.identity.own(payload, context), skipRetry: true,
+    })).then((res: unknown) => {
         userPrefs = { ...payload };
         const r = res as { prefs?: SpoilerUserPrefs } | undefined;
         return r?.prefs ?? userPrefs;
@@ -362,3 +396,5 @@ export function hasAnyState(): boolean {
     return caches.series.size > 0 || caches.movies.size > 0 || caches.collections.size > 0
         || caches.pendingTmdb.size > 0;
 }
+
+JC.identity.registerReset('spoiler-state', resetState);

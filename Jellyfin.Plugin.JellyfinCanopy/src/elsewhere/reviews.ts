@@ -2,8 +2,8 @@
 
 import { JC as JEBase } from '../globals';
 import { ensureMaterialSymbolsFont } from '../core/ui-kit';
-import { decideReviewSuppression } from '../enhanced/spoiler-guard/suppression';
-import type { ApiApi, JELegacyHelpers, UserSettings } from '../types/jc';
+import { decideReviewSuppression, type SuppressionItem } from '../enhanced/spoiler-guard/suppression';
+import type { ApiApi, IdentityContext, JELegacyHelpers, UserSettings } from '../types/jc';
 
 /**
  * Local view of the shared namespace adding the public member this module
@@ -30,6 +30,50 @@ type ReviewsJE = typeof JEBase & {
 
 const JC = JEBase as ReviewsJE;
 
+interface ReviewItem extends SuppressionItem {
+    ProviderIds?: { Tmdb?: string | number };
+    SeriesProviderIds?: { Tmdb?: string | number };
+    IndexNumber?: number;
+    ParentIndexNumber?: number;
+}
+
+interface ReviewViewer {
+    Id?: string;
+    Policy?: { IsAdministrator?: boolean };
+}
+
+interface TmdbReview {
+    content: string;
+    author?: string;
+    created_at?: string;
+    author_details?: { rating?: number };
+}
+
+interface UserReview {
+    userId: string;
+    userName?: string;
+    content?: string;
+    rating?: number | null;
+    createdAt?: string;
+    updatedAt?: string;
+}
+
+function isTmdbReview(value: unknown): value is TmdbReview {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+        && 'content' in value && typeof value.content === 'string';
+}
+
+function isUserReview(value: unknown): value is UserReview {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+        && 'userId' in value && typeof value.userId === 'string';
+}
+
+function asReviewViewer(value: unknown): ReviewViewer | null {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? value
+        : null;
+}
+
 /** Dashboard global exposed by jellyfin-web (not typed in src/types/global.d.ts). */
 interface DashboardLike {
     confirm?: (text: string, title: string | undefined, callback: (confirmed: boolean) => void) => void;
@@ -48,13 +92,52 @@ export function resolveReviewByCard<T>(reviews: readonly T[], card: HTMLElement)
     return Number.isInteger(index) ? reviews[index] : undefined;
 }
 
+let reviewsGeneration = 0;
+let reviewsUnregister: (() => void) | null = null;
+const reviewsTimers = new Map<ReturnType<typeof setTimeout>, () => void>();
+
+function resetReviews(): void {
+    reviewsGeneration++;
+    reviewsUnregister?.();
+    reviewsUnregister = null;
+    for (const [timer, resolve] of reviewsTimers) {
+        clearTimeout(timer);
+        resolve();
+    }
+    reviewsTimers.clear();
+    document.querySelectorAll('.tmdb-reviews-section, .jc-review-form, .jc-review-form-placeholder, .jc-avg-user-rating-chip')
+        .forEach((node) => node.remove());
+}
+
+function reviewsActive(context: IdentityContext, expectedGeneration: number): boolean {
+    return reviewsGeneration === expectedGeneration && JC.identity.isCurrent(context);
+}
+
+function reviewsDelay(delay: number): Promise<void> {
+    return new Promise((resolve) => {
+        const finish = (): void => {
+            reviewsTimers.delete(timer);
+            resolve();
+        };
+        const timer = setTimeout(finish, delay);
+        reviewsTimers.set(timer, finish);
+    });
+}
+
 JC.initializeReviewsScript = function () {
+    resetReviews();
     const tmdbReviewsEnabled = JC.pluginConfig.ShowReviews && JC.pluginConfig.TmdbEnabled;
     const userReviewsEnabled = JC.pluginConfig.ShowUserReviews;
     if (!tmdbReviewsEnabled && !userReviewsEnabled) {
         console.log('🪼 Jellyfin Canopy: Reviews feature disabled.');
         return;
     }
+
+    const capturedIdentity = JC.identity.capture();
+    if (!capturedIdentity) return;
+    const identityContext: IdentityContext = capturedIdentity;
+    const expectedGeneration = reviewsGeneration;
+    const client = ApiClient;
 
     const logPrefix = '🪼 Jellyfin Canopy: Reviews:';
 
@@ -124,12 +207,16 @@ JC.initializeReviewsScript = function () {
         }
     }
 
-    function fetchReviews(tmdbId: string, mediaType: string): Promise<any[] | null> {
+    function fetchReviews(tmdbId: string, mediaType: string): Promise<TmdbReview[] | null> {
         const apiMediaType = mediaType === 'Series' ? 'tv' : 'movie';
         const url = `${ApiClient.getUrl(`/JellyfinCanopy/tmdb/${apiMediaType}/${tmdbId}/reviews`)}?language=en-US&page=1`;
         return JC.core.api.fetch(url)
-            .then((data: any) => data.results || [])
+            .then((data) => data !== null && typeof data === 'object' && !Array.isArray(data)
+                && 'results' in data && Array.isArray(data.results)
+                ? data.results.filter(isTmdbReview)
+                : [])
             .catch((error: unknown) => {
+                if (!reviewsActive(identityContext, expectedGeneration)) return null;
                 console.error(`${logPrefix} Failed to fetch reviews.`, error);
                 return null;
             });
@@ -138,11 +225,15 @@ JC.initializeReviewsScript = function () {
     /**
      * Fetches all user-written reviews for a TMDB item (aggregated across all users).
      */
-    function fetchUserReviews(tmdbId: string, mediaType: string): Promise<any[]> {
+    function fetchUserReviews(tmdbId: string, mediaType: string): Promise<UserReview[]> {
         // mediaType is already in API format ('movie' or 'tv') — no conversion needed
         return JC.core.api.plugin(`/reviews/${mediaType}/${tmdbId}`)
-            .then((data: any) => data.reviews || [])
+            .then((data) => data !== null && typeof data === 'object' && !Array.isArray(data)
+                && 'reviews' in data && Array.isArray(data.reviews)
+                ? data.reviews.filter(isUserReview)
+                : [])
             .catch((err: unknown) => {
+                if (!reviewsActive(identityContext, expectedGeneration)) return [];
                 console.error(`${logPrefix} Failed to fetch user reviews.`, err);
                 return [];
             });
@@ -397,7 +488,7 @@ JC.initializeReviewsScript = function () {
         return processed.join('');
     }
 
-    function createReviewElement(review: any, index: number): HTMLElement {
+    function createReviewElement(review: TmdbReview, index: number): HTMLElement {
         const REVIEW_PREVIEW_LENGTH = 350;
         const reviewCard = document.createElement('div');
         reviewCard.className = 'tmdb-review-card';
@@ -458,11 +549,11 @@ JC.initializeReviewsScript = function () {
      * when the viewer is an admin (for moderation).
      */
     function createUserReviewElement(
-        review: any,
+        review: UserReview,
         currentUserId: string,
         viewerIsAdmin: boolean,
-        onEditCallback: (review: any) => void,
-        onDeleteCallback: (review: any) => void | Promise<void>
+        onEditCallback: (review: UserReview) => void,
+        onDeleteCallback: (review: UserReview) => void | Promise<void>
     ): HTMLElement {
         const REVIEW_PREVIEW_LENGTH = 350;
         const reviewCard = document.createElement('div');
@@ -552,7 +643,7 @@ JC.initializeReviewsScript = function () {
      * @param onCancel - Called when the user cancels.
      */
     function createReviewForm(
-        existingReview: any,
+        existingReview: UserReview | null,
         onSave: (content: string, rating: number | null) => Promise<void>,
         onCancel: () => void
     ): HTMLElement {
@@ -610,6 +701,7 @@ JC.initializeReviewsScript = function () {
 
         // eslint-disable-next-line @typescript-eslint/no-misused-promises -- async click handler, matches the pre-conversion behavior
         submitBtn.addEventListener('click', async () => {
+            if (!reviewsActive(identityContext, expectedGeneration)) return;
             const content = textarea.value.trim();
             if (!content && !currentRating) {
                 errorEl.textContent = JC.t('reviews_form_error_empty');
@@ -621,6 +713,7 @@ JC.initializeReviewsScript = function () {
             try {
                 await onSave(content, currentRating || null);
             } catch (err) {
+                if (!reviewsActive(identityContext, expectedGeneration)) return;
                 errorEl.textContent = JC.t('reviews_form_error_save');
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = '<span class="material-icons" aria-hidden="true">save</span>';
@@ -632,7 +725,8 @@ JC.initializeReviewsScript = function () {
         return form;
     }
 
-    function addReviewsToPage(reviews: any[] | null, userReviews: any[], contextPage: Element, tmdbId: string, tmdbMediaType: string, currentUser: any): void {
+    function addReviewsToPage(reviews: TmdbReview[] | null, userReviews: UserReview[], contextPage: Element, tmdbId: string, tmdbMediaType: string, currentUser: ReviewViewer | null): void {
+        if (!reviewsActive(identityContext, expectedGeneration) || !contextPage.isConnected) return;
         const existingSection = contextPage.querySelector('.tmdb-reviews-section');
         if (existingSection) {
             existingSection.remove();
@@ -640,7 +734,10 @@ JC.initializeReviewsScript = function () {
 
         // Inject average user rating chip next to the TMDB/RT rating chips
         if (userReviewsEnabled && userReviews.length > 0) {
-            const ratingsWithValue = userReviews.filter(r => r.rating);
+            const ratingsWithValue = userReviews.filter(
+                (review): review is UserReview & { rating: number } =>
+                    typeof review.rating === 'number' && review.rating !== 0
+            );
             if (ratingsWithValue.length > 0) {
                 const avg = ratingsWithValue.reduce((sum, r) => sum + r.rating, 0) / ratingsWithValue.length;
                 const raw = avg * 2; // convert 1-5 → raw out of 10
@@ -681,7 +778,7 @@ JC.initializeReviewsScript = function () {
         //      would see phantom admin controls, while the backend still
         //      blocks the actual delete with 403).
         // Using the live ApiClient session fixes both.
-        const currentUserId: string = (currentUser?.Id) || ApiClient.getCurrentUserId() || '';
+        const currentUserId: string = (currentUser?.Id) || identityContext.userId;
         const viewerIsAdmin = currentUser?.Policy?.IsAdministrator === true;
         const ownReview = userReviews.find(r => r.userId.replace(/-/g, '') === currentUserId.replace(/-/g, ''));
         let reviewsSection: HTMLDetailsElement;
@@ -732,6 +829,7 @@ JC.initializeReviewsScript = function () {
                     // Delete callback — routes to self-delete for own reviews,
                     // admin moderation delete for others (admin viewers only).
                     async (r) => {
+                        if (!reviewsActive(identityContext, expectedGeneration)) return;
                         const isOwn = r.userId.replace(/-/g, '') === currentUserId.replace(/-/g, '');
                         const userName = r.userName || 'user';
                         const title = isOwn
@@ -744,14 +842,17 @@ JC.initializeReviewsScript = function () {
                                 'Delete this review by {user}? This cannot be undone.',
                                 { user: userName });
                         if (!(await jcConfirm(body, title))) return;
+                        if (!reviewsActive(identityContext, expectedGeneration)) return;
                         try {
                             if (isOwn) {
                                 await deleteUserReview(tmdbId, tmdbMediaType);
                             } else {
                                 await adminDeleteUserReview(r.userId, tmdbId, tmdbMediaType);
                             }
+                            if (!reviewsActive(identityContext, expectedGeneration)) return;
                             void refreshReviews(contextPage);
                         } catch (e: any) {
+                            if (!reviewsActive(identityContext, expectedGeneration)) return;
                             // Surface the failure to the admin instead of
                             // silently failing: without this, a 403/404/500
                             // on the delete call would leave the review on
@@ -786,12 +887,14 @@ JC.initializeReviewsScript = function () {
             reviewsSection.appendChild(swipeContainer);
 
             // ── Form open/close helpers ──────────────────────────────────────
-            function openForm(existingReview: any): void {
+            function openForm(existingReview: UserReview | null): void {
+                if (!reviewsActive(identityContext, expectedGeneration)) return;
                 formPlaceholder.innerHTML = '';
                 const form = createReviewForm(
                     existingReview || null,
                     async (content, rating) => {
                         await saveUserReview(tmdbId, tmdbMediaType, content, rating);
+                        if (!reviewsActive(identityContext, expectedGeneration)) return;
                         void refreshReviews(contextPage);
                     },
                     () => { formPlaceholder.innerHTML = ''; }
@@ -804,6 +907,7 @@ JC.initializeReviewsScript = function () {
 
             if (writeBtn) {
                 writeBtn.addEventListener('click', () => {
+                    if (!reviewsActive(identityContext, expectedGeneration)) return;
                     if (formPlaceholder.querySelector('.jc-review-form')) {
                         formPlaceholder.innerHTML = '';
                     } else {
@@ -814,6 +918,7 @@ JC.initializeReviewsScript = function () {
 
             // ── Read-more toggle for TMDB reviews ─────────────────────────────
             swipeContainer.addEventListener('click', function (e) {
+                if (!reviewsActive(identityContext, expectedGeneration)) return;
                 const target = e.target as HTMLElement;
                 if (target.classList.contains('tmdb-review-toggle')) {
                     const textElement = target.parentElement!;
@@ -841,6 +946,7 @@ JC.initializeReviewsScript = function () {
 
             // Persist user's expand/collapse choice for future pages
             reviewsSection.addEventListener('toggle', function () {
+                if (!reviewsActive(identityContext, expectedGeneration)) return;
                 try {
                     if (!window.JellyfinCanopy) return;
                     const JC = window.JellyfinCanopy as ReviewsJE;
@@ -871,17 +977,20 @@ JC.initializeReviewsScript = function () {
      * Re-fetches and re-renders the review section for the current page.
      */
     async function refreshReviews(contextPage: Element): Promise<void> {
+        if (!reviewsActive(identityContext, expectedGeneration)) return;
         try {
             const itemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
-            const userId = ApiClient.getCurrentUserId();
+            const userId = client.getCurrentUserId();
             if (!itemId || !userId) return;
 
             const item = (JC.helpers?.getItemCached
                 ? await JC.helpers.getItemCached(itemId, { userId })
-                : await ApiClient.getItem(userId, itemId)) as any;
+                : await client.getItem(userId, itemId)) as ReviewItem | null;
+            if (!reviewsActive(identityContext, expectedGeneration)) return;
             const mediaType = item?.Type;
 
             if (await shouldSuppressForSpoilerMode(item, mediaType)) {
+                if (!reviewsActive(identityContext, expectedGeneration)) return;
                 removeReviewsSection(contextPage);
                 return;
             }
@@ -903,7 +1012,8 @@ JC.initializeReviewsScript = function () {
                     let seriesTmdbId = item?.SeriesProviderIds?.Tmdb;
                     if (!seriesTmdbId && item?.SeriesId) {
                         try {
-                            const series = await ApiClient.getItem(userId, item.SeriesId) as any;
+                            const series = await client.getItem(userId, item.SeriesId) as ReviewItem | null;
+                            if (!reviewsActive(identityContext, expectedGeneration)) return;
                             seriesTmdbId = series?.ProviderIds?.Tmdb;
                         } catch (_) {}
                     }
@@ -914,7 +1024,8 @@ JC.initializeReviewsScript = function () {
                     let seriesTmdbId = item?.SeriesProviderIds?.Tmdb;
                     if (!seriesTmdbId && item?.SeriesId) {
                         try {
-                            const series = await ApiClient.getItem(userId, item.SeriesId) as any;
+                            const series = await client.getItem(userId, item.SeriesId) as ReviewItem | null;
+                            if (!reviewsActive(identityContext, expectedGeneration)) return;
                             seriesTmdbId = series?.ProviderIds?.Tmdb;
                         } catch (_) {}
                     }
@@ -932,8 +1043,10 @@ JC.initializeReviewsScript = function () {
                     ? fetchReviews(tmdbKey.split(':')[0], mediaType)
                     : Promise.resolve(null),
                 userReviewsEnabled ? fetchUserReviews(tmdbKey, apiMediaType) : Promise.resolve([]),
-                ApiClient.getCurrentUser().catch(() => null),
+                client.getCurrentUser().then(asReviewViewer).catch(() => null),
             ]);
+
+            if (!reviewsActive(identityContext, expectedGeneration)) return;
 
             const page = document.querySelector('#itemDetailPage:not(.hide)') || contextPage;
             addReviewsToPage(tmdbReviews, userReviews, page, tmdbKey, apiMediaType, currentUser);
@@ -943,6 +1056,7 @@ JC.initializeReviewsScript = function () {
                 JC.invalidateUserReviewTagCache(tmdbKey);
             }
         } catch (err) {
+            if (!reviewsActive(identityContext, expectedGeneration)) return;
             console.error(`${logPrefix} Failed to refresh reviews:`, err);
         }
     }
@@ -1143,21 +1257,25 @@ JC.initializeReviewsScript = function () {
     }
 
     async function processPage(visiblePage: Element): Promise<void> {
-        if (!visiblePage || visiblePage.querySelector('.tmdb-reviews-section')) {
+        if (!reviewsActive(identityContext, expectedGeneration)
+            || !visiblePage?.isConnected
+            || visiblePage.querySelector('.tmdb-reviews-section')) {
             return;
         }
 
         try {
             const itemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
-            const userId = ApiClient.getCurrentUserId();
+            const userId = client.getCurrentUserId();
 
             if (itemId && userId) {
                 const item = (JC.helpers?.getItemCached
                     ? await JC.helpers.getItemCached(itemId, { userId })
-                    : await ApiClient.getItem(userId, itemId)) as any;
+                    : await client.getItem(userId, itemId)) as ReviewItem | null;
+                if (!reviewsActive(identityContext, expectedGeneration)) return;
                 const mediaType = item?.Type;
 
                 if (await shouldSuppressForSpoilerMode(item, mediaType)) {
+                    if (!reviewsActive(identityContext, expectedGeneration)) return;
                     removeReviewsSection(visiblePage);
                     return;
                 }
@@ -1180,7 +1298,8 @@ JC.initializeReviewsScript = function () {
                     let seriesTmdbId = item?.SeriesProviderIds?.Tmdb;
                     if (!seriesTmdbId && item?.SeriesId) {
                         try {
-                            const series = await ApiClient.getItem(userId, item.SeriesId) as any;
+                            const series = await client.getItem(userId, item.SeriesId) as ReviewItem | null;
+                            if (!reviewsActive(identityContext, expectedGeneration)) return;
                             seriesTmdbId = series?.ProviderIds?.Tmdb;
                         } catch (_) {}
                     }
@@ -1191,7 +1310,8 @@ JC.initializeReviewsScript = function () {
                     let seriesTmdbId = item?.SeriesProviderIds?.Tmdb;
                     if (!seriesTmdbId && item?.SeriesId) {
                         try {
-                            const series = await ApiClient.getItem(userId, item.SeriesId) as any;
+                            const series = await client.getItem(userId, item.SeriesId) as ReviewItem | null;
+                            if (!reviewsActive(identityContext, expectedGeneration)) return;
                             seriesTmdbId = series?.ProviderIds?.Tmdb;
                         } catch (_) {}
                     }
@@ -1209,12 +1329,14 @@ JC.initializeReviewsScript = function () {
                             ? fetchReviews(tmdbKey.split(':')[0], mediaType)
                             : Promise.resolve(null),
                         userReviewsEnabled ? fetchUserReviews(tmdbKey, apiMediaType) : Promise.resolve([]),
-                        ApiClient.getCurrentUser().catch(() => null),
+                        client.getCurrentUser().then(asReviewViewer).catch(() => null),
                     ]);
+                    if (!reviewsActive(identityContext, expectedGeneration)) return;
                     addReviewsToPage(tmdbReviews, userReviews, visiblePage, tmdbKey, apiMediaType, currentUser);
                 }
             }
         } catch (error) {
+            if (!reviewsActive(identityContext, expectedGeneration)) return;
             console.error(`${logPrefix} Error processing page:`, error);
         }
     }
@@ -1223,6 +1345,7 @@ JC.initializeReviewsScript = function () {
 
     // Use Emby.Page.onViewShow hook for reliable page navigation detection
     const unregister = JC.helpers.onViewPage(async (view, element, hash) => {
+        if (!reviewsActive(identityContext, expectedGeneration)) return;
         // Check if feature is still enabled
         if (!JC?.pluginConfig?.ShowReviews && !JC?.pluginConfig?.ShowUserReviews) {
             unregister();
@@ -1261,7 +1384,8 @@ JC.initializeReviewsScript = function () {
             let remainingVisibleMs = 120_000;
             let delay = 150;
             while (!visiblePage) {
-                await new Promise(resolve => setTimeout(resolve, delay));
+                await reviewsDelay(delay);
+                if (!reviewsActive(identityContext, expectedGeneration)) return;
                 if (window.location.hash !== currentHash) return; // navigated away
                 if (Date.now() >= hardDeadline) break;
                 if (document.visibilityState !== 'hidden') {
@@ -1280,4 +1404,7 @@ JC.initializeReviewsScript = function () {
         fetchItem: false,
         immediate: true // Process current page immediately on load
     });
+    reviewsUnregister = unregister;
 };
+
+JC.identity.registerReset('reviews', resetReviews);

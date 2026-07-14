@@ -74,4 +74,19 @@ describe('notifyIfNewer (one-shot toast)', () => {
         mod2.notifyIfNewer('unknown');
         expect(toast).not.toHaveBeenCalled();
     });
+
+    it('recreates exactly one initial check and interval for B', async () => {
+        const original = JC.identity.capture()!;
+        await loadWith('1.2.3.0');
+
+        const next = JC.identity.transition('server-b', 'user-b', 'live-update-test')!;
+        const afterReset = vi.getTimerCount();
+        await JC.identity.activate(next);
+        const afterActivation = vi.getTimerCount();
+        expect(afterActivation - afterReset).toBe(2);
+
+        await JC.identity.activate(next);
+        expect(vi.getTimerCount()).toBe(afterActivation);
+        JC.identity.transition(original.serverId, original.userId, 'live-update-test-restore');
+    });
 });

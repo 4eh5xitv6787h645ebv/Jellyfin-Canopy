@@ -8,21 +8,52 @@ import { onBodyMutation } from '../core/dom-observer';
 import { register as registerLifecycle } from '../core/lifecycle';
 import { onNavigate, onViewPage } from '../core/navigation';
 import { JC } from './arr-globals';
+import type { IdentityContext } from '../types/jc';
+
+const arrTagLifecycle = registerLifecycle('arr-tag-links');
+let arrTagGeneration = 0;
+let arrTagTimer: ReturnType<typeof setTimeout> | null = null;
+
+function removeArrTagLinks(): void {
+    document.querySelectorAll('.arr-tag-link').forEach((link) => {
+        if (link.previousSibling?.nodeType === Node.TEXT_NODE) link.previousSibling.remove();
+        link.remove();
+    });
+}
+
+function resetArrTagLinks(): void {
+    arrTagGeneration++;
+    if (arrTagTimer) clearTimeout(arrTagTimer);
+    arrTagTimer = null;
+    arrTagLifecycle.teardown();
+    removeArrTagLinks();
+}
+
+function isActive(context: IdentityContext, expectedGeneration: number): boolean {
+    return arrTagGeneration === expectedGeneration && JC.identity.isCurrent(context);
+}
 
 // eslint-disable-next-line @typescript-eslint/require-await -- frozen contract: initializer has always been async (plugin.js Stage 6 may rely on the Promise)
 JC.initializeArrTagLinksScript = async function () {
     const logPrefix = '🪼 Jellyfin Canopy: Arr Tag Links:';
+
+    resetArrTagLinks();
 
     if (!JC?.pluginConfig?.ArrTagsShowAsLinks) {
         console.log(`${logPrefix} Tag links display disabled in plugin settings.`);
         return;
     }
 
+    const capturedIdentity = JC.identity.capture();
+    if (!capturedIdentity) return;
+    const context: IdentityContext = capturedIdentity;
+    const expectedGeneration = arrTagGeneration;
+    const client = ApiClient;
+
     console.log(`${logPrefix} Initializing...`);
 
     let isAddingLinks = false;
     const processedItems = new Set<string>(); // Track items that have been processed
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     function slugifyTagName(name: string): string {
         try {
@@ -42,6 +73,7 @@ JC.initializeArrTagLinksScript = async function () {
     }
 
     async function addTagLinks(itemId: string, externalLinksContainer: Element): Promise<void> {
+        if (!isActive(context, expectedGeneration)) return;
         if (isAddingLinks) {
             return;
         }
@@ -70,7 +102,9 @@ JC.initializeArrTagLinksScript = async function () {
         try {
             const item = (JC.helpers?.getItemCached
                 ? await JC.helpers.getItemCached(itemId)
-                : await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId)) as { Tags?: string[] } | null;
+                : await client.getItem(client.getCurrentUserId(), itemId)) as { Tags?: string[] } | null;
+
+            if (!isActive(context, expectedGeneration) || !externalLinksContainer.isConnected) return;
 
             if (!item?.Tags || item.Tags.length === 0) {
                 // Mark as processed even if no tags - don't keep checking
@@ -120,7 +154,7 @@ JC.initializeArrTagLinksScript = async function () {
                 return;
             }
 
-            const serverId = (ApiClient.serverId as () => string)();
+            const serverId = (client.serverId as () => string)();
 
             relevantTags.forEach(tag => {
                 externalLinksContainer.appendChild(document.createTextNode(' '));
@@ -136,6 +170,7 @@ JC.initializeArrTagLinksScript = async function () {
 
                 link.addEventListener('click', (e) => {
                     e.preventDefault();
+                    if (!isActive(context, expectedGeneration)) return;
                     const url = `list.html?type=tag&tag=${encodeURIComponent(tag)}&serverId=${serverId}`;
                     const dashboard = (window as { Dashboard?: { navigate?: (url: string) => void } }).Dashboard;
                     if (dashboard && typeof dashboard.navigate === 'function') {
@@ -182,6 +217,7 @@ JC.initializeArrTagLinksScript = async function () {
     }
 
     function checkAndAddLinks(): void {
+        if (!isActive(context, expectedGeneration)) return;
         const visiblePage = document.querySelector('#itemDetailPage:not(.hide)');
         if (visiblePage) {
             const externalLinksContainer = visiblePage.querySelector('.itemExternalLinks');
@@ -210,36 +246,50 @@ JC.initializeArrTagLinksScript = async function () {
     // cached #itemDetailPage duplicates coexist (v12-platform.md §3) and
     // getElementById returns the lowest slot — usually an old hidden one —
     // which left this gate permanently dead after two details visits.
-    const lifecycle = registerLifecycle('arr-tag-links');
-    lifecycle.track(onBodyMutation('arr-tag-links', () => {
+    arrTagLifecycle.track(onBodyMutation('arr-tag-links', () => {
+        if (!isActive(context, expectedGeneration)) return;
         if (!JC?.pluginConfig?.ArrTagsShowAsLinks) {
             return;
         }
         if (!isDetailsPageVisible()) return;
 
         // Debounce to avoid excessive processing on rapid DOM changes
-        if (debounceTimer) {
-            clearTimeout(debounceTimer);
+        if (arrTagTimer) {
+            clearTimeout(arrTagTimer);
         }
 
-        debounceTimer = setTimeout(checkAndAddLinks, 100);
+        arrTagTimer = setTimeout(() => {
+            arrTagTimer = null;
+            checkAndAddLinks();
+        }, 100);
     }));
 
     // Also check immediately on navigation — the shared deduplicated
     // pipeline covers hashchange, popstate and pushState transitions the
     // old raw hashchange listener missed — and on viewshow, which covers
     // legacy-layout cached-page re-shows. Lifecycle-tracked for teardown.
-    lifecycle.track(onNavigate(() => {
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(checkAndAddLinks, 200);
+    arrTagLifecycle.track(onNavigate(() => {
+        if (arrTagTimer) clearTimeout(arrTagTimer);
+        arrTagTimer = setTimeout(() => {
+            arrTagTimer = null;
+            checkAndAddLinks();
+        }, 200);
     }));
-    lifecycle.track(onViewPage(() => {
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(checkAndAddLinks, 200);
+    arrTagLifecycle.track(onViewPage(() => {
+        if (arrTagTimer) clearTimeout(arrTagTimer);
+        arrTagTimer = setTimeout(() => {
+            arrTagTimer = null;
+            checkAndAddLinks();
+        }, 200);
     }));
 
     // Run once immediately in case were already on an item detail page
-    setTimeout(checkAndAddLinks, 500);
+    arrTagTimer = setTimeout(() => {
+        arrTagTimer = null;
+        checkAndAddLinks();
+    }, 500);
 
     console.log(`${logPrefix} Initialized successfully`);
 };
+
+JC.identity.registerReset('arr-tag-links', resetArrTagLinks);

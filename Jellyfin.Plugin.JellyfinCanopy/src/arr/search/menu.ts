@@ -16,11 +16,21 @@ import { reportDispatch } from './manage-modal';
 import { openInteractiveSearch } from './interactive-modal';
 import { openManage } from './manage-modal';
 import type { ArrService } from './types';
+import type { IdentityContext } from '../../types/jc';
 
 const SEARCH_ID = 'jc-arr-search';
 const INTERACTIVE_ID = 'jc-arr-interactive';
 const MANAGE_ID = 'jc-arr-manage';
 const ALL_IDS = [SEARCH_ID, INTERACTIVE_ID, MANAGE_ID];
+
+/** Remove action rows stamped for the previous identity (including cached sheets). */
+export function resetSearchItems(): void {
+    if (scheduledFrame !== null) cancelAnimationFrame(scheduledFrame);
+    scheduledFrame = null;
+    for (const id of ALL_IDS) {
+        document.querySelectorAll(`[data-id="${id}"]`).forEach((node) => node.remove());
+    }
+}
 
 // Native per-item action ids present in a card OR a details action sheet (details sets play:false,
 // so we also accept edit/refresh/etc.). Their presence distinguishes a real per-item menu from a
@@ -31,13 +41,17 @@ function isPerItemSheet(scroller: HTMLElement): boolean {
     return PER_ITEM_MARKERS.some((id) => scroller.querySelector(`[data-id="${id}"]`) !== null);
 }
 
-let scheduled = false;
+let scheduledFrame: number | null = null;
 
 /** rAF-coalesced injection request (also used by the body-mutation multiplexer and the capture refine). */
 export function requestInject(): void {
-    if (scheduled) return;
-    scheduled = true;
-    requestAnimationFrame(() => { scheduled = false; injectSearchItems(); });
+    if (scheduledFrame !== null) return;
+    const context = JC.identity.capture();
+    if (!context) return;
+    scheduledFrame = requestAnimationFrame(() => {
+        scheduledFrame = null;
+        if (JC.identity.isCurrent(context)) injectSearchItems();
+    });
 }
 
 function removeExisting(scroller: HTMLElement): void {
@@ -51,6 +65,8 @@ function serviceLabel(service: ArrService): string {
 
 /** Reconciles the Search items on the currently-open action sheet. Idempotent; safe to over-call. */
 export function injectSearchItems(): void {
+    const identityContext = JC.identity.capture();
+    if (!identityContext) return;
     if (!getAdmin() || !searchEnabled()) return;
 
     const scroller = getActiveActionSheetScroller();
@@ -88,20 +104,20 @@ export function injectSearchItems(): void {
     removeExisting(scroller);
 
     const items: HTMLButtonElement[] = [];
-    items.push(makeItem(scroller, ctx.itemId, SEARCH_ID, 'search', JC.t!('arr_search_action_search', { service: serviceLabel(service) }), () => {
+    items.push(makeItem(scroller, identityContext, ctx.itemId, SEARCH_ID, 'search', JC.t!('arr_search_action_search', { service: serviceLabel(service) }), () => {
         closeOpenActionSheet();
-        void runAutoSearch(ctx.itemId);
+        void runAutoSearch(identityContext, ctx.itemId);
     }));
 
     if (supportsInteractive(ctx.type)) {
-        items.push(makeItem(scroller, ctx.itemId, INTERACTIVE_ID, 'travel_explore', JC.t!('arr_search_action_interactive'), () => {
+        items.push(makeItem(scroller, identityContext, ctx.itemId, INTERACTIVE_ID, 'travel_explore', JC.t!('arr_search_action_interactive'), () => {
             closeOpenActionSheet();
             void openInteractiveSearch(ctx.itemId);
         }));
     }
 
     if (manageEnabled()) {
-        items.push(makeItem(scroller, ctx.itemId, MANAGE_ID, 'dns', JC.t!('arr_search_action_manage', { service: serviceLabel(service) }), () => {
+        items.push(makeItem(scroller, identityContext, ctx.itemId, MANAGE_ID, 'dns', JC.t!('arr_search_action_manage', { service: serviceLabel(service) }), () => {
             closeOpenActionSheet();
             void openManage(ctx.itemId);
         }));
@@ -122,22 +138,25 @@ export function injectSearchItems(): void {
     setCaptured(null);
 }
 
-function makeItem(scroller: HTMLElement, itemId: string, dataId: string, icon: string, label: string, onClick: () => void): HTMLButtonElement {
+function makeItem(scroller: HTMLElement, context: IdentityContext, itemId: string, dataId: string, icon: string, label: string, onClick: () => void): HTMLButtonElement {
     const button = buildNativeActionSheetItem(scroller, { dataId, icon, text: label });
     button.dataset.jcItemId = itemId;
     button.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!JC.identity.isCurrent(context)) return;
         onClick();
     });
     return button;
 }
 
-async function runAutoSearch(itemId: string): Promise<void> {
+async function runAutoSearch(context: IdentityContext, itemId: string): Promise<void> {
     try {
         const result = await autoSearch(itemId);
+        if (!JC.identity.isCurrent(context)) return;
         reportDispatch(result.dispatched.length, result.errors.length);
     } catch (e) {
+        if (!JC.identity.isCurrent(context)) return;
         toastError(errorMessage(e));
     }
 }

@@ -22,6 +22,7 @@ import type {
     ApiClientConfig,
     CoreFetchOptions,
     HttpError,
+    IdentityContext,
     RequestManagerApi,
     RequestMetric,
     RetryConfig,
@@ -61,9 +62,20 @@ const responseCache = new Map<string, { data: unknown; timestamp: number }>();
 // AbortController management per page/context
 const activeControllers = new Map<string, AbortController>();
 
+// Every coreFetch owns a controller, even when its caller did not supply one.
+// This makes document-wide navigation / identity resets able to abort all
+// active transport work rather than merely dropping its eventual result.
+const activeRequestControllers = new Set<AbortController>();
+
 // Concurrency control
 let activeCount = 0;
-const pendingQueue: Array<() => void> = [];
+interface ConcurrencyJob {
+    readonly context: IdentityContext | null;
+    start(): void;
+    cancel(error: Error): void;
+}
+const pendingQueue: ConcurrencyJob[] = [];
+const activeJobs = new Set<ConcurrencyJob>();
 
 // Metrics (debug-gated)
 const metrics = {
@@ -71,6 +83,67 @@ const metrics = {
     sections: new Map<string, SectionMetrics>(),
     requests: [] as RequestMetric[]
 };
+
+const IDENTITY_STALE_CODE = 'JC_IDENTITY_STALE';
+
+/**
+ * Abort-shaped identity error. Keeping `name === AbortError` is important:
+ * fetchWithRetry must never replay an A request after B has become current.
+ */
+function identityStaleError(message = 'Request identity is stale'): Error {
+    const error = new Error(message) as Error & { code?: string };
+    error.name = 'AbortError';
+    error.code = IDENTITY_STALE_CODE;
+    return error;
+}
+
+function snapshotIdentity(required: boolean): IdentityContext | null {
+    const captured = JC.identity?.capture?.() ?? null;
+    if (!captured) {
+        if (required) {
+            throw identityStaleError('Authenticated request requires an active Jellyfin identity');
+        }
+        return null;
+    }
+    // Do not trust a participant to retain a mutable controller-owned object.
+    // Each request carries its own immutable value snapshot.
+    return Object.freeze({
+        serverId: captured.serverId,
+        userId: captured.userId,
+        epoch: captured.epoch
+    });
+}
+
+function assertIdentityCurrent(
+    context: IdentityContext | null,
+    signal?: AbortSignal,
+    required = false
+): void {
+    if (signal?.aborted) {
+        throw identityStaleError('Request was aborted');
+    }
+    if (!context) {
+        if (required) {
+            throw identityStaleError('Authenticated request requires an active Jellyfin identity');
+        }
+        // Anonymous work may run before sign-in, but it must not publish after
+        // an authenticated owner appears.
+        if (JC.identity?.capture?.()) {
+            throw identityStaleError();
+        }
+        return;
+    }
+    if (!JC.identity?.isCurrent?.(context)) {
+        throw identityStaleError();
+    }
+}
+
+function scopedKey(key: string, context: IdentityContext | null): string {
+    const prefix = context
+        ? `${encodeURIComponent(context.serverId)}:${encodeURIComponent(context.userId)}:${context.epoch}`
+        : 'anonymous:anonymous:0';
+    return `${prefix}:${key}`;
+}
 
 /**
  * Sleep utility with jitter support
@@ -106,13 +179,16 @@ export function isRetryable(error: unknown, status?: number): boolean {
 export async function fetchWithRetry(
     url: string,
     options: RequestInit = {},
-    retryConfig: RetryConfig = CONFIG.retry
+    retryConfig: RetryConfig = CONFIG.retry,
+    requestGuard?: () => void
 ): Promise<Response> {
     const startTime = performance.now();
     let lastError: unknown;
     let lastStatus: number | undefined;
 
     for (let attempt = 1; attempt <= retryConfig.maxAttempts; attempt++) {
+        requestGuard?.();
+
         // Check time budget
         if (performance.now() - startTime > retryConfig.timeoutBudgetMs) {
             throw new Error(`Time budget exceeded (${retryConfig.timeoutBudgetMs}ms)`);
@@ -127,6 +203,7 @@ export async function fetchWithRetry(
 
         try {
             const response = await fetch(url, options);
+            requestGuard?.();
 
             if (response.ok) {
                 if (metrics.enabled) {
@@ -148,11 +225,15 @@ export async function fetchWithRetry(
             // Capture body so callers can read structured error details (e.g. quota messages).
             try {
                 const text = await response.clone().text();
+                requestGuard?.();
                 if (text) {
                     httpError.responseText = text;
                     try {
+                        requestGuard?.();
                         httpError.responseJSON = JSON.parse(text);
+                        requestGuard?.();
                     } catch (e) {
+                        if ((e as Error)?.name === 'AbortError') throw e;
                         // Body wasn't JSON (Seerr HTML challenge page, etc) — keep responseText.
                         console.debug(`${logPrefix} Error body not JSON:`, (e as Error).message);
                     }
@@ -186,6 +267,7 @@ export async function fetchWithRetry(
                 console.debug(`${logPrefix} Retry ${attempt}/${retryConfig.maxAttempts} for ${url} in ${delay}ms`);
             }
             await sleep(delay);
+            requestGuard?.();
         }
     }
 
@@ -231,30 +313,107 @@ export function deduplicatedFetch<T>(key: string, fetchFn: () => Promise<T>, sig
     return promise;
 }
 
+function drainPendingQueue(): void {
+    while (activeCount < CONFIG.concurrency.maxConcurrent && pendingQueue.length > 0) {
+        pendingQueue.shift()?.start();
+    }
+}
+
 /**
- * Execute function with concurrency limit
+ * Execute function with concurrency limit. Unlike a queue of bare wake-up
+ * callbacks, each job retains the identity captured when it was submitted and
+ * can be rejected synchronously by abortAllRequests(). A stale A job therefore
+ * cannot wake after B signs in and call its closure against B's live globals.
  */
-export async function withConcurrencyLimit<T>(fn: () => Promise<T>): Promise<T> {
-    // Wait if at capacity
-    if (activeCount >= CONFIG.concurrency.maxConcurrent) {
-        // Check queue size limit
-        if (pendingQueue.length >= CONFIG.concurrency.maxQueueSize) {
-            throw new Error('Request queue full - too many pending requests');
-        }
-        await new Promise<void>((resolve) => pendingQueue.push(resolve));
+export function withConcurrencyLimit<T>(
+    fn: () => Promise<T>,
+    context: IdentityContext | null = snapshotIdentity(false),
+    signal?: AbortSignal
+): Promise<T> {
+    if (activeCount >= CONFIG.concurrency.maxConcurrent
+        && pendingQueue.length >= CONFIG.concurrency.maxQueueSize) {
+        return Promise.reject(new Error('Request queue full - too many pending requests'));
     }
 
-    activeCount++;
-    try {
-        return await fn();
-    } finally {
-        activeCount--;
-        // Release next queued request
-        if (pendingQueue.length > 0) {
-            const next = pendingQueue.shift();
-            if (next) next();
+    return new Promise<T>((resolve, reject) => {
+        let state: 'queued' | 'active' | 'settled' | 'cancelled' = 'queued';
+        let holdsSlot = false;
+
+        const releaseSlot = (): void => {
+            if (!holdsSlot) return;
+            holdsSlot = false;
+            activeCount--;
+            activeJobs.delete(job);
+            drainPendingQueue();
+        };
+
+        const removeAbortListener = (): void => {
+            signal?.removeEventListener('abort', onAbort);
+        };
+
+        const job: ConcurrencyJob = {
+            context,
+            start(): void {
+                if (state !== 'queued') return;
+                state = 'active';
+                holdsSlot = true;
+                activeCount++;
+                activeJobs.add(job);
+
+                void (async () => {
+                    try {
+                        assertIdentityCurrent(context, signal);
+                        const value = await fn();
+                        assertIdentityCurrent(context, signal);
+                        if (state === 'active') {
+                            state = 'settled';
+                            removeAbortListener();
+                            resolve(value);
+                        }
+                    } catch (error) {
+                        if (state === 'active') {
+                            state = 'settled';
+                            removeAbortListener();
+                            reject(error instanceof Error
+                                ? error
+                                : new Error('Request failed', { cause: error }));
+                        }
+                    } finally {
+                        // cancel() may already have released this logical slot
+                        // while an abort-ignoring transport continued settling.
+                        releaseSlot();
+                    }
+                })();
+            },
+            cancel(error: Error): void {
+                if (state === 'settled' || state === 'cancelled') return;
+                state = 'cancelled';
+                removeAbortListener();
+                reject(error);
+                releaseSlot();
+            }
+        };
+
+        const onAbort = (): void => {
+            if (state === 'queued') {
+                const index = pendingQueue.indexOf(job);
+                if (index >= 0) pendingQueue.splice(index, 1);
+            }
+            job.cancel(identityStaleError('Request was aborted'));
+        };
+
+        if (signal?.aborted) {
+            job.cancel(identityStaleError('Request was aborted'));
+            return;
         }
-    }
+        signal?.addEventListener('abort', onAbort, { once: true });
+
+        if (activeCount < CONFIG.concurrency.maxConcurrent) {
+            job.start();
+        } else {
+            pendingQueue.push(job);
+        }
+    });
 }
 
 /**
@@ -262,14 +421,17 @@ export async function withConcurrencyLimit<T>(fn: () => Promise<T>): Promise<T> 
  * Automatically aborts previous request for the same key
  */
 function getAbortSignal(pageKey: string): AbortSignal {
+    const context = snapshotIdentity(false);
+    const identityPageKey = scopedKey(pageKey, context);
+
     // Abort previous controller for this key
-    const previous = activeControllers.get(pageKey);
+    const previous = activeControllers.get(identityPageKey);
     if (previous) {
         previous.abort();
     }
 
     const controller = new AbortController();
-    activeControllers.set(pageKey, controller);
+    activeControllers.set(identityPageKey, controller);
     return controller.signal;
 }
 
@@ -277,10 +439,30 @@ function getAbortSignal(pageKey: string): AbortSignal {
  * Abort all active requests (call on navigation)
  */
 function abortAllRequests(): void {
+    // Drop pending work BEFORE aborting controllers or releasing active slots.
+    // Abort listeners call cancel() synchronously, and cancel(active) drains the
+    // queue; leaving A jobs queued until later could therefore start one during
+    // the reset itself (the identity guard would stop a user switch, but a
+    // same-identity navigation abort must not dispatch it either).
+    for (const job of pendingQueue.splice(0)) {
+        job.cancel(identityStaleError('Queued request aborted'));
+    }
+
     for (const controller of activeControllers.values()) {
         controller.abort();
     }
     activeControllers.clear();
+
+    for (const controller of [...activeRequestControllers]) {
+        controller.abort();
+    }
+    activeRequestControllers.clear();
+
+    // Non-core users can call withConcurrencyLimit directly and therefore have
+    // no controller. Cancel those active logical jobs explicitly too.
+    for (const job of [...activeJobs]) {
+        job.cancel(identityStaleError('Request queue aborted'));
+    }
     inFlightRequests.clear();
 }
 
@@ -288,10 +470,16 @@ function abortAllRequests(): void {
  * Abort request for a specific page key
  */
 function abortRequest(pageKey: string): void {
-    const controller = activeControllers.get(pageKey);
+    const context = snapshotIdentity(false);
+    const identityPageKey = scopedKey(pageKey, context);
+    const controller = activeControllers.get(identityPageKey);
     if (controller) {
         controller.abort();
-        activeControllers.delete(pageKey);
+        // Do not let an old abort remove a newer controller installed under the
+        // same logical key between lookup and cleanup.
+        if (activeControllers.get(identityPageKey) === controller) {
+            activeControllers.delete(identityPageKey);
+        }
     }
 }
 
@@ -475,12 +663,70 @@ const manager: RequestManagerApi = {
  * headers are ignored). X-Jellyfin-User-Id lets the plugin's server side
  * resolve the acting user.
  */
-function authHeaders(): Record<string, string> {
+function authHeadersFor(client: JellyfinApiClient): Record<string, string> {
     return {
-        'X-Jellyfin-User-Id': ApiClient.getCurrentUserId(),
-        'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
+        'X-Jellyfin-User-Id': client.getCurrentUserId(),
+        'Authorization': 'MediaBrowser Token="' + client.accessToken() + '"',
         'Accept': 'application/json'
     };
+}
+
+function authHeaders(): Record<string, string> {
+    return authHeadersFor(ApiClient);
+}
+
+function normalizeIdentityValue(value: string | null | undefined): string {
+    return String(value ?? '').trim().replace(/-/g, '').toLowerCase();
+}
+
+const UNKNOWN_SERVER_ID = normalizeIdentityValue('unknown-server');
+
+/** An authenticated owner must have a concrete server half, not the loader fallback. */
+function isResolvedServerId(value: string | null | undefined): boolean {
+    const normalized = normalizeIdentityValue(value);
+    return normalized !== '' && normalized !== UNKNOWN_SERVER_ID;
+}
+
+function deleteHeaderCaseInsensitive(headers: Record<string, string>, name: string): void {
+    const normalizedName = name.toLowerCase();
+    for (const key of Object.keys(headers)) {
+        if (key.toLowerCase() === normalizedName) delete headers[key];
+    }
+}
+
+function hasHeaderCaseInsensitive(headers: Record<string, string>, name: string): boolean {
+    const normalizedName = name.toLowerCase();
+    return Object.keys(headers).some((key) => key.toLowerCase() === normalizedName);
+}
+
+/** Resolve the same stable server half used by the classic identity loader. */
+function apiClientServerId(client: JellyfinApiClient): string {
+    const extended = client as JellyfinApiClient & {
+        serverId?: string | (() => string);
+        serverInfo?: { Id?: string; ServerId?: string } | (() => { Id?: string; ServerId?: string });
+        _serverInfo?: { Id?: string; ServerId?: string };
+        serverAddress?: string | (() => string);
+    };
+    try {
+        const direct = typeof extended.serverId === 'function'
+            ? extended.serverId.call(client)
+            : extended.serverId;
+        if (isResolvedServerId(direct)) return direct || '';
+    } catch { /* try server-info forms */ }
+    try {
+        const info = typeof extended.serverInfo === 'function'
+            ? extended.serverInfo.call(client)
+            : (extended.serverInfo || extended._serverInfo);
+        const fromInfo = info?.Id || info?.ServerId || '';
+        if (isResolvedServerId(fromInfo)) return fromInfo;
+    } catch { /* fall through to address */ }
+    try {
+        const address = typeof extended.serverAddress === 'function'
+            ? extended.serverAddress.call(client)
+            : (extended.serverAddress || client.getUrl('/'));
+        if (isResolvedServerId(address)) return new URL(String(address), window.location.href).origin;
+    } catch { /* unknown-server below */ }
+    return '';
 }
 
 /**
@@ -490,7 +736,11 @@ function authHeaders(): Record<string, string> {
  * @param url - Fully-qualified URL.
  * @returns Parsed JSON response ({} for empty bodies).
  */
-async function coreFetch(url: string, options: CoreFetchOptions = {}): Promise<unknown> {
+async function coreFetch(
+    url: string,
+    options: CoreFetchOptions = {},
+    requestApiClient: JellyfinApiClient = ApiClient
+): Promise<unknown> {
     const {
         method = 'GET',
         headers = {},
@@ -504,82 +754,145 @@ async function coreFetch(url: string, options: CoreFetchOptions = {}): Promise<u
     } = options;
 
     const isGet = method.toUpperCase() === 'GET';
+    const context = snapshotIdentity(auth);
+    const capturedAuthHeaders = auth
+        ? authHeadersFor(requestApiClient)
+        : { 'Accept': 'application/json' };
+    const requestHeaders: Record<string, string> = {
+        ...capturedAuthHeaders,
+        ...headers
+    };
+    if (auth) {
+        // Authentication is owned by the captured ApiClient, not by a stale
+        // caller-supplied header object. Callers needing different credentials
+        // must opt out with auth:false. Header names are case-insensitive on the
+        // wire, so remove every caller spelling before installing one canonical
+        // value; otherwise `authorization` could coexist with `Authorization`.
+        deleteHeaderCaseInsensitive(requestHeaders, 'X-Jellyfin-User-Id');
+        deleteHeaderCaseInsensitive(requestHeaders, 'Authorization');
+        requestHeaders['X-Jellyfin-User-Id'] = capturedAuthHeaders['X-Jellyfin-User-Id'];
+        requestHeaders.Authorization = capturedAuthHeaders.Authorization;
+    }
+    assertIdentityCurrent(context, signal, auth);
 
-    // Check cache first (GET only)
-    if (isGet && !skipCache && cacheKey) {
-        const cached = getCached(cacheKey);
-        if (cached !== undefined) return cached;
+    // The header and epoch must describe the same owner. This also closes the
+    // tiny synchronous window where the host has announced B but has not yet
+    // finished mutating a reused ApiClient instance's authentication fields.
+    if (auth && context
+        && normalizeIdentityValue(requestHeaders['X-Jellyfin-User-Id'])
+            !== normalizeIdentityValue(context.userId)) {
+        throw identityStaleError('ApiClient authentication does not match the captured identity');
+    }
+    if (auth && context) {
+        const requestServerId = apiClientServerId(requestApiClient);
+        if (!isResolvedServerId(context.serverId) || !isResolvedServerId(requestServerId)) {
+            throw identityStaleError('Authenticated request requires a resolved Jellyfin server identity');
+        }
+        if (normalizeIdentityValue(requestServerId) !== normalizeIdentityValue(context.serverId)) {
+            throw identityStaleError('ApiClient server does not match the captured identity');
+        }
     }
 
-    const fetchFn = async (): Promise<unknown> => {
-        const requestHeaders: Record<string, string> = {
-            ...(auth ? authHeaders() : { 'Accept': 'application/json' }),
-            ...headers
-        };
+    const identityCacheKey = cacheKey ? scopedKey(cacheKey, context) : undefined;
 
-        const init: RequestInit = { method, headers: requestHeaders };
-
-        if (body !== undefined) {
-            if (typeof body === 'string') {
-                init.body = body;
-            } else {
-                init.body = JSON.stringify(body);
-                if (!requestHeaders['Content-Type']) {
-                    requestHeaders['Content-Type'] = 'application/json';
-                }
-            }
+    // Check cache first (GET only)
+    if (isGet && !skipCache && identityCacheKey) {
+        const cached = getCached(identityCacheKey);
+        if (cached !== undefined) {
+            // Keep even a memory-cache hit asynchronous and fence its actual
+            // promise settlement. Without this yield, `const p = fetch();
+            // logout(); await p` could still deliver A data to B because no
+            // transport controller exists for abortAllRequests() to cancel.
+            await Promise.resolve();
+            assertIdentityCurrent(context, signal, auth);
+            return cached;
         }
+    }
 
-        // Per-request timeout: abort via our own controller, chained to
-        // the caller's signal so either can cancel the request.
-        let timeoutId: ReturnType<typeof setTimeout> | null = null;
-        let unchain: (() => void) | null = null;
-        if (timeoutMs && timeoutMs > 0) {
-            const controller = new AbortController();
-            if (signal) {
-                if (signal.aborted) {
-                    controller.abort();
-                } else {
-                    const onAbort = (): void => controller.abort();
-                    signal.addEventListener('abort', onAbort, { once: true });
-                    unchain = () => signal.removeEventListener('abort', onAbort);
-                }
-            }
-            timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-            init.signal = controller.signal;
-        } else if (signal) {
-            init.signal = signal;
+    // One controller exists for every request, regardless of whether the caller
+    // supplied a signal or timeout. It is registered before queueing so a reset
+    // can reject pending A work as well as active A transport.
+    const controller = new AbortController();
+    activeRequestControllers.add(controller);
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let unchain: (() => void) | null = null;
+
+    if (signal) {
+        if (signal.aborted) {
+            controller.abort();
+        } else {
+            const onAbort = (): void => controller.abort();
+            signal.addEventListener('abort', onAbort, { once: true });
+            unchain = () => signal.removeEventListener('abort', onAbort);
         }
+    }
+    if (timeoutMs && timeoutMs > 0) {
+        timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    }
 
-        try {
-            const response = await fetchWithRetry(
-                url,
-                init,
-                skipRetry ? { ...CONFIG.retry, maxAttempts: 1 } : undefined
-            );
-            // Tolerant JSON parse: some endpoints reply with empty bodies.
-            const text = await response.text();
-            const data: unknown = text ? JSON.parse(text) : {};
-
-            if (isGet && cacheKey) {
-                setCache(cacheKey, data);
-            }
-            return data;
-        } finally {
-            if (timeoutId) clearTimeout(timeoutId);
-            if (unchain) unchain();
-        }
+    const init: RequestInit = {
+        method,
+        headers: requestHeaders,
+        signal: controller.signal
     };
 
-    // Concurrency limit + in-flight dedup (GET with a cache key only). Forward the caller's signal:
-    // deduplicatedFetch skips dedup when a signal is present so an abortable caller gets its own
-    // request — otherwise one caller's abort could hand a rejected/aborted shared promise to the
-    // next same-key caller (e.g. a re-rendered feed re-requesting a row it just aborted).
-    return withConcurrencyLimit(() =>
-        (isGet && cacheKey)
-            ? deduplicatedFetch(cacheKey, fetchFn, signal)
-            : fetchFn()
-    );
+    if (body !== undefined) {
+        if (typeof body === 'string') {
+            init.body = body;
+        } else {
+            init.body = JSON.stringify(body);
+            if (!hasHeaderCaseInsensitive(requestHeaders, 'Content-Type')) {
+                requestHeaders['Content-Type'] = 'application/json';
+            }
+        }
+    }
+
+    const guard = (): void => assertIdentityCurrent(context, controller.signal, auth);
+
+    const fetchFn = async (): Promise<unknown> => {
+        guard();
+        const response = await fetchWithRetry(
+            url,
+            init,
+            skipRetry ? { ...CONFIG.retry, maxAttempts: 1 } : undefined,
+            guard
+        );
+        guard();
+
+        // Tolerant JSON parse: some endpoints reply with empty bodies.
+        const text = await response.text();
+        guard();
+        const data: unknown = text ? JSON.parse(text) : {};
+        guard();
+
+        if (isGet && identityCacheKey) {
+            guard();
+            setCache(identityCacheKey, data);
+        }
+        guard();
+        return data;
+    };
+
+    // Concurrency limit + in-flight dedup (GET with a cache key only). Forward an
+    // abort scope whenever the caller supplied a signal OR timeout. A timeout is
+    // caller-owned too: sharing its transport would let one caller's deadline
+    // abort an otherwise-independent waiter for the same cache key.
+    const deduplicationSignal = signal || (timeoutMs && timeoutMs > 0 ? controller.signal : undefined);
+    try {
+        const result = await withConcurrencyLimit(
+            () => (isGet && identityCacheKey)
+                ? deduplicatedFetch(identityCacheKey, fetchFn, deduplicationSignal)
+                : fetchFn(),
+            context,
+            controller.signal
+        );
+        guard();
+        return result;
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+        if (unchain) unchain();
+        activeRequestControllers.delete(controller);
+    }
 }
 
 /**
@@ -587,7 +900,8 @@ async function coreFetch(url: string, options: CoreFetchOptions = {}): Promise<u
  * @param path - e.g. '/Plugins'
  */
 function jf(path: string, options?: CoreFetchOptions): Promise<unknown> {
-    return coreFetch(ApiClient.getUrl(path), options);
+    const requestApiClient = ApiClient;
+    return coreFetch(requestApiClient.getUrl(path), options, requestApiClient);
 }
 
 /**

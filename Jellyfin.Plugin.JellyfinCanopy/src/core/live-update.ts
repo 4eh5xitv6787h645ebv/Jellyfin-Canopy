@@ -20,6 +20,7 @@
 import { JC } from '../globals';
 import { register } from './lifecycle';
 import { LIVE, on } from './live';
+import type { IdentityContext } from '../types/jc';
 
 const logPrefix = '🪼 Jellyfin Canopy: Self-Update:';
 
@@ -87,14 +88,17 @@ export function notifyIfNewer(serverVersion: string | null | undefined): void {
  * version but register nothing. Keeps running after a notify so the heartbeat
  * never stops — notifyIfNewer itself is one-shot.
  */
-async function checkNow(): Promise<void> {
+async function checkNow(context: IdentityContext): Promise<void> {
     if (typeof ApiClient === 'undefined') return;
+    if (!JC.identity.isCurrent(context)) return;
     try {
         const res = await fetch(ApiClient.getUrl(`/JellyfinCanopy/version?_je=${Date.now()}`), {
             headers: { Authorization: `MediaBrowser Token="${ApiClient.accessToken()}"` }
         });
+        if (!JC.identity.isCurrent(context)) return;
         if (!res.ok) return;
         const serverVersion = (await res.text()).trim();
+        if (!JC.identity.isCurrent(context)) return;
         notifyIfNewer(serverVersion);
     } catch (err) {
         console.debug(`${logPrefix} version check failed:`, err);
@@ -108,18 +112,43 @@ on(LIVE.CONFIG_CHANGED, (data) => {
 });
 
 // (1) + (3): an initial check shortly after load, then a visibility-gated
-// re-check for sessions that stay open across an update. Tracked on a lifecycle
-// handle so teardownAll disposes the interval.
+// re-check for sessions that stay open across an update. Identity teardown
+// stops both and activation recreates exactly one pair for the new account.
 const handle = register('live-update');
-const initialCheck = setTimeout(() => { void checkNow(); }, 5000);
-handle.onTeardown(() => clearTimeout(initialCheck));
+let initialCheck: number | null = null;
+let recheck: number | null = null;
 
-const recheck = setInterval(() => {
-    // NOT gated on `notified`: beyond the one-shot toast, this ping is the
-    // session's live-push registry heartbeat and must outlive the notify.
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-    void checkNow();
-}, RECHECK_INTERVAL_MS);
-handle.track(recheck);
+function stopTimers(): void {
+    if (initialCheck !== null) {
+        clearTimeout(initialCheck);
+        initialCheck = null;
+    }
+    if (recheck !== null) {
+        clearInterval(recheck);
+        recheck = null;
+    }
+}
+
+function startTimers(context: IdentityContext): void {
+    if (!JC.identity.isCurrent(context)) return;
+    stopTimers();
+    initialCheck = window.setTimeout(() => {
+        initialCheck = null;
+        void checkNow(context);
+    }, 5000);
+    recheck = window.setInterval(() => {
+        // NOT gated on `notified`: beyond the one-shot toast, this ping is the
+        // session's live-push registry heartbeat and must outlive the notify.
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+        void checkNow(context);
+    }, RECHECK_INTERVAL_MS);
+}
+
+handle.onTeardown(stopTimers);
+JC.identity.registerReset('core-live-update', stopTimers);
+JC.identity.registerActivate('core-live-update', startTimers);
+
+const initialIdentity = JC.identity.capture();
+if (initialIdentity) startTimers(initialIdentity);
 
 console.log(`${logPrefix} initialized`);

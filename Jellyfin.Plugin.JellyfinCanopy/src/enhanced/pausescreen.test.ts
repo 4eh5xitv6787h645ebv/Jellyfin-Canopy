@@ -18,11 +18,21 @@ function initPauseScreen(): void {
     (window.JellyfinCanopy as unknown as PauseApi).initializePauseScreen();
 }
 
+function destroyPauseScreen(): void {
+    const instance = jc()._pauseScreenInstance as { destroy?: () => void } | undefined;
+    instance?.destroy?.();
+    jc()._pauseScreenInstance = undefined;
+}
+
 describe('pause-screen singleton + teardown', () => {
     beforeEach(() => {
+        // Do not discard the only handle to a previous test's shared-body
+        // subscription. A connected jsdom MutationObserver can otherwise
+        // deliver its final record after the environment has removed the
+        // global `document`, producing misleading full-suite stderr.
+        destroyPauseScreen();
         document.body.innerHTML = '';
         document.head.innerHTML = '';
-        jc()._pauseScreenInstance = undefined;
         (window.JellyfinCanopy as unknown as { t: (k: string) => string }).t = (k: string) => k;
         jc().currentSettings = { pauseScreenEnabled: true, pauseScreenDelaySeconds: 5 };
         localStorage.setItem(
@@ -32,6 +42,7 @@ describe('pause-screen singleton + teardown', () => {
     });
 
     afterEach(() => {
+        destroyPauseScreen();
         vi.restoreAllMocks();
         localStorage.clear();
     });
@@ -69,5 +80,20 @@ describe('pause-screen singleton + teardown', () => {
         expect(revokeSpy).toHaveBeenCalledWith('blob:a');
         expect(revokeSpy).toHaveBeenCalledWith('blob:b');
         expect(inst.imgBlobCache.size).toBe(0);
+    });
+
+    it('destroy releases the shared body subscription before later DOM mutations', async () => {
+        initPauseScreen();
+        const inst = jc()._pauseScreenInstance as {
+            checkForVideoChanges: () => void;
+            destroy: () => void;
+        };
+        const checkSpy = vi.spyOn(inst, 'checkForVideoChanges');
+
+        destroyPauseScreen();
+        document.body.append(document.createElement('div'));
+        await Promise.resolve();
+
+        expect(checkSpy).not.toHaveBeenCalled();
     });
 });

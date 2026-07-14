@@ -184,3 +184,70 @@ describe('tag-renderer-base projection invalidation (BI-SEC-035)', () => {
         localStorage.removeItem(cacheKey);
     });
 });
+
+describe('tag-renderer-base identity ownership', () => {
+    afterEach(() => {
+        JC.identity.transition('test-server-id', 'test-user-id', 'tag-renderer-test-cleanup');
+        JC.tagPipeline = undefined;
+        JC.pluginConfig = {};
+        document.body.innerHTML = '';
+    });
+
+    it('drops A caches synchronously and rejects a retained A renderer context under B', () => {
+        const registerRenderer = vi.fn();
+        JC.tagPipeline = { registerRenderer };
+        JC.pluginConfig = { TagCacheServerMode: false };
+
+        const suffix = `${Date.now()}-${Math.random()}`;
+        const name = `identity-cache-${suffix}`;
+        const cacheKey = `jc-test-${name}`;
+        let retainedA: ReturnType<typeof register> | null = null;
+        const spec: TagSpec = {
+            logPrefix: 'identity-test',
+            settingKey: 'qualityTagsEnabled',
+            containerClass: `identity-overlay-${suffix.replaceAll('.', '-')}`,
+            taggedAttr: 'jcIdentityTestTagged',
+            cache: {
+                key: cacheKey,
+                legacyPrefix: `${cacheKey}-legacy`,
+                hotBucket: `${name}-hot`,
+                saveOnUnload: false,
+            },
+            pipeline: {
+                render(ctx) { retainedA = ctx; },
+            },
+        };
+
+        const ctxA = register(name, spec);
+        const hotA = ctxA.hot!;
+        ctxA.setPersistent('item', { value: 'A', timestamp: Date.now() });
+        hotA.set('item', { value: 'A' });
+        localStorage.setItem(cacheKey, JSON.stringify({ item: { value: 'A' } }));
+
+        const host = buildCardHost('indexPage');
+        const rendererA = registerRenderer.mock.calls.at(-1)![1] as {
+            render(el: HTMLElement, item: unknown): void;
+        };
+        rendererA.render(host, {});
+        expect(retainedA).not.toBeNull();
+
+        JC.identity.transition('server-b', `user-b-${suffix}`, 'tag-renderer-test');
+        expect(localStorage.getItem(cacheKey)).toBeNull();
+        expect(hotA.get('item')).toBeUndefined();
+        expect(ctxA.getPersistent('item')).toBeUndefined();
+
+        const ctxB = register(name, spec);
+        ctxA.setPersistent('late-public-a', { value: 'A' });
+        retainedA!.setPersistent('late-a', { value: 'A' });
+        const lateOverlay = document.createElement('div');
+        lateOverlay.className = spec.containerClass;
+        lateOverlay.appendChild(document.createElement('span'));
+        expect(retainedA!.commitOverlay(host, lateOverlay)).toBe(false);
+        expect(host.querySelector(`.${spec.containerClass}`)).toBeNull();
+        expect(ctxB.getPersistent('late-public-a')).toBeUndefined();
+        expect(ctxB.getPersistent('late-a')).toBeUndefined();
+
+        ctxB.setPersistent('item', { value: 'B' });
+        expect(ctxB.getPersistent('item')).toEqual({ value: 'B' });
+    });
+});

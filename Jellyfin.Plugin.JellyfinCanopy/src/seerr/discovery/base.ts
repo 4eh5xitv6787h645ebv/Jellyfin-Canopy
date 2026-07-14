@@ -20,6 +20,7 @@
 //
 // Public surface: JC.discoveryBase { createDiscovery, idFromDetailUrl, idFromListParam }.
 import { JC } from '../../globals';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + spec shapes; typed incrementally */
 
@@ -32,9 +33,42 @@ export interface DiscoveryController {
     start: () => void;
 }
 
+interface DiscoveryResolveContext {
+    id: string;
+    signal: AbortSignal;
+}
+
+interface DiscoveryOneShotContext extends DiscoveryResolveContext {
+    pageKey: string;
+    waitForPageReady: (signal?: AbortSignal) => Promise<HTMLElement | null>;
+}
+
+export interface DiscoverySpec {
+    key: string;
+    mode: 'dual-feed' | 'client-paged' | 'one-shot';
+    logLabel: string;
+    configKey: string;
+    defaultEnabled?: boolean;
+    getIdFromUrl: () => string | null;
+    pageKey?: (id: string) => string;
+    resolveFeeds?: (context: DiscoveryResolveContext) => Promise<{
+        tvId?: number | null;
+        movieId?: number | null;
+        title: string;
+    } | null>;
+    buildDiscoverPath?: (kind: 'tv' | 'movie', id: number) => string;
+    resolveItems?: (context: DiscoveryResolveContext) => Promise<{
+        items: any[];
+        title: string;
+    } | null>;
+    renderOneShot?: (context: DiscoveryOneShotContext) => Promise<boolean | undefined>;
+    pageSize?: number;
+    onCleanup?: () => void;
+}
+
 /** Shared discovery chassis (JC.discoveryBase). */
 export interface DiscoveryBaseApi {
-    createDiscovery: (spec: any) => DiscoveryController;
+    createDiscovery: (spec: DiscoverySpec) => DiscoveryController;
     idFromDetailUrl: () => string | null;
     idFromListParam: (param: string) => () => string | null;
 }
@@ -119,7 +153,7 @@ function idFromListParam(param: string): () => string | null {
  * @param {DiscoverySpec} spec
  * @returns {{initialize: () => void, cleanup: () => void, render: () => Promise<void>, handlePageNavigation: () => void, start: () => void}}
  */
-function createDiscovery(spec: any): DiscoveryController {
+function createDiscovery(spec: DiscoverySpec): DiscoveryController {
     const key = spec.key;
     const logPrefix = `🪼 Jellyfin Canopy: ${spec.logLabel}:`;
     const sectionSelector = `.seerr-${key}-discovery-section`;
@@ -139,6 +173,10 @@ function createDiscovery(spec: any): DiscoveryController {
     let currentAbortController: AbortController | null = null;
     /** @type {string|null} */
     let currentRenderingPageKey: string | null = null;
+    let renderGeneration = 0;
+    let initialized = false;
+    let started = false;
+    const renderFrames = new Set<number>();
 
     // ---- Pagination state (dual-feed + client-paged) --------------------
     let isLoading = false;
@@ -203,7 +241,7 @@ function createDiscovery(spec: any): DiscoveryController {
             const sortBy = kind === 'tv'
                 ? (JC.discoveryFilter?.getTvSortMode(key) || '')
                 : (JC.discoveryFilter?.getSortMode(key) || '');
-            let path = `${spec.buildDiscoverPath(kind, feedId)}?page=${page}`;
+            let path = `${spec.buildDiscoverPath!(kind, feedId)}?page=${page}`;
             if (sortBy) path += `&sortBy=${encodeURIComponent(sortBy)}`;
             const response = await fetchWithManagedRequest(path, { signal });
             if (signal?.aborted) {
@@ -675,11 +713,16 @@ function createDiscovery(spec: any): DiscoveryController {
      * @param {AbortSignal} signal
      * @param {string} pageKey
      */
-    async function renderDualFeed(id: string, signal: AbortSignal, pageKey: string): Promise<void> {
+    async function renderDualFeed(
+        id: string,
+        signal: AbortSignal,
+        pageKey: string,
+        context: IdentityContext
+    ): Promise<void> {
         const pageReadyPromise = waitForPageReady(signal);
 
-        const resolved = await spec.resolveFeeds({ id, signal });
-        if (signal.aborted) return;
+        const resolved = await spec.resolveFeeds!({ id, signal });
+        if (signal.aborted || !JC.identity.isCurrent(context)) return;
         if (!resolved || (!resolved.tvId && !resolved.movieId)) return;
 
         // Reset pagination state
@@ -718,7 +761,7 @@ function createDiscovery(spec: any): DiscoveryController {
             pageReadyPromise
         ]);
 
-        if (signal.aborted) return;
+        if (signal.aborted || !JC.identity.isCurrent(context)) return;
 
         // Process results
         fetchResults.forEach((r: any) => {
@@ -758,7 +801,14 @@ function createDiscovery(spec: any): DiscoveryController {
         const existing = document.querySelector(sectionSelector);
         if (existing) existing.remove();
 
-        const section = createSectionContainer(resolved.title, hasBoth, handleFilterChange, handleSortChange);
+        const section = createSectionContainer(
+            resolved.title,
+            hasBoth,
+            (mode) => { if (JC.identity.isCurrent(context)) handleFilterChange(mode); },
+            () => JC.identity.isCurrent(context) ? handleSortChange() : undefined
+        );
+        section.setAttribute('data-jc-identity-owned', 'true');
+        JC.identity.own(section, context);
         const itemsContainer = section.querySelector('.itemsContainer')!;
 
         const fragment = createCardsFragment(displayResults);
@@ -795,9 +845,14 @@ function createDiscovery(spec: any): DiscoveryController {
      * @param {AbortSignal} signal
      * @param {string} pageKey
      */
-    async function renderClientPaged(id: string, signal: AbortSignal, pageKey: string): Promise<void> {
-        const resolved = await spec.resolveItems({ id, signal });
-        if (signal.aborted) return;
+    async function renderClientPaged(
+        id: string,
+        signal: AbortSignal,
+        pageKey: string,
+        context: IdentityContext
+    ): Promise<void> {
+        const resolved = await spec.resolveItems!({ id, signal });
+        if (signal.aborted || !JC.identity.isCurrent(context)) return;
         if (!resolved || !resolved.items || resolved.items.length === 0) return;
 
         // Store all results for filter switching
@@ -823,7 +878,7 @@ function createDiscovery(spec: any): DiscoveryController {
 
         // Wait for page content
         const detailSection = await waitForPageReady(signal);
-        if (signal.aborted) return;
+        if (signal.aborted || !JC.identity.isCurrent(context)) return;
 
         if (!detailSection) {
             console.debug(`${logPrefix} Could not find detail section to insert into`);
@@ -835,7 +890,14 @@ function createDiscovery(spec: any): DiscoveryController {
         if (existing) existing.remove();
 
         // Create and insert section
-        const section = createSectionContainer(resolved.title, hasBoth, handleFilterChange, handleSortChange);
+        const section = createSectionContainer(
+            resolved.title,
+            hasBoth,
+            (mode) => { if (JC.identity.isCurrent(context)) handleFilterChange(mode); },
+            () => JC.identity.isCurrent(context) ? handleSortChange() : undefined
+        );
+        section.setAttribute('data-jc-identity-owned', 'true');
+        JC.identity.own(section, context);
         const itemsContainer = section.querySelector('.itemsContainer')!;
 
         // Seed first page and let seamless scroll load the rest.
@@ -873,6 +935,8 @@ function createDiscovery(spec: any): DiscoveryController {
      * error handling.
      */
     async function render(): Promise<void> {
+        const context = JC.identity.capture();
+        if (!context) return;
         const id = spec.getIdFromUrl();
         if (!id) return;
 
@@ -888,6 +952,7 @@ function createDiscovery(spec: any): DiscoveryController {
 
         // Set rendering key before potentially aborting
         currentRenderingPageKey = pageKey;
+        const generation = ++renderGeneration;
 
         // Cancel any previous requests (for different pages)
         if (currentAbortController) {
@@ -903,18 +968,23 @@ function createDiscovery(spec: any): DiscoveryController {
 
         try {
             if (isDualFeed) {
-                await renderDualFeed(id, signal, pageKey);
+                await renderDualFeed(id, signal, pageKey, context);
             } else if (isClientPaged) {
-                await renderClientPaged(id, signal, pageKey);
+                await renderClientPaged(id, signal, pageKey, context);
             } else {
-                const rendered = await spec.renderOneShot({
+                const rendered = await spec.renderOneShot!({
                     id,
                     pageKey,
                     signal,
                     waitForPageReady
                 });
-                if (signal.aborted) return;
+                if (signal.aborted || !JC.identity.isCurrent(context)) return;
                 if (rendered) {
+                    const section = document.querySelector<HTMLElement>(sectionSelector);
+                    if (section) {
+                        section.setAttribute('data-jc-identity-owned', 'true');
+                        JC.identity.own(section, context);
+                    }
                     // Mark as processed
                     processedPages.add(pageKey);
 
@@ -933,12 +1003,13 @@ function createDiscovery(spec: any): DiscoveryController {
             console.error(`${logPrefix} Error rendering ${key} discovery:`, error);
         } finally {
             // Clear rendering key after completion (success, abort, or failure)
-            currentRenderingPageKey = null;
+            if (renderGeneration === generation) currentRenderingPageKey = null;
         }
     }
 
     /** Cleanup function — aborts in-flight requests and resets state. */
     function cleanup() {
+        renderGeneration++;
         if (currentAbortController) {
             currentAbortController.abort();
             currentAbortController = null;
@@ -961,6 +1032,9 @@ function createDiscovery(spec: any): DiscoveryController {
         renderedCount = 0;
 
         currentRenderingPageKey = null;
+        for (const frame of renderFrames) cancelAnimationFrame(frame);
+        renderFrames.clear();
+        document.querySelectorAll(sectionSelector).forEach((section) => section.remove());
 
         // Clear cached results
         cachedTvResults = [];
@@ -985,14 +1059,22 @@ function createDiscovery(spec: any): DiscoveryController {
 
     /** Handles page navigation — renders when the URL matches the module. */
     function handlePageNavigation() {
+        const context = JC.identity.capture();
+        if (!context) return;
         const id = spec.getIdFromUrl();
         if (id) {
-            requestAnimationFrame(() => { void render(); });
+            const frame = requestAnimationFrame(() => {
+                renderFrames.delete(frame);
+                if (JC.identity.isCurrent(context)) void render();
+            });
+            renderFrames.add(frame);
         }
     }
 
     /** Initialize navigation listeners + lifecycle teardown wiring. */
     function initialize() {
+        if (initialized) return;
+        initialized = true;
         // Lifecycle: run cleanup() on EVERY navigation — hashchange, popstate
         // AND the pushState transitions the old raw hashchange listener
         // missed. Registration order matters: the teardown wiring is
@@ -1009,12 +1091,17 @@ function createDiscovery(spec: any): DiscoveryController {
 
     /** Run initialize now, or on DOMContentLoaded if still loading. */
     function start() {
+        if (started) return;
+        started = true;
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', initialize);
         } else {
             initialize();
         }
     }
+
+    JC.identity.registerReset(`seerr-${key}-discovery`, cleanup);
+    JC.identity.registerActivate(`seerr-${key}-discovery`, () => handlePageNavigation());
 
     return { initialize, cleanup, render, handlePageNavigation, start };
 }

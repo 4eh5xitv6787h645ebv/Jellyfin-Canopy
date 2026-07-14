@@ -23,12 +23,16 @@ export interface DiscoveryFilterApi {
     createFilterControl: (moduleName: string, onFilterChange: (mode: string) => void) => HTMLElement;
     createSortControl: (moduleName: string, onSortChange: (sort: string) => void | Promise<void>) => HTMLElement;
     createSectionHeader: (title: string, moduleName: string, showFilter: boolean, onFilterChange: (mode: string) => void, onSortChange?: (sort: string) => void | Promise<void>) => HTMLElement;
-    fetchWithManagedRequest: (path: string, cachePrefix: string, options?: any) => Promise<any>;
+    fetchWithManagedRequest: (path: string, cachePrefix: string, options?: ManagedRequestOptions) => Promise<any>;
     createCardsFragment: (results: any[], options?: any) => DocumentFragment;
     waitForPageReady: (signal?: AbortSignal, options?: any) => Promise<any>;
     setupInfiniteScroll: (state: any, sectionSelector: string, loadMoreFn: () => Promise<void>, hasMoreCheck: () => boolean, isLoadingCheck: () => boolean) => void;
     cleanupScrollObserver: (state: any) => void;
     applyFilterVisibility: (container: HTMLElement | null, mode: string) => void;
+}
+
+interface ManagedRequestOptions {
+    signal?: AbortSignal;
 }
 
 declare module '../../types/jc' {
@@ -46,6 +50,11 @@ const FILTER_MODES = {
 };
 const runtimeFilterModes = new Map<string, string>();
 const runtimeSortModes = new Map<string, string>();
+
+JC.identity.registerReset('seerr-discovery-filter', () => {
+    runtimeFilterModes.clear();
+    runtimeSortModes.clear();
+});
 
 const SORT_OPTIONS = [
     { value: '', label: 'Popular' },
@@ -378,42 +387,19 @@ function createSectionHeader(title: string, moduleName: string, showFilter: bool
  * @param {object} [options] - Fetch options including signal
  * @returns {Promise<any>}
  */
-async function fetchWithManagedRequest(path: string, cachePrefix: string, options: any = {}): Promise<any> {
-    const url = ApiClient.getUrl(path);
+async function fetchWithManagedRequest(
+    path: string,
+    cachePrefix: string,
+    options: ManagedRequestOptions = {}
+): Promise<any> {
     const { signal } = options;
-
-    const requestManager = JC.requestManager;
-    if (requestManager) {
-        const cacheKey = `${cachePrefix}:${path}`;
-        const cached = requestManager.getCached(cacheKey);
-        if (cached) return cached;
-
-        const fetchFn = async () => {
-            const response = await requestManager.fetchWithRetry(url, {
-                method: 'GET',
-                headers: {
-                    'X-Jellyfin-User-Id': ApiClient.getCurrentUserId(),
-                    'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
-                    'Accept': 'application/json'
-                },
-                signal
-            });
-            const data = await response.json();
-            requestManager.setCache(cacheKey, data);
-            return data;
-        };
-
-        return requestManager.withConcurrencyLimit(() =>
-            requestManager.deduplicatedFetch(cacheKey, fetchFn)
-        );
-    }
-
-    // Fallback to ApiClient.ajax
-    return ApiClient.ajax({
-        type: 'GET',
-        url: url,
-        headers: { 'X-Jellyfin-User-Id': ApiClient.getCurrentUserId() },
-        dataType: 'json'
+    // The core paved road owns auth, per-identity cache keys, parsing fences,
+    // abort-on-transition, dedup and concurrency. Calling manager primitives
+    // directly here previously allowed an unsignalled A response to parse and
+    // setCache after B had become current.
+    return JC.core.api!.jf(path, {
+        signal,
+        cacheKey: `${cachePrefix}:${path}`,
     });
 }
 

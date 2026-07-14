@@ -38,6 +38,8 @@ async function loadAllDataOnce(): Promise<void> {
     // Capture THIS run's signal: a new adoption replaces activeSignal, and
     // the old run must keep honoring its own (aborted) one.
     const runSignal = activeSignal;
+    const context = JC.identity.capture();
+    if (!context || runSignal?.aborted) return;
     state.isLoading = true;
     renderPage();
 
@@ -48,15 +50,15 @@ async function loadAllDataOnce(): Promise<void> {
     // First fetch calendar events (the signal aborts the request itself on
     // drain; the helpers publish nothing once aborted)
     await fetchCalendarEvents(start, end, runSignal ?? undefined);
-    if (runSignal?.aborted) return;
+    if (runSignal?.aborted || !JC.identity.isCurrent(context)) return;
 
     // Then fetch user data for those specific events
     await fetchUserData(runSignal ?? undefined);
-    if (runSignal?.aborted) return;
+    if (runSignal?.aborted || !JC.identity.isCurrent(context)) return;
 
     if (state.activeFilters.has('Requests') || state.settings.forceOnlyRequested) {
         await ensureRequestData(runSignal ?? undefined);
-        if (runSignal?.aborted) return;
+        if (runSignal?.aborted || !JC.identity.isCurrent(context)) return;
     }
 
     state.isLoading = false;
@@ -186,6 +188,8 @@ export function toggleShowUnmonitored(): void {
  * Navigate to Jellyfin item by provider IDs
  */
 async function navigateToJellyfinItem(event: CalendarEvent, options: { preferSeries?: boolean } = {}): Promise<void> {
+    const context = JC.identity.capture();
+    if (!context) return;
     const preferSeries = !!options.preferSeries;
     const isMovie = event.type === 'Movie';
 
@@ -197,22 +201,25 @@ async function navigateToJellyfinItem(event: CalendarEvent, options: { preferSer
 
     // No need to search if itemId is already provided
     if (itemId) {
+        if (!JC.identity.isCurrent(context)) return;
         window.location.hash = `#/details?id=${itemId}`;
         return;
     }
 
     if (event.itemEpisodeId && !preferSeries) {
+        if (!JC.identity.isCurrent(context)) return;
         window.location.hash = `#/details?id=${event.itemEpisodeId}`;
         return;
     }
 
     try {
         const providerItemId = await searchFromProviders(event, { preferSeries });
-        if (providerItemId) {
+        if (providerItemId && JC.identity.isCurrent(context)) {
             window.location.hash = `#/details?id=${providerItemId}`;
             return;
         }
     } catch (error) {
+        if (!JC.identity.isCurrent(context)) return;
         console.error(`${logPrefix} Navigation failed:`, error);
     }
 }
@@ -222,6 +229,51 @@ async function navigateToJellyfinItem(event: CalendarEvent, options: { preferSer
  */
 export function handleEventClick(e: MouseEvent): void {
     const target = e.target as Element | null;
+    const ownerContainer = target?.closest<HTMLElement>('#jc-calendar-container');
+    const owner = ownerContainer ? JC.identity.ownerOf(ownerContainer) : null;
+    if (!owner || !JC.identity.isCurrent(owner)) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        return;
+    }
+
+    const viewButton = target?.closest<HTMLElement>('[data-calendar-view]');
+    if (viewButton?.dataset.calendarView) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        setViewMode(viewButton.dataset.calendarView);
+        return;
+    }
+
+    const shiftButton = target?.closest<HTMLElement>('[data-calendar-shift]');
+    if (shiftButton?.dataset.calendarShift) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        shiftPeriod(shiftButton.dataset.calendarShift);
+        return;
+    }
+
+    const actionButton = target?.closest<HTMLElement>('[data-calendar-action]');
+    if (actionButton?.dataset.calendarAction) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (actionButton.dataset.calendarAction === 'today') goToday();
+        if (actionButton.dataset.calendarAction === 'toggle-unmonitored') toggleShowUnmonitored();
+        return;
+    }
+
+    const legendFilter = target?.closest<HTMLElement>('[data-calendar-filter]');
+    if (legendFilter?.dataset.calendarFilter) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        toggleFilter(legendFilter.dataset.calendarFilter);
+        return;
+    }
 
     const sidebarToggle = target?.closest('.jc-calendar-sidebar-toggle');
     if (sidebarToggle) {
@@ -304,3 +356,11 @@ export function handleEventClick(e: MouseEvent): void {
     e.stopPropagation();
     void navigateToJellyfinItem(event, { preferSeries: true });
 }
+
+JC.identity.registerReset('arr-calendar-actions', () => {
+    // The in-flight promise is allowed to settle naturally; its captured
+    // identity fences every continuation. A B adoption queues one fresh pass
+    // behind it, while stale A-only queued work is discarded synchronously.
+    activeSignal = null;
+    loadQueued = false;
+});

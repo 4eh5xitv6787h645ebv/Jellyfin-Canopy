@@ -39,6 +39,9 @@ declare module '../types/jc' {
 
 const logPrefix = '🪼 Jellyfin Canopy: Seerr Modal:';
 const modal = {} as SeerrModalApi;
+type ManagedModal = SeerrModalHandle & { destroy: () => void };
+type IdentityCleanupElement = HTMLElement & { _jcIdentityCleanups?: Set<() => void> };
+const activeModals = new Set<ManagedModal>();
 
 const escapeHtml = JC.escapeHtml;
 
@@ -56,8 +59,11 @@ const escapeHtml = JC.escapeHtml;
  * @returns {object} - An object with methods to show and close the modal.
  */
 modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, onSave, onClose, buttonText }) {
-    const modalElement = document.createElement('div');
+    const identity = JC.identity.capture();
+    const modalElement = document.createElement('div') as IdentityCleanupElement;
     modalElement.className = 'seerr-season-modal';
+    modalElement.dataset.jcIdentityOwned = 'true';
+    JC.identity.own(modalElement, identity);
     modalElement.setAttribute('role', 'dialog');
     modalElement.setAttribute('aria-modal', 'true');
     modalElement.setAttribute('tabindex', '-1');
@@ -126,7 +132,15 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
     // restored it, and never counted toward the jc-modal-open shortcut gate).
     let a11y: ModalA11yHandle | null = null;
 
+    let isClosing = false;
+    let showTimer: ReturnType<typeof setTimeout> | null = null;
+    let removeTimer: ReturnType<typeof setTimeout> | null = null;
+    const cleanups = new Set<() => void>();
+    modalElement._jcIdentityCleanups = cleanups;
+    const isCurrent = () => !!identity && JC.identity.isCurrent(identity) && !isClosing;
+
     const show = () => {
+        if (!isCurrent() || document.body.contains(modalElement)) return;
         document.body.appendChild(modalElement);
         document.body.classList.add('seerr-modal-is-open');
         // Add a state to history to handle back button for closing
@@ -137,14 +151,34 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
             initialFocus: () => modalElement.querySelector<HTMLElement>('button:not([disabled]), select, input'),
             onEscape: () => history.back(), // keep the history-based close mechanism
         });
-        setTimeout(() => { modalElement.classList.add('show'); }, 10);
+        showTimer = setTimeout(() => {
+            showTimer = null;
+            if (isCurrent() && document.body.contains(modalElement)) modalElement.classList.add('show');
+        }, 10);
     };
 
-    let isClosing = false;
+    const finishClose = () => {
+        if (document.body.contains(modalElement)) modalElement.remove();
+        activeModals.delete(handle);
+        if (activeModals.size === 0) document.body.classList.remove('seerr-modal-is-open');
+    };
 
-    const close = () => {
+    const closeInternal = (immediate: boolean) => {
         if (isClosing) return;
         isClosing = true;
+
+        if (showTimer !== null) {
+            clearTimeout(showTimer);
+            showTimer = null;
+        }
+        if (removeTimer !== null) {
+            clearTimeout(removeTimer);
+            removeTimer = null;
+        }
+        for (const cleanup of cleanups) {
+            try { cleanup(); } catch { /* continue closing */ }
+        }
+        cleanups.clear();
 
         if (typeof onClose === 'function') {
             try {
@@ -158,23 +192,30 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
         a11y?.release(); // restores focus to the trigger + lifts the shortcut gate
         a11y = null;
         modalElement.classList.remove('show');
-        document.body.classList.remove('seerr-modal-is-open');
-        setTimeout(() => {
-            if (document.body.contains(modalElement)) {
-                document.body.removeChild(modalElement);
-            }
-            isClosing = false;
-        }, 300);
+        if (immediate) {
+            finishClose();
+        } else {
+            removeTimer = setTimeout(() => {
+                removeTimer = null;
+                finishClose();
+            }, 300);
+        }
     };
+    const close = () => closeInternal(false);
 
     // Event listeners for closing the modal
-    cancelBtn.addEventListener('click', () => history.back());
-    modalElement.addEventListener('click', (e: MouseEvent) => { if (e.target === modalElement) history.back(); });
+    cancelBtn.addEventListener('click', () => { if (isCurrent()) history.back(); });
+    modalElement.addEventListener('click', (e: MouseEvent) => { if (isCurrent() && e.target === modalElement) history.back(); });
 
     // Event listener for the primary action button
-    primaryBtn.addEventListener('click', () => { void onSave(modalElement, primaryBtn, close); });
+    primaryBtn.addEventListener('click', () => {
+        if (!isCurrent()) return;
+        void onSave(modalElement, primaryBtn, close);
+    });
 
-    return { modalElement, show, close };
+    const handle: ManagedModal = { modalElement, show, close, destroy: () => closeInternal(true) };
+    activeModals.add(handle);
+    return handle;
 };
 
 /**
@@ -213,6 +254,10 @@ modal.createAdvancedOptionsHTML = function(idPrefix) {
  * @param {string} idPrefix - The prefix ('movie' or 'tv') used for the element IDs.
  */
 modal.populateAdvancedOptions = function(modalElement, data, idPrefix) {
+    const identity = JC.identity.ownerOf(modalElement) || JC.identity.capture();
+    const isCurrent = () => !!identity
+        && JC.identity.isCurrent(identity)
+        && document.body.contains(modalElement);
     // Backend failed to load server options: show an error note instead of
     // polling for selects that will only ever be populated with empty
     // placeholders — three empty dropdowns look like a valid config (W4-ERR-5).
@@ -228,6 +273,10 @@ modal.populateAdvancedOptions = function(modalElement, data, idPrefix) {
     let attempts = 0;
     const maxAttempts = 50; // 5 seconds
     const interval = setInterval(() => {
+        if (!isCurrent()) {
+            clearInterval(interval);
+            return;
+        }
         const serverSelect = modalElement.querySelector<HTMLSelectElement>(`#${idPrefix}-server`);
         const qualitySelect = modalElement.querySelector<HTMLSelectElement>(`#${idPrefix}-quality`);
         const folderSelect = modalElement.querySelector<HTMLSelectElement>(`#${idPrefix}-folder`);
@@ -283,7 +332,13 @@ modal.populateAdvancedOptions = function(modalElement, data, idPrefix) {
             }
         }
     }, 100);
+    const cleanups = (modalElement as IdentityCleanupElement)._jcIdentityCleanups;
+    cleanups?.add(() => clearInterval(interval));
 };
+
+JC.identity.registerReset('seerr-request-modal', () => {
+    for (const active of [...activeModals]) active.destroy();
+});
 
 // Expose the modal module on the global JC object
 JC.seerrModal = modal;

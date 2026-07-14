@@ -12,6 +12,7 @@ import {
     buildNativeActionSheetItem, setActionSheetItemIcon, getActiveActionSheetScroller,
     fitActionSheetItem, closeOpenActionSheet,
 } from '../../core/action-sheet';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -97,12 +98,14 @@ function optimisticHideRemovedCard(itemId: string, surface: string, card?: HTMLE
     try {
         if (card && card.isConnected) {
             card.style.display = 'none';
+            card.dataset.jcHomeRemoved = '1';
             return;
         }
         // Fallback (card re-rendered/detached): hide matching cards on the same surface only.
         document.querySelectorAll<HTMLElement>(`.card[data-id="${CSS.escape(itemId)}"]`).forEach(c => {
             if (JC.detectCardSurface!(c) === surface) {
                 c.style.display = 'none';
+                c.dataset.jcHomeRemoved = '1';
             }
         });
     } catch (e) {
@@ -118,8 +121,10 @@ function optimisticHideRemovedCard(itemId: string, surface: string, card?: HTMLE
  * @param card The specific card element the action was triggered from.
  */
 export async function removeFromHomeSurface(itemId: string, surface: string, card?: HTMLElement): Promise<boolean> {
+    const context = JC.identity.capture();
+    if (!context) return false;
     const config = REMOVE_SURFACES[surface];
-    const userId = ApiClient.getCurrentUserId();
+    const userId = context.userId;
     if (!userId || !itemId || !config) {
         showNotification(JC.t!('remove_continue_watching_error'), "error");
         return false;
@@ -130,20 +135,20 @@ export async function removeFromHomeSurface(itemId: string, surface: string, car
     // don't proceed on top of stale server state.
     try {
         await (JC as any).hiddenContent?.flushPendingSave?.();
+        if (!JC.identity.isCurrent(context)) return false;
     } catch (e: any) {
+        if (!JC.identity.isCurrent(context)) return false;
         showNotification(JC.t!('remove_continue_watching_error_api', { error: JC.escapeHtml(e?.statusText || '') || JC.t!('unknown_error') }), "error");
         return false;
     }
 
     try {
-        await ApiClient.ajax({
-            type: 'POST',
-            url: ApiClient.getUrl(`/JellyfinCanopy/${config.path}/hide/${itemId}`),
-            data: '{}',
-            contentType: 'application/json',
-            dataType: 'json',
-            headers: { 'Content-Type': 'application/json' }
-        } as any);
+        await JC.core.api!.plugin(`/${config.path}/hide/${encodeURIComponent(itemId)}`, {
+            method: 'POST',
+            body: {},
+            skipRetry: true,
+        });
+        if (!JC.identity.isCurrent(context)) return false;
 
         optimisticHideRemovedCard(itemId, surface, card);
 
@@ -155,6 +160,7 @@ export async function removeFromHomeSurface(itemId: string, surface: string, car
         }
         return true;
     } catch (error: any) {
+        if (!JC.identity.isCurrent(context)) return false;
         // SEC(X1): server/API error text reaches an innerHTML-rendered toast.
         const errorMessage = JC.escapeHtml(error.responseJSON?.message
             || error.responseJSON?.Message
@@ -184,7 +190,10 @@ export function hideEmptyHomeSections(): void {
                 if (card.style.display === 'none') continue;
                 visibleCount++;
             }
-            if (visibleCount === 0) section.style.display = 'none';
+            if (visibleCount === 0) {
+                section.style.display = 'none';
+                section.dataset.jcHomeSectionHidden = '1';
+            }
         }
     } catch (err) {
         console.warn('🪼 Jellyfin Canopy: hideEmptyHomeSections failed', err);
@@ -202,7 +211,7 @@ JC.hideEmptyHomeSections = hideEmptyHomeSections;
  * @param card The source card element, for a precise optimistic hide.
  * @returns The created button element.
  */
-function createRemoveButton(scroller: HTMLElement, itemId: string, surface: string, card?: HTMLElement): HTMLButtonElement {
+function createRemoveButton(context: IdentityContext, scroller: HTMLElement, itemId: string, surface: string, card?: HTMLElement): HTMLButtonElement {
     const config = REMOVE_SURFACES[surface] || REMOVE_SURFACES.continuewatching;
     const button = buildNativeActionSheetItem(scroller, {
         dataId: 'remove-continue-watching',
@@ -216,6 +225,7 @@ function createRemoveButton(scroller: HTMLElement, itemId: string, surface: stri
     button.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!JC.identity.isCurrent(context)) return;
 
         void (async () => {
             const originalText = textEl.textContent;
@@ -224,6 +234,7 @@ function createRemoveButton(scroller: HTMLElement, itemId: string, surface: stri
             setActionSheetItemIcon(button, 'hourglass_empty');
 
             const success = await removeFromHomeSurface(itemId, surface, card);
+            if (!JC.identity.isCurrent(context)) return;
 
             // Restore visuals BEFORE close — a stuck sheet under odd themes is better than a stuck "Removing…" label.
             button.disabled = false;
@@ -255,6 +266,8 @@ function createRemoveButton(scroller: HTMLElement, itemId: string, surface: stri
  * The context is consumed once handled so a later sheet can't reuse it.
  */
 JC.addRemoveButton = (): void => {
+    const context = JC.identity.capture();
+    if (!context) return;
     if (!JC.currentSettings!.removeContinueWatchingEnabled) return;
 
     const scroller = getActiveActionSheetScroller();
@@ -286,10 +299,22 @@ JC.addRemoveButton = (): void => {
     }
     if (!wantSurface) { JC.state!.removeContext = null; return; }
 
-    const removeButton = createRemoveButton(scroller, ctx.itemId, wantSurface, ctx.card as HTMLElement | undefined);
+    const removeButton = createRemoveButton(context, scroller, ctx.itemId, wantSurface, ctx.card as HTMLElement | undefined);
     insertionPoint.after(removeButton);
     fitActionSheetItem(removeButton, scroller);
     // Consume the context: one menu-open yields one button; later observer fires (or an
     // unrelated sheet opened within the TTL) must not re-inject from this same context.
     JC.state!.removeContext = null;
 };
+
+JC.identity.registerReset('remove-home', () => {
+    document.querySelectorAll('[data-id="remove-continue-watching"]').forEach((node) => node.remove());
+    document.querySelectorAll<HTMLElement>('[data-jc-home-removed="1"]').forEach((card) => {
+        card.style.removeProperty('display');
+        delete card.dataset.jcHomeRemoved;
+    });
+    document.querySelectorAll<HTMLElement>('[data-jc-home-section-hidden="1"]').forEach((section) => {
+        section.style.removeProperty('display');
+        delete section.dataset.jcHomeSectionHidden;
+    });
+});

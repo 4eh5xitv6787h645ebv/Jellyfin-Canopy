@@ -8,9 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const setUserPrefs = vi.fn((_next?: unknown) => Promise.resolve({}));
 const invalidateServerCache = vi.fn(() => Promise.resolve());
 let loadOkValue = true;
+let loadPromise: Promise<void> = Promise.resolve();
 
 vi.mock('./state', () => ({
-    whenLoaded: () => Promise.resolve(),
+    whenLoaded: () => loadPromise,
     isLoadOk: () => loadOkValue,
     getUserPrefs: () => ({}),
     setUserPrefs: (next: unknown) => setUserPrefs(next),
@@ -27,8 +28,16 @@ function renderRatingsBox(checked: boolean): HTMLInputElement {
 
 async function flush(): Promise<void> { await Promise.resolve(); await Promise.resolve(); }
 
+function deferred(): { promise: Promise<void>; resolve(): void } {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => { resolve = done; });
+    return { promise, resolve };
+}
+
 describe('spoiler-guard settings-tab save-guard', () => {
     beforeEach(() => {
+        JC.identity.transition('', '', 'settings-test-reset');
+        JC.identity.transition('server-a', 'user-a', 'settings-test-start');
         (JC.pluginConfig as Record<string, unknown>).SpoilerBlurEnabled = true;
         JC.tagPipeline = {
             registerRenderer: vi.fn(),
@@ -37,8 +46,12 @@ describe('spoiler-guard settings-tab save-guard', () => {
         setUserPrefs.mockClear();
         invalidateServerCache.mockClear();
         loadOkValue = true;
+        loadPromise = Promise.resolve();
     });
-    afterEach(() => { document.body.innerHTML = ''; });
+    afterEach(() => {
+        JC.identity.transition('', '', 'settings-test-cleanup');
+        document.body.innerHTML = '';
+    });
 
     it('saves when the initial load succeeded', async () => {
         const box = renderRatingsBox(true);
@@ -63,5 +76,30 @@ describe('spoiler-guard settings-tab save-guard', () => {
         expect(setUserPrefs).not.toHaveBeenCalled();
         // The box the user clicked is reverted to its pre-click state.
         expect(box.checked).toBe(true);
+    });
+
+    it('drops a held A load and makes the retained checkbox inert for B', async () => {
+        const held = deferred();
+        loadPromise = held.promise;
+        const resetAutoCloseTimer = vi.fn();
+        const box = renderRatingsBox(true);
+        wireSpoilerGuardListeners(resetAutoCloseTimer);
+
+        box.checked = false;
+        box.dispatchEvent(new Event('change'));
+        expect(box.disabled).toBe(true);
+
+        JC.identity.transition('server-a', 'user-b', 'account-switch');
+        expect(box.disabled).toBe(true);
+        held.resolve();
+        await flush();
+
+        expect(setUserPrefs).not.toHaveBeenCalled();
+        expect(invalidateServerCache).not.toHaveBeenCalled();
+
+        box.dispatchEvent(new Event('change'));
+        await flush();
+        expect(setUserPrefs).not.toHaveBeenCalled();
+        expect(resetAutoCloseTimer).toHaveBeenCalledTimes(1);
     });
 });

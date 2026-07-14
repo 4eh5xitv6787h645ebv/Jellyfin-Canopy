@@ -5,7 +5,7 @@ import { JC as JEBase } from '../globals';
 import { assetUrl } from '../core/asset-urls';
 import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate } from '../core/navigation';
-import type { PluginConfig } from '../types/jc';
+import type { IdentityContext, PluginConfig } from '../types/jc';
 
 /**
  * Local view of the shared namespace adding the public members this module
@@ -32,6 +32,11 @@ let navUnsubscribe: (() => void) | null = null;
 let navSettleTimer: ReturnType<typeof setTimeout> | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let processedElements = new WeakSet<Element>();
+let generation = 0;
+
+function isActive(context: IdentityContext, expectedGeneration: number): boolean {
+    return generation === expectedGeneration && JC.identity.isCurrent(context);
+}
 
 function isFeatureEnabled(): boolean {
     return Boolean(window?.JellyfinCanopy?.pluginConfig?.ColoredRatingsEnabled);
@@ -54,11 +59,13 @@ function injectCSS(): void {
 }
 
 
-function processRatingElements(): void {
+function processRatingElements(context: IdentityContext, expectedGeneration: number): void {
+    if (!isActive(context, expectedGeneration) || !isFeatureEnabled()) return;
     try {
         const elements = document.querySelectorAll<HTMLElement>(CONFIG.targetSelector);
 
         elements.forEach((element) => {
+            if (!isActive(context, expectedGeneration)) return;
             if (processedElements.has(element)) {
                 const currentRating = element.textContent?.trim();
                 const existingRating = element.getAttribute(CONFIG.attributeName);
@@ -73,13 +80,16 @@ function processRatingElements(): void {
 
                 if (element.getAttribute(CONFIG.attributeName) !== normalizedRating) {
                     element.setAttribute(CONFIG.attributeName, normalizedRating);
+                    element.dataset.jcColoredRating = 'true';
                     processedElements.add(element);
 
                     if (!element.getAttribute('aria-label')) {
                         element.setAttribute('aria-label', `Content rated ${normalizedRating}`);
+                        element.dataset.jcColoredRatingAria = 'true';
                     }
                     if (!element.getAttribute('title')) {
                         element.setAttribute('title', `Rating: ${normalizedRating}`);
+                        element.dataset.jcColoredRatingTitle = 'true';
                     }
                 }
             }
@@ -107,11 +117,15 @@ function normalizeRating(rating: string): string {
     return ratingMappings[normalized] || rating.trim();
 }
 
-function debouncedProcess(): void {
+function debouncedProcess(context: IdentityContext, expectedGeneration: number): void {
+    if (!isActive(context, expectedGeneration)) return;
     if (debounceTimer) {
         clearTimeout(debounceTimer);
     }
-    debounceTimer = setTimeout(processRatingElements, CONFIG.debounceDelay);
+    debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        processRatingElements(context, expectedGeneration);
+    }, CONFIG.debounceDelay);
 }
 
 /**
@@ -142,7 +156,7 @@ export function mutationsTouchRatings(mutations: MutationRecord[]): boolean {
     return false;
 }
 
-function setupMutationObserver(): boolean {
+function setupMutationObserver(context: IdentityContext, expectedGeneration: number): boolean {
     if (!window.MutationObserver) return false;
 
     try {
@@ -152,8 +166,8 @@ function setupMutationObserver(): boolean {
         // only ever (re)renders via childList mutations, and the
         // per-navigation pass below covers cached-page re-shows.
         observerHandle = onBodyMutation('colored-ratings', (mutations) => {
-            if (mutationsTouchRatings(mutations)) {
-                debouncedProcess();
+            if (isActive(context, expectedGeneration) && mutationsTouchRatings(mutations)) {
+                debouncedProcess(context, expectedGeneration);
             }
         });
         return true;
@@ -163,16 +177,19 @@ function setupMutationObserver(): boolean {
     }
 }
 
-function setupNavigationWatcher(): void {
+function setupNavigationWatcher(context: IdentityContext, expectedGeneration: number): void {
     if (navUnsubscribe) return;
     // PERF(R5): replaces both the permanent 1Hz full-document polling interval and
     // the per-mutation location.href watcher — one debounced pass per
     // navigation plus a settle pass for late-arriving page content.
     navUnsubscribe = onNavigate(() => {
-        if (!isFeatureEnabled()) return;
-        debouncedProcess();
+        if (!isActive(context, expectedGeneration) || !isFeatureEnabled()) return;
+        debouncedProcess(context, expectedGeneration);
         if (navSettleTimer) clearTimeout(navSettleTimer);
-        navSettleTimer = setTimeout(processRatingElements, CONFIG.navSettleDelay);
+        navSettleTimer = setTimeout(() => {
+            navSettleTimer = null;
+            processRatingElements(context, expectedGeneration);
+        }, CONFIG.navSettleDelay);
     });
 }
 
@@ -189,8 +206,9 @@ function pausePolling(): void {
  * pause screen's rating element is colored as soon as it is shown.
  */
 function resumePolling(): void {
-    if (isFeatureEnabled()) {
-        debouncedProcess();
+    const context = JC.identity.capture();
+    if (context && isFeatureEnabled()) {
+        debouncedProcess(context, generation);
     }
 }
 
@@ -214,27 +232,52 @@ function cleanup(): void {
     processedElements = new WeakSet();
 }
 
+function reset(): void {
+    generation += 1;
+    cleanup();
+    document.querySelectorAll<HTMLElement>('[data-jc-colored-rating="true"]').forEach((element) => {
+        element.removeAttribute(CONFIG.attributeName);
+        if (element.dataset.jcColoredRatingAria === 'true') element.removeAttribute('aria-label');
+        if (element.dataset.jcColoredRatingTitle === 'true') element.removeAttribute('title');
+        delete element.dataset.jcColoredRating;
+        delete element.dataset.jcColoredRatingAria;
+        delete element.dataset.jcColoredRatingTitle;
+    });
+    document.getElementById(CONFIG.cssId)?.remove();
+}
+
 function initialize(): void {
+    reset();
     if (!isFeatureEnabled()) {
-        cleanup();
         return;
     }
-    cleanup();
+    const context = JC.identity.capture();
+    if (!context) return;
+    const expectedGeneration = generation;
     injectCSS();
-    processRatingElements();
-    setupMutationObserver();
-    setupNavigationWatcher();
+    processRatingElements(context, expectedGeneration);
+    setupMutationObserver(context, expectedGeneration);
+    setupNavigationWatcher(context, expectedGeneration);
 }
 
 if (typeof document.visibilityState !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && isFeatureEnabled()) {
-            setTimeout(processRatingElements, 100);
+        const context = JC.identity.capture();
+        if (context && document.visibilityState === 'visible' && isFeatureEnabled()) {
+            const expectedGeneration = generation;
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                debounceTimer = null;
+                if (isActive(context, expectedGeneration) && isFeatureEnabled()) {
+                    processRatingElements(context, expectedGeneration);
+                }
+            }, 100);
         }
     });
 }
 
 window.addEventListener('beforeunload', cleanup);
+JC.identity.registerReset('colored-ratings', reset);
 JC.initializeColoredRatings = initialize;
 // Expose pause/resume functions for pausescreen.js to control
 JC.pauseRatingsPolling = pausePolling;

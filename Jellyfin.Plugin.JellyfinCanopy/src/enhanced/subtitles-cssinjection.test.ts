@@ -26,7 +26,7 @@ describe('subtitles ::cue insertRule injection', () => {
     });
 
     it('falls back to a safe colour instead of injecting the payload declaration', async () => {
-        const JC = window.JellyfinCanopy as unknown as Record<string, any>;
+        const JC = window.JellyfinCanopy;
         JC.currentSettings = {
             customSubtitleTextColor: '#FFFFFFFF',
             customSubtitleBgColor: MALICIOUS,
@@ -43,7 +43,7 @@ describe('subtitles ::cue insertRule injection', () => {
         await import('./subtitles');
 
         const insertSpy = vi.spyOn(CSSStyleSheet.prototype, 'insertRule');
-        JC.applySavedStylesWhenReady();
+        JC.applySavedStylesWhenReady?.();
 
         expect(insertSpy).toHaveBeenCalled();
         const rule = String(insertSpy.mock.calls[0][0]);
@@ -52,5 +52,41 @@ describe('subtitles ::cue insertRule injection', () => {
         expect(rule).not.toContain('evil');
         // The bg colour is replaced by the transparent fallback.
         expect(rule).toContain('#00000000');
+    });
+
+    it('removes A styling and leaves B-disabled subtitles untouched', async () => {
+        const JC = window.JellyfinCanopy;
+        JC.identity.transition('server-a', 'user-a', 'subtitle-test-start');
+        JC.currentSettings = {
+            customSubtitleTextColor: '#FF0000FF',
+            customSubtitleBgColor: '#000000FF',
+            disableCustomSubtitleStyles: false,
+        };
+        document.body.appendChild(document.createElement('video'));
+        const innerA = document.createElement('div');
+        innerA.className = 'videoSubtitlesInner';
+        document.body.appendChild(innerA);
+        const clientSheet = document.createElement('style');
+        clientSheet.id = 'htmlvideoplayer-cuestyle';
+        document.head.appendChild(clientSheet);
+        await import('./subtitles');
+
+        JC.applySavedStylesWhenReady?.();
+        expect(innerA.style.getPropertyValue('color')).not.toBe('');
+        expect((document.getElementById('jc-html-videoplayer-cuestyle') as HTMLStyleElement | null)
+            ?.sheet?.cssRules.length).toBe(1);
+
+        const contextB = JC.identity.transition('server-a', 'user-b', 'account-switch');
+        expect(innerA.style.getPropertyValue('color')).toBe('');
+        expect((document.getElementById('jc-html-videoplayer-cuestyle') as HTMLStyleElement | null)
+            ?.sheet?.cssRules.length ?? 0).toBe(0);
+
+        JC.currentSettings = { disableCustomSubtitleStyles: true };
+        await JC.identity.activate(contextB);
+        const innerB = document.createElement('div');
+        innerB.className = 'videoSubtitlesInner';
+        document.body.appendChild(innerB);
+        await Promise.resolve();
+        expect(innerB.getAttribute('style')).toBeNull();
     });
 });

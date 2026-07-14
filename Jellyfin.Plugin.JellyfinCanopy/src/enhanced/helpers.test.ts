@@ -3,6 +3,7 @@
 // used to be re-read on every observer tick; it must now be read at most once
 // per navigation).
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { JC } from '../globals';
 import { clearItemCache, getHeaderRightContainer, getItemCached } from './helpers';
 import { insertHeaderTrayButton, HeaderTrayOrder } from './header-tray';
 
@@ -104,6 +105,25 @@ describe('privacy reset item-cache invalidation (BI-SEC-035)', () => {
         await expect(oldRequest).resolves.toEqual({ projection: 'stale' });
         await expect(getItemCached(itemId, { userId: 'race-user' }))
             .resolves.toEqual({ projection: 'fresh' });
+        expect(getItem).toHaveBeenCalledTimes(2);
+        getItem.mockRestore();
+    });
+
+    it('drops a held DTO and refetches when the same user id switches servers', async () => {
+        let resolveA!: (value: unknown) => void;
+        const heldA = new Promise<unknown>((resolve) => { resolveA = resolve; });
+        const getItem = vi.spyOn(ApiClient, 'getItem')
+            .mockImplementationOnce(() => heldA)
+            .mockResolvedValueOnce({ server: 'b' });
+
+        JC.identity.transition('server-a', 'same-user', 'helpers-server-a');
+        const requestA = getItemCached('same-item', { userId: 'same-user' });
+        JC.identity.transition('server-b', 'same-user', 'helpers-server-switch');
+        resolveA({ server: 'a' });
+
+        await expect(requestA).resolves.toBeNull();
+        await expect(getItemCached('same-item', { userId: 'same-user' }))
+            .resolves.toEqual({ server: 'b' });
         expect(getItem).toHaveBeenCalledTimes(2);
         getItem.mockRestore();
     });

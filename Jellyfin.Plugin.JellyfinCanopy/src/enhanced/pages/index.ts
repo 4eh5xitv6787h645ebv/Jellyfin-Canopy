@@ -13,7 +13,7 @@
 
 import { JC } from '../../globals';
 import { installEarlyMask } from './early-mask';
-import { initFallbackHost, lateAdoptIfOnPage } from './fallback-host';
+import { drain, initFallbackHost, lateAdoptIfOnPage } from './fallback-host';
 import { initEntryPoints } from './entry-points';
 
 installEarlyMask();
@@ -34,3 +34,11 @@ export function initPagesFramework(): void {
 }
 
 JC.initializePagesFramework = initPagesFramework;
+
+// A fallback page can survive the host's no-reload login route swap. Drain it
+// synchronously before the loader replaces A's globals, then reconcile the
+// still-mounted route once B's atomic snapshot has been committed.
+JC.identity.registerReset('pages-framework', () => drain('identity-change'));
+JC.identity.registerActivate('pages-framework', () => {
+    if (initialized) lateAdoptIfOnPage();
+});

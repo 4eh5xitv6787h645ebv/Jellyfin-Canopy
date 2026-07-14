@@ -7,9 +7,53 @@
 import { JC } from '../../globals';
 import { getHiddenData, unhideItem, unhideAll } from './data';
 import type { HiddenItem } from './data';
+import type { IdentityContext } from '../../types/jc';
 
 /** Max poster width when loading images from TMDB / Jellyfin. */
 const POSTER_MAX_WIDTH = 300;
+
+interface PanelFence {
+    readonly generation: number;
+    readonly context: IdentityContext | null;
+}
+
+let panelGeneration = 0;
+let activeManagementClose: (() => void) | null = null;
+const panelTimeouts = new Set<number>();
+
+function capturePanelFence(): PanelFence {
+    return { generation: panelGeneration, context: JC.identity?.capture?.() || null };
+}
+
+function isPanelFenceCurrent(fence: PanelFence): boolean {
+    return fence.generation === panelGeneration
+        && (!fence.context || JC.identity.isCurrent(fence.context));
+}
+
+function schedulePanelTimeout(callback: () => void, delay: number, fence: PanelFence): number {
+    const handle = window.setTimeout(() => {
+        panelTimeouts.delete(handle);
+        if (isPanelFenceCurrent(fence)) callback();
+    }, delay);
+    panelTimeouts.add(handle);
+    return handle;
+}
+
+function cancelPanelTimeout(handle: number): void {
+    clearTimeout(handle);
+    panelTimeouts.delete(handle);
+}
+
+function resetPanelUi(): void {
+    panelGeneration += 1;
+    activeManagementClose?.();
+    activeManagementClose = null;
+    for (const handle of panelTimeouts) clearTimeout(handle);
+    panelTimeouts.clear();
+    document.querySelectorAll('.jc-hidden-management-overlay').forEach((node) => node.remove());
+}
+
+JC.identity?.registerReset?.('hidden-content-management-panel', resetPanelUi);
 
 // ============================================================
 // Management panel (overlay)
@@ -41,9 +85,11 @@ function createManagementHeader(count: number): HTMLElement {
  * @returns The card element.
  */
 export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLElement {
+    const fence = capturePanelFence();
     const card = document.createElement('div');
     card.className = 'jc-hidden-item-card';
     card.dataset.itemId = item.itemId;
+    card.dataset.jcIdentityOwned = 'true';
 
     const hasJellyfinId = !!item.itemId;
     const hasTmdbId = !!item.tmdbId;
@@ -74,6 +120,7 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
         img.alt = '';
         img.loading = 'lazy';
         img.onerror = () => {
+            if (!isPanelFenceCurrent(fence)) return;
             const self = img;
             // Switch card to Seerr navigation
             if (hasTmdbId && (JC as any).seerrMoreInfo) {
@@ -82,27 +129,35 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
             // Item removed from Jellyfin — fall back to TMDB poster
             if (hasTmdbId && item.posterPath) {
                 self.src = `https://image.tmdb.org/t/p/w${POSTER_MAX_WIDTH}${item.posterPath}`;
-                self.onerror = function(this: HTMLImageElement) { this.style.display = 'none'; };
+                self.onerror = function(this: HTMLImageElement) {
+                    if (isPanelFenceCurrent(fence)) this.style.display = 'none';
+                };
             } else if (hasTmdbId && (JC as any).seerrAPI) {
                 // No posterPath stored — fetch it from Seerr
-                self.onerror = function(this: HTMLImageElement) { this.style.display = 'none'; };
+                self.onerror = function(this: HTMLImageElement) {
+                    if (isPanelFenceCurrent(fence)) this.style.display = 'none';
+                };
                 const fetchFn = mediaType === 'tv'
                     ? (JC as any).seerrAPI.fetchTvShowDetails
                     : (JC as any).seerrAPI.fetchMovieDetails;
                 fetchFn(parseInt(String(item.tmdbId), 10)).then(function(details: any) {
+                    if (!isPanelFenceCurrent(fence)) return;
                     const path = details && (details.posterPath || details.poster_path);
                     if (path) {
                         self.src = `https://image.tmdb.org/t/p/w${POSTER_MAX_WIDTH}${path}`;
                     } else {
                         self.style.display = 'none';
                     }
-                }).catch(function() { self.style.display = 'none'; });
+                }).catch(function() {
+                    if (isPanelFenceCurrent(fence)) self.style.display = 'none';
+                });
             } else if (item.type !== 'Person' && item.name && (JC as any).seerrAPI && (JC as any).seerrMoreInfo) {
                 // No TMDB id stored and the Jellyfin media is gone — resolve via a Seerr search
                 // so the card opens the more-info modal instead of a blank poster + dead link.
                 self.style.display = 'none';
                 const wantType = (item.type === 'Series' || item.type === 'Episode' || item.type === 'Season') ? 'tv' : 'movie';
                 (JC as any).seerrAPI.search(item.name).then(function(res: any) {
+                    if (!isPanelFenceCurrent(fence)) return;
                     const results = (res && res.results) || [];
                     const hit = results.find(function(r: any) { return r.mediaType === wantType; })
                         || results.find(function(r: any) { return r.mediaType === 'movie' || r.mediaType === 'tv'; });
@@ -114,7 +169,9 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
                         if (p) {
                             self.src = `https://image.tmdb.org/t/p/w${POSTER_MAX_WIDTH}${p}`;
                             self.style.display = '';
-                            self.onerror = function(this: HTMLImageElement) { this.style.display = 'none'; };
+                            self.onerror = function(this: HTMLImageElement) {
+                                if (isPanelFenceCurrent(fence)) this.style.display = 'none';
+                            };
                         }
                     }
                 }).catch(function() {});
@@ -150,6 +207,10 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
     const navigableLinks = [posterLink, nameLink];
     for (const link of navigableLinks) {
         link.addEventListener('click', (e) => {
+            if (!isPanelFenceCurrent(fence)) {
+                e.preventDefault();
+                return;
+            }
             // If item was removed from Jellyfin, fall back to the Seerr modal — using the
             // stored TMDB id, or one resolved at render time by a Seerr search.
             const removedId = (card.dataset.jellyfinRemoved === '1')
@@ -199,22 +260,30 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
  * Shows all hidden items in a searchable grid with unhide actions.
  */
 export function showManagementPanel(): void {
-    document.querySelector('.jc-hidden-management-overlay')?.remove();
+    const fence = capturePanelFence();
+    if (!isPanelFenceCurrent(fence)) return;
+    activeManagementClose?.();
 
     const data = getHiddenData();
     const items = Object.entries(data.items || {}).map(([key, item]) => ({ ...item, _key: key }));
 
     const overlay = document.createElement('div');
     overlay.className = 'jc-hidden-management-overlay';
+    overlay.dataset.jcIdentityOwned = 'true';
 
     const panel = document.createElement('div');
     panel.className = 'jc-hidden-management-panel';
 
     const header = createManagementHeader(items.length);
+    const overlayTimers = new Set<number>();
     const closeOverlay = (): void => {
+        for (const handle of overlayTimers) cancelPanelTimeout(handle);
+        overlayTimers.clear();
         overlay.remove();
         document.removeEventListener('keydown', escHandler);
+        if (activeManagementClose === closeOverlay) activeManagementClose = null;
     };
+    activeManagementClose = closeOverlay;
     header.querySelector('.jc-hidden-management-close')!.addEventListener('click', closeOverlay);
     panel.appendChild(header);
 
@@ -229,6 +298,7 @@ export function showManagementPanel(): void {
      * @param filter Search text to filter by name.
      */
     function renderGrid(filter?: string): void {
+        if (!isPanelFenceCurrent(fence)) return;
         const filtered = filter
             ? items.filter(i => i.name?.toLowerCase().includes(filter.toLowerCase()))
             : items;
@@ -251,11 +321,14 @@ export function showManagementPanel(): void {
         grid.className = 'jc-hidden-management-grid';
 
         for (const item of filtered) {
-            const card = createItemCard(item, () => overlay.remove());
+            const card = createItemCard(item, closeOverlay);
 
             card.querySelector('.jc-hidden-item-unhide')!.addEventListener('click', () => {
+                if (!isPanelFenceCurrent(fence) || !overlay.isConnected) return;
                 card.classList.add('jc-hidden-item-removing');
-                setTimeout(() => {
+                const handle = schedulePanelTimeout(() => {
+                    overlayTimers.delete(handle);
+                    if (!card.isConnected || !overlay.isConnected) return;
                     unhideItem(item._key || item.itemId!);
                     card.remove();
                     const remaining = gridContainer.querySelectorAll('.jc-hidden-item-card').length;
@@ -266,7 +339,8 @@ export function showManagementPanel(): void {
                         emptyDiv.textContent = JC.t!('hidden_content_manage_empty');
                         gridContainer.replaceChildren(emptyDiv);
                     }
-                }, 300);
+                }, 300, fence);
+                overlayTimers.add(handle);
             });
 
             grid.appendChild(card);
@@ -277,10 +351,14 @@ export function showManagementPanel(): void {
 
     renderGrid();
 
-    toolbar.searchInput.addEventListener('input', () => renderGrid(toolbar.searchInput.value));
+    toolbar.searchInput.addEventListener('input', () => {
+        if (isPanelFenceCurrent(fence)) renderGrid(toolbar.searchInput.value);
+    });
 
     toolbar.unhideAllBtn.addEventListener('click', () => {
+        if (!isPanelFenceCurrent(fence) || !overlay.isConnected) return;
         if (!confirm(JC.t!('hidden_content_clear_confirm'))) return;
+        if (!isPanelFenceCurrent(fence)) return;
         unhideAll();
         const emptyDiv = document.createElement('div');
         emptyDiv.className = 'jc-hidden-management-empty';

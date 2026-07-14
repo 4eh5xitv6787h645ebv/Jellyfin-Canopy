@@ -29,24 +29,30 @@ import { confirmDisableSpoiler } from './dialog';
 import { injectSpoilerGuardCss } from './styles';
 import { primeIdentityCookieEarly, setIdentityCookie } from './identity';
 import { installWatchedRefresh } from './watched-refresh';
+import type { IdentityContext } from '../../types/jc';
 
 const logPrefix = '🪼 Jellyfin Canopy [SpoilerGuard]:';
 
 let inited = false;
+let activeEpoch: number | null = null;
 
 /**
  * Boot the client feature. Gated on the admin master switch. Idempotent: safe
  * to re-run on LIVE.CONFIG_CHANGED (re-fetches state; the cookie / CSS / live
  * subscription install once).
  */
-function init(): void {
+function init(context: IdentityContext | null = JC.identity.capture()): void {
     if (JC.pluginConfig?.SpoilerBlurEnabled !== true) return;
-    setIdentityCookie();
+    if (!context || !JC.identity.isCurrent(context)) return;
+    setIdentityCookie(context);
+    primeIdentityCookieEarly(context);
     if (!inited) {
         inited = true;
         injectSpoilerGuardCss();
-        installWatchedRefresh();
     }
+    installWatchedRefresh();
+    if (activeEpoch === context.epoch) return;
+    activeEpoch = context.epoch;
     void loadState();
 }
 
@@ -78,12 +84,20 @@ JC.spoilerGuard = {
 // card <img> requests — with a bounded retry until ApiClient reports a user.
 primeIdentityCookieEarly();
 
+JC.identity.registerReset('spoiler-guard', () => {
+    activeEpoch = null;
+});
+JC.identity.registerActivate('spoiler-guard', (context) => {
+    init(context);
+});
+
 // Boot now, and re-boot when an admin saves config (re-init instead of reload).
 init();
 on(LIVE.CONFIG_CHANGED, () => {
     try {
         if (JC.pluginConfig?.SpoilerBlurEnabled === true) {
             resetState();
+            activeEpoch = null;
             init();
         }
     } catch (e) {

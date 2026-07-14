@@ -5,7 +5,7 @@ import { assetUrl } from '../core/asset-urls';
 import { isDetailsPageVisible } from '../core/details-view';
 import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate, onViewPage } from '../core/navigation';
-import type { JELegacyHelpers, PluginConfig } from '../types/jc';
+import type { IdentityContext, JELegacyHelpers, PluginConfig } from '../types/jc';
 
 /** Options accepted by helpers.createExternalLink (and its local fallback). */
 interface ExternalLinkOptions {
@@ -24,18 +24,61 @@ const JC = JEBase as typeof JEBase & {
     pluginConfig: PluginConfig & { LetterboxdEnabled?: boolean; ShowLetterboxdLinkAsText?: boolean };
     helpers: JELegacyHelpers & {
         createExternalLink?: (url: string, options?: ExternalLinkOptions) => HTMLAnchorElement;
-        getItemCached?: (itemId: string) => Promise<unknown>;
+        getItemCached?: (itemId: string, options?: { userId?: string }) => Promise<unknown>;
     };
 };
+
+let letterboxdGeneration = 0;
+let letterboxdBodySubscription: { unsubscribe(): void } | null = null;
+let letterboxdNavUnsubscribe: (() => void) | null = null;
+let letterboxdViewUnsubscribe: (() => void) | null = null;
+const letterboxdTimers = new Set<ReturnType<typeof setTimeout>>();
+const letterboxdIdleJobs = new Set<number>();
+
+function removeLetterboxdLinks(): void {
+    document.querySelectorAll('.letterboxd-link').forEach((link) => {
+        if (link.previousSibling?.nodeType === Node.TEXT_NODE) link.previousSibling.remove();
+        link.remove();
+    });
+}
+
+function resetLetterboxd(): void {
+    letterboxdGeneration++;
+    letterboxdBodySubscription?.unsubscribe();
+    letterboxdBodySubscription = null;
+    letterboxdNavUnsubscribe?.();
+    letterboxdNavUnsubscribe = null;
+    letterboxdViewUnsubscribe?.();
+    letterboxdViewUnsubscribe = null;
+    for (const timer of letterboxdTimers) clearTimeout(timer);
+    letterboxdTimers.clear();
+    if (typeof cancelIdleCallback === 'function') {
+        for (const job of letterboxdIdleJobs) cancelIdleCallback(job);
+    }
+    letterboxdIdleJobs.clear();
+    removeLetterboxdLinks();
+}
+
+function isActive(context: IdentityContext, expectedGeneration: number): boolean {
+    return letterboxdGeneration === expectedGeneration && JC.identity.isCurrent(context);
+}
 
 // eslint-disable-next-line @typescript-eslint/require-await -- public initializer kept async to preserve its Promise-returning contract
 JC.initializeLetterboxdLinksScript = async function () {
     const logPrefix = '🪼 Jellyfin Canopy: Letterboxd Links:';
 
+    resetLetterboxd();
+
     if (!JC?.pluginConfig?.LetterboxdEnabled) {
         console.log(`${logPrefix} Integration disabled in plugin settings.`);
         return;
     }
+
+    const capturedIdentity = JC.identity.capture();
+    if (!capturedIdentity) return;
+    const context: IdentityContext = capturedIdentity;
+    const expectedGeneration = letterboxdGeneration;
+    const client = ApiClient;
 
     console.log(`${logPrefix} Initializing...`);
 
@@ -112,6 +155,7 @@ JC.initializeLetterboxdLinksScript = async function () {
     }
 
     async function addLetterboxdLinks(): Promise<void> {
+        if (!isActive(context, expectedGeneration)) return;
         if (isAddingLinks) {
             return;
         }
@@ -151,8 +195,9 @@ JC.initializeLetterboxdLinksScript = async function () {
         isAddingLinks = true;
         try {
             const item = (JC.helpers?.getItemCached
-                ? await JC.helpers.getItemCached(itemId)
-                : await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId)) as any;
+                ? await JC.helpers.getItemCached(itemId, { userId: context.userId })
+                : await client.getItem(client.getCurrentUserId(), itemId)) as any;
+            if (!isActive(context, expectedGeneration) || !anchorElement.isConnected) return;
             if (!item?.Type) {
                 processedItemIds.add(itemId);
                 return;
@@ -191,6 +236,7 @@ JC.initializeLetterboxdLinksScript = async function () {
             anchorElement.appendChild(createLinkButton("Letterboxd", letterboxdUrl, "letterboxd-link-icon"));
             processedItemIds.add(itemId);
         } catch (err) {
+            if (!isActive(context, expectedGeneration)) return;
             console.error(`${logPrefix} Error adding Letterboxd link:`, err);
             // PERF(R9): fail open — only poison the processed set after repeated
             // failures; the shared body observer / nav probes retry until then.
@@ -220,18 +266,25 @@ JC.initializeLetterboxdLinksScript = async function () {
     // Coalesced, idle-scheduled lookup pass shared by every trigger below.
     let processingLetterboxd = false;
     function scheduleLetterboxdLinks(): void {
+        if (!isActive(context, expectedGeneration)) return;
         if (processingLetterboxd) return;
         processingLetterboxd = true;
         if (typeof requestIdleCallback !== 'undefined') {
-            requestIdleCallback(() => {
+            const job = requestIdleCallback(() => {
+                letterboxdIdleJobs.delete(job);
+                if (!isActive(context, expectedGeneration)) return;
                 void addLetterboxdLinks();
                 processingLetterboxd = false;
             }, { timeout: 500 });
+            letterboxdIdleJobs.add(job);
         } else {
-            setTimeout(() => {
+            const timer = setTimeout(() => {
+                letterboxdTimers.delete(timer);
+                if (!isActive(context, expectedGeneration)) return;
                 void addLetterboxdLinks();
                 processingLetterboxd = false;
             }, 100);
+            letterboxdTimers.add(timer);
         }
     }
 
@@ -248,27 +301,39 @@ JC.initializeLetterboxdLinksScript = async function () {
     // cached #itemDetailPage duplicates coexist (v12-platform.md §3) and
     // getElementById returns the lowest slot — usually an old hidden one —
     // which left this gate permanently dead after two details visits.
-    const letterboxdSubscription = onBodyMutation('letterboxd-links', () => {
+    letterboxdBodySubscription = onBodyMutation('letterboxd-links', () => {
+        if (!isActive(context, expectedGeneration)) return;
         if (!JC?.pluginConfig?.LetterboxdEnabled) {
-            letterboxdSubscription.unsubscribe();
+            letterboxdBodySubscription?.unsubscribe();
+            letterboxdBodySubscription = null;
             console.log(`${logPrefix} Stopped - feature disabled`);
             return;
         }
         if (!isDetailsPageVisible()) return;
         scheduleLetterboxdLinks();
     });
-    onNavigate(() => {
+    letterboxdNavUnsubscribe = onNavigate(() => {
+        if (!isActive(context, expectedGeneration)) return;
         if (JC?.pluginConfig?.LetterboxdEnabled) scheduleLetterboxdLinks();
     });
-    onViewPage(() => {
+    letterboxdViewUnsubscribe = onViewPage(() => {
+        if (!isActive(context, expectedGeneration)) return;
         if (JC?.pluginConfig?.LetterboxdEnabled) scheduleLetterboxdLinks();
     });
 
     // Initial check
     if (typeof requestIdleCallback !== 'undefined') {
-        requestIdleCallback(() => { void addLetterboxdLinks(); }, { timeout: 1000 });
+        const job = requestIdleCallback(() => {
+            letterboxdIdleJobs.delete(job);
+            if (isActive(context, expectedGeneration)) void addLetterboxdLinks();
+        }, { timeout: 1000 });
+        letterboxdIdleJobs.add(job);
     } else {
-        setTimeout(() => { void addLetterboxdLinks(); }, 500);
+        const timer = setTimeout(() => {
+            letterboxdTimers.delete(timer);
+            if (isActive(context, expectedGeneration)) void addLetterboxdLinks();
+        }, 500);
+        letterboxdTimers.add(timer);
     }
 
     try {
@@ -277,3 +342,5 @@ JC.initializeLetterboxdLinksScript = async function () {
         console.error(`${logPrefix} Failed to initialize`, err);
     }
 };
+
+JC.identity.registerReset('letterboxd-links', resetLetterboxd);

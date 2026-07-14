@@ -37,6 +37,9 @@ import './core/lifecycle';
 import './core/dom-observer';
 import './core/ui-kit';
 import './core/api-client';
+// Connect the loader-owned identity epoch to core request/lifecycle teardown
+// only after both owners above have installed their public surfaces.
+import './core/identity';
 import './core/tag-renderer-base';
 // Pages framework: imported before the feature barrels so the early 404-mask
 // installs at parse time and the registry exists before descriptors register.

@@ -7,7 +7,15 @@
 
 import { JC } from '../../globals';
 import { currentPageHandle } from '../pages/fallback-host';
-import { state, POSTER_MAX_WIDTH } from './state';
+import {
+    cancelPageTimeout,
+    capturePageFence,
+    isPageFenceCurrent,
+    schedulePageTimeout,
+    state,
+    POSTER_MAX_WIDTH,
+} from './state';
+import type { HiddenContentPageFence } from './state';
 import { isCssColor } from '../../core/css-safe';
 // Cross-module reference (defined in hidden-content-page/render.ts). ES-module
 // cyclic edge — only ever invoked at call time, never during module evaluation.
@@ -16,6 +24,14 @@ import { renderPage } from './render';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const logPrefix = '🪼 Jellyfin Canopy: Hidden Content Page:';
+let activeAdminModalClose: (() => void) | null = null;
+
+function resetAdminUi(): void {
+    activeAdminModalClose?.();
+    activeAdminModalClose = null;
+}
+
+JC.identity?.registerReset?.('hidden-content-page-admin-ui', resetAdminUi);
 
 // ============================================================
 // Admin cross-user view
@@ -28,7 +44,8 @@ const logPrefix = '🪼 Jellyfin Canopy: Hidden Content Page:';
  * UX gate only — the server independently enforces admin access on every
  * admin/* endpoint, so a false positive here cannot leak another user's data.
  */
-async function resolveIsAdmin(): Promise<boolean> {
+async function resolveIsAdmin(fence: HiddenContentPageFence): Promise<boolean> {
+    if (!isPageFenceCurrent(fence)) return false;
     if (state.adminIsAdmin !== null) return state.adminIsAdmin;
     // A positive flag is trustworthy; a falsy one may simply be "not yet resolved",
     // so only short-circuit on an explicit true and otherwise verify authoritatively.
@@ -43,6 +60,7 @@ async function resolveIsAdmin(): Promise<boolean> {
     }
     try {
         const user: any = await ApiClient.getCurrentUser();
+        if (!isPageFenceCurrent(fence)) return false;
         // Authoritative result — cache it even when false.
         state.adminIsAdmin = !!(user && user.Policy && user.Policy.IsAdministrator);
         return state.adminIsAdmin;
@@ -60,6 +78,8 @@ async function resolveIsAdmin(): Promise<boolean> {
  * after the cache is invalidated (state.adminUsers reset to null). Never throws.
  */
 export async function maybeInitAdminFilter(): Promise<void> {
+    const fence = capturePageFence();
+    if (!isPageFenceCurrent(fence)) return;
     // Respect the admin config toggle: when cross-user access is disabled, never build the filter
     // (and never call the admin endpoints, which the server also refuses).
     if (JC.pluginConfig && JC.pluginConfig.HiddenContentAdmin === false) return;
@@ -69,20 +89,24 @@ export async function maybeInitAdminFilter(): Promise<void> {
     // completion must NOT repopulate adminUsers — that would defeat the fresh re-init on re-open.
     const token = state.adminLoadToken;
     try {
-        const isAdmin = await resolveIsAdmin();
+        const isAdmin = await resolveIsAdmin(fence);
+        if (!isPageFenceCurrent(fence) || token !== state.adminLoadToken) return;
         if (!isAdmin) return; // leave adminUsers null; resolveIsAdmin governs retry semantics
         const list = await (JC as any).hiddenContent.fetchHiddenContentUsers();
         // null = transient failure: leave adminUsers null so a later render retries, and do NOT
         // re-render here (re-rendering would re-enter this function and spin a fetch/render loop).
         if (list === null) return;
-        if (token !== state.adminLoadToken) return; // page left during the fetch — discard stale result
+        if (!isPageFenceCurrent(fence) || token !== state.adminLoadToken) return; // page/account left during the fetch
         state.adminUsers = list;
         // The dropdown can now be drawn from cache — repaint the current surface.
         renderPage();
     } catch (e) {
-        console.warn(`${logPrefix} admin filter init failed`, e);
+        if (isPageFenceCurrent(fence)) console.warn(`${logPrefix} admin filter init failed`, e);
     } finally {
-        state.adminUsersLoading = false;
+        // A's completion must not clear B's independent loading sentinel.
+        if (isPageFenceCurrent(fence) && token === state.adminLoadToken) {
+            state.adminUsersLoading = false;
+        }
     }
 }
 
@@ -94,6 +118,8 @@ export async function maybeInitAdminFilter(): Promise<void> {
  * @param value Selected user id (N format) or '' for own list.
  */
 export async function onAdminUserChange(value: string): Promise<void> {
+    const fence = capturePageFence();
+    if (!isPageFenceCurrent(fence)) return;
     const token = ++state.adminLoadToken;
     state.searchQuery = '';
     state.scopedOnly = false;
@@ -118,7 +144,8 @@ export async function onAdminUserChange(value: string): Promise<void> {
     renderPage();
 
     const items = await (JC as any).hiddenContent.fetchUserHiddenItemsForAdmin(value);
-    if (token !== state.adminLoadToken) return; // a newer selection superseded this one
+    if (!isPageFenceCurrent(fence) || token !== state.adminLoadToken
+        || state.selectedAdminUserId !== value) return;
     if (items === null) {
         // Load failed — surface an error (with retry) rather than a misleading empty grid. Leaving
         // adminItemsUserId null keeps adminReady false so the error branch renders.
@@ -201,8 +228,10 @@ export function createAdminViewingBadge(): HTMLElement {
  * @param key Item key (item._key || item.itemId).
  */
 export function handleUnhide(key: string): void {
+    const fence = capturePageFence();
+    if (!isPageFenceCurrent(fence)) return;
     if (state.selectedAdminUserId) {
-        if (state.adminEditMode) void adminUnhide([key]);
+        if (state.adminEditMode) void adminUnhide([key], fence);
         return; // read-only view: ignore (the control should already be stripped)
     }
     (JC as any).hiddenContent.unhideItem(key);
@@ -213,9 +242,11 @@ export function handleUnhide(key: string): void {
  * @param keys Item keys to unhide.
  */
 export function handleUnhideMany(keys: string[]): void {
+    const fence = capturePageFence();
+    if (!isPageFenceCurrent(fence)) return;
     if (!Array.isArray(keys) || keys.length === 0) return;
     if (state.selectedAdminUserId) {
-        if (state.adminEditMode) void adminUnhide(keys);
+        if (state.adminEditMode) void adminUnhide(keys, fence);
         return;
     }
     keys.forEach((k) => (JC as any).hiddenContent.unhideItem(k));
@@ -226,11 +257,12 @@ export function handleUnhideMany(keys: string[]): void {
  * repaints. Keeps the dropdown count roughly in sync without a full refetch.
  * @param keys Item keys to unhide for state.selectedAdminUserId.
  */
-async function adminUnhide(keys: string[]): Promise<void> {
+async function adminUnhide(keys: string[], fence: HiddenContentPageFence): Promise<void> {
+    if (!isPageFenceCurrent(fence)) return;
     const uid = state.selectedAdminUserId;
     if (!uid) return;
     const ok = await (JC as any).hiddenContent.adminUnhideForUser(uid, keys);
-    if (!ok) return;
+    if (!ok || !isPageFenceCurrent(fence) || state.selectedAdminUserId !== uid) return;
     const removed = new Set(keys);
     if (Array.isArray(state.adminItems)) {
         state.adminItems = state.adminItems.filter((it) => !removed.has(it._key));
@@ -250,7 +282,8 @@ async function adminUnhide(keys: string[]): Promise<void> {
  * @param result A normalized search result (library or Seerr).
  * @returns true on success.
  */
-async function adminAddItem(targetUserId: string, result: any): Promise<boolean> {
+async function adminAddItem(targetUserId: string, result: any, fence: HiddenContentPageFence): Promise<boolean> {
+    if (!isPageFenceCurrent(fence) || state.selectedAdminUserId !== targetUserId) return false;
     const item = {
         itemId: result.itemId || '',
         name: result.name || '',
@@ -267,7 +300,8 @@ async function adminAddItem(targetUserId: string, result: any): Promise<boolean>
         hiddenAt: new Date().toISOString(),
     };
     const added = await (JC as any).hiddenContent.adminHideForUser(targetUserId, [item]);
-    if (added === false) return false;
+    if (added === false || !isPageFenceCurrent(fence)
+        || state.selectedAdminUserId !== targetUserId) return false;
     // The server returns the number of items it newly added; 0 means the user already had it hidden.
     // Only update the local cache + dropdown count for a real add, so the count can't drift upward.
     const didAdd = typeof added === 'number' ? added > 0 : true;
@@ -290,16 +324,20 @@ async function adminAddItem(targetUserId: string, result: any): Promise<boolean>
  * management-panel styling.
  */
 export function openAdminAddModal(): void {
+    const fence = capturePageFence();
+    if (!isPageFenceCurrent(fence)) return;
     const uid = state.selectedAdminUserId;
     if (!uid) return;
     const userName = state.adminUserName || uid;
 
+    activeAdminModalClose?.();
     // The open overlay normally blocks re-opening, but if a stale one is somehow present, note it so
     // we don't later "restore" the page overflow to its already-locked 'hidden' value (a perma-lock).
     const hadStaleOverlay = !!document.querySelector('.jc-hidden-admin-add-overlay');
     document.querySelector('.jc-hidden-admin-add-overlay')?.remove();
     const overlay = document.createElement('div');
     overlay.className = 'jc-hidden-management-overlay jc-hidden-admin-add-overlay';
+    overlay.dataset.jcIdentityOwned = 'true';
     const panel = document.createElement('div');
     panel.className = 'jc-hidden-management-panel';
 
@@ -338,12 +376,25 @@ export function openAdminAddModal(): void {
     // can never re-save and re-apply a 'hidden' that permanently locks the page.
     const prevBodyOverflow = hadStaleOverlay ? '' : document.body.style.overflow;
     const prevHtmlOverflow = hadStaleOverlay ? '' : document.documentElement.style.overflow;
+    const pageHandle = currentPageHandle();
+    let searchTimer: number | null = null;
+    let searchToken = 0;
+    let closed = false;
+    const isModalCurrent = (): boolean => !closed && isPageFenceCurrent(fence);
     const close = (): void => {
+        if (closed) return;
+        closed = true;
+        searchToken += 1;
+        cancelPageTimeout(searchTimer);
+        searchTimer = null;
         overlay.remove();
         document.removeEventListener('keydown', esc);
         document.body.style.overflow = prevBodyOverflow;
         document.documentElement.style.overflow = prevHtmlOverflow;
+        pageHandle?.untrack(close);
+        if (activeAdminModalClose === close) activeAdminModalClose = null;
     };
+    activeAdminModalClose = close;
     const esc = (e: KeyboardEvent): void => { if (e.key === 'Escape') close(); };
     closeBtn.addEventListener('click', close);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
@@ -354,6 +405,7 @@ export function openAdminAddModal(): void {
         const alreadyHidden = (state.adminItems || []).some((i) => (i._key || i.itemId) === key);
         const card = document.createElement('div');
         card.className = 'jc-hidden-item-card';
+        card.dataset.jcIdentityOwned = 'true';
 
         const posterWrap = document.createElement('div');
         posterWrap.className = 'jc-hidden-item-poster-link';
@@ -366,12 +418,22 @@ export function openAdminAddModal(): void {
             // Library item → Jellyfin image, falling back to the TMDB poster if available.
             img.src = (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl('/Items/' + n.itemId + '/Images/Primary', { maxWidth: POSTER_MAX_WIDTH });
             img.onerror = tmdbPoster
-                ? function (this: HTMLImageElement) { this.onerror = function (this: HTMLImageElement) { this.style.display = 'none'; }; this.src = tmdbPoster; }
-                : function (this: HTMLImageElement) { this.style.display = 'none'; };
+                ? function (this: HTMLImageElement) {
+                    if (!isModalCurrent()) return;
+                    this.onerror = function (this: HTMLImageElement) {
+                        if (isModalCurrent()) this.style.display = 'none';
+                    };
+                    this.src = tmdbPoster;
+                }
+                : function (this: HTMLImageElement) {
+                    if (isModalCurrent()) this.style.display = 'none';
+                };
         } else if (tmdbPoster) {
             // Seerr-only item → TMDB poster.
             img.src = tmdbPoster;
-            img.onerror = function (this: HTMLImageElement) { this.style.display = 'none'; };
+            img.onerror = function (this: HTMLImageElement) {
+                if (isModalCurrent()) this.style.display = 'none';
+            };
         } else {
             img.style.display = 'none';
         }
@@ -399,9 +461,11 @@ export function openAdminAddModal(): void {
             btn.textContent = JC.t!('hidden_content_admin_add_hide');
             btn.addEventListener('click', () => {
                 void (async () => {
+                    if (!isModalCurrent()) return;
                     btn.disabled = true;
                     btn.textContent = JC.t!('hidden_content_admin_add_hiding');
-                    const ok = await adminAddItem(uid, n);
+                    const ok = await adminAddItem(uid, n, fence);
+                    if (!isModalCurrent()) return;
                     btn.textContent = ok ? JC.t!('hidden_content_admin_add_added') : JC.t!('hidden_content_admin_add_hide');
                     if (!ok) btn.disabled = false;
                 })();
@@ -414,15 +478,15 @@ export function openAdminAddModal(): void {
         return card;
     };
 
-    let searchTimer: number | null = null;
-    let searchToken = 0;
     const showMessage = (text: string): void => {
+        if (!isModalCurrent()) return;
         const m = document.createElement('div');
         m.className = 'jc-hidden-management-empty';
         m.textContent = text;
         grid.replaceChildren(m);
     };
     const doSearch = async (q: string): Promise<void> => {
+        if (!isModalCurrent()) return;
         const token = ++searchToken;
         const term = (q || '').trim();
         if (term.length < 2) { grid.replaceChildren(hint); return; }
@@ -433,7 +497,7 @@ export function openAdminAddModal(): void {
         // Routed through the core fetch layer (auth + JSON parse identical to the
         // former ApiClient.ajax call; any failure still resolves to []).
         const libP = JC.core.api!.fetch((ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl('/Items', {
-            userId: ApiClient.getCurrentUserId(), searchTerm: term, IncludeItemTypes: 'Movie,Series',
+            userId: fence.context?.userId || ApiClient.getCurrentUserId(), searchTerm: term, IncludeItemTypes: 'Movie,Series',
             Recursive: true, Limit: 24, Fields: 'ProviderIds', ImageTypeLimit: 1, EnableImageTypes: 'Primary',
         })).then((res: any) => (res && res.Items) || []).catch(() => []);
         const seerrAPI = (JC as any).seerrAPI;
@@ -442,7 +506,7 @@ export function openAdminAddModal(): void {
             : Promise.resolve([]);
 
         const [libItems, seerrItems] = await Promise.all([libP, seerrP]);
-        if (token !== searchToken) return;
+        if (!isModalCurrent() || token !== searchToken) return;
 
         const normalized: any[] = [];
         const seenTmdb = new Set<string>();
@@ -470,8 +534,12 @@ export function openAdminAddModal(): void {
     };
 
     searchInput.addEventListener('input', () => {
-        if (searchTimer) clearTimeout(searchTimer);
-        searchTimer = window.setTimeout(() => { void doSearch(searchInput.value); }, 300);
+        if (!isModalCurrent()) return;
+        cancelPageTimeout(searchTimer);
+        searchTimer = schedulePageTimeout(() => {
+            searchTimer = null;
+            void doSearch(searchInput.value);
+        }, 300, fence);
     });
 
     document.body.style.overflow = 'hidden';
@@ -479,6 +547,6 @@ export function openAdminAddModal(): void {
     document.body.appendChild(overlay);
     // Body-level overlay with a scroll lock: register on the page's dispose
     // bag so a drain (navigation) closes it and restores the scroll owners.
-    currentPageHandle()?.track(close);
+    pageHandle?.track(close);
     searchInput.focus();
 }

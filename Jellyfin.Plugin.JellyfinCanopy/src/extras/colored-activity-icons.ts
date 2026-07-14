@@ -2,7 +2,7 @@
 // Replaces activity icons with Material Design icons and adds colors
 
 import { JC as JEBase } from '../globals';
-import type { LifecycleApi, LifecycleHandle, NavigationApi } from '../types/jc';
+import type { IdentityContext, LifecycleApi, LifecycleHandle, NavigationApi } from '../types/jc';
 
 /**
  * Local view of the shared namespace adding the public members this module
@@ -360,8 +360,18 @@ let isProcessing = false;
 let observer: { unsubscribe(): void } | null = null;
 let lifecycle: LifecycleHandle | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let generation = 0;
+const originalAvatars = new WeakMap<Element, { children: Node[]; background: string; priority: string }>();
 
-function updateActivityIcons(): void {
+function isActive(context: IdentityContext, expectedGeneration: number): boolean {
+    return generation === expectedGeneration && JC.identity.isCurrent(context);
+}
+
+function updateActivityIcons(
+    context = JC.identity.capture(),
+    expectedGeneration = generation
+): void {
+    if (!context || !isActive(context, expectedGeneration)) return;
     if (isProcessing) return;
     isProcessing = true;
 
@@ -393,7 +403,17 @@ function updateActivityIcons(): void {
                     avatar.style.backgroundColor === match.color) return;
             }
 
-            avatar.innerHTML = `<span class="material-icons">${match.icon}</span>`;
+            if (!originalAvatars.has(avatar)) {
+                originalAvatars.set(avatar, {
+                    children: Array.from(avatar.childNodes, (node) => node.cloneNode(true)),
+                    background: avatar.style.getPropertyValue('background-color'),
+                    priority: avatar.style.getPropertyPriority('background-color')
+                });
+            }
+            const icon = document.createElement('span');
+            icon.className = 'material-icons';
+            icon.textContent = match.icon;
+            avatar.replaceChildren(icon);
             avatar.style.setProperty('background-color', match.color, 'important');
             avatar.setAttribute(dataAttr, 'true');
         });
@@ -402,12 +422,15 @@ function updateActivityIcons(): void {
     }
 }
 
-function debouncedUpdateActivityIcons(): void {
+function debouncedUpdateActivityIcons(context: IdentityContext, expectedGeneration: number): void {
     if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(updateActivityIcons, 100);
+    debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        updateActivityIcons(context, expectedGeneration);
+    }, 100);
 }
 
-function startMonitoring(): void {
+function startMonitoring(context: IdentityContext, expectedGeneration: number): void {
     if (observer) return;
 
     const callback = (mutations: MutationRecord[]): void => {
@@ -434,7 +457,7 @@ function startMonitoring(): void {
         });
 
         if (shouldProcess) {
-            debouncedUpdateActivityIcons();
+            debouncedUpdateActivityIcons(context, expectedGeneration);
         }
     };
 
@@ -456,13 +479,38 @@ function stopMonitoring(): void {
         lifecycle.teardown();
         lifecycle = null;
     }
+    if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+    }
+}
+
+function restoreOwnedUi(): void {
+    document.querySelectorAll('[data-jellyfin-canopy-activity-icon]').forEach((avatar) => {
+        const original = originalAvatars.get(avatar);
+        if (original) {
+            avatar.replaceChildren(...original.children.map((node) => node.cloneNode(true)));
+            if (original.background) {
+                (avatar as HTMLElement).style.setProperty('background-color', original.background, original.priority);
+            } else {
+                (avatar as HTMLElement).style.removeProperty('background-color');
+            }
+        }
+        avatar.removeAttribute('data-jellyfin-canopy-activity-icon');
+    });
 }
 
 function initialize(): void {
+    stopMonitoring();
+    const context = JC.identity.capture();
+    if (!context) return;
+    const expectedGeneration = ++generation;
+    isProcessing = false;
+
     // Inject CSS for Material Icons
     injectCSS();
-    updateActivityIcons();
-    startMonitoring();
+    updateActivityIcons(context, expectedGeneration);
+    startMonitoring(context, expectedGeneration);
 
     // Re-process icons when navigating to activity page or configuration
     // page. Uses the shared deduplicated navigation pipeline (covers
@@ -473,10 +521,21 @@ function initialize(): void {
         const hash = window.location.hash;
         if (hash.includes('#/dashboard/activity') || hash.includes('#/configurationpage')) {
             // Use a longer timeout to ensure page is rendered
-            setTimeout(updateActivityIcons, 300);
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                debounceTimer = null;
+                updateActivityIcons(context, expectedGeneration);
+            }, 300);
         }
     }));
 }
 
 JC.initializeActivityIcons = initialize;
 JC.stopActivityIconsMonitoring = stopMonitoring;
+
+JC.identity.registerReset('colored-activity-icons', () => {
+    generation++;
+    isProcessing = false;
+    stopMonitoring();
+    restoreOwnedUi();
+});

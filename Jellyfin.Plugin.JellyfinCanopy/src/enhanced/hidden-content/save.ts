@@ -5,11 +5,36 @@
 // (Converted from js/enhanced/hidden-content-save.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
+import type { IdentityContext } from '../../types/jc';
 import { toast } from '../../core/ui-kit';
 import { getHiddenData } from './data';
 import type { HiddenItem } from './data';
 
 let saveTimeout: number | null = null;
+let pendingDebounceContext: IdentityContext | null = null;
+
+class StaleHiddenContentIdentityError extends Error {
+    constructor() {
+        super('hidden-content identity is no longer current');
+    }
+}
+
+function normalizeUserId(value: unknown): string {
+    if (typeof value !== 'string' && typeof value !== 'number') return '';
+    return String(value).trim().replace(/-/g, '').toLowerCase();
+}
+
+function currentDataContext(): IdentityContext | null {
+    const data = getHiddenData();
+    const owner = JC.identity?.ownerOf?.(data) || null;
+    return owner && JC.identity.isCurrent(owner) ? owner : null;
+}
+
+function isUsableContext(context: IdentityContext | null | undefined): context is IdentityContext {
+    if (!context || !JC.identity.isCurrent(context)) return false;
+    const data = getHiddenData();
+    return JC.identity.isOwned(data, context);
+}
 
 /** Debounce interval for persisting hidden-content data. */
 const SAVE_DEBOUNCE_MS = 500;
@@ -19,20 +44,27 @@ const SAVE_DEBOUNCE_MS = 500;
  * Coalesces rapid writes (e.g. bulk-unhide) into a single save.
  */
 export function debouncedSave(): void {
+    const context = currentDataContext();
+    if (!context) return;
     if (saveTimeout) clearTimeout(saveTimeout);
+    pendingDebounceContext = context;
     saveTimeout = window.setTimeout(() => {
         void (async () => {
+            const scheduledContext = pendingDebounceContext;
             saveTimeout = null;
+            pendingDebounceContext = null;
+            if (!isUsableContext(scheduledContext)) return;
             try {
                 // Route through directSaveHiddenContent (not JC.saveUserSettings) so a successful save can
                 // reconcile against any in-flight retry and a failure can re-enter the retry ladder.
                 // JC.saveUserSettings swallows errors, which would leave a pending retry firing later and
                 // clobbering server state.
-                const sent = await directSaveHiddenContent();
-                reconcileAfterSave(sent);
+                const sent = await directSaveHiddenContent(scheduledContext);
+                reconcileAfterSave(sent, scheduledContext);
             } catch (e) {
+                if (e instanceof StaleHiddenContentIdentityError || !JC.identity.isCurrent(scheduledContext)) return;
                 console.warn('🪼 Jellyfin Canopy: debouncedSave failed; scheduling background retry', e);
-                if (pendingRetryHandle == null) scheduleFlushRetry(0);
+                if (pendingRetryHandle == null) scheduleFlushRetry(0, scheduledContext);
             }
         })();
     }, SAVE_DEBOUNCE_MS);
@@ -148,16 +180,24 @@ export async function adminHideForUser(targetUserId: string, items: HiddenItem[]
 // Direct bypass of JC.saveUserSettings (which swallows errors) so callers can react to failure.
 // Returns the JSON snapshot that was sent so the caller can compare it to current state and decide
 // whether the success acknowledgement still represents the latest local intent.
-async function directSaveHiddenContent(): Promise<string> {
-    const userId = ApiClient.getCurrentUserId();
-    if (!userId) throw new Error('no current user');
-    const snapshot = JSON.stringify(getHiddenData());
+async function directSaveHiddenContent(context: IdentityContext): Promise<string> {
+    if (!isUsableContext(context)) throw new StaleHiddenContentIdentityError();
+    if (normalizeUserId(ApiClient.getCurrentUserId()) !== context.userId) {
+        throw new StaleHiddenContentIdentityError();
+    }
+    const data = getHiddenData();
+    if (!JC.identity.isOwned(data, context)) throw new StaleHiddenContentIdentityError();
+    const snapshot = JSON.stringify(data);
+    // Keep the last identity check adjacent to invocation. No task can switch
+    // authentication between these two synchronous statements.
+    if (!JC.identity.isCurrent(context)) throw new StaleHiddenContentIdentityError();
     await ApiClient.ajax({
         type: 'POST',
-        url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${userId}/hidden-content.json`),
+        url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${context.userId}/hidden-content.json`),
         data: snapshot,
         contentType: 'application/json'
     });
+    if (!JC.identity.isCurrent(context)) throw new StaleHiddenContentIdentityError();
     return snapshot;
 }
 
@@ -166,7 +206,8 @@ async function directSaveHiddenContent(): Promise<string> {
 // - Mismatch: state moved during the await; schedule another save.
 // The retry-timer body explicitly clears RETRY_INFLIGHT before calling this so a same-state mismatch
 // doesn't leave the sentinel stuck; cancelPendingRetry refuses to clear an in-flight retry from another path.
-function reconcileAfterSave(snapshotSent: string): void {
+function reconcileAfterSave(snapshotSent: string, context: IdentityContext): void {
+    if (!isUsableContext(context)) return;
     if (snapshotSent === JSON.stringify(getHiddenData())) {
         cancelPendingRetry();
     } else {
@@ -179,6 +220,15 @@ function reconcileAfterSave(snapshotSent: string): void {
 const FLUSH_RETRY_DELAYS_MS = [1000, 5000, 15000];
 const RETRY_INFLIGHT = -1; // sentinel: retry timer fired and POST is in flight (handle no longer cancelable)
 let pendingRetryHandle: number | null = null;
+let pendingRetryContext: IdentityContext | null = null;
+
+function clearRetryStateFor(context: IdentityContext): void {
+    // A late completion from an invalidated epoch must not clear a retry that B
+    // has scheduled since the synchronous reset ran.
+    if (pendingRetryContext !== context) return;
+    pendingRetryHandle = null;
+    pendingRetryContext = null;
+}
 
 function cancelPendingRetry(): void {
     // Don't unset RETRY_INFLIGHT — the timer body whose POST is in flight needs to manage its own
@@ -186,9 +236,11 @@ function cancelPendingRetry(): void {
     if (pendingRetryHandle === RETRY_INFLIGHT) return;
     if (pendingRetryHandle != null) clearTimeout(pendingRetryHandle);
     pendingRetryHandle = null;
+    pendingRetryContext = null;
 }
 
-function scheduleFlushRetry(attempt: number): void {
+function scheduleFlushRetry(attempt: number, context: IdentityContext): void {
+    if (!isUsableContext(context)) return;
     if (attempt >= FLUSH_RETRY_DELAYS_MS.length) {
         console.error('🪼 Jellyfin Canopy: hidden-content save retries exhausted; local change may be lost on reload');
         // User-visible toast — the bulk-save endpoint is genuinely down at this point.
@@ -196,27 +248,40 @@ function scheduleFlushRetry(attempt: number): void {
             toast(JC.t!('hidden_content_save_failed_persistent'), 5000);
         } catch (_) { /* toast helper unavailable, console.error above is best-effort */ }
         pendingRetryHandle = null;
+        pendingRetryContext = null;
         return;
     }
+    pendingRetryContext = context;
     pendingRetryHandle = window.setTimeout(() => {
         void (async () => {
+            if (pendingRetryContext !== context || !isUsableContext(context)) {
+                clearRetryStateFor(context);
+                return;
+            }
             pendingRetryHandle = RETRY_INFLIGHT; // mark in-flight so a concurrent debouncedSave failure doesn't spawn a parallel ladder
             // Guard for ApiClient teardown / signed-out state during the window.
-            if (typeof ApiClient === 'undefined' || typeof ApiClient.getCurrentUserId !== 'function' || !ApiClient.getCurrentUserId()) {
+            if (typeof ApiClient === 'undefined' || typeof ApiClient.getCurrentUserId !== 'function'
+                || normalizeUserId(ApiClient.getCurrentUserId()) !== context.userId) {
                 console.error('🪼 Jellyfin Canopy: abandoning hidden-content retry; ApiClient unavailable');
                 pendingRetryHandle = null;
+                pendingRetryContext = null;
                 return;
             }
             try {
-                const sent = await directSaveHiddenContent();
+                const sent = await directSaveHiddenContent(context);
                 // Retry succeeded — clear the in-flight sentinel BEFORE reconcile so a state-mismatch
                 // reschedule via debouncedSave doesn't leave the sentinel stuck (cancelPendingRetry from
                 // other code paths intentionally refuses to clear RETRY_INFLIGHT).
                 if (pendingRetryHandle === RETRY_INFLIGHT) pendingRetryHandle = null;
-                reconcileAfterSave(sent);
+                pendingRetryContext = null;
+                reconcileAfterSave(sent, context);
             } catch (err) {
+                if (err instanceof StaleHiddenContentIdentityError || !JC.identity.isCurrent(context)) {
+                    clearRetryStateFor(context);
+                    return;
+                }
                 console.warn(`🪼 Jellyfin Canopy: hidden-content save retry ${attempt + 1} failed`, err);
-                scheduleFlushRetry(attempt + 1);
+                scheduleFlushRetry(attempt + 1, context);
             }
         })();
     }, FLUSH_RETRY_DELAYS_MS[attempt]);
@@ -226,20 +291,39 @@ function scheduleFlushRetry(attempt: number): void {
 // On failure: re-throw so the caller aborts, AND start a bounded background retry so the local mutation isn't lost.
 export async function flushPendingSave(): Promise<void> {
     if (!saveTimeout) return;
+    const context = pendingDebounceContext;
     clearTimeout(saveTimeout);
     saveTimeout = null;
+    pendingDebounceContext = null;
+    if (!isUsableContext(context)) throw new StaleHiddenContentIdentityError();
     try {
-        const sent = await directSaveHiddenContent();
-        reconcileAfterSave(sent);
+        const sent = await directSaveHiddenContent(context);
+        reconcileAfterSave(sent, context);
     } catch (e) {
+        if (e instanceof StaleHiddenContentIdentityError || !JC.identity.isCurrent(context)) throw e;
         console.warn('🪼 Jellyfin Canopy: flushPendingSave failed; scheduling background retry', e);
-        if (pendingRetryHandle == null) scheduleFlushRetry(0);
+        if (pendingRetryHandle == null) scheduleFlushRetry(0, context);
         throw e;
     }
 }
 
+function cancelAllPersistence(): void {
+    if (saveTimeout != null) clearTimeout(saveTimeout);
+    saveTimeout = null;
+    pendingDebounceContext = null;
+    if (pendingRetryHandle != null && pendingRetryHandle !== RETRY_INFLIGHT) {
+        clearTimeout(pendingRetryHandle);
+    }
+    // An in-flight ajax cannot be cancelled here, but its captured context will
+    // fail the post-await fence and therefore cannot reconcile or retry.
+    pendingRetryHandle = null;
+    pendingRetryContext = null;
+}
+
+JC.identity?.registerReset?.('hidden-content-persistence', cancelAllPersistence);
+
 // Cancel pending retries on tab teardown so a stale snapshot can't overwrite server state after navigation.
 // Only pagehide — visibilitychange fires on backgrounded tabs the user may return to within the retry window.
 try {
-    window.addEventListener('pagehide', cancelPendingRetry);
+    window.addEventListener('pagehide', cancelAllPersistence);
 } catch (_) { /* non-browser env, harmless */ }

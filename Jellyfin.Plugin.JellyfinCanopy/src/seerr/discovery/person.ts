@@ -215,7 +215,11 @@ const discovery = JC.discoveryBase!.createDiscovery({
     configKey: 'SeerrShowPersonDiscovery',
     getIdFromUrl: JC.discoveryBase!.idFromDetailUrl,
     pageSize: 40,
-    resolveItems
+    resolveItems,
+    onCleanup: () => {
+        personIdCache.clear();
+        personInfoCache.clear();
+    }
 });
 
 discovery.start();

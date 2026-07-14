@@ -171,9 +171,21 @@ function analyzeSeasonStatuses(seasons: any) {
 // PERF(R7): pending detached-placement watcher for the Seerr section. A newer
 // render supersedes (cancels) it so a stale keystroke never inserts late.
 let pendingSectionPlacement: { cancel: () => void } | null = null;
+const sectionTimers = new Set<number>();
 // How long to hold the built section detached waiting for the native
 // Movies/Shows sections before falling back to the results container.
 const SECTION_PLACEMENT_TIMEOUT_MS = 1000;
+
+/** Cancel detached placement/timers owned by the previous search identity. */
+export function resetSeerrResultsIdentity(): void {
+    pendingSectionPlacement?.cancel();
+    pendingSectionPlacement = null;
+    for (const timer of sectionTimers) clearTimeout(timer);
+    sectionTimers.clear();
+}
+
+ui.resetResultsIdentity = resetSeerrResultsIdentity;
+JC.identity.registerReset('seerr-results-placement', resetSeerrResultsIdentity);
 
 /**
  * Renders Seerr search results into the search page with improved placement logic.
@@ -184,6 +196,8 @@ const SECTION_PLACEMENT_TIMEOUT_MS = 1000;
  * @param {boolean} seerrUserFound - If the current user is linked.
  */
 ui.renderSeerrResults = function (results: any, query: any, isSeerrOnlyMode: any, isSeerrActive: any, seerrUserFound: any) {
+    const context = JC.identity.capture();
+    if (!context) return;
     console.log(`${logPrefix} Rendering results for query: "${query}"`);
     const searchPage = document.querySelector('#searchPage')!;
     if (!searchPage) {
@@ -193,12 +207,9 @@ ui.renderSeerrResults = function (results: any, query: any, isSeerrOnlyMode: any
 
     // A newer render supersedes any still-detached section from the previous
     // keystroke — cancel its placement watcher so it never inserts late.
-    if (pendingSectionPlacement) {
-        pendingSectionPlacement.cancel();
-        pendingSectionPlacement = null;
-    }
+    resetSeerrResultsIdentity();
 
-    const sectionToInject = createSeerrSection(results, isSeerrOnlyMode, isSeerrActive, seerrUserFound);
+    const sectionToInject = createSeerrSection(results, isSeerrOnlyMode, isSeerrActive, seerrUserFound, context);
 
     // PERF(R7): per-keystroke re-render PATCHES the existing section in place —
     // one replaceChildren() swap inside the same container node — instead of
@@ -207,14 +218,19 @@ ui.renderSeerrResults = function (results: any, query: any, isSeerrOnlyMode: any
     // only the mount strategy changed.
     const oldSection = searchPage.querySelector('.seerr-section');
     if (oldSection) {
-        oldSection.replaceChildren(...Array.from(sectionToInject.childNodes));
-        // Keep the localized no-results message in sync (the full-render path
-        // does this at placement time).
-        const noResultsMessage = searchPage.querySelector('.noItemsMessage');
-        if (noResultsMessage) {
-            noResultsMessage.textContent = JC.t!('seerr_no_results_jellyfin', { query });
+        const owner = JC.identity.ownerOf(oldSection);
+        if (owner && !JC.identity.isCurrent(owner)) {
+            oldSection.remove();
+        } else {
+            oldSection.replaceChildren(...Array.from(sectionToInject.childNodes));
+            // Keep the localized no-results message in sync (the full-render path
+            // does this at placement time).
+            const noResultsMessage = searchPage.querySelector('.noItemsMessage');
+            if (noResultsMessage) {
+                noResultsMessage.textContent = JC.t!('seerr_no_results_jellyfin', { query });
+            }
+            return;
         }
-        return;
     }
 
     const primarySectionKeywords = ['movies', 'shows', 'film', 'serier', 'filme', 'serien', 'películas', 'series', 'films', 'séries', 'serie tv'];
@@ -240,6 +256,7 @@ ui.renderSeerrResults = function (results: any, query: any, isSeerrOnlyMode: any
      * @returns {boolean} True if the section was inserted.
      */
     function tryPlaceAtAnchor() {
+        if (!JC.identity.isCurrent(context) || !searchPage.isConnected) return false;
         const noResultsMessage = searchPage.querySelector('.noItemsMessage');
         if (noResultsMessage) {
             noResultsMessage.textContent = JC.t!('seerr_no_results_jellyfin', { query });
@@ -266,6 +283,10 @@ ui.renderSeerrResults = function (results: any, query: any, isSeerrOnlyMode: any
 
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     const observer = new MutationObserver(() => {
+        if (!JC.identity.isCurrent(context)) {
+            resetSeerrResultsIdentity();
+            return;
+        }
         if (searchPage.querySelector('.noItemsMessage') || findLastPrimarySection()) {
             cancel();
             pendingSectionPlacement = null;
@@ -274,7 +295,11 @@ ui.renderSeerrResults = function (results: any, query: any, isSeerrOnlyMode: any
     });
     const cancel = () => {
         observer.disconnect();
-        if (timeoutId) clearTimeout(timeoutId);
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+            sectionTimers.delete(Number(timeoutId));
+            timeoutId = null;
+        }
     };
     pendingSectionPlacement = { cancel };
     observer.observe(searchPage, { childList: true, subtree: true });
@@ -284,6 +309,7 @@ ui.renderSeerrResults = function (results: any, query: any, isSeerrOnlyMode: any
     timeoutId = setTimeout(() => {
         cancel();
         pendingSectionPlacement = null;
+        if (!JC.identity.isCurrent(context) || !searchPage.isConnected) return;
         const resultsContainer = searchPage.querySelector('.searchResults, [class*="searchResults"], .padded-top.padded-bottom-page');
         if (resultsContainer) {
             resultsContainer.appendChild(sectionToInject);
@@ -291,6 +317,7 @@ ui.renderSeerrResults = function (results: any, query: any, isSeerrOnlyMode: any
             searchPage.appendChild(sectionToInject);
         }
     }, SECTION_PLACEMENT_TIMEOUT_MS);
+    sectionTimers.add(Number(timeoutId));
 };
 
 /**
@@ -301,10 +328,18 @@ ui.renderSeerrResults = function (results: any, query: any, isSeerrOnlyMode: any
  * @param {boolean} seerrUserFound - If the current user is linked.
  * @returns {HTMLElement} - Section element.
  */
-function createSeerrSection(results: any = [], isSeerrOnlyMode: any, isSeerrActive: any, seerrUserFound: any) {
+function createSeerrSection(
+    results: any = [],
+    isSeerrOnlyMode: any,
+    isSeerrActive: any,
+    seerrUserFound: any,
+    context = JC.identity.capture()
+) {
     const section = document.createElement('div');
     section.className = 'verticalSection emby-scroller-container seerr-section';
     section.setAttribute('data-seerr-section', 'true');
+    section.setAttribute('data-jc-identity-owned', 'true');
+    if (context) JC.identity.own(section, context);
 
     const title = document.createElement('h2');
     title.className = 'sectionTitle sectionTitle-cards focuscontainer-x padded-left padded-right';
@@ -330,8 +365,13 @@ function createSeerrSection(results: any = [], isSeerrOnlyMode: any, isSeerrActi
     refreshBtn.addEventListener('click', function (e: any) {
         e.preventDefault();
         e.stopPropagation();
+        if (!context || !JC.identity.isCurrent(context)) return;
         icon.style.transform = 'rotate(360deg)';
-        setTimeout(() => { icon.style.transform = ''; }, 500);
+        const timer = window.setTimeout(() => {
+            sectionTimers.delete(timer);
+            if (JC.identity.isCurrent(context)) icon.style.transform = '';
+        }, 500);
+        sectionTimers.add(timer);
         document.dispatchEvent(new CustomEvent('seerr-manual-refresh'));
     });
     title.appendChild(refreshBtn);

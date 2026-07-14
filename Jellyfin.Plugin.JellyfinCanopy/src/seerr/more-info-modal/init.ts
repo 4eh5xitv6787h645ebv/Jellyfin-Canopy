@@ -2,15 +2,37 @@
 // Public surface + orchestration for the Seerr more-info modal:
 // open/close, modal lifecycle, refresh and navigation cleanup.
 import { JC } from '../../globals';
-import { installModalA11y } from '../../core/modal-a11y';
+import { installModalA11y, type ModalA11yHandle } from '../../core/modal-a11y';
+import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 /* eslint-disable @typescript-eslint/no-misused-promises -- legacy async event listeners with fire-and-forget bodies; semantics preserved verbatim */
 
 
-const moreInfoModal: any = JC.seerrMoreInfo = JC.seerrMoreInfo || {};
+interface MoreInfoModalElement extends HTMLDivElement {
+    _identityCleanups: Set<() => void>;
+    _actionCleanups: Set<() => void>;
+    _cleanupTvListener?: () => void;
+    _a11y?: ModalA11yHandle;
+    _activationTimer?: ReturnType<typeof setTimeout>;
+    _removeTimer?: ReturnType<typeof setTimeout>;
+    _isClosing?: boolean;
+}
+
+interface MoreInfoModalApi {
+    open: (tmdbId: any, mediaType: any) => Promise<void>;
+    close: (immediate?: boolean) => void;
+    checkForUnrequestedSeasons?: (data: any) => Promise<boolean>;
+}
+
+const moreInfoModal = (JC.seerrMoreInfo || {}) as MoreInfoModalApi;
+JC.seerrMoreInfo = moreInfoModal;
 import { internal } from './internal';
-const state = internal.state;
+const state: {
+    currentModal: MoreInfoModalElement | null;
+    identity: IdentityContext | null;
+    openGeneration: number;
+} = internal.state;
 const logPrefix = '🪼 Jellyfin Canopy: Seerr More Info:';
 
 /**
@@ -19,16 +41,21 @@ const logPrefix = '🪼 Jellyfin Canopy: Seerr More Info:';
  * @param {string} mediaType - 'movie' or 'tv'
  */
 moreInfoModal.open = async function (tmdbId: any, mediaType: any) {
+const identity = JC.identity.capture();
+if (!identity || !JC.identity.isCurrent(identity)) return;
+const generation = ++state.openGeneration;
+const isCurrent = () => generation === state.openGeneration && JC.identity.isCurrent(identity);
 try {
     // Fetch details first so the modal can open immediately
     const data = await internal.fetchMediaDetails(tmdbId, mediaType);
+    if (!isCurrent()) return;
     if (!data) {
         internal.showError('Failed to load media information');
         return;
     }
 
     // Render modal immediately
-    showModal(data, mediaType);
+    showModal(data, mediaType, identity, generation);
 
     // For TV shows, backfill missing season metadata (poster, overview, airDate) from TMDB/episodes
     if (mediaType === 'tv' && data.seasons?.some((s: any) => s.episodeCount > 0 && (!s.airDate || !s.posterPath))) {
@@ -38,6 +65,7 @@ try {
     // Fetch ratings in the background and populate when ready
     internal.fetchRatings(tmdbId, mediaType)
         .then((ratings: any) => {
+            if (!isCurrent()) return;
             // Modal might have been closed or replaced; ensure we're updating the correct one
             if (!state.currentModal) return;
             const modalTmdbId = state.currentModal?.dataset?.tmdbId;
@@ -52,10 +80,12 @@ try {
             }
         })
         .catch((error: any) => {
+            if (!isCurrent()) return;
             console.error(`${logPrefix} Failed to fetch ratings for TMDB ID ${tmdbId}:`, error);
             // Silently fail; modal is already shown without ratings
         });
 } catch (error: any) {
+    if (!isCurrent()) return;
     console.error('Error opening more info modal:', error);
     internal.showError('Failed to load media information');
 }
@@ -64,7 +94,18 @@ try {
 /**
  * Refresh modal data and update displays
  */
-async function refreshModalData(data: any, mediaType: any, modal: any, refreshBtn: any) {
+async function refreshModalData(
+    data: any,
+    mediaType: any,
+    modal: MoreInfoModalElement,
+    refreshBtn: HTMLButtonElement
+) {
+const identity = JC.identity.ownerOf(modal);
+const isCurrent = () => !!identity
+    && JC.identity.isCurrent(identity)
+    && state.currentModal === modal
+    && modal.isConnected;
+if (!isCurrent()) return;
 try {
     // Show loading state on button
     refreshBtn.classList.add('loading');
@@ -72,6 +113,7 @@ try {
 
     // Fetch fresh data
     const freshData = await internal.fetchMediaDetails(data.id, mediaType);
+    if (!isCurrent()) return;
     if (!freshData) {
         internal.showError('Failed to refresh media information');
         refreshBtn.classList.remove('loading');
@@ -92,6 +134,7 @@ try {
     refreshBtn.disabled = false;
 
 } catch (error: any) {
+    if (!isCurrent()) return;
     console.error('Error refreshing modal data:', error);
     internal.showError('Failed to refresh modal data');
     refreshBtn.classList.remove('loading');
@@ -102,31 +145,39 @@ try {
 /**
  * Show the modal with media information
  */
-function showModal(data: any, mediaType: any) {
+function showModal(data: any, mediaType: any, identity: IdentityContext, generation: number) {
+if (!JC.identity.isCurrent(identity) || generation !== state.openGeneration) return;
 // Close existing modal if any
-moreInfoModal.close();
+moreInfoModal.close(true);
 
-const modal = document.createElement('div');
+const modal = document.createElement('div') as MoreInfoModalElement;
 modal.className = 'jc-more-info-modal';
+modal.dataset.jcIdentityOwned = 'true';
+JC.identity.own(modal, identity);
 modal.innerHTML = internal.buildModalContent(data, mediaType);
 // Tag modal so async updates only apply to the current item
 modal.dataset.tmdbId = String(data.id || '');
 modal.dataset.mediaType = mediaType;
+modal._identityCleanups = new Set<() => void>();
+modal._actionCleanups = new Set<() => void>();
 
 // Add event listeners
 modal.addEventListener('click', (e: any) => {
+    if (!JC.identity.isCurrent(identity) || state.currentModal !== modal) return;
     if (e.target === modal || e.target.classList.contains('modal-overlay')) {
         moreInfoModal.close();
     }
 });
 
 // Refresh button handler
-const refreshBtn = modal.querySelector('.modal-refresh');
+const refreshBtn = modal.querySelector<HTMLButtonElement>('.modal-refresh');
 if (refreshBtn) {
     refreshBtn.addEventListener('click', async (e: any) => {
         e.preventDefault();
         e.stopPropagation();
-        await refreshModalData(data, mediaType, modal, refreshBtn);
+        if (JC.identity.isCurrent(identity) && state.currentModal === modal) {
+            await refreshModalData(data, mediaType, modal, refreshBtn);
+        }
     });
 }
 
@@ -136,7 +187,7 @@ if (closeBtn) {
     closeBtn.addEventListener('click', (e: any) => {
         e.preventDefault();
         e.stopPropagation();
-        moreInfoModal.close();
+        if (JC.identity.isCurrent(identity) && state.currentModal === modal) moreInfoModal.close();
     });
 }
 
@@ -146,6 +197,7 @@ if (collectionBtn) {
     collectionBtn.addEventListener('click', (e: any) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!JC.identity.isCurrent(identity) || state.currentModal !== modal) return;
         const collectionId = parseInt(collectionBtn.dataset.collectionId || "", 10);
         const collectionName = collectionBtn.dataset.collectionName;
         if (collectionId && collectionName) {
@@ -156,11 +208,12 @@ if (collectionBtn) {
 
 document.body.appendChild(modal);
 state.currentModal = modal;
+state.identity = identity;
 
 // Accessible dialog: role/aria, focus trap + restore, Escape, and the
 // jc-modal-open gate that suppresses JC global shortcuts while open (A11Y-1 /
 // INT-1). Replaces the former hand-rolled Escape-only keydown listener.
-(modal as any)._a11y = installModalA11y(modal, {
+modal._a11y = installModalA11y(modal, {
     labelledBy: 'jc-more-info-title',
     onEscape: () => moreInfoModal.close(),
 });
@@ -174,11 +227,13 @@ if (mediaType === 'tv') {
 // Listen for TV season requests to update status
 if (mediaType === 'tv') {
     const handleTvRequest = async (e: any) => {
+        if (!JC.identity.isCurrent(identity) || state.currentModal !== modal) return;
         if (!e.detail?.tmdbId || String(e.detail.tmdbId) !== String(data.id)) return;
 
         try {
             // Refresh details to pull latest status/progress
             const fresh = await internal.fetchMediaDetails(data.id, 'tv');
+            if (!JC.identity.isCurrent(identity) || state.currentModal !== modal) return;
             if (fresh?.mediaInfo) {
                 data.mediaInfo = fresh.mediaInfo;
             } else {
@@ -187,45 +242,65 @@ if (mediaType === 'tv') {
                 mediaInfo.status = mediaInfo.status || 2;
             }
         } catch (_: any) {
+            if (!JC.identity.isCurrent(identity) || state.currentModal !== modal) return;
             const mediaInfo = data.mediaInfo || (data.mediaInfo = {});
             mediaInfo.status = mediaInfo.status || 2;
         }
 
+        if (!JC.identity.isCurrent(identity) || state.currentModal !== modal) return;
         internal.renderActions(data, mediaType);
         internal.enrichSeasonCardsWithJellyfinLinks(data, modal);
     };
     document.addEventListener('seerr-tv-requested', handleTvRequest);
-    (modal as any)._cleanupTvListener = () => document.removeEventListener('seerr-tv-requested', handleTvRequest);
+    modal._cleanupTvListener = () => document.removeEventListener('seerr-tv-requested', handleTvRequest);
 }
 
 // Trigger animation
-setTimeout(() => modal.classList.add('active'), 10);
+const activationTimer = setTimeout(() => {
+    if (JC.identity.isCurrent(identity) && state.currentModal === modal) modal.classList.add('active');
+}, 10);
+modal._activationTimer = activationTimer;
 }
 
 /**
  * Close the modal
  */
-moreInfoModal.close = function () {
-if (state.currentModal) {
-    if (state.currentModal._isClosing) return;
-    state.currentModal._isClosing = true;
+moreInfoModal.close = function (immediate = false) {
+const target = state.currentModal;
+if (target) {
+    if (target._isClosing && !immediate) return;
+    target._isClosing = true;
+
+    if (target._activationTimer) clearTimeout(target._activationTimer);
+    if (target._removeTimer) clearTimeout(target._removeTimer);
+    for (const cleanup of target._identityCleanups || []) {
+        try { cleanup(); } catch { /* continue closing */ }
+    }
+    target._identityCleanups?.clear?.();
+    for (const cleanup of target._actionCleanups || []) {
+        try { cleanup(); } catch { /* continue closing */ }
+    }
+    target._actionCleanups?.clear?.();
 
     // Clean up TV request listener if exists
-    if (state.currentModal._cleanupTvListener) {
-        state.currentModal._cleanupTvListener();
+    if (target._cleanupTvListener) {
+        target._cleanupTvListener();
     }
     // Release the a11y handle now (before the 300ms removal) so focus restores
     // immediately and the jc-modal-open gate lifts.
-    if (state.currentModal._a11y) {
-        state.currentModal._a11y.release();
+    if (target._a11y) {
+        target._a11y.release();
     }
-    state.currentModal.classList.remove('active');
-    setTimeout(() => {
-        if (document.body.contains(state.currentModal)) {
-            document.body.removeChild(state.currentModal);
+    target.classList.remove('active');
+    const finish = () => {
+        target.remove();
+        if (state.currentModal === target) {
+            state.currentModal = null;
+            state.identity = null;
         }
-        state.currentModal = null;
-    }, 300);
+    };
+    if (immediate) finish();
+    else target._removeTimer = setTimeout(finish, 300);
 }
 }
 
@@ -234,6 +309,11 @@ document.addEventListener('viewshow', function () {
     if (state.currentModal) {
         moreInfoModal.close();
     }
+});
+
+JC.identity.registerReset('seerr-more-info-modal', () => {
+    state.openGeneration += 1;
+    moreInfoModal.close(true);
 });
 
 // Expose helpers used by other modules (e.g., item-details.js for the

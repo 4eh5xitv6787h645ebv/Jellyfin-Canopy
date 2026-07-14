@@ -18,6 +18,7 @@ import {
 } from './state';
 import { confirmDisableSpoiler } from './dialog';
 import { refreshSpoilerableImages } from './image-refresh';
+import type { IdentityContext } from '../../types/jc';
 
 const logPrefix = '🪼 Jellyfin Canopy [SpoilerGuard]:';
 
@@ -65,6 +66,13 @@ function placeButton(button: HTMLButtonElement, container: Element): void {
     }
 }
 
+function isLiveButton(button: HTMLButtonElement, context: IdentityContext, visiblePage?: Element): boolean {
+    return JC.identity.isCurrent(context)
+        && JC.identity.isOwned(button, context)
+        && button.isConnected
+        && (!visiblePage || visiblePage.contains(button));
+}
+
 /**
  * Insert (or refresh) the Spoiler Guard toggle on a Series / Movie / Collection
  * detail page's action row. Idempotent: re-running on the same page reuses the
@@ -74,6 +82,8 @@ function placeButton(button: HTMLButtonElement, container: Element): void {
  * @param itemType - Jellyfin item Type (Series | Movie | BoxSet).
  */
 export function addSpoilerBlurButton(itemId: string, visiblePage: Element, itemType: string): void {
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return;
     if (JC.pluginConfig?.SpoilerBlurEnabled !== true) return;
     if (!itemId || !visiblePage) return;
     if (!isStateLoaded()) return; // wait for the initial GET attempt to settle
@@ -93,11 +103,20 @@ export function addSpoilerBlurButton(itemId: string, visiblePage: Element, itemT
 
     let existing = visiblePage.querySelector<HTMLButtonElement>('.jc-spoiler-blur-btn');
 
+    // A cached details-page element can survive an account switch. Never
+    // reuse a control whose listener closure belongs to the previous epoch.
+    if (existing && !JC.identity.isOwned(existing, context)) {
+        existing.remove();
+        existing = null;
+    }
+
     if (!existing) {
         existing = document.createElement('button');
         existing.setAttribute('is', 'emby-button');
         existing.className = 'button-flat detailButton emby-button jc-spoiler-blur-btn';
         existing.type = 'button';
+        existing.dataset.jcIdentityOwned = 'true';
+        JC.identity.own(existing, context);
         placeButton(existing, container);
         // Read itemId/kind LIVE from data-attrs at click time, not closure:
         // Jellyfin reuses #itemDetailPage across SPA navigations, so a button
@@ -105,10 +124,12 @@ export function addSpoilerBlurButton(itemId: string, visiblePage: Element, itemT
         existing.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (!isLiveButton(existing!, context)) return;
             const liveId = existing!.getAttribute('data-jc-item-id') || '';
             const liveKind = (existing!.getAttribute('data-jc-spoiler-kind') || 'series') as SpoilerKind;
             const livePage = existing!.closest('#itemDetailPage:not(.hide)') || visiblePage;
-            onToggleClicked(existing!, liveId, liveKind, livePage);
+            if (!isLiveButton(existing!, context, livePage)) return;
+            onToggleClicked(existing!, liveId, liveKind, livePage, context);
         });
         existing.setAttribute('data-jc-item-id', itemId);
         existing.setAttribute('data-jc-spoiler-state', newState);
@@ -139,10 +160,21 @@ export function addSpoilerBlurButton(itemId: string, visiblePage: Element, itemT
 // server-side strip changes. Coalesced + debounced so a burst of watched-marks
 // triggers one reload. One-shot setTimeout (not self-rescheduling).
 let pendingReload: number | null = null;
-function scheduleFullReload(): void {
-    if (pendingReload) clearTimeout(pendingReload);
+let pendingReloadContext: IdentityContext | null = null;
+function cancelFullReload(): void {
+    if (pendingReload !== null) clearTimeout(pendingReload);
+    pendingReload = null;
+    pendingReloadContext = null;
+}
+
+function scheduleFullReload(context: IdentityContext): void {
+    cancelFullReload();
+    pendingReloadContext = context;
     pendingReload = window.setTimeout(() => {
+        const owner = pendingReloadContext;
         pendingReload = null;
+        pendingReloadContext = null;
+        if (!owner || !JC.identity.isCurrent(owner)) return;
         try { location.reload(); } catch (e) { console.warn(`${logPrefix} reload failed:`, e); }
     }, 600);
 }
@@ -151,28 +183,38 @@ function scheduleFullReload(): void {
  * Click handler: flips Spoiler Guard for this item, confirms on disable (unless
  * snoozed / SkipDisableConfirm), toasts, and refreshes images in place.
  */
-function onToggleClicked(button: HTMLButtonElement, itemId: string, kind: SpoilerKind, visiblePage: Element): void {
+function onToggleClicked(
+    button: HTMLButtonElement,
+    itemId: string,
+    kind: SpoilerKind,
+    visiblePage: Element,
+    context: IdentityContext,
+): void {
+    if (!isLiveButton(button, context, visiblePage)) return;
     if (button.disabled) return; // ignore re-entrant clicks
     const willBeEnabled = !isEnabledForKind(kind, itemId);
     // Disable up-front so rapid double-clicks can't stack confirm dialogs.
     button.disabled = true;
     if (!willBeEnabled) {
-        confirmDisableSpoiler().then((proceed) => {
-            if (proceed) performToggle(button, itemId, kind, visiblePage, willBeEnabled);
+        confirmDisableSpoiler(context).then((proceed) => {
+            if (!isLiveButton(button, context, visiblePage)) return;
+            if (proceed) performToggle(button, itemId, kind, visiblePage, willBeEnabled, context);
             else button.disabled = false;
         }, (err) => {
+            if (!isLiveButton(button, context, visiblePage)) return;
             console.warn(`${logPrefix} confirmDisableSpoiler rejected:`, err);
             button.disabled = false;
         });
         return;
     }
-    performToggle(button, itemId, kind, visiblePage, willBeEnabled);
+    performToggle(button, itemId, kind, visiblePage, willBeEnabled, context);
 }
 
 function performToggle(
     button: HTMLButtonElement, itemId: string, kind: SpoilerKind,
-    visiblePage: Element, willBeEnabled: boolean
+    visiblePage: Element, willBeEnabled: boolean, context: IdentityContext,
 ): void {
+    if (!isLiveButton(button, context, visiblePage)) return;
     let displayName = '';
     if ((kind === 'movie' || kind === 'collection') && visiblePage) {
         try {
@@ -193,6 +235,7 @@ function performToggle(
     }
 
     promise.then(() => {
+        if (!isLiveButton(button, context, visiblePage)) return;
         renderButton(button, willBeEnabled);
         button.setAttribute('data-jc-spoiler-state', willBeEnabled ? 'on' : 'off');
 
@@ -234,11 +277,17 @@ function performToggle(
         try { refreshSpoilerableImages(); }
         catch (e) { console.warn(`${logPrefix} refreshSpoilerableImages failed:`, e); }
 
-        if (JC.pluginConfig?.SpoilerBlurStrictRefresh === true) scheduleFullReload();
+        if (JC.pluginConfig?.SpoilerBlurStrictRefresh === true) scheduleFullReload(context);
     }).catch((err) => {
+        if (!isLiveButton(button, context, visiblePage)) return;
         console.error(`${logPrefix} Toggle failed:`, err);
         JC.toast?.(JC.t!('spoiler_blur_error_toast'));
     }).finally(() => {
-        button.disabled = false;
+        if (isLiveButton(button, context, visiblePage)) button.disabled = false;
     });
 }
+
+JC.identity.registerReset('spoiler-detail-controls', () => {
+    cancelFullReload();
+    document.querySelectorAll('.jc-spoiler-blur-btn').forEach((node) => node.remove());
+});

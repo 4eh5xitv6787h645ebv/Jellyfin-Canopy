@@ -298,28 +298,28 @@ function renderLegend(): string {
     const showRequestsFilter = !!JC.pluginConfig?.SeerrEnabled && !state.settings.forceOnlyRequested;
     const requestsLabel = JC.t?.('requests_requests') || 'Requests';
     const requestsLegend = showRequestsFilter
-        ? `<div class="jc-calendar-legend-item ${getItemClass('Requests')}" onclick="window.JellyfinCanopy.calendarPage.toggleFilter('Requests'); event.stopPropagation();">
+        ? `<div class="jc-calendar-legend-item ${getItemClass('Requests')}" data-calendar-filter="Requests">
           <span class="material-symbols-rounded" style="color: #6f63f2; font-size: 18px;">download</span>
           <span>${requestsLabel}</span>
         </div>`
         : '';
 
     const watchlistLegend = state.settings.highlightFavorites
-        ? `<div class="jc-calendar-legend-item ${getItemClass('Watchlist')}" onclick="window.JellyfinCanopy.calendarPage.toggleFilter('Watchlist'); event.stopPropagation();">
+        ? `<div class="jc-calendar-legend-item ${getItemClass('Watchlist')}" data-calendar-filter="Watchlist">
           <span class="material-symbols-rounded" style="color: #ffd700; font-size: 18px; font-variation-settings: 'FILL' 1;">bookmark</span>
           <span>${JC.t?.('calendar_watchlist')}</span>
         </div>`
         : '';
 
     const watchedLegend = state.settings.highlightWatchedSeries
-        ? `<div class="jc-calendar-legend-item ${getItemClass('Watched')}" onclick="window.JellyfinCanopy.calendarPage.toggleFilter('Watched'); event.stopPropagation();">
+        ? `<div class="jc-calendar-legend-item ${getItemClass('Watched')}" data-calendar-filter="Watched">
           <span class="material-symbols-rounded" style="color: #64b5f6; font-size: 18px;">visibility</span>
           <span>${JC.t?.('calendar_watched')}</span>
         </div>`
         : '';
 
     const hasTwoFilters = state.activeFilters.size >= 2;
-    const unmonitoredLegend = `<div class="jc-calendar-legend-item jc-calendar-unmonitored-toggle ${state.settings.showUnmonitored ? 'active' : hasActiveFilters ? 'inactive' : ''}" onclick="window.JellyfinCanopy.calendarPage.toggleShowUnmonitored(); event.stopPropagation();" style="cursor: pointer;">
+    const unmonitoredLegend = `<div class="jc-calendar-legend-item jc-calendar-unmonitored-toggle ${state.settings.showUnmonitored ? 'active' : hasActiveFilters ? 'inactive' : ''}" data-calendar-action="toggle-unmonitored" style="cursor: pointer;">
         <span class="material-symbols-rounded" style="color: #ff9800; font-size: 18px;">${state.settings.showUnmonitored ? 'visibility' : 'visibility_off'}</span>
         <span>${JC.t?.('calendar_include_unmonitored') || 'Unmonitored'}</span>
       </div>`;
@@ -335,23 +335,23 @@ function renderLegend(): string {
     return `
       <div class="jc-calendar-legend">
         ${filterControls}
-        <div class="jc-calendar-legend-item ${getItemClass('CinemaRelease')}" onclick="window.JellyfinCanopy.calendarPage.toggleFilter('CinemaRelease'); event.stopPropagation();">
+        <div class="jc-calendar-legend-item ${getItemClass('CinemaRelease')}" data-calendar-filter="CinemaRelease">
           <span class="material-symbols-rounded" style="color: ${STATUS_COLORS.CinemaRelease}; font-size: 18px;">local_movies</span>
           <span>${JC.t?.('calendar_cinema_release')}</span>
         </div>
-        <div class="jc-calendar-legend-item ${getItemClass('DigitalRelease')}" onclick="window.JellyfinCanopy.calendarPage.toggleFilter('DigitalRelease'); event.stopPropagation();">
+        <div class="jc-calendar-legend-item ${getItemClass('DigitalRelease')}" data-calendar-filter="DigitalRelease">
           <span class="material-symbols-rounded" style="color: ${STATUS_COLORS.DigitalRelease}; font-size: 18px;">ondemand_video</span>
           <span>${JC.t?.('calendar_digital_release')}</span>
         </div>
-        <div class="jc-calendar-legend-item ${getItemClass('PhysicalRelease')}" onclick="window.JellyfinCanopy.calendarPage.toggleFilter('PhysicalRelease'); event.stopPropagation();">
+        <div class="jc-calendar-legend-item ${getItemClass('PhysicalRelease')}" data-calendar-filter="PhysicalRelease">
           <span class="material-symbols-rounded" style="color: ${STATUS_COLORS.PhysicalRelease}; font-size: 18px;">album</span>
           <span>${JC.t?.('calendar_physical_release')}</span>
         </div>
-        <div class="jc-calendar-legend-item ${getItemClass('Episode')}" onclick="window.JellyfinCanopy.calendarPage.toggleFilter('Episode'); event.stopPropagation();">
+        <div class="jc-calendar-legend-item ${getItemClass('Episode')}" data-calendar-filter="Episode">
           <span class="material-symbols-rounded" style="color: ${STATUS_COLORS.Episode}; font-size: 18px;">tv_guide</span>
           <span>${JC.t?.('calendar_episode')}</span>
         </div>
-        <div class="jc-calendar-legend-item ${getItemClass('Available')}" onclick="window.JellyfinCanopy.calendarPage.toggleFilter('Available'); event.stopPropagation();">
+        <div class="jc-calendar-legend-item ${getItemClass('Available')}" data-calendar-filter="Available">
           <span class="material-symbols-rounded" style="color: #4caf50; font-size: 18px;">check_circle</span>
           <span>${JC.t?.('seerr_btn_available') || 'Available'}</span>
         </div>
@@ -393,18 +393,18 @@ export function renderPage(): void {
         <div class="jc-calendar-actions jc-calendar-actions-center">
           <div class="jc-calendar-nav">
             <div class="jc-calendar-nav-group">
-              <button class="jc-calendar-nav-btn" onclick="window.JellyfinCanopy.calendarPage.shiftPeriod('prev'); event.stopPropagation();" aria-label="${JC.t?.('calendar_prev')}">‹</button>
-              <button class="jc-calendar-nav-btn jc-calendar-nav-today" onclick="window.JellyfinCanopy.calendarPage.goToday(); event.stopPropagation();">${JC.t?.('calendar_today')}</button>
-              <button class="jc-calendar-nav-btn" onclick="window.JellyfinCanopy.calendarPage.shiftPeriod('next'); event.stopPropagation();" aria-label="${JC.t?.('calendar_next')}">›</button>
+              <button class="jc-calendar-nav-btn" data-calendar-shift="prev" aria-label="${JC.t?.('calendar_prev')}">‹</button>
+              <button class="jc-calendar-nav-btn jc-calendar-nav-today" data-calendar-action="today">${JC.t?.('calendar_today')}</button>
+              <button class="jc-calendar-nav-btn" data-calendar-shift="next" aria-label="${JC.t?.('calendar_next')}">›</button>
             </div>
           </div>
         </div>
         <div class="jc-calendar-actions jc-calendar-actions-right">
           <div class="jc-calendar-nav">
-            <button class="jc-calendar-view-btn ${state.viewMode === 'day' ? 'active' : ''}" onclick="window.JellyfinCanopy.calendarPage.setViewMode('day'); event.stopPropagation();">${JC.t?.('calendar_day') || 'Day'}</button>
-            <button class="jc-calendar-view-btn ${state.viewMode === 'week' ? 'active' : ''}" onclick="window.JellyfinCanopy.calendarPage.setViewMode('week'); event.stopPropagation();">${JC.t?.('calendar_week')}</button>
-            <button class="jc-calendar-view-btn ${state.viewMode === 'month' ? 'active' : ''}" onclick="window.JellyfinCanopy.calendarPage.setViewMode('month'); event.stopPropagation();">${JC.t?.('calendar_month')}</button>
-            <button class="jc-calendar-view-btn ${state.viewMode === 'agenda' ? 'active' : ''}" onclick="window.JellyfinCanopy.calendarPage.setViewMode('agenda'); event.stopPropagation();">${JC.t?.('calendar_agenda')}</button>
+            <button class="jc-calendar-view-btn ${state.viewMode === 'day' ? 'active' : ''}" data-calendar-view="day">${JC.t?.('calendar_day') || 'Day'}</button>
+            <button class="jc-calendar-view-btn ${state.viewMode === 'week' ? 'active' : ''}" data-calendar-view="week">${JC.t?.('calendar_week')}</button>
+            <button class="jc-calendar-view-btn ${state.viewMode === 'month' ? 'active' : ''}" data-calendar-view="month">${JC.t?.('calendar_month')}</button>
+            <button class="jc-calendar-view-btn ${state.viewMode === 'agenda' ? 'active' : ''}" data-calendar-view="agenda">${JC.t?.('calendar_agenda')}</button>
             <div class="jc-calendar-mode-toggle ${state.viewMode === 'agenda' ? 'is-disabled' : ''}" role="group" aria-label="Display mode">
               <button type="button" class="jc-calendar-mode-btn ${state.settings.displayMode === 'list' ? 'active' : ''}" title="List" aria-label="List" data-mode="list" ${state.viewMode === 'agenda' ? 'disabled aria-disabled="true"' : ''}>
                 <span class="material-icons">view_list</span>

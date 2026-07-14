@@ -2,6 +2,7 @@
 import { JC } from '../globals';
 import { describeFetchError } from '../core/fetch-error';
 import { isSafeLinkBase } from '../core/url-safe';
+import type { IdentityContext } from '../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -10,8 +11,8 @@ import { isSafeLinkBase } from '../core/url-safe';
  * legacy Seerr payloads — typed loosely until the typed-model phase.
  */
 export interface SeerrApi {
-    checkUserStatus: () => Promise<any>;
-    surfaceUserStatusBanner: (status: any) => void;
+    checkUserStatus: () => Promise<SeerrUserStatus>;
+    surfaceUserStatusBanner: (status: SeerrUserStatus) => void;
     clearUserStatusCache: () => void;
     search: (query: string, page?: number, options?: any) => Promise<any>;
     fetchMovieCollection: (tmdbId: any) => Promise<any>;
@@ -19,7 +20,7 @@ export interface SeerrApi {
     fetchTvShowDetails: (tmdbId: any, options?: any) => Promise<any>;
     fetchTvSeasonDetails: (tmdbId: any, seasonNumber: any) => Promise<any>;
     fetchTmdbTvDetails: (tmdbId: any) => Promise<any>;
-    fetchOverrideRules: () => Promise<any[]>;
+    fetchOverrideRules: () => Promise<SeerrOverrideRule[]>;
     getCurrentSeerrUserId: () => Promise<string | null>;
     evaluateOverrideRules: (mediaData: any, mediaType: any, is4k?: boolean) => Promise<any>;
     requestMedia: (tmdbId: any, mediaType: any, advancedSettings?: any, is4k?: boolean, mediaData?: any) => Promise<any>;
@@ -47,6 +48,20 @@ export interface SeerrApi {
      * resolves. The single source of truth for every 4K UI gate.
      */
     canRequest4k: (mediaType: any) => boolean;
+}
+
+export interface SeerrUserStatus {
+    active: boolean;
+    userFound: boolean;
+    reason?: string;
+    message?: string;
+    seerrUserId?: string | number | null;
+    canRequest4kMovie?: boolean;
+    canRequest4kTv?: boolean;
+}
+
+export interface SeerrOverrideRule {
+    [key: string]: any;
 }
 
 /**
@@ -102,8 +117,9 @@ const api = {} as SeerrApi;
 // sections to disappear for the entire SPA session after a single transient
 // error. Now we keep success results for the SPA session but only cache
 // negatives for 60 seconds so transient blips recover automatically.
-let cachedUserStatus: any = null;
+let cachedUserStatus: SeerrUserStatus | null = null;
 let cachedUserStatusAt = 0;
+let cachedUserStatusEpoch: number | null = null;
 const NEGATIVE_USER_STATUS_TTL_MS = 60 * 1000;
 // PERF(R9): a TRANSIENT transport failure (no answer from the server at all)
 // is remembered even more briefly than a genuine negative answer — one blip
@@ -113,9 +129,35 @@ const ERROR_USER_STATUS_TTL_MS = 10 * 1000;
 let cachedUserStatusTtl = NEGATIVE_USER_STATUS_TTL_MS;
 
 // Cache for override rules
-let cachedOverrideRules: any[] | null = null;
+let cachedOverrideRules: SeerrOverrideRule[] | null = null;
 let overrideRulesCachedAt = 0;
+let overrideRulesEpoch: number | null = null;
 const OVERRIDE_RULES_TTL = 5 * 60 * 1000; // 5 minutes
+
+function identityChangedError(): Error {
+    return new Error('Seerr operation belongs to a stale identity');
+}
+
+function captureIdentity(): IdentityContext {
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) throw identityChangedError();
+    return context;
+}
+
+function assertCurrentIdentity(context: IdentityContext): void {
+    if (!JC.identity.isCurrent(context)) throw identityChangedError();
+}
+
+function resetIdentityCaches(): void {
+    cachedUserStatus = null;
+    cachedUserStatusAt = 0;
+    cachedUserStatusEpoch = null;
+    cachedUserStatusTtl = NEGATIVE_USER_STATUS_TTL_MS;
+    cachedOverrideRules = null;
+    overrideRulesCachedAt = 0;
+    overrideRulesEpoch = null;
+    delete window.__JE_userStatusBannerShown;
+}
 
 /**
  * Internal fetch helper — delegates to the shared core API client, which
@@ -225,7 +267,8 @@ function emitMediaRequested(tmdbId: any, mediaType: any, is4k = false): void {
  * @returns {Promise<{active: boolean, userFound: boolean}>}
  */
 api.checkUserStatus = async function() {
-    if (cachedUserStatus !== null) {
+    const context = captureIdentity();
+    if (cachedUserStatus !== null && cachedUserStatusEpoch === context.epoch) {
         // Successful result is sticky for the SPA session.
         if (cachedUserStatus.active && cachedUserStatus.userFound) {
             return cachedUserStatus;
@@ -239,27 +282,38 @@ api.checkUserStatus = async function() {
     }
 
     try {
-        const status = await get('/user-status', { skipCache: true });
+        const status = await get('/user-status', { skipCache: true }) as unknown as SeerrUserStatus;
+        assertCurrentIdentity(context);
         cachedUserStatus = status;
         cachedUserStatusAt = Date.now();
+        cachedUserStatusEpoch = context.epoch;
         cachedUserStatusTtl = NEGATIVE_USER_STATUS_TTL_MS;
         // Surface the typed reason as a banner so users aren't left staring
         // at silently-hidden discovery sections.
         api.surfaceUserStatusBanner(status);
         return status;
-    } catch (error: any) {
+    } catch (error: unknown) {
+        assertCurrentIdentity(context);
         console.warn(`${logPrefix} Status check failed:`, error);
+        const errorShape = error && typeof error === 'object'
+            ? error as { responseJSON?: unknown }
+            : null;
+        const response = errorShape?.responseJSON && typeof errorShape.responseJSON === 'object'
+            ? errorShape.responseJSON as { code?: unknown; message?: unknown }
+            : undefined;
+        const responseCode = typeof response?.code === 'string' ? response.code : null;
         const fallback = {
             active: false,
             userFound: false,
-            reason: error?.responseJSON?.code || 'unreachable',
-            message: error?.responseJSON?.message
-        };
+            reason: responseCode || 'unreachable',
+            message: typeof response?.message === 'string' ? response.message : undefined
+        } satisfies SeerrUserStatus;
         cachedUserStatus = fallback;
         cachedUserStatusAt = Date.now();
+        cachedUserStatusEpoch = context.epoch;
         // PERF(R9): a typed business answer keeps the normal negative TTL; a
         // bare transport failure (nothing came back) expires fast.
-        cachedUserStatusTtl = error?.responseJSON?.code ? NEGATIVE_USER_STATUS_TTL_MS : ERROR_USER_STATUS_TTL_MS;
+        cachedUserStatusTtl = responseCode ? NEGATIVE_USER_STATUS_TTL_MS : ERROR_USER_STATUS_TTL_MS;
         api.surfaceUserStatusBanner(fallback);
         return fallback;
     }
@@ -275,8 +329,10 @@ api.surfaceUserStatusBanner = function(status) {
         if (!status || (status.active && status.userFound)) return;
         if (status.reason === 'disabled') return;
         // Don't double-surface within a single session.
-        if (window.__JE_userStatusBannerShown === status.reason) return;
-        window.__JE_userStatusBannerShown = status.reason;
+        const reason = status.reason || 'unknown';
+        const bannerKey = `${JC.identity.getEpoch()}:${reason}`;
+        if (window.__JE_userStatusBannerShown === bannerKey) return;
+        window.__JE_userStatusBannerShown = bannerKey;
 
         const reasons: Record<string, string> = {
             blocked: 'Your administrator has disabled Seerr for your account.',
@@ -288,7 +344,7 @@ api.surfaceUserStatusBanner = function(status) {
         // from SeerrHttpHelper.ToResponseShape, which uses UserMessage
         // (plain English, no URLs / cf-ray / proxy product names). Still
         // HTML-escape it before insertion as defence-in-depth.
-        const rawMsg = status.message || reasons[status.reason] || 'Seerr is unavailable right now.';
+        const rawMsg = status.message || reasons[reason] || 'Seerr is unavailable right now.';
         const msg = (typeof JC !== 'undefined' && typeof JC.escapeHtml === 'function')
             ? JC.escapeHtml(rawMsg)
             : String(rawMsg).replace(/[&<>"']/g, function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'} as Record<string, string>)[c];});
@@ -311,6 +367,7 @@ api.surfaceUserStatusBanner = function(status) {
 api.clearUserStatusCache = function() {
     cachedUserStatus = null;
     cachedUserStatusAt = 0;
+    cachedUserStatusEpoch = null;
 };
 
 /**
@@ -329,18 +386,17 @@ api.canRequest4k = function(mediaType) {
         : !!JC.pluginConfig.SeerrEnable4KRequests;
     if (!adminEnabled) return false;
 
-    const status = cachedUserStatus as {
-        active?: boolean;
-        userFound?: boolean;
-        canRequest4kMovie?: boolean;
-        canRequest4kTv?: boolean;
-    } | null;
-    if (!status || !status.active || !status.userFound) {
+    const status = cachedUserStatus;
+    const context = JC.identity.capture();
+    if (!context || cachedUserStatusEpoch !== context.epoch
+        || !status || !status.active || !status.userFound) {
         // Capability not resolved yet — hide for now rather than showing an option
         // the server may reject. Callers resolve status before rendering, so this
         // path is belt-and-suspenders; the fire-and-forget fetch just guards against
         // a stray early call leaving the capability permanently unresolved.
-        if (cachedUserStatus === null) { void api.checkUserStatus(); }
+        if (cachedUserStatus === null || cachedUserStatusEpoch !== context?.epoch) {
+            void api.checkUserStatus().catch(() => undefined);
+        }
         return false;
     }
     return isTv ? !!status.canRequest4kTv : !!status.canRequest4kMovie;
@@ -487,17 +543,24 @@ api.fetchTmdbTvDetails = async function(tmdbId) {
  * @returns {Promise<Array>}
  */
 api.fetchOverrideRules = async function() {
-    if (cachedOverrideRules !== null && Date.now() - overrideRulesCachedAt < OVERRIDE_RULES_TTL) {
+    const context = captureIdentity();
+    if (cachedOverrideRules !== null && overrideRulesEpoch === context.epoch
+        && Date.now() - overrideRulesCachedAt < OVERRIDE_RULES_TTL) {
         return cachedOverrideRules;
     }
     try {
         const rules = await get('/overrideRule');
-        cachedOverrideRules = Array.isArray(rules) ? rules : [];
+        assertCurrentIdentity(context);
+        cachedOverrideRules = Array.isArray(rules)
+            ? rules as SeerrOverrideRule[]
+            : [];
         overrideRulesCachedAt = Date.now();
+        overrideRulesEpoch = context.epoch;
         return cachedOverrideRules;
     } catch (error: any) {
+        assertCurrentIdentity(context);
         console.error(`${logPrefix} Failed to fetch override rules:`, error);
-        return cachedOverrideRules || [];
+        return overrideRulesEpoch === context.epoch ? (cachedOverrideRules || []) : [];
     }
 };
 
@@ -648,37 +711,43 @@ api.evaluateOverrideRules = async function(mediaData, mediaType, is4k = false) {
  * @returns {Promise<any>}
  */
 api.requestMedia = async function(tmdbId, mediaType, advancedSettings = {}, is4k = false, mediaData = null) {
+    const context = captureIdentity();
     // Apply override rules if no advanced settings are provided and media data is available
     if (Object.keys(advancedSettings).length === 0 && mediaData) {
         const overrideSettings = await api.evaluateOverrideRules(mediaData, mediaType, is4k);
+        assertCurrentIdentity(context);
         if (overrideSettings) {
             console.debug(`${logPrefix} Applying override rule settings:`, overrideSettings);
             advancedSettings = { ...overrideSettings };
         }
     }
 
-    const body = {
-        mediaType,
-        mediaId: parseInt(tmdbId),
-        ...advancedSettings,
+    const body = JC.identity.own({
+        mediaType: mediaType as unknown,
+        mediaId: Number.parseInt(String(tmdbId), 10),
+        ...(advancedSettings as unknown as Record<string, unknown>),
         ...(mediaType === 'tv' ? { seasons: 'all' } : {}),
         ...(is4k ? { is4k: true } : {})
-    };
+    } satisfies Record<string, unknown>, context);
 
     const result = await post('/request', body);
+    assertCurrentIdentity(context);
 
     // Add to watchlist after successful request
     if (result) {
         invalidateRequestCaches(tmdbId, mediaType);
         emitMediaRequested(tmdbId, mediaType, is4k);
+        assertCurrentIdentity(context);
         try {
             await api.addToWatchlist(tmdbId, mediaType);
+            assertCurrentIdentity(context);
         } catch (error: any) {
             // Don't fail the request if watchlist addition fails
             console.warn(`${logPrefix} Failed to add to watchlist:`, error);
         }
     }
 
+    assertCurrentIdentity(context);
     return result;
 };
 
@@ -692,36 +761,42 @@ api.requestMedia = async function(tmdbId, mediaType, advancedSettings = {}, is4k
  * @returns {Promise<any>}
  */
 api.requestTvSeasons = async function(tmdbId, seasonNumbers, advancedSettings = {}, mediaData = null, is4k = false) {
+    const context = captureIdentity();
     // Apply override rules if no advanced settings are provided and media data is available
     if (Object.keys(advancedSettings).length === 0 && mediaData) {
         const overrideSettings = await api.evaluateOverrideRules(mediaData, 'tv', is4k);
+        assertCurrentIdentity(context);
         if (overrideSettings) {
             console.debug(`${logPrefix} Applying override rule settings for TV seasons:`, overrideSettings);
             advancedSettings = { ...overrideSettings };
         }
     }
 
-    const body = {
+    const body = JC.identity.own({
         mediaType: 'tv',
-        mediaId: parseInt(tmdbId),
-        seasons: seasonNumbers,
-        ...advancedSettings,
+        mediaId: Number.parseInt(String(tmdbId), 10),
+        seasons: seasonNumbers as unknown,
+        ...(advancedSettings as unknown as Record<string, unknown>),
         ...(is4k ? { is4k: true } : {})
-    };
+    } satisfies Record<string, unknown>, context);
     const result = await post('/request', body);
+    assertCurrentIdentity(context);
 
     // Add to watchlist after successful request
     if (result) {
         invalidateRequestCaches(tmdbId, 'tv');
         emitMediaRequested(tmdbId, 'tv', is4k);
+        assertCurrentIdentity(context);
         try {
             await api.addToWatchlist(tmdbId, 'tv');
+            assertCurrentIdentity(context);
         } catch (error: any) {
             // Don't fail the request if watchlist addition fails
             console.warn(`${logPrefix} Failed to add to watchlist:`, error);
         }
     }
 
+    assertCurrentIdentity(context);
     return result;
 };
 
@@ -736,6 +811,7 @@ api.requestTvSeasons = async function(tmdbId, seasonNumbers, advancedSettings = 
  * @returns {Promise<{pageInfo?: object, results: Array}>}
  */
 api.fetchIssuesForMedia = async function(tmdbId, mediaType, options = {}) {
+    const context = captureIdentity();
     const { take = 20, skip = 0, filter = 'open', sort = 'added' } = options;
     try {
         const query = new URLSearchParams({
@@ -746,6 +822,7 @@ api.fetchIssuesForMedia = async function(tmdbId, mediaType, options = {}) {
         });
 
         const res = await get(`/issue?${query.toString()}`);
+        assertCurrentIdentity(context);
         const issues = res && Array.isArray(res.results) ? res.results : [];
 
         const filtered = issues.filter((issue: any) => {
@@ -757,6 +834,7 @@ api.fetchIssuesForMedia = async function(tmdbId, mediaType, options = {}) {
 
         return { ...res, results: filtered };
     } catch (error: any) {
+        assertCurrentIdentity(context);
         console.error(`${logPrefix} Failed to fetch issues for ${mediaType} ${tmdbId}:`, error);
         return { results: [] };
     }
@@ -768,10 +846,13 @@ api.fetchIssuesForMedia = async function(tmdbId, mediaType, options = {}) {
  * @returns {Promise<object|null>}
  */
 api.fetchIssueById = async function(issueId) {
+    const context = captureIdentity();
     try {
         const res = await get(`/issue/${issueId}`);
+        assertCurrentIdentity(context);
         return res || null;
     } catch (error: any) {
+        assertCurrentIdentity(context);
         console.warn(`${logPrefix} Failed to fetch issue ${issueId}:`, error);
         return null;
     }
@@ -910,6 +991,7 @@ api.addToWatchlist = async function(tmdbId, mediaType) {
 // parses the numeric value and forwards it to Seerr.
 
 api.reportIssue = async function(mediaId, mediaType, problemType, message = '', problemSeason = 0, problemEpisode = 0) {
+    const context = captureIdentity();
     try {
         // problemType is now a numeric issue type (1, 2, 3, or 4) from the form
         const issueType = parseInt(problemType) || 4;
@@ -922,6 +1004,7 @@ api.reportIssue = async function(mediaId, mediaType, problemType, message = '', 
         } else if (mediaType === 'tv') {
             apiResult = await get(`/tv/${mediaId}`);
         }
+        assertCurrentIdentity(context);
 
         const internalId = apiResult && apiResult.mediaInfo && apiResult.mediaInfo.id;
         if (!internalId) {
@@ -929,19 +1012,21 @@ api.reportIssue = async function(mediaId, mediaType, problemType, message = '', 
         }
         console.debug(`${logPrefix} Retrieved internal media id for issue report:`, internalId);
 
-        const body = {
+        const body = JC.identity.own({
             mediaId: parseInt(internalId),
             issueType: issueType,
             problemSeason: parseInt(problemSeason) || 0,
             problemEpisode: parseInt(problemEpisode) || 0,
             message: message || ''
-        };
+        }, context);
 
         console.debug(`${logPrefix} Sending issue report with body:`, body);
         const result = await post('/issue', body);
+        assertCurrentIdentity(context);
         console.debug(`${logPrefix} Issue reported for Seerr media ID ${internalId} (TMDB ${mediaId}, ${mediaType}): ${problemType}`);
         return result;
     } catch (error: any) {
+        assertCurrentIdentity(context);
         console.error(`${logPrefix} Failed to report issue for TMDB ID ${mediaId}:`, error);
         throw error;
     }
@@ -1060,3 +1145,4 @@ api.resolveSeerrBaseUrl = function() {
 
 // Expose the API module on the global JC object
 JC.seerrAPI = api;
+JC.identity.registerReset('seerr-api', resetIdentityCaches);

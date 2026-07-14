@@ -9,17 +9,97 @@ import { currentPageHandle } from '../pages/fallback-host';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { getItemCached } from '../helpers';
 import { renderActiveBookmarks } from './library-render';
+import type { IdentityContext } from '../../types/jc';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+const replacementModalTimers = new Set<number>();
+
+interface StoredBookmark {
+  itemId: string;
+  tmdbId: string;
+  tvdbId: string;
+  mediaType: string;
+  name: string;
+  [key: string]: unknown;
+}
+
+interface BookmarkGroup {
+  details: StoredBookmark;
+  bookmarks: Array<StoredBookmark & { id: string }>;
+}
+
+interface JellyfinReplacementItem {
+  Id: string;
+  Name: string;
+  ProductionYear?: string | number;
+  ProviderIds?: { Tmdb?: string; Tvdb?: string };
+  ImageTags?: { Primary?: string };
+  UserData?: { Key?: string };
+}
+
+interface ImageApiClient {
+  getImageUrl(itemId: string, options: { type: string; maxWidth: number; tag?: string }): string;
+}
+
+interface ReplacementResult {
+  group: BookmarkGroup;
+  matches: JellyfinReplacementItem[];
+}
+
+function isJellyfinReplacementItem(value: unknown): value is JellyfinReplacementItem {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && 'Id' in value && typeof value.Id === 'string'
+    && 'Name' in value && typeof value.Name === 'string';
+}
+
+function currentImageApiClient(): ImageApiClient | null {
+  const direct = window.ApiClient as unknown as Partial<ImageApiClient> | undefined;
+  if (typeof direct?.getImageUrl === 'function') return direct as ImageApiClient;
+  const manager = (window as Window & {
+    ConnectionManager?: { currentApiClient?(): ImageApiClient | null };
+  }).ConnectionManager;
+  return manager?.currentApiClient?.() ?? null;
+}
+
+function scheduleReplacementTask(context: IdentityContext, callback: () => void, delay: number): void {
+  const timer = window.setTimeout(() => {
+    replacementModalTimers.delete(timer);
+    if (JC.identity.isCurrent(context)) callback();
+  }, delay);
+  replacementModalTimers.add(timer);
+}
+
+function ownReplacementModal(modal: HTMLElement): void {
+  modal.dataset.jcIdentityOwned = 'true';
+  modal.dataset.jcBookmarkLibraryModal = 'true';
+}
+
+function closeReplacementModal(modal: HTMLElement): void {
+  if (!modal.isConnected) return;
+  modal.style.opacity = '0';
+  const timer = window.setTimeout(() => {
+    replacementModalTimers.delete(timer);
+    modal.remove();
+  }, 200);
+  replacementModalTimers.add(timer);
+}
+
+JC.identity.registerReset('bookmarks-library-replacement-modals', () => {
+  for (const timer of replacementModalTimers) window.clearTimeout(timer);
+  replacementModalTimers.clear();
+  document.querySelectorAll('[data-jc-bookmark-library-modal="true"]').forEach((modal) => modal.remove());
+});
 
 /**
  * Search Jellyfin for items matching a TMDB/TVDB ID
  */
-async function searchForReplacementItem(tmdbId: string, tvdbId: string, mediaType: string): Promise<any[] | null> {
-  const apiClient: any = window.ApiClient || (window as any).ConnectionManager?.currentApiClient();
-  if (!apiClient) return null;
-
-  const userId = apiClient.getCurrentUserId();
+async function searchForReplacementItem(
+  tmdbId: string,
+  tvdbId: string,
+  mediaType: string,
+  context: IdentityContext
+): Promise<JellyfinReplacementItem[] | null> {
+  if (!JC.identity.isCurrent(context)) return null;
+  const userId = context.userId;
 
   try {
     // Search using Jellyfin's provider ID filtering
@@ -27,20 +107,25 @@ async function searchForReplacementItem(tmdbId: string, tvdbId: string, mediaTyp
 
     // Fetch all items of this type and filter by provider ID client-side
     // This is more reliable than relying on AnyProviderIdEquals
-    const url = `Users/${userId}/Items?Recursive=true&IncludeItemTypes=${itemTypes}&SortBy=DateCreated&SortOrder=Descending&Limit=500`;
+    const url = `/Users/${userId}/Items?Recursive=true&IncludeItemTypes=${itemTypes}&SortBy=DateCreated&SortOrder=Descending&Limit=500`;
 
     // Routed through the core fetch layer (auth + JSON parse identical to the
     // former ApiClient.ajax call; failures still land in the catch below).
-    let response: any = await JC.core.api!.fetch(apiClient.getUrl(url));
+    let response: unknown = await JC.core.api!.jf(url, { skipCache: true });
+    if (!JC.identity.isCurrent(context)) return null;
 
     // Handle if response is a string (shouldn't happen but be safe)
     if (typeof response === 'string') {
-      response = JSON.parse(response);
+      response = JSON.parse(response) as unknown;
+      if (!JC.identity.isCurrent(context)) return null;
     }
 
     console.log(`🪼 Jellyfin Canopy: Bookmarks Library: API Response:`, response);
 
-    const items = response?.Items || [];
+    const items = response !== null && typeof response === 'object' && !Array.isArray(response)
+      && 'Items' in response && Array.isArray(response.Items)
+      ? response.Items.filter(isJellyfinReplacementItem)
+      : [];
     console.log(`🪼 Jellyfin Canopy: Bookmarks Library: Fetched ${items.length} total items of type ${itemTypes}`);
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -50,7 +135,7 @@ async function searchForReplacementItem(tmdbId: string, tvdbId: string, mediaTyp
 
     // Filter items by matching provider IDs
     // Check both ProviderIds and UserData.Key (TMDB ID is often stored there)
-    const matches = items.filter((item: any) => {
+    const matches = items.filter((item) => {
       const providerIds = item.ProviderIds || {};
       const userData = item.UserData || {};
 
@@ -72,6 +157,7 @@ async function searchForReplacementItem(tmdbId: string, tvdbId: string, mediaTyp
     console.log(`🪼 Jellyfin Canopy: Bookmarks Library: Found ${matches.length} matches for ${tmdbId ? 'TMDB:'+tmdbId : 'TVDB:'+tvdbId}`, matches);
     return matches.length > 0 ? matches : null;
   } catch (e) {
+    if (!JC.identity.isCurrent(context)) return null;
     console.error('Failed to search for replacement:', e);
     return null;
   }
@@ -80,14 +166,21 @@ async function searchForReplacementItem(tmdbId: string, tvdbId: string, mediaTyp
 /**
  * Find replacement for orphaned item and offer migration
  */
-export async function findAndOfferReplacement(group: any, triggerBtn: HTMLButtonElement): Promise<void> {
+export async function findAndOfferReplacement(
+  group: BookmarkGroup,
+  triggerBtn: HTMLButtonElement,
+  context: IdentityContext | null = JC.identity.capture()
+): Promise<void> {
+  if (!context || !JC.identity.isCurrent(context)) return;
   triggerBtn.disabled = true;
 
   const matches = await searchForReplacementItem(
     group.details.tmdbId,
     group.details.tvdbId,
-    group.details.mediaType
+    group.details.mediaType,
+    context
   );
+  if (!JC.identity.isCurrent(context)) return;
 
   if (!matches || matches.length === 0) {
     toast(JC.t!('bookmark_no_replacement'), 3000);
@@ -95,23 +188,28 @@ export async function findAndOfferReplacement(group: any, triggerBtn: HTMLButton
     return;
   }
 
-  showReplacementSelectionModal(group, matches);
+  showReplacementSelectionModal(group, matches, context);
   triggerBtn.disabled = false;
 }
 
 /**
  * Show modal to select replacement item and migrate bookmarks
  */
-function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): void {
+function showReplacementSelectionModal(
+  oldGroup: BookmarkGroup,
+  replacementItems: JellyfinReplacementItem[],
+  context: IdentityContext
+): void {
   // These modals are reached from awaited flows (library search, orphan
   // scan): the page can drain mid-await. A modal with no live adoption to
   // own its teardown must not appear over the destination view.
-  if (!currentPageHandle()) return;
-  const apiClient: any = window.ApiClient || (window as any).ConnectionManager?.currentApiClient();
+  if (!JC.identity.isCurrent(context) || !currentPageHandle()) return;
+  const apiClient = currentImageApiClient();
   if (!apiClient) return;
 
   const modal = document.createElement('div');
   modal.className = 'jc-bm-library-modal-overlay';
+  ownReplacementModal(modal);
   modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.9); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s;';
   modal.innerHTML = `
     <div class="jc-bm-library-modal-container jc-replacement-modal-container">
@@ -168,12 +266,9 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
 
   document.body.appendChild(modal);
 
-  let selectedItem: any = null;
+  let selectedItem: JellyfinReplacementItem | null = null;
 
-  const closeDialog = () => {
-    modal.style.opacity = '0';
-    setTimeout(() => modal.remove(), 200);
-  };
+  const closeDialog = () => closeReplacementModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.
   currentPageHandle()?.track(closeDialog);
 
@@ -186,6 +281,7 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
   // Selection handlers
   modal.querySelectorAll<HTMLElement>('.replacement-option').forEach(option => {
     option.addEventListener('click', () => {
+      if (!JC.identity.isCurrent(context)) return;
       const idx = parseInt(option.dataset.itemIndex!);
       selectedItem = replacementItems[idx];
 
@@ -207,6 +303,7 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
 
   // Migrate handler
   modal.querySelector('.jc-bookmark-btn-submit')?.addEventListener('click', () => { void (async () => {
+    if (!JC.identity.isCurrent(context)) return;
     if (!selectedItem) return;
 
     const btn = modal.querySelector<HTMLButtonElement>('.jc-bookmark-btn-submit')!;
@@ -215,8 +312,8 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
 
     try {
       // Fetch full details for new item
-      const userId = apiClient.getCurrentUserId();
-      const fullItem: any = await getItemCached(selectedItem.Id, { userId });
+      const fullItem = await getItemCached(selectedItem.Id, { userId: context.userId });
+      if (!JC.identity.isCurrent(context) || !isJellyfinReplacementItem(fullItem)) return;
 
       const newDetails = {
         itemId: fullItem.Id,
@@ -230,8 +327,9 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
       // originals. syncBookmarks removes the originals (by id) only after the
       // new copies are durably persisted, so a mid-flight failure keeps the
       // originals intact (the old pre-delete lost data if syncing failed).
-      const oldIds = oldGroup.bookmarks.map((bm: any) => bm.id);
+      const oldIds = oldGroup.bookmarks.map((bookmark) => bookmark.id);
       const synced = await JC.bookmarks!.syncBookmarks(oldGroup.bookmarks, newDetails, 0, oldIds);
+      if (!JC.identity.isCurrent(context)) return;
 
       toast(JC.t!('bookmark_migrated').replace('{count}', String(synced.length)).replace('{name}', JC.escapeHtml(fullItem.Name)), 4000);
 
@@ -239,8 +337,9 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
 
       // Refresh the adopted host (syncBookmarks already resolved — no blind
       // setTimeout needed).
-      renderActiveBookmarks();
+      renderActiveBookmarks(context);
     } catch (e) {
+      if (!JC.identity.isCurrent(context)) return;
       console.error('Migration failed:', e);
       toast(JC.t!('bookmark_migration_failed'), 3000);
       btn.disabled = false;
@@ -248,25 +347,29 @@ function showReplacementSelectionModal(oldGroup: any, replacementItems: any[]): 
     }
   })(); });
 
-  setTimeout(() => modal.style.opacity = '1', 10);
+  scheduleReplacementTask(context, () => { if (modal.isConnected) modal.style.opacity = '1'; }, 10);
 }
 
 /**
  * Find all orphaned bookmarks and offer migration
  */
-export async function findAllOrphanedAndOfferMigration(bookmarks: Record<string, any>): Promise<void> {
-  const apiClient: any = window.ApiClient || (window as any).ConnectionManager?.currentApiClient();
+export async function findAllOrphanedAndOfferMigration(
+  bookmarks: Record<string, StoredBookmark>,
+  context: IdentityContext | null = JC.identity.capture()
+): Promise<void> {
+  if (!context || !JC.identity.isCurrent(context)) return;
+  const apiClient = currentImageApiClient();
   if (!apiClient) {
     toast(JC.t!('toast_api_client_unavailable'), 3000);
     return;
   }
 
-  const userId = apiClient.getCurrentUserId();
-  const orphanedGroups: any[] = [];
+  const userId = context.userId;
+  const orphanedGroups: BookmarkGroup[] = [];
 
   // Group by item ID
-  const byItem: Record<string, any> = {};
-  for (const [id, bm] of Object.entries<any>(bookmarks)) {
+  const byItem: Record<string, BookmarkGroup> = {};
+  for (const [id, bm] of Object.entries(bookmarks)) {
     if (!byItem[bm.itemId]) {
       byItem[bm.itemId] = {
         details: bm,
@@ -277,11 +380,14 @@ export async function findAllOrphanedAndOfferMigration(bookmarks: Record<string,
   }
 
   // Check each item
-  for (const [itemId, group] of Object.entries<any>(byItem)) {
+  for (const [itemId, group] of Object.entries(byItem)) {
+    if (!JC.identity.isCurrent(context)) return;
     try {
       await getItemCached(itemId, { userId });
+      if (!JC.identity.isCurrent(context)) return;
       // Item exists, not orphaned
     } catch (e) {
+      if (!JC.identity.isCurrent(context)) return;
       // DATA-SAFETY: only an explicit 404 means the item is truly gone. A
       // transient failure must not be treated as orphaned (which would offer a
       // destructive migration); keep it and warn.
@@ -302,13 +408,16 @@ export async function findAllOrphanedAndOfferMigration(bookmarks: Record<string,
   }
 
   // Search for replacements for all orphaned items
-  const replacementResults: any[] = [];
+  const replacementResults: ReplacementResult[] = [];
   for (const group of orphanedGroups) {
+    if (!JC.identity.isCurrent(context)) return;
     const matches = await searchForReplacementItem(
       group.details.tmdbId,
       group.details.tvdbId,
-      group.details.mediaType
+      group.details.mediaType,
+      context
     );
+    if (!JC.identity.isCurrent(context)) return;
     if (matches && matches.length > 0) {
       replacementResults.push({ group, matches });
     }
@@ -320,17 +429,18 @@ export async function findAllOrphanedAndOfferMigration(bookmarks: Record<string,
   }
 
   // Show summary modal
-  showOrphanedSummaryModal(replacementResults);
+  showOrphanedSummaryModal(replacementResults, context);
 }
 
 /**
  * Show summary of all orphaned items with replacements
  */
-function showOrphanedSummaryModal(replacementResults: any[]): void {
+function showOrphanedSummaryModal(replacementResults: ReplacementResult[], context: IdentityContext): void {
   // Same delayed-flow guard as showReplacementSelectionModal.
-  if (!currentPageHandle()) return;
+  if (!JC.identity.isCurrent(context) || !currentPageHandle()) return;
   const modal = document.createElement('div');
   modal.className = 'jc-bm-library-modal-overlay';
+  ownReplacementModal(modal);
   modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s;';
   modal.innerHTML = `
     <div class="jc-bm-library-modal-container" style="max-width: 700px; background: #181818; border-radius: 12px; padding: 24px; position: relative; box-shadow: 0 8px 32px rgba(0,0,0,0.8);">
@@ -374,10 +484,7 @@ function showOrphanedSummaryModal(replacementResults: any[]): void {
 
   document.body.appendChild(modal);
 
-  const closeDialog = () => {
-    modal.style.opacity = '0';
-    setTimeout(() => modal.remove(), 200);
-  };
+  const closeDialog = () => closeReplacementModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.
   currentPageHandle()?.track(closeDialog);
 
@@ -390,12 +497,15 @@ function showOrphanedSummaryModal(replacementResults: any[]): void {
   // Migrate button handlers
   modal.querySelectorAll<HTMLElement>('.btnMigrateOrphaned').forEach(btn => {
     btn.addEventListener('click', () => {
+      if (!JC.identity.isCurrent(context)) return;
       const idx = parseInt(btn.dataset.resultIndex!);
       const result = replacementResults[idx];
       closeDialog();
-      setTimeout(() => showReplacementSelectionModal(result.group, result.matches), 300);
+      scheduleReplacementTask(context, () => {
+        showReplacementSelectionModal(result.group, result.matches, context);
+      }, 300);
     });
   });
 
-  setTimeout(() => modal.style.opacity = '1', 10);
+  scheduleReplacementTask(context, () => { if (modal.isConnected) modal.style.opacity = '1'; }, 10);
 }

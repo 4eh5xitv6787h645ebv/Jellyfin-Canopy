@@ -19,16 +19,21 @@ import { register } from '../../core/lifecycle';
 import { on, LIVE } from '../../core/live';
 import { refreshSpoilerableImages } from './image-refresh';
 import { hasAnyState } from './state';
+import { JC } from '../../globals';
+import type { IdentityContext } from '../../types/jc';
 
 const REFRESH_DEBOUNCE_MS = 200;
 
 let debounceTimer: number | null = null;
+let liveUnsubscribe: (() => void) | null = null;
+const handle = register('spoiler-guard-watched');
 
 /** Debounced image-only refresh (coalesces a burst of season-mark events). */
-function scheduleRefresh(): void {
+function scheduleRefresh(context: IdentityContext): void {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = window.setTimeout(() => {
         debounceTimer = null;
+        if (!JC.identity.isCurrent(context)) return;
         try { refreshSpoilerableImages(); }
         catch (e) { console.warn('🪼 Jellyfin Canopy [SpoilerGuard]: auto-refresh after watched-flip failed:', e); }
     }, REFRESH_DEBOUNCE_MS);
@@ -41,13 +46,23 @@ function scheduleRefresh(): void {
  * reset tears them down cleanly.
  */
 export function installWatchedRefresh(): void {
-    const handle = register('spoiler-guard-watched');
-    const unsubscribe = on(LIVE.USER_DATA_CHANGED, () => {
+    if (liveUnsubscribe) return;
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return;
+    liveUnsubscribe = on(LIVE.USER_DATA_CHANGED, () => {
+        if (!JC.identity.isCurrent(context)) return;
         if (!hasAnyState()) return;
-        scheduleRefresh();
-    });
-    handle.track(unsubscribe);
-    handle.onTeardown(() => {
-        if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+        scheduleRefresh(context);
     });
 }
+
+// Persistent hook registered once even though the reusable lifecycle handle is
+// torn down for every identity. Activation calls installWatchedRefresh again.
+handle.onTeardown(() => {
+    if (liveUnsubscribe) {
+        liveUnsubscribe();
+        liveUnsubscribe = null;
+    }
+    if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+});
+JC.identity.registerReset('spoiler-guard-watched', () => handle.teardown());

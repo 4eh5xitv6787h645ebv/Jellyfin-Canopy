@@ -20,6 +20,8 @@ const logPrefix = '🪼 Jellyfin Canopy [SpoilerGuard]:';
  * @param mediaType - 'tv' | 'movie'.
  */
 export function buildSeerrPendingToggle(data: any, mediaType: string): HTMLButtonElement | null { // eslint-disable-line @typescript-eslint/no-explicit-any
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return null;
     if (JC.pluginConfig?.SpoilerBlurEnabled !== true) return null;
     if (mediaType !== 'tv' && mediaType !== 'movie') return null;
     const tmdbId = data?.id;
@@ -33,8 +35,10 @@ export function buildSeerrPendingToggle(data: any, mediaType: string): HTMLButto
     // Deliberately NOT the primary request CTA class — this is a quieter
     // secondary action with its own ghost styling.
     btn.className = 'jc-spoiler-pending-btn';
+    btn.dataset.jcIdentityOwned = 'true';
     btn.setAttribute('data-jc-tmdb-id', String(tmdbId));
     btn.setAttribute('data-jc-media-type', mediaType);
+    JC.identity.own(btn, context);
 
     const iconSpan = document.createElement('span');
     iconSpan.className = 'material-icons';
@@ -42,7 +46,14 @@ export function buildSeerrPendingToggle(data: any, mediaType: string): HTMLButto
     btn.appendChild(iconSpan);
     btn.appendChild(labelSpan);
 
+    function isOwnedButton(requireConnected = false): boolean {
+        return JC.identity.isCurrent(context)
+            && JC.identity.isOwned(btn, context)
+            && (!requireConnected || btn.isConnected);
+    }
+
     function refreshLabel(): void {
+        if (!isOwnedButton()) return;
         const enabled = isTmdbEnabled(mediaType, String(tmdbId), jellyfinMediaId);
         const label = enabled ? JC.t!('spoiler_blur_pending_button_on') : JC.t!('spoiler_blur_pending_button_off');
         btn.classList.toggle('jc-spoiler-pending-on', enabled);
@@ -55,34 +66,46 @@ export function buildSeerrPendingToggle(data: any, mediaType: string): HTMLButto
     // Cold-load fix: state may load after the modal mounts, so an initial
     // refreshLabel could read empty sets. whenLoaded resolves immediately if
     // already loaded, else awaits the in-flight load.
-    whenLoaded().then(refreshLabel).catch(() => { /* refresh best-effort */ });
+    whenLoaded().then(() => {
+        if (isOwnedButton()) refreshLabel();
+    }).catch(() => { /* refresh best-effort */ });
 
     btn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!isOwnedButton(true)) return;
         if (btn.disabled) return;
         btn.disabled = true;
         const wasEnabled = isTmdbEnabled(mediaType, String(tmdbId), jellyfinMediaId);
         void (async () => {
             try {
                 if (wasEnabled) {
-                    const proceed = await confirmDisableSpoiler();
-                    if (!proceed) return;
+                    const proceed = await confirmDisableSpoiler(context);
+                    if (!isOwnedButton(true) || !proceed) return;
                     await disableForTmdb(mediaType, String(tmdbId));
+                    if (!isOwnedButton(true)) return;
                     JC.toast?.(JC.t!('spoiler_blur_pending_disabled_toast'));
                 } else {
                     await enableForTmdb(mediaType, String(tmdbId), displayName);
+                    if (!isOwnedButton(true)) return;
                     JC.toast?.(JC.t!('spoiler_blur_pending_enabled_toast'));
                 }
             } catch (err) {
+                if (!isOwnedButton(true)) return;
                 console.warn(`${logPrefix} pending toggle failed:`, err);
                 JC.toast?.(JC.t!('spoiler_blur_pending_error_toast'));
             } finally {
-                refreshLabel();
-                btn.disabled = false;
+                if (isOwnedButton(true)) {
+                    refreshLabel();
+                    btn.disabled = false;
+                }
             }
         })();
     });
 
     return btn;
 }
+
+JC.identity.registerReset('spoiler-seerr-controls', () => {
+    document.querySelectorAll('.jc-spoiler-pending-btn').forEach((node) => node.remove());
+});

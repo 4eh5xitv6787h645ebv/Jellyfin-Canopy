@@ -3,7 +3,7 @@
 // Calendar page descriptor + the frozen JC.calendarPage facade. All
 // lifecycle (routing, adoption, teardown) is owned by the shared pages
 // framework; this module only knows how to render calendar content into an
-// adopted host and which actions the markup's inline handlers need.
+// adopted host and which actions its scoped delegated handler needs.
 
 import { JC } from '../arr-globals';
 import { registerPage } from '../../enhanced/pages/registry';
@@ -24,6 +24,8 @@ import {
 import type { PageContext } from '../../enhanced/pages/types';
 
 function render({ host, handle, signal }: PageContext): void {
+    const context = JC.identity.capture();
+    if (!context) return;
     injectStyles();
     loadSettings();
 
@@ -36,6 +38,7 @@ function render({ host, handle, signal }: PageContext): void {
     container.className = 'jc-interior-page-top';
     container.style.paddingLeft = '0.5em';
     container.style.paddingRight = '0.5em';
+    JC.identity.own(container, context);
     primary.appendChild(container);
     content.appendChild(primary);
     host.appendChild(content);
@@ -45,7 +48,9 @@ function render({ host, handle, signal }: PageContext): void {
     // Delegated content clicks (event cards, sidebar toggle, display-mode
     // buttons) — scoped to the adopted host and drained with it, replacing
     // the old permanent document-level listener.
-    handle.addListener(host, 'click', handleEventClick as EventListener);
+    handle.addListener(host, 'click', (event: Event) => {
+        if (JC.identity.isCurrent(context)) handleEventClick(event as MouseEvent);
+    });
 
     void loadAllData(signal);
 }
@@ -60,7 +65,7 @@ registerPage({
     render
 });
 
-/** The frozen JC.calendarPage contract (e2e + inline onclick handlers). */
+/** The frozen JC.calendarPage compatibility contract (e2e + integrations). */
 export interface CalendarPageApi {
     showPage: () => void;
     refresh: () => Promise<void>;
@@ -78,8 +83,9 @@ export interface CalendarPageApi {
     updateDisplayModeButtons: () => void;
 }
 
-// The frozen public surface (e2e + inline onclick handlers in the markup).
-// showPage delegates to the framework; content actions are unchanged.
+// The frozen public surface remains for e2e/integrations. Page markup uses the
+// adoption-owned delegated listener above so detached A controls cannot resolve
+// this live facade and act on B.
 JC.calendarPage = {
     showPage: () => { openPage('calendar'); },
     refresh: loadAllData,

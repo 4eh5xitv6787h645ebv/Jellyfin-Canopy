@@ -8,7 +8,14 @@
 
 import { JC } from '../../globals';
 import { isCssColor } from '../../core/css-safe';
-import { state, scopeBadgeText, showUnhideConfirmation } from './state';
+import {
+    capturePageFence,
+    isPageFenceCurrent,
+    schedulePageTimeout,
+    state,
+    scopeBadgeText,
+    showUnhideConfirmation,
+} from './state';
 import {
     handleUnhide, handleUnhideMany, maybeInitAdminFilter, onAdminUserChange,
     toOpaqueColor, applyAdminThemeVars, createAdminViewingBadge,
@@ -255,8 +262,11 @@ export function setActiveContainer(container: HTMLElement | null): void {
  * DOM). Called on adoption and whenever hidden content changes.
  */
 export function renderPage(): void {
+    const fence = capturePageFence();
+    if (!isPageFenceCurrent(fence)) return;
     const container = activeContainer;
     if (!container || !container.isConnected) return;
+    if (!JC.hiddenContent) return;
 
     // Publish theme colours so the admin controls follow the active theme (Purple Haze, etc.).
     applyAdminThemeVars(container);
@@ -330,15 +340,17 @@ export function renderPage(): void {
     // defer to the next tick so the native picker fully tears down before the element is replaced.
     if (toolbar.adminUserSelect) {
         toolbar.adminUserSelect.addEventListener('change', (e) => {
+            if (!isPageFenceCurrent(fence)) return;
             const value = (e.target as HTMLSelectElement).value;
             try { (e.target as HTMLSelectElement).blur(); } catch (_) {}
-            setTimeout(function () { void onAdminUserChange(value); }, 0);
+            schedulePageTimeout(() => { void onAdminUserChange(value); }, 0, fence);
         });
     }
 
     // Wire the admin edit-mode toggle: flips read-only ↔ editable for the viewed user.
     if (toolbar.adminEditToggle) {
         toolbar.adminEditToggle.addEventListener('click', () => {
+            if (!isPageFenceCurrent(fence)) return;
             state.adminEditMode = !state.adminEditMode;
             renderPage();
         });
@@ -346,7 +358,9 @@ export function renderPage(): void {
 
     // Wire the admin "add items" button: opens the library-search modal.
     if (toolbar.adminAddBtn) {
-        toolbar.adminAddBtn.addEventListener('click', () => openAdminAddModal());
+        toolbar.adminAddBtn.addEventListener('click', () => {
+            if (isPageFenceCurrent(fence)) openAdminAddModal();
+        });
     }
 
     // Apply scoped filter — only show items hidden from Next Up / CW
@@ -374,7 +388,9 @@ export function renderPage(): void {
             // Load failed — show a retry affordance rather than a misleading "empty".
             emptyDiv.textContent = JC.t!('hidden_content_admin_load_error');
             emptyDiv.style.cursor = 'pointer';
-            emptyDiv.addEventListener('click', () => void onAdminUserChange(state.selectedAdminUserId!));
+            emptyDiv.addEventListener('click', () => {
+                if (isPageFenceCurrent(fence)) void onAdminUserChange(state.selectedAdminUserId!);
+            });
         } else if (viewingOther && !adminReady) {
             // Another user's items are still loading — show a loading hint rather than "empty".
             emptyDiv.textContent = JC.t!('hidden_content_admin_loading');
@@ -398,6 +414,7 @@ export function renderPage(): void {
 
     // Attach search handler
     toolbar.searchInput.addEventListener('input', () => {
+        if (!isPageFenceCurrent(fence)) return;
         state.searchQuery = toolbar.searchInput.value;
         renderPage();
     });
@@ -410,6 +427,7 @@ export function renderPage(): void {
 
     // Attach scoped filter toggle
     toolbar.scopedToggle.addEventListener('click', () => {
+        if (!isPageFenceCurrent(fence)) return;
         state.scopedOnly = !state.scopedOnly;
         renderPage();
 
@@ -431,7 +449,9 @@ export function renderPage(): void {
         toolbar.unhideAllBtn.style.display = 'none';
     } else {
         toolbar.unhideAllBtn.addEventListener('click', () => {
+            if (!isPageFenceCurrent(fence)) return;
             showUnhideConfirmation(JC.t!('hidden_content_clear_confirm') || 'Unhide all items?', () => {
+                if (!isPageFenceCurrent(fence)) return;
                 if (viewingOther) {
                     handleUnhideMany((state.adminItems || []).map((it) => it._key || it.itemId));
                 } else {
@@ -464,14 +484,17 @@ function stripUnhideControls(container: HTMLElement): void {
  * @param item The hidden item data.
  */
 function attachUnhideHandler(card: HTMLElement, item: any): void {
+    const fence = capturePageFence();
     const unhideBtn = card.querySelector('.jc-hidden-item-unhide');
     if (unhideBtn) {
         unhideBtn.addEventListener('click', () => {
+            if (!isPageFenceCurrent(fence)) return;
             showUnhideConfirmation(JC.t!('hidden_content_unhide_confirm') || 'Unhide this item?', () => {
+                if (!isPageFenceCurrent(fence)) return;
                 card.classList.add('jc-hidden-item-removing');
-                setTimeout(() => {
+                schedulePageTimeout(() => {
                     handleUnhide(item._key || item.itemId);
-                }, 300);
+                }, 300, fence);
             }, item.name || 'this item');
         });
     }
