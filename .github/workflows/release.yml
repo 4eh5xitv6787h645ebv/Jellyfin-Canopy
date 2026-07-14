@@ -16,7 +16,9 @@ name: Release
 #      naming of the existing release assets),
 #   4. creates the GitHub Release (or attaches assets to a pre-drafted one,
 #      reusing its body as the changelog),
-#   5. regenerates manifest.json via scripts/release/update-manifest.js
+#   5. regenerates manifest.json via scripts/release/update-manifest.js,
+#      publishes the release asset, then proves the catalog and exact ZIP are
+#      anonymously downloadable/checksum-valid before opening the manifest PR
 #      (MD5 checksums from the real ZIPs, monotonic version guard) and opens
 #      a PR with the change — manifest.json is never pushed directly.
 #
@@ -118,6 +120,12 @@ jobs:
       - name: Validate current manifest
         run: node scripts/release/validate-manifest.js manifest.json
 
+      - name: Verify current public catalog
+        run: >-
+          node scripts/release/verify-manifest-remote.js manifest.json
+          --manifest-url
+          https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/main/manifest.json
+
       # ---- Build & package. The tag is the single source of truth for ----
       # ---- the version: it is stamped into the assemblies at build    ----
       # ---- time, never committed back into the csproj.                ----
@@ -173,6 +181,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          cp manifest.json "$RUNNER_TEMP/manifest-before-release.json"
           node scripts/release/update-manifest.js \
             --manifest manifest.json \
             --tag "$GITHUB_REF_NAME" \
@@ -206,6 +215,17 @@ jobs:
               --title "v$VERSION" \
               --notes-file changelog.txt
           fi
+
+      # A published GitHub release can still be unreachable to Jellyfin when
+      # the repository is private, the asset path is wrong, or GitHub redirects
+      # anonymous callers to authentication. Do not even open the manifest PR
+      # until the exact newly generated sourceUrl passes the public contract.
+      - name: Verify anonymous catalog contract before manifest PR
+        run: >-
+          node scripts/release/verify-manifest-remote.js manifest.json
+          --base-manifest "$RUNNER_TEMP/manifest-before-release.json"
+          --manifest-url
+          https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/main/manifest.json
 
       # The manifest lands via PR, not a direct push: a human reviews the
       # generated entry before every installed plugin starts seeing it.

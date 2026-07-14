@@ -192,6 +192,13 @@ test('CI and release share the verifier while every non-lint workflow gate stays
     assert.match(client, /npm run test:client:coverage/);
     assert.match(release, /dotnet test/);
     assert.match(release, /validate-manifest\.js/);
+    assert.match(build, /verify-manifest-remote\.js "\$\{args\[@\]\}"/);
+    assert.match(build, /args=\(\s*manifest\.json/);
+    assert.match(build, /--base-manifest/);
+    assert.match(release, /Verify current public catalog/);
+    assert.match(release, /Verify anonymous catalog contract before manifest PR/);
+    assert.equal((release.match(/verify-manifest-remote\.js manifest\.json/g) || []).length, 2);
+    assert.match(release, /--manifest-url/);
 });
 
 test('the warning cap and local policy entry points remain explicit', () => {
@@ -206,4 +213,17 @@ test('the warning cap and local policy entry points remain explicit', () => {
     assert.match(preCommit, /pass_filenames: false/);
     assert.doesNotMatch(preCommit, /mirrors-eslint/);
     assert.notEqual(fs.statSync(VERIFY).mode & 0o111, 0, 'verify.sh must be executable');
+});
+
+test('documentation and blocking workflows use the same public catalog URL', () => {
+    const catalogUrl = 'https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/main/manifest.json';
+    for (const relative of [
+        'README.md',
+        'docs/getting-started.md',
+        '.github/workflows/build.yml',
+        '.github/workflows/release.yml',
+    ]) {
+        const source = fs.readFileSync(path.join(ROOT, relative), 'utf8');
+        assert.ok(source.includes(catalogUrl), `${relative} does not use the verified public catalog URL`);
+    }
 });
