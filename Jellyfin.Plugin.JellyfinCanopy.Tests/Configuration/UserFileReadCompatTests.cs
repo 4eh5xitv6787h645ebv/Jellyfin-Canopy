@@ -94,8 +94,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             Assert.False(s.ShowResolutionTag); // even SHOUTING-case binds
         }
 
-        /// <summary>Unknown members (from newer/older plugin versions) are ignored,
-        /// not fatal — Newtonsoft MissingMemberHandling.Ignore default.</summary>
+        /// <summary>Unknown members (from newer/older plugin versions) remain
+        /// non-fatal and are retained so an acknowledged rewrite cannot erase
+        /// settings owned by a newer client/plugin.</summary>
         [Fact]
         public void LenientRead_UnknownFields_AreIgnored()
         {
@@ -104,6 +105,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
 
             Assert.True(s.AutoPauseEnabled);
             Assert.Equal(8, s.PauseScreenDelaySeconds);
+            Assert.Equal("old", s.ExtensionData["ThisFieldWasRemovedInV12"].GetString());
+            Assert.Equal(1.5, s.ExtensionData["AnotherUnknown"].GetProperty("deep")[2].GetDouble());
         }
 
         /// <summary>
@@ -224,6 +227,54 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             // Original bytes are preserved twice over: in place and as a forensic backup.
             Assert.Equal(content, File.ReadAllText(Path.Combine(UserDir, "settings.json")));
             Assert.Single(Directory.GetFiles(UserDir, "settings.json.corrupt-*"));
+        }
+
+        [Fact]
+        public void StrictRead_RepeatedSameCorruption_ReusesOneBoundedForensicBackup()
+        {
+            SeedUserFileRaw("settings.json", "{{{ repeated corruption");
+
+            for (var attempt = 0; attempt < 10; attempt++)
+            {
+                Assert.ThrowsAny<Exception>(() =>
+                    _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
+            }
+
+            Assert.Single(Directory.GetFiles(UserDir, "settings.json.corrupt-*"));
+        }
+
+        [Fact]
+        public void StrictRead_DistinctCorruptions_RetainOnlyNewestFiveBackups()
+        {
+            for (var version = 0; version < 8; version++)
+            {
+                SeedUserFileRaw("settings.json", $"{{{{{{ corruption-{version}");
+                Assert.ThrowsAny<Exception>(() =>
+                    _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
+                System.Threading.Thread.Sleep(2);
+            }
+
+            Assert.Equal(5, Directory.GetFiles(UserDir, "settings.json.corrupt-*").Length);
+            Assert.Equal("{{{ corruption-7", File.ReadAllText(Path.Combine(UserDir, "settings.json")));
+        }
+
+        [Fact]
+        public void StrictRead_UnreadableOldBackup_DoesNotPreventPreservingNewCorruptBytes()
+        {
+            const string content = "{{{ current-corrupt";
+            SeedUserFileRaw("settings.json", content);
+            var unreadable = Path.Combine(UserDir, "settings.json.corrupt-20000101000000000");
+            File.WriteAllText(unreadable, new string('x', content.Length));
+
+            using (File.Open(unreadable, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                Assert.ThrowsAny<Exception>(() =>
+                    _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
+            }
+
+            var backups = Directory.GetFiles(UserDir, "settings.json.corrupt-*");
+            Assert.Equal(2, backups.Length);
+            Assert.Contains(backups, path => path != unreadable && File.ReadAllText(path) == content);
         }
 
         /// <summary>

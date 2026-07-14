@@ -1,11 +1,18 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 {
-    public class UserSettings
+    public interface IRevisionedUserConfiguration
     {
+        long Revision { get; set; }
+    }
+
+    public class UserSettings : IRevisionedUserConfiguration
+    {
+        public long Revision { get; set; }
         public bool AutoPauseEnabled { get; set; }
         public bool AutoResumeEnabled { get; set; }
         public bool AutoPipEnabled { get; set; }
@@ -61,6 +68,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string DisplayLanguage { get; set; } = string.Empty;
         public string CalendarDisplayMode { get; set; } = "list";
         public string CalendarDefaultViewMode { get; set; } = "agenda";
+        public bool? IsAdmin { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
     }
 
     // Per-user Spoiler Guard state. Stored in spoilerblur.json alongside
@@ -209,9 +220,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool FailClosed { get; set; }
     }
 
-    public class UserShortcuts
+    public class UserShortcuts : IRevisionedUserConfiguration
     {
+        public long Revision { get; set; }
         public List<Shortcut> Shortcuts { get; set; } = new List<Shortcut>();
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
     }
 
     public class BookmarkItem
@@ -228,7 +243,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string SyncedFrom { get; set; } = string.Empty;
     }
 
-    public class UserBookmark
+    public class UserBookmark : IRevisionedUserConfiguration
     {
         /// <summary>
         /// Gets or sets the optimistic-concurrency revision for this complete
@@ -240,11 +255,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public Dictionary<string, BookmarkItem> Bookmarks { get; set; } = new Dictionary<string, BookmarkItem>();
     }
 
-    public class ElsewhereSettings
+    public class ElsewhereSettings : IRevisionedUserConfiguration
     {
+        public long Revision { get; set; }
         public string Region { get; set; } = string.Empty;
         public List<string> Regions { get; set; } = new List<string>();
         public List<string> Services { get; set; } = new List<string>();
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
     }
 
     public class PendingWatchlistItem

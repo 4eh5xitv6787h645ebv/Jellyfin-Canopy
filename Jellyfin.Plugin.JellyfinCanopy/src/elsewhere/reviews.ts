@@ -16,7 +16,7 @@ type ReviewsJE = typeof JEBase & {
     icon: (name: unknown) => string;
     IconName: Record<string, unknown>;
     loadSettings?: () => UserSettings;
-    saveUserSettings?: (fileName: string, data: unknown) => void;
+    saveUserSettings?: (fileName: string, data: unknown) => Promise<unknown>;
     invalidateUserReviewTagCache?: (tmdbKey?: string) => void;
     core: { api: ApiApi };
     helpers: JELegacyHelpers & {
@@ -950,10 +950,12 @@ JC.initializeReviewsScript = function () {
                 try {
                     if (!window.JellyfinCanopy) return;
                     const JC = window.JellyfinCanopy as ReviewsJE;
-                    JC.currentSettings = JC.currentSettings || JC.loadSettings?.() || {};
-                    JC.currentSettings.reviewsExpandedByDefault = reviewsSection.open;
+                    const settings = JC.currentSettings || JC.loadSettings?.();
+                    if (!settings) return;
+                    JC.currentSettings = settings;
+                    settings.reviewsExpandedByDefault = reviewsSection.open;
                     if (typeof JC.saveUserSettings === 'function') {
-                        void JC.saveUserSettings('settings.json', JC.currentSettings);
+                        void JC.saveUserSettings('settings.json', settings).catch(() => undefined);
                     }
                 } catch (err) {
                     console.error(`${logPrefix} Failed to persist reviews expanded state`, err);

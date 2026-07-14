@@ -58,7 +58,8 @@ declare module '../types/jc' {
             shortcuts?: { Shortcuts?: unknown } & Record<string, unknown>;
             [key: string]: unknown;
         };
-        saveUserSettings?: (fileName: string, settings: unknown) => Promise<void>;
+        saveUserSettings?: (fileName: string, settings: unknown) => Promise<import('./config').UserSettingsSaveResult>;
+        rememberUserSettingsSnapshot?: (fileName: string, settings: unknown) => void;
         loadSettings?: () => UserSettings;
         initializeShortcuts?: () => void;
         /**

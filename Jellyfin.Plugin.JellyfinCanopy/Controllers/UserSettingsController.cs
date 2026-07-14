@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using System.Collections.Generic;
@@ -74,73 +75,48 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
-            // Populate defaults from plugin configuration if missing
-            if (!_userConfigurationManager.UserConfigurationExists(authorizedUserId, "settings.json"))
+            lock (_userConfigurationManager.GetUserFileLock(authorizedUserId, "settings.json"))
             {
-                var defaultConfig = _configProvider.ConfigurationOrNull;
-                if (defaultConfig != null)
+                var read = _userConfigurationManager.ReadUserConfiguration<UserSettings>(authorizedUserId, "settings.json");
+                if (!read.HasUsableValue || read.Value == null || !IsValidUserFileState(read.Value))
                 {
-                    var defaultUserSettings = new UserSettings
-                    {
-                        AutoPauseEnabled = defaultConfig.AutoPauseEnabled,
-                        AutoResumeEnabled = defaultConfig.AutoResumeEnabled,
-                        AutoPipEnabled = defaultConfig.AutoPipEnabled,
-                        LongPress2xEnabled = defaultConfig.LongPress2xEnabled,
-                        PauseScreenEnabled = defaultConfig.PauseScreenEnabled,
-                        PauseScreenDelaySeconds = defaultConfig.PauseScreenDelaySeconds,
-                        AutoSkipIntro = defaultConfig.AutoSkipIntro,
-                        AutoSkipOutro = defaultConfig.AutoSkipOutro,
-                        DisableCustomSubtitleStyles = defaultConfig.DisableCustomSubtitleStyles,
-                        SelectedStylePresetIndex = defaultConfig.DefaultSubtitleStyle,
-                        SelectedFontSizePresetIndex = defaultConfig.DefaultSubtitleSize,
-                        SelectedFontFamilyPresetIndex = defaultConfig.DefaultSubtitleFont,
-                        RandomButtonEnabled = defaultConfig.RandomButtonEnabled,
-                        RandomUnwatchedOnly = defaultConfig.RandomUnwatchedOnly,
-                        RandomIncludeMovies = defaultConfig.RandomIncludeMovies,
-                        RandomIncludeShows = defaultConfig.RandomIncludeShows,
-                        ShowWatchProgress = defaultConfig.ShowWatchProgress,
-                        WatchProgressMode = string.IsNullOrWhiteSpace(defaultConfig.WatchProgressDefaultMode) ? "percentage" : defaultConfig.WatchProgressDefaultMode,
-                        WatchProgressTimeFormat = string.IsNullOrWhiteSpace(defaultConfig.WatchProgressTimeFormat) ? "hours" : defaultConfig.WatchProgressTimeFormat,
-                        ShowFileSizes = defaultConfig.ShowFileSizes,
-                        ShowAudioLanguages = defaultConfig.ShowAudioLanguages,
-                        QualityTagsEnabled = defaultConfig.QualityTagsEnabled,
-                        ShowResolutionTag = defaultConfig.ShowResolutionTag,
-                        ShowSourceTag = defaultConfig.ShowSourceTag,
-                        ShowDynamicRangeTag = defaultConfig.ShowDynamicRangeTag,
-                        ShowSpecialFormatTag = defaultConfig.ShowSpecialFormatTag,
-                        ShowVideoCodecTag = defaultConfig.ShowVideoCodecTag,
-                        ShowAudioInfoTag = defaultConfig.ShowAudioInfoTag,
-                        ResolutionTagOrder = defaultConfig.ResolutionTagOrder,
-                        SourceTagOrder = defaultConfig.SourceTagOrder,
-                        DynamicRangeTagOrder = defaultConfig.DynamicRangeTagOrder,
-                        SpecialFormatTagOrder = defaultConfig.SpecialFormatTagOrder,
-                        VideoCodecTagOrder = defaultConfig.VideoCodecTagOrder,
-                        AudioInfoTagOrder = defaultConfig.AudioInfoTagOrder,
-                        GenreTagsEnabled = defaultConfig.GenreTagsEnabled,
-                        LanguageTagsEnabled = defaultConfig.LanguageTagsEnabled,
-                        RatingTagsEnabled = defaultConfig.RatingTagsEnabled,
-                        PeopleTagsEnabled = defaultConfig.PeopleTagsEnabled,
-                        TagsHideOnHover = defaultConfig.TagsHideOnHover,
-                        QualityTagsPosition = defaultConfig.QualityTagsPosition,
-                        GenreTagsPosition = defaultConfig.GenreTagsPosition,
-                        LanguageTagsPosition = defaultConfig.LanguageTagsPosition,
-                        RatingTagsPosition = defaultConfig.RatingTagsPosition,
-                        ShowRatingInPlayer = defaultConfig.ShowRatingInPlayer,
-                        RemoveContinueWatchingEnabled = defaultConfig.RemoveContinueWatchingEnabled,
-                        ReviewsExpandedByDefault = defaultConfig.ReviewsExpandedByDefault,
-                        DisplayLanguage = defaultConfig.DefaultLanguage,
-                        CalendarDisplayMode = "list",
-                        CalendarDefaultViewMode = "agenda",
-                        LastOpenedTab = "shortcuts"
-                    };
-
-                    _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "settings.json", defaultUserSettings);
-                    _logger.LogInformation($"Saved default settings.json for new user {ResolveUserDisplay(authorizedUserId)} from plugin configuration.");
+                    return UserFileReadFailure<UserSettings>("settings.json", read.Status, read.FaultDetail);
                 }
-            }
 
-            var userConfig = _userConfigurationManager.GetUserConfiguration<UserSettings>(authorizedUserId, "settings.json");
-            return Ok(userConfig);
+                var userConfig = read.Value;
+                if (read.Status == UserConfigReadStatus.Missing && _configProvider.ConfigurationOrNull is PluginConfiguration defaults)
+                {
+                    userConfig = BuildDefaultUserSettings(defaults);
+                    StampServerManagedFields(authorizedUserId, userConfig);
+                    if (!IsValidUserFileState(userConfig))
+                    {
+                        _logger.LogError($"Refusing to seed invalid default settings for {ResolveUserDisplay(authorizedUserId)}.");
+                        return StatusCode(StatusCodes.Status503ServiceUnavailable, new UserFileMutationResponse<UserSettings>
+                        {
+                            File = "settings.json",
+                            Message = "The configured user-settings defaults are invalid; no user file was written."
+                        });
+                    }
+                    try
+                    {
+                        _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "settings.json", userConfig);
+                        _logger.LogInformation($"Saved default settings.json for new user {ResolveUserDisplay(authorizedUserId)} from plugin configuration.");
+                    }
+                    catch (Exception ex) when (ex is InvalidDataException || ex is JsonException || ex is IOException || ex is UnauthorizedAccessException)
+                    {
+                        _logger.LogError($"Failed to seed settings.json for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
+                        return StatusCode(StatusCodes.Status503ServiceUnavailable, new UserFileMutationResponse<UserSettings>
+                        {
+                            File = "settings.json",
+                            Message = "The settings store is unavailable; defaults were not acknowledged."
+                        });
+                    }
+                }
+
+                StampServerManagedFields(authorizedUserId, userConfig);
+                SetUserFileEvidence(userConfig);
+                return Ok(userConfig);
+            }
         }
 
         [HttpGet("user-settings/{userId}/shortcuts.json")]
@@ -153,8 +129,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
-            var userConfig = _userConfigurationManager.GetUserConfiguration<UserShortcuts>(authorizedUserId, "shortcuts.json");
-            return Ok(userConfig);
+            return ReadUserFile<UserShortcuts>(authorizedUserId, "shortcuts.json");
         }
 
         [HttpGet("user-settings/{userId}/elsewhere.json")]
@@ -167,8 +142,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
-            var userConfig = _userConfigurationManager.GetUserConfiguration<ElsewhereSettings>(authorizedUserId, "elsewhere.json");
-            return Ok(userConfig);
+            return ReadUserFile<ElsewhereSettings>(authorizedUserId, "elsewhere.json");
+        }
+
+        [HttpGet("user-settings/{userId}/{fileName}/evidence")]
+        [Authorize]
+        [Produces("application/json")]
+        public IActionResult GetUserFileEvidence(string userId, string fileName)
+        {
+            var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
+            if (authorizationResult != null)
+            {
+                return authorizationResult;
+            }
+
+            return fileName switch
+            {
+                "settings.json" => ReadUserFileEvidence<UserSettings>(authorizedUserId, fileName),
+                "shortcuts.json" => ReadUserFileEvidence<UserShortcuts>(authorizedUserId, fileName),
+                "elsewhere.json" => ReadUserFileEvidence<ElsewhereSettings>(authorizedUserId, fileName),
+                _ => NotFound(new { success = false, message = "Unsupported user settings file." })
+            };
         }
 
         [HttpPost("user-settings/{userId}/settings.json")]
@@ -182,42 +176,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
-            try
-            {
-                // Diff against the existing config so the log shows what actually changed
-                var existing = _userConfigurationManager.GetUserConfiguration<UserSettings>(authorizedUserId, "settings.json");
-                var changes = new System.Collections.Generic.List<string>();
-                if (existing != null)
-                {
-                    var existingJson = System.Text.Json.JsonSerializer.Serialize(existing);
-                    var newJson      = System.Text.Json.JsonSerializer.Serialize(userConfiguration);
-                    if (existingJson != newJson)
-                    {
-                        var existingDoc = System.Text.Json.JsonDocument.Parse(existingJson).RootElement;
-                        var newDoc      = System.Text.Json.JsonDocument.Parse(newJson).RootElement;
-                        foreach (var prop in newDoc.EnumerateObject())
-                        {
-                            if (!existingDoc.TryGetProperty(prop.Name, out var oldVal) ||
-                                oldVal.ToString() != prop.Value.ToString())
-                            {
-                                changes.Add($"{prop.Name}: {(existingDoc.TryGetProperty(prop.Name, out var ov) ? ov.ToString() : "—")} → {prop.Value}");
-                            }
-                        }
-                    }
-                }
-
-                _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "settings.json", userConfiguration);
-
-                if (changes.Count > 0)
-                    _logger.LogInformation($"Saved user settings for {ResolveUserDisplay(authorizedUserId)}: {string.Join(", ", changes)}");
-
-                return Ok(new { success = true, file = "settings.json" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Failed to save user settings for user {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
-                return StatusCode(500, new { success = false, message = "Failed to save user settings." });
-            }
+            return CommitUserFile(authorizedUserId, "settings.json", userConfiguration, "settings");
         }
 
         [HttpPost("user-settings/{userId}/shortcuts.json")]
@@ -231,18 +190,403 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
+            return CommitUserFile(authorizedUserId, "shortcuts.json", userConfiguration, "shortcuts");
+        }
+
+        private enum UserFileCommitStatus
+        {
+            Success,
+            PreconditionRequired,
+            Conflict,
+            Invalid
+        }
+
+        public sealed class UserFileMutationResponse<T>
+            where T : class, IRevisionedUserConfiguration, new()
+        {
+            public bool Success { get; set; }
+            public bool Conflict { get; set; }
+            public string Message { get; set; } = string.Empty;
+            public string File { get; set; } = string.Empty;
+            public long Revision { get; set; }
+            public string ContentHash { get; set; } = string.Empty;
+            public T? Data { get; set; }
+        }
+
+        private sealed class UserFileCommitResult<T>
+            where T : class, IRevisionedUserConfiguration, new()
+        {
+            public UserFileCommitStatus Status { get; set; }
+            public T? State { get; set; }
+            public string Message { get; set; } = string.Empty;
+        }
+
+        private IActionResult CommitUserFile<T>(
+            string authorizedUserId,
+            string fileName,
+            T? candidate,
+            string displayName)
+            where T : class, IRevisionedUserConfiguration, new()
+        {
+            if (candidate != null)
+            {
+                StampServerManagedFields(authorizedUserId, candidate);
+            }
+
+            if (candidate == null || !IsValidUserFileState(candidate))
+            {
+                return BadRequest(new UserFileMutationResponse<T>
+                {
+                    File = fileName,
+                    Message = $"The {displayName} payload is invalid."
+                });
+            }
+
+            if (!TryParseIfMatchRevision(out var expectedRevision))
+            {
+                return StatusCode(StatusCodes.Status428PreconditionRequired, new UserFileMutationResponse<T>
+                {
+                    File = fileName,
+                    Data = candidate,
+                    Revision = candidate.Revision,
+                    ContentHash = ContentHash(candidate),
+                    Message = $"Saving {displayName} requires If-Match: \"<revision>\" from the latest GET."
+                });
+            }
+
+            if (candidate.Revision != expectedRevision)
+            {
+                return BadRequest(new UserFileMutationResponse<T>
+                {
+                    File = fileName,
+                    Data = candidate,
+                    Revision = candidate.Revision,
+                    ContentHash = ContentHash(candidate),
+                    Message = "The body Revision must match the If-Match revision."
+                });
+            }
+
             try
             {
-                _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "shortcuts.json", userConfiguration);
-                _logger.LogInformation($"Saved user shortcuts for {ResolveUserDisplay(authorizedUserId)} to shortcuts.json");
-                return Ok(new { success = true, file = "shortcuts.json" });
+                var result = CommitUserFileState(authorizedUserId, fileName, expectedRevision, candidate);
+                if (result.State != null)
+                {
+                    SetUserFileEvidence(result.State);
+                }
+
+                var response = new UserFileMutationResponse<T>
+                {
+                    Success = result.Status == UserFileCommitStatus.Success,
+                    Conflict = result.Status == UserFileCommitStatus.Conflict,
+                    Message = result.Message,
+                    File = fileName,
+                    Revision = result.State?.Revision ?? 0,
+                    ContentHash = result.State == null ? string.Empty : ContentHash(result.State),
+                    Data = result.State
+                };
+
+                if (result.Status == UserFileCommitStatus.Success)
+                {
+                    _logger.LogInformation(
+                        $"Saved user {displayName} for {ResolveUserDisplay(authorizedUserId)} " +
+                        $"to {fileName} at revision {response.Revision} ({response.ContentHash}).");
+                }
+
+                return result.Status switch
+                {
+                    UserFileCommitStatus.Success => Ok(response),
+                    UserFileCommitStatus.PreconditionRequired => StatusCode(StatusCodes.Status428PreconditionRequired, response),
+                    UserFileCommitStatus.Conflict => Conflict(response),
+                    UserFileCommitStatus.Invalid => BadRequest(response),
+                    _ => StatusCode(StatusCodes.Status500InternalServerError, response)
+                };
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Failed to save user shortcuts for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
-                return StatusCode(500, new { success = false, message = "Failed to save user shortcuts." });
+                _logger.LogError($"Failed to save user {displayName} for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
+                var response = new UserFileMutationResponse<T>
+                {
+                    File = fileName,
+                    Message = $"The {displayName} store is unavailable; no write was acknowledged."
+                };
+                if (ex is InvalidDataException || ex is JsonException || ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    return StatusCode(StatusCodes.Status503ServiceUnavailable, response);
+                }
+
+                return StatusCode(StatusCodes.Status500InternalServerError, response);
             }
         }
+
+        private UserFileCommitResult<T> CommitUserFileState<T>(
+            string authorizedUserId,
+            string fileName,
+            long? expectedRevision,
+            T candidate)
+            where T : class, IRevisionedUserConfiguration, new()
+        {
+            lock (_userConfigurationManager.GetUserFileLock(authorizedUserId, fileName))
+            {
+                var current = _userConfigurationManager.GetUserConfigurationStrict<T>(authorizedUserId, fileName);
+                StampServerManagedFields(authorizedUserId, current);
+                StampServerManagedFields(authorizedUserId, candidate);
+                if (!IsValidUserFileState(current))
+                {
+                    throw new InvalidDataException($"{fileName} has an invalid revision or payload shape.");
+                }
+
+                if (!expectedRevision.HasValue)
+                {
+                    return new UserFileCommitResult<T>
+                    {
+                        Status = UserFileCommitStatus.PreconditionRequired,
+                        State = current,
+                        Message = "A revision precondition is required."
+                    };
+                }
+
+                if (expectedRevision.Value != current.Revision)
+                {
+                    return new UserFileCommitResult<T>
+                    {
+                        Status = UserFileCommitStatus.Conflict,
+                        State = current,
+                        Message = "The user file changed. Rebase the intended fields on the returned state and retry."
+                    };
+                }
+
+                if (string.Equals(ContentHash(current), ContentHash(candidate), StringComparison.Ordinal))
+                {
+                    return new UserFileCommitResult<T> { Status = UserFileCommitStatus.Success, State = current };
+                }
+
+                candidate.Revision = checked(current.Revision + 1);
+                _userConfigurationManager.SaveUserConfiguration(authorizedUserId, fileName, candidate);
+                return new UserFileCommitResult<T> { Status = UserFileCommitStatus.Success, State = candidate };
+            }
+        }
+
+        private static bool IsValidUserFileState<T>(T state)
+            where T : class, IRevisionedUserConfiguration
+            => state.Revision >= 0 && state switch
+            {
+                UserSettings settings => settings.ExtensionData != null
+                    && settings.ExtensionData.Count <= 1000
+                    && settings.PauseScreenDelaySeconds is >= 1 and <= 60
+                    && settings.SubtitleVerticalPosition is >= 0 and <= 100
+                    && settings.SubtitleHorizontalPosition is >= 0 and <= 100
+                    && HasValidSettingsStrings(settings)
+                    && HasBoundedSerializedSize(settings),
+                UserShortcuts shortcuts => shortcuts.Shortcuts != null
+                    && shortcuts.Shortcuts.Count <= 1000
+                    && shortcuts.Shortcuts.All(shortcut => shortcut != null
+                        && IsBoundedString(shortcut.Name)
+                        && IsBoundedString(shortcut.Key)
+                        && IsBoundedString(shortcut.Label)
+                        && IsBoundedString(shortcut.Category))
+                    && shortcuts.ExtensionData != null
+                    && shortcuts.ExtensionData.Count <= 1000
+                    && HasBoundedSerializedSize(shortcuts),
+                ElsewhereSettings elsewhere => elsewhere.Regions != null
+                    && elsewhere.Services != null
+                    && elsewhere.Regions.Count <= 500
+                    && elsewhere.Services.Count <= 500
+                    && IsBoundedString(elsewhere.Region)
+                    && elsewhere.Regions.All(IsBoundedString)
+                    && elsewhere.Services.All(IsBoundedString)
+                    && elsewhere.ExtensionData != null
+                    && elsewhere.ExtensionData.Count <= 1000
+                    && HasBoundedSerializedSize(elsewhere),
+                _ => false
+            };
+
+        private const int MaxUserFileBytes = 1024 * 1024;
+        private const int MaxUserStringLength = 512;
+
+        private static bool IsBoundedString(string? value)
+            => value != null && value.Length <= MaxUserStringLength;
+
+        private static bool HasValidSettingsStrings(UserSettings settings)
+            => IsBoundedString(settings.CustomSubtitleTextColor)
+                && IsBoundedString(settings.CustomSubtitleBgColor)
+                && IsBoundedString(settings.WatchProgressMode)
+                && IsBoundedString(settings.WatchProgressTimeFormat)
+                && IsBoundedString(settings.QualityTagsPosition)
+                && IsBoundedString(settings.GenreTagsPosition)
+                && IsBoundedString(settings.LanguageTagsPosition)
+                && IsBoundedString(settings.RatingTagsPosition)
+                && IsBoundedString(settings.LastOpenedTab)
+                && IsBoundedString(settings.DisplayLanguage)
+                && IsBoundedString(settings.CalendarDisplayMode)
+                && IsBoundedString(settings.CalendarDefaultViewMode);
+
+        private static bool HasBoundedSerializedSize<T>(T state)
+        {
+            try
+            {
+                return JsonSerializer.SerializeToUtf8Bytes(state, state!.GetType(), PersistedJson.WriteOptions).Length
+                    <= MaxUserFileBytes;
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
+        private void StampServerManagedFields<T>(string authorizedUserId, T state)
+            where T : class, IRevisionedUserConfiguration
+        {
+            if (state is UserSettings settings)
+            {
+                settings.IsAdmin = IsUserAdministrator(authorizedUserId);
+            }
+        }
+
+        private bool IsUserAdministrator(string userId)
+        {
+            try
+            {
+                if (!Guid.TryParse(userId, out var guid) && !Guid.TryParseExact(userId, "N", out guid))
+                {
+                    return false;
+                }
+
+                var user = _userManager.GetUserById(guid);
+                return user != null && user.HasPermission(
+                    Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string ContentHash<T>(T state)
+            where T : class, IRevisionedUserConfiguration
+        {
+            var node = JsonSerializer.SerializeToNode(state, state.GetType(), PersistedJson.WriteOptions) as JsonObject
+                ?? throw new InvalidDataException("User configuration did not serialize as a JSON object.");
+            node.Remove(nameof(IRevisionedUserConfiguration.Revision));
+            var canonical = node.ToJsonString(PersistedJson.WriteOptions);
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+        }
+
+        private void SetUserFileEvidence<T>(T state)
+            where T : class, IRevisionedUserConfiguration
+        {
+            Response.Headers.ETag = $"\"{state.Revision}\"";
+            Response.Headers["X-JC-Content-Hash"] = ContentHash(state);
+        }
+
+        private IActionResult ReadUserFile<T>(string authorizedUserId, string fileName)
+            where T : class, IRevisionedUserConfiguration, new()
+        {
+            lock (_userConfigurationManager.GetUserFileLock(authorizedUserId, fileName))
+            {
+                var read = _userConfigurationManager.ReadUserConfiguration<T>(authorizedUserId, fileName);
+                if (!read.HasUsableValue || read.Value == null || !IsValidUserFileState(read.Value))
+                {
+                    return UserFileReadFailure<T>(fileName, read.Status, read.FaultDetail);
+                }
+
+                StampServerManagedFields(authorizedUserId, read.Value);
+                SetUserFileEvidence(read.Value);
+                return Ok(read.Value);
+            }
+        }
+
+        private IActionResult ReadUserFileEvidence<T>(string authorizedUserId, string fileName)
+            where T : class, IRevisionedUserConfiguration, new()
+        {
+            lock (_userConfigurationManager.GetUserFileLock(authorizedUserId, fileName))
+            {
+                var read = _userConfigurationManager.ReadUserConfiguration<T>(authorizedUserId, fileName);
+                if (!read.HasUsableValue || read.Value == null || !IsValidUserFileState(read.Value))
+                {
+                    return UserFileReadFailure<T>(fileName, read.Status, read.FaultDetail);
+                }
+
+                StampServerManagedFields(authorizedUserId, read.Value);
+                SetUserFileEvidence(read.Value);
+                return Ok(new UserFileMutationResponse<T>
+                {
+                    Success = true,
+                    File = fileName,
+                    Revision = read.Value.Revision,
+                    ContentHash = ContentHash(read.Value),
+                    Data = read.Value
+                });
+            }
+        }
+
+        private IActionResult UserFileReadFailure<T>(
+            string fileName,
+            UserConfigReadStatus status,
+            string? detail)
+            where T : class, IRevisionedUserConfiguration, new()
+        {
+            _logger.LogWarning($"Refusing to publish {fileName} (status={status}, detail={detail ?? "invalid-state"}).");
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new UserFileMutationResponse<T>
+            {
+                File = fileName,
+                Message = "User settings are corrupt or temporarily unavailable. No empty replacement state was published."
+            });
+        }
+
+        private static UserSettings BuildDefaultUserSettings(PluginConfiguration defaultConfig)
+            => new UserSettings
+            {
+                AutoPauseEnabled = defaultConfig.AutoPauseEnabled,
+                AutoResumeEnabled = defaultConfig.AutoResumeEnabled,
+                AutoPipEnabled = defaultConfig.AutoPipEnabled,
+                LongPress2xEnabled = defaultConfig.LongPress2xEnabled,
+                PauseScreenEnabled = defaultConfig.PauseScreenEnabled,
+                PauseScreenDelaySeconds = defaultConfig.PauseScreenDelaySeconds,
+                AutoSkipIntro = defaultConfig.AutoSkipIntro,
+                AutoSkipOutro = defaultConfig.AutoSkipOutro,
+                DisableCustomSubtitleStyles = defaultConfig.DisableCustomSubtitleStyles,
+                SelectedStylePresetIndex = defaultConfig.DefaultSubtitleStyle,
+                SelectedFontSizePresetIndex = defaultConfig.DefaultSubtitleSize,
+                SelectedFontFamilyPresetIndex = defaultConfig.DefaultSubtitleFont,
+                RandomButtonEnabled = defaultConfig.RandomButtonEnabled,
+                RandomUnwatchedOnly = defaultConfig.RandomUnwatchedOnly,
+                RandomIncludeMovies = defaultConfig.RandomIncludeMovies,
+                RandomIncludeShows = defaultConfig.RandomIncludeShows,
+                ShowWatchProgress = defaultConfig.ShowWatchProgress,
+                WatchProgressMode = string.IsNullOrWhiteSpace(defaultConfig.WatchProgressDefaultMode) ? "percentage" : defaultConfig.WatchProgressDefaultMode,
+                WatchProgressTimeFormat = string.IsNullOrWhiteSpace(defaultConfig.WatchProgressTimeFormat) ? "hours" : defaultConfig.WatchProgressTimeFormat,
+                ShowFileSizes = defaultConfig.ShowFileSizes,
+                ShowAudioLanguages = defaultConfig.ShowAudioLanguages,
+                QualityTagsEnabled = defaultConfig.QualityTagsEnabled,
+                ShowResolutionTag = defaultConfig.ShowResolutionTag,
+                ShowSourceTag = defaultConfig.ShowSourceTag,
+                ShowDynamicRangeTag = defaultConfig.ShowDynamicRangeTag,
+                ShowSpecialFormatTag = defaultConfig.ShowSpecialFormatTag,
+                ShowVideoCodecTag = defaultConfig.ShowVideoCodecTag,
+                ShowAudioInfoTag = defaultConfig.ShowAudioInfoTag,
+                ResolutionTagOrder = defaultConfig.ResolutionTagOrder,
+                SourceTagOrder = defaultConfig.SourceTagOrder,
+                DynamicRangeTagOrder = defaultConfig.DynamicRangeTagOrder,
+                SpecialFormatTagOrder = defaultConfig.SpecialFormatTagOrder,
+                VideoCodecTagOrder = defaultConfig.VideoCodecTagOrder,
+                AudioInfoTagOrder = defaultConfig.AudioInfoTagOrder,
+                GenreTagsEnabled = defaultConfig.GenreTagsEnabled,
+                LanguageTagsEnabled = defaultConfig.LanguageTagsEnabled,
+                RatingTagsEnabled = defaultConfig.RatingTagsEnabled,
+                PeopleTagsEnabled = defaultConfig.PeopleTagsEnabled,
+                TagsHideOnHover = defaultConfig.TagsHideOnHover,
+                QualityTagsPosition = defaultConfig.QualityTagsPosition,
+                GenreTagsPosition = defaultConfig.GenreTagsPosition,
+                LanguageTagsPosition = defaultConfig.LanguageTagsPosition,
+                RatingTagsPosition = defaultConfig.RatingTagsPosition,
+                ShowRatingInPlayer = defaultConfig.ShowRatingInPlayer,
+                RemoveContinueWatchingEnabled = defaultConfig.RemoveContinueWatchingEnabled,
+                ReviewsExpandedByDefault = defaultConfig.ReviewsExpandedByDefault,
+                DisplayLanguage = defaultConfig.DefaultLanguage,
+                CalendarDisplayMode = "list",
+                CalendarDefaultViewMode = "agenda",
+                LastOpenedTab = "shortcuts"
+            };
 
         [HttpGet("user-settings/{userId}/bookmark.json")]
         [Authorize]
@@ -867,17 +1211,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
-            try
-            {
-                _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "elsewhere.json", userConfiguration);
-                _logger.LogInformation($"Saved user elsewhere settings for {ResolveUserDisplay(authorizedUserId)} to elsewhere.json");
-                return Ok(new { success = true, file = "elsewhere.json" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Failed to save user elsewhere settings for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
-                return StatusCode(500, new { success = false, message = "Failed to save user elsewhere settings." });
-            }
+            return CommitUserFile(authorizedUserId, "elsewhere.json", userConfiguration, "elsewhere settings");
         }
 
         [HttpPost("reset-all-users-settings")]
@@ -891,56 +1225,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return StatusCode(500, new { success = false, message = "Default plugin configuration not found." });
             }
 
-            var defaultUserSettings = new UserSettings
+            var defaultsValidation = BuildDefaultUserSettings(defaultConfig);
+            if (!IsValidUserFileState(defaultsValidation))
             {
-                AutoPauseEnabled = defaultConfig.AutoPauseEnabled,
-                AutoResumeEnabled = defaultConfig.AutoResumeEnabled,
-                AutoPipEnabled = defaultConfig.AutoPipEnabled,
-                LongPress2xEnabled = defaultConfig.LongPress2xEnabled,
-                PauseScreenEnabled = defaultConfig.PauseScreenEnabled,
-                PauseScreenDelaySeconds = defaultConfig.PauseScreenDelaySeconds,
-                AutoSkipIntro = defaultConfig.AutoSkipIntro,
-                AutoSkipOutro = defaultConfig.AutoSkipOutro,
-                DisableCustomSubtitleStyles = defaultConfig.DisableCustomSubtitleStyles,
-                SelectedStylePresetIndex = defaultConfig.DefaultSubtitleStyle,
-                SelectedFontSizePresetIndex = defaultConfig.DefaultSubtitleSize,
-                SelectedFontFamilyPresetIndex = defaultConfig.DefaultSubtitleFont,
-                RandomButtonEnabled = defaultConfig.RandomButtonEnabled,
-                RandomUnwatchedOnly = defaultConfig.RandomUnwatchedOnly,
-                RandomIncludeMovies = defaultConfig.RandomIncludeMovies,
-                RandomIncludeShows = defaultConfig.RandomIncludeShows,
-                ShowWatchProgress = defaultConfig.ShowWatchProgress,
-                ShowFileSizes = defaultConfig.ShowFileSizes,
-                ShowAudioLanguages = defaultConfig.ShowAudioLanguages,
-                QualityTagsEnabled = defaultConfig.QualityTagsEnabled,
-                ShowResolutionTag = defaultConfig.ShowResolutionTag,
-                ShowSourceTag = defaultConfig.ShowSourceTag,
-                ShowDynamicRangeTag = defaultConfig.ShowDynamicRangeTag,
-                ShowSpecialFormatTag = defaultConfig.ShowSpecialFormatTag,
-                ShowVideoCodecTag = defaultConfig.ShowVideoCodecTag,
-                ShowAudioInfoTag = defaultConfig.ShowAudioInfoTag,
-                ResolutionTagOrder = defaultConfig.ResolutionTagOrder,
-                SourceTagOrder = defaultConfig.SourceTagOrder,
-                DynamicRangeTagOrder = defaultConfig.DynamicRangeTagOrder,
-                SpecialFormatTagOrder = defaultConfig.SpecialFormatTagOrder,
-                VideoCodecTagOrder = defaultConfig.VideoCodecTagOrder,
-                AudioInfoTagOrder = defaultConfig.AudioInfoTagOrder,
-                GenreTagsEnabled = defaultConfig.GenreTagsEnabled,
-                LanguageTagsEnabled = defaultConfig.LanguageTagsEnabled,
-                RatingTagsEnabled = defaultConfig.RatingTagsEnabled,
-                PeopleTagsEnabled = defaultConfig.PeopleTagsEnabled,
-                QualityTagsPosition = defaultConfig.QualityTagsPosition,
-                GenreTagsPosition = defaultConfig.GenreTagsPosition,
-                LanguageTagsPosition = defaultConfig.LanguageTagsPosition,
-                RatingTagsPosition = defaultConfig.RatingTagsPosition,
-                ShowRatingInPlayer = defaultConfig.ShowRatingInPlayer,
-                RemoveContinueWatchingEnabled = defaultConfig.RemoveContinueWatchingEnabled,
-                ReviewsExpandedByDefault = defaultConfig.ReviewsExpandedByDefault,
-                DisplayLanguage = defaultConfig.DefaultLanguage,
-                CalendarDisplayMode = "list",
-                CalendarDefaultViewMode = "agenda",
-                LastOpenedTab = "shortcuts"
-            };
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "Default plugin settings are invalid; no user settings were reset."
+                });
+            }
 
             var userCount = 0;
             var skippedSettings = new System.Collections.Generic.List<string>();
@@ -951,7 +1244,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             {
                 try
                 {
-                    _userConfigurationManager.SaveUserConfiguration(userId, "settings.json", defaultUserSettings);
+                    lock (_userConfigurationManager.GetUserFileLock(userId, "settings.json"))
+                    {
+                        var current = _userConfigurationManager.GetUserConfigurationStrict<UserSettings>(userId, "settings.json");
+                        var replacement = BuildDefaultUserSettings(defaultConfig);
+                        replacement.Revision = checked(current.Revision + 1);
+                        StampServerManagedFields(userId, replacement);
+                        _userConfigurationManager.SaveUserConfiguration(userId, "settings.json", replacement);
+                    }
                     userCount++;
                 }
                 catch (Exception ex)

@@ -139,10 +139,11 @@ export function displayWatchProgress(itemId: string, container: HTMLElement): vo
 
     const persistWatchProgressMode = (mode: string): void => {
         if (!isActive(context, placeholder) || !window.JellyfinCanopy) return;
-        window.JellyfinCanopy.currentSettings = window.JellyfinCanopy.currentSettings || {};
-        window.JellyfinCanopy.currentSettings.watchProgressMode = mode;
+        const settings = window.JellyfinCanopy.currentSettings;
+        if (!settings) return;
+        settings.watchProgressMode = mode;
         if (typeof window.JellyfinCanopy.saveUserSettings === 'function') {
-            void window.JellyfinCanopy.saveUserSettings('settings.json', window.JellyfinCanopy.currentSettings);
+            void window.JellyfinCanopy.saveUserSettings('settings.json', settings).catch(() => undefined);
         }
     };
 

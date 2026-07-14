@@ -51,6 +51,142 @@ async function saveDelay(page: any, value: number): Promise<void> {
 }
 
 test.describe('per-user settings persistence', () => {
+    test('a rejected settings write restores exact state and reports typed failure without success', async ({ page, consoleErrors }) => {
+        await loginAs(page, 'user', consoleErrors);
+        consoleErrors.reset();
+        const original = await readDelay(page);
+        const target = original === 29 ? 31 : 29;
+        const routePattern = '**/JellyfinCanopy/user-settings/**/settings.json';
+        let rejectedTarget = false;
+        await page.route(routePattern, async route => {
+            if (route.request().method() !== 'POST') {
+                await route.continue();
+                return;
+            }
+            const body = route.request().postDataJSON() as Record<string, unknown> | null;
+            const delay = Number(body?.PauseScreenDelaySeconds ?? body?.pauseScreenDelaySeconds);
+            if (rejectedTarget || delay !== target) {
+                await route.continue();
+                return;
+            }
+            rejectedTarget = true;
+            await route.fulfill({
+                status: 503,
+                contentType: 'application/json',
+                body: JSON.stringify({ success: false, message: 'intentional persistence test failure' }),
+            });
+        });
+
+        const outcome = await page.evaluate(async (nextValue: number) => {
+            const JC = (window as any).JellyfinCanopy;
+            const settings = JC.currentSettings;
+            const before = JSON.stringify(settings);
+            let errorEvent: any = null;
+            document.addEventListener('jc:user-settings-save-error', (event: Event) => {
+                errorEvent = (event as CustomEvent).detail;
+            }, { once: true });
+            settings.pauseScreenDelaySeconds = nextValue;
+            try {
+                await JC.saveUserSettings('settings.json', settings);
+                return { fulfilled: true, before, after: JSON.stringify(settings), errorEvent };
+            } catch (error: any) {
+                return {
+                    fulfilled: false,
+                    kind: error?.kind,
+                    status: error?.status,
+                    retryable: error?.retryable,
+                    before,
+                    after: JSON.stringify(settings),
+                    errorEvent,
+                };
+            }
+        }, target);
+        await page.unroute(routePattern);
+
+        expect(rejectedTarget, 'the route rejected the intended settings mutation').toBe(true);
+        expect(outcome).toMatchObject({
+            fulfilled: false,
+            kind: 'unavailable',
+            status: 503,
+            retryable: true,
+            errorEvent: { file: 'settings.json', kind: 'unavailable', status: 503 },
+        });
+        expect(outcome.after, 'the complete acknowledged settings snapshot is restored byte-for-byte').toBe(outcome.before);
+        const expected5xx = consoleErrors.unexpected5xx();
+        expect(expected5xx).toHaveLength(1);
+        expect(expected5xx[0]).toMatchObject({ status: 503, method: 'POST' });
+        consoleErrors.acknowledgeExpected5xx(expected5xx);
+        expect(consoleErrors.real().filter(text => /Failed to save settings\.json/i.test(text))).toHaveLength(1);
+        consoleErrors.reset();
+        assertNoRuntimeErrors(consoleErrors);
+    });
+
+    test('a committed settings write survives response loss and resolves from exact server evidence', async ({ page, consoleErrors }) => {
+        await loginAs(page, 'user', consoleErrors);
+        const original = await readDelay(page);
+        const target = original === 23 ? 27 : 23;
+        let committedStatus = 0;
+        let droppedTarget = false;
+        const routePattern = '**/JellyfinCanopy/user-settings/**/settings.json';
+
+        await page.route(routePattern, async route => {
+            if (route.request().method() !== 'POST') {
+                await route.continue();
+                return;
+            }
+            const body = route.request().postDataJSON() as Record<string, unknown> | null;
+            const delay = Number(body?.PauseScreenDelaySeconds ?? body?.pauseScreenDelaySeconds);
+            if (droppedTarget || delay !== target) {
+                await route.continue();
+                return;
+            }
+            droppedTarget = true;
+            const committed = await route.fetch();
+            committedStatus = committed.status();
+            await route.abort('failed');
+        });
+
+        try {
+            const outcome = await page.evaluate(async (nextValue: number) => {
+                const JC = (window as any).JellyfinCanopy;
+                const settings = JC.currentSettings;
+                const priorRevision = Number(settings.revision ?? settings.Revision ?? 0);
+                settings.pauseScreenDelaySeconds = nextValue;
+                const result = await JC.saveUserSettings('settings.json', settings);
+                return {
+                    result,
+                    value: settings.pauseScreenDelaySeconds,
+                    revision: Number(settings.revision ?? settings.Revision ?? 0),
+                    priorRevision,
+                };
+            }, target);
+
+            expect(committedStatus, 'the server committed before the browser response was dropped').toBe(200);
+            expect(droppedTarget, 'the route dropped the intended settings mutation').toBe(true);
+            expect(outcome.result).toMatchObject({
+                acknowledged: true,
+                deduplicated: false,
+                file: 'settings.json',
+            });
+            expect(outcome.result.contentHash).toMatch(/^[0-9a-f]{64}$/);
+            expect(outcome.value).toBe(target);
+            expect(outcome.revision).toBe(outcome.priorRevision + 1);
+
+            await page.reload({ waitUntil: 'domcontentloaded' });
+            await waitReady(page);
+            expect(await readDelay(page), 'the evidence-resolved write persists across reload').toBe(target);
+        } finally {
+            await page.unroute(routePattern);
+            await saveDelay(page, original);
+        }
+        expect(
+            consoleErrors.real(),
+            'the only console error is Chromium reporting the response intentionally dropped by this test'
+        ).toEqual(['Failed to load resource: net::ERR_FAILED']);
+        consoleErrors.reset();
+        assertNoRuntimeErrors(consoleErrors);
+    });
+
     test('a per-user setting persists across reload (write → persist → reload → re-read)', async ({ page, consoleErrors }) => {
         await loginAs(page, 'user', consoleErrors);
 

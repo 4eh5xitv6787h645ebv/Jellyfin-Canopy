@@ -24,91 +24,100 @@ describe('identity-owned user settings', () => {
 
     it('rejects both unowned and stale payloads before ajax', async () => {
         const ajax = vi.spyOn(ApiClient, 'ajax').mockResolvedValue({});
-        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-        await saveUserSettings('shortcuts.json', { Shortcuts: [] });
+        await expect(saveUserSettings('shortcuts.json', { Revision: 0, Shortcuts: [] })).rejects.toMatchObject({
+            kind: 'cancelled'
+        });
 
         const ownerA = JC.identity.capture()!;
-        const stale = JC.identity.own({ Shortcuts: [] }, ownerA);
+        const stale = JC.identity.own({ Revision: 0, Shortcuts: [] }, ownerA);
         JC.identity.transition('test-server-id', 'user-b', 'account-switch');
         vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue('user-b');
-        await saveUserSettings('shortcuts.json', stale);
+        await expect(saveUserSettings('shortcuts.json', stale)).rejects.toMatchObject({ kind: 'cancelled' });
 
         expect(ajax).not.toHaveBeenCalled();
-        expect(error).toHaveBeenCalledTimes(2);
     });
 
     it('refuses a current-owned same-user snapshot when the live client belongs to another server', async () => {
         const owner = JC.identity.capture()!;
-        const payload = JC.identity.own({ Shortcuts: [{ Name: 'A', Key: 'a' }] }, owner);
+        const payload = JC.identity.own({ Revision: 0, Shortcuts: [{ Name: 'A', Key: 'a' }] }, owner);
         const liveClient = ApiClient as JellyfinApiClient & { serverId: () => string };
         const serverId = vi.spyOn(liveClient, 'serverId').mockReturnValue('other-server-id');
         const ajax = vi.spyOn(ApiClient, 'ajax');
-        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
-        await saveUserSettings('shortcuts.json', payload);
+        await expect(saveUserSettings('shortcuts.json', payload)).rejects.toMatchObject({ kind: 'authorization' });
 
         expect(serverId).toHaveBeenCalled();
         expect(ajax).not.toHaveBeenCalled();
-        expect(error).toHaveBeenCalledWith(
-            expect.stringContaining('live server does not own the settings'),
-        );
     });
 
     it('fails closed when both the owner and live client use the unresolved server fallback', async () => {
         const owner = startSession('test-user-id', 'unknown-server');
-        const payload = JC.identity.own({ Shortcuts: [{ Name: 'A', Key: 'a' }] }, owner);
+        const payload = JC.identity.own({ Revision: 0, Shortcuts: [{ Name: 'A', Key: 'a' }] }, owner);
         const liveClient = ApiClient as JellyfinApiClient & { serverId: () => string };
         vi.spyOn(liveClient, 'serverId').mockReturnValue('unknown-server');
         const ajax = vi.spyOn(ApiClient, 'ajax').mockResolvedValue({});
-        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
-        await saveUserSettings('unresolved-server.json', payload);
+        await expect(saveUserSettings('shortcuts.json', payload)).rejects.toMatchObject({ kind: 'authorization' });
 
         expect(ajax).not.toHaveBeenCalled();
-        expect(error).toHaveBeenCalledWith(
-            expect.stringContaining('live server does not own the settings'),
-        );
     });
 
     it('allows a save when getUrl supplies the concrete server fallback', async () => {
         const owner = startSession('test-user-id', 'http://jellyfin.test');
-        const payload = JC.identity.own({ Shortcuts: [{ Name: 'A', Key: 'a' }] }, owner);
+        const payload = JC.identity.own({ Revision: 0, Shortcuts: [] }, owner);
+        JC.rememberUserSettingsSnapshot!('shortcuts.json', payload);
+        payload.Shortcuts.push({ Name: 'A', Key: 'a' });
         const liveClient = ApiClient as JellyfinApiClient & { serverId: () => string };
         vi.spyOn(liveClient, 'serverId').mockReturnValue('unknown-server');
-        const ajax = vi.spyOn(ApiClient, 'ajax').mockResolvedValue({});
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockResolvedValue({
+            success: true,
+            file: 'shortcuts.json',
+            revision: 1,
+            contentHash: 'a'.repeat(64),
+            data: { Revision: 1, Shortcuts: [{ Name: 'A', Key: 'a' }] }
+        });
         const originalCoreApi = JC.core.api;
         delete JC.core.api;
 
         try {
-            await saveUserSettings('origin-fallback.json', payload);
+            await saveUserSettings('shortcuts.json', payload);
         } finally {
             JC.core.api = originalCoreApi;
         }
 
         expect(ajax).toHaveBeenCalledTimes(1);
         expect(ajax).toHaveBeenCalledWith(expect.objectContaining({
-            url: 'http://jellyfin.test/JellyfinCanopy/user-settings/testuserid/origin-fallback.json'
+            url: 'http://jellyfin.test/JellyfinCanopy/user-settings/testuserid/shortcuts.json'
         }));
     });
 
     it('does not publish an A acknowledgement into a later same-user epoch', async () => {
         let resolvePost!: (value: unknown) => void;
         const firstPost = new Promise((resolve) => { resolvePost = resolve; });
+        const ack = {
+            success: true,
+            file: 'shortcuts.json',
+            revision: 1,
+            contentHash: 'b'.repeat(64),
+            data: { Revision: 1, Shortcuts: [{ Name: 'Open', Key: 'o' }] }
+        };
         const ajax = vi.spyOn(ApiClient, 'ajax')
             .mockReturnValueOnce(firstPost)
-            .mockResolvedValueOnce({});
+            .mockResolvedValueOnce(ack);
         const ownerA = JC.identity.capture()!;
-        const payloadA = JC.identity.own({ Shortcuts: [{ Name: 'Open', Key: 'o' }] }, ownerA);
+        const payloadA = JC.identity.own({ Revision: 0, Shortcuts: [] as Array<{ Name: string; Key: string }> }, ownerA);
+        JC.rememberUserSettingsSnapshot!('shortcuts.json', payloadA);
+        payloadA.Shortcuts.push({ Name: 'Open', Key: 'o' });
 
         const pending = saveUserSettings('shortcuts.json', payloadA);
         expect(ajax).toHaveBeenCalledTimes(1);
 
         const ownerB = startSession();
-        resolvePost({});
-        await pending;
+        resolvePost(ack);
+        await expect(pending).rejects.toMatchObject({ kind: 'cancelled' });
 
-        const payloadB = JC.identity.own({ Shortcuts: [{ Name: 'Open', Key: 'o' }] }, ownerB);
+        const payloadB = JC.identity.own({ Revision: 0, Shortcuts: [] as Array<{ Name: string; Key: string }> }, ownerB);
+        JC.rememberUserSettingsSnapshot!('shortcuts.json', payloadB);
+        payloadB.Shortcuts.push({ Name: 'Open', Key: 'o' });
         await saveUserSettings('shortcuts.json', payloadB);
 
         expect(ajax).toHaveBeenCalledTimes(2);

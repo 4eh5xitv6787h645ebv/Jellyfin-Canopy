@@ -168,21 +168,11 @@ JC.initializeArrLinksScript = async function () {
 
     isAdmin = user?.Policy?.IsAdministrator === true;
 
-    // Update settings.json if the value changed. In its own try so a failed
-    // settings save (transient) can't disable the whole feature for the session.
-    try {
-        if (JC?.currentSettings && JC.currentSettings.isAdmin !== isAdmin && typeof JC.saveUserSettings === 'function') {
-            JC.currentSettings.isAdmin = isAdmin;
-            await JC.saveUserSettings('settings.json', JC.currentSettings);
-            if (!isActive(context, expectedGeneration)) return;
-            console.log(`${logPrefix} Updated admin status in settings.json: ${isAdmin}`);
-        } else if (JC?.currentSettings) {
-            JC.currentSettings.isAdmin = isAdmin;
-            console.log(`${logPrefix} Admin status: ${isAdmin}`);
-        }
-    } catch (err) {
-        console.warn(`${logPrefix} Could not persist admin status (continuing):`, err);
-    }
+    // This is session-derived authorization state, not a user preference.
+    // Keep the local projection current without creating a background settings
+    // revision that can conflict with a user's real panel edit.
+    if (JC?.currentSettings) JC.currentSettings.isAdmin = isAdmin;
+    console.log(`${logPrefix} Admin status: ${isAdmin}`);
 
     if (!isAdmin) {
         console.log(`${logPrefix} User is not an administrator. Links will not be shown.`);

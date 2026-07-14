@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
@@ -16,6 +18,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
     {
         private readonly string _configBaseDir;
         private readonly ILogger _logger;
+        private const int MaxCorruptBackupsPerFile = 5;
 
         // Static so the Singleton ResponseFilter and the Scoped IEventConsumer share one pool.
         private static readonly ConcurrentDictionary<string, object> _userFileLocks = new ConcurrentDictionary<string, object>();
@@ -320,6 +323,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         {
             try
             {
+                var existingBackups = Directory.GetFiles(
+                    Path.GetDirectoryName(filePath)!,
+                    Path.GetFileName(filePath) + ".corrupt-*");
+                foreach (var existing in existingBackups)
+                {
+                    try
+                    {
+                        if (FilesHaveSameContent(filePath, existing))
+                        {
+                            _logger.LogWarning($"Corrupt config already preserved at {existing} — skipping duplicate backup.");
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // A stale/unreadable old backup must not prevent the
+                        // newly observed corrupt bytes from being preserved.
+                        _logger.LogWarning($"Could not compare corrupt config backup {existing}; preserving a new copy: {ex.Message}");
+                    }
+                }
+
                 // Millisecond resolution so two corruption events in the same UTC second get distinct backups.
                 var backupPath = filePath + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
                 if (File.Exists(backupPath))
@@ -329,11 +353,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 }
                 File.Copy(filePath, backupPath);
                 _logger.LogWarning($"Corrupt config backed up to {backupPath}");
+
+                foreach (var stale in Directory.GetFiles(
+                    Path.GetDirectoryName(filePath)!,
+                    Path.GetFileName(filePath) + ".corrupt-*")
+                    .OrderByDescending(path => path, StringComparer.Ordinal)
+                    .Skip(MaxCorruptBackupsPerFile))
+                {
+                    File.Delete(stale);
+                    _logger.LogWarning($"Removed stale corrupt config backup {stale} (retaining newest {MaxCorruptBackupsPerFile}).");
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogError($"Failed to back up corrupt config: {ex.Message}");
             }
+        }
+
+        private static bool FilesHaveSameContent(string leftPath, string rightPath)
+        {
+            var leftInfo = new FileInfo(leftPath);
+            var rightInfo = new FileInfo(rightPath);
+            if (leftInfo.Length != rightInfo.Length) return false;
+
+            using var left = File.OpenRead(leftPath);
+            using var right = File.OpenRead(rightPath);
+            return SHA256.HashData(left).AsSpan().SequenceEqual(SHA256.HashData(right));
         }
 
         /// <summary>

@@ -139,13 +139,14 @@ function bUserFilePayload(
     const accountSwitchOwnerSentinel = bPayloadSentinel(segment, file);
     switch (file) {
         case 'shortcuts.json':
-            return { Shortcuts: [], accountSwitchOwnerSentinel };
+            return { Revision: 0, Shortcuts: [], accountSwitchOwnerSentinel };
         case 'bookmark.json':
-            return { Bookmarks: {}, accountSwitchOwnerSentinel };
+            return { Revision: 0, Bookmarks: {}, accountSwitchOwnerSentinel };
+        case 'settings.json':
+        case 'elsewhere.json':
+            return { Revision: 0, accountSwitchOwnerSentinel };
         case 'hidden-content.json':
             return { Items: {}, Settings: {}, accountSwitchOwnerSentinel };
-        default:
-            return { accountSwitchOwnerSentinel };
     }
 }
 
@@ -901,8 +902,11 @@ test.describe('no-reload account identity switching', () => {
             const originalPluginFetch = JC.core.api.plugin;
             const observedPluginFetch = function(path: string, options: any): Promise<unknown> {
                 const transport = originalPluginFetch.call(JC.core.api, path, options);
+                const serializedBody = typeof options?.body === 'string'
+                    ? options.body
+                    : JSON.stringify(options?.body ?? '');
                 if (/\/user-settings\/.+\/settings\.json$/i.test(path)
-                    && /AccountSwitchRaceSentinel/i.test(String(options?.body || ''))) {
+                    && /AccountSwitchRaceSentinel/i.test(serializedBody)) {
                     (window as any).__jcHeldSaveTransportOutcome = 'pending';
                     void transport.then(
                         () => { (window as any).__jcHeldSaveTransportOutcome = 'resolved'; },

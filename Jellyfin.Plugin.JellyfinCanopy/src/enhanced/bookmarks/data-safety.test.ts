@@ -29,6 +29,13 @@ describe('bookmarks data-safety', () => {
 
     async function loadModule(bookmarks: AnyRec): Promise<any> {
         vi.resetModules();
+        document.body.innerHTML = `
+            <div class="videoPlayerContainer"><video></video></div>
+            <div class="videoOsdBottom">
+                <button class="btnUserRating" data-id="item-current"></button>
+                <div class="osdPositionSliderContainer"><input class="osdPositionSlider" type="range"></div>
+                <div class="buttons focuscontainer-x"><button class="btnVideoOsdSettings"></button></div>
+            </div>`;
         JC = window.JellyfinCanopy;
         JC.identity.transition('', '', 'bookmark-data-safety-reset');
         const context = JC.identity.transition('server-a', 'u1', 'bookmark-data-safety-user');
@@ -64,7 +71,14 @@ describe('bookmarks data-safety', () => {
             getCurrentUserId: () => 'u1',
             getItem,
             getUrl: (p: string) => p,
-            ajax: () => Promise.resolve({}),
+            ajax: () => Promise.resolve({
+                Items: [{
+                    Id: 'item-current',
+                    Name: 'Current item',
+                    Type: 'Movie',
+                    ProviderIds: { Tmdb: '123' }
+                }]
+            }),
         };
         (globalThis as AnyRec).ApiClient = apiClient;
         (window as AnyRec).ApiClient = apiClient;
@@ -223,6 +237,98 @@ describe('bookmarks data-safety', () => {
             });
             expect(JC.userConfig.bookmark.bookmarks[generatedId].ItemId).toBeUndefined();
         });
+
+        it('accepts a lost batch response only after GET evidence proves the exact atomic migration', async () => {
+            const api = await loadModule({ old1: { itemId: 'oldI', timestamp: 10, label: 'L', createdAt: 't0' } });
+            let dropped = false;
+            const serverState = structuredClone(JC.userConfig.bookmark);
+            const responseLossPlugin = vi.fn((_path: string, options: AnyRec) => {
+                if (options.method === 'GET') {
+                    return Promise.resolve(structuredClone(serverState));
+                }
+                for (const operation of options.body.operations as AnyRec[]) {
+                    if (operation.type === 'delete') delete serverState.bookmarks[operation.bookmarkId];
+                    else serverState.bookmarks[operation.bookmarkId] = structuredClone(operation.bookmark);
+                }
+                serverState.revision++;
+                if (!dropped) {
+                    dropped = true;
+                    return Promise.reject(new TypeError('Failed to fetch'));
+                }
+                return Promise.resolve(structuredClone(serverState));
+            });
+            plugin = responseLossPlugin;
+            JC.core.api.plugin = responseLossPlugin;
+
+            const synced = await api.syncBookmarks(old(), newDetails, 0, ['old1']);
+
+            expect(synced).toHaveLength(1);
+            expect(dropped).toBe(true);
+            expect(responseLossPlugin.mock.calls.map(call => call[1].method)).toEqual(['POST', 'GET']);
+            const store = JC.userConfig.bookmark.bookmarks;
+            expect(store.old1).toBeUndefined();
+            expect(Object.values<AnyRec>(store).filter(bookmark => bookmark.itemId === 'newI')).toHaveLength(1);
+        });
+    });
+
+    it.each([
+        ['400', httpError(400)],
+        ['401', httpError(401)],
+        ['409', httpError(409)],
+        ['429', httpError(429)],
+        ['500', httpError(500)],
+        ['503', httpError(503)],
+        ['network', new TypeError('Failed to fetch')],
+        ['abort', Object.assign(new Error('aborted'), { name: 'AbortError' })]
+    ])('keeps exact prior state and emits no success for %s across every mutation class', async (label, failure) => {
+        const initial = {
+            one: { itemId: 'item-one', timestamp: 10, label: 'one' },
+            two: { itemId: 'item-two', timestamp: 20, label: 'two' }
+        };
+        const api = await loadModule(structuredClone(initial));
+        const updated = vi.fn();
+        document.addEventListener('jc-bookmarks-updated', updated);
+        plugin.mockRejectedValue(failure);
+
+        const expectTypedRejection = async (mutation: Promise<unknown>): Promise<void> => {
+            try {
+                await mutation;
+                throw new Error('expected bookmark mutation to reject');
+            } catch (error) {
+                if (label === '409') {
+                    expect(error).toBeInstanceOf(Error);
+                    expect((error as Error).message).toBe('Bookmark conflict response omitted authoritative state');
+                } else {
+                    expect(error).toBe(failure);
+                }
+            }
+        };
+
+        await expectTypedRejection(api.add(30, 'new'));
+        expect(JC.userConfig.bookmark.bookmarks).toEqual(initial);
+
+        await expect(api.update('one', { label: 'changed' })).resolves.toBe(false);
+        expect(JC.userConfig.bookmark.bookmarks).toEqual(initial);
+
+        await expect(api.delete('one')).resolves.toBe(false);
+        expect(JC.userConfig.bookmark.bookmarks).toEqual(initial);
+
+        await expectTypedRejection(api.syncBookmarks(
+            [{ id: 'one', ...initial.one }],
+            { itemId: 'replacement', tmdbId: '123', tvdbId: '', mediaType: 'movie', name: 'Replacement' },
+            0,
+            ['one']
+        ));
+        expect(JC.userConfig.bookmark.bookmarks).toEqual(initial);
+
+        getItem.mockRejectedValue(httpError(404));
+        await expect(api.cleanupOrphaned()).resolves.toEqual({ cleaned: 0, errors: 2 });
+        expect(JC.userConfig.bookmark.bookmarks).toEqual(initial);
+
+        await expectTypedRejection(api.deleteAll());
+        expect(JC.userConfig.bookmark.bookmarks).toEqual(initial);
+        expect(updated).not.toHaveBeenCalled();
+        document.removeEventListener('jc-bookmarks-updated', updated);
     });
 
     it('blocks add, delete, and migration when no successful versioned bookmark read was published', async () => {
