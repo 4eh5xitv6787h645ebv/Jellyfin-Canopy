@@ -8,7 +8,13 @@
 // showReviews). This spec drives the real embedded config page, which the dev
 // server already has in the exact bug state (ElsewhereEnabled=false,
 // ShowReviews=true, TMDB key set).
-import { test, expect, loginAs } from './fixtures/auth';
+import {
+    test,
+    expect,
+    loginAs,
+    assertNoRuntimeErrors,
+    type ConsoleErrors,
+} from './fixtures/auth';
 import { tmdbReady } from './fixtures/seerr';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -20,6 +26,25 @@ const CONFIG_HASH = '#/configurationpage?name=Jellyfin%20Canopy';
 // old 60s waitForFunction would time out rather than guard anything. Skip
 // cleanly when TMDB is unconfigured (set TMDB_API_KEY at seed time to run).
 const NEEDS_TMDB = 'TMDB not configured — set TMDB_API_KEY at seed time to run';
+
+// Match the config page's narrowly documented Jellyfin-dashboard chrome
+// exceptions. The adapter leaves every 5xx and every unrelated error visible
+// to the shared runtime assertion.
+const DASHBOARD_CHROME =
+    /scrollHandler is not a function|\/Users\/[^/]+\/Images\/Primary|\/JellyfinCanopy\/BrandingImage/i;
+
+function assertNoConfigPageRuntimeErrors(consoleErrors: ConsoleErrors): void {
+    assertNoRuntimeErrors({
+        ...consoleErrors,
+        real: () => consoleErrors.real().filter((text) => !DASHBOARD_CHROME.test(text)),
+        realDetails: () => consoleErrors.realDetails().filter(
+            ({ text }) => !DASHBOARD_CHROME.test(text)
+        ),
+        unexpected4xx: () => consoleErrors.unexpected4xx().filter(
+            ({ url }) => !DASHBOARD_CHROME.test(url)
+        ),
+    });
+}
 
 test.describe('reviews gating', () => {
     test('Show TMDB Reviews is toggleable with Elsewhere OFF + TMDB key set', async ({ page, consoleErrors }) => {
@@ -79,6 +104,8 @@ test.describe('reviews gating', () => {
             return container ? container.style.opacity === '0.5' : false;
         });
         expect(labelDimmed, 'Show TMDB Reviews container must not be dimmed by a parent dep').toBe(false);
+
+        assertNoConfigPageRuntimeErrors(consoleErrors);
     });
 
     // Same bug class: Default Region / Default Providers / Ignore Providers are
@@ -141,5 +168,7 @@ test.describe('reviews gating', () => {
         // The branding field is Elsewhere-only, so it SHOULD be disabled here —
         // proving the fix narrowed the gate rather than removing it wholesale.
         expect(state.brandingDisabled, 'Custom Branding stays gated by Elsewhere').toBe(true);
+
+        assertNoConfigPageRuntimeErrors(consoleErrors);
     });
 });

@@ -44,7 +44,7 @@ export type Role = keyof typeof USERS;
 //   - Chromium's generic "Failed to load resource … 40x" line, which carries
 //     NO url and so cannot be scoped here — kept only as text-noise
 //     suppression; the real signal for a broken plugin endpoint now comes from
-//     the URL-aware unexpected4xx() detector below.
+//     the URL-aware response detectors below.
 const CONSOLE_NOISE: RegExp[] = [
     /favicon/i,
     // Narrowed from a blanket /WebSocket/i to the dead legacy apiclient probe:
@@ -70,8 +70,8 @@ const CONSOLE_NOISE: RegExp[] = [
 //                                 (bare 403 — docs/v12-platform.md §5)
 // Config-page-only chrome noise (admin dashboard branding previews, the admin's
 // absent avatar, jellyfin-web's own dashboard pageerror) is NOT listed here — it
-// is scoped locally in settings-persist.spec.ts (the only spec that enters the
-// dashboard) so this web-client net stays tight for every other spec.
+// is scoped locally by each config-page spec so this web-client net stays tight
+// for normal pages.
 const ALLOWED_4XX_URL: RegExp[] = [
     /\/socket(\?|$)/i,
     /favicon/i,
@@ -79,18 +79,54 @@ const ALLOWED_4XX_URL: RegExp[] = [
     /\/JellyfinCanopy\/admin\//i,
 ];
 
+const SENSITIVE_QUERY_KEY = /api[-_]?key|access[-_]?token|auth[-_]?token|token|authorization|password|secret/i;
+
+/** Keep route diagnostics useful without ever printing credential query values. */
+function safeResponseUrl(rawUrl: string): string {
+    try {
+        const parsed = new URL(rawUrl);
+        const keys = new Set(parsed.searchParams.keys());
+        for (const key of keys) {
+            if (SENSITIVE_QUERY_KEY.test(key)) {
+                parsed.searchParams.set(key, '<redacted>');
+            }
+        }
+        if (parsed.username) parsed.username = '<redacted>';
+        if (parsed.password) parsed.password = '<redacted>';
+        return parsed.href;
+    } catch {
+        // Response URLs are normally absolute. Fail closed if a browser ever
+        // supplies a malformed shape rather than echoing possibly secret text.
+        return '<unparseable-response-url>';
+    }
+}
+
 /** A response whose HTTP status was an error (>= 400). */
 export interface FailedResponse {
     url: string;
     status: number;
+    method: string;
 }
 
-/** Console/pageerror sink with noise filtering + a URL-aware 4xx detector. */
+/** Structured source information for a browser console/page error. */
+export interface ConsoleErrorDetail {
+    text: string;
+    url: string;
+    lineNumber: number;
+    columnNumber: number;
+    source: 'console' | 'pageerror';
+}
+
+/** Console/pageerror sink with noise filtering + URL-aware response detectors. */
 export interface ConsoleErrors {
     /** Every collected console error / pageerror text. */
     all: string[];
+    /** Every collected error with its browser-reported source location. */
+    details: ConsoleErrorDetail[];
     /** Errors that are NOT on the noise whitelist — must be empty. */
     real(): string[];
+    /** Structured errors that are NOT on the noise whitelist. */
+    realDetails(): ConsoleErrorDetail[];
     /**
      * 4xx responses whose url is NOT on the ALLOWED_4XX_URL allowlist — a real
      * broken plugin endpoint. Complements real(): Chromium's generic 40x
@@ -98,7 +134,15 @@ export interface ConsoleErrors {
      * catches a bad endpoint. Must be empty.
      */
     unexpected4xx(): FailedResponse[];
-    /** Drop everything collected so far (used to discard pre-login noise). */
+    /** Every HTTP 5xx response. Callers may narrowly classify proven host defects. */
+    unexpected5xx(): FailedResponse[];
+    /**
+     * Remove only these exact collected 5xx objects after a test has proved
+     * they came from an intentional route. Object identity prevents callers
+     * from fabricating a lookalike response to bypass the teardown gate.
+     */
+    acknowledgeExpected5xx(responses: readonly FailedResponse[]): void;
+    /** Drop console/4xx noise while retaining every 5xx as sticky failure evidence. */
     reset(): void;
 }
 
@@ -109,34 +153,87 @@ interface Fixtures {
 export const test = base.extend<Fixtures>({
     consoleErrors: async ({ page }, use) => {
         const all: string[] = [];
+        const details: ConsoleErrorDetail[] = [];
         const failed: FailedResponse[] = [];
         page.on('console', (message) => {
-            if (message.type() === 'error') all.push(message.text());
+            if (message.type() !== 'error') return;
+            const text = message.text();
+            const location = message.location();
+            all.push(text);
+            details.push({
+                text,
+                url: location.url || '',
+                lineNumber: Number(location.lineNumber || 0),
+                columnNumber: Number(location.columnNumber || 0),
+                source: 'console',
+            });
         });
         page.on('pageerror', (error) => {
-            all.push(`pageerror: ${error.message}`);
+            const text = `pageerror: ${error.message}`;
+            all.push(text);
+            details.push({
+                text,
+                url: '',
+                lineNumber: 0,
+                columnNumber: 0,
+                source: 'pageerror',
+            });
         });
-        // URL-aware failed-response recorder: a 4xx's console text is generic and
-        // url-less, so scope the safety net by RESPONSE url here instead.
+        // URL-aware failed-response recorder: Chromium's console text is generic,
+        // so scope the safety net by response URL and request method here instead.
         // requestfailed (net-level aborts) is deliberately NOT wired — a
         // cancelled fetch on fast navigation would false-positive; a genuinely
-        // broken endpoint answers with a 4xx response, which this captures.
+        // broken endpoint answers with an HTTP error response, which this captures.
         page.on('response', (response) => {
             const status = response.status();
-            if (status >= 400) failed.push({ url: response.url(), status });
+            if (status >= 400) {
+                failed.push({
+                    url: safeResponseUrl(response.url()),
+                    status,
+                    method: response.request().method(),
+                });
+            }
         });
-        await use({
+        const sink: ConsoleErrors = {
             all,
+            details,
             real: () => all.filter((text) => !CONSOLE_NOISE.some((rx) => rx.test(text))),
+            realDetails: () => details.filter(
+                ({ text }) => !CONSOLE_NOISE.some((rx) => rx.test(text))
+            ),
             unexpected4xx: () =>
                 failed.filter(
                     (r) => r.status < 500 && !ALLOWED_4XX_URL.some((rx) => rx.test(r.url))
                 ),
-            reset: () => {
-                all.length = 0;
-                failed.length = 0;
+            unexpected5xx: () => failed.filter((r) => r.status >= 500),
+            acknowledgeExpected5xx: (responses) => {
+                const acknowledged = new Set(responses);
+                for (let index = failed.length - 1; index >= 0; index--) {
+                    const response = failed[index];
+                    if (response.status >= 500 && acknowledged.has(response)) {
+                        failed.splice(index, 1);
+                    }
+                }
             },
-        });
+            reset: () => {
+                // Tests reset between login/reload/identity phases to discard
+                // known host noise. A server failure must survive every such
+                // boundary or a later clean phase could hide the real defect.
+                const serverFailures = failed.filter((response) => response.status >= 500);
+                all.length = 0;
+                details.length = 0;
+                failed.length = 0;
+                failed.push(...serverFailures);
+            },
+        };
+        await use(sink);
+        // Fixture teardown runs even for runtime test.skip(), thrown assertions,
+        // and early returns. This makes every unacknowledged server failure
+        // blocking even when a test never reaches its own diagnostic gate.
+        expect(
+            sink.unexpected5xx(),
+            'unacknowledged 5xx responses at browser-fixture teardown'
+        ).toEqual([]);
     },
 });
 
@@ -144,11 +241,16 @@ export { expect };
 
 /**
  * Assert a spec produced no runtime errors: neither an un-whitelisted console
- * error / pageerror (real()) NOR a 4xx from a non-allowlisted url
- * (unexpected4xx()). One shared call so every spec gets the tightened net and
- * it cannot drift per-spec.
+ * error / pageerror, a 4xx from a non-allowlisted URL, nor any 5xx response.
+ * One shared call keeps the safety net consistent across specs.
  */
 export function assertNoRuntimeErrors(consoleErrors: ConsoleErrors): void {
+    // Lead with the URL/method-aware diagnostics. Chromium's generic console
+    // text can otherwise make the same 5xx look less actionable.
+    expect(
+        consoleErrors.unexpected5xx(),
+        'unexpected 5xx responses'
+    ).toEqual([]);
     expect(consoleErrors.real(), 'unexpected console errors').toEqual([]);
     expect(
         consoleErrors.unexpected4xx(),
@@ -304,6 +406,7 @@ async function attemptLogin(
     await page.reload({ waitUntil: 'domcontentloaded' });
 
     // Everything before this point is boot noise from the unauthenticated app.
+    // reset() deliberately retains any 5xx response as sticky failure evidence.
     consoleErrors?.reset();
 
     // Fast path: a login/selectserver route with no persisted token and no

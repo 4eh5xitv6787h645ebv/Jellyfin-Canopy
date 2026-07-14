@@ -47,7 +47,7 @@ test.describe('boot', () => {
         // Cover late boot work (home sections, tag pipeline) with a CONCRETE
         // signal, not a blind sleep: when any tag family is enabled wait for the
         // pipeline to have processed a card; otherwise settle on network idle.
-        // Then the no-errors assertion (real() + unexpected4xx()) covers it.
+        // Then the shared console/4xx/5xx assertion covers it.
         await page.waitForSelector('#indexPage .card', { timeout: 60_000 });
         const anyTagsEnabled = await page.evaluate(() => {
             const settings = (window as any).JellyfinCanopy?.currentSettings || {};

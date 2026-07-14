@@ -7,7 +7,7 @@
 //     left a dash),
 //   - the Seerr report button must survive a dead status endpoint at boot via
 //     lazy re-verification (the old one-shot init disabled it until reload).
-import { test, expect, loginAs, showRoute } from './fixtures/auth';
+import { test, expect, loginAs, showRoute, type ConsoleErrors } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -44,9 +44,10 @@ async function suitableMovieId(
  * browser logs resource failures and JC logs its (expected) fetch errors.
  * Everything else must still be clean.
  */
-function assertOnlyInducedErrors(real: string[], induced: RegExp): void {
+function assertOnlyInducedErrors(consoleErrors: ConsoleErrors, induced: RegExp): void {
+    expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
     expect(
-        real.filter((text) => !induced.test(text)),
+        consoleErrors.real().filter((text) => !induced.test(text)),
         'console errors beyond the deliberately induced failures'
     ).toEqual([]);
 }
@@ -105,7 +106,7 @@ test.describe('late-load resilience (R9)', () => {
         await expect(progress.locator('.mediaInfoItem-watchProgress-value')).toBeVisible({ timeout: 30_000 });
 
         assertOnlyInducedErrors(
-            consoleErrors.real(),
+            consoleErrors,
             /file-size|watch-progress|net::ERR_FAILED|Failed to load resource|Error fetching (item size|watch progress)/i
         );
     });
@@ -145,7 +146,7 @@ test.describe('late-load resilience (R9)', () => {
         await expect(reportButton.first()).toBeVisible({ timeout: 60_000 });
 
         assertOnlyInducedErrors(
-            consoleErrors.real(),
+            consoleErrors,
             /seerr\/status|net::ERR_FAILED|Failed to load resource|status probe failed|Could not verify Seerr status/i
         );
     });

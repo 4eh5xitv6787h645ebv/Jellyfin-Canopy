@@ -14,7 +14,7 @@
 //      502), the app still boots clean (window.JellyfinCanopy.initialized),
 //      Seerr surfaces stay absent, and there are zero real console errors
 //      beyond the deliberately-induced request failures.
-import { test, expect, loginAs, type Role } from './fixtures/auth';
+import { test, expect, loginAs, assertNoRuntimeErrors, type Role } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -50,6 +50,8 @@ test.describe('Seerr/arr split internal/external URLs', () => {
             } else {
                 expect(resolved).toBe('');
             }
+
+            assertNoRuntimeErrors(consoleErrors);
         });
     }
 
@@ -66,6 +68,8 @@ test.describe('Seerr/arr split internal/external URLs', () => {
             return JC.seerrAPI.resolveSeerrBaseUrl();
         });
         expect(resolved).toBe('https://requests.example.com');
+
+        assertNoRuntimeErrors(consoleErrors);
     });
 
     test('[admin] a matching URL mapping wins over the external URL', async ({ page, consoleErrors }) => {
@@ -80,6 +84,8 @@ test.describe('Seerr/arr split internal/external URLs', () => {
             return JC.seerrAPI.resolveSeerrBaseUrl();
         });
         expect(resolved).toBe('https://mapped.example.com');
+
+        assertNoRuntimeErrors(consoleErrors);
     });
 
     test('[admin] the internal/external split reaches the client config contract', async ({ page, consoleErrors }) => {
@@ -104,6 +110,8 @@ test.describe('Seerr/arr split internal/external URLs', () => {
         expect(contract.hasBazarrExternalKey).toBe(true);
         expect(contract.instanceHasExternalField).toBe(true);
         expect(contract.instanceHasInternalUrl).toBe(true);
+
+        assertNoRuntimeErrors(consoleErrors);
     });
 });
 
@@ -114,9 +122,11 @@ test.describe('Seerr resilience: a bad/down Seerr never breaks the UI (591)', ()
             // abort (connection refused), half return a non-JSON login page with 502.
             // The client must survive both without throwing or spamming the console.
             let seerrCalls = 0;
+            let routed502Count = 0;
             await page.route('**/JellyfinCanopy/seerr/**', async (route) => {
                 seerrCalls++;
                 if (seerrCalls % 2 === 0) {
+                    routed502Count++;
                     await route.fulfill({
                         status: 502,
                         contentType: 'text/html',
@@ -152,6 +162,23 @@ test.describe('Seerr resilience: a bad/down Seerr never breaks the UI (591)', ()
             // is a real regression (an unhandled rejection / thrown boot error).
             const induced = /seerr|Bad Gateway|502|connectionrefused|Failed to (fetch|load)|net::ERR|Seerr/i;
             const unexpected = consoleErrors.real().filter((t) => !induced.test(t));
+            const all5xx = consoleErrors.unexpected5xx();
+            const unexpected5xx = all5xx.filter(
+                (response) => response.status !== 502 || !/\/JellyfinCanopy\/seerr\//i.test(response.url)
+            );
+            expect(
+                unexpected5xx,
+                'no 5xx responses beyond the deliberately routed Seerr 502s'
+            ).toEqual([]);
+            const routed502Evidence = all5xx.filter(
+                (response) => response.status === 502
+                    && /\/JellyfinCanopy\/seerr\//i.test(response.url)
+            );
+            expect(
+                routed502Evidence,
+                'every acknowledged 502 corresponds one-for-one with the route fulfillments'
+            ).toHaveLength(routed502Count);
+            consoleErrors.acknowledgeExpected5xx(routed502Evidence);
             expect(unexpected, 'no real console errors beyond the induced Seerr failures').toEqual([]);
         });
     }

@@ -169,6 +169,7 @@ test.describe('session control', () => {
             // <img> 404s and falls back to the person icon (handled by its onerror).
             // Scope that benign 404 locally — mirrors settings-persist.spec.ts.
             const AVATAR_404 = /\/Users\/[^/]+\/Images\/Primary/i;
+            expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
             expect(consoleErrors.real().filter((t) => !AVATAR_404.test(t)), 'unexpected console errors').toEqual([]);
             expect(consoleErrors.unexpected4xx().filter((r) => !AVATAR_404.test(r.url)), 'unexpected 4xx').toEqual([]);
         } catch (error) {

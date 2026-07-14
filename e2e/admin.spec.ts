@@ -15,10 +15,11 @@ const ADMIN_ENDPOINT = '/JellyfinCanopy/admin/hidden-content-users';
 
 /**
  * Entering the standalone Hidden Content page can trip two exact Jellyfin-web
- * host races for either role. The predicate stays narrow, and plugin 4xx
- * responses remain unfiltered.
+ * host races for either role. The predicate stays narrow, while plugin 4xx
+ * and every 5xx response remain unfiltered.
  */
 function assertNoHiddenContentRuntimeErrors(consoleErrors: ConsoleErrors): void {
+    expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
     const pluginErrors = consoleErrors.real().filter(
         (text) => !isKnownHiddenContentHostNoise(text)
     );

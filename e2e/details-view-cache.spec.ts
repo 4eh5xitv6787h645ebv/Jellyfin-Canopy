@@ -11,7 +11,14 @@
 // assert the chips always land in the VISIBLE page for the CURRENT item —
 // including with artificially late item-data (the slow-server wipe order) and
 // after a direct simulated wipe.
-import { test, expect, loginAs, showRoute, waitForHash } from './fixtures/auth';
+import {
+    test,
+    expect,
+    loginAs,
+    showRoute,
+    waitForHash,
+    assertNoRuntimeErrors,
+} from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -78,6 +85,8 @@ test.describe('details view-cache (chips land in the visible page)', () => {
         await page.goBack();
         await waitForHash(page, b);
         await expect(visibleChip(page, b)).toBeVisible({ timeout: 20_000 });
+
+        assertNoRuntimeErrors(consoleErrors);
     });
 
     test('chips survive late item-data (host innerHTML wipe after the fill)', async ({ page, consoleErrors }) => {
@@ -104,6 +113,8 @@ test.describe('details view-cache (chips land in the visible page)', () => {
         await gotoDetails(page, b);
         await expect(visibleChip(page, b)).toBeVisible({ timeout: 30_000 });
         await page.unroute(/\/(Users\/[^/]+\/)?Items\/[0-9a-f-]{30,}(\?|$)/);
+
+        assertNoRuntimeErrors(consoleErrors);
     });
 
     test('a wiped misc-info row is re-populated (observer gate is alive with cached duplicates)', async ({ page, consoleErrors }) => {
@@ -136,5 +147,7 @@ test.describe('details view-cache (chips land in the visible page)', () => {
             if (container) container.innerHTML = '';
         });
         await expect(visibleChip(page, b)).toBeVisible({ timeout: 20_000 });
+
+        assertNoRuntimeErrors(consoleErrors);
     });
 });

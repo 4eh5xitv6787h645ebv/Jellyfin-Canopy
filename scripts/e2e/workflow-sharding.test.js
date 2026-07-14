@@ -34,15 +34,16 @@ test('E2E uses six native file shards with one fresh serial two-CPU server each'
     );
     assert.match(
         shard,
-        /id: playwright\n\s+timeout-minutes: 15\n\s+run: npm run e2e -- --shard=\$\{\{ matrix\.shard \}\}\/\$\{\{ matrix\.total \}\}/
+        /id: playwright\n\s+timeout-minutes: 15\n\s+run: \|[\s\S]*jc-e2e-playwright-started-at[\s\S]*npm run e2e -- --shard=\$\{\{ matrix\.shard \}\}\/\$\{\{ matrix\.total \}\}/
     );
     assert.doesNotMatch(shard, /npm run e2e[^\n]*(--grep|\.spec\.ts)/);
     assert.match(shard, /name: Tear down\n\s+if: always\(\)/);
     assert.match(
         shard,
-        /name: Server logs on failure[\s\S]*docker compose -f e2e\/docker\/compose\.yml logs --no-color --tail 200 jellyfin/
+        /name: Sanitized server logs on failure[\s\S]*log_args=\(logs --no-color\)[\s\S]*log_args\+=\(--since "\$\{started_at\}"\)[\s\S]*docker compose -f e2e\/docker\/compose\.yml "\$\{log_args\[@\]\}" jellyfin 2>&1 \\\n\s+\| node scripts\/e2e\/sanitize-jellyfin-log\.js \|\| true/
     );
     assert.doesNotMatch(shard, /docker logs jc-e2e-jellyfin/);
+    assert.doesNotMatch(shard, /run: docker compose[^\n]*logs/);
 
     assert.match(playwrightConfig, /workers:\s*1/);
     assert.match(playwrightConfig, /fullyParallel:\s*false/);

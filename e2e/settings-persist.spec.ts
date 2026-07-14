@@ -169,10 +169,9 @@ test.describe('per-user settings persistence', () => {
         expect(control!.max).toBe('60');
         expect(control!.inForm, 'the control is inside the config page').toBe(true);
 
-        // This is the only spec that reaches into the full JF12 admin dashboard
-        // (the only place a plugin config page can be shown). That dashboard
-        // chrome emits its own core-Jellyfin noise that has nothing to do with
-        // the plugin and does not appear in the web-client the other specs use:
+        // The full JF12 admin dashboard is the only place a plugin config page
+        // can be shown. Its chrome emits core-Jellyfin noise that has nothing
+        // to do with the plugin and does not appear on normal web-client pages:
         //   - `t.scrollHandler is not a function`: a pageerror from
         //     jellyfin-web's own dashboard bundle (JC's only scroll feature uses
         //     `_scrollHandler` and runs only on Seerr discovery pages).
@@ -181,11 +180,13 @@ test.describe('per-user settings persistence', () => {
         //     that are not uploaded on the bare seed; config-page.js handles the
         //     404 by showing a placeholder (refreshBrandingPreview).
         // Filter exactly those, then assert the PLUGIN itself produced no console
-        // errors or 4xx on the config page — a real, non-hollow check.
+        // errors or HTTP failures on the config page — a real, non-hollow check.
         const DASHBOARD_CHROME =
             /scrollHandler is not a function|\/Users\/[^/]+\/Images\/Primary|\/JellyfinCanopy\/BrandingImage/i;
+        const serverErrors = consoleErrors.unexpected5xx();
         const pluginErrors = consoleErrors.real().filter((t) => !DASHBOARD_CHROME.test(t));
         const plugin4xx = consoleErrors.unexpected4xx().filter((r) => !DASHBOARD_CHROME.test(r.url));
+        expect(serverErrors, 'no 5xx responses on the admin config page').toEqual([]);
         expect(pluginErrors, 'no plugin console errors on the admin config page').toEqual([]);
         expect(plugin4xx, 'no plugin 4xx responses on the admin config page').toEqual([]);
     });

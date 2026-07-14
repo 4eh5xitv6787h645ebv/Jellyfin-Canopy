@@ -54,6 +54,7 @@ test.describe('tags', () => {
                 .toBeGreaterThan(0);
         }
 
+        expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
         expect(consoleErrors.real()).toEqual([]);
     });
 
@@ -118,6 +119,7 @@ test.describe('tags', () => {
             return !!oc && getComputedStyle(oc).opacity === '0';
         }, undefined, { timeout: 5_000 });
 
+        expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
         expect(consoleErrors.real()).toEqual([]);
     });
 });

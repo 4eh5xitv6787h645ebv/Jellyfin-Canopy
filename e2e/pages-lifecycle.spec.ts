@@ -3,7 +3,7 @@
 // (the ghost-page bug: page content lingering over other views until a
 // refresh), browser back re-opens it, deep links and refreshes render it,
 // and switching directly between two pages tears the first one down.
-import { test, expect, loginAs } from './fixtures/auth';
+import { test, expect, loginAs, type ConsoleErrors } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -19,8 +19,12 @@ import { test, expect, loginAs } from './fixtures/auth';
 //    feature uses `_scrollHandler` and runs only on Seerr discovery pages.
 // Filtered by exact message, nothing else.
 const KNOWN_WEB_NOISE = /\[Home\] failed to get tab controller|scrollHandler is not a function/;
-function realErrors(consoleErrors: any): string[] {
-    return consoleErrors.real().filter((t: string) => !KNOWN_WEB_NOISE.test(t));
+function assertNoPageLifecycleRuntimeErrors(consoleErrors: ConsoleErrors): void {
+    expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
+    expect(
+        consoleErrors.real().filter((text) => !KNOWN_WEB_NOISE.test(text)),
+        'unexpected console errors'
+    ).toEqual([]);
 }
 
 const PAGES = [
@@ -87,7 +91,7 @@ test.describe('pages lifecycle (shared framework)', () => {
             await page.waitForSelector('#indexPage', { state: 'visible', timeout: 30_000 });
             await expectGone(page, info.marker);
 
-            expect(realErrors(consoleErrors)).toEqual([]);
+            assertNoPageLifecycleRuntimeErrors(consoleErrors);
         });
     }
 
@@ -106,7 +110,7 @@ test.describe('pages lifecycle (shared framework)', () => {
             /page not found/i.test(document.body.innerText));
         expect(notFoundVisible, 'the 404 shell must not remain visible').toBe(false);
 
-        expect(realErrors(consoleErrors)).toEqual([]);
+        assertNoPageLifecycleRuntimeErrors(consoleErrors);
     });
 
     test('page → page direct switch tears the first page down', async ({ page, consoleErrors }) => {
@@ -125,7 +129,7 @@ test.describe('pages lifecycle (shared framework)', () => {
         await page.waitForSelector('#indexPage', { state: 'visible', timeout: 30_000 });
         await expectGone(page, '#jc-downloads-container');
 
-        expect(realErrors(consoleErrors)).toEqual([]);
+        assertNoPageLifecycleRuntimeErrors(consoleErrors);
     });
 
     test('non-admin: pages open and close cleanly too', async ({ page, consoleErrors }) => {
@@ -137,6 +141,6 @@ test.describe('pages lifecycle (shared framework)', () => {
         await page.waitForSelector('#indexPage', { state: 'visible', timeout: 30_000 });
         await expectGone(page, '#jc-calendar-container');
 
-        expect(realErrors(consoleErrors)).toEqual([]);
+        assertNoPageLifecycleRuntimeErrors(consoleErrors);
     });
 });

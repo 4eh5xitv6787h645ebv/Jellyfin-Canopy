@@ -155,6 +155,7 @@ test.describe('seerr parental-rating filter', () => {
             const userAfter = await searchIds(page);
             expect(userAfter.movies, 'with no limit the user sees the R titles again').toContain(DEADPOOL_R);
 
+            expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
             expect(consoleErrors.real(), 'no unexpected console errors').toEqual([]);
         } finally {
             // Always clear the imposed limit so the shared dev user is left clean.

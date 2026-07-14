@@ -185,6 +185,7 @@ test.describe('in-app request approvals', () => {
             // Only console errors are asserted here: the intentional 403 above is a
             // deliberate authz-refusal, not a broken endpoint, so unexpected4xx()
             // (which would flag it) is intentionally not asserted for this test.
+            expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
             expect(consoleErrors.real(), 'unexpected console errors').toEqual([]);
         } finally {
             await loginAs(page, 'admin');

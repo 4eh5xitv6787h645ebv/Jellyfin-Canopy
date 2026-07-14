@@ -1,4 +1,4 @@
-// Unit-of-behavior spec for the URL-scoped 4xx safety net in fixtures/auth.ts.
+// Unit-of-behavior specs for the URL-scoped HTTP/console safety net in auth.ts.
 //
 // Chromium logs a broken resource as a generic "Failed to load resource … 404"
 // console line that carries NO url, so the text-only noise whitelist swallows
@@ -12,6 +12,9 @@ import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
 
 const BAD = '/JellyfinCanopy/does-not-exist';
 const ALLOWED = '/JellyfinCanopy/admin/does-not-exist';
+const DELIBERATE_5XX = '/JellyfinCanopy/e2e-deliberate-503';
+const DELIBERATE_5XX_SECRET = 'jc-e2e-detector-query-secret';
+const CONSOLE_SOURCE = '/JellyfinCanopy/e2e-console-source.js';
 
 /**
  * Fetch a plugin path in the browser (same origin, authenticated) and return
@@ -37,7 +40,7 @@ async function fetchStatus(page: any, path: string): Promise<number> {
     }, path);
 }
 
-test.describe('console 4xx safety net', () => {
+test.describe('console and HTTP error safety net', () => {
     test('unexpected4xx() catches a broken plugin endpoint but not an allowlisted url', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
 
@@ -76,5 +79,97 @@ test.describe('console 4xx safety net', () => {
         // 4xx detector and not just to real().
         consoleErrors.reset();
         assertNoRuntimeErrors(consoleErrors);
+    });
+
+    test('unexpected5xx() preserves method/url and remains globally blocking', async ({
+        page,
+        consoleErrors,
+    }) => {
+        await loginAs(page, 'admin', consoleErrors);
+        await page.route(`**${DELIBERATE_5XX}*`, async (route) => {
+            await route.fulfill({
+                status: 503,
+                contentType: 'text/plain',
+                body: 'deliberate detector probe',
+            });
+        });
+        consoleErrors.reset();
+
+        expect(
+            await page.evaluate(
+                async (path) => (await fetch(path, { method: 'POST' })).status,
+                `${DELIBERATE_5XX}?api_key=${DELIBERATE_5XX_SECRET}&attempt=2`
+            ),
+            'the deterministic route returns its deliberate 503'
+        ).toBe(503);
+        await expect.poll(() => consoleErrors.unexpected5xx()).toEqual([
+            expect.objectContaining({
+                method: 'POST',
+                status: 503,
+                url: expect.stringContaining(DELIBERATE_5XX),
+            }),
+        ]);
+        consoleErrors.reset();
+        expect(
+            consoleErrors.unexpected5xx(),
+            'phase resets retain 5xx evidence instead of hiding it'
+        ).toEqual([
+            expect.objectContaining({
+                method: 'POST',
+                status: 503,
+                url: expect.stringContaining(DELIBERATE_5XX),
+            }),
+        ]);
+        expect(
+            () => assertNoRuntimeErrors(consoleErrors),
+            'the shared gate leads with URL-aware 5xx evidence'
+        ).toThrow(/unexpected 5xx responses/i);
+        const deliberate = consoleErrors.unexpected5xx();
+        expect(deliberate).toHaveLength(1);
+        expect(deliberate[0].url, 'sensitive response-query values are redacted').toContain(
+            'api_key=%3Credacted%3E'
+        );
+        expect(deliberate[0].url).not.toContain(DELIBERATE_5XX_SECRET);
+        consoleErrors.acknowledgeExpected5xx(deliberate);
+        await page.unroute(`**${DELIBERATE_5XX}*`);
+    });
+
+    test('structured console errors retain their source script URL', async ({
+        page,
+        consoleErrors,
+    }) => {
+        await loginAs(page, 'admin', consoleErrors);
+        await page.route(`**${CONSOLE_SOURCE}`, async (route) => {
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/javascript',
+                body: 'console.error("jc-e2e-structured-source");',
+            });
+        });
+        consoleErrors.reset();
+
+        await page.evaluate(async (path) => {
+            await new Promise<void>((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = path;
+                script.onload = () => resolve();
+                script.onerror = () => reject(new Error('source probe failed to load'));
+                document.head.appendChild(script);
+            });
+        }, CONSOLE_SOURCE);
+
+        await expect.poll(
+            () => consoleErrors.realDetails()
+                .filter(({ text }) => text === 'jc-e2e-structured-source')
+                .map(({ source, url }) => ({ source, url }))
+        ).toEqual([{
+            source: 'console',
+            url: expect.stringContaining(CONSOLE_SOURCE),
+        }]);
+        expect(
+            consoleErrors.unexpected5xx(),
+            'the structured-console probe permits no unrelated server failure'
+        ).toEqual([]);
+        await page.unroute(`**${CONSOLE_SOURCE}`);
     });
 });

@@ -9,9 +9,15 @@
 // authenticated ApiClient as both the restricted non-admin and an admin, and
 // asserts the server filtered the JSON — not the DOM. All policy changes are
 // restored in finally blocks.
-import { test, expect, loginAs } from './fixtures/auth';
+import {
+    test,
+    expect,
+    loginAs,
+    assertNoRuntimeErrors,
+    USERS,
+    type ConsoleErrors,
+} from './fixtures/auth';
 import { seerrReady, findRestrictedUserId, setParentalTags } from './fixtures/seerr';
-import { USERS } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -62,66 +68,85 @@ async function postRequestStatus(page: any, tmdbId: number): Promise<number> {
     }, tmdbId);
 }
 
+/** Require exactly the two deliberate parental-policy refusals and no other runtime error. */
+function assertOnlyExpectedBlockedResponses(consoleErrors: ConsoleErrors): void {
+    const signatures = consoleErrors.unexpected4xx()
+        .map((response) => {
+            const path = new URL(response.url).pathname;
+            return `${response.method} ${path} ${response.status}`;
+        })
+        .sort();
+    expect(signatures, 'only the exact blocked detail/request 403s are expected').toEqual([
+        `GET /JellyfinCanopy/seerr/movie/${NOTLD_1968} 403`,
+        'POST /JellyfinCanopy/seerr/request 403',
+    ]);
+
+    // The exact 403 set is proven above; retain the shared console + 5xx net.
+    assertNoRuntimeErrors({
+        ...consoleErrors,
+        unexpected4xx: () => [],
+    });
+}
+
 test.describe('Seerr parental tag blocking', () => {
-    test('blocked keyword tag gates search, detail, and request for the restricted user only', async ({ browser }) => {
+    test('blocked keyword tag gates search, detail, and request for the restricted user only', async ({ browser, page, consoleErrors }) => {
         const adminCtx = await browser.newContext();
         const adminPage = await adminCtx.newPage();
-        await loginAs(adminPage, 'admin');
-        test.skip(!(await seerrReady(adminPage)), 'Seerr not configured on this server');
-
-        const userId = await findRestrictedUserId(adminPage, USERS.user.username);
-        await setParentalTags(adminPage, userId, ['zombie']);
+        let userId = '';
         try {
-            const userCtx = await browser.newContext();
-            const userPage = await userCtx.newPage();
-            await loginAs(userPage, 'user');
+            await loginAs(adminPage, 'admin');
+            test.skip(!(await seerrReady(adminPage)), 'Seerr not configured on this server');
+
+            userId = await findRestrictedUserId(adminPage, USERS.user.username);
+            await setParentalTags(adminPage, userId, ['zombie']);
+            await loginAs(page, 'user', consoleErrors);
 
             // Search: the zombie-keyword original is dropped; sparse-keyword
             // remakes/parodies survive (keyword precision, not title match).
-            const ids = await searchMovieIds(userPage);
+            const ids = await searchMovieIds(page);
             expect(ids, 'zombie-keyword title must be filtered from search').not.toContain(NOTLD_1968);
             expect(ids.length, 'non-matching titles must survive a keyword block').toBeGreaterThan(0);
 
             // Detail: bare 403 for the blocked title.
-            expect(await getStatus(userPage, `/JellyfinCanopy/seerr/movie/${NOTLD_1968}`)).toBe(403);
+            expect(await getStatus(page, `/JellyfinCanopy/seerr/movie/${NOTLD_1968}`)).toBe(403);
 
             // Request creation: blocked pre-proxy.
-            expect(await postRequestStatus(userPage, NOTLD_1968)).toBe(403);
+            expect(await postRequestStatus(page, NOTLD_1968)).toBe(403);
 
             // The admin's own view stays unfiltered (bypass, matching core).
             expect(await getStatus(adminPage, `/JellyfinCanopy/seerr/movie/${NOTLD_1968}`)).toBe(200);
 
-            await userCtx.close();
+            assertOnlyExpectedBlockedResponses(consoleErrors);
         } finally {
-            await setParentalTags(adminPage, userId, []);
+            if (userId) await setParentalTags(adminPage, userId, []);
             await adminCtx.close();
         }
     });
 
-    test('blocked genre tag hides whole-genre titles the keyword block would miss', async ({ browser }) => {
+    test('blocked genre tag hides whole-genre titles the keyword block would miss', async ({ browser, page, consoleErrors }) => {
         const adminCtx = await browser.newContext();
         const adminPage = await adminCtx.newPage();
-        await loginAs(adminPage, 'admin');
-        test.skip(!(await seerrReady(adminPage)), 'Seerr not configured on this server');
-
-        const userId = await findRestrictedUserId(adminPage, USERS.user.username);
-
-        // Baseline (no tags): capture how many titles the query returns.
-        await setParentalTags(adminPage, userId, []);
-        const userCtx = await browser.newContext();
-        const userPage = await userCtx.newPage();
-        await loginAs(userPage, 'user');
-        const baseline = await searchMovieIds(userPage);
-        test.skip(baseline.length < 3, 'query returned too few titles to prove genre narrowing');
-
-        await setParentalTags(adminPage, userId, ['horror']);
+        let userId = '';
         try {
-            const blocked = await searchMovieIds(userPage);
+            await loginAs(adminPage, 'admin');
+            test.skip(!(await seerrReady(adminPage)), 'Seerr not configured on this server');
+
+            userId = await findRestrictedUserId(adminPage, USERS.user.username);
+
+            // Baseline (no tags): capture how many titles the query returns.
+            await setParentalTags(adminPage, userId, []);
+            await loginAs(page, 'user', consoleErrors);
+            const baseline = await searchMovieIds(page);
+            test.skip(baseline.length < 3, 'query returned too few titles to prove genre narrowing');
+
+            await setParentalTags(adminPage, userId, ['horror']);
+            const blocked = await searchMovieIds(page);
             expect(blocked.length, 'genre block must remove Horror-genre titles').toBeLessThan(baseline.length);
             expect(blocked, 'the Horror-genre original must be gone').not.toContain(NOTLD_1968);
+
+            assertNoRuntimeErrors(consoleErrors);
         } finally {
-            await setParentalTags(adminPage, userId, []);
-            await userCtx.close();
+            if (userId) await setParentalTags(adminPage, userId, []);
             await adminCtx.close();
         }
     });

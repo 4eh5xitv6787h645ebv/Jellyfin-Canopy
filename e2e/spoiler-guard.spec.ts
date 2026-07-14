@@ -68,14 +68,16 @@ function norm(id: string): string {
 // and the response is a 403 — both entirely unrelated to Spoiler Guard, and both
 // absent on the :8100 seed (no Seerr → the indicator never runs). Scope exactly
 // that pair out here (like settings-persist.spec's DASHBOARD_CHROME) so the check
-// still catches any REAL Spoiler Guard console error or plugin 4xx.
+// still catches every 5xx plus any REAL Spoiler Guard console error or plugin 4xx.
 const SEERR_ISSUE_NOISE_TEXT = /Seerr API: Failed to fetch issues/i;
 const SEERR_ISSUE_NOISE_URL = /\/JellyfinCanopy\/seerr\/issue/i;
 
 function assertNoSpoilerRuntimeErrors(consoleErrors: {
     real(): string[];
     unexpected4xx(): { url: string; status: number }[];
+    unexpected5xx(): { url: string; status: number }[];
 }): void {
+    expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
     const real = consoleErrors.real().filter((t) => !SEERR_ISSUE_NOISE_TEXT.test(t));
     expect(real, 'unexpected console errors (excluding the shared-server Seerr issue-indicator)').toEqual([]);
     const bad4xx = consoleErrors.unexpected4xx().filter((r) => !SEERR_ISSUE_NOISE_URL.test(r.url));
@@ -84,14 +86,13 @@ function assertNoSpoilerRuntimeErrors(consoleErrors: {
 
 /** Fetch the admin-exposed public config once (unauthenticated is fine). */
 async function spoilerBlurEnabled(): Promise<boolean> {
-    try {
-        const res = await fetch(`${BASE}/JellyfinCanopy/public-config`);
-        if (!res.ok) return false;
-        const cfg = (await res.json()) as { SpoilerBlurEnabled?: boolean };
-        return cfg.SpoilerBlurEnabled === true;
-    } catch {
-        return false;
+    const res = await fetch(`${BASE}/JellyfinCanopy/public-config`);
+    if (res.status >= 500) {
+        throw new Error(`Spoiler Guard public-config probe returned ${res.status}`);
     }
+    if (!res.ok) return false;
+    const cfg = (await res.json()) as { SpoilerBlurEnabled?: boolean };
+    return cfg.SpoilerBlurEnabled === true;
 }
 
 /** List a page's worth of episodes for a series as the given user. */
