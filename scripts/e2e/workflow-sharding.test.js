@@ -166,8 +166,10 @@ test('the same blocking workflow proves pull-request, main and release source SH
     assert.match(workflow, /push:\n\s+branches: \[main, master\]/);
     assert.match(workflow, /pull_request:\n\s+branches: \[main, master\]/);
     assert.match(workflow, /workflow_call:/);
-    assert.match(releaseWorkflow, /quality-gates:\n\s+name: Required source-SHA quality gates\n\s+uses: \.\/\.github\/workflows\/build\.yml/);
-    assert.match(releaseWorkflow, /release:\n\s+name: Build, test, package & publish\n\s+needs: quality-gates/);
+    assert.match(releaseWorkflow, /provenance:\n\s+name: Verify release source provenance/);
+    assert.match(releaseWorkflow, /quality-gates:\n\s+name: Required source-SHA quality gates\n\s+needs: provenance\n\s+uses: \.\/\.github\/workflows\/build\.yml/);
+    assert.match(releaseWorkflow, /security-gates:\n\s+name: Required source-SHA security gates\n\s+needs: provenance\n\s+uses: \.\/\.github\/workflows\/security-scan\.yml/);
+    assert.match(releaseWorkflow, /release:\n\s+name: Build, test, package & publish\n\s+needs: \[provenance, quality-gates, security-gates\]/);
 });
 
 test('mutable latest-Jellyfin probing is isolated in one advisory workflow', () => {
