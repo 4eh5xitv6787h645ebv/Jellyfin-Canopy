@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
@@ -92,6 +93,30 @@ public sealed class SeerrReadGenerationFenceTests
             "parental_filter_unavailable",
             result.Value?.GetType().GetProperty("code")?.GetValue(result.Value));
         Assert.Single(handler.Requests, request => request.Path == "/api/v1/keyword");
+        Assert.Empty(cache.ResponseCache);
+    }
+
+    [Fact]
+    public async Task GenericProxy_ChunkedCapPlusOne_ReturnsTypedErrorAndNeverCaches()
+    {
+        const string apiPath = "/api/v1/keyword?query=space";
+        var provider = new FakePluginConfigProvider(Configuration(SourceA, "key-a"));
+        var cache = new SeerrCache(provider);
+        var handler = new ChunkedOversizeHandler();
+        var client = CreateClient(handler, provider, cache, new PassthroughParentalFilter());
+
+        var result = Assert.IsType<ObjectResult>(await client.ProxyRequestAsync(
+            apiPath,
+            HttpMethod.Get,
+            content: null,
+            new SeerrCaller(JellyfinUserId, IsAdmin: false),
+            BoundUser()));
+
+        Assert.Equal(502, result.StatusCode);
+        Assert.Equal(
+            nameof(SeerrErrorCode.ResponseTooLarge),
+            result.Value?.GetType().GetProperty("code")?.GetValue(result.Value));
+        Assert.Equal(SeerrHttpHelper.MaxBodyBytes + 1, handler.Body.BytesRead);
         Assert.Empty(cache.ResponseCache);
     }
 
@@ -355,6 +380,79 @@ public sealed class SeerrReadGenerationFenceTests
     }
 
     private sealed record CapturedRequest(string Host, string Path, string? ApiKey);
+
+    private sealed class ChunkedOversizeHandler : HttpMessageHandler
+    {
+        public CountingBodyStream Body { get; } = new(SeerrHttpHelper.MaxBodyBytes + 1024);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var content = new StreamContent(Body);
+            content.Headers.ContentType = new("application/json");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        }
+    }
+
+    private sealed class CountingBodyStream : Stream
+    {
+        private readonly long _length;
+        private long _remaining;
+
+        public CountingBodyStream(long length)
+        {
+            _length = length;
+            _remaining = length;
+        }
+
+        public long BytesRead { get; private set; }
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => _length - _remaining;
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = (int)Math.Min(_remaining, count);
+            Array.Clear(buffer, offset, read);
+            _remaining -= read;
+            BytesRead += read;
+            return read;
+        }
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var read = (int)Math.Min(_remaining, buffer.Length);
+            buffer.Span[..read].Clear();
+            _remaining -= read;
+            BytesRead += read;
+            return ValueTask.FromResult(read);
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
 
     private sealed class PassthroughParentalFilter : ISeerrParentalFilter
     {

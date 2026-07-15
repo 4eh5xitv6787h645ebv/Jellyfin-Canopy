@@ -180,7 +180,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             {
                 using var request = SeerrHttpHelper.BuildRequest(
                     HttpMethod.Post, requestUri, apiKey, bodyJson: requestBody);
-                using var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                using var response = await SeerrHttpHelper.SendResponseHeadersReadAsync(
+                    httpClient,
+                    request,
+                    cancellationToken).ConfigureAwait(false);
                 result.Reached = true;
 
                 var (json, error) = await SeerrHttpHelper.ReadResponseAsync(

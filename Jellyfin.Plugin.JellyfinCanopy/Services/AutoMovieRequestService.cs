@@ -410,8 +410,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 {
                     using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                         HttpMethod.Get, requestUrl, config.SeerrApiKey);
-                    using var response = await httpClient.SendAsync(request);
-                    var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
+                    var (content, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
+                        httpClient,
+                        request,
+                        requestUrl);
                     if (error != null)
                     {
                         _logger.LogDebug($"[Auto-Movie-Request] Seerr collection fetch failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
@@ -588,8 +590,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var requestUrl = $"{pinnedSource}/api/v1/movie/{tmdbId}";
                 using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                     HttpMethod.Get, requestUrl, config.SeerrApiKey);
-                using var response = await httpClient.SendAsync(request);
-                var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUrl);
+                var (content, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
+                    httpClient,
+                    request,
+                    requestUrl);
                 if (error != null)
                 {
                     _logger.LogDebug($"[Auto-Movie-Request] Quality profile lookup for movie {tmdbId} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
@@ -958,8 +962,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                     HttpMethod.Post, requestUri, config.SeerrApiKey, seerrUserId, jsonContent);
                 dispatched = true;
-                using var response = await httpClient.SendAsync(request);
-                var (_, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+                var (_, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
+                    httpClient,
+                    request,
+                    requestUri);
 
                 if (error == null)
                 {

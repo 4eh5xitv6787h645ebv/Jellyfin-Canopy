@@ -484,11 +484,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                     HttpMethod.Get,
                     requestUri,
                     apiKey);
-                using var response = await httpClient.SendAsync(
+                var (content, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
+                    httpClient,
                     request,
-                    cancellationToken).ConfigureAwait(false);
-                var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(
-                    response,
                     requestUri,
                     cancellationToken).ConfigureAwait(false);
                 if (error != null || string.IsNullOrWhiteSpace(content))
@@ -715,9 +713,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 var requestUri = $"{seerrUrl.TrimEnd('/')}/api/v1/watchlist";
                 var body = JsonSerializer.Serialize(new { tmdbId, mediaType, title });
                 using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(HttpMethod.Post, requestUri, apiKey, seerrUserId, body);
-                using var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-                var (_, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(
-                    response,
+                var (_, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
+                    httpClient,
+                    request,
                     requestUri,
                     cancellationToken).ConfigureAwait(false);
 

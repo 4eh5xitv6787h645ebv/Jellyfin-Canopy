@@ -122,8 +122,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 try
                 {
                     using var request = SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, config.SeerrApiKey);
-                    using var response = await httpClient.SendAsync(request);
-                    var (_, error) = await SeerrHttpHelper.ReadResponseAsync(response, requestUri);
+                    var (_, error, _) = await SeerrHttpHelper.SendAndReadJsonAsync(httpClient, request, requestUri);
                     if (error == null)
                     {
                         return true;
@@ -313,8 +312,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
                 // User-neutral within this pinned source: no X-Api-User.
                 using var request = SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, apiKey);
-                using var response = await httpClient.SendAsync(request).ConfigureAwait(false);
-                var (json, error) = await SeerrHttpHelper.ReadResponseAsync(response, requestUri).ConfigureAwait(false);
+                var (json, error, _) = await SeerrHttpHelper.SendAndReadJsonAsync(
+                    httpClient,
+                    request,
+                    requestUri).ConfigureAwait(false);
                 if (!IsConfigurationCurrent())
                 {
                     return (false, false);
@@ -997,9 +998,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 var requestBody = JsonSerializer.Serialize(new { jellyfinUserIds = new[] { normalizedUserId } });
 
                 using var importRequest = SeerrHttpHelper.BuildRequest(HttpMethod.Post, importUri, apiKey, bodyJson: requestBody);
-                using var importResponse = await httpClient.SendAsync(importRequest, cancellationToken).ConfigureAwait(false);
-                var (importJson, importError) = await SeerrHttpHelper.ReadResponseAsync(
-                    importResponse,
+                var (importJson, importError, _) = await SeerrHttpHelper.SendAndReadJsonAsync(
+                    httpClient,
+                    importRequest,
                     importUri,
                     cancellationToken).ConfigureAwait(false);
 
@@ -2101,11 +2102,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     using var request = SeerrHttpHelper.BuildRequest(method, requestUri, config.SeerrApiKey, requestUserId, content);
                     if (content != null) _logger.LogDebug($"Request body: {content}");
 
-                    using var response = await httpClient.SendAsync(
+                    var (json, error, _) = await SeerrHttpHelper.SendAndReadJsonAsync(
+                        httpClient,
                         request,
-                        cancellationToken).ConfigureAwait(false);
-                    var (json, error) = await SeerrHttpHelper.ReadResponseAsync(
-                        response,
                         requestUri,
                         cancellationToken).ConfigureAwait(false);
 
@@ -2125,9 +2124,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                             { StatusCode = 409 };
                         }
 
-                        // Cache only verified-JSON 2xx responses. The Content-Type
-                        // guard inside ReadResponseAsync prevents HTML challenge
-                        // pages from being cached as JSON for 10 min.
+                        // Cache only complete, size-bounded, parsed JSON 2xx responses.
+                        // SendAndReadJsonAsync also prevents HTML challenge pages from
+                        // being cached as JSON for 10 min.
                         if (isCacheable)
                         {
                             var publishedEntry = (
@@ -2274,11 +2273,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     HttpMethod.Get,
                     requestUri,
                     apiKey);
-                using var response = await httpClient.SendAsync(
+                var (json, error, _) = await SeerrHttpHelper.SendAndReadJsonAsync(
+                    httpClient,
                     request,
-                    cancellationToken).ConfigureAwait(false);
-                var (json, error) = await SeerrHttpHelper.ReadResponseAsync(
-                    response,
                     requestUri,
                     cancellationToken).ConfigureAwait(false);
                 if (error != null || json == null) return null;

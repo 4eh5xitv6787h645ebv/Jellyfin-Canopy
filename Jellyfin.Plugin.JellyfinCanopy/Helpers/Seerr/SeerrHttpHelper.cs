@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -22,6 +23,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
         Cloudflare5xx,
         UpstreamError,
         ParseError,
+        ResponseTooLarge,
         Timeout,
         UrlNotAllowed,
         ConfigInvalid,
@@ -68,6 +70,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             SeerrErrorCode.Cloudflare5xx     => "Seerr is having connection issues. Please try again in a moment.",
             SeerrErrorCode.UpstreamError     => "Seerr returned an error. Please try again in a moment.",
             SeerrErrorCode.ParseError        => "Got an unexpected response from Seerr. Please try again in a moment.",
+            SeerrErrorCode.ResponseTooLarge  => "Seerr returned too much data. Please try again in a moment.",
             SeerrErrorCode.Timeout           => "Seerr took too long to respond. Please try again in a moment.",
             SeerrErrorCode.UrlNotAllowed     => "Seerr is not configured correctly. Ask your administrator to check the Seerr URL.",
             SeerrErrorCode.ConfigInvalid     => "Seerr is not configured. Ask your administrator to set it up.",
@@ -101,7 +104,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             catch { return factory.CreateClient(); }
         }
 
-        private const int MaxBodyBytes = 8 * 1024 * 1024;
+        internal const int MaxBodyBytes = 8 * 1024 * 1024;
+        private const int ReadBufferBytes = 64 * 1024;
+        private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
         public static HttpRequestMessage BuildRequest(
             HttpMethod method,
@@ -133,8 +138,45 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                 || (ct.StartsWith("application/", StringComparison.OrdinalIgnoreCase) && ct.EndsWith("+json", StringComparison.OrdinalIgnoreCase));
         }
 
-        public static async Task<(string? Json, SeerrError? Error)> ReadResponseAsync(HttpResponseMessage response, string url, CancellationToken ct = default)
+        internal static Task<HttpResponseMessage> SendResponseHeadersReadAsync(
+            HttpClient httpClient,
+            HttpRequestMessage request,
+            CancellationToken ct = default)
+            => httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+
+        public static Task<(string? Json, SeerrError? Error, int HttpStatus)> SendAndReadJsonAsync(
+            HttpClient httpClient,
+            HttpRequestMessage request,
+            string url,
+            CancellationToken ct = default)
+            => SendAndReadJsonAsync(httpClient, request, url, MaxBodyBytes, ct);
+
+        internal static async Task<(string? Json, SeerrError? Error, int HttpStatus)> SendAndReadJsonAsync(
+            HttpClient httpClient,
+            HttpRequestMessage request,
+            string url,
+            int maxBodyBytes,
+            CancellationToken ct = default)
         {
+            using var response = await SendResponseHeadersReadAsync(httpClient, request, ct).ConfigureAwait(false);
+            var (json, error) = await ReadResponseAsync(response, url, maxBodyBytes, ct).ConfigureAwait(false);
+            return (json, error, (int)response.StatusCode);
+        }
+
+        internal static Task<(string? Json, SeerrError? Error)> ReadResponseAsync(
+            HttpResponseMessage response,
+            string url,
+            CancellationToken ct = default)
+            => ReadResponseAsync(response, url, MaxBodyBytes, ct);
+
+        internal static async Task<(string? Json, SeerrError? Error)> ReadResponseAsync(
+            HttpResponseMessage response,
+            string url,
+            int maxBodyBytes,
+            CancellationToken ct = default)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(maxBodyBytes);
+
             string? cfRay = null;
             if (response.Headers.TryGetValues("cf-ray", out var rays))
             {
@@ -168,23 +210,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                 });
             }
 
-            string body;
-            using (var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
-            using (var reader = new StreamReader(stream, Encoding.UTF8))
-            {
-                var buffer = new char[8192];
-                var sb = new StringBuilder(8192);
-                int read;
-                while ((read = await reader.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) > 0)
-                {
-                    if (sb.Length + read > MaxBodyBytes) { sb.Append(buffer, 0, MaxBodyBytes - sb.Length); break; }
-                    sb.Append(buffer, 0, read);
-                }
-                body = sb.ToString();
-            }
-
             // HTML when JSON expected = reverse-proxy auth challenge intercepting
-            // the request. Reject before attempting to parse.
+            // the request. Reject before reading or attempting to parse.
             if (!IsJsonContentType(response))
             {
                 return (null, new SeerrError
@@ -198,46 +225,129 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                 });
             }
 
-            if (response.IsSuccessStatusCode)
+            // Preserve status-specific upstream errors without requiring an
+            // error body to be buffered or even well-formed JSON.
+            if (!response.IsSuccessStatusCode)
             {
-                return (body, null);
+                if (status == 401)
+                {
+                    return (null, new SeerrError
+                    {
+                        Code = SeerrErrorCode.Unauthorized,
+                        HttpStatus = 401,
+                        CfRay = cfRay,
+                        Url = url,
+                        Message = "Seerr rejected the API key. Check the key has not been rotated and matches the Seerr install.",
+                        UserMessage = "Seerr couldn't sign in. Ask your administrator to check the Seerr settings."
+                    });
+                }
+
+                if (status == 403)
+                {
+                    return (null, new SeerrError
+                    {
+                        Code = SeerrErrorCode.Forbidden,
+                        HttpStatus = 403,
+                        CfRay = cfRay,
+                        Url = url,
+                        Message = "Seerr returned 403. Common causes: API key rotated, user lacks permission, or CSRF protection enabled in Seerr.",
+                        UserMessage = "Seerr declined the request. Ask your administrator to check your account permissions."
+                    });
+                }
+
+                return (null, new SeerrError
+                {
+                    Code = SeerrErrorCode.UpstreamError,
+                    HttpStatus = status,
+                    CfRay = cfRay,
+                    Url = url,
+                    Message = $"Seerr returned {status} from {url}.",
+                    UserMessage = "Seerr returned an error. Please try again in a moment."
+                });
             }
 
-            if (status == 401)
+            var declaredLength = response.Content.Headers.ContentLength;
+            if (declaredLength > maxBodyBytes)
+            {
+                return (null, ResponseTooLarge(url, status, cfRay, maxBodyBytes, declaredLength));
+            }
+
+            byte[] bodyBytes;
+            var readBuffer = ArrayPool<byte>.Shared.Rent(Math.Min(ReadBufferBytes, maxBodyBytes + 1));
+            try
+            {
+                using var body = new MemoryStream(
+                    declaredLength.HasValue
+                        ? Math.Min(checked((int)declaredLength.Value), ReadBufferBytes)
+                        : Math.Min(8192, maxBodyBytes));
+                using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                while (true)
+                {
+                    var remainingWithSentinel = (long)maxBodyBytes + 1 - body.Length;
+                    if (remainingWithSentinel <= 0)
+                    {
+                        return (null, ResponseTooLarge(url, status, cfRay, maxBodyBytes, body.Length));
+                    }
+
+                    var readSize = (int)Math.Min(readBuffer.Length, remainingWithSentinel);
+                    var read = await stream.ReadAsync(readBuffer.AsMemory(0, readSize), ct).ConfigureAwait(false);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    body.Write(readBuffer, 0, read);
+                }
+
+                if (body.Length > maxBodyBytes)
+                {
+                    return (null, ResponseTooLarge(url, status, cfRay, maxBodyBytes, body.Length));
+                }
+
+                bodyBytes = body.ToArray();
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(readBuffer);
+            }
+
+            string bodyText;
+            try
+            {
+                using var _ = JsonDocument.Parse(bodyBytes);
+                bodyText = StrictUtf8.GetString(bodyBytes);
+            }
+            catch (Exception ex) when (ex is JsonException or DecoderFallbackException)
             {
                 return (null, new SeerrError
                 {
-                    Code = SeerrErrorCode.Unauthorized,
-                    HttpStatus = 401,
+                    Code = SeerrErrorCode.ParseError,
+                    HttpStatus = 502,
                     CfRay = cfRay,
                     Url = url,
-                    Message = "Seerr rejected the API key. Check the key has not been rotated and matches the Seerr install.",
-                    UserMessage = "Seerr couldn't sign in. Ask your administrator to check the Seerr settings."
-                });
-            }
-            if (status == 403)
-            {
-                return (null, new SeerrError
-                {
-                    Code = SeerrErrorCode.Forbidden,
-                    HttpStatus = 403,
-                    CfRay = cfRay,
-                    Url = url,
-                    Message = "Seerr returned 403. Common causes: API key rotated, user lacks permission, or CSRF protection enabled in Seerr.",
-                    UserMessage = "Seerr declined the request. Ask your administrator to check your account permissions."
+                    Message = $"Failed to parse complete Seerr response JSON from {url}: {ex.Message}",
+                    UserMessage = "Got an unexpected response from Seerr. Please try again in a moment."
                 });
             }
 
-            return (null, new SeerrError
+            return (bodyText, null);
+        }
+
+        private static SeerrError ResponseTooLarge(
+            string url,
+            int status,
+            string? cfRay,
+            int maxBodyBytes,
+            long? observedBytes) => new()
             {
-                Code = SeerrErrorCode.UpstreamError,
-                HttpStatus = status,
+                Code = SeerrErrorCode.ResponseTooLarge,
+                HttpStatus = 502,
                 CfRay = cfRay,
                 Url = url,
-                Message = $"Seerr returned {status} from {url}.",
-                UserMessage = "Seerr returned an error. Please try again in a moment."
-            });
-        }
+                Message = $"Seerr response from {url} (upstream HTTP {status}) exceeded the {maxBodyBytes}-byte limit"
+                    + (observedBytes.HasValue ? $" ({observedBytes.Value} bytes observed)." : "."),
+                UserMessage = "Seerr returned too much data. Please try again in a moment."
+            };
 
         public static (T? Result, SeerrError? Error) TryDeserialize<T>(string json, string url)
         {

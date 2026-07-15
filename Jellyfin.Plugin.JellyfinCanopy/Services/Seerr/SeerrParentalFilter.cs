@@ -1039,8 +1039,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     // X-Api-User is intentionally omitted: certification data does not
                     // vary per user, which is what makes the shared cert cache correct.
                     using var request = SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, config.SeerrApiKey);
-                    using var response = await httpClient.SendAsync(request, ct).ConfigureAwait(false);
-                    var (body, error) = await SeerrHttpHelper.ReadResponseAsync(response, requestUri, ct).ConfigureAwait(false);
+                    var (body, error, _) = await SeerrHttpHelper.SendAndReadJsonAsync(
+                        httpClient,
+                        request,
+                        requestUri,
+                        ct).ConfigureAwait(false);
                     if (error != null || string.IsNullOrEmpty(body))
                     {
                         continue;
