@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
@@ -36,6 +37,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     // DOM manipulation needed.
     public sealed class SpoilerBlurImageFilter : IAsyncActionFilter, IDisposable
     {
+        internal enum ImageExtractionStatus
+        {
+            Available,
+            NoContent,
+            Unrecognized,
+            Rejected,
+        }
+
+        internal sealed record ImageExtractionResult(
+            ImageExtractionStatus Status,
+            byte[]? Bytes,
+            string? ContentType)
+        {
+            public static ImageExtractionResult Available(byte[] bytes, string? contentType)
+                => new(ImageExtractionStatus.Available, bytes, contentType);
+
+            public static ImageExtractionResult NoContent(string? contentType)
+                => new(ImageExtractionStatus.NoContent, null, contentType);
+
+            public static ImageExtractionResult Unrecognized()
+                => new(ImageExtractionStatus.Unrecognized, null, null);
+
+            public static ImageExtractionResult Rejected(string? contentType)
+                => new(ImageExtractionStatus.Rejected, null, contentType);
+        }
+
         private const string ImageController = "Image";
         // Trickplay tile-sheet endpoint (Videos/{id}/Trickplay/{w}/{i}.jpg).
         // Each tile is a sprite-sheet JPEG containing many small thumbnails for
@@ -435,9 +462,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // picks art from that specific user's Collections). First blurring
             // candidate wins.
             UserSpoilerBlur userState = inScope[0].State;
+            Guid transformUserId = inScope[0].User.Id;
             for (var i = 0; i < inScope.Count; i++)
             {
-                if (!decisions[i]) { userState = inScope[i].State; break; }
+                if (!decisions[i])
+                {
+                    userState = inScope[i].State;
+                    transformUserId = inScope[i].User.Id;
+                    break;
+                }
             }
 
             // Artwork tier with the toggle OFF — pass through the original
@@ -465,11 +498,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 if (spoilerMode == "hide")
                 {
-                    await ReplaceWithStockCardAsync(executed, pluginConfig.SpoilerBlurIntensity, cacheKey, imageType, item, userState).ConfigureAwait(false);
+                    await ReplaceWithStockCardAsync(
+                        executed,
+                        pluginConfig.SpoilerBlurIntensity,
+                        cacheKey,
+                        imageType,
+                        item,
+                        userState,
+                        transformUserId).ConfigureAwait(false);
                 }
                 else
                 {
                     await ReplaceWithBlurredAsync(executed, pluginConfig.SpoilerBlurIntensity, cacheKey, imageType).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (executed.HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                // The client is gone, but the original result must still never be
+                // allowed to execute. A live coalesced follower may continue using
+                // the shared leader input under the flight-owned cancellation token.
+                if (!executed.HttpContext.Response.HasStarted)
+                {
+                    executed.Result = new FileContentResult(_blurService.HardcodedFallbackJpeg, "image/jpeg");
+                    ApplyNoStoreToResponse(executed.HttpContext);
                 }
             }
             catch (Exception ex)
@@ -1024,7 +1075,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             string cacheKey,
             string imageType,
             MediaBrowser.Controller.Entities.BaseItem item,
-            UserSpoilerBlur userState)
+            UserSpoilerBlur userState,
+            Guid transformUserId)
         {
             if (executed.Result == null) return;
             if (string.Equals(executed.HttpContext.Request.Method, "HEAD", StringComparison.OrdinalIgnoreCase))
@@ -1032,55 +1084,78 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 ApplyNoStoreToResponse(executed.HttpContext);
                 return;
             }
-
-            var (originalBytes, _) = await ExtractBytesAsync(executed.Result).ConfigureAwait(false);
-            if (originalBytes == null || originalBytes.Length == 0)
+            if (HandlePreFlightResult(executed, imageType))
             {
-                FailClosedOnEmptyExtraction(executed, imageType);
                 return;
             }
 
-            var parentBytes = TryGetParentArtBytes(item, userState, originalBytes, cacheKey + ":pp");
-            if (parentBytes != null && parentBytes.Length > 0)
-            {
-                executed.Result = new FileContentResult(parentBytes, "image/jpeg");
-                if (executed.HttpContext.Response.HasStarted) return;
-                ApplyNoStoreHeadersDirect(executed.HttpContext, imageType);
-                return;
-            }
+            var sourceResult = executed.Result;
+            var outcome = await _blurService.RunBoundedTransformAsync(
+                cacheKey + ":pipeline:user:" + transformUserId.ToString("N"),
+                token => BuildStockCardResultAsync(sourceResult, sigma, cacheKey, item, userState, token),
+                () => DisposeSourceResultAsync(sourceResult),
+                executed.HttpContext.RequestAborted).ConfigureAwait(false);
+            ApplyTransformOutcome(executed, outcome, imageType);
+        }
 
-            // No safe parent art available (e.g. movie directly opted in,
-            // series without a Backdrop, season without a Series Primary).
-            // Fall back to a blur of the original bytes so the card still
-            // has content rather than rendering as a flat dark "broken"
-            // tile. Visually consistent with what the user would see in
-            // blur-mode for the same item.
-            var blurred = _blurService.Blur(originalBytes, sigma, cacheKey);
-            if (blurred != null)
+        private async Task<SpoilerTransformResult> BuildStockCardResultAsync(
+            IActionResult sourceResult,
+            int sigma,
+            string cacheKey,
+            MediaBrowser.Controller.Entities.BaseItem item,
+            UserSpoilerBlur userState,
+            CancellationToken cancellationToken)
+        {
+            try
             {
-                executed.Result = new FileContentResult(blurred, "image/jpeg");
-                if (executed.HttpContext.Response.HasStarted) return;
-                ApplyNoStoreHeadersDirect(executed.HttpContext, imageType);
-                return;
-            }
+                var extracted = await ExtractBytesAsync(
+                    sourceResult,
+                    ImageBlurService.MaximumEncodedImageBytes,
+                    cancellationToken).ConfigureAwait(false);
+                if (extracted.Status == ImageExtractionStatus.NoContent)
+                {
+                    return SpoilerTransformResult.NoContent();
+                }
 
-            var stock = _blurService.StockCard(originalBytes, cacheKey);
-            if (stock == null)
+                if (extracted.Status == ImageExtractionStatus.Unrecognized)
+                {
+                    return SpoilerTransformResult.Unrecognized();
+                }
+
+                if (extracted.Status != ImageExtractionStatus.Available || extracted.Bytes == null)
+                {
+                    return SpoilerTransformResult.Rejected();
+                }
+
+                var parentBytes = await TryGetParentArtBytesAsync(
+                    item,
+                    userState,
+                    extracted.Bytes,
+                    cacheKey + ":pp",
+                    cancellationToken).ConfigureAwait(false);
+                if (parentBytes != null && parentBytes.Length > 0)
+                {
+                    return SpoilerTransformResult.Available(parentBytes);
+                }
+
+                // No safe parent art available. Blur the original; if that fails,
+                // generate a dark stock card, then use the pre-encoded structural
+                // fallback. None of these paths can publish the source bytes.
+                cancellationToken.ThrowIfCancellationRequested();
+                var blurred = _blurService.Blur(extracted.Bytes, sigma, cacheKey);
+                if (blurred != null)
+                {
+                    return SpoilerTransformResult.Available(blurred);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                var stock = _blurService.StockCard(extracted.Bytes, cacheKey);
+                return SpoilerTransformResult.Available(stock ?? _blurService.HardcodedFallbackJpeg);
+            }
+            finally
             {
-                // Skia render failed on a flat-fill — practically unreachable
-                // (Jellyfin's whole image pipeline shares the same Skia copy)
-                // but the hide-mode spoiler contract is "never serve original
-                // bytes through this path". Fall back to the pre-encoded
-                // 16x16 #101010 JPEG so the invariant is structural, not
-                // dependent on Skia liveness.
-                executed.Result = new FileContentResult(_blurService.HardcodedFallbackJpeg, "image/jpeg");
-                ApplyNoStoreToResponse(executed.HttpContext);
-                return;
+                await DisposeSourceResultAsync(sourceResult).ConfigureAwait(false);
             }
-
-            executed.Result = new FileContentResult(stock, "image/jpeg");
-            if (executed.HttpContext.Response.HasStarted) return;
-            ApplyNoStoreHeadersDirect(executed.HttpContext, imageType);
         }
 
         // Returns the bytes of a "safe parent" art image scaled to roughly
@@ -1097,11 +1172,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // falls back to blurring the original (then a flat dark stock card,
         // then the hardcoded fallback JPEG). JPEG-encoded, suitable for
         // FileContentResult.
-        private byte[]? TryGetParentArtBytes(
+        private async Task<byte[]?> TryGetParentArtBytesAsync(
             MediaBrowser.Controller.Entities.BaseItem item,
             UserSpoilerBlur userState,
             byte[] originalBytes,
-            string cacheKey)
+            string cacheKey,
+            CancellationToken cancellationToken)
         {
             try
             {
@@ -1145,9 +1221,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 if (imgInfo == null || string.IsNullOrEmpty(imgInfo.Path)) return null;
                 if (!System.IO.File.Exists(imgInfo.Path)) return null;
 
-                // Cache via the same LRU as StockCard — same cacheKey
-                // shape so successive identical requests are free.
-                var fileBytes = System.IO.File.ReadAllBytes(imgInfo.Path);
+                var fileBytes = await ReadFileWithCapAsync(
+                    imgInfo.Path,
+                    ImageBlurService.MaximumEncodedImageBytes,
+                    cancellationToken).ConfigureAwait(false);
                 if (fileBytes == null || fileBytes.Length == 0) return null;
 
                 // Resize to roughly match the original dimensions so the
@@ -1162,6 +1239,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // could be served user A's Collection A art from the cache.
                 var parentArtKey = cacheKey + ":" + parentId.ToString("N") + ":" + parentImageType;
                 return _blurService.ResizeToMatch(fileBytes, originalBytes, parentArtKey);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -1182,74 +1263,298 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 ApplyNoStoreToResponse(executed.HttpContext);
                 return;
             }
-
-            var (originalBytes, _) = await ExtractBytesAsync(executed.Result).ConfigureAwait(false);
-            if (originalBytes == null || originalBytes.Length == 0)
+            if (HandlePreFlightResult(executed, imageType))
             {
+                return;
+            }
+
+            var sourceResult = executed.Result;
+            var outcome = await _blurService.RunBoundedTransformAsync(
+                cacheKey + ":pipeline",
+                token => BuildBlurredResultAsync(sourceResult, sigma, cacheKey, token),
+                () => DisposeSourceResultAsync(sourceResult),
+                executed.HttpContext.RequestAborted).ConfigureAwait(false);
+            ApplyTransformOutcome(executed, outcome, imageType);
+        }
+
+        private async Task<SpoilerTransformResult> BuildBlurredResultAsync(
+            IActionResult sourceResult,
+            int sigma,
+            string cacheKey,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                var extracted = await ExtractBytesAsync(
+                    sourceResult,
+                    ImageBlurService.MaximumEncodedImageBytes,
+                    cancellationToken).ConfigureAwait(false);
+                if (extracted.Status == ImageExtractionStatus.NoContent)
+                {
+                    return SpoilerTransformResult.NoContent();
+                }
+
+                if (extracted.Status == ImageExtractionStatus.Unrecognized)
+                {
+                    return SpoilerTransformResult.Unrecognized();
+                }
+
+                if (extracted.Status != ImageExtractionStatus.Available || extracted.Bytes == null)
+                {
+                    return SpoilerTransformResult.Rejected();
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                var blurred = _blurService.Blur(extracted.Bytes, sigma, cacheKey);
+                if (blurred != null)
+                {
+                    return SpoilerTransformResult.Available(blurred);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                var fallback = _blurService.StockCard(extracted.Bytes, null) ?? _blurService.HardcodedFallbackJpeg;
+                return SpoilerTransformResult.Available(fallback);
+            }
+            finally
+            {
+                await DisposeSourceResultAsync(sourceResult).ConfigureAwait(false);
+            }
+        }
+
+        private void ApplyTransformOutcome(
+            ActionExecutedContext executed,
+            SpoilerTransformResult outcome,
+            string imageType)
+        {
+            if (outcome.Status == SpoilerTransformStatus.NoContent)
+            {
+                if (executed.Result is FileResult)
+                {
+                    executed.Result = new EmptyResult();
+                    ApplyNoStoreToResponse(executed.HttpContext);
+                }
+                else
+                {
+                    FailClosedOnEmptyExtraction(executed, imageType);
+                }
+
+                return;
+            }
+
+            if (outcome.Status == SpoilerTransformStatus.Unrecognized)
+            {
+                // Preserve the caller's exact result semantics. Known status-only
+                // shapes (404/204/4xx/5xx) pass through with no-store, 304 remains
+                // fail-closed, and truly unknown content-bearing shapes still get
+                // the structural fallback plus the existing observability warning.
                 FailClosedOnEmptyExtraction(executed, imageType);
                 return;
             }
 
-            var blurred = _blurService.Blur(originalBytes, sigma, cacheKey);
-            if (blurred == null)
-            {
-                // Blur failed, and we already consumed the source stream during
-                // ExtractBytesAsync, so we MUST write a complete body — but it
-                // must NEVER be the original spoiler bytes (fail CLOSED, same as
-                // hide mode). Fall back to a stock card sized to the original
-                // (keeps the grid from shifting), then the hardcoded JPEG if even
-                // that fails. Not cached (null key) since this is a transient
-                // error path. Force `no-store`.
-                var fallback = _blurService.StockCard(originalBytes, null) ?? _blurService.HardcodedFallbackJpeg;
-                executed.Result = new FileContentResult(fallback, "image/jpeg");
-                ApplyNoStoreToResponse(executed.HttpContext);
-                return;
-            }
-
-            // We always re-encode as JPEG (the blur service does), so set the
-            // content type explicitly. Cache-Control: private, no-store keeps
-            // clients from holding the blurred copy after the user marks the
-            // episode watched or disables Spoiler Guard for the series.
-            // Chapter images get a short browser-cache window via
-            // ApplyNoStoreHeadersDirect so timeline-hover preview thumbs
-            // don't round-trip on every cursor move.
-            executed.Result = new FileContentResult(blurred, "image/jpeg");
-
+            var bytes = outcome.Status == SpoilerTransformStatus.Available
+                && outcome.Bytes is { Length: > 0 }
+                ? outcome.Bytes
+                : _blurService.HardcodedFallbackJpeg;
+            executed.Result = new FileContentResult(bytes, "image/jpeg");
             if (executed.HttpContext.Response.HasStarted) return;
             ApplyNoStoreHeadersDirect(executed.HttpContext, imageType);
         }
 
-        private static async Task<(byte[]? Bytes, string? ContentType)> ExtractBytesAsync(IActionResult result)
+        private bool HandlePreFlightResult(ActionExecutedContext executed, string imageType)
         {
+            // A flight outcome is shared, so status-only and unknown shapes must
+            // be adjudicated against this caller's own result before coalescing.
+            // Otherwise a 304 leader could lend its "no body" classification to
+            // a normal FileResult follower and expose that follower's clear bytes.
+            if (!CanEnterTransformFlight(executed.Result))
+            {
+                FailClosedOnEmptyExtraction(executed, imageType);
+                return true;
+            }
+
+            var definitelyEmpty = executed.Result switch
+            {
+                FileContentResult content => content.FileContents == null || content.FileContents.Length == 0,
+                FileStreamResult stream => stream.FileStream == null
+                    || (stream.FileStream.CanSeek
+                        && stream.FileStream.Length - stream.FileStream.Position == 0),
+                PhysicalFileResult physical => IsMissingOrEmptyFile(physical.FileName),
+                VirtualFileResult virtualFile => IsMissingOrEmptyFile(virtualFile.FileName),
+                _ => false,
+            };
+            if (!definitelyEmpty)
+            {
+                return false;
+            }
+
+            DisposeReplacedFileStream(executed.Result);
+
+            executed.Result = new EmptyResult();
+            ApplyNoStoreToResponse(executed.HttpContext);
+            return true;
+        }
+
+        internal static bool CanEnterTransformFlight(IActionResult? result)
+            => result is FileContentResult
+                or FileStreamResult
+                or PhysicalFileResult
+                or VirtualFileResult;
+
+        internal static void DisposeReplacedFileStream(IActionResult? result)
+        {
+            if (result is FileStreamResult streamResult)
+            {
+                streamResult.FileStream?.Dispose();
+            }
+        }
+
+        private static bool IsMissingOrEmptyFile(string? path)
+            => string.IsNullOrEmpty(path)
+                || !File.Exists(path)
+                || new FileInfo(path).Length == 0;
+
+        internal static async Task<ImageExtractionResult> ExtractBytesAsync(
+            IActionResult result,
+            long maximumBytes,
+            CancellationToken cancellationToken)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumBytes);
+            cancellationToken.ThrowIfCancellationRequested();
+
             switch (result)
             {
                 case FileContentResult fcr:
-                    return (fcr.FileContents, fcr.ContentType);
-
-                case FileStreamResult fsr:
-                    if (fsr.FileStream == null) return (null, fsr.ContentType);
-                    using (var ms = new MemoryStream())
+                    if (fcr.FileContents == null || fcr.FileContents.Length == 0)
                     {
-                        await fsr.FileStream.CopyToAsync(ms).ConfigureAwait(false);
-                        return (ms.ToArray(), fsr.ContentType);
+                        return ImageExtractionResult.NoContent(fcr.ContentType);
                     }
 
+                    return fcr.FileContents.LongLength > maximumBytes
+                        ? ImageExtractionResult.Rejected(fcr.ContentType)
+                        : ImageExtractionResult.Available(fcr.FileContents, fcr.ContentType);
+
+                case FileStreamResult fsr:
+                    if (fsr.FileStream == null)
+                    {
+                        return ImageExtractionResult.NoContent(fsr.ContentType);
+                    }
+
+                    if (fsr.FileStream.CanSeek
+                        && fsr.FileStream.Length - fsr.FileStream.Position > maximumBytes)
+                    {
+                        return ImageExtractionResult.Rejected(fsr.ContentType);
+                    }
+
+                    var streamBytes = await ReadStreamWithCapAsync(
+                        fsr.FileStream,
+                        maximumBytes,
+                        cancellationToken).ConfigureAwait(false);
+                    if (streamBytes == null)
+                    {
+                        return ImageExtractionResult.Rejected(fsr.ContentType);
+                    }
+
+                    return streamBytes.Length == 0
+                        ? ImageExtractionResult.NoContent(fsr.ContentType)
+                        : ImageExtractionResult.Available(streamBytes, fsr.ContentType);
+
                 case PhysicalFileResult pfr:
-                    if (string.IsNullOrEmpty(pfr.FileName) || !File.Exists(pfr.FileName))
-                        return (null, pfr.ContentType);
-                    return (await File.ReadAllBytesAsync(pfr.FileName).ConfigureAwait(false), pfr.ContentType);
+                    return await ExtractFileAsync(
+                        pfr.FileName,
+                        pfr.ContentType,
+                        maximumBytes,
+                        cancellationToken).ConfigureAwait(false);
 
                 case VirtualFileResult vfr:
-                    if (string.IsNullOrEmpty(vfr.FileName)) return (null, vfr.ContentType);
-                    var fp = vfr.FileName;
-                    return File.Exists(fp)
-                        ? (await File.ReadAllBytesAsync(fp).ConfigureAwait(false), vfr.ContentType)
-                        : (null, vfr.ContentType);
+                    return await ExtractFileAsync(
+                        vfr.FileName,
+                        vfr.ContentType,
+                        maximumBytes,
+                        cancellationToken).ConfigureAwait(false);
 
                 default:
-                    return (null, null);
+                    return ImageExtractionResult.Unrecognized();
             }
         }
+
+        private static async Task<ImageExtractionResult> ExtractFileAsync(
+            string? path,
+            string? contentType,
+            long maximumBytes,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            {
+                return ImageExtractionResult.NoContent(contentType);
+            }
+
+            var file = new FileInfo(path);
+            if (file.Length > maximumBytes)
+            {
+                return ImageExtractionResult.Rejected(contentType);
+            }
+
+            var bytes = await ReadFileWithCapAsync(path, maximumBytes, cancellationToken).ConfigureAwait(false);
+            if (bytes == null)
+            {
+                return ImageExtractionResult.Rejected(contentType);
+            }
+
+            return bytes.Length == 0
+                ? ImageExtractionResult.NoContent(contentType)
+                : ImageExtractionResult.Available(bytes, contentType);
+        }
+
+        private static async Task<byte[]?> ReadFileWithCapAsync(
+            string path,
+            long maximumBytes,
+            CancellationToken cancellationToken)
+        {
+            var file = new FileInfo(path);
+            if (!file.Exists || file.Length > maximumBytes)
+            {
+                return null;
+            }
+
+            await using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 81920,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            return await ReadStreamWithCapAsync(stream, maximumBytes, cancellationToken).ConfigureAwait(false);
+        }
+
+        private static async Task<byte[]?> ReadStreamWithCapAsync(
+            Stream stream,
+            long maximumBytes,
+            CancellationToken cancellationToken)
+        {
+            using var buffer = new MemoryStream();
+            var chunk = new byte[81920];
+            while (buffer.Length <= maximumBytes)
+            {
+                var remainingThroughCap = maximumBytes + 1 - buffer.Length;
+                var requested = (int)Math.Min(chunk.Length, remainingThroughCap);
+                var read = await stream.ReadAsync(
+                    chunk.AsMemory(0, requested),
+                    cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    return buffer.ToArray();
+                }
+
+                buffer.Write(chunk, 0, read);
+            }
+
+            return null;
+        }
+
+        private static ValueTask DisposeSourceResultAsync(IActionResult sourceResult)
+            => sourceResult is FileStreamResult { FileStream: not null } streamResult
+                ? streamResult.FileStream.DisposeAsync()
+                : ValueTask.CompletedTask;
 
         // F2 fail-closed on empty extraction. ExtractBytesAsync returned no
         // bytes. Two very different situations produce that:
@@ -1297,7 +1602,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 case null:
                     return true; // nothing to write
-                case FileResult:
+                case FileContentResult:
+                case FileStreamResult:
+                case PhysicalFileResult:
+                case VirtualFileResult:
                     // Recognized file shape (Content/Stream/Physical/Virtual)
                     // that yielded no bytes → an empty body, no leak.
                     return true;

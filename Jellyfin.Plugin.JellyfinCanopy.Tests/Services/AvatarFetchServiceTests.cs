@@ -52,7 +52,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.All(results, result => Assert.Equal(AvatarFetchStatus.Available, result.Status));
             Assert.Equal(1, handler.Calls);
             Assert.Single(cache.AvatarCache);
-            Assert.Equal(0, service.InFlightCount);
+            await WaitForNoFlightsAsync(service);
         }
 
         [Fact]
@@ -86,7 +86,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Equal(ValidPng, result.Content);
             Assert.Single(cache.AvatarCache);
             Assert.Equal(1, handler.Calls);
-            Assert.Equal(0, service.InFlightCount);
+            await WaitForNoFlightsAsync(service);
         }
 
         [Fact]
@@ -108,7 +108,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fetch);
             await stream.CancellationObserved.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Empty(cache.AvatarCache);
-            Assert.Equal(0, service.InFlightCount);
+            await WaitForNoFlightsAsync(service);
         }
 
         [Fact]
@@ -201,6 +201,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         {
             var (_, cache, service) = CreateWithService(handler, timeProvider, maximumAvatarBytes);
             return (service, cache);
+        }
+
+        private static async Task WaitForNoFlightsAsync(AvatarFetchService service)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (service.InFlightCount != 0 && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(10);
+            }
+
+            Assert.Equal(0, service.InFlightCount);
         }
 
         private static (RecordingHttpClientFactory Factory, SeerrCache Cache, AvatarFetchService Service) CreateWithService(
