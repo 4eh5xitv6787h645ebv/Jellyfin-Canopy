@@ -30,6 +30,12 @@
     <ItemGroup>
       <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinVersion)" />
       <PackageReference Include="Jellyfin.Model" Version="$(JellyfinVersion)" />
+      <!-- Jellyfin 12 ships Microsoft.Data.Sqlite.Core 10.0.9 and its SQLitePCLRaw
+           provider in the host. Compile against that exact shared assembly but do
+           not deploy a second copy into the plugin load context. -->
+      <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.9" PrivateAssets="all">
+        <ExcludeAssets>runtime</ExcludeAssets>
+      </PackageReference>
       <!--
         Spoiler Guard uses SkiaSharp for the Gaussian blur. Jellyfin ships SkiaSharp.dll in /jellyfin/ (verified present in the Jellyfin 12 container) as its own thumbnail engine, so we compile against the package but exclude the runtime asset (PrivateAssets=all + ExcludeAssets=runtime). The host's already-loaded copy wins. This keeps the plugin DLL deployment a single file with no native deps.
       -->

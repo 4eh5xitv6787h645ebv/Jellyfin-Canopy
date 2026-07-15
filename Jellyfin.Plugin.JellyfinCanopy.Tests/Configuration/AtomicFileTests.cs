@@ -10,7 +10,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
     ///   1. UTF-8 no-BOM output (keeps UserFileFormatGoldenTests byte-identical), and
     ///   2. a failed/partial write NEVER truncates the previously-good destination
     ///      (the W4-LEAK-7 truncate-then-copy defect a naive FileStream(Create) has).
-    /// Every routed caller (ReviewsStore, MaintenanceModeService, index.html,
+    /// Every routed JSON/file caller (MaintenanceModeService, index.html,
     /// BrandingController, UserConfigurationStore, TagCacheService, AssetCacheService)
     /// delegates to this helper, so proving the helper + the write-guard proving they
     /// USE it is the complete durability net.

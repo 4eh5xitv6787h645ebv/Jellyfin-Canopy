@@ -15,7 +15,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers;
 public sealed class PersistedPayloadLimitAttributeTests
 {
     [Fact]
-    public void AllFourCompleteReplacementEndpoints_UseTheSharedPreBindingPolicy()
+    public void EveryBoundedPersistenceEndpoint_UsesItsPreBindingPolicy()
     {
         AssertLimit(
             typeof(UserSettingsController),
@@ -33,6 +33,14 @@ public sealed class PersistedPayloadLimitAttributeTests
             typeof(HiddenContentController),
             nameof(HiddenContentController.SaveUserHiddenContent),
             PersistedPayloadPolicy.HiddenContentRequestBytes);
+        AssertLimit(
+            typeof(ReviewsController),
+            nameof(ReviewsController.UpsertReview),
+            ReviewLimits.RequestBytes);
+        AssertLimit(
+            typeof(ReviewsController),
+            nameof(ReviewsController.AdminUpsertReview),
+            ReviewLimits.RequestBytes);
     }
 
     [Theory]

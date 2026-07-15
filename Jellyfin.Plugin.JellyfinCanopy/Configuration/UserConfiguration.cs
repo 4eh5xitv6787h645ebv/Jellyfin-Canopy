@@ -357,8 +357,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
     }
 
     /// <summary>
-    /// Server-wide store of all user reviews, keyed by "{userIdN}:{mediaType}:{tmdbId}".
-    /// Stored in a single shared file (reviews.json) at the plugin config root.
+    /// Legacy server-wide JSON store, retained only as the one-time SQLite
+    /// migration input. New writes never serialize this whole-file shape.
     /// </summary>
     public class AllReviewsStore
     {

@@ -225,18 +225,37 @@ JC.initializeReviewsScript = function () {
     /**
      * Fetches all user-written reviews for a TMDB item (aggregated across all users).
      */
-    function fetchUserReviews(tmdbId: string, mediaType: string): Promise<UserReview[]> {
-        // mediaType is already in API format ('movie' or 'tv') — no conversion needed
-        return JC.core.api.plugin(`/reviews/${mediaType}/${tmdbId}`)
-            .then((data) => data !== null && typeof data === 'object' && !Array.isArray(data)
-                && 'reviews' in data && Array.isArray(data.reviews)
-                ? data.reviews.filter(isUserReview)
-                : [])
-            .catch((err: unknown) => {
-                if (!reviewsActive(identityContext, expectedGeneration)) return [];
-                console.error(`${logPrefix} Failed to fetch user reviews.`, err);
-                return [];
-            });
+    async function fetchUserReviews(tmdbId: string, mediaType: string): Promise<UserReview[]> {
+        // Follow bounded server pages so large libraries retain the pre-indexing
+        // behaviour (the UI still receives every visible review for this item).
+        const reviews: UserReview[] = [];
+        let cursor: string | null = null;
+        const seenCursors = new Set<string>();
+        try {
+            do {
+                const query = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+                const data = await JC.core.api.plugin(
+                    `/reviews/${mediaType}/${tmdbId}?pageSize=100${query}`
+                );
+                if (data === null || typeof data !== 'object' || Array.isArray(data)) break;
+                if ('reviews' in data && Array.isArray(data.reviews)) {
+                    reviews.push(...data.reviews.filter(isUserReview));
+                }
+
+                const next = 'nextCursor' in data && typeof data.nextCursor === 'string'
+                    ? data.nextCursor
+                    : null;
+                if (!next || seenCursors.has(next)) break;
+                seenCursors.add(next);
+                cursor = next;
+            } while (reviewsActive(identityContext, expectedGeneration));
+
+            return reviews;
+        } catch (err: unknown) {
+            if (!reviewsActive(identityContext, expectedGeneration)) return [];
+            console.error(`${logPrefix} Failed to fetch user reviews.`, err);
+            return [];
+        }
     }
 
     /**

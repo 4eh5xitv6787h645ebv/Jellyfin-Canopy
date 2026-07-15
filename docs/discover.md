@@ -673,6 +673,11 @@ What users get:
 - The **average user rating** shows as a chip next to the TMDB/RT ratings in the item's media-info bar.
 - The average also appears as a poster tag (a `person_heart` icon) on library cards when rating tags are enabled.
 
+Review text is limited to 2,000 characters. A server can hold 15,000 reviews in
+total, with up to 1,000 per user; editing or deleting an existing review remains
+available at the limit. Lists are loaded in bounded pages automatically, so normal
+detail-page behaviour is unchanged for large community libraries.
+
 **How to write one:** open a movie, series, season or episode detail page, scroll to the **Reviews** section, click **Add Review**, choose a star rating (optional) and write text (optional — a rating alone is valid), then click the save icon.
 
 **Enable it (admin):**

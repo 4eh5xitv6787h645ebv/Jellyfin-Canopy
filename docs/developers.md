@@ -1024,6 +1024,45 @@ Jellyfin.Plugin.JellyfinCanopy/
 └── dist/                      # esbuild output (generated at build time, never committed)
 ```
 
+#### Indexed review persistence
+
+User-written reviews live in `reviews.db`, not a process-wide JSON dictionary. The
+`Reviews` table is `WITHOUT ROWID` with `(UserId, MediaType, Target)` as its primary
+key and a second `(MediaType, Target, UserId)` index for item pages. Reads and admin
+moderation use opaque keyset cursors with a hard 100-row page ceiling. Inserts and
+deletes maintain total and per-user counters through SQLite triggers in the same
+`BEGIN IMMEDIATE` transaction, so the exact 1,000-per-user and 15,000-server quotas
+are checked before a mutation without scanning the table. Updating an existing row
+remains possible if an imported legacy installation is already above either quota.
+
+SQLite runs in WAL mode with `synchronous=FULL`, a five-second busy timeout, and
+short-lived unpooled connections. The plugin compiles against the exact
+`Microsoft.Data.Sqlite.Core` version supplied by Jellyfin 12; the test project binds
+that API to the operating system's patched `libsqlite3` rather than shipping another
+native SQLite into the plugin load context.
+
+On the first review operation after an upgrade, a bounded `reviews.json` is imported
+transactionally into a same-directory temporary database. Legacy numeric keys are
+canonicalized, collisions keep the newest `UpdatedAt`, every resulting row is
+hashed and read back, and `PRAGMA quick_check` must pass before the database is
+atomically published. The JSON then becomes a retained `reviews.json.migrated-*`
+rollback artifact. Once `reviews.db` exists it is always authoritative, including a
+crash between database publication and JSON archival. Startup also verifies the
+counter tables, repairs drift transactionally, creates at most five verified SQLite
+backups, and recovers a corrupt primary only from the newest backup that passes its
+own integrity check. A missing primary with retained backups is treated as an
+interrupted recovery and restores a verified backup instead of creating an empty
+store, even if a stale legacy JSON is still present. Corrupt database groups and
+stale migration/recovery temporary files are bounded as well.
+
+Migration is intentionally fail-closed: an oversized file or any invalid legacy
+review namespace leaves `reviews.json` untouched, preserves a deduplicated
+`reviews.json.corrupt-*` forensic copy, and makes review endpoints return 503 rather
+than silently dropping data. The operator recovery is to stop Jellyfin, repair the
+reported entry in `reviews.json` (or move the file aside only after preserving it),
+then restart. A valid file is retried automatically; moving it aside starts an empty
+review database.
+
 The project targets **Jellyfin 12 / net10.0 only** and builds with `TreatWarningsAsErrors` — the build is warning-free by contract.
 
 ### Development tooling

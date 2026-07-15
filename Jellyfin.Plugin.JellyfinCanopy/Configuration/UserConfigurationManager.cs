@@ -13,7 +13,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
     /// The three responsibilities it used to mix now live in:
     ///   • <see cref="UserConfigurationStore"/> — per-user settings file IO
     ///   • <see cref="UserDirMigration"/> — one-shot case-variant dir migration
-    ///   • <see cref="ReviewsStore"/> — shared reviews.json store
+    ///   • <see cref="ReviewsStore"/> — indexed, transactional review store
     /// </summary>
     public class UserConfigurationManager
     {
@@ -77,25 +77,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string[] GetAllUserIds()
             => _store.GetAllUserIds();
 
-        // ─── Shared reviews file (ReviewsStore) ──────────────────────────────────
+        // ─── Indexed shared reviews (ReviewsStore) ───────────────────────────────
 
-        /// Reads the server-wide reviews store from the shared reviews.json file.
-        public AllReviewsStore GetAllReviews()
-            => _reviews.GetAllReviews();
+        internal ReviewPage GetItemReviews(string mediaType, string tmdbId, int pageSize, string? cursor)
+            => _reviews.GetItemReviews(mediaType, tmdbId, pageSize, cursor);
+
+        internal ReviewPage GetAllReviews(int pageSize, string? cursor)
+            => _reviews.GetAllReviews(pageSize, cursor);
+
+        internal UserReview? GetReview(string userIdN, string mediaType, string tmdbId)
+            => _reviews.GetReview(userIdN, mediaType, tmdbId);
 
         /// <summary>
         /// Atomically creates or updates a user's review for a specific item.
         /// </summary>
-        public void UpsertReview(string userIdN, string mediaType, string tmdbId,
-                                 string content, int? rating, string nowIso)
+        internal ReviewUpsertOutcome UpsertReview(string userIdN, string mediaType, string tmdbId,
+                                                   string content, int? rating, string nowIso)
             => _reviews.UpsertReview(userIdN, mediaType, tmdbId, content, rating, nowIso);
 
         /// <summary>
         /// Atomically deletes a review identified by userIdN + mediaType + tmdbId.
         /// Returns true if a review was removed, false if no matching review existed.
         /// </summary>
-        public bool DeleteReview(string userIdN, string mediaType, string tmdbId)
+        internal bool DeleteReview(string userIdN, string mediaType, string tmdbId)
             => _reviews.DeleteReview(userIdN, mediaType, tmdbId);
+
+        internal int DeleteUserReviews(string userIdN, int maximum)
+            => _reviews.DeleteUserReviews(userIdN, maximum);
+
+        internal ReviewStoreStatus GetReviewStoreStatus()
+            => _reviews.GetStatus();
 
         // ─── Processed watchlist convenience wrappers ────────────────────────────
 

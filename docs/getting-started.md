@@ -71,6 +71,13 @@ The importer never modifies or removes Enhanced's files. They remain the rollbac
 
 Malformed Enhanced administration XML, or malformed critical Enhanced JSON such as settings, bookmarks, hidden content, or reviews, also blocks publication. Canopy logs the exact source file and refuses to finish loading for that startup, preventing defaults or background writers from contaminating the retry path; Jellyfin itself remains available. Repair or move aside the reported source, then restart. A genuinely missing XML or data half is reported by its absence and the available half is still imported.
 
+The same fail-closed rule applies when the older Canopy `reviews.json` is first
+converted to the indexed review database. An oversized file or one invalid review
+key is preserved as `reviews.json.corrupt-*`, the original stays untouched, and
+review endpoints return unavailable. Stop Jellyfin, repair the reported JSON entry
+(or preserve and move the file aside if an empty review store is intentional), then
+restart; a repaired file is retried automatically.
+
 For rollback, stop Jellyfin, remove or move aside the Canopy installation/state, restore your pre-upgrade server backup, and start Jellyfin 10.11 with Enhanced. Because the importer copied rather than moved the Enhanced source, the original state is still available. Enhanced and Canopy are not intended to run side by side: Enhanced targets Jellyfin 10.11, while Canopy targets Jellyfin 12.
 
 ## Upgrading from Jellyfin Elevate
