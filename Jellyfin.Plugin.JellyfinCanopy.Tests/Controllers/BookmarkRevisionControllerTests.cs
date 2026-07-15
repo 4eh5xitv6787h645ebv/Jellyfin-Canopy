@@ -253,6 +253,68 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void BatchUpdateExistingBookmark_CommitsUpdatedBookmark()
+        {
+            Seed(("target", Bookmark("item-target", "old")));
+
+            var result = Controller().BatchUserBookmarks(UserId, new UserSettingsController.BookmarkBatchPayload
+            {
+                Revision = 0,
+                Operations = new List<UserSettingsController.BookmarkOperationPayload>
+                {
+                    new UserSettingsController.BookmarkOperationPayload
+                    {
+                        Type = "update",
+                        BookmarkId = "target",
+                        Bookmark = Bookmark("item-target", "new")
+                    }
+                }
+            });
+
+            var ok = Assert.IsType<OkObjectResult>(result);
+            var response = Assert.IsType<UserSettingsController.BookmarkMutationResponse>(ok.Value);
+            Assert.True(response.Success);
+            Assert.Equal(1, response.Revision);
+            Assert.Equal("new", response.Bookmarks["target"].Label);
+
+            var final = State();
+            Assert.Equal(1, final.Revision);
+            Assert.Equal("new", final.Bookmarks["target"].Label);
+        }
+
+        [Fact]
+        public void BatchUpdateMissingBookmark_ReturnsNotFoundWithoutChangingState()
+        {
+            Seed(("keep", Bookmark("item-keep", "unchanged")));
+
+            var result = Controller().BatchUserBookmarks(UserId, new UserSettingsController.BookmarkBatchPayload
+            {
+                Revision = 0,
+                Operations = new List<UserSettingsController.BookmarkOperationPayload>
+                {
+                    new UserSettingsController.BookmarkOperationPayload
+                    {
+                        Type = "update",
+                        BookmarkId = "missing",
+                        Bookmark = Bookmark("item-missing", "new")
+                    }
+                }
+            });
+
+            var notFound = Assert.IsType<NotFoundObjectResult>(result);
+            var response = Assert.IsType<UserSettingsController.BookmarkMutationResponse>(notFound.Value);
+            Assert.False(response.Success);
+            Assert.Equal(0, response.Revision);
+            Assert.Contains("does not exist", response.Message, StringComparison.Ordinal);
+            Assert.Equal(new[] { "keep" }, response.Bookmarks.Keys);
+
+            var final = State();
+            Assert.Equal(0, final.Revision);
+            Assert.Equal(new[] { "keep" }, final.Bookmarks.Keys);
+            Assert.Equal("unchanged", final.Bookmarks["keep"].Label);
+        }
+
+        [Fact]
         public async Task ConcurrentUpdateDelete_DoesNotResurrectDeletedBookmark()
         {
             Seed(("target", Bookmark("item-target", "old")));
