@@ -185,7 +185,10 @@ after it is an ordinary blocking check.
 
 ```bash
 # One-time setup
-npm install
+nvm install                       # reads the exact Node version from .nvmrc
+nvm use
+npm run check:toolchain           # verifies exact Node + npm before any build
+npm ci
 
 # Client
 ./verify.sh lint                # ESLint findings/cap breaches are advisory;

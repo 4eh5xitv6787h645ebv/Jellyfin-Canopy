@@ -78,13 +78,23 @@
       <NpmWorkingDir>$(MSBuildThisFileDirectory)..</NpmWorkingDir>
     </PropertyGroup>
 
-    <!-- Guard: fail with a clear message when npm is missing, instead of an opaque
-         Exec error. Node/npm is required on build machines (CI runners have it). -->
+    <!-- Fail before dependency installation when the build machine is missing or
+         drifting from the exact repository-owned Node/npm contract. CI must run
+         actions/setup-node from .nvmrc before reaching this target; local builds
+         get the same actionable check instead of inheriting an arbitrary PATH. -->
+    <Exec Command="node --version" WorkingDirectory="$(NpmWorkingDir)" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="NodeProbeExitCode" />
+    </Exec>
+    <Error Condition="'$(NodeProbeExitCode)' != '0'"
+           Text="Node.js was not found on PATH. This repository requires the exact Node/npm versions declared by .nvmrc and package.json. Install them with nvm install, then re-run the build." />
+
     <Exec Command="npm --version" WorkingDirectory="$(NpmWorkingDir)" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low" StandardErrorImportance="low">
       <Output TaskParameter="ExitCode" PropertyName="NpmProbeExitCode" />
     </Exec>
     <Error Condition="'$(NpmProbeExitCode)' != '0'"
-           Text="npm was not found on PATH. Building this plugin requires Node.js + npm to produce the client bundle (dist/jc.bundle.js). Install Node.js (https://nodejs.org) and re-run the build." />
+           Text="npm was not found on PATH. This repository requires the exact Node/npm versions declared by .nvmrc and package.json. Install them with nvm install, then re-run the build." />
+
+    <Exec Command="node scripts/check-node-toolchain.js" WorkingDirectory="$(NpmWorkingDir)" />
 
     <!-- First build on a clean checkout: install the JS toolchain (esbuild). -->
     <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(NpmWorkingDir)" Condition="!Exists('$(NpmWorkingDir)/node_modules/esbuild')" />

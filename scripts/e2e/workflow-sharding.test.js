@@ -140,12 +140,14 @@ test('stable blocking aggregate reuses same-run attempts and rejects invalid sha
     const aggregate = jobBlock('e2e', 'manifest');
 
     assert.match(aggregate, /name: E2E \(dockerized Jellyfin 12\)/);
-    assert.match(aggregate, /needs: e2e_shard/);
+    assert.match(aggregate, /needs: \[e2e_shard, bundle-equivalence\]/);
     assert.match(aggregate, /if: always\(\)/);
     const aggregateHeader = aggregate.slice(0, aggregate.indexOf('\n    steps:'));
     assert.doesNotMatch(aggregateHeader, /continue-on-error:/);
     assert.match(aggregate, /id: download\n\s+continue-on-error: true/);
     assert.match(aggregate, /name: Require shard artifact download/);
+    assert.match(aggregate, /name: Require reproducible client bundle/);
+    assert.match(aggregate, /BUNDLE_EQUIVALENCE_RESULT: \$\{\{ needs\.bundle-equivalence\.result \}\}/);
     assert.match(aggregate, /permissions:\n\s+actions: read\n\s+contents: read/);
     assert.match(aggregate, /github-token: \$\{\{ github\.token \}\}/);
     assert.match(aggregate, /run-id: \$\{\{ github\.run_id \}\}/);
