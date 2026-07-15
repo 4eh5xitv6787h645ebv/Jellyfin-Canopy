@@ -22,8 +22,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         // Cross-request in-memory cache keyed by userId (N-format string).
         // Eliminates per-request disk reads for hidden-content.json.
-        private static readonly ConcurrentDictionary<string, (HideContext Ctx, DateTime CachedAt)> _hcCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly TimeSpan _hcCacheTtl = TimeSpan.FromSeconds(30);
+        private static readonly BoundedTtlCache<string, (HideContext Ctx, DateTime CachedAt)> _hcCache = new(
+            maximumEntries: 2_048,
+            maximumWeight: 100_000,
+            weight: static (_, entry) => 1L
+                + entry.Ctx.ItemIdScopes.Count
+                + entry.Ctx.SeriesIdScopes.Count,
+            comparer: StringComparer.OrdinalIgnoreCase,
+            defaultTtl: () => _hcCacheTtl);
 
         /// <summary>
         /// Removes the cached hidden-content context for the given user so the next
@@ -88,8 +95,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         // Re-warn at most once per hour so a real Jellyfin upgrade isn't permanently invisible after the first warn.
         private static readonly TimeSpan ShapeMismatchReWarnInterval = TimeSpan.FromHours(1);
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _warnedShapeMismatchAt = new();
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _warnedReadFailure = new();
+        private static readonly BoundedTtlCache<string, DateTime> _warnedShapeMismatchAt = new(
+            maximumEntries: 256,
+            maximumWeight: 256 * 1024,
+            weight: static (key, _) => key.Length + sizeof(long),
+            comparer: StringComparer.Ordinal,
+            defaultTtl: () => ShapeMismatchReWarnInterval);
+        private static readonly BoundedTtlCache<Guid, byte> _warnedReadFailure = new(
+            maximumEntries: 2_048,
+            maximumWeight: 2_048,
+            defaultTtl: static () => TimeSpan.FromDays(7));
 
         private static void WarnShapeMismatchOnce(ILogger<HiddenContentResponseFilter> logger, string surface, string handlerName, IActionResult? result)
         {
@@ -97,7 +112,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // AddOrUpdate returns the stored value. Equality with `now` means our new timestamp won the slot — log.
             var stored = _warnedShapeMismatchAt.AddOrUpdate(
                 surface,
-                now,
+                _ => now,
                 (_, last) => (now - last) >= ShapeMismatchReWarnInterval ? now : last);
             if (stored != now) return;
             var actualType = result?.GetType().FullName ?? "(null)";
@@ -250,7 +265,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // Cache the resolved context (an intentional policy, retained LKG, or the
             // fail-closed sentinel) with a fresh timestamp — never an empty fail-open
             // entry after a fault. A repair invalidates this via InvalidateUser.
-            _hcCache[userIdN] = (ctx, now);
+            _hcCache.Set(userIdN, (ctx, now), _hcCacheTtl);
             httpContext.Items[CacheKey] = ctx;
             return ctx;
         }

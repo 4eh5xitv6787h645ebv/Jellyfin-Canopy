@@ -26,7 +26,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         public const string ContextKeyUserState = "__JE_SpoilerBlur_UserState_Shared";
 
         private static readonly TimeSpan PerKeyWarnInterval = TimeSpan.FromHours(1);
-        private static readonly ConcurrentDictionary<string, DateTime> _warnedAt = new();
+        private static readonly BoundedTtlCache<string, DateTime> _warnedAt = new(
+            maximumEntries: 4_096,
+            maximumWeight: 1024 * 1024,
+            weight: static (key, _) => key.Length + sizeof(long),
+            comparer: StringComparer.Ordinal,
+            defaultTtl: () => PerKeyWarnInterval);
 
         // F7: cross-request in-memory cache of each user's spoiler state, keyed
         // by userId (N-format). An anonymous image burst on a shared IP probes
@@ -35,8 +40,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // every controller/pending/promoter write path via InvalidateUser, and
         // per-request the HttpContext.Items layer still short-circuits repeats.
         private static readonly TimeSpan UserStateCacheTtl = TimeSpan.FromSeconds(30);
-        private static readonly ConcurrentDictionary<string, (UserSpoilerBlur State, DateTime CachedAt)> _userStateCache
-            = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly BoundedTtlCache<string, (UserSpoilerBlur State, DateTime CachedAt)> _userStateCache
+            = new(
+                maximumEntries: 2_048,
+                maximumWeight: 100_000,
+                weight: static (_, entry) => 1L
+                    + entry.State.Series.Count
+                    + entry.State.Movies.Count
+                    + entry.State.Collections.Count
+                    + entry.State.PendingTmdb.Count,
+                comparer: StringComparer.OrdinalIgnoreCase,
+                defaultTtl: () => UserStateCacheTtl);
 
         // F6: memoized result of the O(opted-collections × members) collection
         // walk in FindOptedInCollectionForMovie (runs 2-3× per movie image/DTO).
@@ -46,8 +60,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // automatically (self-invalidating) and two users with the same set share
         // safely. Short TTL bounds staleness from library edits.
         private static readonly TimeSpan CollectionScopeCacheTtl = TimeSpan.FromSeconds(30);
-        private static readonly ConcurrentDictionary<string, (Guid? CollectionId, DateTime CachedAt)> _collectionScopeCache
-            = new(StringComparer.Ordinal);
+        private static readonly BoundedTtlCache<string, (Guid? CollectionId, DateTime CachedAt)> _collectionScopeCache
+            = new(
+                maximumEntries: 1_024,
+                maximumWeight: 8L * 1024 * 1024,
+                weight: static (key, _) => key.Length + 16,
+                comparer: StringComparer.Ordinal,
+                defaultTtl: () => CollectionScopeCacheTtl);
 
         /// <summary>
         /// Drops the cross-request caches for a user so the next request re-reads
@@ -147,17 +166,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             if (cacheKey != null)
             {
-                _collectionScopeCache[cacheKey] = (result, now);
-                // Opportunistic eviction, mirroring the season-watched cache in
-                // SpoilerBlurImageFilter: snapshot-free, only removes expired.
-                if (_collectionScopeCache.Count > 1024)
-                {
-                    foreach (var kvp in _collectionScopeCache)
-                    {
-                        if ((now - kvp.Value.CachedAt) >= CollectionScopeCacheTtl)
-                            _collectionScopeCache.TryRemove(kvp.Key, out _);
-                    }
-                }
+                _collectionScopeCache.Set(
+                    cacheKey,
+                    (result, now),
+                    CollectionScopeCacheTtl);
             }
             return result;
         }
@@ -264,17 +276,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     $"Spoiler Guard resolver: {read.Status} spoilerblur.json for {userId} ({read.FaultDetail}) — {posture} until repaired.");
             }
 
-            _userStateCache[userIdN] = (state, now);
-            // Opportunistic prune so the cache can't grow unbounded across many
-            // users over a long uptime (mirrors the IP-scan cache prune).
-            if (_userStateCache.Count > 512)
-            {
-                foreach (var kvp in _userStateCache)
-                {
-                    if ((now - kvp.Value.CachedAt) >= UserStateCacheTtl)
-                        _userStateCache.TryRemove(kvp.Key, out _);
-                }
-            }
+            _userStateCache.Set(userIdN, (state, now), UserStateCacheTtl);
             httpContext.Items[cacheKey] = state;
             return state;
         }
@@ -300,7 +302,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         public void WarnRateLimited(string key, string message)
         {
             var now = DateTime.UtcNow;
-            var stored = _warnedAt.AddOrUpdate(key, now,
+            var stored = _warnedAt.AddOrUpdate(key, _ => now,
                 (_, last) => (now - last) >= PerKeyWarnInterval ? now : last);
             if (stored != now) return;
             _logger.LogWarning(message);

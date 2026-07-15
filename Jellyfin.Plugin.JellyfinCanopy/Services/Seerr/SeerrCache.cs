@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
@@ -15,26 +16,84 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
     /// </summary>
     public sealed class SeerrCache : ISeerrCache
     {
+        internal const int AvatarMaximumEntries = 64;
+        internal const long AvatarMaximumBytes = 32 * 1024 * 1024;
+        internal const int UserMaximumEntries = 2048;
+        internal const long UserMaximumBytes = 4 * 1024 * 1024;
+        internal const int ResponseMaximumEntries = 256;
+        internal const long ResponseMaximumBytes = 32 * 1024 * 1024;
+        internal const int TmdbEnrichmentMaximumEntries = 512;
+        internal const long TmdbEnrichmentMaximumBytes = 4 * 1024 * 1024;
+        internal const int CertificationMaximumEntries = 4096;
+        internal const long CertificationMaximumBytes = 16 * 1024 * 1024;
+        internal const int Public4kMaximumEntries = 64;
+
         private readonly IPluginConfigProvider _configProvider;
 
         public SeerrCache(IPluginConfigProvider configProvider)
         {
             _configProvider = configProvider;
+            AvatarCache = new(
+                AvatarMaximumEntries,
+                AvatarMaximumBytes,
+                AvatarWeight,
+                StringComparer.Ordinal,
+                defaultTtl: () => AvatarCacheDuration);
+            UserIdCache = new(
+                UserMaximumEntries,
+                UserMaximumBytes,
+                UserIdWeight,
+                StringComparer.Ordinal,
+                defaultTtl: GetUserIdCacheTtl);
+            UserCache = new(
+                UserMaximumEntries,
+                UserMaximumBytes,
+                UserWeight,
+                StringComparer.Ordinal,
+                defaultTtl: GetUserIdCacheTtl);
+            AutoImportFailureThrottle = new(
+                maximumEntries: UserMaximumEntries,
+                maximumWeight: UserMaximumEntries, // unit-weight entries
+                comparer: StringComparer.Ordinal,
+                defaultTtl: () => AutoImportFailureThrottleTtl);
+            ResponseCache = new(
+                ResponseMaximumEntries,
+                ResponseMaximumBytes,
+                ResponseWeight,
+                StringComparer.Ordinal,
+                defaultTtl: GetResponseCacheTtl);
+            Public4kSettingsCache = new(
+                maximumEntries: Public4kMaximumEntries,
+                maximumWeight: Public4kMaximumEntries, // unit-weight entries
+                comparer: StringComparer.Ordinal,
+                defaultTtl: () => Public4kSettingsCacheTtl);
+            TmdbEnrichmentCache = new(
+                TmdbEnrichmentMaximumEntries,
+                TmdbEnrichmentMaximumBytes,
+                TmdbEnrichmentWeight,
+                StringComparer.Ordinal,
+                defaultTtl: GetTmdbEnrichmentCacheTtl);
+            CertScoreCache = new(
+                CertificationMaximumEntries,
+                CertificationMaximumBytes,
+                CertificationWeight,
+                StringComparer.Ordinal,
+                defaultTtl: GetParentalRatingCacheTtl);
         }
 
         // Server-side cache for proxied avatar images to avoid re-fetching from
         // upstream Seerr on every request. Entries expire after 1 hour.
-        public ConcurrentDictionary<string, (byte[] Content, string ContentType, string ETag, DateTime CachedAt)> AvatarCache { get; } = new();
+        public BoundedTtlCache<string, (byte[] Content, string ContentType, string ETag, DateTime CachedAt)> AvatarCache { get; }
 
         public TimeSpan AvatarCacheDuration { get; } = TimeSpan.FromHours(1);
 
         // Cache for Seerr user ID lookups (JellyfinUserId -> SeerrUserId)
-        public Dictionary<string, (string SeerrUserId, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> UserIdCache { get; } = new();
+        public BoundedTtlCache<string, (string SeerrUserId, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> UserIdCache { get; }
 
         public object UserIdCacheLock { get; } = new();
 
         // Cache for Seerr user lookups (JellyfinUserId -> full Seerr user payload, null = negative cache)
-        public Dictionary<string, (SeerrUser? User, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> UserCache { get; } = new();
+        public BoundedTtlCache<string, (SeerrUser? User, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> UserCache { get; }
 
         public object UserCacheLock { get; } = new();
 
@@ -42,14 +101,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         // imports. The timestamp is written before the POST and retained only
         // when its outcome is incomplete, preventing concurrent/repeated
         // requests from creating an import storm without publishing absence.
-        public Dictionary<string, DateTime> AutoImportFailureThrottle { get; } = new();
+        public BoundedTtlCache<string, DateTime> AutoImportFailureThrottle { get; }
 
         public object AutoImportFailureThrottleLock { get; } = new();
 
         public TimeSpan AutoImportFailureThrottleTtl { get; } = TimeSpan.FromSeconds(60);
 
         // Cache for Seerr proxy responses (discovery/search endpoints)
-        public Dictionary<string, (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> ResponseCache { get; } = new();
+        public BoundedTtlCache<string, (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> ResponseCache { get; }
 
         public object ResponseCacheLock { get; } = new();
 
@@ -68,14 +127,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         public TimeSpan SeerrStatusCacheTtl { get; } = TimeSpan.FromSeconds(30);
 
         // Source-keyed cache of Seerr's /api/v1/settings/public 4K flags.
-        public Dictionary<string, (bool Movie4kEnabled, bool Series4kEnabled, DateTime CachedAt, long ConfigurationRevision, string ApiKeyFingerprint)> Public4kSettingsCache { get; } = new(StringComparer.Ordinal);
+        public BoundedTtlCache<string, (bool Movie4kEnabled, bool Series4kEnabled, DateTime CachedAt, long ConfigurationRevision, string ApiKeyFingerprint)> Public4kSettingsCache { get; }
 
         public object Public4kSettingsCacheLock { get; } = new();
 
         public TimeSpan Public4kSettingsCacheTtl { get; } = TimeSpan.FromMinutes(5);
 
         // Cache for request-page TMDB enrichments (movie/tv detail lookups via Seerr)
-        public Dictionary<string, (TmdbEnrichmentResult Data, DateTime CachedAt, long ConfigurationRevision)> TmdbEnrichmentCache { get; } = new();
+        public BoundedTtlCache<string, (TmdbEnrichmentResult Data, DateTime CachedAt, long ConfigurationRevision)> TmdbEnrichmentCache { get; }
 
         public object TmdbEnrichmentCacheLock { get; } = new();
 
@@ -86,7 +145,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         // source, credentials, and full configuration. Null Score =
         // unrated/unknown; null Keywords = tag data not fetched (light
         // cert-only endpoint) — a tag-rule pass treats that as a miss.
-        public ConcurrentDictionary<string, (int? Score, int? SubScore, string[]? Keywords, string[]? Genres, DateTime CachedAt)> CertScoreCache { get; } = new();
+        public BoundedTtlCache<string, (int? Score, int? SubScore, string[]? Keywords, string[]? Genres, DateTime CachedAt)> CertScoreCache { get; }
 
         public TimeSpan GetResponseCacheTtl()
         {
@@ -110,6 +169,72 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         {
             var minutes = _configProvider.ConfigurationOrNull?.SeerrResponseCacheTtlMinutes ?? 10;
             return TimeSpan.FromMinutes(Math.Max(1, minutes));
+        }
+
+        private static long AvatarWeight(
+            string key,
+            (byte[] Content, string ContentType, string ETag, DateTime CachedAt) value)
+            => (key.Length * 2L)
+                + value.Content.LongLength
+                + (value.ContentType.Length * 2L)
+                + (value.ETag.Length * 2L)
+                + 128;
+
+        private static long UserIdWeight(
+            string key,
+            (string SeerrUserId, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity) value)
+            => ((key.Length + value.SeerrUserId.Length + value.ConfigurationIdentity.Length) * 2L) + 128;
+
+        private static long UserWeight(
+            string key,
+            (SeerrUser? User, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity) value)
+            => ((key.Length
+                    + value.ConfigurationIdentity.Length
+                    + (value.User?.JellyfinUserId?.Length ?? 0)
+                    + (value.User?.SourceUrl?.Length ?? 0)) * 2L)
+                + 256;
+
+        private static long ResponseWeight(
+            string key,
+            (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity) value)
+            => ((key.Length + value.Content.Length) * 2L)
+                + (value.ConfigurationIdentity.Length * 2L)
+                + 128;
+
+        private static long TmdbEnrichmentWeight(
+            string key,
+            (TmdbEnrichmentResult Data, DateTime CachedAt, long ConfigurationRevision) value)
+            => ((key.Length
+                    + (value.Data.Title?.Length ?? 0)
+                    + (value.Data.PosterUrl?.Length ?? 0)
+                    + (value.Data.DigitalReleaseDate?.Length ?? 0)
+                    + (value.Data.TheatricalReleaseDate?.Length ?? 0)
+                    + (value.Data.InitialAirDate?.Length ?? 0)
+                    + (value.Data.NextAirDate?.Length ?? 0)) * 2L)
+                + 256;
+
+        private static long CertificationWeight(
+            string key,
+            (int? Score, int? SubScore, string[]? Keywords, string[]? Genres, DateTime CachedAt) value)
+            => (key.Length * 2L)
+                + StringArrayWeight(value.Keywords)
+                + StringArrayWeight(value.Genres)
+                + 128;
+
+        private static long StringArrayWeight(string[]? values)
+        {
+            if (values == null)
+            {
+                return 0;
+            }
+
+            long weight = values.Length * 8L;
+            foreach (var value in values)
+            {
+                weight += (value?.Length ?? 0) * 2L;
+            }
+
+            return weight;
         }
 
         public void ClearUserCaches()

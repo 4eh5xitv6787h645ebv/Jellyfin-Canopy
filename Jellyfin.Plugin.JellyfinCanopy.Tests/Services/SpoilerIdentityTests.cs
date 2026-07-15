@@ -284,6 +284,31 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
+        public void RequestIdentity_ArbitraryIpAndCookieKeysRemainHardBounded()
+        {
+            var markers = NewService();
+            var identity = new RequestIdentityService(
+                new CountingSessionManager(),
+                new StubUserManager(),
+                markers,
+                NullLogger<RequestIdentityService>.Instance);
+
+            for (var i = 0; i < 3_000; i++)
+            {
+                var ctx = new DefaultHttpContext();
+                ctx.Connection.RemoteIpAddress = System.Net.IPAddress.Parse(
+                    $"10.{i / 256}.{i % 256}.1");
+                ctx.Request.Headers.Cookie =
+                    RequestIdentityService.SpoilerUidCookie + "=" + Guid.NewGuid();
+                identity.Resolve(ctx);
+            }
+
+            var counts = RequestIdentityService.CacheCountsForTest;
+            Assert.InRange(counts.IpScans, 1, 1_024);
+            Assert.InRange(counts.CookieMisses, 1, 2_048);
+        }
+
+        [Fact]
         public void RequestIdentity_ReadsMarkerFromPathAndIfNoneMatch()
         {
             var user = new User("carrier-user", "Prov", "PwProv");

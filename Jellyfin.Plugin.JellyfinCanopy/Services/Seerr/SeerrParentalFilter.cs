@@ -939,10 +939,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             // value and never return it to a waiter from a newer generation.
             if (!IsCurrentConfiguration(gate))
             {
-                Helpers.AsyncSingleFlight.TryRemoveExact(
-                    _seerrCache.CertScoreCache,
-                    generationCacheKey,
-                    published);
+                _seerrCache.CertScoreCache.Remove(generationCacheKey, published);
                 return null;
             }
 

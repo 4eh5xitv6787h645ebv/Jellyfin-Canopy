@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using MediaBrowser.Controller.Chapters;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
@@ -87,7 +88,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // Re-warn at most once per hour per surface so a real Jellyfin upgrade
         // changing the response shape isn't permanently invisible.
         private static readonly TimeSpan ShapeWarnInterval = TimeSpan.FromHours(1);
-        private static readonly ConcurrentDictionary<string, DateTime> _warnedShapeAt = new();
+        private static readonly BoundedTtlCache<string, DateTime> _warnedShapeAt = new(
+            maximumEntries: 256,
+            maximumWeight: 256 * 1024,
+            weight: static (key, _) => key.Length + sizeof(long),
+            comparer: StringComparer.Ordinal,
+            defaultTtl: () => ShapeWarnInterval);
 
         // Rate-limited warning helper + per-request user-state caching now
         // live on SpoilerUserResolver (single shared HttpContext.Items key
@@ -752,13 +758,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // mark-watched → next-navigation roundtrips see fresh data.
         private static readonly TimeSpan SeasonWatchedCacheTtl = TimeSpan.FromSeconds(30);
 
-        private sealed class WatchedCacheEntry
-        {
-            public required bool AnyWatched { get; init; }
-            public required DateTime ExpiresAt { get; init; }
-        }
-
-        private static readonly ConcurrentDictionary<string, WatchedCacheEntry> _watchedCache = new();
+        private static readonly BoundedTtlCache<string, bool> _watchedCache = new(
+            maximumEntries: 512,
+            maximumWeight: 512,
+            comparer: StringComparer.Ordinal,
+            defaultTtl: () => SeasonWatchedCacheTtl);
 
         // Does this candidate's spoiler state cover the item at all? Used to
         // pick the effective user when a shared-IP request yields several
@@ -945,10 +949,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private bool HasWatchedAnyEpisodeInSeason(JUser user, Season season)
         {
             var key = user.Id.ToString("N") + ":" + season.Id.ToString("N");
-            var now = DateTime.UtcNow;
-            if (_watchedCache.TryGetValue(key, out var hit) && hit.ExpiresAt > now)
+            if (_watchedCache.TryGetValue(key, out var hit))
             {
-                return hit.AnyWatched;
+                return hit;
             }
 
             bool anyWatched = false;
@@ -996,24 +999,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // succeeds.
             if (!determinationFailed)
             {
-                _watchedCache[key] = new WatchedCacheEntry
-                {
-                    AnyWatched = anyWatched,
-                    ExpiresAt = now + SeasonWatchedCacheTtl,
-                };
-            }
-
-            // Periodic eviction so the dictionary doesn't grow unbounded
-            // across long server uptimes. Snapshot via ToArray so a
-            // concurrent insert during the scan can't trip
-            // InvalidOperationException — `ConcurrentDictionary` enumerator
-            // only guarantees stable iteration when snapshotted.
-            if (_watchedCache.Count > 512)
-            {
-                foreach (var kvp in _watchedCache.ToArray())
-                {
-                    if (kvp.Value.ExpiresAt < now) _watchedCache.TryRemove(kvp.Key, out _);
-                }
+                _watchedCache.Set(key, anyWatched, SeasonWatchedCacheTtl);
             }
 
             return anyWatched;
@@ -1341,7 +1327,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var now = DateTime.UtcNow;
             var stored = _warnedShapeAt.AddOrUpdate(
                 key,
-                now,
+                _ => now,
                 (_, last) => (now - last) >= ShapeWarnInterval ? now : last);
             if (stored != now) return;
             _logger.LogWarning($"Spoiler Guard: image action produced an unrecognized result type ({key}); blur is no-op for this shape. Re-warns hourly. Likely a Jellyfin upgrade changed the image controller's return type.");

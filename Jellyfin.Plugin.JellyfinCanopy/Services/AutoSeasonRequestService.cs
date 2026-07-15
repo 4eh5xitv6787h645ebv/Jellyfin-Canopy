@@ -14,6 +14,7 @@ using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Querying;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
@@ -30,11 +31,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly ILibraryManager _libraryManager;
 
         // In-memory cache of recently requested seasons to avoid duplicates (keyed by tmdbId_seasonNumber, global across all users)
-        private readonly Dictionary<string, DateTime> _requestedSeasons = new();
+        private static readonly TimeSpan RequestReservationTtl = TimeSpan.FromHours(1);
+        private readonly BoundedTtlCache<string, byte> _requestedSeasons = new(
+            maximumEntries: 16_384,
+            maximumWeight: 16_384,
+            comparer: StringComparer.Ordinal,
+            defaultTtl: () => RequestReservationTtl);
         private readonly object _requestCacheLock = new();
         private readonly Seerr.ISeerrClient _seerrClient;
         private readonly ISeerrParentalFilter _parentalFilter;
-        private readonly Dictionary<string, (string Content, DateTime CachedAt)> _seriesDetailsCache = new();
+        private readonly BoundedTtlCache<string, string> _seriesDetailsCache = new(
+            maximumEntries: 256,
+            maximumWeight: 16L * 1024 * 1024,
+            weight: static (key, content) => Encoding.UTF8.GetByteCount(key) + Encoding.UTF8.GetByteCount(content),
+            comparer: StringComparer.Ordinal);
         private readonly object _seriesDetailsCacheLock = new();
         private readonly ConcurrentDictionary<string, Lazy<Task<string?>>> _seriesDetailsInFlight = new();
 
@@ -112,13 +122,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 lock (_seriesDetailsCacheLock)
                 {
                     if (_seriesDetailsCache.TryGetValue(cacheKey, out var cached) &&
-                        DateTime.UtcNow - cached.CachedAt < cacheTtl &&
                         IsCapturedConfigurationCurrent())
                     {
-                        return cached.Content;
+                        return cached;
                     }
                 }
             }
+
+            BoundedTtlCache<string, string>.CacheToken publication = default;
 
             async Task<string?> FetchAsync()
             {
@@ -162,7 +173,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         // removal cannot expose a miss before the result lands.
                         lock (_seriesDetailsCacheLock)
                         {
-                            _seriesDetailsCache[cacheKey] = (fetchedContent, DateTime.UtcNow);
+                            _seriesDetailsCache.TrySet(cacheKey, fetchedContent, cacheTtl, out publication);
                         }
                     }
 
@@ -188,7 +199,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // transition within this service instance.
                 lock (_seriesDetailsCacheLock)
                 {
-                    _seriesDetailsCache.Remove(cacheKey);
+                    _seriesDetailsCache.Remove(publication);
                 }
 
                 return null;
@@ -353,13 +364,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var cacheKey = BuildSourceScopedKey(
                 seerrSourceUrl,
                 $"{tmdbId}:S{nextSeasonNumber}");
+            BoundedTtlCache<string, byte>.CacheToken reservation;
             lock (_requestCacheLock)
             {
-                // Clean up expired entries
-                var expiredKeys = _requestedSeasons.Where(kvp => (DateTime.Now - kvp.Value).TotalHours > 1)
-                    .Select(kvp => kvp.Key).ToList();
-                foreach (var key in expiredKeys) _requestedSeasons.Remove(key);
-
                 if (_requestedSeasons.ContainsKey(cacheKey))
                 {
                     _logger.LogDebug($"[Auto-Season-Request] Already requested S{nextSeasonNumber} for TMDB {tmdbId} (cached)");
@@ -367,7 +374,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
 
                 // Reserve the slot so concurrent callers see it immediately
-                _requestedSeasons[cacheKey] = DateTime.Now;
+                _requestedSeasons.TrySet(cacheKey, 0, out reservation);
             }
 
             // Get episode count for next season to verify it has started
@@ -384,7 +391,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // TMDB updates with the new season's data.
                 lock (_requestCacheLock)
                 {
-                    _requestedSeasons.Remove(cacheKey);
+                    _requestedSeasons.Remove(reservation);
                 }
                 return;
             }
@@ -400,7 +407,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 _logger.LogDebug($"[Auto-Season-Request] Season {nextSeasonNumber} does not exist for '{series.Name}' (not available on TMDB)");
                 lock (_requestCacheLock)
                 {
-                    _requestedSeasons.Remove(cacheKey);
+                    _requestedSeasons.Remove(reservation);
                 }
                 return;
             }
@@ -437,7 +444,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // a possibly committed non-idempotent request.
                 lock (_requestCacheLock)
                 {
-                    _requestedSeasons.Remove(cacheKey);
+                    _requestedSeasons.Remove(reservation);
                 }
                 _logger.LogWarning($"[Auto-Season-Request] ✗ Failed to request '{series.Name}' S{nextSeasonNumber} for {user.Username}");
             }
