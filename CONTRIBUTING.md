@@ -195,22 +195,22 @@ npm ci
                                 # invocation/configuration failures still block
 npm run typecheck:src          # tsc --strict over the TypeScript module tree (src/)
 npm run test:client            # vitest unit tests for src/ modules
-npm run test:client:coverage   # + the src/core line-coverage ratchet
+npm run test:client:coverage   # the same full suite once + the src/core ratchet
 npm run build:bundle           # esbuild bundle — fails on unreachable src/ modules
 npm run syntax                 # node --check on the frozen legacy js/ tree
 npm run typecheck              # opt-in @ts-check over legacy js/ files
 
 # Server (Jellyfin 12 / net10.0; TreatWarningsAsErrors — zero warnings)
 dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release
-dotnet test                    # xUnit; add --collect:"XPlat Code Coverage" +
-                               # node scripts/check-dotnet-coverage.js for the ratchet
+dotnet test                    # plain xUnit when coverage evidence is not needed
+npm run test:server:coverage   # the full xUnit suite once + Cobertura ratchet
 
 # End-to-end (real browser against a real Jellyfin 12)
 npm run e2e                    # JF_BASE_URL=... (default http://localhost:8099)
 npm run e2e:headed             # watch it run
 ```
 
-Coverage thresholds are **ratchets**: they were set just below measured coverage when introduced (`vitest.config.ts` for `src/core`, `scripts/check-dotnet-coverage.js` for the plugin assembly). Raise them as you add tests; never lower them.
+Coverage thresholds are **ratchets**: they were set just below measured coverage when introduced (`vitest.config.ts` for `src/core`, `scripts/check-dotnet-coverage.js` for the plugin assembly). Raise them as you add tests; never lower them. The coverage commands already execute the complete unit suite, so do not run the corresponding plain command immediately before them.
 
 The ESLint warning cap (`--max-warnings` in the raw `npm run lint` script) is the same idea inverted: it is pinned at the reviewed count of typed-lint `no-unsafe-*` warnings in the converted legacy feature areas (`src/core` and `src/types` treat those rules as errors). Findings and cap breaches stay visible in logs and summaries but are advisory for delivery; the cap remains a review ratchet and must never be raised to make a branch green. When you type legacy shapes and the count drops, lower the cap to match. ESLint configuration, invocation, or internal failures are tooling failures and remain blocking.
 

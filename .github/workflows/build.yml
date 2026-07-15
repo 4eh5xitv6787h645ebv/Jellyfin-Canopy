@@ -92,17 +92,12 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Test
-        run: dotnet test Jellyfin.Plugin.JellyfinCanopy.Tests/JellyfinCanopy.Tests.csproj -c Release --logger "console;verbosity=normal"
-
       # Line-coverage ratchet over the plugin assembly (coverlet.collector).
       # The threshold and repeated clean measurement live in the shared
       # scripts/coverage-baselines.json artifact. Scope or coverage growth
       # requires an explicit reviewed ratchet update.
-      - name: Coverage (plugin assembly line-coverage ratchet)
-        run: |
-          dotnet test Jellyfin.Plugin.JellyfinCanopy.Tests/JellyfinCanopy.Tests.csproj -c Release --collect:"XPlat Code Coverage"
-          node scripts/check-dotnet-coverage.js
+      - name: Unit tests + coverage (plugin assembly line-coverage ratchet)
+        run: npm run test:server:coverage
 
   client-scripts:
     name: Client checks (lint advisory; all other gates blocking)
@@ -149,13 +144,10 @@ jobs:
       - name: Type check (src TypeScript modules, strict)
         run: npm run typecheck:src
 
-      - name: Client unit tests (vitest)
-        run: npm run test:client
-
       # Line-coverage ratchet over src/core/ (the typed platform layer).
       # The threshold and repeated clean measurement live in the same shared
       # scripts/coverage-baselines.json artifact as the server gate.
-      - name: Client coverage gate (src/core)
+      - name: Client unit tests + coverage gate (src/core)
         run: npm run test:client:coverage
 
       - name: Record independently built client bundle bytes
