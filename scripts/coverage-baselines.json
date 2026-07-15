@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 16063,
-        "totalLines": 24704
+        "coveredLines": 16244,
+        "totalLines": 24886
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Two clean reviewed 2026-07-15 .NET 10/Coverlet runs identically measured 16063 covered lines across the 24704-line combined scope after the Continue Watching linear index and playback retry deduplication, plus the bounded asynchronous log sink, hard retention budgets, DST-aware midnight rotation, periodic flush coalescing, oversized-file normalization, stream reuse, and truthful bounded shutdown. One line permits only the reproduced instrumentation variance."
+        "rationale": "Two clean reviewed 2026-07-15 .NET 10/Coverlet integration runs measured 16244 and 16243 covered lines across the identical 24886-line final scope after the Continue Watching linear index, outcome-aware playback retry deduplication, bounded asynchronous logging, and strict static locale resolution with immutable responses, silent regional fallback, and bounded miss logging. The one-line tolerance covers that reproduced instrumentation variance."
       }
     }
   }
