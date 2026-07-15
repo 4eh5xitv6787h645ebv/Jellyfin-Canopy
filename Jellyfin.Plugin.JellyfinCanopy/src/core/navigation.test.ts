@@ -164,6 +164,7 @@ describe('routeHref', () => {
     it('rejects route text that could escape the Jellyfin SPA route grammar', () => {
         expect(() => routeHref('https://attacker.example/')).toThrow(TypeError);
         expect(() => routeHref('details?admin=true')).toThrow(TypeError);
+        expect(routeHref('home')).toBe('#/home');
         expect(routeHref('details', { optional: null, enabled: false }))
             .toBe('#/details?enabled=false');
     });

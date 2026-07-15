@@ -9,12 +9,12 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 1428,
-        "totalLines": 1751
+        "coveredLines": 1436,
+        "totalLines": 1759
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "A final clean reviewed Node 22/V8 run on 2026-07-15 measured 1428 covered lines across the 1751-line core scope after centralizing bounded discovery response ownership, explicit semantic negative caching, shared-result waiter cancellation, and rejection observation for an already-aborted waiter. One line permits only negligible instrumentation variance."
+        "rationale": "A clean GitHub Actions Node 22/V8 run on 2026-07-16 measured 1436 covered lines across the 1759-line core scope after adding the shared document-relative Jellyfin SPA route builders. Focused V8 evidence exercised every new executable line, including encoded parameters, invalid routes, and the parameter-free path. One line permits only negligible instrumentation variance."
       }
     },
     "server": {
