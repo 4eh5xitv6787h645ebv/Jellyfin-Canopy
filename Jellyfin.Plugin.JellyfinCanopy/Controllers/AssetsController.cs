@@ -79,7 +79,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             if (path == null || !System.IO.File.Exists(path))
             {
-                _logger.LogWarning($"[Asset Cache] Asset '{asset.Key}' is not cached and upstream is unreachable; returning 404.");
                 return NotFound();
             }
 

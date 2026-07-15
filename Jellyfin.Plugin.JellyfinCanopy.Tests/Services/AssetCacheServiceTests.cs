@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -34,11 +35,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             }
         }
 
-        private AssetCacheService CreateService(RecordingHttpMessageHandler handler)
+        private AssetCacheService CreateService(
+            HttpMessageHandler handler,
+            TimeProvider? timeProvider = null,
+            int maxConcurrentFetches = 8,
+            ILogger<AssetCacheService>? logger = null)
             => new(
                 new RecordingHttpClientFactory(handler),
-                NullLogger<AssetCacheService>.Instance,
-                _cacheDir);
+                logger ?? NullLogger<AssetCacheService>.Instance,
+                _cacheDir,
+                timeProvider,
+                maxConcurrentFetches);
 
         // ---- Manifest integrity ------------------------------------------------------------
 
@@ -378,6 +385,95 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.True(File.Exists(Path.Combine(_cacheDir, "elsewhere", "regions.txt")));
         }
 
+        [Fact]
+        public async Task EnsureCached_OneHundredSameKeyFailures_FetchOncePerBackoffWindow()
+        {
+            var handler = new RecordingHttpMessageHandler();
+            var clock = new ManualTimeProvider(new DateTimeOffset(2026, 7, 15, 0, 0, 0, TimeSpan.Zero));
+            var logger = new CapturingLogger<AssetCacheService>();
+            var service = CreateService(handler, clock, logger: logger);
+            var asset = service.Resolve("icons/seerr.svg");
+
+            var firstWindow = await Task.WhenAll(Enumerable.Range(0, 100)
+                .Select(_ => service.EnsureCachedAsync(asset, forceRefresh: false, CancellationToken.None)));
+
+            Assert.All(firstWindow, Assert.Null);
+            Assert.Single(handler.Requests);
+            Assert.Single(logger.WarningMessages);
+            Assert.Equal(1, service.FailureStateCount);
+
+            clock.Advance(TimeSpan.FromSeconds(29));
+            await Task.WhenAll(Enumerable.Range(0, 100)
+                .Select(_ => service.EnsureCachedAsync(asset, forceRefresh: false, CancellationToken.None)));
+            Assert.Single(handler.Requests);
+            Assert.Single(logger.WarningMessages);
+
+            // At expiry, exactly one caller becomes the retry leader. Its failure opens the next
+            // (one-minute) window before any of the remaining 99 waiters may fetch.
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await Task.WhenAll(Enumerable.Range(0, 100)
+                .Select(_ => service.EnsureCachedAsync(asset, forceRefresh: false, CancellationToken.None)));
+            Assert.Equal(2, handler.Requests.Count);
+            Assert.Equal(2, logger.WarningMessages.Count);
+        }
+
+        [Fact]
+        public async Task EnsureCached_DifferentKeys_NeverExceedGlobalFetchLimit()
+        {
+            const int limit = 3;
+            var handler = new BlockingFailureHandler(limit);
+            var service = CreateService(handler, maxConcurrentFetches: limit);
+            var tasks = Enumerable.Range(0, 20)
+                .Select(i =>
+                {
+                    var first = (char)('a' + (i / 26));
+                    var second = (char)('a' + (i % 26));
+                    return service.EnsureCachedAsync(
+                        service.Resolve($"flags/4x3/{first}{second}.svg"),
+                        forceRefresh: false,
+                        CancellationToken.None);
+                })
+                .ToArray();
+
+            var reached = await Task.WhenAny(handler.ReachedLimit, Task.Delay(TimeSpan.FromSeconds(5)));
+            Assert.Same(handler.ReachedLimit, reached);
+            Assert.Equal(limit, handler.PeakActive);
+
+            handler.Release();
+            await Task.WhenAll(tasks);
+
+            Assert.Equal(20, handler.Calls);
+            Assert.Equal(limit, handler.PeakActive);
+        }
+
+        [Fact]
+        public async Task EnsureCached_SuccessfulRecovery_ClearsNegativeStateOnce()
+        {
+            var handler = new RecordingHttpMessageHandler();
+            var clock = new ManualTimeProvider(new DateTimeOffset(2026, 7, 15, 0, 0, 0, TimeSpan.Zero));
+            var logger = new CapturingLogger<AssetCacheService>();
+            var service = CreateService(handler, clock, logger: logger);
+            var asset = service.Resolve("elsewhere/providers.txt");
+
+            Assert.Null(await service.EnsureCachedAsync(asset, forceRefresh: false, CancellationToken.None));
+            Assert.Equal(1, service.FailureStateCount);
+
+            handler.AddResponse("/resources/providers.txt", "Netflix");
+            clock.Advance(TimeSpan.FromSeconds(30));
+            var recovered = await service.EnsureCachedAsync(asset, forceRefresh: false, CancellationToken.None);
+
+            Assert.NotNull(recovered);
+            Assert.Equal("Netflix", await File.ReadAllTextAsync(recovered!));
+            Assert.Equal(0, service.FailureStateCount);
+            Assert.Single(logger.InformationMessages);
+
+            // A normal cache hit neither contacts upstream nor repeats the recovery transition.
+            var requests = handler.Requests.Count;
+            Assert.Equal(recovered, await service.EnsureCachedAsync(asset, forceRefresh: false, CancellationToken.None));
+            Assert.Equal(requests, handler.Requests.Count);
+            Assert.Single(logger.InformationMessages);
+        }
+
         // ---- Embedded assets --------------------------------------------------------------------
 
         [Fact]
@@ -394,6 +490,104 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Contains("<svg", svg, StringComparison.Ordinal);
             // The guaranteed placeholder must not itself depend on the network.
             Assert.DoesNotContain("http", svg.Replace("http://www.w3.org", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+        }
+
+        private sealed class ManualTimeProvider : TimeProvider
+        {
+            private DateTimeOffset _now;
+
+            public ManualTimeProvider(DateTimeOffset now) => _now = now;
+
+            public override DateTimeOffset GetUtcNow() => _now;
+
+            public void Advance(TimeSpan amount) => _now = _now.Add(amount);
+        }
+
+        private sealed class BlockingFailureHandler : HttpMessageHandler
+        {
+            private readonly int _expectedLimit;
+            private readonly TaskCompletionSource _reachedLimit = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            private int _active;
+            private int _calls;
+            private int _peakActive;
+
+            public BlockingFailureHandler(int expectedLimit) => _expectedLimit = expectedLimit;
+
+            public Task ReachedLimit => _reachedLimit.Task;
+
+            public int Calls => Volatile.Read(ref _calls);
+
+            public int PeakActive => Volatile.Read(ref _peakActive);
+
+            public void Release() => _release.TrySetResult();
+
+            protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                Interlocked.Increment(ref _calls);
+                var active = Interlocked.Increment(ref _active);
+                UpdatePeak(active);
+                if (active >= _expectedLimit)
+                {
+                    _reachedLimit.TrySetResult();
+                }
+
+                try
+                {
+                    await _release.Task.WaitAsync(cancellationToken);
+                    return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                    {
+                        Content = new StringContent("unavailable"),
+                    };
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _active);
+                }
+            }
+
+            private void UpdatePeak(int candidate)
+            {
+                while (true)
+                {
+                    var current = Volatile.Read(ref _peakActive);
+                    if (candidate <= current || Interlocked.CompareExchange(ref _peakActive, candidate, current) == current)
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+
+        private sealed class CapturingLogger<T> : ILogger<T>
+        {
+            public List<string> WarningMessages { get; } = new();
+
+            public List<string> InformationMessages { get; } = new();
+
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull
+                => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                var message = formatter(state, exception);
+                if (logLevel == LogLevel.Warning)
+                {
+                    WarningMessages.Add(message);
+                }
+                else if (logLevel == LogLevel.Information)
+                {
+                    InformationMessages.Add(message);
+                }
+            }
         }
     }
 }
