@@ -987,7 +987,7 @@ Jellyfin.Plugin.JellyfinCanopy/
 │   ├── UserConfiguration.cs / UserConfigurationManager.cs (+ store/migration/reviews classes)
 │   │                          # UserConfigurationStore owns three read tiers: LENIENT (GetUserConfiguration,
 │   │                          # any fault → new T(), for ordinary display settings), STRICT (RMW writes,
-│   │                          # corrupt → backup + throw), and the TYPED policy read (ReadUserConfiguration →
+│   │                          # corrupt → durable quarantine + throw), and the TYPED policy read (ReadUserConfiguration →
 │   │                          # UserConfigReadResult classifying Missing/Valid/Corrupt/Unavailable). Security
 │   │                          # enforcement (Hidden Content, Spoiler Guard) uses the typed read so a corrupt or
 │   │                          # unavailable file retains last-known-good or fails CLOSED instead of failing open
@@ -1023,6 +1023,36 @@ Jellyfin.Plugin.JellyfinCanopy/
 ├── ScheduledTasks/ · Model/ · Logging/ · PluginPages/
 └── dist/                      # esbuild output (generated at build time, never committed)
 ```
+
+#### Per-user store recovery
+
+A malformed strict-read store does not remain at its authoritative path. Under the
+same per-user/file lock used by every mutation, `UserConfigurationStore` first
+publishes `<file>.unhealthy`, then atomically moves the exact source generation to
+`<file>.corrupt-<timestamp>-<hash>-<nonce>`. Publishing the marker first makes both
+crash windows fail closed: a crash before the move leaves the source plus marker;
+a crash after the move leaves the quarantine plus marker. Neither state can be
+mistaken for a new user. Normal saves refuse to overwrite a marked store, and
+retries inspect the marker without reparsing, copying, or relogging the same bytes.
+
+Forensic history is capped at five generations and 32 MiB per source file. The
+newest generation is always retained even when an externally created source was
+already larger than that budget; because quarantine is a same-directory move, that
+case does not add disk usage, and all older generations are removed.
+
+Recovery metadata (never payload bytes) is elevation-gated:
+
+- `GET /JellyfinCanopy/admin/user-store-recovery` lists active markers and whether
+  their recorded quarantine move completed.
+- `POST /JellyfinCanopy/admin/user-store-recovery/{userId}/{fileName}/reset`
+  preserves any source left by an interrupted move, deletes the marker last, and
+  intentionally starts that one store from its normal defaults on next access.
+
+Retrying a failed user mutation is not recovery. To retain repaired data instead
+of resetting it, stop Jellyfin, keep the quarantine artifact, validate and place
+the repaired JSON at the original filename, remove the matching `.unhealthy`
+marker only after that validation, and restart. Never replace a live marked file
+or delete the marker before the repaired primary is durable.
 
 #### Indexed review persistence
 

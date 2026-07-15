@@ -395,6 +395,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // TOCTOU path, or removed by the user) — nothing to do.
                 return PromotionOutcome.NotPending;
             }
+            catch (UserStoreUnhealthyException)
+            {
+                // Keep the registration for a post-repair event, but do not log
+                // every library notification for the same durable generation.
+                return PromotionOutcome.StillPending;
+            }
             catch (InvalidDataException ex)
             {
                 _logger.LogWarning($"SpoilerSeerrPromoter: skipping {userId}/{pendingKey} due to corrupt spoilerblur.json: {ex.Message}");

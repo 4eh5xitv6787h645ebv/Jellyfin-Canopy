@@ -118,6 +118,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
                             return 1;
                         });
                 }
+                catch (UserStoreUnhealthyException)
+                {
+                    return Task.CompletedTask;
+                }
                 catch (InvalidDataException ex)
                 {
                     _logger.LogWarning($"SpoilerAutoEnable: skipping {userId}/{seriesIdN} due to corrupt spoilerblur.json: {ex.Message}");

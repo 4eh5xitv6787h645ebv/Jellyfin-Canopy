@@ -13,6 +13,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
@@ -59,13 +60,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         private const string SpoilerFileName = "spoilerblur.json";
 
-        // Standard corrupt-store response: log, record the corruption event (so the
-        // health endpoint / management banner can surface it), and 503.
+        private static bool IsCorruptStoreException(Exception exception)
+            => exception is UserStoreUnhealthyException or InvalidDataException or JsonException;
+
+        // Standard corrupt-store response. The store itself logs only the transition;
+        // the in-memory banner is likewise recorded only for the new generation so
+        // request retries cannot amplify logs or events.
         private IActionResult CorruptStore(string userKey, Exception strictEx)
         {
-            _logger.LogWarning($"{SpoilerFileName} corrupt for {ResolveUserDisplay(userKey)} (backed up): {strictEx.Message}");
             SpoilerUserResolver.RecordCorruption(userKey, ResolveUserDisplay(userKey), strictEx.Message);
-            return StatusCode(503, new { success = false, message = "Spoiler Guard data was corrupt and has been backed up. Your stored values have been reset to defaults — please reconfigure." });
+            return StatusCode(503, new
+            {
+                success = false,
+                message = "Spoiler Guard state is quarantined. Retry alone cannot recover it; an administrator must inspect and reset or repair the store."
+            });
         }
 
         // ─── Self-or-admin spoilerblur.json accessor pair ───────────────────────
@@ -83,13 +91,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
-            // Lenient read on purpose: this is an inspection surface, so a corrupt
-            // file should still return the (empty) default rather than 503 — the
-            // user-facing spoiler-blur endpoints already handle strict reads,
-            // backups and corruption reporting.
-            var state = _userConfigurationManager.GetUserConfiguration<UserSpoilerBlur>(
+            var read = _userConfigurationManager.ReadUserConfiguration<UserSpoilerBlur>(
                 authorizedUserId, SpoilerFileName);
-            return Ok(state);
+            if (!read.HasUsableValue || read.Value == null)
+            {
+                var quarantined = string.Equals(
+                    read.FaultDetail,
+                    "quarantined-recovery-required",
+                    StringComparison.Ordinal);
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = quarantined
+                        ? "Spoiler Guard state is quarantined. Retry alone cannot recover it; an administrator must inspect and reset or repair the store."
+                        : "Spoiler Guard state is corrupt or temporarily unavailable. No empty replacement state was published."
+                });
+            }
+
+            return Ok(read.Value);
         }
 
         // Hard cap per spoiler-list dict on the raw full-state save endpoint: the
@@ -146,17 +165,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             {
                 lock (_userConfigurationManager.GetUserFileLock(authorizedUserId, SpoilerFileName))
                 {
-                    // Pre-write strict read so a corrupt existing file 503s + backs up
+                    // Pre-write strict read so a corrupt existing file enters recovery
                     // instead of being silently overwritten (same as hidden-content).
                     try
                     {
                         _userConfigurationManager.GetUserConfigurationStrict<UserSpoilerBlur>(
                             authorizedUserId, SpoilerFileName);
                     }
-                    catch (Exception strictEx) when (strictEx is InvalidDataException || strictEx is JsonException)
+                    catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
                     {
-                        _logger.LogWarning($"{SpoilerFileName} corrupt for {ResolveUserDisplay(authorizedUserId)} (backed up): {strictEx.Message}");
-                        return StatusCode(503, new { success = false, message = "Spoiler Guard store is corrupt; backed up. Please retry." });
+                        return CorruptStore(authorizedUserId, strictEx);
                     }
                     catch (IOException ioEx)
                     {
@@ -286,7 +304,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 var state = _userConfigurationManager.GetUserConfigurationStrict<UserSpoilerBlur>(userKey, SpoilerFileName);
                 return Ok(state);
             }
-            catch (Exception strictEx) when (strictEx is InvalidDataException || strictEx is JsonException)
+            catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
                 return CorruptStore(userKey, strictEx);
             }
@@ -313,7 +331,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 var state = _userConfigurationManager.GetUserConfigurationStrict<UserSpoilerBlur>(userKey, SpoilerFileName);
                 return Ok(state.Prefs ?? new SpoilerBlurUserPrefs());
             }
-            catch (Exception strictEx) when (strictEx is InvalidDataException || strictEx is JsonException)
+            catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
                 return CorruptStore(userKey, strictEx);
             }
@@ -354,7 +372,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 SpoilerUserResolver.InvalidateUser(userKey);
                 return Ok(new { success = true, prefs = body });
             }
-            catch (Exception strictEx) when (strictEx is InvalidDataException || strictEx is JsonException)
+            catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
                 return CorruptStore(userKey, strictEx);
             }
@@ -432,7 +450,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 _logger.LogInformation($"Spoiler Guard enabled for series '{series.Name}' ({key}) by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, seriesId = key, name = series.Name });
             }
-            catch (Exception strictEx) when (strictEx is InvalidDataException || strictEx is JsonException)
+            catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
                 return CorruptStore(userKey, strictEx);
             }
@@ -476,7 +494,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 _logger.LogInformation($"Spoiler Guard disabled for series {key} by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, seriesId = key, removed = true });
             }
-            catch (Exception strictEx) when (strictEx is InvalidDataException || strictEx is JsonException)
+            catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
                 return CorruptStore(userKey, strictEx);
             }
@@ -558,7 +576,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 _logger.LogInformation($"Spoiler Guard enabled for movie '{movie.Name}' ({key}) by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, movieId = key, name = movie.Name });
             }
-            catch (Exception strictEx) when (strictEx is InvalidDataException || strictEx is JsonException)
+            catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
                 return CorruptStore(userKey, strictEx);
             }
@@ -602,7 +620,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 _logger.LogInformation($"Spoiler Guard disabled for movie {key} by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, movieId = key, removed = true });
             }
-            catch (Exception strictEx) when (strictEx is InvalidDataException || strictEx is JsonException)
+            catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
                 return CorruptStore(userKey, strictEx);
             }
@@ -731,7 +749,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 _logger.LogInformation($"Spoiler Guard enabled for collection '{boxSet.Name}' ({key}) by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, collectionId = key, name = boxSet.Name });
             }
-            catch (Exception strictEx) when (strictEx is InvalidDataException || strictEx is JsonException)
+            catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
                 return CorruptStore(userKey, strictEx);
             }
@@ -775,7 +793,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 _logger.LogInformation($"Spoiler Guard disabled for collection {key} by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, collectionId = key, removed = true });
             }
-            catch (Exception strictEx) when (strictEx is InvalidDataException || strictEx is JsonException)
+            catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
                 return CorruptStore(userKey, strictEx);
             }
@@ -824,7 +842,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 }
                 return Ok(new { success = true, promoted = summary.Promoted, jellyfinId = summary.JellyfinId, name = summary.Name });
             }
-            catch (Exception strictEx) when (strictEx is InvalidDataException || strictEx is JsonException)
+            catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
                 return CorruptStore(userKey, strictEx);
             }
@@ -887,7 +905,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 _logger.LogInformation($"Spoiler Guard pending DELETE removed {pendingKey} ({removedFrom}) for {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, removed = true, removedFrom, jellyfinId = removedJellyfinId });
             }
-            catch (Exception strictEx) when (strictEx is InvalidDataException || strictEx is JsonException)
+            catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
                 return CorruptStore(userKey, strictEx);
             }
