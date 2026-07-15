@@ -255,7 +255,12 @@ if ! "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1; then
 fi
 rm -rf -- "${CONFIG_DIR}" "${CACHE_DIR}" "${MEDIA_DIR}" "${MOCK_STATE_DIR}"
 rm -f -- "${SEED_RESULT}" "${SEED_RESULT_TMP}"
-mkdir -p -- "${CONFIG_DIR}/plugins/JellyfinCanopy_e2e" "${CACHE_DIR}" "${MEDIA_DIR}" "${MOCK_STATE_DIR}"
+mkdir -p -- \
+    "${CONFIG_DIR}/plugins/JellyfinCanopy_e2e" \
+    "${CONFIG_DIR}/data/collections" \
+    "${CACHE_DIR}" \
+    "${MEDIA_DIR}" \
+    "${MOCK_STATE_DIR}"
 cp -- "${PLUGIN_DLL}" "${CONFIG_DIR}/plugins/JellyfinCanopy_e2e/"
 log "installed plugin DLL into the isolated config volume"
 
@@ -447,10 +452,15 @@ log "creating the Shows library"
 api POST "/Library/VirtualFolders?name=Shows&collectionType=tvshows&paths=%2Fmedia%2FShows&refreshLibrary=false" \
     '{"LibraryOptions":{"EnableRealtimeMonitor":false}}'
 
-# A refresh per library creates two independent scans. Their state can briefly
-# become Idle between runs, and the later scan can overwrite deterministic
-# ProviderIds written below. Capture a high-resolution timestamp and trigger
-# exactly one scan after both libraries exist; metadata writes later require a
+log "creating the Collections library without an implicit scan"
+api POST "/Library/VirtualFolders?name=Collections&collectionType=boxsets&paths=%2Fconfig%2Fdata%2Fcollections&refreshLibrary=false" \
+    '{"LibraryOptions":{"EnableRealtimeMonitor":false,"SaveLocalMetadata":true}}'
+
+# A refresh per library creates independent scans. First-use collection
+# creation also adds this boxsets virtual folder with refresh enabled when
+# it is absent. Those queued scans can overwrite deterministic ProviderIds
+# written below. Capture a high-resolution timestamp and trigger exactly one
+# scan after all three libraries exist; metadata writes later require a
 # completed run whose own start time is strictly later than this trigger bound.
 LIBRARY_SCAN_TRIGGERED_AT="$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)"
 log "starting one explicit library scan"
@@ -713,22 +723,43 @@ log "updated metadata on ${i} movies (genres + community rating; audio lang bake
 log "creating the TMDB-anchored incomplete collection fixture"
 BOXSET_SEED_IDS="$(api GET "/Items?IncludeItemTypes=Movie&Recursive=true&userId=${ADMIN_ID}&Limit=2" \
     | jq -er '[.Items[].Id] | if length == 2 then join(",") else empty end')"
-BOXSET_CREATED="$(api POST "/Collections?Name=JC%20E2E%20Fixture%20Collection&Ids=${BOXSET_SEED_IDS}")"
+# Collection creation queues a full BoxSet metadata refresh. Lock at creation
+# time so Jellyfin's metadata owner skips that refresh before it can race and
+# overwrite the deterministic provider anchor written below.
+BOXSET_CREATED="$(api POST "/Collections?Name=JC%20E2E%20Fixture%20Collection&Ids=${BOXSET_SEED_IDS}&isLocked=true")"
 BOXSET_ID="$(printf '%s' "${BOXSET_CREATED}" | jq -er '.Id // empty')"
 BOXSET_DTO="$(api GET "/Users/${ADMIN_ID}/Items/${BOXSET_ID}?Fields=ProviderIds,Path")"
+BOXSET_LOCKED="$(printf '%s' "${BOXSET_DTO}" | jq -r '.LockData // false')"
+[ "${BOXSET_LOCKED}" = true ] \
+    || fail "BoxSet ${BOXSET_ID} was not locked before its queued metadata refresh"
 BOXSET_PATCHED="$(printf '%s' "${BOXSET_DTO}" | jq \
-    '.ProviderIds = (.ProviderIds // {}) | .ProviderIds.Tmdb = "10"')"
-api POST "/Items/${BOXSET_ID}" "${BOXSET_PATCHED}" >/dev/null \
-    || fail "could not anchor BoxSet ${BOXSET_ID} to TMDB collection 10"
+    '.LockData = true | .ProviderIds = (.ProviderIds // {}) | .ProviderIds.Tmdb = "10"')"
+if ! api POST "/Items/${BOXSET_ID}" "${BOXSET_PATCHED}" >/dev/null; then
+    BOXSET_DTO="$(api GET "/Users/${ADMIN_ID}/Items/${BOXSET_ID}?Fields=ProviderIds,Path" 2>/dev/null || true)"
+    BOXSET_LOCKED="$(printf '%s' "${BOXSET_DTO}" | jq -r '.LockData // "missing"' 2>/dev/null || true)"
+    BOXSET_NATIVE_TMDB="$(printf '%s' "${BOXSET_DTO}" | jq -r '.ProviderIds.Tmdb // "missing"' 2>/dev/null || true)"
+    fail "could not anchor BoxSet ${BOXSET_ID} to TMDB collection 10 (locked=${BOXSET_LOCKED:-missing}, nativeTmdb=${BOXSET_NATIVE_TMDB:-missing})"
+fi
+BOXSET_NATIVE_TMDB=""
 BOXSET_VISIBLE_TMDB=""
-for _ in $(seq 1 60); do
+BOXSET_ANCHOR_ATTEMPTS=10
+for attempt in $(seq 1 "${BOXSET_ANCHOR_ATTEMPTS}"); do
+    BOXSET_DTO="$(api GET "/Users/${ADMIN_ID}/Items/${BOXSET_ID}?Fields=ProviderIds,Path" 2>/dev/null || true)"
+    BOXSET_LOCKED="$(printf '%s' "${BOXSET_DTO}" | jq -r '.LockData // "missing"' 2>/dev/null || true)"
+    BOXSET_NATIVE_TMDB="$(printf '%s' "${BOXSET_DTO}" | jq -r '.ProviderIds.Tmdb // empty' 2>/dev/null || true)"
     BOXSET_VISIBLE_TMDB="$(api GET "/JellyfinCanopy/boxset/${BOXSET_ID}" 2>/dev/null \
         | jq -r '.tmdbId // empty' || true)"
-    [ "${BOXSET_VISIBLE_TMDB}" = 10 ] && break
-    sleep 1
+    if [ "${BOXSET_LOCKED}" = true ] \
+        && [ "${BOXSET_NATIVE_TMDB}" = 10 ] \
+        && [ "${BOXSET_VISIBLE_TMDB}" = 10 ]; then
+        break
+    fi
+    [ "${attempt}" -lt "${BOXSET_ANCHOR_ATTEMPTS}" ] && sleep 1
 done
-[ "${BOXSET_VISIBLE_TMDB}" = 10 ] \
-    || fail "BoxSet ${BOXSET_ID} never exposed TMDB collection 10 through the plugin endpoint"
+[ "${BOXSET_LOCKED}" = true ] \
+    && [ "${BOXSET_NATIVE_TMDB}" = 10 ] \
+    && [ "${BOXSET_VISIBLE_TMDB}" = 10 ] \
+    || fail "BoxSet anchor verification failed after ${BOXSET_ANCHOR_ATTEMPTS} attempts (id=${BOXSET_ID}, locked=${BOXSET_LOCKED:-missing}, nativeTmdb=${BOXSET_NATIVE_TMDB:-missing}, pluginTmdb=${BOXSET_VISIBLE_TMDB:-missing})"
 api GET "/JellyfinCanopy/seerr/collection/10" \
     | jq -e '.parts | length >= 2 and any(.[]; ((.mediaInfo.status // 1) != 5))' >/dev/null \
     || fail "hermetic Seerr collection 10 has no missing movie fixture"
