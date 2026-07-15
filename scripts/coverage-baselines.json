@@ -21,8 +21,8 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 14003,
-        "totalLines": 22259
+        "coveredLines": 14239,
+        "totalLines": 22500
       },
       "tolerance": {
         "missingCoveredLines": 1,

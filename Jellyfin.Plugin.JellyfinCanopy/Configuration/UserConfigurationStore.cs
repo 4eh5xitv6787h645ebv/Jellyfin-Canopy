@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
@@ -300,21 +301,31 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         {
             try
             {
-                var configPath = ResolveUserFile(userId, fileName);
-
                 // Serialize with the runtime type: callers pass both typed DTOs and
                 // raw JsonElement payloads (client JSON pass-through). JsonElement is
                 // written verbatim — unlike the old JToken.Parse round-trip, which
                 // re-parsed and normalized ISO date strings and exponent numbers.
                 // Both forms read identically; pinned by RawClientJson_* tests.
                 var jsonToSave = JsonSerializer.Serialize(config, config.GetType(), PersistedJson.WriteOptions);
+                var serializedBytes = Encoding.UTF8.GetByteCount(jsonToSave);
+                if (serializedBytes > PersistedPayloadPolicy.AbsolutePersistedBytes)
+                {
+                    throw new InvalidDataException(
+                        $"User configuration exceeds the absolute {PersistedPayloadPolicy.AbsolutePersistedBytes}-byte store limit.");
+                }
+
+                // Resolve only after validation so a rejected future caller cannot
+                // create a user directory as a side effect of an oversized write.
+                var configPath = ResolveUserFile(userId, fileName);
 
                 // AtomicFile owns the per-call temp sibling + rename + temp cleanup.
                 AtomicFile.WriteAllText(configPath, jsonToSave);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Failed to save user configuration for user '{userId}' to file '{fileName}'. Exception: {ex.Message}");
+                _logger.LogError(
+                    $"Failed to save user configuration for user '{userId}' to file '{fileName}' " +
+                    $"(exception={ex.GetType().Name}).");
                 throw;
             }
         }
