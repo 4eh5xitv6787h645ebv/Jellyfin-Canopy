@@ -20,6 +20,30 @@ Help make Jellyfin Canopy accessible to more users by contributing translations.
 
 See the [Contributing Translations](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/faq-support/contributing-translations/) section for details.
 
+### Issue triage and inactivity
+
+Inactivity is not evidence that an accepted report is fixed. The scheduled stale
+workflow therefore treats issues and pull requests differently:
+
+- Issues without an accepted-state exemption receive a reminder after 30
+  inactive days. They are never closed by stale automation. This reminder window
+  applies to untriaged reports and `awaiting-reporter`/`question` support states.
+- `bug`, `bug-inventory`, `security`, `confirmed`, P0/P1, `enhancement`,
+  `tracking`, `help wanted`, and `no-stale` are accepted backlog states and do
+  not receive stale reminders. Any milestone or assignee also exempts an issue.
+- Adding an issue to a GitHub Project must be paired with `no-stale`. Project 4
+  already applies that label to every tracked item; issue auto-close is disabled
+  as a second, policy-level safeguard.
+- A maintainer may close an issue only after leaving a triage reason such as
+  resolved, duplicate, invalid, superseded, or reporter-unavailable. Elapsed
+  time alone is not a closure reason.
+- Pull requests retain a 15-day reminder and a 3-day close window. The workflow
+  posts the inactivity reason when it closes a PR; draft PRs remain exempt.
+
+Manual runs default to the workflow's `dry_run` audit mode, which logs proposed
+operations without changing issues or pull requests. Set it to false only after
+reviewing that audit and intentionally applying the documented policy.
+
 ## 🚀 Getting Started
 
 ### Project Structure
