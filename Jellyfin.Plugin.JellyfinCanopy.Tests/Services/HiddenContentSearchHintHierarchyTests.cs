@@ -52,6 +52,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var queryCount = 0;
             var library = new CountingLibraryManager
             {
+                ConfigureUserAccessHook = (query, configuredUser) =>
+                {
+                    Assert.Same(user, configuredUser);
+                    Assert.Empty(query.ItemIds);
+                },
                 GetItemListHook = query =>
                 {
                     queryCount++;
@@ -126,6 +131,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var audioId = Guid.NewGuid();
             var library = new CountingLibraryManager
             {
+                ConfigureUserAccessHook = (_, _) => { },
                 // A successful user-scoped query omits the Season: whether it
                 // was deleted or inaccessible, its parent cannot be trusted.
                 GetItemListHook = query =>
@@ -161,6 +167,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var seriesId = Guid.NewGuid();
             var library = new CountingLibraryManager
             {
+                ConfigureUserAccessHook = (_, _) => { },
                 GetItemListHook = _ => throw new IOException("transient library fault"),
             };
             var filter = NewFilter(library, user);
@@ -214,6 +221,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var queryCount = 0;
             var library = new CountingLibraryManager
             {
+                ConfigureUserAccessHook = (_, _) => { },
                 GetItemListHook = query =>
                 {
                     queryCount++;
@@ -242,12 +250,127 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
+        public void EnabledLibraryAccess_IsConfiguredBeforeExactIds_AndDropsDisabledLibraryDescendant()
+        {
+            var user = NewUser();
+            var allowedLibraryId = Guid.NewGuid();
+            var allowedSeriesId = Guid.NewGuid();
+            var disabledSeriesId = Guid.NewGuid();
+            var unrelatedHiddenSeriesId = Guid.NewGuid();
+            var allowedEpisodeId = Guid.NewGuid();
+            var disabledEpisodeId = Guid.NewGuid();
+            var configureCount = 0;
+            var queryCount = 0;
+            var library = new CountingLibraryManager
+            {
+                ConfigureUserAccessHook = (query, configuredUser) =>
+                {
+                    configureCount++;
+                    Assert.Same(user, configuredUser);
+                    Assert.Empty(query.ItemIds);
+                    query.TopParentIds = new[] { allowedLibraryId };
+                },
+                GetItemListHook = query =>
+                {
+                    queryCount++;
+                    Assert.Equal(
+                        new[] { allowedEpisodeId, disabledEpisodeId }.OrderBy(static id => id),
+                        query.ItemIds.OrderBy(static id => id));
+
+                    var enabledAndDisabled = new BaseItem[]
+                    {
+                        new Episode { Id = allowedEpisodeId, SeriesId = allowedSeriesId },
+                        new Episode { Id = disabledEpisodeId, SeriesId = disabledSeriesId },
+                    };
+
+                    // Reproduce Jellyfin 12's exact-ID hazard: without the
+                    // enabled-library TopParentIds derived above, both rows are
+                    // returned even though one belongs to a disabled library.
+                    return query.TopParentIds.Contains(allowedLibraryId)
+                        ? enabledAndDisabled.Take(1).ToArray()
+                        : enabledAndDisabled;
+                },
+            };
+            var filter = NewFilter(library, user);
+
+            var result = filter.FilterSearchHintsForTest(
+                Result(
+                    Hint(allowedEpisodeId, BaseItemKind.Episode),
+                    Hint(disabledEpisodeId, BaseItemKind.Episode)),
+                SeriesPolicy(unrelatedHiddenSeriesId),
+                user.Id);
+
+            Assert.Equal(new[] { allowedEpisodeId }, result.SearchHints.Select(static hint => hint.Id));
+            Assert.Equal(1, configureCount);
+            Assert.Equal(1, queryCount);
+        }
+
+        [Fact]
+        public void UserAccessConfigurationFailure_DropsCompletePayloadWithoutQuerying()
+        {
+            var user = NewUser();
+            var queryCount = 0;
+            var library = new CountingLibraryManager
+            {
+                ConfigureUserAccessHook = (_, _) => throw new IOException("access configuration fault"),
+                GetItemListHook = _ =>
+                {
+                    queryCount++;
+                    return Array.Empty<BaseItem>();
+                },
+            };
+            var filter = NewFilter(library, user);
+
+            var result = filter.FilterSearchHintsForTest(
+                Result(
+                    Hint(Guid.NewGuid(), BaseItemKind.Movie),
+                    Hint(Guid.NewGuid(), BaseItemKind.Episode)),
+                SeriesPolicy(Guid.NewGuid()),
+                user.Id);
+
+            Assert.Empty(result.SearchHints);
+            Assert.Equal(0, result.TotalRecordCount);
+            Assert.Equal(0, queryCount);
+        }
+
+        [Fact]
+        public void UserAccessConfigurationCancellation_DropsCompletePayloadWithoutQuerying()
+        {
+            var user = NewUser();
+            using var cancelled = new CancellationTokenSource();
+            var queryCount = 0;
+            var library = new CountingLibraryManager
+            {
+                ConfigureUserAccessHook = (_, _) => cancelled.Cancel(),
+                GetItemListHook = _ =>
+                {
+                    queryCount++;
+                    return Array.Empty<BaseItem>();
+                },
+            };
+            var filter = NewFilter(library, user);
+
+            var result = filter.FilterSearchHintsForTest(
+                Result(
+                    Hint(Guid.NewGuid(), BaseItemKind.Movie),
+                    Hint(Guid.NewGuid(), BaseItemKind.Episode)),
+                SeriesPolicy(Guid.NewGuid()),
+                user.Id,
+                cancelled.Token);
+
+            Assert.Empty(result.SearchHints);
+            Assert.Equal(0, result.TotalRecordCount);
+            Assert.Equal(0, queryCount);
+        }
+
+        [Fact]
         public void PreQueryCancellation_DropsCompletePayloadWithoutQuerying()
         {
             var user = NewUser();
             var queryCount = 0;
             var library = new CountingLibraryManager
             {
+                ConfigureUserAccessHook = (_, _) => { },
                 GetItemListHook = _ =>
                 {
                     queryCount++;
@@ -277,6 +400,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             using var cancelled = new CancellationTokenSource();
             var library = new CountingLibraryManager
             {
+                ConfigureUserAccessHook = (_, _) => { },
                 GetItemListHook = _ =>
                 {
                     cancelled.Cancel();

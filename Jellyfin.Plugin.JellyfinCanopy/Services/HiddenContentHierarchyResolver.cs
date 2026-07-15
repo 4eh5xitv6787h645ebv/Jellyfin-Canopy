@@ -81,12 +81,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                items = _libraryManager.GetItemList(new InternalItemsQuery(user)
+                var query = new InternalItemsQuery(user)
                 {
-                    ItemIds = new List<Guid>(uniqueIds).ToArray(),
-                    Recursive = true,
-                    Limit = uniqueIds.Count,
-                });
+                    ItemIds = Array.Empty<Guid>(),
+                };
+
+                // Jellyfin 12 deliberately skips its normal enabled-library
+                // derivation when ItemIds is already populated. Configure access
+                // while the exact-ID set is still empty so TopParentIds is owned
+                // by Jellyfin's canonical user-access implementation.
+                _libraryManager.ConfigureUserAccess(query, user);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                query.ItemIds = new List<Guid>(uniqueIds).ToArray();
+                query.Recursive = true;
+                query.Limit = uniqueIds.Count;
+                items = _libraryManager.GetItemList(query);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

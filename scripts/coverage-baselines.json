@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 16360,
-        "totalLines": 25016
+        "coveredLines": 16366,
+        "totalLines": 25020
       },
       "tolerance": {
         "missingCoveredLines": 2,
-        "rationale": "Three clean reviewed local .NET 10/Coverlet integration runs on 2026-07-16 measured 16359, 16359, and 16360 covered lines across the identical 25016-line final scope after adding bounded, user-scoped SearchHint hierarchy resolution for hidden-series Season and Episode descendants, including fail-closed atomic query, user, cap, and cancellation handling. The existing two-line tolerance remains narrow and covers only reproduced cross-run instrumentation variance (0.0080 percentage points)."
+        "rationale": "Two clean reviewed local .NET 10/Coverlet integration runs on 2026-07-16 measured 16366 and 16365 covered lines across the identical 25020-line final scope after adding bounded SearchHint hierarchy resolution and deriving Jellyfin 12 enabled-library TopParentIds before assigning exact item IDs. Focused evidence covers hidden-series descendants plus atomic user, access-configuration, query, cap, and cancellation failures. The existing two-line tolerance remains narrow and covers only the reproduced one-line instrumentation variance (0.0080 percentage points)."
       }
     }
   }
