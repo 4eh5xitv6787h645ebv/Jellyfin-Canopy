@@ -3,6 +3,7 @@ import { JC } from '../../globals';
 import type { ApiApi } from '../../types/jc';
 import type { UserSettingsSaveResult } from '../config';
 import { renderBookmarksLibrary } from './library-render';
+import { findDuplicateBookmarks } from './library-modals';
 
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 
@@ -117,5 +118,61 @@ describe('bookmarks library identity ownership', () => {
     await Promise.resolve();
 
     expect(jf).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows every canonical and legacy media type in a counted management tab', async () => {
+    const entries = [
+      ['movie', 'Movie', 'Movie bookmark'],
+      ['episode', 'Episode', 'Episode bookmark'],
+      ['series', 'Series', 'Series bookmark'],
+      ['music', 'MusicVideo', 'Music video bookmark'],
+      ['video', 'Video', 'Generic video bookmark'],
+      ['unknown', 'Podcast', 'Unknown bookmark'],
+      ['missing', undefined, 'Missing-type bookmark']
+    ] as const;
+    (JC as any).userConfig = {
+      bookmark: {
+        bookmarks: Object.fromEntries(entries.map(([itemId, mediaType, name]) => [itemId, {
+          itemId,
+          ...(mediaType === undefined ? {} : { mediaType }),
+          timestamp: 42,
+          name
+        }]))
+      }
+    };
+    getItem.mockResolvedValue({ Id: 'available', Name: 'Available item', Type: 'Video', ImageTags: {} });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    await renderBookmarksLibrary(container);
+
+    const tabs = [...container.querySelectorAll<HTMLButtonElement>('.jc-tab')];
+    expect(tabs.map(tab => [tab.dataset.tab, tab.querySelector('.jc-tab-count')?.textContent]))
+      .toEqual([['movie', '2'], ['tv', '2'], ['other', '3']]);
+    expect(container.querySelectorAll('.jc-bookmark-row')).toHaveLength(2);
+
+    tabs.find(tab => tab.dataset.tab === 'other')!.click();
+    await vi.waitFor(() => expect(container.querySelectorAll('.jc-bookmark-row')).toHaveLength(3));
+    expect(container.textContent).toContain('Generic video bookmark');
+    expect(container.textContent).toContain('Unknown bookmark');
+    expect(container.textContent).toContain('Missing-type bookmark');
+
+    tabs.find(tab => tab.dataset.tab === 'tv')!.click();
+    await vi.waitFor(() => expect(container.querySelectorAll('.jc-bookmark-row')).toHaveLength(2));
+    expect(container.textContent).toContain('Episode bookmark');
+    expect(container.textContent).toContain('Series bookmark');
+  });
+
+  it('never offers a cross-category provider-id duplicate merge', () => {
+    const duplicates = findDuplicateBookmarks({
+      movieA: { itemId: 'movie-a', tmdbId: '10', mediaType: 'Movie', name: 'Movie A' },
+      movieB: { itemId: 'movie-b', tmdbId: '10', mediaType: 'MusicVideo', name: 'Movie B' },
+      series: { itemId: 'series', tmdbId: '10', mediaType: 'Series', name: 'Series' },
+      legacy: { itemId: 'legacy', tmdbId: '10', mediaType: 'Video', name: 'Video' }
+    });
+
+    expect(duplicates).toHaveLength(1);
+    expect(duplicates[0].providerKey).toBe('movie:tmdb:10');
+    expect(Object.keys(duplicates[0].itemGroups)).toEqual(['movie-a', 'movie-b']);
   });
 });

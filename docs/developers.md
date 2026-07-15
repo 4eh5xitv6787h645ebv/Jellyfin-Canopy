@@ -244,7 +244,7 @@ The data structure is (property names are persisted as-is, in PascalCase):
       "ItemId": "jellyfin-item-id",
       "TmdbId": "12345",
       "TvdbId": "67890",
-      "MediaType": "movie" | "tv",
+      "MediaType": "movie" | "tv" | "other",
       "Name": "Item Name",
       "Timestamp": 123.45,
       "Label": "Epic scene",
@@ -255,6 +255,13 @@ The data structure is (property names are persisted as-is, in PascalCase):
   }
 }
 ```
+
+New client writes normalize Jellyfin Movie and MusicVideo items to `movie`,
+Series/Season/Episode items to `tv`, and every remaining playable type to
+`other`. Existing unknown or missing values remain readable and appear in the
+Other management tab; the next edit or migration writes their canonical
+category. Provider-id fallback matching and duplicate/replacement workflows use
+the same categories so identifiers from different media classes are not merged.
 
 External applications read and write bookmarks through the endpoints below. `{userId}` is the 32-character hex (`"N"` format) Jellyfin user id. Bookmark state is server-authoritative and revisioned: retain the `Revision` returned by every GET/mutation, submit it with the next operation, and rebase on the authoritative state returned with HTTP `409 Conflict`. Missing preconditions return `428 Precondition Required`. A successful mutation increments the revision once and returns the complete committed state.
 

@@ -10,6 +10,11 @@ import { escapeHtml, toast } from '../../core/ui-kit';
 import { renderBookmarkItems } from './library-items';
 import { showDuplicatesSyncModal } from './library-modals';
 import type { IdentityContext } from '../../types/jc';
+import {
+  BOOKMARK_MEDIA_TYPES,
+  normalizeBookmarkMediaType,
+  type BookmarkMediaType
+} from './media-types';
 
 const logPrefix = '🪼 Jellyfin Canopy: Bookmarks Library:';
 
@@ -29,7 +34,7 @@ interface BookmarkConfig {
 interface BookmarkGroup {
   details: StoredBookmark;
   bookmarks: Array<StoredBookmark & { id: string }>;
-  type: string;
+  type: BookmarkMediaType;
 }
 
 function bookmarkConfigOrEmpty(value: unknown): BookmarkConfig {
@@ -109,28 +114,30 @@ export async function renderBookmarksLibrary(
 
   // Group by item
   const groupedByItem: Record<string, BookmarkGroup> = {};
-  const typeCounts: Record<string, { items: number; bookmarks: number }> = {
+  const typeCounts: Record<BookmarkMediaType, { items: number; bookmarks: number }> = {
     tv: { items: 0, bookmarks: 0 },
-    movie: { items: 0, bookmarks: 0 }
+    movie: { items: 0, bookmarks: 0 },
+    other: { items: 0, bookmarks: 0 }
   };
 
   for (const [id, bm] of bookmarkEntries) {
-    const key = bm.itemId || bm.tmdbId || bm.tvdbId || 'unknown';
-    const normalizedType = normalizeMediaType(bm.mediaType);
+    const normalizedType = normalizeBookmarkMediaType(bm.mediaType);
+    // Include the canonical category in the group identity. Provider ids can
+    // overlap across media classes, and conflicting legacy values for one item
+    // must remain visible in their own fallback category rather than inheriting
+    // whichever record happened to be enumerated first.
+    const itemKey = bm.itemId || bm.tmdbId || bm.tvdbId || 'unknown';
+    const key = `${normalizedType}:${itemKey}`;
     if (!groupedByItem[key]) {
       groupedByItem[key] = {
         details: bm,
         bookmarks: [],
         type: normalizedType
       };
-      if (typeCounts[normalizedType]) {
-        typeCounts[normalizedType].items += 1;
-      }
+      typeCounts[normalizedType].items += 1;
     }
     groupedByItem[key].bookmarks.push({ id, ...bm });
-    if (typeCounts[groupedByItem[key].type]) {
-      typeCounts[groupedByItem[key].type].bookmarks += 1;
-    }
+    typeCounts[groupedByItem[key].type].bookmarks += 1;
   }
 
   // Sort bookmarks within each group by timestamp
@@ -139,12 +146,13 @@ export async function renderBookmarksLibrary(
   });
 
   const totalBookmarks = bookmarkEntries.length;
-  let currentTab = container.dataset.currentTab || 'movie';
-  if (currentTab === 'tv' && typeCounts.tv.items === 0 && typeCounts.movie.items > 0) {
-    currentTab = 'movie';
-  } else if (currentTab === 'movie' && typeCounts.movie.items === 0 && typeCounts.tv.items > 0) {
-    currentTab = 'tv';
-  }
+  const requestedTab = BOOKMARK_MEDIA_TYPES.includes(container.dataset.currentTab as BookmarkMediaType)
+    ? container.dataset.currentTab as BookmarkMediaType
+    : 'movie';
+  const firstPopulatedTab = BOOKMARK_MEDIA_TYPES.find(type => typeCounts[type].items > 0);
+  const currentTab = typeCounts[requestedTab].items > 0 || !firstPopulatedTab
+    ? requestedTab
+    : firstPopulatedTab;
   container.dataset.currentTab = currentTab;
 
   // Create UI
@@ -152,10 +160,13 @@ export async function renderBookmarksLibrary(
     <div class="jc-bookmarks-wrapper">
       <div class="jc-bookmark-tabs">
         <button class="jc-tab ${currentTab === 'movie' ? 'active' : ''}" data-tab="movie">
-          ${JC.t!('bookmarks_library_tab_movies')}
+          ${JC.t!('bookmarks_library_tab_movies')} <span class="jc-tab-count">${typeCounts.movie.bookmarks}</span>
         </button>
         <button class="jc-tab ${currentTab === 'tv' ? 'active' : ''}" data-tab="tv">
-          ${JC.t!('bookmarks_library_tab_series')}
+          ${JC.t!('bookmarks_library_tab_series')} <span class="jc-tab-count">${typeCounts.tv.bookmarks}</span>
+        </button>
+        <button class="jc-tab ${currentTab === 'other' ? 'active' : ''}" data-tab="other">
+          ${JC.t!('bookmarks_library_tab_other')} <span class="jc-tab-count">${typeCounts.other.bookmarks}</span>
         </button>
       </div>
 
@@ -282,7 +293,7 @@ export async function renderBookmarksLibrary(
       container.querySelectorAll<HTMLElement>('.jc-tab').forEach(btn => {
         btn.addEventListener('click', () => { void (async () => {
           if (!JC.identity.isCurrent(context)) return;
-          const tab = btn.dataset.tab!;
+          const tab = btn.dataset.tab as BookmarkMediaType;
           container.dataset.currentTab = tab;
           container.querySelectorAll<HTMLElement>('.jc-tab').forEach(b => {
             b.classList.toggle('active', b.dataset.tab === tab);
@@ -305,13 +316,6 @@ export function formatTimestamp(seconds: number): string {
     return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   }
   return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
-function normalizeMediaType(mediaType: unknown): string {
-  const type = typeof mediaType === 'string' ? mediaType.toLowerCase() : '';
-  if (type === 'series' || type === 'episode' || type === 'tvshow' || type === 'tv') return 'tv';
-  if (type === 'movie' || type === 'film' || type === 'musicvideo') return 'movie';
-  return 'other';
 }
 
 // Parse HH:MM:SS or MM:SS or seconds into numeric seconds

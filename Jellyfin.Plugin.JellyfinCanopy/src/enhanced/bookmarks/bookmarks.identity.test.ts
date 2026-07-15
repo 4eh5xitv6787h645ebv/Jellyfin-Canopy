@@ -498,6 +498,48 @@ describe('bookmark player identity ownership', () => {
     expect(JC.userConfig.bookmark.bookmarks).toEqual({});
   });
 
+  it('persists a generic playable Video in the manageable other category', async () => {
+    const api = await loadModule({});
+    ajax.mockResolvedValueOnce({
+      Items: [{
+        Id: 'item-a',
+        Name: 'Home video',
+        Type: 'Video',
+        ProviderIds: {}
+      }]
+    });
+
+    await expect(api.add(5, 'Clip')).resolves.toMatchObject({ mediaType: 'other' });
+    const operation = save.mock.calls[0][1].body.operations[0];
+    expect(operation.bookmark.mediaType).toBe('other');
+  });
+
+  it('uses the canonical media category for provider fallback matching', async () => {
+    const api = await loadModule({
+      movie: { ...bookmark('old-movie', 'Movie'), tmdbId: 'shared', mediaType: 'Movie' },
+      episode: { ...bookmark('old-episode', 'Episode'), tmdbId: 'shared', mediaType: 'Episode' },
+      legacy: { ...bookmark('old-video', 'Video'), tmdbId: 'shared', mediaType: 'Video' }
+    });
+
+    expect(api.findForItem('new-movie', 'shared', '', 'movie').bookmarks.map((bm: AnyRecord) => bm.id))
+      .toEqual(['movie']);
+    expect(api.findForItem('new-series', 'shared', '', 'Series').bookmarks.map((bm: AnyRecord) => bm.id))
+      .toEqual(['episode']);
+    expect(api.findForItem('new-video', 'shared', '', 'other').bookmarks.map((bm: AnyRecord) => bm.id))
+      .toEqual(['legacy']);
+    expect(api.findForItem('legacy-caller', 'shared').bookmarks).toHaveLength(3);
+  });
+
+  it('canonically migrates a legacy type when that bookmark is edited', async () => {
+    const api = await loadModule({
+      legacy: { ...bookmark('item-a', 'Before'), mediaType: 'Podcast' }
+    });
+
+    await expect(api.update('legacy', { label: 'After' })).resolves.toBe(true);
+    const operation = save.mock.calls[0][1].body.operations[0];
+    expect(operation.bookmark).toMatchObject({ label: 'After', mediaType: 'other' });
+  });
+
   it('does not let a held rejected A add roll back a same-key B bookmark', async () => {
     const api = await loadModule({});
     const heldSave = deferred<void>();

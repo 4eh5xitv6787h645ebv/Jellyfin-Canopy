@@ -52,6 +52,18 @@ if (!JC.pluginConfig?.BookmarksEnabled) {
       border-bottom-color: #fff;
     }
 
+    .jc-tab-count {
+      display: inline-block;
+      min-width: 1.6em;
+      margin-left: 4px;
+      padding: 1px 5px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      font-size: 11px;
+      line-height: 1.4;
+      text-align: center;
+    }
+
     .bookmarks-container {
       padding: 12px 3vw;
     }
