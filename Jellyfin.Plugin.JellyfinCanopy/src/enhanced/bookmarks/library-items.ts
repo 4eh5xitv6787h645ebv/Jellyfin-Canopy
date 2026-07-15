@@ -5,6 +5,7 @@
 // (Converted from js/enhanced/bookmarks-library-items.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
+import { routeHref, routePath } from '../../core/navigation';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { getItemCached } from '../helpers';
 import { formatTimestamp, parseTimestampInput, renderActiveBookmarks } from './library-render';
@@ -113,6 +114,7 @@ export async function renderBookmarkItems(
     }
 
     // Create the card header HTML
+    const detailsHref = routeHref('details', { id: group.details.itemId || '' });
     const headerHtml = `
       <div class="jc-bookmark-item-header">
         ${posterUrl ? `
@@ -123,7 +125,7 @@ export async function renderBookmarkItems(
           <div class="jc-bookmark-item-placeholder"><span class="material-icons" style="font-size: 48px; opacity: 0.3;">image_not_supported</span></div>
         `}
         <div class="jc-bookmark-item-info">
-          <a href="/web/#/details?id=${escapeHtml(group.details.itemId || '')}" class="jc-bookmark-item-title">${titleDisplay}</a>
+          <a href="${escapeHtml(detailsHref)}" class="jc-bookmark-item-title">${titleDisplay}</a>
           <div class="jc-bookmark-item-meta">
             ${JC.t!('bookmark_count').replace('{count}', group.bookmarks.length)}
             ${orphaned ? ` • <span style="color: #ff9800;">${JC.t!('bookmark_orphaned')}</span>` : ''}
@@ -171,7 +173,8 @@ export async function renderBookmarkItems(
         if (!JC.identity.isCurrent(context)) return;
         const itemId = poster.dataset.itemId;
         if (itemId) {
-          (window.Emby?.Page as { show?: (path: string) => void } | undefined)?.show?.(`/details?id=${itemId}`);
+          (window.Emby?.Page as { show?: (path: string) => void } | undefined)
+            ?.show?.(routePath('details', { id: itemId }));
         }
       });
     }

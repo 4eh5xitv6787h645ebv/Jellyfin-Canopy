@@ -140,7 +140,14 @@ export interface ViewPageOptions {
     immediate?: boolean;
 }
 
+export type JellyfinRouteParam = string | number | boolean | null | undefined;
+
 export interface NavigationApi {
+    /**
+     * Build a hash-only Jellyfin SPA link. Keeping the href document-relative
+     * preserves reverse-proxy base paths and native WebView origins.
+     */
+    routeHref(route: string, params?: Record<string, JellyfinRouteParam>): string;
     onNavigate(callback: NavigateCallback): () => void;
     offNavigate(callback: NavigateCallback): boolean;
     onViewPage(callback: ViewPageCallback, options?: ViewPageOptions): () => void;
