@@ -76,6 +76,9 @@ public sealed class CountingLibraryManager : ILibraryManager
     /// <summary>When set, backs the user-scoped <see cref="GetItemById{T}(Guid, User?)"/>.</summary>
     public Func<Guid, User?, BaseItem?>? GetItemByIdUserHook { get; set; }
 
+    /// <summary>When set, backs the user-access projection query.</summary>
+    public Func<InternalItemsQuery, IReadOnlyList<Guid>>? GetItemIdsHook { get; set; }
+
     // ---- Everything below is an unused NotImplemented stub (per the repo convention). ----
 
     public AggregateFolder RootFolder => throw new NotImplementedException();
@@ -217,7 +220,8 @@ public sealed class CountingLibraryManager : ILibraryManager
 
     public Task UpdatePeopleAsync(BaseItem item, IReadOnlyList<PersonInfo> people, CancellationToken cancellationToken) => throw new NotImplementedException();
 
-    public IReadOnlyList<Guid> GetItemIds(InternalItemsQuery query) => throw new NotImplementedException();
+    public IReadOnlyList<Guid> GetItemIds(InternalItemsQuery query)
+        => GetItemIdsHook is null ? throw new NotImplementedException() : GetItemIdsHook(query);
 
     public IReadOnlyList<string> GetPeopleNames(InternalPeopleQuery query) => throw new NotImplementedException();
 

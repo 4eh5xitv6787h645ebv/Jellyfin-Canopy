@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Logging;
@@ -30,7 +31,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
         protected readonly IPluginConfigProvider _configProvider;
 
         // Track which user+item combinations have already been checked to avoid duplicate checks
-        private readonly Dictionary<string, DateTime> _checkedSessions = new();
+        private static readonly TimeSpan CheckedSessionTtl = TimeSpan.FromHours(1);
+        private readonly BoundedTtlCache<string, byte> _checkedSessions = new(
+            maximumEntries: 16_384,
+            maximumWeight: 16_384,
+            comparer: StringComparer.Ordinal,
+            defaultTtl: () => CheckedSessionTtl);
         private readonly object _sessionLock = new();
         private readonly object _subLock = new();
         private bool _subscribed;
@@ -121,15 +127,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
         {
             lock (_sessionLock)
             {
-                // Clean up expired cache entries (older than 1 hour)
-                var expiredKeys = _checkedSessions.Where(kvp => (DateTime.Now - kvp.Value).TotalHours > 1)
-                    .Select(kvp => kvp.Key)
-                    .ToList();
-                foreach (var key in expiredKeys)
-                {
-                    _checkedSessions.Remove(key);
-                }
-
                 // Skip if we've checked this user+item combination in the last hour
                 if (_checkedSessions.ContainsKey(sessionItemKey))
                 {
@@ -137,7 +134,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
                 }
 
                 // Mark as checked with current timestamp
-                _checkedSessions[sessionItemKey] = DateTime.Now;
+                _checkedSessions.Set(sessionItemKey, 0, CheckedSessionTtl);
                 return true;
             }
         }

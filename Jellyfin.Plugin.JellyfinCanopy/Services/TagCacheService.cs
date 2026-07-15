@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Model;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities;
@@ -52,6 +53,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // holding the guard" state and drive the rebuild against it deterministically.
         internal Action? OnAfterFlushApplyForTest;
 
+        // Test seam after a user-access cache miss and before joining the
+        // per-user singleflight. A delayed miss must re-check the cache inside
+        // the winning Lazy so it cannot query after another flight publishes.
+        internal Action? OnAfterUserAccessCacheMissForTest;
+
         // Incremental cache maintenance. Library-scan events are recorded here (O(1),
         // no DB/probe work) and drained by a debounced background worker so scans are
         // never blocked and repeated hits on the same id coalesce to one rebuild.
@@ -79,8 +85,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private const int CurrentCacheSchemaVersion = 2;
 
         // User access cache: avoids expensive GetItemIds query on every request
-        private readonly ConcurrentDictionary<string, (HashSet<string> Ids, DateTime CachedAt)> _userAccessCache = new();
         private static readonly TimeSpan UserAccessCacheTtl = TimeSpan.FromSeconds(60);
+        private readonly BoundedTtlCache<string, (HashSet<string> Ids, DateTime CachedAt)> _userAccessCache = new(
+            maximumEntries: 2_048,
+            maximumWeight: 2_000_000,
+            weight: static (key, entry) => key.Length + entry.Ids.Count,
+            comparer: StringComparer.Ordinal,
+            defaultTtl: () => UserAccessCacheTtl);
+        private readonly ConcurrentDictionary<string, Lazy<HashSet<string>>> _userAccessInFlight = new(StringComparer.Ordinal);
 
         public static readonly HashSet<BaseItemKind> TaggableTypes = new()
         {
@@ -625,15 +637,41 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
             else
             {
-                var accessibleIds = _libraryManager.GetItemIds(new InternalItemsQuery(user)
+                OnAfterUserAccessCacheMissForTest?.Invoke();
+                var flight = _userAccessInFlight.GetOrAdd(
+                    userKey,
+                    _ => new Lazy<HashSet<string>>(
+                        () =>
+                        {
+                            if (_userAccessCache.TryGetValue(userKey, out var published)
+                                && DateTime.UtcNow - published.CachedAt < UserAccessCacheTtl)
+                            {
+                                return published.Ids;
+                            }
+
+                            var accessibleIds = _libraryManager.GetItemIds(new InternalItemsQuery(user)
+                            {
+                                IncludeItemTypes = TaggableTypes.ToArray(),
+                                Recursive = true,
+                            });
+                            var result = new HashSet<string>(
+                                accessibleIds.Select(id => id.ToString("N").ToLowerInvariant()));
+                            _userAccessCache.Set(
+                                userKey,
+                                (result, DateTime.UtcNow),
+                                UserAccessCacheTtl);
+                            return result;
+                        },
+                        LazyThreadSafetyMode.ExecutionAndPublication));
+                try
                 {
-                    IncludeItemTypes = TaggableTypes.ToArray(),
-                    Recursive = true
-                });
-                accessibleSet = new HashSet<string>(
-                    accessibleIds.Select(id => id.ToString("N").ToLowerInvariant())
-                );
-                _userAccessCache[userKey] = (accessibleSet, DateTime.UtcNow);
+                    accessibleSet = flight.Value;
+                }
+                finally
+                {
+                    ((ICollection<KeyValuePair<string, Lazy<HashSet<string>>>>)_userAccessInFlight)
+                        .Remove(new KeyValuePair<string, Lazy<HashSet<string>>>(userKey, flight));
+                }
             }
 
             var result = new Dictionary<string, TagCacheEntry>();

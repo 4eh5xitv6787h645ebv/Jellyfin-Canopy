@@ -1376,7 +1376,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         }
 
         internal static bool TryPublishResponseCacheEntry(
-            Dictionary<string, (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> cache,
+            Helpers.BoundedTtlCache<string, (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> cache,
             object cacheLock,
             string cacheKey,
             (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity) entry,
@@ -1387,9 +1387,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return false;
             }
 
+            Helpers.BoundedTtlCache<string, (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)>.CacheToken publication;
             lock (cacheLock)
             {
-                cache[cacheKey] = entry;
+                cache.TrySet(cacheKey, entry, out publication);
             }
 
             if (isConfigurationCurrent())
@@ -1402,11 +1403,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             // must not be deleted by stale cleanup.
             lock (cacheLock)
             {
-                if (cache.TryGetValue(cacheKey, out var published)
-                    && published.Equals(entry))
-                {
-                    cache.Remove(cacheKey);
-                }
+                cache.Remove(publication);
             }
 
             return false;
@@ -2152,18 +2149,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                                 { StatusCode = 409 };
                             }
 
-                            lock (_seerrCache.ResponseCacheLock)
-                            {
-                                if (_seerrCache.ResponseCache.Count > 200 || _seerrCache.ResponseCache.Count % 50 == 0)
-                                {
-                                    var staleKeys = _seerrCache.ResponseCache
-                                        .Where(kv => DateTime.UtcNow - kv.Value.CachedAt > _seerrCache.GetResponseCacheTtl())
-                                        .Select(kv => kv.Key)
-                                        .ToList();
-                                    foreach (var key in staleKeys)
-                                        _seerrCache.ResponseCache.Remove(key);
-                                }
-                            }
                         }
 
                         // a successful POST /api/v1/request changes
@@ -2711,9 +2696,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         // Dedup tracker for high-frequency polling log lines.
         // Key = (userId, apiPath), Value = (last logged message, count since last log, last log time)
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string LastMsg, int Count, DateTime LastLogged)>
-            _pollLogDedup = new();
         private static readonly TimeSpan _pollLogInterval = TimeSpan.FromMinutes(5);
+        private static readonly Helpers.BoundedTtlCache<string, (string LastMsg, int Count, DateTime LastLogged)>
+            _pollLogDedup = new(
+                maximumEntries: 4_096,
+                maximumWeight: 4L * 1024 * 1024,
+                weight: static (key, entry) => key.Length + entry.LastMsg.Length + 16,
+                comparer: StringComparer.Ordinal,
+                defaultTtl: static () => TimeSpan.FromMinutes(30));
 
         private void LogPollingRequest(string userDisplay, string requestUri, string dedupKey)
         {

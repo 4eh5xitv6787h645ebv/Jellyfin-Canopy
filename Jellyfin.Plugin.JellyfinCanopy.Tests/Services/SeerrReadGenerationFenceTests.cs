@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
@@ -239,7 +240,7 @@ public sealed class SeerrReadGenerationFenceTests
     [Fact]
     public void ResponseCache_StalePublicationCleanupCannotDeleteNewerReplacement()
     {
-        var cache = new Dictionary<string, (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)>();
+        var cache = new BoundedTtlCache<string, (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)>(4, 4);
         var cacheLock = new object();
         const string key = "same-generation-key";
         var stale = ("old", DateTime.UtcNow, 1L, "old-generation");

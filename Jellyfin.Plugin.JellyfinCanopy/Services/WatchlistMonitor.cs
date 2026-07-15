@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks;
 using MediaBrowser.Controller;
@@ -33,7 +34,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly UserConfigurationManager _userConfigurationManager;
         private readonly ILogger<WatchlistMonitor> _logger;
         private readonly IPluginConfigProvider _configProvider;
-        private readonly Dictionary<string, (List<RequestItemWithUser> Items, DateTime CachedAt)> _requestsCache = new();
+        private readonly BoundedTtlCache<string, List<RequestItemWithUser>> _requestsCache = new(
+            maximumEntries: 64,
+            maximumWeight: 100_000,
+            weight: static (key, items) => key.Length + items.Count,
+            comparer: StringComparer.Ordinal,
+            defaultTtl: GetRequestsCacheTtl);
         private readonly object _requestsCacheLock = new();
         private readonly ConcurrentDictionary<string, Lazy<Task<List<RequestItemWithUser>?>>> _requestsInFlight = new();
         private readonly object _lifecycleLock = new();
@@ -482,10 +488,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             lock (_requestsCacheLock)
             {
-                if (_requestsCache.TryGetValue(cacheKey, out var cached) &&
-                    DateTime.UtcNow - cached.CachedAt < cacheTtl)
+                if (_requestsCache.TryGetValue(cacheKey, out var cached))
                 {
-                    return cached.Items;
+                    return cached;
                 }
             }
 
@@ -558,7 +563,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     // caller could otherwise start a duplicate fetch.
                     lock (_requestsCacheLock)
                     {
-                        _requestsCache[cacheKey] = (fetchedItems, DateTime.UtcNow);
+                        _requestsCache.Set(cacheKey, fetchedItems, cacheTtl);
                     }
                 }
 

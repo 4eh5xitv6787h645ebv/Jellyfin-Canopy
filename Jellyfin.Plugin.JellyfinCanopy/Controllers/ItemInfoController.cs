@@ -565,24 +565,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     return ConfigurationChanged();
                 }
 
-                // Evict expired entries periodically.
-                if (_seerrCache.AvatarCache.Count > 50 || _seerrCache.AvatarCache.Count % 10 == 0)
-                {
-                    foreach (var key in _seerrCache.AvatarCache
-                        .Where(kv => DateTime.UtcNow - kv.Value.CachedAt > _seerrCache.AvatarCacheDuration)
-                        .Select(kv => kv.Key)
-                        .ToList())
-                    {
-                        _seerrCache.AvatarCache.TryRemove(key, out _);
-                    }
-                }
-
                 if (!IsConfigurationCurrent())
                 {
-                    AsyncSingleFlight.TryRemoveExact(
-                        _seerrCache.AvatarCache,
-                        cacheKey,
-                        publishedEntry);
+                    _seerrCache.AvatarCache.Remove(cacheKey, publishedEntry);
                     return ConfigurationChanged();
                 }
 
@@ -624,7 +609,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         }
 
         internal static bool TryPublishAvatarCacheEntry(
-            ConcurrentDictionary<string, (byte[] Content, string ContentType, string ETag, DateTime CachedAt)> cache,
+            BoundedTtlCache<string, (byte[] Content, string ContentType, string ETag, DateTime CachedAt)> cache,
             string cacheKey,
             (byte[] Content, string ContentType, string ETag, DateTime CachedAt) entry,
             Func<bool> isConfigurationCurrent)
@@ -634,13 +619,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return false;
             }
 
-            cache[cacheKey] = entry;
+            cache.TrySet(cacheKey, entry, out var publication);
             if (isConfigurationCurrent())
             {
                 return true;
             }
 
-            AsyncSingleFlight.TryRemoveExact(cache, cacheKey, entry);
+            cache.Remove(publication);
             return false;
         }
 

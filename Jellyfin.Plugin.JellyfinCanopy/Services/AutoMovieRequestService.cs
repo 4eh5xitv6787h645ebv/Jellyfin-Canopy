@@ -12,6 +12,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Querying;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
@@ -28,7 +29,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly ILibraryManager _libraryManager;
 
         // Track which movies have already been requested to avoid duplicates (with timestamps for expiry)
-        private readonly Dictionary<string, DateTime> _requestedMovies = new(StringComparer.Ordinal);
+        private static readonly TimeSpan RequestReservationTtl = TimeSpan.FromHours(1);
+        private readonly BoundedTtlCache<string, byte> _requestedMovies = new(
+            maximumEntries: 16_384,
+            maximumWeight: 16_384,
+            comparer: StringComparer.Ordinal,
+            defaultTtl: () => RequestReservationTtl);
         private readonly object _movieCacheLock = new();
         private readonly Seerr.ISeerrClient _seerrClient;
         private readonly ISeerrParentalFilter _parentalFilter;
@@ -172,18 +178,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var requestKey = BuildSourceScopedKey(
                 seerrSourceUrl,
                 $"{nextMovieInfo.TmdbId}:{(requestIs4k ? "4k" : "normal")}");
+            BoundedTtlCache<string, byte>.CacheToken reservation;
             lock (_movieCacheLock)
             {
                 // The target reservation is global to this service instance,
                 // not per Jellyfin caller. Seerr's duplicate check is a
                 // non-atomic read/write, so two users racing the same source,
                 // successor, and quality domain must share one lease.
-                var expired = _requestedMovies
-                    .Where(kvp => (DateTime.Now - kvp.Value).TotalHours >= 1)
-                    .Select(kvp => kvp.Key)
-                    .ToList();
-                foreach (var key in expired) _requestedMovies.Remove(key);
-
                 if (_requestedMovies.ContainsKey(requestKey))
                 {
                     _logger.LogDebug($"[Auto-Movie-Request] Already requested '{nextMovieInfo.Title}' (cached)");
@@ -191,7 +192,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
 
                 // Reserve the slot so concurrent callers see it immediately
-                _requestedMovies[requestKey] = DateTime.Now;
+                _requestedMovies.TrySet(requestKey, 0, out reservation);
             }
 
             // Request the movie
@@ -215,7 +216,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // a possibly committed non-idempotent request.
                 lock (_movieCacheLock)
                 {
-                    _requestedMovies.Remove(requestKey);
+                    _requestedMovies.Remove(reservation);
                 }
                 _logger.LogWarning($"[Auto-Movie-Request] ✗ Failed to request '{nextMovieInfo.Title}' (TMDB {nextMovieInfo.TmdbId}) for {user.Username}");
             }

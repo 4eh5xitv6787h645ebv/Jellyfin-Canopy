@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
@@ -11,6 +10,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Controllers;
 using Jellyfin.Plugin.JellyfinCanopy.Data;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using Microsoft.AspNetCore.Http;
@@ -221,7 +221,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         [Fact]
         public void TryPublishAvatarCacheEntry_StaleCleanupCannotDeleteNewerReplacement()
         {
-            var cache = new ConcurrentDictionary<string, (byte[] Content, string ContentType, string ETag, DateTime CachedAt)>();
+            var cache = new BoundedTtlCache<string, (byte[] Content, string ContentType, string ETag, DateTime CachedAt)>(4, 4);
             const string key = "same-generation-key";
             var stale = (new byte[] { 1 }, "image/png", "\"old\"", DateTime.UtcNow);
             var newer = (new byte[] { 2 }, "image/png", "\"new\"", DateTime.UtcNow);

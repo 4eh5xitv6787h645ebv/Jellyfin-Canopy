@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Logging;
 
@@ -80,7 +81,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         public const string SpoilerUidCookie = "jc-spoiler-uid";
 
         private static readonly TimeSpan PerKeyWarnInterval = TimeSpan.FromHours(1);
-        private static readonly ConcurrentDictionary<string, DateTime> _warnedAt = new();
+        private static readonly BoundedTtlCache<string, DateTime> _warnedAt = new(
+            maximumEntries: 4_096,
+            maximumWeight: 1024 * 1024,
+            weight: static (key, _) => key.Length + sizeof(long),
+            comparer: StringComparer.Ordinal,
+            defaultTtl: () => PerKeyWarnInterval);
 
         // Short-TTL cache of the per-IP session scan. A single page load fires
         // a burst of image requests from one IP; without this each one would
@@ -90,7 +96,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // (e.g. a Seerr instance polling the server). Cache the scan result
         // for a couple of seconds so a burst pays for one scan, not dozens.
         private static readonly TimeSpan IpScanCacheTtl = TimeSpan.FromSeconds(2);
-        private static readonly ConcurrentDictionary<string, IpScanCacheEntry> _ipScanCache = new();
+        private static readonly BoundedTtlCache<string, IpScanCacheEntry> _ipScanCache = new(
+            maximumEntries: 1_024,
+            maximumWeight: 1024 * 1024,
+            weight: static (key, entry) => key.Length + (entry.IpUsers.Count * 16L),
+            comparer: StringComparer.Ordinal,
+            defaultTtl: () => IpScanCacheTtl);
 
         private sealed class IpScanCacheEntry
         {
@@ -106,7 +117,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // moment earlier is never suppressed for longer than the ordinary
         // scan staleness they'd face anyway.
         private static readonly TimeSpan CookieMissNegativeCacheTtl = TimeSpan.FromSeconds(2);
-        private static readonly ConcurrentDictionary<string, DateTime> _cookieMissCache = new(StringComparer.Ordinal);
+        private static readonly BoundedTtlCache<string, DateTime> _cookieMissCache = new(
+            maximumEntries: 2_048,
+            maximumWeight: 1024 * 1024,
+            weight: static (key, _) => key.Length + sizeof(long),
+            comparer: StringComparer.Ordinal,
+            defaultTtl: () => CookieMissNegativeCacheTtl);
 
         // TTL-cached user count for the single-user shortcut so we don't
         // enumerate users per request (GetUsers() is a DB query in JF12).
@@ -134,6 +150,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly MediaBrowser.Controller.Library.IUserManager _userManager;
         private readonly SpoilerIdentityService _markers;
         private readonly ILogger<RequestIdentityService> _logger;
+
+        internal static (int IpScans, int CookieMisses) CacheCountsForTest
+            => (_ipScanCache.Count, _cookieMissCache.Count);
 
         public RequestIdentityService(
             ISessionManager sessionManager,
@@ -289,15 +308,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         ipUsers = ScanActiveSessionUsersFresh(httpContext);
                         if (missKey != null && !ipUsers.Contains(cookieUid))
                         {
-                            _cookieMissCache[missKey] = now;
-                            if (_cookieMissCache.Count > 512)
-                            {
-                                foreach (var kvp in _cookieMissCache)
-                                {
-                                    if ((now - kvp.Value) >= CookieMissNegativeCacheTtl)
-                                        _cookieMissCache.TryRemove(kvp.Key, out _);
-                                }
-                            }
+                            _cookieMissCache.Set(missKey, now, CookieMissNegativeCacheTtl);
                         }
                     }
                 }
@@ -397,17 +408,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             var now = DateTime.UtcNow;
             var ipUsers = ScanActiveSessionUsers(httpContext);
-            _ipScanCache[ipKey] = new IpScanCacheEntry { CachedAt = now, IpUsers = ipUsers };
-
-            // Opportunistic prune so the cache can't grow unbounded across
-            // many distinct client IPs over a long uptime.
-            if (_ipScanCache.Count > 512)
-            {
-                foreach (var kvp in _ipScanCache)
-                {
-                    if ((now - kvp.Value.CachedAt) >= IpScanCacheTtl) _ipScanCache.TryRemove(kvp.Key, out _);
-                }
-            }
+            _ipScanCache.Set(
+                ipKey,
+                new IpScanCacheEntry { CachedAt = now, IpUsers = ipUsers },
+                IpScanCacheTtl);
             return ipUsers;
         }
 
@@ -535,7 +539,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private void WarnRateLimited(string key, string message)
         {
             var now = DateTime.UtcNow;
-            var stored = _warnedAt.AddOrUpdate(key, now,
+            var stored = _warnedAt.AddOrUpdate(key, _ => now,
                 (_, last) => (now - last) >= PerKeyWarnInterval ? now : last);
             if (stored != now) return;
             _logger.LogWarning(message);

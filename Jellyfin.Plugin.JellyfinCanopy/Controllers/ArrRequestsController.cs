@@ -2020,24 +2020,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         && string.IsNullOrEmpty(fetchedResult.PosterUrl);
                     if (!isEmpty && IsReadConfigurationCurrent(configStamp))
                     {
+                        Helpers.BoundedTtlCache<string, (TmdbEnrichmentResult Data, DateTime CachedAt, long ConfigurationRevision)>.CacheToken publication;
                         lock (_seerrCache.TmdbEnrichmentCacheLock)
                         {
-                            _seerrCache.TmdbEnrichmentCache[cacheKey] = (
+                            _seerrCache.TmdbEnrichmentCache.TrySet(cacheKey, (
                                 fetchedResult,
                                 DateTime.UtcNow,
-                                configurationRevision);
-
-                            if (_seerrCache.TmdbEnrichmentCache.Count > 500 || _seerrCache.TmdbEnrichmentCache.Count % 100 == 0)
-                            {
-                                var staleKeys = _seerrCache.TmdbEnrichmentCache
-                                    .Where(kv => DateTime.UtcNow - kv.Value.CachedAt > cacheTtl)
-                                    .Select(kv => kv.Key)
-                                    .ToList();
-                                foreach (var staleKey in staleKeys)
-                                {
-                                    _seerrCache.TmdbEnrichmentCache.Remove(staleKey);
-                                }
-                            }
+                                configurationRevision), cacheTtl, out publication);
                         }
 
                         // A save can race the final publication check. Entries
@@ -2047,11 +2036,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         {
                             lock (_seerrCache.TmdbEnrichmentCacheLock)
                             {
-                                if (_seerrCache.TmdbEnrichmentCache.TryGetValue(cacheKey, out var published)
-                                    && published.ConfigurationRevision == configurationRevision)
-                                {
-                                    _seerrCache.TmdbEnrichmentCache.Remove(cacheKey);
-                                }
+                                _seerrCache.TmdbEnrichmentCache.Remove(publication);
                             }
                         }
                     }

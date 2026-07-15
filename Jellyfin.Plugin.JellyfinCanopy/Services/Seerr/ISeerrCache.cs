@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
@@ -43,17 +44,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         /// Server-side cache for proxied avatar images to avoid re-fetching from
         /// upstream Seerr on every request. Entries expire after <see cref="AvatarCacheDuration"/>.
         /// </summary>
-        ConcurrentDictionary<string, (byte[] Content, string ContentType, string ETag, DateTime CachedAt)> AvatarCache { get; }
+        BoundedTtlCache<string, (byte[] Content, string ContentType, string ETag, DateTime CachedAt)> AvatarCache { get; }
 
         TimeSpan AvatarCacheDuration { get; }
 
         /// <summary>Cache for Seerr user ID lookups (JellyfinUserId -> SeerrUserId).</summary>
-        Dictionary<string, (string SeerrUserId, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> UserIdCache { get; }
+        BoundedTtlCache<string, (string SeerrUserId, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> UserIdCache { get; }
 
         object UserIdCacheLock { get; }
 
         /// <summary>Cache for Seerr user lookups (JellyfinUserId -> full Seerr user payload, null = negative cache).</summary>
-        Dictionary<string, (SeerrUser? User, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> UserCache { get; }
+        BoundedTtlCache<string, (SeerrUser? User, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> UserCache { get; }
 
         object UserCacheLock { get; }
 
@@ -63,14 +64,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         /// burst of callers cannot fan out duplicate import POSTs. This is not
         /// an authoritative negative-user cache.
         /// </summary>
-        Dictionary<string, DateTime> AutoImportFailureThrottle { get; }
+        BoundedTtlCache<string, DateTime> AutoImportFailureThrottle { get; }
 
         object AutoImportFailureThrottleLock { get; }
 
         TimeSpan AutoImportFailureThrottleTtl { get; }
 
         /// <summary>Cache for Seerr proxy responses (discovery/search endpoints).</summary>
-        Dictionary<string, (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> ResponseCache { get; }
+        BoundedTtlCache<string, (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity)> ResponseCache { get; }
 
         object ResponseCacheLock { get; }
 
@@ -95,14 +96,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         /// URL. The response is user-neutral within one Seerr instance, but
         /// separate configured instances are distinct settings domains.
         /// </summary>
-        Dictionary<string, (bool Movie4kEnabled, bool Series4kEnabled, DateTime CachedAt, long ConfigurationRevision, string ApiKeyFingerprint)> Public4kSettingsCache { get; }
+        BoundedTtlCache<string, (bool Movie4kEnabled, bool Series4kEnabled, DateTime CachedAt, long ConfigurationRevision, string ApiKeyFingerprint)> Public4kSettingsCache { get; }
 
         object Public4kSettingsCacheLock { get; }
 
         TimeSpan Public4kSettingsCacheTtl { get; }
 
         /// <summary>Cache for request-page TMDB enrichments (movie/tv detail lookups via Seerr).</summary>
-        Dictionary<string, (TmdbEnrichmentResult Data, DateTime CachedAt, long ConfigurationRevision)> TmdbEnrichmentCache { get; }
+        BoundedTtlCache<string, (TmdbEnrichmentResult Data, DateTime CachedAt, long ConfigurationRevision)> TmdbEnrichmentCache { get; }
 
         object TmdbEnrichmentCacheLock { get; }
 
@@ -126,7 +127,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         /// null Keywords as a cache miss when tag rules are active. Like the
         /// score, they depend only on the title, never the caller.
         /// </remarks>
-        ConcurrentDictionary<string, (int? Score, int? SubScore, string[]? Keywords, string[]? Genres, DateTime CachedAt)> CertScoreCache { get; }
+        BoundedTtlCache<string, (int? Score, int? SubScore, string[]? Keywords, string[]? Genres, DateTime CachedAt)> CertScoreCache { get; }
 
         TimeSpan GetResponseCacheTtl();
 
