@@ -5,15 +5,10 @@
 // lifecycle wiring; this module keeps the studio → TMDB network/company
 // resolution (known-network map + company search scoring).
 import { JC } from '../../globals';
+import { classifyObjectDetails, classifyResultsEnvelope } from '../../core/cache-policy';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
-
-// Cache for network ID mappings (studioName -> TMDB networkId)
-const networkIdCache = new Map<string, any>();
-
-// Cache for studio info (studioId -> studioInfo)
-const studioInfoCache = new Map<string, any>();
 
 // Alias for shared utilities
 const fetchWithManagedRequest = (path: string, options?: any) =>
@@ -82,24 +77,21 @@ const TV_NETWORKS: Record<string, number> = {
  * @param {AbortSignal} [signal]
  */
 async function getStudioInfo(studioId: string, signal?: AbortSignal): Promise<any> {
-    if (studioInfoCache.has(studioId)) {
-        return studioInfoCache.get(studioId);
-    }
-
     try {
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
 
-        const response = await fetchWithManagedRequest(`/JellyfinCanopy/studio/${studioId}`, { signal });
+        const response = await fetchWithManagedRequest(`/JellyfinCanopy/studio/${studioId}`, {
+            signal,
+            cacheDisposition: classifyObjectDetails,
+            cacheNotFound: true,
+        });
 
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
 
-        if (response) {
-            studioInfoCache.set(studioId, response);
-        }
         return response;
     } catch (error: any) {
         if (error.name === 'AbortError') throw error;
@@ -130,12 +122,6 @@ function getKnownNetworkId(networkName: string): number | null {
  * @param {AbortSignal} [signal]
  */
 async function searchTmdbCompany(networkName: string, signal?: AbortSignal): Promise<any> {
-    const cacheKey = networkName.toLowerCase().trim();
-
-    if (networkIdCache.has(cacheKey)) {
-        return networkIdCache.get(cacheKey);
-    }
-
     try {
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
@@ -143,7 +129,7 @@ async function searchTmdbCompany(networkName: string, signal?: AbortSignal): Pro
 
         const response = await fetchWithManagedRequest(
             `/JellyfinCanopy/tmdb/search/company?query=${encodeURIComponent(networkName)}`,
-            { signal }
+            { signal, cacheDisposition: classifyResultsEnvelope }
         );
 
         if (signal?.aborted) {
@@ -166,10 +152,7 @@ async function searchTmdbCompany(networkName: string, signal?: AbortSignal): Pro
             scored.sort((a: any, b: any) => b.score - a.score);
 
             if (scored.length === 0) return null;
-            const companyId = scored[0].id;
-
-            networkIdCache.set(cacheKey, companyId);
-            return companyId;
+            return scored[0].id;
         }
     } catch (error: any) {
         if (error.name === 'AbortError') throw error;
@@ -227,11 +210,7 @@ const discovery = JC.discoveryBase!.createDiscovery({
     resolveFeeds,
     buildDiscoverPath: (kind: string, id: number) => kind === 'tv'
         ? `/JellyfinCanopy/seerr/discover/tv/network/${id}`
-        : `/JellyfinCanopy/seerr/discover/movies/studio/${id}`,
-    onCleanup: () => {
-        networkIdCache.clear();
-        studioInfoCache.clear();
-    }
+        : `/JellyfinCanopy/seerr/discover/movies/studio/${id}`
 });
 
 discovery.start();

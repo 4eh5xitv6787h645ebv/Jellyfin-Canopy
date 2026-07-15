@@ -4,15 +4,12 @@
 // pagination, filter/sort controls, infinite scroll and lifecycle wiring;
 // this module keeps the TMDB person resolution and the credits fetch.
 import { JC } from '../../globals';
+import { classifyObjectDetails, classifyResultsEnvelope } from '../../core/cache-policy';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
 
 const logPrefix = '🪼 Jellyfin Canopy: Person Discovery:';
-
-// Cache for person ID mappings (personName -> TMDB personId)
-const personIdCache = new Map<string, any>();
-const personInfoCache = new Map<string, any>();
 
 // Alias for shared utilities
 const fetchWithManagedRequest = (path: string, options?: any) =>
@@ -24,23 +21,21 @@ const fetchWithManagedRequest = (path: string, options?: any) =>
  * @param {AbortSignal} [signal]
  */
 async function getPersonInfo(personId: string, signal?: AbortSignal): Promise<any> {
-    if (personInfoCache.has(personId)) {
-        return personInfoCache.get(personId);
-    }
     try {
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
 
-        const response = await fetchWithManagedRequest(`/JellyfinCanopy/person/${personId}`, { signal });
+        const response = await fetchWithManagedRequest(`/JellyfinCanopy/person/${personId}`, {
+            signal,
+            cacheDisposition: classifyObjectDetails,
+            cacheNotFound: true,
+        });
 
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
 
-        if (response) {
-            personInfoCache.set(personId, response);
-        }
         return response;
     } catch (error: any) {
         if (error.name === 'AbortError') throw error;
@@ -80,11 +75,6 @@ async function isPersonPage(itemId: string, signal?: AbortSignal): Promise<any> 
  * @param {AbortSignal} [signal]
  */
 async function searchTmdbPerson(personName: string, signal?: AbortSignal): Promise<any> {
-    const cacheKey = personName.toLowerCase().trim();
-    if (personIdCache.has(cacheKey)) {
-        return personIdCache.get(cacheKey);
-    }
-
     try {
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
@@ -92,7 +82,7 @@ async function searchTmdbPerson(personName: string, signal?: AbortSignal): Promi
 
         const response = await fetchWithManagedRequest(
             `/JellyfinCanopy/tmdb/search/person?query=${encodeURIComponent(personName)}`,
-            { signal }
+            { signal, cacheDisposition: classifyResultsEnvelope }
         );
 
         if (signal?.aborted) {
@@ -116,10 +106,7 @@ async function searchTmdbPerson(personName: string, signal?: AbortSignal): Promi
                 scored.sort((a: any, b: any) => b.score - a.score);
 
                 if (scored.length === 0) return null;
-                const personId = scored[0].id;
-
-                personIdCache.set(cacheKey, personId);
-                return personId;
+                return scored[0].id;
             }
         }
     } catch (error: any) {
@@ -215,11 +202,7 @@ const discovery = JC.discoveryBase!.createDiscovery({
     configKey: 'SeerrShowPersonDiscovery',
     getIdFromUrl: JC.discoveryBase!.idFromDetailUrl,
     pageSize: 40,
-    resolveItems,
-    onCleanup: () => {
-        personIdCache.clear();
-        personInfoCache.clear();
-    }
+    resolveItems
 });
 
 discovery.start();

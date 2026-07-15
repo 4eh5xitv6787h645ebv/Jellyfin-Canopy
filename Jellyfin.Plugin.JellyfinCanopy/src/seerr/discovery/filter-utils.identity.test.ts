@@ -36,12 +36,37 @@ describe('discovery managed request identity paving', () => {
         expect(jf).toHaveBeenCalledWith(
             '/JellyfinCanopy/tmdb/genres/movie',
             {
-                signal,
                 cacheKey: 'genre:/JellyfinCanopy/tmdb/genres/movie',
+                cacheDisposition: undefined,
+                cacheNotFound: undefined,
             },
         );
         expect(getCached).not.toHaveBeenCalled();
         expect(setCache).not.toHaveBeenCalled();
         expect(fetchWithRetry).not.toHaveBeenCalled();
+    });
+
+    it('cancels only the lifecycle waiter and leaves shared transport ownership in core', async () => {
+        let resolve!: (value: unknown) => void;
+        jf.mockReturnValue(new Promise(done => { resolve = done; }));
+        const controller = new AbortController();
+
+        const waiting = JC.discoveryFilter!.fetchWithManagedRequest(
+            '/JellyfinCanopy/tmdb/search/person?query=a',
+            'person',
+            { signal: controller.signal },
+        );
+        controller.abort();
+
+        await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+        expect(jf).toHaveBeenCalledWith(
+            '/JellyfinCanopy/tmdb/search/person?query=a',
+            expect.not.objectContaining({ signal: expect.anything() }),
+        );
+
+        // The underlying shared request remains settleable/cacheable for other
+        // waiters; this aborted lifecycle did not own its transport.
+        resolve({ results: [] });
+        await Promise.resolve();
     });
 });

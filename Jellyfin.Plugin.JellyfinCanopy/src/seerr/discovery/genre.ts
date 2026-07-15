@@ -4,14 +4,9 @@
 // pagination, filter/sort controls, infinite scroll, dedup and lifecycle
 // wiring; this module keeps the Jellyfin-genre → TMDB-genre resolution.
 import { JC } from '../../globals';
+import { classifyArrayPayload, classifyObjectDetails } from '../../core/cache-policy';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
-
-
-const genreInfoCache = new Map<string, any>();
-
-// Dynamic genre cache (populated from TMDB API)
-let tmdbGenreCache: any = null;
 
 // Alias for shared utilities
 const fetchWithManagedRequest = (path: string, options?: any) =>
@@ -22,14 +17,12 @@ const fetchWithManagedRequest = (path: string, options?: any) =>
  * @param {AbortSignal} [signal] - Optional abort signal
  */
 async function fetchTmdbGenres(signal?: AbortSignal): Promise<any> {
-    if (tmdbGenreCache) return tmdbGenreCache;
-
     try {
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
 
-        const fetchOptions = { signal };
+        const fetchOptions = { signal, cacheDisposition: classifyArrayPayload };
         const [tvResponse, movieResponse] = await Promise.all([
             fetchWithManagedRequest('/JellyfinCanopy/tmdb/genres/tv', fetchOptions).catch(() => []),
             fetchWithManagedRequest('/JellyfinCanopy/tmdb/genres/movie', fetchOptions).catch(() => [])
@@ -40,19 +33,19 @@ async function fetchTmdbGenres(signal?: AbortSignal): Promise<any> {
         }
 
         // Build lookup map by genre name (lowercase for matching)
-        tmdbGenreCache = {};
+        const genres: Record<string, { tv: number | null; movie: number | null }> = {};
         (tvResponse || []).forEach((g: any) => {
             const key = g.name.toLowerCase();
-            if (!tmdbGenreCache[key]) tmdbGenreCache[key] = { tv: null, movie: null };
-            tmdbGenreCache[key].tv = g.id;
+            if (!genres[key]) genres[key] = { tv: null, movie: null };
+            genres[key].tv = g.id;
         });
         (movieResponse || []).forEach((g: any) => {
             const key = g.name.toLowerCase();
-            if (!tmdbGenreCache[key]) tmdbGenreCache[key] = { tv: null, movie: null };
-            tmdbGenreCache[key].movie = g.id;
+            if (!genres[key]) genres[key] = { tv: null, movie: null };
+            genres[key].movie = g.id;
         });
 
-        return tmdbGenreCache;
+        return genres;
     } catch (error: any) {
         if (error.name === 'AbortError') throw error;
         return {};
@@ -66,23 +59,21 @@ async function fetchTmdbGenres(signal?: AbortSignal): Promise<any> {
  * @returns {Promise<Object|null>} Genre info object or null
  */
 async function getGenreInfo(genreId: string, signal?: AbortSignal): Promise<any> {
-    if (genreInfoCache.has(genreId)) {
-        return genreInfoCache.get(genreId);
-    }
     try {
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
 
-        const response = await fetchWithManagedRequest(`/JellyfinCanopy/genre/${genreId}`, { signal });
+        const response = await fetchWithManagedRequest(`/JellyfinCanopy/genre/${genreId}`, {
+            signal,
+            cacheDisposition: classifyObjectDetails,
+            cacheNotFound: true,
+        });
 
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
 
-        if (response) {
-            genreInfoCache.set(genreId, response);
-        }
         return response;
     } catch (error: any) {
         if (error.name === 'AbortError') throw error;
@@ -96,9 +87,8 @@ async function getGenreInfo(genreId: string, signal?: AbortSignal): Promise<any>
  * @param {AbortSignal} [signal]
  * @returns {Promise<{tv: number|null, movie: number|null}|null>} Genre IDs or null
  */
-async function getTmdbGenreIds(genreName: string, signal?: AbortSignal): Promise<any> {
+function getTmdbGenreIds(genreName: string, genres: Record<string, { tv: number | null; movie: number | null }>): any {
     const cacheKey = genreName.toLowerCase().trim();
-    const genres = await fetchTmdbGenres(signal);
 
     // Start with exact match result (if any)
     const result: { tv: any; movie: any } = { tv: null, movie: null };
@@ -135,14 +125,17 @@ async function resolveFeeds({ id: genreId, signal }: { id: string; signal: Abort
     const statusPromise = JC.seerrAPI?.checkUserStatus();
     const tmdbGenresPromise = fetchTmdbGenres(signal);
 
-    const [genreInfo, status] = await Promise.all([genreInfoPromise, statusPromise, tmdbGenresPromise]);
+    const [genreInfo, status, tmdbGenres] = await Promise.all([
+        genreInfoPromise,
+        statusPromise,
+        tmdbGenresPromise
+    ]);
 
     if (signal.aborted) return null;
 
     if (!status?.active || !genreInfo?.name) return null;
 
-    // TMDB genres are already cached from the parallel fetch above
-    const tmdbGenreIds = await getTmdbGenreIds(genreInfo.name, signal);
+    const tmdbGenreIds = getTmdbGenreIds(genreInfo.name, tmdbGenres);
     if (signal.aborted) return null;
 
     if (!tmdbGenreIds || (!tmdbGenreIds.tv && !tmdbGenreIds.movie)) return null;
@@ -163,11 +156,7 @@ const discovery = JC.discoveryBase!.createDiscovery({
     resolveFeeds,
     buildDiscoverPath: (kind: string, id: number) => kind === 'tv'
         ? `/JellyfinCanopy/seerr/discover/tv/genre/${id}`
-        : `/JellyfinCanopy/seerr/discover/movies/genre/${id}`,
-    onCleanup: () => {
-        genreInfoCache.clear();
-        tmdbGenreCache = null;
-    }
+        : `/JellyfinCanopy/seerr/discover/movies/genre/${id}`
 });
 
 discovery.start();

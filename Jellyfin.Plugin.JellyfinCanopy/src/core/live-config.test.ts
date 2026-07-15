@@ -20,7 +20,12 @@ describe('config hot-reload reaction', () => {
             if (path.startsWith('/private-config')) return Promise.resolve({ SecretUrl: 'http://x' });
             return Promise.resolve({});
         });
-        JC.core.api = { plugin } as unknown as NonNullable<typeof JC.core.api>;
+        const abortAllRequests = vi.fn();
+        const clearCache = vi.fn();
+        JC.core.api = {
+            plugin,
+            manager: { abortAllRequests, clearCache },
+        } as unknown as NonNullable<typeof JC.core.api>;
 
         const domEvent = vi.fn();
         window.addEventListener('jc:config-changed', domEvent);
@@ -40,6 +45,8 @@ describe('config hot-reload reaction', () => {
         expect(JC.pluginConfig).toBe(configRef);
         // legacy hook fired for unmigrated modules.
         expect(domEvent).toHaveBeenCalledTimes(1);
+        expect(abortAllRequests).toHaveBeenCalledTimes(1);
+        expect(clearCache).toHaveBeenCalledTimes(1);
 
         // both endpoints hit with a cache-buster.
         expect(plugin).toHaveBeenCalledWith(expect.stringMatching(/^\/public-config\?_je=\d+/), expect.anything());

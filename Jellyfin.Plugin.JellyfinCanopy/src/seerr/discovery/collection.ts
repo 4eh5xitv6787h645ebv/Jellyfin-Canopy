@@ -4,13 +4,12 @@
 // metrics and lifecycle wiring; this module keeps only the BoxSet lookup
 // and the missing-movies render.
 import { JC } from '../../globals';
+import { classifyObjectDetails } from '../../core/cache-policy';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
 
 const logPrefix = '🪼 Jellyfin Canopy: Collection Discovery:';
-
-const boxsetInfoCache = new Map<string, any>();
 
 // Alias for shared utilities
 const fetchWithManagedRequest = (path: string, options?: any) =>
@@ -23,23 +22,21 @@ const fetchWithManagedRequest = (path: string, options?: any) =>
  * @returns {Promise<{id: string, name: string, tmdbId: string|null, type: string}|null>}
  */
 async function getBoxSetInfo(boxsetId: string, signal?: AbortSignal): Promise<any> {
-    if (boxsetInfoCache.has(boxsetId)) {
-        return boxsetInfoCache.get(boxsetId);
-    }
     try {
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
 
-        const response = await fetchWithManagedRequest(`/JellyfinCanopy/boxset/${boxsetId}`, { signal });
+        const response = await fetchWithManagedRequest(`/JellyfinCanopy/boxset/${boxsetId}`, {
+            signal,
+            cacheDisposition: classifyObjectDetails,
+            cacheNotFound: true,
+        });
 
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
 
-        if (response) {
-            boxsetInfoCache.set(boxsetId, response);
-        }
         return response;
     } catch (error: any) {
         if (error.name === 'AbortError') throw error;
@@ -222,8 +219,7 @@ const discovery = JC.discoveryBase!.createDiscovery({
     logLabel: 'Collection Discovery',
     configKey: 'SeerrShowCollectionDiscovery',
     getIdFromUrl: JC.discoveryBase!.idFromDetailUrl,
-    renderOneShot: renderCollectionDiscovery,
-    onCleanup: () => boxsetInfoCache.clear()
+    renderOneShot: renderCollectionDiscovery
 });
 
 discovery.start();

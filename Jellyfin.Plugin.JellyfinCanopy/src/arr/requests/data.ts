@@ -10,6 +10,8 @@
 import { JC } from '../arr-globals';
 import { renderPage } from './render';
 import { describeFetchError } from '../../core/fetch-error';
+import { classifyObjectDetails } from '../../core/cache-policy';
+import { waitForSharedResult } from '../../core/shared-result';
 import type { ApiApi, IdentityContext } from '../../types/jc';
 
 const logPrefix = '🪼 Jellyfin Canopy: Requests Page:';
@@ -183,7 +185,6 @@ export const state: RequestsPageState = {
     searchDebounceTimer: null,
 };
 
-const issueMediaCache = new Map<string, IssueMediaDetails | null>();
 const avatarObjectUrlCache = new Map<string, string>();
 const avatarFetchPromises = new Map<string, Promise<string>>();
 const avatarAbortControllers = new Map<string, AbortController>();
@@ -486,7 +487,7 @@ function applyIssueMediaDetails(issue: IssueItem, details: IssueMediaDetails | n
     return issue;
 }
 
-async function fetchIssueMediaDetails(
+export async function fetchIssueMediaDetails(
     mediaType: string,
     tmdbId: number | string | null,
     signal: AbortSignal | undefined,
@@ -494,21 +495,21 @@ async function fetchIssueMediaDetails(
 ): Promise<IssueMediaDetails | null> {
     if (!mediaType || !tmdbId) return null;
     if (!JC.identity.isCurrent(context)) return null;
-    const cacheKey = `${mediaType}:${tmdbId}`;
-    if (issueMediaCache.has(cacheKey)) return issueMediaCache.get(cacheKey) ?? null;
-
     const path = mediaType === 'tv'
         ? `/seerr/tv/${tmdbId}`
         : `/seerr/movie/${tmdbId}`;
 
     try {
-        const data = await api.plugin(path, { signal }) as IssueMediaDetails | null;
+        const sharedRequest = api.plugin(path, {
+            cacheKey: `arr:issue-media:${path}`,
+            cacheDisposition: classifyObjectDetails,
+            cacheNotFound: true,
+        }) as Promise<IssueMediaDetails | null>;
+        const data = await waitForSharedResult(sharedRequest, signal);
         if (!JC.identity.isCurrent(context)) return null;
-        issueMediaCache.set(cacheKey, data || null);
         return data || null;
     } catch {
         if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
-        issueMediaCache.set(cacheKey, null);
         return null;
     }
 }
@@ -702,7 +703,6 @@ function resetRequestsIdentityState(): void {
     });
     activeSignal = null;
     loadQueued = false;
-    issueMediaCache.clear();
     _toastedDownloadsErrors.clear();
     clearAvatarObjectUrlCache(true);
 }

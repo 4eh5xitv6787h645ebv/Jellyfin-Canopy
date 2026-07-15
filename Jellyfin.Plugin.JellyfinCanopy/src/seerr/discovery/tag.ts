@@ -5,11 +5,9 @@
 // wiring; this module keeps the tag → TMDB-keyword resolution. Both feeds
 // share the same keyword id.
 import { JC } from '../../globals';
+import { classifyResultsEnvelope } from '../../core/cache-policy';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
-
-
-const keywordIdCache = new Map<string, any>();
 
 // Alias for shared utilities
 const fetchWithManagedRequest = (path: string, options?: any) =>
@@ -39,11 +37,6 @@ function getTagFromUrl(): string | null {
  * @param {AbortSignal} [signal]
  */
 async function searchTmdbKeyword(tagName: string, signal?: AbortSignal): Promise<any> {
-    const cacheKey = tagName.toLowerCase().trim();
-    if (keywordIdCache.has(cacheKey)) {
-        return keywordIdCache.get(cacheKey);
-    }
-
     try {
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
@@ -51,7 +44,7 @@ async function searchTmdbKeyword(tagName: string, signal?: AbortSignal): Promise
 
         const response = await fetchWithManagedRequest(
             `/JellyfinCanopy/tmdb/search/keyword?query=${encodeURIComponent(tagName)}`,
-            { signal }
+            { signal, cacheDisposition: classifyResultsEnvelope }
         );
 
         if (signal?.aborted) {
@@ -62,9 +55,7 @@ async function searchTmdbKeyword(tagName: string, signal?: AbortSignal): Promise
             const exactMatch = response.results.find((r: any) =>
                 r.name.toLowerCase() === tagName.toLowerCase()
             );
-            const keywordId = exactMatch ? exactMatch.id : response.results[0].id;
-            keywordIdCache.set(cacheKey, keywordId);
-            return keywordId;
+            return exactMatch ? exactMatch.id : response.results[0].id;
         }
     } catch (error: any) {
         if (error.name === 'AbortError') throw error;
@@ -108,8 +99,7 @@ const discovery = JC.discoveryBase!.createDiscovery({
     resolveFeeds,
     buildDiscoverPath: (kind: string, id: number) => kind === 'tv'
         ? `/JellyfinCanopy/seerr/discover/tv/keyword/${id}`
-        : `/JellyfinCanopy/seerr/discover/movies/keyword/${id}`,
-    onCleanup: () => keywordIdCache.clear()
+        : `/JellyfinCanopy/seerr/discover/movies/keyword/${id}`
 });
 
 discovery.start();

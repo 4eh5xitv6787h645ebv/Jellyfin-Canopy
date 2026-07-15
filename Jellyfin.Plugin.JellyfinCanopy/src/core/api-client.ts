@@ -45,7 +45,13 @@ const CONFIG: ApiClientConfig = {
     },
     cache: {
         ttlMs: 30 * 60 * 1000, // 30 minutes - discovery data rarely changes
-        maxEntries: 200
+        // A successful JSON null is an authoritative absence, but should
+        // recover much sooner than positive discovery data.
+        negativeTtlMs: 30 * 1000,
+        maxEntries: 200,
+        // Parsed discovery payloads can be large even when the entry count is
+        // small. Bound retained response memory as well as cardinality.
+        maxBytes: 16 * 1024 * 1024
     },
     concurrency: {
         maxConcurrent: 8,
@@ -57,7 +63,13 @@ const CONFIG: ApiClientConfig = {
 const inFlightRequests = new Map<string, Promise<unknown>>();
 
 // Response cache with TTL
-const responseCache = new Map<string, { data: unknown; timestamp: number }>();
+const responseCache = new Map<string, {
+    data: unknown;
+    timestamp: number;
+    ttlMs: number;
+    sizeBytes: number;
+}>();
+let responseCacheBytes = 0;
 
 // AbortController management per page/context
 const activeControllers = new Map<string, AbortController>();
@@ -488,7 +500,7 @@ function abortRequest(pageKey: string): void {
  */
 function getCached(key: string): unknown {
     const entry = responseCache.get(key);
-    if (entry && Date.now() - entry.timestamp < CONFIG.cache.ttlMs) {
+    if (entry && Date.now() - entry.timestamp < entry.ttlMs) {
         if (metrics.enabled) {
             console.debug(`${logPrefix} Cache hit for ${key}`);
         }
@@ -499,7 +511,7 @@ function getCached(key: string): unknown {
     }
     // Remove stale entry
     if (entry) {
-        responseCache.delete(key);
+        deleteCacheEntry(key);
     }
     // `undefined` is the unambiguous miss sentinel: a faithfully-cached falsy
     // value (false / 0 / '' / null) is still a hit and must not be re-fetched.
@@ -507,20 +519,61 @@ function getCached(key: string): unknown {
     return undefined;
 }
 
+function deleteCacheEntry(key: string): boolean {
+    const entry = responseCache.get(key);
+    if (!entry) return false;
+    responseCacheBytes = Math.max(0, responseCacheBytes - entry.sizeBytes);
+    return responseCache.delete(key);
+}
+
+function estimateCacheBytes(data: unknown): number {
+    try {
+        const serialized = JSON.stringify(data);
+        return new TextEncoder().encode(serialized === undefined ? String(data) : serialized).byteLength;
+    } catch {
+        // Cyclic/non-serializable values are not valid JSON API responses. Do
+        // not retain an unmeasurable value outside the byte budget.
+        return Number.POSITIVE_INFINITY;
+    }
+}
+
 /**
  * Set cached response
  */
-function setCache(key: string, data: unknown): void {
-    // Evict oldest entries if at capacity
-    if (responseCache.size >= CONFIG.cache.maxEntries) {
+function setCache(
+    key: string,
+    data: unknown,
+    measuredSizeBytes?: number,
+    ttlMs = CONFIG.cache.ttlMs
+): void {
+    const sizeBytes = measuredSizeBytes === undefined
+        ? estimateCacheBytes(data)
+        : measuredSizeBytes;
+
+    // Replacing a key must release the old weight before applying either cap.
+    deleteCacheEntry(key);
+
+    if (!Number.isFinite(sizeBytes) || sizeBytes < 0 || sizeBytes > CONFIG.cache.maxBytes
+        || !Number.isFinite(ttlMs) || ttlMs <= 0
+        || CONFIG.cache.maxEntries <= 0 || CONFIG.cache.maxBytes <= 0) {
+        return;
+    }
+
+    // Evict least-recently-used entries until both explicit budgets fit.
+    while (responseCache.size >= CONFIG.cache.maxEntries
+        || responseCacheBytes + sizeBytes > CONFIG.cache.maxBytes) {
         const oldestKey = responseCache.keys().next().value;
-        if (oldestKey !== undefined) responseCache.delete(oldestKey);
+        if (oldestKey === undefined) break;
+        deleteCacheEntry(oldestKey);
     }
 
     responseCache.set(key, {
         data,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        ttlMs,
+        sizeBytes
     });
+    responseCacheBytes += sizeBytes;
 }
 
 /**
@@ -528,6 +581,7 @@ function setCache(key: string, data: unknown): void {
  */
 function clearCache(): void {
     responseCache.clear();
+    responseCacheBytes = 0;
 }
 
 /**
@@ -536,9 +590,13 @@ function clearCache(): void {
 function clearCacheMatching(pattern: string): void {
     for (const key of responseCache.keys()) {
         if (key.includes(pattern)) {
-            responseCache.delete(key);
+            deleteCacheEntry(key);
         }
     }
+}
+
+function getCacheUsage(): { entries: number; bytes: number } {
+    return { entries: responseCache.size, bytes: responseCacheBytes };
 }
 
 // Metrics API
@@ -642,6 +700,7 @@ const manager: RequestManagerApi = {
     setCache,
     clearCache,
     clearCacheMatching,
+    getCacheUsage,
 
     // Metrics
     metrics,
@@ -747,6 +806,8 @@ async function coreFetch(
         body,
         signal,
         cacheKey,
+        cacheDisposition,
+        cacheNotFound = false,
         skipCache = false,
         skipRetry = false,
         auth = true,
@@ -851,12 +912,24 @@ async function coreFetch(
 
     const fetchFn = async (): Promise<unknown> => {
         guard();
-        const response = await fetchWithRetry(
-            url,
-            init,
-            skipRetry ? { ...CONFIG.retry, maxAttempts: 1 } : undefined,
-            guard
-        );
+        let response: Response;
+        try {
+            response = await fetchWithRetry(
+                url,
+                init,
+                skipRetry ? { ...CONFIG.retry, maxAttempts: 1 } : undefined,
+                guard
+            );
+        } catch (error) {
+            const status = (error as HttpError | null)?.status;
+            if (isGet && identityCacheKey && cacheNotFound && status === 404) {
+                guard();
+                setCache(identityCacheKey, null, 4, CONFIG.cache.negativeTtlMs);
+                guard();
+                return null;
+            }
+            throw error;
+        }
         guard();
 
         // Tolerant JSON parse: some endpoints reply with empty bodies.
@@ -867,7 +940,23 @@ async function coreFetch(
 
         if (isGet && identityCacheKey) {
             guard();
-            setCache(identityCacheKey, data);
+            let disposition: 'positive' | 'negative' | 'skip' = data === null
+                ? 'skip'
+                : 'positive';
+            if (cacheDisposition) {
+                try {
+                    disposition = cacheDisposition(data);
+                } catch {
+                    disposition = 'skip';
+                }
+            }
+            if (disposition !== 'skip') {
+                const responseBytes = new TextEncoder().encode(text || '{}').byteLength;
+                const ttlMs = disposition === 'negative'
+                    ? CONFIG.cache.negativeTtlMs
+                    : CONFIG.cache.ttlMs;
+                setCache(identityCacheKey, data, responseBytes, ttlMs);
+            }
         }
         guard();
         return data;

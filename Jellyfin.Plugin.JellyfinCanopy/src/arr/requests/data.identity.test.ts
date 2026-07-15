@@ -57,4 +57,29 @@ describe('Requests page identity ownership', () => {
 
         expect(plugin).not.toHaveBeenCalled();
     });
+
+    it('delegates issue-media ownership to the bounded core cache and retries transient failure', async () => {
+        const plugin = vi.fn()
+            .mockRejectedValueOnce(new Error('temporary upstream failure'))
+            .mockResolvedValueOnce({ id: 42, title: 'Recovered' });
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { fetchIssueMediaDetails } = await import('./data');
+        const context = JC.identity.capture()!;
+
+        await expect(fetchIssueMediaDetails('movie', 42, undefined, context)).resolves.toBeNull();
+        await expect(fetchIssueMediaDetails('movie', 42, undefined, context))
+            .resolves.toMatchObject({ id: 42, title: 'Recovered' });
+
+        expect(plugin).toHaveBeenCalledTimes(2);
+        expect(plugin).toHaveBeenNthCalledWith(1, '/seerr/movie/42', {
+            cacheKey: 'arr:issue-media:/seerr/movie/42',
+            cacheDisposition: expect.any(Function),
+            cacheNotFound: true,
+        });
+        expect(plugin).toHaveBeenNthCalledWith(2, '/seerr/movie/42', {
+            cacheKey: 'arr:issue-media:/seerr/movie/42',
+            cacheDisposition: expect.any(Function),
+            cacheNotFound: true,
+        });
+    });
 });
