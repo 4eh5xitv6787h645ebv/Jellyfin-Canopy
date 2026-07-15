@@ -1,9 +1,29 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import { wireShortcutEditor } from './shortcut-editor';
 import type { PanelContext } from './panel';
 
 describe('settings shortcut editor identity ownership', () => {
+    const ownedTimers = new Set<number>();
+    const trackTimer = (timer: number): void => {
+        ownedTimers.add(timer);
+    };
+    const retireTimers = (): void => {
+        for (const timer of ownedTimers) window.clearTimeout(timer);
+        ownedTimers.clear();
+    };
+
+    afterEach(() => {
+        // Mirror the panel lifecycle owner: no production callback may survive
+        // long enough to observe Vitest tearing down its jsdom environment.
+        retireTimers();
+        document.body.innerHTML = '';
+        if (vi.isFakeTimers()) {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
     it('does not let a retained A key control mutate B shortcuts', () => {
         JC.identity.transition('server-a', 'user-a', 'shortcut-test-start');
         const contextA = JC.identity.capture()!;
@@ -21,7 +41,7 @@ describe('settings shortcut editor identity ownership', () => {
             primaryAccentColor: '#0ff',
             kbdBackground: '#111',
             identityContext: contextA,
-            trackTimer: vi.fn(),
+            trackTimer,
         } as unknown as PanelContext);
 
         JC.identity.transition('server-a', 'user-b', 'account-switch');
@@ -34,6 +54,7 @@ describe('settings shortcut editor identity ownership', () => {
     });
 
     it('rejects a duplicate semantic binding regardless of legacy modifier order', () => {
+        vi.useFakeTimers();
         JC.identity.transition('server-a', 'user-a', 'shortcut-conflict-test-start');
         const context = JC.identity.capture()!;
         const help = document.createElement('div');
@@ -41,6 +62,7 @@ describe('settings shortcut editor identity ownership', () => {
             '<span class="shortcut-key" data-action="first">Ctrl+Shift+K</span><span></span>',
             '<span class="shortcut-key" data-action="second">Alt+K</span><span></span>',
         ].join('');
+        document.body.appendChild(help);
         const second = help.querySelectorAll<HTMLElement>('.shortcut-key')[1];
         JC.pluginConfig = { DisableAllShortcuts: false };
         JC.state = {
@@ -61,7 +83,7 @@ describe('settings shortcut editor identity ownership', () => {
             primaryAccentColor: '#0ff',
             kbdBackground: '#111',
             identityContext: context,
-            trackTimer: vi.fn(),
+            trackTimer,
         } as unknown as PanelContext);
 
         second.dispatchEvent(new KeyboardEvent('keydown', {
@@ -71,6 +93,17 @@ describe('settings shortcut editor identity ownership', () => {
         expect(second.classList.contains('shake-error')).toBe(true);
         expect(save).not.toHaveBeenCalled();
         expect(JC.userConfig.shortcuts!.Shortcuts).toEqual([]);
+
+        expect(ownedTimers.size).toBe(1);
+        const removeFeedback = vi.spyOn(second.classList, 'remove');
+        retireTimers();
+        help.remove();
+        vi.advanceTimersByTime(500);
+
+        expect(help.isConnected).toBe(false);
+        expect(ownedTimers.size).toBe(0);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(removeFeedback).not.toHaveBeenCalled();
     });
 
     it('captures Meta independently and saves every entry in canonical form', async () => {
@@ -95,7 +128,7 @@ describe('settings shortcut editor identity ownership', () => {
             primaryAccentColor: '#0ff',
             kbdBackground: '#111',
             identityContext: context,
-            trackTimer: vi.fn(),
+            trackTimer,
         } as unknown as PanelContext);
 
         key.dispatchEvent(new KeyboardEvent('keydown', {
