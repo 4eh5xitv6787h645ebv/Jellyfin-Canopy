@@ -25,8 +25,8 @@
         "totalLines": 24886
       },
       "tolerance": {
-        "missingCoveredLines": 1,
-        "rationale": "Two clean reviewed 2026-07-15 .NET 10/Coverlet integration runs measured 16244 and 16243 covered lines across the identical 24886-line final scope after the Continue Watching linear index, outcome-aware playback retry deduplication, bounded asynchronous logging, and strict static locale resolution with immutable responses, silent regional fallback, and bounded miss logging. The one-line tolerance covers that reproduced instrumentation variance."
+        "missingCoveredLines": 2,
+        "rationale": "Two clean reviewed local .NET 10/Coverlet integration runs on 2026-07-15 measured 16244 and 16243 covered lines, while the first clean GitHub Actions run measured 16242, across the identical 24886-line final scope after the Continue Watching linear index, outcome-aware playback retry deduplication, bounded asynchronous logging, and strict static locale resolution with immutable responses, silent regional fallback, and bounded miss logging. The two-line tolerance covers only that reproduced cross-run instrumentation variance (0.0081 percentage points)."
       }
     }
   }

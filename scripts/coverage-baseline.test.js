@@ -21,11 +21,11 @@ test('reviewed coverage baselines match the repeated clean measurements', () => 
     assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 1428, totalLines: 1751 });
     assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 16244, totalLines: 24886 });
     assert.equal(baselines.profiles.client.tolerance.missingCoveredLines, 1);
-    assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 1);
+    assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 2);
 });
 
 for (const name of ['client', 'server']) {
-    test(`${name} gate accepts its exact reviewed baseline and one-line tolerance`, () => {
+    test(`${name} gate accepts its exact reviewed baseline and narrow instrumentation tolerance`, () => {
         const profile = baselines.profiles[name];
         assert.equal(evaluateCoverage(profile.measured, profile).reason, 'exact');
         const tolerated = {
@@ -35,7 +35,7 @@ for (const name of ['client', 'server']) {
         assert.deepEqual(evaluateCoverage(tolerated, profile), {
             ok: true,
             reason: 'within-tolerance',
-            message: 'measurement is within the 1-line instrumentation tolerance',
+            message: `measurement is within the ${profile.tolerance.missingCoveredLines}-line instrumentation tolerance`,
         });
     });
 
