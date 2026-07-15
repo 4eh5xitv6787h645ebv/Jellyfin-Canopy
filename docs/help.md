@@ -382,7 +382,7 @@ The strongest requests pair a clear description with a concrete use case, add mo
 
 ## Translate Jellyfin Canopy
 
-Jellyfin Canopy ships its translations as JSON files in the repository — one per locale in `Jellyfin.Plugin.JellyfinCanopy/js/locales/`. Adding or improving a language is a plain pull request: edit a file and open a PR. There's **no external translation platform to sign up for** and no Weblate — the workflow is validated entirely in CI.
+Jellyfin Canopy ships its translations as JSON files in the repository — one per locale in `Jellyfin.Plugin.JellyfinCanopy/js/locales/`. The repository's [`locale-manifest.json`](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/blob/main/Jellyfin.Plugin.JellyfinCanopy/locale-manifest.json) is the canonical supported-language list. Adding or improving a language is a plain pull request: edit a file and open a PR. There's **no external translation platform to sign up for** and no Weblate — the workflow is validated entirely in CI.
 
 ### Add or update a language
 
@@ -392,7 +392,7 @@ Jellyfin Canopy ships its translations as JSON files in the repository — one p
 4. Run the validator locally: `npm run validate-translations`.
 5. Commit your changes and open a pull request.
 
-When a pull request touches any `js/locales/*.json` file, the **Translation Checks** workflow re-runs the same validation and gates the merge. A locale that is missing keys, drops a placeholder, or leaves a value blank fails CI — all 26 locales must stay in sync with `en.json`.
+When a pull request touches a locale or the inventory, the **Translation Checks** workflow validates the complete registered set and gates the merge. Missing or unregistered files, case/region-code drift, missing keys, dropped placeholders, and blank values all fail CI. Intentional language additions or removals must update the inventory and its documented count in the same reviewed migration.
 
 ### What the validator checks
 

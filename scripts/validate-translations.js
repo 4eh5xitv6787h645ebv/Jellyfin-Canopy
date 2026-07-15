@@ -25,13 +25,16 @@ const fs = require('fs');
 const path = require('path');
 
 const LOCALES_DIR = path.join(__dirname, '../Jellyfin.Plugin.JellyfinCanopy/js/locales');
+const LOCALE_INVENTORY_PATH = path.join(
+    __dirname,
+    '../Jellyfin.Plugin.JellyfinCanopy/locale-manifest.json'
+);
 // Translation call sites live in the TypeScript module tree (src/) plus the
 // remaining legacy loader files under js/ — scan both.
 const CODE_DIRS = [
     path.join(__dirname, '../Jellyfin.Plugin.JellyfinCanopy/src'),
     path.join(__dirname, '../Jellyfin.Plugin.JellyfinCanopy/js'),
 ];
-const BASE_LANG = 'en';
 const WEBLATE_URL = 'https://hosted.weblate.org/projects/jellyfincanopy/';
 
 // ANSI color codes for terminal output
@@ -82,17 +85,113 @@ function loadTranslation(lang) {
     }
 }
 
+function readLocaleInventory(inventoryPath = LOCALE_INVENTORY_PATH) {
+    return JSON.parse(fs.readFileSync(inventoryPath, 'utf8'));
+}
+
 /**
- * Get all available translation languages
+ * Compare the canonical supported-locale inventory with the files on disk.
+ * Exact spelling matters: Linux can hold both fr.json and FR.json, while other
+ * filesystems cannot, so case collisions and case-only renames are hard errors.
+ */
+function validateLocaleInventory(
+    localesDir = LOCALES_DIR,
+    inventoryPath = LOCALE_INVENTORY_PATH
+) {
+    const errors = [];
+    let inventory;
+    try {
+        inventory = readLocaleInventory(inventoryPath);
+    } catch (error) {
+        return {
+            valid: false,
+            errors: [`Cannot read locale inventory: ${error.message}`],
+            baseLocale: '',
+            locales: [],
+            files: [],
+        };
+    }
+
+    const baseLocale = typeof inventory.baseLocale === 'string' ? inventory.baseLocale : '';
+    const locales = Array.isArray(inventory.locales) ? inventory.locales : [];
+    if (!baseLocale) errors.push('Locale inventory must define baseLocale');
+    if (locales.length === 0 || locales.some(code => typeof code !== 'string')) {
+        errors.push('Locale inventory must define a non-empty string locales array');
+    }
+
+    const validCode = /^[a-z]{2}(?:-[A-Z]{2})?$/;
+    for (const code of locales) {
+        if (typeof code === 'string' && !validCode.test(code)) {
+            errors.push(`Invalid locale code in inventory: ${code}`);
+        }
+    }
+    if (baseLocale && !locales.includes(baseLocale)) {
+        errors.push(`Base locale is not registered: ${baseLocale}`);
+    }
+
+    const exactCodes = new Set();
+    const foldedCodes = new Map();
+    for (const code of locales.filter(value => typeof value === 'string')) {
+        if (exactCodes.has(code)) errors.push(`Duplicate locale in inventory: ${code}`);
+        exactCodes.add(code);
+        const folded = code.toLowerCase();
+        if (foldedCodes.has(folded) && foldedCodes.get(folded) !== code) {
+            errors.push(`Case-colliding locales in inventory: ${foldedCodes.get(folded)} and ${code}`);
+        }
+        foldedCodes.set(folded, code);
+    }
+    const sortedLocales = [...locales].sort();
+    if (JSON.stringify(locales) !== JSON.stringify(sortedLocales)) {
+        errors.push('Locale inventory must remain sorted');
+    }
+
+    let files = [];
+    try {
+        files = fs.readdirSync(localesDir, { withFileTypes: true })
+            .filter(entry => entry.isFile() && /\.json$/i.test(entry.name))
+            .map(entry => entry.name)
+            .sort();
+    } catch (error) {
+        errors.push(`Cannot read locale directory: ${error.message}`);
+    }
+
+    const actualCodes = files.map(file => file.replace(/\.json$/i, ''));
+    const actualByFolded = new Map();
+    for (const [index, code] of actualCodes.entries()) {
+        if (!files[index].endsWith('.json')) {
+            errors.push(`Invalid locale filename extension casing: ${files[index]}`);
+        }
+        const folded = code.toLowerCase();
+        if (actualByFolded.has(folded)) {
+            errors.push(`Case-colliding locale files: ${actualByFolded.get(folded)}.json and ${code}.json`);
+        }
+        actualByFolded.set(folded, code);
+        if (!validCode.test(code)) errors.push(`Invalid locale filename: ${code}.json`);
+    }
+
+    for (const code of locales.filter(value => typeof value === 'string')) {
+        if (actualCodes.includes(code)) continue;
+        const caseVariant = actualByFolded.get(code.toLowerCase());
+        if (caseVariant) {
+            errors.push(`Locale filename case mismatch: expected ${code}.json, found ${caseVariant}.json`);
+        } else {
+            errors.push(`Registered locale file is missing: ${code}.json`);
+        }
+    }
+    for (const code of actualCodes) {
+        if (!locales.includes(code) && !foldedCodes.has(code.toLowerCase())) {
+            errors.push(`Unregistered locale file: ${code}.json`);
+        }
+    }
+
+    return { valid: errors.length === 0, errors, baseLocale, locales, files };
+}
+
+/**
+ * Get all supported translation languages from the canonical inventory.
  */
 function getAvailableLanguages() {
-    if (!fs.existsSync(LOCALES_DIR)) {
-        return [];
-    }
-    return fs.readdirSync(LOCALES_DIR)
-        .filter(file => file.endsWith('.json'))
-        .map(file => file.replace('.json', ''))
-        .sort();
+    return readLocaleInventory().locales;
 }
 
 /**
@@ -202,6 +301,7 @@ function validateEntries(baseTranslation, translation) {
  * Validate a single translation file against base
  */
 function validateTranslation(lang, verbose = false) {
+    const BASE_LANG = readLocaleInventory().baseLocale;
     if (lang === BASE_LANG) {
         logInfo(`Skipping validation of base language (${BASE_LANG})`);
         return { valid: true, errors: [], warnings: [] };
@@ -256,6 +356,7 @@ function validateTranslation(lang, verbose = false) {
  * Find translation keys that are not used in the codebase
  */
 function findUnusedKeys() {
+    const BASE_LANG = readLocaleInventory().baseLocale;
     const baseTranslation = loadTranslation(BASE_LANG);
     if (!baseTranslation) {
         logError('Base translation file not found!');
@@ -366,6 +467,7 @@ function findUnusedKeys() {
  * Create a new translation file template
  */
 function createTranslationTemplate(lang) {
+    const BASE_LANG = readLocaleInventory().baseLocale;
     if (!lang || !/^[a-z]{2}(-[A-Z]{2})?$/.test(lang)) {
         logError('Language code must be ISO 639-1 (e.g., es, fr, de) or with region (e.g., zh-HK, pt-BR)');
         return;
@@ -387,6 +489,13 @@ function createTranslationTemplate(lang) {
 
     try {
         fs.writeFileSync(filePath, JSON.stringify(template, null, 4) + '\n', { encoding: 'utf8', flag: 'wx' });
+        const inventory = readLocaleInventory();
+        if (!inventory.locales.includes(lang)) {
+            inventory.locales.push(lang);
+            inventory.locales.sort();
+            fs.writeFileSync(LOCALE_INVENTORY_PATH, JSON.stringify(inventory, null, 2) + '\n');
+            logInfo(`Registered ${lang} in locale-manifest.json`);
+        }
         logSuccess(`Created translation template: ${filePath}`);
         logInfo(`Now edit ${lang}.json and translate the English values to ${lang.toUpperCase()}`);
         logInfo(`Preferred workflow for contributors is Weblate: ${WEBLATE_URL}`);
@@ -404,6 +513,7 @@ function createTranslationTemplate(lang) {
  * Show translation statistics for all languages
  */
 function showStats() {
+    const BASE_LANG = readLocaleInventory().baseLocale;
     const languages = getAvailableLanguages();
     const baseTranslation = loadTranslation(BASE_LANG);
 
@@ -533,10 +643,19 @@ function main() {
 
     switch (command) {
         case 'validate': {
+            const inventory = validateLocaleInventory();
+            if (!inventory.valid) {
+                inventory.errors.forEach(error => logError(error));
+                process.exit(1);
+            }
             const targetLang = args[1];
+            if (targetLang && !inventory.locales.includes(targetLang)) {
+                logError(`Locale is not registered in locale-manifest.json: ${targetLang}`);
+                process.exit(1);
+            }
             const languages = targetLang
                 ? [targetLang]
-                : getAvailableLanguages().filter(lang => lang !== BASE_LANG);
+                : inventory.locales.filter(lang => lang !== inventory.baseLocale);
 
             if (languages.length === 0) {
                 logError('No translation files found!');
@@ -597,5 +716,8 @@ module.exports = {
     validateTranslation,
     findUnusedKeys,
     createTranslationTemplate,
-    showStats
+    showStats,
+    getAvailableLanguages,
+    readLocaleInventory,
+    validateLocaleInventory
 };

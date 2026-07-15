@@ -9,6 +9,7 @@
 // to the former js/enhanced/translations.js; this is a typed port.
 
 import type { JEGlobal } from '../types/jc';
+import localeManifest from '../../locale-manifest.json';
 
 (function (JC: JEGlobal) {
     'use strict';
@@ -18,6 +19,7 @@ import type { JEGlobal } from '../types/jc';
     // strings. Only used as the last-resort fallback when AssetCacheEnabled === false.
     const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/main/Jellyfin.Plugin.JellyfinCanopy/js/locales';
     const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+    const SUPPORTED_LOCALES = new Set(localeManifest.locales);
 
     type LangResult = { translations: Record<string, string>; usedLang: string };
 
@@ -33,19 +35,19 @@ import type { JEGlobal } from '../types/jc';
         const normalizedLang = normalizeLangCode(primaryLang);
         const langCodes: string[] = [];
 
-        if (normalizedLang) {
+        if (normalizedLang && SUPPORTED_LOCALES.has(normalizedLang)) {
             langCodes.push(normalizedLang);
         }
 
         if (normalizedLang && normalizedLang.includes('-')) {
             const baseLang = normalizedLang.split('-')[0];
-            if (!langCodes.includes(baseLang)) {
+            if (SUPPORTED_LOCALES.has(baseLang) && !langCodes.includes(baseLang)) {
                 langCodes.push(baseLang);
             }
         }
 
-        if (langCodes[langCodes.length - 1] !== 'en') {
-            langCodes.push('en');
+        if (langCodes[langCodes.length - 1] !== localeManifest.baseLocale) {
+            langCodes.push(localeManifest.baseLocale);
         }
 
         return Array.from(new Set(langCodes.filter(Boolean)));

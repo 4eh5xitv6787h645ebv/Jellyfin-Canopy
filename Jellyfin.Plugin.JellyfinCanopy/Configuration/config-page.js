@@ -2826,8 +2826,12 @@
                     cultureMap[c.TwoLetterISOLanguageName.toLowerCase()] = c;
                 });
 
-                const localeSet = new Set(localeCodes.map(c => c.toLowerCase()));
-                const options = localeCodes.map(code => {
+                // The endpoint exposes the complete canonical inventory. Generic
+                // English is the fallback catalog, while the two regional English
+                // variants remain the selectable UI choices.
+                const selectableLocaleCodes = localeCodes.filter(code => code !== 'en');
+                const localeSet = new Set(selectableLocaleCodes.map(c => c.toLowerCase()));
+                const options = selectableLocaleCodes.map(code => {
                     let displayName = CUSTOM_DISPLAY_NAMES[code]
                         || cultureMap[code.toLowerCase()]?.DisplayName;
                     if (!displayName && code.includes('-')) {
