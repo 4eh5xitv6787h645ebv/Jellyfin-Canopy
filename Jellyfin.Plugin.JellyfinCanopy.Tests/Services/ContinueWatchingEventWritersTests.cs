@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.EventHandlers;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
@@ -8,6 +9,7 @@ using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 {
@@ -19,6 +21,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
     /// </summary>
     public sealed class ContinueWatchingEventWritersTests
     {
+        private readonly ITestOutputHelper _output;
+
+        public ContinueWatchingEventWritersTests(ITestOutputHelper output)
+        {
+            _output = output;
+        }
+
         private sealed class CollectingLogger<T> : ILogger<T>
         {
             public List<string> Messages { get; } = new();
@@ -127,14 +136,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
             var callsPerUser = new Dictionary<Guid, int>();
             var batchSizesSeen = new List<int>();
+            var indexesSeen = new List<CwRemovedIdIndex>();
 
             var prunedUsers = ContinueWatchingLibraryHook.DrainBatch(
                 removedIds,
                 users,
-                (userId, ids) =>
+                (userId, index) =>
                 {
                     callsPerUser[userId] = callsPerUser.GetValueOrDefault(userId) + 1;
-                    batchSizesSeen.Add(ids.Count);
+                    batchSizesSeen.Add(index.Count);
+                    indexesSeen.Add(index);
                 });
 
             Assert.Equal(2, prunedUsers);
@@ -142,6 +153,99 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Equal(1, callsPerUser[users[1]]);
             // Every prune received the whole batch of 5 ids (coalesced), never a single id at a time.
             Assert.All(batchSizesSeen, size => Assert.Equal(5, size));
+            Assert.Same(indexesSeen[0], indexesSeen[1]);
+            Assert.Equal(5, indexesSeen[0].RemovedIdentifierNormalizations);
+            Assert.Equal(5, indexesSeen[0].RemovedGuidParseAttempts);
+        }
+
+        [Fact]
+        public void LibraryHook_MixedGuidFormsAndOpaqueIds_MatchExactly()
+        {
+            var first = Guid.Parse("1f78f651-67a8-4fb4-b24f-6e4b81bc1234");
+            var second = Guid.Parse("2a89e762-78b9-40c5-a350-7f5c92cd5678");
+            var other = Guid.Parse("3b90f873-89ca-41d6-b461-806da3de9012");
+            var removedIds = new[]
+            {
+                first.ToString("D").ToUpperInvariant(),
+                first.ToString("N").ToLowerInvariant(),
+                second.ToString("N").ToLowerInvariant(),
+                "Opaque-Item"
+            };
+            var hidden = new UserHiddenContent();
+            hidden.Items["first-n-lower"] = new HiddenContentItem { ItemId = first.ToString("N").ToLowerInvariant() };
+            hidden.Items["second-d-upper"] = new HiddenContentItem { ItemId = second.ToString("D").ToUpperInvariant() };
+            hidden.Items["opaque-case"] = new HiddenContentItem { ItemId = "opaque-item" };
+            hidden.Items["keep-guid"] = new HiddenContentItem { ItemId = other.ToString("N") };
+            hidden.Items["keep-opaque"] = new HiddenContentItem { ItemId = "opaque-item-extra" };
+
+            var index = CwRemovedIdIndex.Create(removedIds);
+            var removed = ContinueWatchingLibraryHook.PruneOrphansCore(hidden, index);
+
+            Assert.Equal(3, removed);
+            Assert.Equal(new[] { "keep-guid", "keep-opaque" }, hidden.Items.Keys.OrderBy(key => key));
+            Assert.Equal(3, index.Count);
+            Assert.Equal(4, index.RemovedIdentifierNormalizations);
+            Assert.Equal(4, index.RemovedGuidParseAttempts);
+            Assert.Equal(5, index.EntryIdentifierNormalizations);
+            Assert.Equal(5, index.EntryGuidParseAttempts);
+            Assert.Equal(5, index.MembershipComparisons);
+        }
+
+        [Fact]
+        public void LibraryHook_FifteenThousandByFifteenThousand_StaysWithinLinearBudgets()
+        {
+            const int scale = 15_000;
+            const long allocationBudget = 8L * 1024 * 1024;
+            var timeBudget = TimeSpan.FromSeconds(5);
+            var removedIds = new string[scale];
+            var hidden = new UserHiddenContent();
+            for (var index = 0; index < scale; index++)
+            {
+                var removedId = DeterministicGuid(index, family: 0x11);
+                removedIds[index] = index % 2 == 0
+                    ? removedId.ToString("D").ToUpperInvariant()
+                    : removedId.ToString("N").ToLowerInvariant();
+
+                hidden.Items[$"hidden-{index}"] = new HiddenContentItem
+                {
+                    ItemId = index % 2 == 0
+                        ? removedId.ToString("N").ToLowerInvariant()
+                        : removedId.ToString("D").ToUpperInvariant()
+                };
+            }
+
+            var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+            var stopwatch = Stopwatch.StartNew();
+            var targetIds = CwRemovedIdIndex.Create(removedIds);
+            var removed = ContinueWatchingLibraryHook.PruneOrphansCore(hidden, targetIds);
+            stopwatch.Stop();
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+
+            _output.WriteLine(
+                "removedIds={0} hiddenEntries={1} removedNormalizations={2} entryNormalizations={3} "
+                + "membershipComparisons={4} elapsedMs={5:F3} allocatedBytes={6}",
+                scale,
+                scale,
+                targetIds.RemovedIdentifierNormalizations,
+                targetIds.EntryIdentifierNormalizations,
+                targetIds.MembershipComparisons,
+                stopwatch.Elapsed.TotalMilliseconds,
+                allocated);
+
+            Assert.Equal(scale, removed);
+            Assert.Empty(hidden.Items);
+            Assert.Equal(scale, targetIds.Count);
+            Assert.Equal(scale, targetIds.RemovedIdentifierNormalizations);
+            Assert.Equal(scale, targetIds.RemovedGuidParseAttempts);
+            Assert.Equal(scale, targetIds.EntryIdentifierNormalizations);
+            Assert.Equal(scale, targetIds.EntryGuidParseAttempts);
+            Assert.Equal(scale, targetIds.MembershipComparisons);
+            Assert.True(
+                stopwatch.Elapsed < timeBudget,
+                $"15k x 15k cleanup took {stopwatch.Elapsed}; budget is {timeBudget}.");
+            Assert.True(
+                allocated < allocationBudget,
+                $"15k x 15k cleanup allocated {allocated} bytes; budget is {allocationBudget} bytes.");
         }
 
         [Fact]
@@ -195,5 +299,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
             }
         }
+
+        private static Guid DeterministicGuid(int value, byte family)
+            => new(value, family, 0, family, 0, 0, 0, 0, 0, 0, 1);
     }
 }
