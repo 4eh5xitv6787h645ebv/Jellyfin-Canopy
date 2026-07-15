@@ -3,6 +3,7 @@
 
 import { JC as JEBase } from '../globals';
 import { assetUrl } from '../core/asset-urls';
+import { routeHref } from '../core/navigation';
 import type { IdentityContext, LifecycleApi, LifecycleHandle, NavigationApi } from '../types/jc';
 
 /** Icon override descriptor for a built-in plugin link. */
@@ -139,9 +140,7 @@ function createCustomPluginLink(plugin: CustomPlugin): void {
     const existingLink = pluginsSection.querySelector(`[data-jellyfin-canopy-plugin-id="${plugin.id}"]`);
     if (existingLink) return;
 
-    // Get current base URL
-    const baseUrl = window.location.origin + window.location.pathname;
-    const pluginUrl = `${baseUrl}#/configurationpage?name=${encodeURIComponent(plugin.name)}`;
+    const pluginUrl = routeHref('configurationpage', { name: plugin.name });
 
     // Create the link element
     const link = document.createElement('a');

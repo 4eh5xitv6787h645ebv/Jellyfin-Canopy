@@ -9,11 +9,13 @@
 // navs and missing pushState navs entirely. This module patches history once,
 // listens once, dedupes, and fans out to registered callbacks.
 //
-// Public surface: JC.core.navigation { onNavigate, offNavigate, onViewPage,
-// getCurrentView }. JC.helpers keeps thin aliases for unmigrated callers.
+// Public surface: JC.core.navigation { routeHref, onNavigate, offNavigate,
+// onViewPage, getCurrentView }. JC.helpers keeps thin aliases for unmigrated
+// callers.
 
 import { JC } from '../globals';
 import type {
+    JellyfinRouteParam,
     NavigateCallback,
     NavigationApi,
     ViewPageCallback,
@@ -27,6 +29,42 @@ const logPrefix = '🪼 Jellyfin Canopy: Navigation:';
 // ── Navigation events (URL changes) ─────────────────────────────────────
 
 const navCallbacks = new Set<NavigateCallback>();
+
+/**
+ * Build an href for a Jellyfin SPA destination without assuming that the web
+ * client is mounted at the origin root. A hash-only href deliberately stays
+ * on the active document, which preserves reverse-proxy base paths as well as
+ * the non-HTTP document origins used by native WebView clients.
+ *
+ * Route names are limited to Jellyfin's path-shaped route vocabulary. Query
+ * names and values are encoded exactly once here so feature renderers cannot
+ * accidentally turn an item id or configuration-page name into route syntax.
+ */
+export function routePath(
+    route: string,
+    params: Record<string, JellyfinRouteParam> = {}
+): string {
+    const normalizedRoute = route.trim().replace(/^#?\/+/, '');
+    if (!/^[A-Za-z0-9][A-Za-z0-9/_-]*$/.test(normalizedRoute)) {
+        throw new TypeError(`Invalid Jellyfin route: ${route}`);
+    }
+
+    const query = Object.entries(params)
+        .filter((entry): entry is [string, Exclude<JellyfinRouteParam, null | undefined>] =>
+            entry[1] !== null && entry[1] !== undefined)
+        .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+        .join('&');
+
+    return `/${normalizedRoute}${query ? `?${query}` : ''}`;
+}
+
+/** Build a document-relative anchor for a Jellyfin SPA route. */
+export function routeHref(
+    route: string,
+    params: Record<string, JellyfinRouteParam> = {}
+): string {
+    return `#${routePath(route, params)}`;
+}
 
 // Dedup guard: a hash navigation fires BOTH popstate and hashchange for
 // the same URL change; on the modern layout HISTORY_UPDATE can fire twice for
@@ -452,6 +490,7 @@ if (document.readyState === 'loading') {
 }
 
 const navigation: NavigationApi = {
+    routeHref,
     onNavigate,
     offNavigate,
     onViewPage,

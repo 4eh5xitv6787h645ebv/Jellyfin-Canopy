@@ -6,7 +6,16 @@
 // history/event calls. URLs are unique per test because the dedup guard
 // (last dispatched href) is module state.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { handleHistoryUpdate, installEmbyHook, navDedupKey, offNavigate, onNavigate, onViewPage } from './navigation';
+import {
+    handleHistoryUpdate,
+    installEmbyHook,
+    navDedupKey,
+    offNavigate,
+    onNavigate,
+    onViewPage,
+    routeHref,
+    routePath
+} from './navigation';
 
 describe('onNavigate dedup', () => {
     it('notifies exactly once for a pushState URL change', () => {
@@ -115,6 +124,54 @@ describe('navDedupKey', () => {
         const first = navDedupKey({ pathname: '/home', search: '?tab=2', hash: '' });
         const second = navDedupKey({ pathname: '/home', search: '?tab=2', hash: '' });
         expect(first).toBe(second);
+    });
+});
+
+describe('routeHref', () => {
+    it('keeps details navigation inside a non-root Jellyfin web mount', () => {
+        const href = routeHref('details', { id: 'item/with ?#& delimiters' });
+        const resolved = new URL(
+            href,
+            'https://media.example/jellyfin/web/index.html#/bookmarks'
+        );
+
+        expect(href).toBe('#/details?id=item%2Fwith%20%3F%23%26%20delimiters');
+        expect(resolved.href).toBe(
+            'https://media.example/jellyfin/web/index.html#/details?id=item%2Fwith%20%3F%23%26%20delimiters'
+        );
+    });
+
+    it('keeps configuration navigation inside a root-mounted Jellyfin web client', () => {
+        const resolved = new URL(
+            routeHref('/configurationpage', { name: 'Custom Tabs' }),
+            'https://media.example/web/index.html#/dashboard/plugins'
+        );
+
+        expect(resolved.href).toBe(
+            'https://media.example/web/index.html#/configurationpage?name=Custom%20Tabs'
+        );
+    });
+
+    it('preserves a native WebView document origin instead of switching to an HTTP server URL', () => {
+        const resolved = new URL(
+            routeHref('details', { id: 'movie-1' }),
+            'file:///android_asset/www/index.html#/bookmarks'
+        );
+
+        expect(resolved.href).toBe('file:///android_asset/www/index.html#/details?id=movie-1');
+    });
+
+    it('rejects route text that could escape the Jellyfin SPA route grammar', () => {
+        expect(() => routeHref('https://attacker.example/')).toThrow(TypeError);
+        expect(() => routeHref('details?admin=true')).toThrow(TypeError);
+        expect(routeHref('home')).toBe('#/home');
+        expect(routeHref('details', { optional: null, enabled: false }))
+            .toBe('#/details?enabled=false');
+    });
+
+    it('provides the same encoded path for Jellyfin native router calls', () => {
+        expect(routePath('details', { id: 'item/with?query' }))
+            .toBe('/details?id=item%2Fwith%3Fquery');
     });
 });
 
