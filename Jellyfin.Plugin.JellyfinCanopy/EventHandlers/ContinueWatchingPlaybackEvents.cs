@@ -29,6 +29,83 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
         }
     }
 
+    /// <summary>
+    /// Drain-owned lookup index for removed item identifiers. Removed identifiers are normalized
+    /// exactly once, before any user is visited; each hidden entry then performs one parse and one
+    /// hash membership comparison instead of scanning and reparsing the whole removal batch.
+    /// </summary>
+    internal sealed class CwRemovedIdIndex
+    {
+        private readonly HashSet<Guid> _guidIds;
+        private readonly HashSet<string> _stringIds;
+
+        private CwRemovedIdIndex(
+            HashSet<Guid> guidIds,
+            HashSet<string> stringIds,
+            int removedIdentifierNormalizations,
+            int removedGuidParseAttempts)
+        {
+            _guidIds = guidIds;
+            _stringIds = stringIds;
+            RemovedIdentifierNormalizations = removedIdentifierNormalizations;
+            RemovedGuidParseAttempts = removedGuidParseAttempts;
+        }
+
+        internal int Count => _guidIds.Count + _stringIds.Count;
+
+        // Regression instrumentation: these counters make the linear ownership boundary exact in
+        // tests without relying only on wall-clock timing.
+        internal int RemovedIdentifierNormalizations { get; }
+
+        internal int RemovedGuidParseAttempts { get; }
+
+        internal long EntryIdentifierNormalizations { get; private set; }
+
+        internal long EntryGuidParseAttempts { get; private set; }
+
+        internal long MembershipComparisons { get; private set; }
+
+        internal static CwRemovedIdIndex Create(IReadOnlyCollection<string> removedIds)
+        {
+            ArgumentNullException.ThrowIfNull(removedIds);
+
+            var guidIds = new HashSet<Guid>(removedIds.Count);
+            var stringIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var guidParseAttempts = 0;
+            foreach (var removedId in removedIds)
+            {
+                if (string.IsNullOrEmpty(removedId)) continue;
+                guidParseAttempts++;
+                if (Guid.TryParse(removedId, out var guid))
+                {
+                    guidIds.Add(guid);
+                }
+                else
+                {
+                    stringIds.Add(removedId);
+                }
+            }
+
+            return new CwRemovedIdIndex(
+                guidIds,
+                stringIds,
+                removedIds.Count,
+                guidParseAttempts);
+        }
+
+        internal bool Contains(string? entryId)
+        {
+            EntryIdentifierNormalizations++;
+            if (string.IsNullOrEmpty(entryId)) return false;
+
+            EntryGuidParseAttempts++;
+            MembershipComparisons++;
+            return Guid.TryParse(entryId, out var guid)
+                ? _guidIds.Contains(guid)
+                : _stringIds.Contains(entryId);
+        }
+    }
+
     public sealed class ContinueWatchingPlaybackConsumer : IEventConsumer<PlaybackStartEventArgs>
     {
         private static readonly HashSet<string> AutoRemoveScopes =
@@ -261,13 +338,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
         internal static int DrainBatch(
             IReadOnlyCollection<string> removedIds,
             IEnumerable<Guid> userIds,
-            Action<Guid, IReadOnlyCollection<string>> pruneUser)
+            Action<Guid, CwRemovedIdIndex> pruneUser)
         {
             if (removedIds.Count == 0) return 0;
+            var targetIds = CwRemovedIdIndex.Create(removedIds);
             var users = 0;
             foreach (var userId in userIds)
             {
-                pruneUser(userId, removedIds);
+                pruneUser(userId, targetIds);
                 users++;
             }
             return users;
@@ -275,24 +353,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
 
         // One locked RMW per user that removes every batched orphan id, then invalidates the response
         // filter's HideContext cache for that user if anything changed.
-        private void PruneOrphans(Guid userId, IReadOnlyCollection<string> targetIds)
+        private void PruneOrphans(Guid userId, CwRemovedIdIndex targetIds)
         {
             try
             {
                 var removed = _configManager.RmwUserConfiguration<UserHiddenContent>(
-                    userId.ToString("N"), "hidden-content.json", hidden =>
-                {
-                    if (hidden?.Items == null || hidden.Items.Count == 0) return 0;
-                    var keysToDrop = new List<string>();
-                    foreach (var kvp in hidden.Items)
-                    {
-                        var entry = kvp.Value;
-                        if (entry == null) continue;
-                        if (targetIds.Any(t => CwEventHelpers.IdMatches(entry.ItemId, t))) keysToDrop.Add(kvp.Key);
-                    }
-                    foreach (var k in keysToDrop) hidden.Items.Remove(k);
-                    return keysToDrop.Count;
-                });
+                    userId.ToString("N"),
+                    "hidden-content.json",
+                    hidden => PruneOrphansCore(hidden, targetIds));
                 if (removed > 0)
                 {
                     HiddenContentResponseFilter.InvalidateUser(userId.ToString("N"));
@@ -311,6 +379,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
             {
                 _logger.LogWarning($"CW: orphan-prune failed for user {userId}: {ex.Message}");
             }
+        }
+
+        // Runs inside the config manager's locked read-modify-write transaction, preserving one
+        // atomic mutation per user while making the per-entry work independently testable.
+        internal static int PruneOrphansCore(UserHiddenContent? hidden, CwRemovedIdIndex targetIds)
+        {
+            ArgumentNullException.ThrowIfNull(targetIds);
+            if (hidden?.Items == null || hidden.Items.Count == 0) return 0;
+
+            var keysToDrop = new List<string>();
+            foreach (var kvp in hidden.Items)
+            {
+                var entry = kvp.Value;
+                if (entry == null) continue;
+                if (targetIds.Contains(entry.ItemId)) keysToDrop.Add(kvp.Key);
+            }
+
+            foreach (var key in keysToDrop) hidden.Items.Remove(key);
+            return keysToDrop.Count;
         }
     }
 }
