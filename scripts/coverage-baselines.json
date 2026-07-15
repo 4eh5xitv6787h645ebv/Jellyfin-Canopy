@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 16244,
-        "totalLines": 24886
+        "coveredLines": 16360,
+        "totalLines": 25016
       },
       "tolerance": {
         "missingCoveredLines": 2,
-        "rationale": "Two clean reviewed local .NET 10/Coverlet integration runs on 2026-07-15 measured 16244 and 16243 covered lines, while the first clean GitHub Actions run measured 16242, across the identical 24886-line final scope after the Continue Watching linear index, outcome-aware playback retry deduplication, bounded asynchronous logging, and strict static locale resolution with immutable responses, silent regional fallback, and bounded miss logging. The two-line tolerance covers only that reproduced cross-run instrumentation variance (0.0081 percentage points)."
+        "rationale": "Three clean reviewed local .NET 10/Coverlet integration runs on 2026-07-16 measured 16359, 16359, and 16360 covered lines across the identical 25016-line final scope after adding bounded, user-scoped SearchHint hierarchy resolution for hidden-series Season and Episode descendants, including fail-closed atomic query, user, cap, and cancellation handling. The existing two-line tolerance remains narrow and covers only reproduced cross-run instrumentation variance (0.0080 percentage points)."
       }
     }
   }
