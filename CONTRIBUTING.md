@@ -318,8 +318,30 @@ If you touch `docs/` (any user- or admin-visible change should), the site must b
 
 ```bash
 npm run check:markdown-links
+npm run check:docs-assets
 mkdocs build --strict
 ```
+
+`check:docs-assets` treats every tracked visual file anywhere under `docs/` as
+owned content: it must be referenced by the README, documentation, MkDocs
+theme, or this repository's plugin manifest, and both documentation-only and
+repository-wide visual-asset byte budgets are blocking ratchets. An
+intentionally unreferenced asset needs a named owner, rationale, and expiry in
+`scripts/docs-asset-policy.json`. Animated assets additionally need a tracked
+non-animated alternative, a description presented beside it, and source-backed
+`prefers-reduced-motion` evidence; GIFs are rejected.
+
+The #147 baseline recorded 45 documentation images totalling 78,548,499 bytes
+before the two unreferenced panel GIFs were removed. The owned set is now 43
+files / 24,472,975 bytes, a reduction of 54,075,524 bytes (68.8%). Across the
+whole repository the corresponding visual-asset payload fell from 49 files /
+80,910,807 bytes to 47 files / 26,835,283 bytes. Git history was deliberately
+left intact: a history rewrite and force-push would require separate approval.
+For an otherwise identical current tree, removing the two GIFs reduces the
+tracked checkout from 92,929,846 to 38,854,322 bytes (58.2%) and the strict
+MkDocs `site/` artifact from 80,283,129 to 26,207,605 bytes (67.4%). Existing
+clones retain the historical objects even though new checkouts and the
+generated documentation site no longer carry those files in the current tree.
 
 ### Manual checklist
 

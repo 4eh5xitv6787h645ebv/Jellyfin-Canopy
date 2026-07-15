@@ -1,0 +1,51 @@
+{
+  "assetExtensions": [
+    ".apng",
+    ".avif",
+    ".gif",
+    ".ico",
+    ".jpeg",
+    ".jpg",
+    ".mp4",
+    ".png",
+    ".svg",
+    ".webm",
+    ".webp"
+  ],
+  "docsRoot": "docs",
+  "allowedExternalAssetPrefixes": [
+    "https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/"
+  ],
+  "referenceFiles": [
+    "CONTRIBUTING.md",
+    "README.md",
+    "manifest.json",
+    "mkdocs.yml"
+  ],
+  "referenceDirectories": [
+    "docs",
+    "theme"
+  ],
+  "referenceExtensions": [
+    ".css",
+    ".html",
+    ".js",
+    ".json",
+    ".md",
+    ".ts",
+    ".yml",
+    ".yaml"
+  ],
+  "budgets": {
+    "documentation": {
+      "maxBytes": 24472975,
+      "maxFileBytes": 2941758
+    },
+    "repository": {
+      "maxBytes": 26835283,
+      "maxFileBytes": 2941758
+    }
+  },
+  "unreferencedAllowlist": [],
+  "animatedAllowlist": []
+}
