@@ -524,6 +524,13 @@ PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration" \
                 | .SeerrRespectParentalRatings = $seerrParental
              else . end)')"
 api POST "/Plugins/${PLUGIN_ID}/Configuration" "${PLUGIN_CONFIG}" >/dev/null
+SAVED_PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration")"
+if ! jq -e '
+    .CalendarPageEnabled == true
+    and .DownloadsPageEnabled == true
+' <<<"${SAVED_PLUGIN_CONFIG}" >/dev/null; then
+    fail "saved plugin configuration did not enable the Calendar and Downloads E2E fixtures"
+fi
 log "layout enforcement: ${LAYOUT_ENFORCEMENT}"
 
 log "TMDB configured (${TMDB_API_KEY:+key present})"

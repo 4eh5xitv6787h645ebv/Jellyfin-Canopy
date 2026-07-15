@@ -29,6 +29,7 @@
     "e2e/live-updates.spec.ts › live updates › admin config save hot-reloads JC.pluginConfig without a page reload",
     "e2e/mobile-fits.spec.ts › mobile viewport fits › Hidden Content page: heading clears the header, no horizontal scroll",
     "e2e/mobile-fits.spec.ts › mobile viewport fits › collection Missing-from cards are native-grid-sized (≈3 across)",
+    "e2e/mobile-fits.spec.ts › mobile viewport fits › disabled Calendar and Downloads stay unavailable without leaking configuration",
     "e2e/mobile-fits.spec.ts › mobile viewport fits › settings panel + shortcuts fit the phone (no clipping)",
     "e2e/mobile-fits.spec.ts › mobile viewport fits › standalone pages do not scroll horizontally",
     "e2e/navigation.spec.ts › navigation › header button survives route, param-only and /video navigations",
