@@ -77,7 +77,12 @@ test('all bundle-building workflow paths verify Node before dotnet or npm', () =
         ))?.[0] || '';
         assert.match(job, /Setup Node[\s\S]*node-version-file:\s*\.nvmrc[\s\S]*Verify Node toolchain/);
         const verifyAt = job.indexOf('Verify Node toolchain');
-        const buildAt = [job.indexOf('dotnet build'), job.indexOf('dotnet test'), job.indexOf('npm ci')]
+        const buildAt = [
+            job.indexOf('dotnet build'),
+            job.indexOf('dotnet test'),
+            job.indexOf('npm ci'),
+            job.indexOf('npm run test:server:coverage'),
+        ]
             .filter(index => index !== -1)
             .sort((left, right) => left - right)[0];
         assert.ok(verifyAt !== -1 && verifyAt < buildAt, `${jobName} verifies after its first build command`);

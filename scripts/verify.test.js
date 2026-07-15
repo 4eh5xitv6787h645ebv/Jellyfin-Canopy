@@ -183,13 +183,14 @@ test('CI and release share the verifier while every non-lint workflow gate stays
         'npm run test:scripts',
         'npm run typecheck',
         'npm run typecheck:src',
-        'npm run test:client',
         'npm run build:bundle',
     ]) {
         assert.ok(client.includes(command), `build client job lost blocking command: ${command}`);
         assert.ok(release.includes(command), `release workflow lost blocking command: ${command}`);
     }
-    assert.match(client, /npm run test:client:coverage/);
+    assert.equal((client.match(/npm run test:client:coverage/g) || []).length, 1);
+    assert.doesNotMatch(client, /npm run test:client(?:\s|$)/m);
+    assert.equal((release.match(/npm run test:client(?:\s|$)/gm) || []).length, 1);
     assert.match(release, /dotnet test/);
     assert.match(release, /validate-manifest\.js/);
     assert.match(build, /verify-manifest-remote\.js "\$\{args\[@\]\}"/);

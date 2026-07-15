@@ -123,16 +123,20 @@ test('client report parser fails closed on missing and non-integer line evidence
 test('local and CI coverage entry points share the committed artifact', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
     const vitest = fs.readFileSync(path.join(ROOT, 'vitest.config.ts'), 'utf8');
+    const runner = fs.readFileSync(path.join(__dirname, 'run-coverage-suite.js'), 'utf8');
     const server = fs.readFileSync(path.join(__dirname, 'check-dotnet-coverage.js'), 'utf8');
     const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/build.yml'), 'utf8');
 
-    assert.match(packageJson.scripts['test:client:coverage'], /check-client-coverage\.js/);
+    assert.equal(packageJson.scripts['test:client:coverage'], 'node scripts/run-coverage-suite.js client');
+    assert.equal(packageJson.scripts['test:server:coverage'], 'node scripts/run-coverage-suite.js server');
+    assert.match(runner, /check-client-coverage\.js/);
+    assert.match(runner, /check-dotnet-coverage\.js/);
     assert.match(vitest, /coverage-baselines\.json/);
     assert.match(vitest, /include:\s*\[clientBaseline\.scope\]/);
     assert.doesNotMatch(vitest, /thresholds:/);
     assert.match(server, /loadBaselines\(\)/);
     assert.match(workflow, /npm run test:client:coverage/);
-    assert.match(workflow, /node scripts\/check-dotnet-coverage\.js/);
+    assert.match(workflow, /npm run test:server:coverage/);
     assert.doesNotMatch(vitest, /lines:\s*47\b/);
     assert.doesNotMatch(server, /DEFAULT_THRESHOLD\s*=\s*16\b/);
 });
