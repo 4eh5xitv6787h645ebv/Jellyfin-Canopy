@@ -299,6 +299,184 @@ describe('bookmark player identity ownership', () => {
     expect(document.querySelector('.jellyfin-canopy-toast')).toBeNull();
   });
 
+  it('reconciles one bookmark to empty idempotently without removing an unowned marker', async () => {
+    const api = await loadModule({ existing: bookmark('item-a', 'Owned') });
+    const slider = document.querySelector<HTMLElement>('.osdPositionSliderContainer')!;
+    const unowned = document.createElement('div');
+    unowned.className = 'jc-bookmark-marker';
+    unowned.dataset.testOwner = 'host';
+    slider.appendChild(unowned);
+
+    await api.updateMarkers();
+
+    expect(slider.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(1);
+    expect(unowned.isConnected).toBe(true);
+
+    await expect(api.delete('existing')).resolves.toBe(true);
+    await api.updateMarkers();
+    await api.updateMarkers();
+
+    expect(slider.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(0);
+    expect(unowned.isConnected).toBe(true);
+    expect(JC.userConfig.bookmark.bookmarks).toEqual({});
+  });
+
+  it('clears prior-item markers immediately while a reused OSD waits for an unbookmarked item', async () => {
+    const api = await loadModule({ existing: bookmark('item-a', 'Item A') });
+    await api.updateMarkers();
+    const slider = document.querySelector<HTMLElement>('.osdPositionSliderContainer')!;
+    const reusedSlider = slider;
+    expect(slider.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(1);
+
+    const itemB = deferred<unknown>();
+    ajax.mockClear();
+    ajax.mockReturnValueOnce(itemB.promise);
+    document.querySelector<HTMLElement>('.btnUserRating')!.dataset.id = 'item-b';
+
+    const reconciliation = api.updateMarkers();
+    await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(1));
+
+    expect(document.querySelector('.osdPositionSliderContainer')).toBe(reusedSlider);
+    expect(slider.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(0);
+
+    itemB.resolve({ Items: [{
+      Id: 'item-b',
+      Name: 'Movie B',
+      Type: 'Movie',
+      ProviderIds: { Tmdb: 'tmdb-b' }
+    }] });
+    await reconciliation;
+
+    expect(slider.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(0);
+  });
+
+  it('removes owned markers from a detached OSD before the host reattaches it', async () => {
+    const api = await loadModule({ existing: bookmark('item-a', 'Detached item') });
+    await api.updateMarkers();
+    const osd = document.querySelector<HTMLElement>('.videoOsdBottom')!;
+    const slider = osd.querySelector<HTMLElement>('.osdPositionSliderContainer')!;
+    const unowned = document.createElement('div');
+    unowned.className = 'jc-bookmark-marker';
+    slider.appendChild(unowned);
+    expect(slider.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(1);
+
+    osd.remove();
+    await api.updateMarkers();
+    document.body.appendChild(osd);
+
+    expect(slider.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(0);
+    expect(unowned.isConnected).toBe(true);
+  });
+
+  it('does not let pending debounce callbacks recreate player output after cleanup', async () => {
+    vi.useFakeTimers();
+    await loadModule({ existing: bookmark('item-a', 'Pending') });
+    JC.initializeBookmarks();
+    video.dispatchEvent(new Event('playing', { bubbles: true }));
+
+    JC.cleanupBookmarks();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(document.getElementById('jcBookmarkBtn')).toBeNull();
+    expect(document.querySelector('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toBeNull();
+    expect(ajax).not.toHaveBeenCalled();
+  });
+
+  it('keeps the committed marker until deletion is acknowledged and removes it afterward', async () => {
+    const api = await loadModule({ existing: bookmark('item-a', 'Committed') });
+    await api.updateMarkers();
+    JC.initializeBookmarks();
+    await vi.waitFor(() => expect(document.getElementById('jcBookmarkBtn')).not.toBeNull());
+    const heldDelete = deferred<unknown>();
+    save.mockReturnValueOnce(heldDelete.promise);
+
+    const deletion = api.delete('existing');
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+
+    expect(document.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(1);
+    expect(JC.userConfig.bookmark.bookmarks.existing).toBeDefined();
+
+    heldDelete.resolve({ revision: 1, bookmarks: {} });
+    await expect(deletion).resolves.toBe(true);
+    await vi.waitFor(() => expect(JC.userConfig.bookmark.bookmarks).toEqual({}));
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(0);
+    });
+  });
+
+  it('preserves the marker and committed state when deletion persistence fails', async () => {
+    const api = await loadModule({ existing: bookmark('item-a', 'Still committed') });
+    await api.updateMarkers();
+    await api.showModal('view');
+    save.mockRejectedValueOnce(new Error('disk full'));
+
+    document.querySelector<HTMLButtonElement>('.jc-bookmark-btn-delete')!.click();
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => {
+      expect(document.querySelector('.jellyfin-canopy-toast')).not.toBeNull();
+    });
+
+    expect(JC.userConfig.bookmark.bookmarks.existing).toEqual(bookmark('item-a', 'Still committed'));
+    expect(document.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(1);
+    expect(document.querySelector<HTMLElement>('.jc-bookmark-marker[data-jc-identity-owned="true"]')?.title)
+      .toContain('Still committed');
+  });
+
+  it('reconciles a retained marker to authoritative 409 state when the delete retry fails', async () => {
+    const api = await loadModule({ existing: bookmark('item-a', 'Before conflict') });
+    await api.updateMarkers();
+    JC.initializeBookmarks();
+    const authoritative = {
+      ...bookmark('item-a', 'Changed remotely'),
+      timestamp: 77,
+      updatedAt: '2026-02-01T00:00:00.000Z'
+    };
+    save
+      .mockRejectedValueOnce(Object.assign(new Error('conflict'), {
+        status: 409,
+        responseJSON: { revision: 1, bookmarks: { existing: authoritative } }
+      }))
+      .mockRejectedValueOnce(new Error('retry failed'));
+
+    await expect(api.delete('existing')).resolves.toBe(false);
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>(
+        '.jc-bookmark-marker[data-jc-identity-owned="true"]'
+      )?.title).toContain('Changed remotely - 1:17');
+    });
+
+    expect(JC.userConfig.bookmark).toEqual({
+      revision: 1,
+      bookmarks: { existing: authoritative }
+    });
+  });
+
+  it('does not publish a held reconciliation into a replacement video playback instance', async () => {
+    const api = await loadModule({ current: bookmark('item-b', 'Item B') });
+    const itemB = deferred<unknown>();
+    ajax.mockReturnValueOnce(itemB.promise);
+    document.querySelector<HTMLElement>('.btnUserRating')!.dataset.id = 'item-b';
+
+    const stalePlayback = api.updateMarkers();
+    await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(1));
+
+    const replacement = document.createElement('video');
+    Object.defineProperty(replacement, 'duration', { configurable: true, value: 120 });
+    video.replaceWith(replacement);
+    itemB.resolve({ Items: [{
+      Id: 'item-b',
+      Name: 'Movie B',
+      Type: 'Movie',
+      ProviderIds: { Tmdb: 'tmdb-b' }
+    }] });
+    await stalePlayback;
+
+    expect(document.querySelector('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toBeNull();
+
+    await api.updateMarkers();
+    expect(document.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(1);
+  });
+
   it('does not save a bookmark when playback changes during its item-details fetch', async () => {
     const api = await loadModule({});
     const heldDetails = deferred<unknown>();
