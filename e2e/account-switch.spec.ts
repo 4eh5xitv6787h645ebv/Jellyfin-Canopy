@@ -17,6 +17,7 @@ import {
 } from './fixtures/auth';
 import type { Page, Request, Route } from 'playwright/test';
 import {
+    hasValidConcurrentLogoutResponses,
     isExpectedSignedOutHomeAxios401,
     isExpectedSignedOutHostLogout4xx,
 } from '../scripts/e2e/jellyfin-host-noise';
@@ -456,17 +457,10 @@ async function spaLogout(
             ({ requestIndex, status, bodyBytes }))
             .sort((left, right) => left.requestIndex - right.requestIndex);
         expect(
-            orderedResponses[0],
-            'the first native logout call revokes the session cleanly'
-        ).toEqual({ requestIndex: 0, status: 204, bodyBytes: 0 });
-        expect(
-            { requestIndex: orderedResponses[1]?.requestIndex, bodyBytes: orderedResponses[1]?.bodyBytes },
-            'the concurrent duplicate returns no body'
-        ).toEqual({ requestIndex: 1, bodyBytes: 0 });
-        expect(
-            [204, 401],
-            'the duplicate either authenticates before revocation or is rejected after it'
-        ).toContain(orderedResponses[1]?.status);
+            hasValidConcurrentLogoutResponses(orderedResponses),
+            'the concurrent native logout pair has exact empty 204/401 outcomes '
+                + `independent of server completion order: ${JSON.stringify(orderedResponses)}`
+        ).toBe(true);
 
         expect(signedOut.identityCleared, 'Canopy identity is null after logout').toBe(true);
         expect(signedOut.userId, 'the host client has no current user after logout').toBe('');

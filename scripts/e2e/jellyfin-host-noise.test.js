@@ -10,6 +10,7 @@ const {
     HOME_SELECTED_INDEX_ERROR,
     HOME_TAB_PREFIX,
     SCROLL_HANDLER_ERROR,
+    hasValidConcurrentLogoutResponses,
     isKnownHiddenContentHostNoise,
     isKnownJellyfinWebHostNoise,
     isExpectedSignedOutHostLogout4xx,
@@ -46,6 +47,51 @@ const COMPLETE_SIGNED_OUT = {
         oldTokenStatus: 401,
     },
 };
+
+test('concurrent logout accepts either request as the session-revocation owner', () => {
+    const requestZeroWins = [
+        { requestIndex: 0, status: 204, bodyBytes: 0 },
+        { requestIndex: 1, status: 401, bodyBytes: 0 },
+    ];
+    const requestOneWins = [
+        { requestIndex: 0, status: 401, bodyBytes: 0 },
+        { requestIndex: 1, status: 204, bodyBytes: 0 },
+    ];
+    const bothAuthenticatedBeforeRevocation = [
+        { requestIndex: 1, status: 204, bodyBytes: 0 },
+        { requestIndex: 0, status: 204, bodyBytes: 0 },
+    ];
+
+    assert.equal(hasValidConcurrentLogoutResponses(requestZeroWins), true);
+    assert.equal(hasValidConcurrentLogoutResponses(requestOneWins), true);
+    assert.equal(hasValidConcurrentLogoutResponses(bothAuthenticatedBeforeRevocation), true);
+});
+
+test('concurrent logout rejects missing success, bodies, indices, statuses, and cardinality', () => {
+    const rejected = [
+        [
+            { requestIndex: 0, status: 401, bodyBytes: 0 },
+            { requestIndex: 1, status: 401, bodyBytes: 0 },
+        ],
+        [
+            { requestIndex: 0, status: 204, bodyBytes: 1 },
+            { requestIndex: 1, status: 401, bodyBytes: 0 },
+        ],
+        [
+            { requestIndex: 0, status: 204, bodyBytes: 0 },
+            { requestIndex: 0, status: 401, bodyBytes: 0 },
+        ],
+        [
+            { requestIndex: 0, status: 204, bodyBytes: 0 },
+            { requestIndex: 1, status: 500, bodyBytes: 0 },
+        ],
+        [{ requestIndex: 0, status: 204, bodyBytes: 0 }],
+    ];
+
+    for (const responses of rejected) {
+        assert.equal(hasValidConcurrentLogoutResponses(responses), false, JSON.stringify(responses));
+    }
+});
 
 const OBSERVED_SIGNED_OUT_HOME_401S = [
     '/LiveTv/Programs/Recommended?userId=92bdc95c7381435689451ad246198f74&limit=1&isAiring=true&imageTypeLimit=1&enableImageTypes=Primary&enableImageTypes=Thumb&enableImageTypes=Backdrop&fields=ChannelInfo&fields=PrimaryImageAspectRatio&enableTotalRecordCount=false',
@@ -320,6 +366,8 @@ test('both admin and non-admin Hidden Content paths use the strict host-noise as
 
 test('account switching scopes logout Axios noise to the phase-local response classifier', () => {
     const source = fs.readFileSync(path.join(ROOT, 'e2e/account-switch.spec.ts'), 'utf8');
+    assert.match(source, /hasValidConcurrentLogoutResponses\(orderedResponses\)/);
+    assert.doesNotMatch(source, /orderedResponses\[0\][\s\S]{0,200}status: 204/);
     assert.match(source, /isExpectedSignedOutHomeAxios401\(detail, evidence, hasAllowedHost401\)/);
     assert.match(source, /response\.status === 401\s*&& isExpectedSignedOutHostLogout4xx\(response, evidence\)/);
     assert.match(source, /failed\.filter\(\(response\) => !isExpectedSignedOutHostLogout4xx\(response, evidence\)\)/);
