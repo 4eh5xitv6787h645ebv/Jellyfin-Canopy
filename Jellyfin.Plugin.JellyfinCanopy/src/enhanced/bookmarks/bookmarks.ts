@@ -21,6 +21,8 @@ import type { IdentityContext } from '../../types/jc';
   const ownedBookmarkMarkerSelector = '.jc-bookmark-marker[data-jc-identity-owned="true"]';
   let bookmarkGeneration = 0;
   let bookmarkMarkerGeneration = 0;
+  const ownedBookmarkMarkers = new Set<HTMLElement>();
+  const ownedBookmarkButtons = new Set<HTMLButtonElement>();
   const activeModalDisposers = new Map<HTMLElement, () => void>();
   const bookmarkTimers = new Set<number>();
   let forceCleanupBookmarks: (() => void) | null = null;
@@ -316,9 +318,36 @@ import type { IdentityContext } from '../../types/jc';
   }
 
   function removeOwnedBookmarkMarkers(root: ParentNode = document): number {
-    const markers = root.querySelectorAll(ownedBookmarkMarkerSelector);
-    markers.forEach(marker => marker.remove());
-    return markers.length;
+    let removed = 0;
+    // The host may temporarily detach and later reuse the OSD. Keep explicit
+    // ownership so cleanup also reaches markers outside the connected document.
+    for (const marker of [...ownedBookmarkMarkers]) {
+      marker.remove();
+      ownedBookmarkMarkers.delete(marker);
+      removed += 1;
+    }
+    // Also clean up owned output created by an older bundle instance.
+    for (const marker of root.querySelectorAll<HTMLElement>(ownedBookmarkMarkerSelector)) {
+      marker.remove();
+      removed += 1;
+    }
+    return removed;
+  }
+
+  function removeOwnedBookmarkButtons(root: ParentNode = document): number {
+    let removed = 0;
+    for (const button of [...ownedBookmarkButtons]) {
+      button.remove();
+      ownedBookmarkButtons.delete(button);
+      removed += 1;
+    }
+    for (const button of root.querySelectorAll<HTMLButtonElement>(
+      '#jcBookmarkBtn[data-jc-identity-owned="true"]'
+    )) {
+      button.remove();
+      removed += 1;
+    }
+    return removed;
   }
 
   function invalidateBookmarkMarkerOutput(): number {
@@ -616,6 +645,7 @@ import type { IdentityContext } from '../../types/jc';
       return false;
     }
 
+    const startingRevision = root.revision;
     try {
       const committed = await commitBookmarkBatch(captured, root, state =>
         state.bookmarks[bookmarkId] ? [{ type: 'delete', bookmarkId }] : []);
@@ -625,6 +655,12 @@ import type { IdentityContext } from '../../types/jc';
       return emitBookmarksUpdated(captured, 'delete');
     } catch (e) {
       if (!isBookmarkRootCurrent(captured, root)) return false;
+      // A 409 can advance the local root to an authoritative server snapshot
+      // before the rebased retry fails. Reconcile every view to that retained
+      // snapshot instead of leaving the pre-conflict marker on screen.
+      if (root.revision !== startingRevision) {
+        emitBookmarksUpdated(captured, 'authoritative-reconcile');
+      }
       console.error(`${logPrefix} Failed to delete bookmark:`, e);
       return false;
     }
@@ -908,7 +944,10 @@ import type { IdentityContext } from '../../types/jc';
       });
 
       if (isBookmarkMarkerReconciliationCurrent(captured, mediaItemId, video, generation)
-        && sliderContainer.isConnected) sliderContainer.appendChild(marker);
+        && sliderContainer.isConnected) {
+        sliderContainer.appendChild(marker);
+        ownedBookmarkMarkers.add(marker);
+      }
     });
 
     console.log(`${logPrefix} ✓ Created ${bookmarksList.length} bookmark markers`);
@@ -1527,6 +1566,14 @@ import type { IdentityContext } from '../../types/jc';
    */
   function addOsdBookmarkButton(captured: BookmarkIdentityCapture = captureIdentity()): void {
     if (!captured.context || !isIdentityCurrent(captured)) return;
+    // A replaced OSD may leave its button detached for later host reuse. Retire
+    // it before creating output for the current controls and keep the registry
+    // bounded to connected ownership.
+    for (const button of [...ownedBookmarkButtons]) {
+      if (button.isConnected) continue;
+      button.remove();
+      ownedBookmarkButtons.delete(button);
+    }
     // Don't add if already exists
     if (document.getElementById('jcBookmarkBtn')) return;
 
@@ -1555,6 +1602,7 @@ import type { IdentityContext } from '../../types/jc';
     // Insert before the settings button
     if (!isIdentityCurrent(captured)) return;
     nativeSettingsButton.parentElement!.insertBefore(bookmarkBtn, nativeSettingsButton);
+    ownedBookmarkButtons.add(bookmarkBtn);
     console.log(`${logPrefix} ✓ Added OSD bookmark button`);
   }
 
@@ -1583,8 +1631,11 @@ import type { IdentityContext } from '../../types/jc';
 
       let lastVideoUrl: string | null = null;
       let lastInjectedOsdKey: string | null = null;
+      let disposed = false;
       const osdObserverId = 'jc-bookmarks-osd';
       const videoObserverId = 'jc-bookmarks-video-changes';
+
+      const isActivationCurrent = (): boolean => !disposed && isIdentityCurrent(activation);
 
       function getOsdKey(): string {
         const video = document.querySelector<HTMLVideoElement>('.videoPlayerContainer video');
@@ -1593,7 +1644,7 @@ import type { IdentityContext } from '../../types/jc';
 
       // Debounced OSD injection - prevents rapid re-injection
       const debouncedOsdInjection = debounce(() => {
-        if (!isIdentityCurrent(activation)) return;
+        if (!isActivationCurrent()) return;
         if (!(JC as any).isVideoPage()) return;
 
         const osdBottom = document.querySelector('.videoOsdBottom');
@@ -1604,7 +1655,7 @@ import type { IdentityContext } from '../../types/jc';
         if (osdBottom && video && currentOsdKey !== lastInjectedOsdKey) {
           void updateBookmarkMarkersForCurrentVideo();
           addOsdBookmarkButton(activation);
-          if (!isIdentityCurrent(activation)) return;
+          if (!isActivationCurrent()) return;
           lastInjectedOsdKey = currentOsdKey;
           console.log(`${logPrefix} Injected markers/button for ${currentOsdKey}`);
         }
@@ -1612,7 +1663,7 @@ import type { IdentityContext } from '../../types/jc';
 
       // Managed observer: only watches when on video page
       function ensureOsdObserver(): void {
-        if (!isIdentityCurrent(activation)) return;
+        if (!isActivationCurrent()) return;
         if (!(JC as any).isVideoPage()) {
           disconnectObserver(osdObserverId);
           return;
@@ -1629,21 +1680,21 @@ import type { IdentityContext } from '../../types/jc';
 
       // Debounced handlers for video events
       const handlePlayingEvent = debounce((e: Event) => {
-        if (!isIdentityCurrent(activation)) return;
+        if (!isActivationCurrent()) return;
         if ((e.target as HTMLElement).tagName === 'VIDEO' && (JC as any).isVideoPage()) {
           debouncedOsdInjection();
         }
       }, 300);
 
       const handleMetadataEvent = debounce((e: Event) => {
-        if (!isIdentityCurrent(activation)) return;
+        if (!isActivationCurrent()) return;
         if ((e.target as HTMLElement).tagName === 'VIDEO' && (JC as any).isVideoPage()) {
           debouncedOsdInjection();
         }
       }, 300);
 
       const handleViewShow = () => {
-        if (!isIdentityCurrent(activation)) return;
+        if (!isActivationCurrent()) return;
         if ((JC as any).isVideoPage()) {
           lastInjectedOsdKey = null; // Reset for new page
           ensureOsdObserver();
@@ -1672,7 +1723,7 @@ import type { IdentityContext } from '../../types/jc';
       // been adopted. This keeps every persistence entry point on the same
       // marker reconciliation path without publishing optimistic output.
       const handleBookmarksUpdated = () => {
-        if (isIdentityCurrent(activation)
+        if (isActivationCurrent()
           && (JC as unknown as { isVideoPage(): boolean }).isVideoPage()) {
           void updateBookmarkMarkersForCurrentVideo();
         }
@@ -1687,7 +1738,11 @@ import type { IdentityContext } from '../../types/jc';
       }
 
       const cleanupActivation = (force = false): void => {
+        if (disposed) return;
         if (!force && !isIdentityCurrent(activation)) return;
+        // Mark disposal before draining listeners/observers. Already-queued
+        // debounce callbacks then fail closed even when the identity is unchanged.
+        disposed = true;
         cleanupFunctions.forEach(fn => fn());
         cleanupFunctions = [];
         disconnectObserver(osdObserverId);
@@ -1696,7 +1751,7 @@ import type { IdentityContext } from '../../types/jc';
         bookmarkTimers.clear();
         disposeActiveModals();
         invalidateBookmarkMarkerOutput();
-        document.getElementById('jcBookmarkBtn')?.remove();
+        removeOwnedBookmarkButtons();
         document.querySelectorAll('.jc-bm-player-modal-overlay').forEach((node) => node.remove());
         initialized = false;
         console.log(`${logPrefix} Cleaned up`);
@@ -1725,7 +1780,7 @@ import type { IdentityContext } from '../../types/jc';
     itemDetailsCache.requestId += 1;
     forceCleanupBookmarks?.();
     forceCleanupBookmarks = null;
-    document.getElementById('jcBookmarkBtn')?.remove();
+    removeOwnedBookmarkButtons();
     document.querySelectorAll('.jc-bm-player-modal-overlay').forEach((node) => node.remove());
   });
 

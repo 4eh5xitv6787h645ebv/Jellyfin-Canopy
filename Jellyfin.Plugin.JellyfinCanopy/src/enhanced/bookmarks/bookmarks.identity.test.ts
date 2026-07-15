@@ -350,6 +350,38 @@ describe('bookmark player identity ownership', () => {
     expect(slider.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(0);
   });
 
+  it('removes owned markers from a detached OSD before the host reattaches it', async () => {
+    const api = await loadModule({ existing: bookmark('item-a', 'Detached item') });
+    await api.updateMarkers();
+    const osd = document.querySelector<HTMLElement>('.videoOsdBottom')!;
+    const slider = osd.querySelector<HTMLElement>('.osdPositionSliderContainer')!;
+    const unowned = document.createElement('div');
+    unowned.className = 'jc-bookmark-marker';
+    slider.appendChild(unowned);
+    expect(slider.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(1);
+
+    osd.remove();
+    await api.updateMarkers();
+    document.body.appendChild(osd);
+
+    expect(slider.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(0);
+    expect(unowned.isConnected).toBe(true);
+  });
+
+  it('does not let pending debounce callbacks recreate player output after cleanup', async () => {
+    vi.useFakeTimers();
+    await loadModule({ existing: bookmark('item-a', 'Pending') });
+    JC.initializeBookmarks();
+    video.dispatchEvent(new Event('playing', { bubbles: true }));
+
+    JC.cleanupBookmarks();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(document.getElementById('jcBookmarkBtn')).toBeNull();
+    expect(document.querySelector('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toBeNull();
+    expect(ajax).not.toHaveBeenCalled();
+  });
+
   it('keeps the committed marker until deletion is acknowledged and removes it afterward', async () => {
     const api = await loadModule({ existing: bookmark('item-a', 'Committed') });
     await api.updateMarkers();
@@ -388,6 +420,35 @@ describe('bookmark player identity ownership', () => {
     expect(document.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(1);
     expect(document.querySelector<HTMLElement>('.jc-bookmark-marker[data-jc-identity-owned="true"]')?.title)
       .toContain('Still committed');
+  });
+
+  it('reconciles a retained marker to authoritative 409 state when the delete retry fails', async () => {
+    const api = await loadModule({ existing: bookmark('item-a', 'Before conflict') });
+    await api.updateMarkers();
+    JC.initializeBookmarks();
+    const authoritative = {
+      ...bookmark('item-a', 'Changed remotely'),
+      timestamp: 77,
+      updatedAt: '2026-02-01T00:00:00.000Z'
+    };
+    save
+      .mockRejectedValueOnce(Object.assign(new Error('conflict'), {
+        status: 409,
+        responseJSON: { revision: 1, bookmarks: { existing: authoritative } }
+      }))
+      .mockRejectedValueOnce(new Error('retry failed'));
+
+    await expect(api.delete('existing')).resolves.toBe(false);
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>(
+        '.jc-bookmark-marker[data-jc-identity-owned="true"]'
+      )?.title).toContain('Changed remotely - 1:17');
+    });
+
+    expect(JC.userConfig.bookmark).toEqual({
+      revision: 1,
+      bookmarks: { existing: authoritative }
+    });
   });
 
   it('does not publish a held reconciliation into a replacement video playback instance', async () => {
