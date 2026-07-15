@@ -79,9 +79,10 @@ export function specFromId(id: string, genreNames?: Map<number, string>): Discov
 }
 
 /**
- * The admin default row order, built from the per-row admin toggles (PluginConfiguration). Absent
- * config (not yet loaded / older server) falls back to the built-in defaults, so the client always
- * resolves user → admin → hardcoded per the settings doctrine. `!== false` keeps a row on by default.
+ * The admin built-in row order, built from the per-row admin toggles (PluginConfiguration).
+ * Missing fields (config not yet loaded / older server) retain their documented defaults, while
+ * fields that are explicitly false remain authoritative even when every built-in row is disabled.
+ * That presence/value distinction is why this must not replace an empty `ids` array with defaults.
  */
 export function adminDefaultRowIds(): string[] {
     const cfg = JC.pluginConfig;
@@ -92,12 +93,24 @@ export function adminDefaultRowIds(): string[] {
     if (cfg.DiscoveryRowUpcoming !== false) ids.push('upcoming');
     if (cfg.DiscoveryRowTopRated !== false) ids.push('topRated');
     if (cfg.DiscoveryRowWatchlist === true) ids.push('watchlist');
-    return ids.length > 0 ? ids : [...DEFAULT_ROW_IDS];
+    return ids;
 }
 
 /** Whether the admin wants a few real genre rows appended to the default feed. */
 export function genreRowsEnabled(): boolean {
     return JC.pluginConfig?.DiscoveryGenreRows !== false;
+}
+
+/**
+ * Complete uncustomised row-id set. Generated genre rows compose with exactly the built-ins the
+ * admin selected; they never make an explicit all-off built-in selection fall back to defaults.
+ */
+export function defaultRowIds(genreNames?: Map<number, string>): string[] {
+    const ids = adminDefaultRowIds();
+    if (genreNames && genreRowsEnabled()) {
+        ids.push(...[...genreNames.keys()].slice(0, 4).map((id) => `genre:${id}`));
+    }
+    return ids;
 }
 
 /**
@@ -108,7 +121,7 @@ export function genreRowsEnabled(): boolean {
  * upstream, a renamed built-in) so the feed never breaks.
  */
 export function resolveRows(userRowIds: string[] | null, genreNames?: Map<number, string>): DiscoveryRowSpec[] {
-    const ids = userRowIds !== null ? userRowIds : adminDefaultRowIds();
+    const ids = userRowIds !== null ? userRowIds : defaultRowIds(genreNames);
     const out: DiscoveryRowSpec[] = [];
     const seen = new Set<string>();
     for (const id of ids) {

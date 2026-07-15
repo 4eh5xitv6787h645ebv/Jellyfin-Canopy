@@ -36,6 +36,7 @@ interface PaneState {
     feed: DiscoveryFeedHandle | null;
     pane: HTMLElement | null;
     feedHost: HTMLElement | null;
+    renderGeneration: number;
 }
 
 const state = new Map<string, PaneState>();
@@ -47,7 +48,10 @@ const lifecycle = JC.core.lifecycle!.register('discovery-library-tab');
 
 function stateFor(id: string): PaneState {
     let s = state.get(id);
-    if (!s) { s = { active: false, feed: null, pane: null, feedHost: null }; state.set(id, s); }
+    if (!s) {
+        s = { active: false, feed: null, pane: null, feedHost: null, renderGeneration: 0 };
+        state.set(id, s);
+    }
     return s;
 }
 
@@ -92,6 +96,7 @@ function currentPage(): LibraryPageDef | null {
 
 function closePane(def: LibraryPageDef): void {
     const s = stateFor(def.id);
+    s.renderGeneration += 1;
     s.feed?.destroy();
     s.feed = null;
     s.pane?.remove();
@@ -102,23 +107,31 @@ function closePane(def: LibraryPageDef): void {
     document.getElementById('jc-discovery-toggle-' + def.id)?.classList.remove('is-active');
 }
 
-/** (Re)renders the feed into the pane's feed host using the caller's current saved row prefs. */
+/**
+ * (Re)renders the feed using the caller's current saved row prefs. Build into a detached staging
+ * host and swap only after the new feed is complete, so a config push never blanks the current
+ * explicit-empty/default view while genres and row state are being resolved.
+ */
 async function renderFeedHost(def: LibraryPageDef, context: IdentityContext): Promise<void> {
     if (!JC.identity.isCurrent(context)) return;
     const s = stateFor(def.id);
     if (!s.feedHost) return;
     const feedHost = s.feedHost;
-    s.feed?.destroy();
-    feedHost.textContent = '';
-    const handle = await renderFeed(feedHost, def.mediaType, getUserRowIds(def.mediaType));
+    const generation = ++s.renderGeneration;
+    const stagingHost = document.createElement('div');
+    const handle = await renderFeed(stagingHost, def.mediaType, getUserRowIds(def.mediaType));
     if (!JC.identity.isCurrent(context)
         || state.get(def.id) !== s
         || !s.active
-        || s.feedHost !== feedHost) {
+        || s.feedHost !== feedHost
+        || s.renderGeneration !== generation) {
         handle.destroy();
         return;
     }
+    const previous = s.feed;
+    feedHost.replaceChildren(...Array.from(stagingHost.childNodes));
     s.feed = handle;
+    previous?.destroy();
 }
 
 /** Builds the pane toolbar with the per-user "Customize" button. */
@@ -241,6 +254,22 @@ function scheduleInject(context: IdentityContext | null = activeContext): void {
     });
 }
 
+function handleConfigChanged(): void {
+    const context = activeContext;
+    if (!context || !JC.identity.isCurrent(context)) return;
+    if (!enabled()) {
+        for (const def of PAGES) {
+            if (stateFor(def.id).active) closePane(def);
+            document.getElementById('jc-discovery-toggle-' + def.id)?.remove();
+        }
+        return;
+    }
+    for (const def of PAGES) {
+        if (stateFor(def.id).active) void renderFeedHost(def, context);
+    }
+    scheduleInject(context);
+}
+
 /** Wires the library-page Discovery surface. Idempotent — safe to call once at init. */
 export function initLibraryTab(): void {
     if (initialized) return;
@@ -251,6 +280,7 @@ export function initLibraryTab(): void {
     ensureCss();
     lifecycle.track(JC.core.dom!.onBodyMutation('jc-discovery-library', () => scheduleInject(context)));
     lifecycle.track(onNavigate(() => scheduleInject(context)));
+    lifecycle.addListener(window, 'jc:config-changed', handleConfigChanged);
     scheduleInject(context);
 }
 
