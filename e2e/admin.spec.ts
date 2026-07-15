@@ -1,8 +1,8 @@
 // Authorization contract ([Authorize(Policy = RequiresElevation)] endpoints)
 // and the hidden-content admin page's role-dependent rendering.
 //
-// The v12 policy error contract (docs/v12-platform.md §5): policy failure with
-// a valid non-admin token -> bare 403 with an EMPTY body; missing/garbage
+// The v12 policy error contract (docs/developers.md#authorization-policies):
+// policy failure with a valid non-admin token -> bare 403 with an EMPTY body; missing/garbage
 // token -> 401. Client code branches on status alone, so the specs pin both
 // the codes and the empty-body shape.
 import { test, expect, loginAs, USERS, type ConsoleErrors } from './fixtures/auth';

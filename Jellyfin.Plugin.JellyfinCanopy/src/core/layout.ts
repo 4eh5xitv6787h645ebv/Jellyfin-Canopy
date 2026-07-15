@@ -5,12 +5,12 @@
 // Jellyfin 12 ships TWO layouts and the `html` element cannot discriminate
 // them: both the React/MUI "modern" layout (the default) and the classic
 // "legacy" layout stamp `layout-desktop` on <html> at every viewport
-// (docs/v12-platform.md §1). The layout is chosen once at boot and only
-// changes on reload, so the distinction is stable for the session — but CSS
+// (docs/developers.md#layout-modes-and-enforcement). The layout is chosen once
+// at boot and only changes on reload, so the distinction is stable for the session — but CSS
 // that must differ per layout has nothing on <html> to hang off.
 //
 // This module reuses the SAME DOM discriminator the header-container resolver
-// relies on (docs/v12-platform.md §1: "detect by DOM — visible
+// relies on (docs/developers.md#layout-modes-and-enforcement: "detect by DOM — visible
 // `.MuiAppBar-root .MuiToolbar-root` vs visible `.headerRight`"), caches the
 // result (R4 — read the DOM at most once per resolution, never per tick), and
 // stamps `jc-modern-layout` / `jc-legacy-layout` on <html> so plugin CSS can

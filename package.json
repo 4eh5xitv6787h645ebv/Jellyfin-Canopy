@@ -10,6 +10,7 @@
   "packageManager": "npm@10.9.3",
   "scripts": {
     "check:toolchain": "node scripts/check-node-toolchain.js",
+    "check:markdown-links": "node scripts/check-markdown-links.js",
     "lint": "eslint --exit-on-fatal-error --max-warnings 6586 \"Jellyfin.Plugin.JellyfinCanopy/js/**/*.js\" \"Jellyfin.Plugin.JellyfinCanopy/src/**/*.ts\" \"Jellyfin.Plugin.JellyfinCanopy/Configuration/*.js\" \"scripts/**/*.js\"",
     "lint:fix": "eslint --fix \"Jellyfin.Plugin.JellyfinCanopy/js/**/*.js\" \"Jellyfin.Plugin.JellyfinCanopy/src/**/*.ts\" \"Jellyfin.Plugin.JellyfinCanopy/Configuration/*.js\" \"scripts/**/*.js\"",
     "typecheck": "tsc -p jsconfig.json",
@@ -33,6 +34,7 @@
     "esbuild": "0.28.1",
     "eslint": "^9.39.0",
     "jsdom": "29.1.1",
+    "markdown-it": "14.3.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "8.62.1",
     "vitest": "4.1.9"

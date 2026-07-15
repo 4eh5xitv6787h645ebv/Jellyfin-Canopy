@@ -5,7 +5,7 @@
 //   - param-only navigations (/movies?topParentId=A → B — no viewshow fires),
 //   - the /video round trip (the modern AppBar tray is DESTROYED on entering
 //     the player and NOT restored on exit — re-injection is mandatory,
-//     docs/v12-platform.md §6.5).
+//     docs/developers.md#breaking-assumption-checklist).
 import { test, expect, loginAs, showRoute, waitForHash, assertNoRuntimeErrors } from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -13,7 +13,7 @@ import { test, expect, loginAs, showRoute, waitForHash, assertNoRuntimeErrors } 
 /**
  * Presence rule for header-tray nodes: connected and not stranded in a hidden
  * subtree. (offsetParent is unusable here — the AppBar is position:fixed, so
- * offsetParent is null even when visible; docs/v12-platform.md §1.)
+ * offsetParent is null even when visible; docs/developers.md#layout-modes-and-enforcement.)
  */
 async function waitForHeaderButton(page: import('playwright/test').Page, timeout = 30_000): Promise<void> {
     await page.waitForFunction(() => {
@@ -71,7 +71,7 @@ test.describe('navigation', () => {
         await waitForHash(page, '/video');
         // Wait for the concrete precondition of the remount assertion instead of
         // a blind sleep: the AppBar tray is destroyed (or hidden) on entering the
-        // player (docs/v12-platform.md §6.5), so the injected button stops
+        // player (docs/developers.md#breaking-assumption-checklist), so the injected button stops
         // satisfying the presence rule. That gone/hidden state is exactly what
         // the later re-injection must recover from.
         await page.waitForFunction(() => {
@@ -94,7 +94,7 @@ test.describe('navigation', () => {
         // Fires NO viewshow — only HISTORY_UPDATE/jc:navigate. Runs LAST
         // because a param-only Emby.Page.show() leaves the router's internal
         // promise chain unresolved, deadlocking every later show() call
-        // (docs/v12-platform.md §6.3) — the navigation itself still happens.
+        // (docs/developers.md#breaking-assumption-checklist) — the navigation itself still happens.
         // Only possible when the server has a second movie library.
         if (movieViews.length > 1) {
             await showRoute(page, `/movies?topParentId=${movieViews[0]}`);

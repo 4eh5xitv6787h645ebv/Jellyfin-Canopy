@@ -12,7 +12,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
     ///
     /// These tests fail when (a) new code subscribes to those events without being reviewed for the
     /// record-and-defer pattern, or (b) the reference handler regresses back into inline DB/probe
-    /// work. See docs/advanced/performance-rules.md (S1) and TagCacheMonitor + TagCacheService for
+    /// work. See docs/developers.md#performance-rules (S1) and TagCacheMonitor + TagCacheService for
     /// the pattern to copy: the handler only records ids; a debounced off-thread worker does the work.
     /// </summary>
     public class LibraryScanEventGuardTests
@@ -96,7 +96,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 + string.Join(", ", offenders) + ".\n"
                 + "Jellyfin raises these SYNCHRONOUSLY on the library-scan thread, so the handler must do only "
                 + "O(1) record-and-defer work (no DB query, no GetMediaSources, no I/O) and push real work to a "
-                + "debounced off-thread worker — see docs/advanced/performance-rules.md (S1) and TagCacheMonitor + "
+                + "debounced off-thread worker — see docs/developers.md#performance-rules (S1) and TagCacheMonitor + "
                 + "TagCacheService for the reference. Once your handler follows it, add the file to "
                 + "ReviewedSubscribers in this test.");
         }

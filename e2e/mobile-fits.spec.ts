@@ -1,8 +1,8 @@
 // Mobile-viewport fit checks for the plugin's injected surfaces (issues 31/32/33).
 //
 // On the Jellyfin 12 modern layout the html carries `layout-desktop` at every
-// viewport (docs/v12-platform.md §1), so the plugin's old `.layout-mobile`-gated
-// responsive CSS never fired on a real phone. These checks run at a phone
+// viewport (docs/developers.md#layout-modes-and-enforcement), so the plugin's
+// old `.layout-mobile`-gated responsive CSS never fired on a real phone. These checks run at a phone
 // viewport and assert the surfaces fit:
 //   - the settings/help panel and its shortcuts columns fit the panel (no clip),
 //   - the standalone pages (Hidden Content, Calendar, Requests) don't scroll

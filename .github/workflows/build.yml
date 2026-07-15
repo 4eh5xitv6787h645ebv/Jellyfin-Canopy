@@ -131,6 +131,20 @@ jobs:
       - name: Script unit tests (translation validator hardening)
         run: npm run test:scripts
 
+      - name: Internal Markdown links
+        run: npm run check:markdown-links
+
+      - name: Setup Python for strict documentation build
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: 3.x
+
+      - name: Install documentation dependencies
+        run: pip install mkdocs-material==9.6.12 mdx-truly-sane-lists==1.3
+
+      - name: Build documentation strictly
+        run: mkdocs build --strict -d site
+
       - name: Type check (opt-in @ts-check files)
         run: npm run typecheck
 

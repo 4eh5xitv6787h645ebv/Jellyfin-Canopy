@@ -773,7 +773,7 @@ S1E1_ID="$(printf '%s' "${EP_JSON}" \
     | jq -r 'first(.Items[]? | select(.ParentIndexNumber == 1 and .IndexNumber == 1) | .Id) // empty')"
 [ -n "${S1E1_ID}" ] || fail "could not resolve S01E01 of '${SHOW_NAME}'"
 # v12 marks played via POST /UserPlayedItems/{itemId} in the calling user's
-# context (docs/v12-platform.md — the legacy /Users/{id}/PlayedItems path is
+# context (docs/developers.md — the legacy /Users/{id}/PlayedItems path is
 # kept as a fallback for older builds).
 curl -fsS -X POST "${BASE}/UserPlayedItems/${S1E1_ID}" -H "${USER_AUTHED}" -H 'Content-Type: application/json' >/dev/null 2>&1 \
     || curl -fsS -X POST "${BASE}/Users/${USER_ID}/PlayedItems/${S1E1_ID}" -H "${USER_AUTHED}" -H 'Content-Type: application/json' >/dev/null \

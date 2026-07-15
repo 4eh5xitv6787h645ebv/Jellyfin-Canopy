@@ -1043,7 +1043,8 @@
     // legacy layout is 'desktop' (LayoutMode = {auto, desktop, experimental, mobile,
     // tv}); an unset key means the app falls back to appHost.getDefaultLayout()
     // (Modern on browsers). jellyfin-web reads this once at module init to choose the
-    // route tree, so a change only takes effect on reload. See docs/v12-platform.md §1.
+    // route tree, so a change only takes effect on reload. See the layout modes
+    // and enforcement section in docs/developers.md.
     var LAYOUT_STORAGE_KEY = 'layout';
     var LAYOUT_EXPERIMENTAL = 'experimental';
     var LAYOUT_LEGACY = 'desktop';
@@ -1059,8 +1060,9 @@
      * as modern-painting: getSavedLayout() rejects unknown values and the app falls
      * back to its modern default, so an unknown value never paints legacy.
      *
-     * Detection tolerates BOTH Jellyfin-12 layout-value dialects (docs/v12-platform.md
-     * §1). The VALUES WRITTEN by enforcement below target the shipped 12.0.0 build
+     * Detection tolerates BOTH Jellyfin-12 layout-value dialects (see the layout
+     * modes and enforcement section in docs/developers.md). The VALUES WRITTEN
+     * by enforcement below target the shipped 12.0.0 build
      * ('experimental'/'desktop'); on a build using the master dialect an unknown
      * written value is simply rejected by getSavedLayout() and the app keeps its
      * modern default — so ForceExperimental still lands on modern there, while

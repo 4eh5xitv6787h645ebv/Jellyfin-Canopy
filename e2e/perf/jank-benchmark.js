@@ -4,7 +4,7 @@
  * jank-benchmark.js — manual before/after jank benchmark for Jellyfin Canopy.
  *
  * NOT wired into CI. This is a measurement tool, run by hand against a live
- * server, that produces the numbers behind docs/advanced/performance-rules.md
+ * server, that produces the numbers behind docs/developers.md#performance-rules
  * ("Measured impact"). It drives a real browser through a fixed flow
  * (boot → home → library → detail → search → library revisit → 30s library
  * scroll) and records, per run:

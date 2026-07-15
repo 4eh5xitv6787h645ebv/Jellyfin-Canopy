@@ -120,7 +120,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // PERF(S1): ItemAdded/ItemUpdated fire synchronously on Jellyfin's library-scan thread. Do
         // only constant-time gates and a non-blocking bounded enqueue here. One lifecycle-owned
         // worker performs the Seerr request lookup + per-user watchlist writes off-thread.
-        // See docs/advanced/performance-rules.md (S1).
+        // See docs/developers.md#performance-rules (S1).
         private void ScheduleWatchlistCheck(ItemChangeEventArgs e, string eventType)
         {
             var kind = e.Item?.GetBaseItemKind();

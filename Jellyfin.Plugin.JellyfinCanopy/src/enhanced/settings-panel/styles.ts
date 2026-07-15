@@ -51,7 +51,7 @@ JC.injectGlobalStyles = (): void => {
             /* Phone layout for the settings/help panel. Keyed on the VIEWPORT
                (@media), not the legacy .layout-mobile html class: on the Jellyfin 12
                modern (MUI) layout the html carries layout-desktop at every viewport
-               (docs/v12-platform.md §1 — "html classes cannot discriminate layouts"),
+               (docs/developers.md#layout-modes-and-enforcement — "html classes cannot discriminate layouts"),
                so a .layout-mobile-gated rule never applied on a real phone and the
                panel kept its desktop widths (50vw settings tab, two 400px shortcut
                columns) → horizontal clipping. The .layout-mobile selectors are kept

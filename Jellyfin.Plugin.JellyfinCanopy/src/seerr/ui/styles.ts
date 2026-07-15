@@ -81,8 +81,9 @@ ui.addMainStyles = function () {
         .layout-mobile .seerr-request-button span { font-size: 0.8em !important; }
         /* Phone sizing for Seerr card overlays — keyed on the VIEWPORT, not the
            inert .layout-mobile html class. On the Jellyfin 12 modern layout the
-           html carries layout-desktop at every viewport (docs/v12-platform.md
-           §1), so the .layout-mobile rules above never fired on a real phone:
+           html carries layout-desktop at every viewport (see the layout modes
+           and enforcement section in docs/developers.md), so the .layout-mobile
+           rules above never fired on a real phone:
            the MOVIE/SERIES badge, provider-logo strip, request button and hide
            overlay all stayed desktop-sized on top of the cards — most visible in
            the collection "Missing from …" grid once the cards match native width. */
