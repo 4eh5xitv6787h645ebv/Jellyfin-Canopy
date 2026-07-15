@@ -1,0 +1,26 @@
+{
+  "actions/setup-node": {
+    "sha": "820762786026740c76f36085b0efc47a31fe5020",
+    "version": "v7.0.0",
+    "runtime": "node24",
+    "metadataUrl": "https://raw.githubusercontent.com/actions/setup-node/820762786026740c76f36085b0efc47a31fe5020/action.yml"
+  },
+  "actions/setup-dotnet": {
+    "sha": "26b0ec14cb23fa6904739307f278c14f94c95bf1",
+    "version": "v5.4.0",
+    "runtime": "node24",
+    "metadataUrl": "https://raw.githubusercontent.com/actions/setup-dotnet/26b0ec14cb23fa6904739307f278c14f94c95bf1/action.yml"
+  },
+  "step-security/harden-runner": {
+    "sha": "bf7454d06d71f1098171f2acdf0cd4708d7b5920",
+    "version": "v2.20.0",
+    "runtime": "node24",
+    "metadataUrl": "https://raw.githubusercontent.com/step-security/harden-runner/bf7454d06d71f1098171f2acdf0cd4708d7b5920/action.yml"
+  },
+  "actions/upload-artifact": {
+    "sha": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    "version": "v7.0.1",
+    "runtime": "node24",
+    "metadataUrl": "https://raw.githubusercontent.com/actions/upload-artifact/043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/action.yml"
+  }
+}
