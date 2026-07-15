@@ -93,6 +93,13 @@ Drive Jellyfin without reaching for the mouse: a comprehensive set of hotkeys co
 3. Click any key to set a custom binding.
 4. Changes save automatically, per user.
 
+Modifier combinations work in any pressed order and are displayed consistently
+as `Meta+Ctrl+Alt+Shift+Key` (only the modifiers you use are shown). On macOS,
+the Command key is stored as `Meta`; existing `Cmd`, `Command`, and differently
+ordered legacy bindings are normalized automatically without changing what the
+physical shortcut does. The editor rejects another binding with the same
+semantic key combination, even when its stored spelling or order differs.
+
 !!! note "Admin: disabling shortcuts server-wide"
 
     An administrator can turn off **all** keyboard shortcuts for every user with

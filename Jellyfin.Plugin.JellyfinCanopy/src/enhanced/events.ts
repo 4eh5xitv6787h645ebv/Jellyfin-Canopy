@@ -11,6 +11,7 @@ import { stampLayoutClass } from '../core/layout';
 import { migrateLegacyClientStorage } from './legacy-storage-migration';
 import { throttle } from './helpers';
 import type { IdentityContext } from '../types/jc';
+import { canonicalizeShortcut, shortcutFromEvent, shortcutsEqual } from './shortcut-codec';
 
 const shortcutTimers = new Set<number>();
 let actionSheetFrame: number | null = null;
@@ -59,37 +60,34 @@ JC.keyListener = (e: KeyboardEvent) => {
     if (isAnyModalOpen() || document.body.classList.contains('jc-modal-open')) return;
     if (['INPUT', 'TEXTAREA'].includes(document.activeElement!.tagName)) return;
 
-    const key = e.key;
-    const combo = (e.shiftKey ? 'Shift+' : '') +
-                  (e.metaKey ? 'Meta+' : '') +
-                  (e.ctrlKey ? 'Ctrl+' : '') +
-                  (e.altKey ? 'Alt+' : '') +
-                  (key.match(/^[a-zA-Z]$/) ? key.toUpperCase() : key);
+    const combo = shortcutFromEvent(e);
+    if (!combo) return;
 
     const video = document.querySelector('video');
     const activeShortcuts = JC.state!.activeShortcuts || {};
+    const matches = (name: string) => shortcutsEqual(combo, activeShortcuts[name]);
 
     // --- Global Shortcuts ---
-    if (combo === activeShortcuts.OpenSearch) {
+    if (matches('OpenSearch')) {
         e.preventDefault();
         document.querySelector<HTMLElement>('button.headerSearchButton')?.click();
         scheduleIdentityTimer(context, () => {
             document.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
         }, 100);
         toast(JC.t!('toast_search'));
-    } else if (combo === activeShortcuts.GoToHome) {
+    } else if (matches('GoToHome')) {
         e.preventDefault();
         window.location.hash = '#/home.html';
         toast(JC.t!('toast_home'));
-    } else if (combo === activeShortcuts.GoToDashboard) {
+    } else if (matches('GoToDashboard')) {
         e.preventDefault();
         window.location.hash = '#/dashboard';
         toast(JC.t!('toast_dashboard'));
-    } else if (combo === activeShortcuts.QuickConnect) {
+    } else if (matches('QuickConnect')) {
         e.preventDefault();
         window.location.hash = '#/quickconnect';
         toast(`${JC.icon!(JC.IconName!.LINK)} Quick Connect`);
-    } else if (combo === activeShortcuts.PlayRandomItem && !(JC as any).isVideoPage()) {
+    } else if (matches('PlayRandomItem') && !(JC as any).isVideoPage()) {
         e.preventDefault();
         document.getElementById('randomItemButton')?.click();
     }
@@ -98,7 +96,7 @@ JC.keyListener = (e: KeyboardEvent) => {
     if (!(JC as any).isVideoPage() || !video) return;
 
     switch (combo) {
-        case activeShortcuts.BookmarkCurrentTime:
+        case canonicalizeShortcut(activeShortcuts.BookmarkCurrentTime):
             e.preventDefault();
             e.stopPropagation();
             // Open bookmark modal to add/view bookmarks
@@ -108,12 +106,12 @@ JC.keyListener = (e: KeyboardEvent) => {
                 console.warn('🪼 Jellyfin Canopy: New bookmark system not loaded, using fallback');
             }
             break;
-        case activeShortcuts.CycleAspectRatio:
+        case canonicalizeShortcut(activeShortcuts.CycleAspectRatio):
             e.preventDefault();
             e.stopPropagation();
             JC.cycleAspect!();
             break;
-        case activeShortcuts.ShowPlaybackInfo: {
+        case canonicalizeShortcut(activeShortcuts.ShowPlaybackInfo): {
             e.preventDefault();
             e.stopPropagation();
             // Check if stats dialog is already open
@@ -139,7 +137,7 @@ JC.keyListener = (e: KeyboardEvent) => {
             }
             break;
         }
-        case activeShortcuts.SubtitleMenu: {
+        case canonicalizeShortcut(activeShortcuts.SubtitleMenu): {
             e.preventDefault();
             e.stopPropagation();
             const subtitleMenuTitle = Array.from(document.querySelectorAll('.actionSheetContent .actionSheetTitle')).find(el => el.textContent === 'Subtitles');
@@ -155,32 +153,32 @@ JC.keyListener = (e: KeyboardEvent) => {
             }
             break;
         }
-        case activeShortcuts.CycleSubtitleTracks:
+        case canonicalizeShortcut(activeShortcuts.CycleSubtitleTracks):
             e.preventDefault();
             e.stopPropagation();
             JC.cycleSubtitleTrack!();
             break;
-        case activeShortcuts.CycleAudioTracks:
+        case canonicalizeShortcut(activeShortcuts.CycleAudioTracks):
             e.preventDefault();
             e.stopPropagation();
             JC.cycleAudioTrack!();
             break;
-        case activeShortcuts.ResetPlaybackSpeed:
+        case canonicalizeShortcut(activeShortcuts.ResetPlaybackSpeed):
             e.preventDefault();
             e.stopPropagation();
             JC.resetPlaybackSpeed!();
             break;
-        case activeShortcuts.IncreasePlaybackSpeed:
+        case canonicalizeShortcut(activeShortcuts.IncreasePlaybackSpeed):
             e.preventDefault();
             e.stopPropagation();
             JC.adjustPlaybackSpeed!('increase');
             break;
-        case activeShortcuts.DecreasePlaybackSpeed:
+        case canonicalizeShortcut(activeShortcuts.DecreasePlaybackSpeed):
             e.preventDefault();
             e.stopPropagation();
             JC.adjustPlaybackSpeed!('decrease');
             break;
-        case activeShortcuts.OpenEpisodePreview: {
+        case canonicalizeShortcut(activeShortcuts.OpenEpisodePreview): {
             e.preventDefault();
             e.stopPropagation();
             const popupFocusContainer = document.getElementById('popupFocusContainer');
@@ -200,30 +198,30 @@ JC.keyListener = (e: KeyboardEvent) => {
             }
             break;
         }
-        case activeShortcuts.SkipIntroOutro:
+        case canonicalizeShortcut(activeShortcuts.SkipIntroOutro):
             e.preventDefault();
             e.stopPropagation();
             JC.skipIntroOutro!();
             break;
-        case activeShortcuts.FrameStepBack:
+        case canonicalizeShortcut(activeShortcuts.FrameStepBack):
             e.preventDefault();
             e.stopPropagation();
             void JC.frameStep!('back');
             break;
-        case activeShortcuts.FrameStepForward:
+        case canonicalizeShortcut(activeShortcuts.FrameStepForward):
             e.preventDefault();
             e.stopPropagation();
             void JC.frameStep!('forward');
             break;
-        case activeShortcuts.JumpToLastPosition:
+        case canonicalizeShortcut(activeShortcuts.JumpToLastPosition):
             e.preventDefault();
             e.stopPropagation();
             JC.jumpToLastPosition!();
             break;
     }
 
-    if (key.match(/^[0-9]$/)) {
-        JC.jumpToPercentage!(parseInt(key) * 10);
+    if (e.key.match(/^[0-9]$/)) {
+        JC.jumpToPercentage!(parseInt(e.key) * 10);
     }
 };
 

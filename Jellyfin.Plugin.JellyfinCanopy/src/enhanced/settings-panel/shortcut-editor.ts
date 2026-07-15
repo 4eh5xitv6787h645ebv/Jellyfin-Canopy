@@ -6,6 +6,12 @@
 // (Converted from js/enhanced/ui-panel-shortcut-editor.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
+import {
+    formatShortcut,
+    normalizeShortcutEntries,
+    shortcutFromEvent,
+    shortcutsEqual,
+} from '../shortcut-codec';
 import type { PanelContext } from './panel';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -22,7 +28,7 @@ export function wireShortcutEditor(ctx: PanelContext): void {
     if (!JC.pluginConfig.DisableAllShortcuts) {
         const shortcutKeys = help.querySelectorAll<HTMLElement>('.shortcut-key');
         shortcutKeys.forEach(keyElement => {
-            const getOriginalKey = () => JC.state!.activeShortcuts[keyElement.dataset.action!];
+            const getOriginalKey = () => formatShortcut(JC.state!.activeShortcuts[keyElement.dataset.action!]);
 
             keyElement.addEventListener('click', () => { if (isCurrent()) keyElement.focus(); });
 
@@ -50,12 +56,13 @@ export function wireShortcutEditor(ctx: PanelContext): void {
 
                 if (e.key === 'Backspace') {
                     const defaultConfig = pluginShortcuts.find((s: any) => s.Name === action);
-                    const defaultKey = defaultConfig ? defaultConfig.Key : '';
+                    const defaultKey = formatShortcut(defaultConfig ? defaultConfig.Key : '');
 
                     const shortcutIndex = (JC.userConfig as any).shortcuts.Shortcuts.findIndex((s: any) => s.Name === action);
                     if (shortcutIndex > -1) {
                         (JC.userConfig as any).shortcuts.Shortcuts.splice(shortcutIndex, 1);
                     }
+                    normalizeShortcutEntries((JC.userConfig as any).shortcuts.Shortcuts);
 
                     void JC.saveUserSettings!('shortcuts.json', (JC.userConfig as any).shortcuts).then(() => {
                         if (!isCurrent()) return;
@@ -71,13 +78,11 @@ export function wireShortcutEditor(ctx: PanelContext): void {
                     return;
                 }
 
-                if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) {
-                    return; // Don't allow setting only a modifier key
-                }
-
-                const combo = (e.metaKey ? 'Meta+' : '') + (e.ctrlKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '') + (e.key.match(/^[a-zA-Z]$/) ? e.key.toUpperCase() : e.key);
-                const existingAction = Object.keys(JC.state!.activeShortcuts).find(name => JC.state!.activeShortcuts[name] === combo);
-                if (existingAction && existingAction !== action) {
+                const combo = shortcutFromEvent(e);
+                if (!combo) return; // Don't allow setting only a modifier key.
+                const existingAction = Object.keys(JC.state!.activeShortcuts)
+                    .find(name => name !== action && shortcutsEqual(JC.state!.activeShortcuts[name], combo));
+                if (existingAction) {
                     keyElement.style.background = 'rgb(255 0 0 / 60%)';
                     keyElement.classList.add('shake-error');
                     const timer = window.setTimeout(() => {
@@ -100,6 +105,7 @@ export function wireShortcutEditor(ctx: PanelContext): void {
                     const defaultConfig = pluginShortcuts.find((s: any) => s.Name === action);
                     (JC.userConfig as any).shortcuts.Shortcuts.push({ ...defaultConfig, Key: combo });
                 }
+                normalizeShortcutEntries((JC.userConfig as any).shortcuts.Shortcuts);
                 void JC.saveUserSettings!('shortcuts.json', (JC.userConfig as any).shortcuts).then(() => {
                     if (!isCurrent()) return;
                     JC.state!.activeShortcuts[action] = combo;
