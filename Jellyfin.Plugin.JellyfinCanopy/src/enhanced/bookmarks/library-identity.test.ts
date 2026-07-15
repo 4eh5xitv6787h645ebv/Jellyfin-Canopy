@@ -227,16 +227,26 @@ describe('bookmarks library identity ownership', () => {
     expect(compareBookmarkIdentity(wrongTvdb, both)).toBe('none');
   });
 
-  it('detects season-zero series-provider-only episode duplicates', () => {
-    const special = {
+  it('selects a season-zero rich representative for series-provider-only duplicates in either order', () => {
+    const sparse = {
       itemId: 'special-a', identityVersion: 1, itemType: 'episode', mediaType: 'tv',
-      tmdbId: '', tvdbId: '', seriesTmdbId: 'series-10', seriesTvdbId: '',
-      seasonNumber: 0, episodeNumber: 2, episodeEndNumber: 3, name: 'Special 2-3'
+      tmdbId: 'episode-10', tvdbId: '', seriesTmdbId: 'series-10', seriesTvdbId: '',
+      seasonNumber: null, episodeNumber: 2, episodeEndNumber: 3, name: 'Special 2-3'
     };
-    const alternate = { ...special, itemId: 'special-b' };
+    const rich = { ...sparse, seasonNumber: 0 };
+    const alternate = {
+      ...rich,
+      itemId: 'special-b',
+      tmdbId: ''
+    };
 
-    const duplicate = findDuplicateBookmarks({ special, alternate });
-    expect(duplicate).toHaveLength(1);
-    expect(duplicateMergeTarget(duplicate[0], 'special-a')).toMatchObject({ seasonNumber: 0 });
+    for (const records of [
+      { sparse, rich, alternate },
+      { rich, sparse, alternate }
+    ]) {
+      const duplicate = findDuplicateBookmarks(records);
+      expect(duplicate).toHaveLength(1);
+      expect(duplicateMergeTarget(duplicate[0], 'special-a')).toMatchObject({ seasonNumber: 0 });
+    }
   });
 });

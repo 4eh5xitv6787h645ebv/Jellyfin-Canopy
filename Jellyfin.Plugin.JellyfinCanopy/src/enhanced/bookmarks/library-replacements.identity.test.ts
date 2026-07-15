@@ -97,4 +97,37 @@ describe('bookmark replacement logical identity', () => {
       expect(ids.length).toBeLessThanOrEqual(SERIES_ENRICHMENT_CHUNK_SIZE);
     }
   });
+
+  it('splits long encoded parent IDs before the URL-length bound', async () => {
+    const longSeriesIds = Array.from({ length: 3 }, (_, index) =>
+      `series-${index}-${'/'.repeat(500)}`
+    );
+    const candidates = longSeriesIds.map((SeriesId, index) => ({
+      Id: `episode-${index}`,
+      Name: `Episode ${index}`,
+      Type: 'Episode',
+      SeriesId,
+      ParentIndexNumber: 1,
+      IndexNumber: 1,
+      ProviderIds: { Tmdb: `other-${index}` }
+    }));
+    const jf = vi.fn()
+      .mockResolvedValueOnce({ Items: candidates })
+      .mockResolvedValue({ Items: [] });
+    JC.core.api = { jf } as unknown as ApiApi;
+    const context = JC.identity.capture()!;
+
+    await expect(searchForReplacementItem({
+      itemId: 'gone', identityVersion: 1, itemType: 'episode', mediaType: 'tv',
+      tmdbId: 'missing', tvdbId: '', seriesTmdbId: '', seriesTvdbId: '',
+      seasonNumber: 1, episodeNumber: 1, episodeEndNumber: 1, name: 'Episode'
+    }, context)).resolves.toBeNull();
+
+    const enrichmentUrls = jf.mock.calls.slice(1).map(call => String(call[0]));
+    expect(longSeriesIds.length).toBeLessThan(SERIES_ENRICHMENT_CHUNK_SIZE);
+    expect(enrichmentUrls.length).toBeGreaterThan(1);
+    for (const url of enrichmentUrls) {
+      expect(url.length).toBeLessThanOrEqual(SERIES_ENRICHMENT_MAX_URL_LENGTH);
+    }
+  });
 });
