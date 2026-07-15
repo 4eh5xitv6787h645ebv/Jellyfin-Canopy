@@ -79,6 +79,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private const int MaxDerivedPerEntry = 500;
         private const int MaxDerivedTotal = 2000;
         private const long RefreshTotalByteBudget = 256L * 1024 * 1024;
+        private const int DefaultMaxConcurrentFetches = 8;
+        private const int MaxFailureStates = 4096;
+
+        // A failing key is retried progressively less often. Keeping the state for a day after
+        // the most recent failure preserves the exponential step across quiet periods without
+        // allowing the registry to grow forever.
+        private static readonly TimeSpan[] FailureBackoff =
+        {
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromMinutes(1),
+            TimeSpan.FromMinutes(2),
+            TimeSpan.FromMinutes(4),
+            TimeSpan.FromMinutes(8),
+            TimeSpan.FromMinutes(15),
+        };
+
+        private static readonly TimeSpan FailureStateTtl = TimeSpan.FromDays(1);
 
         private const string DerivedMapFileName = "derived-map.json";
 
@@ -102,21 +119,41 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<AssetCacheService> _logger;
         private readonly string? _cacheDirectoryOverride;
+        private readonly TimeProvider _timeProvider;
+        private readonly SemaphoreSlim _outboundFetches;
+        private readonly BoundedTtlCache<string, AssetFailureState> _failureStates;
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _keyLocks = new(StringComparer.Ordinal);
         private readonly object _derivedMapLock = new();
         private ConcurrentDictionary<string, DerivedAsset>? _derivedMap;
 
         public AssetCacheService(IHttpClientFactory httpClientFactory, ILogger<AssetCacheService> logger)
-            : this(httpClientFactory, logger, cacheDirectoryOverride: null)
+            : this(httpClientFactory, logger, cacheDirectoryOverride: null, TimeProvider.System, DefaultMaxConcurrentFetches)
         {
         }
 
-        /// <summary>Test seam: pins the cache directory instead of deriving it from the plugin instance.</summary>
-        internal AssetCacheService(IHttpClientFactory httpClientFactory, ILogger<AssetCacheService> logger, string? cacheDirectoryOverride)
+        /// <summary>
+        /// Test seam: pins the cache directory, clock and global outbound concurrency instead of
+        /// deriving them from production defaults.
+        /// </summary>
+        internal AssetCacheService(
+            IHttpClientFactory httpClientFactory,
+            ILogger<AssetCacheService> logger,
+            string? cacheDirectoryOverride,
+            TimeProvider? timeProvider = null,
+            int maxConcurrentFetches = DefaultMaxConcurrentFetches)
         {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConcurrentFetches);
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _cacheDirectoryOverride = cacheDirectoryOverride;
+            _timeProvider = timeProvider ?? TimeProvider.System;
+            _outboundFetches = new SemaphoreSlim(maxConcurrentFetches, maxConcurrentFetches);
+            _failureStates = new BoundedTtlCache<string, AssetFailureState>(
+                MaxFailureStates,
+                MaxFailureStates,
+                comparer: StringComparer.Ordinal,
+                timeProvider: _timeProvider,
+                defaultTtl: () => FailureStateTtl);
         }
 
         /// <summary>
@@ -125,6 +162,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// instance is not available yet.
         /// </summary>
         internal string CacheDirectory => _cacheDirectoryOverride ?? JellyfinCanopy.AssetCacheDirectory;
+
+        /// <summary>Number of remembered outage states; exposed internally for boundedness tests.</summary>
+        internal int FailureStateCount => _failureStates.Count;
 
         /// <summary>Classifies a requested key against the manifest. Never touches the network.</summary>
         internal ResolvedAsset Resolve(string? key)
@@ -232,24 +272,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return path;
             }
 
-            var keyLock = _keyLocks.GetOrAdd(asset.Key, _ => new SemaphoreSlim(1, 1));
-            await keyLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (!forceRefresh && File.Exists(path))
-                {
-                    return path; // Someone else fetched it while we waited.
-                }
-
-                await FetchAssetAsync(asset, path, cancellationToken).ConfigureAwait(false);
-                // Whatever the outcome, serve the file when one exists: a fresh fetch and a
-                // failed refresh over a last-good copy are both "serve the cached file".
-                return File.Exists(path) ? path : null;
-            }
-            finally
-            {
-                keyLock.Release();
-            }
+            await FetchWithBackoffAsync(asset, path, forceRefresh, cancellationToken).ConfigureAwait(false);
+            // Whatever the outcome, serve the file when one exists: a fresh fetch and a failed or
+            // backed-off refresh over a last-good copy are all "serve the cached file".
+            return File.Exists(path) ? path : null;
         }
 
         /// <summary>
@@ -296,8 +322,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     try
                     {
                         TryGetSafeCachePath(asset.Key, out var path);
-                        var outcome = await FetchAssetAsync(asset, path, cancellationToken).ConfigureAwait(false);
-                        switch (outcome)
+                        var result = await FetchWithBackoffAsync(asset, path, forceRefresh: true, cancellationToken).ConfigureAwait(false);
+                        switch (result.Outcome)
                         {
                             case FetchOutcome.Fetched:
                                 succeeded++;
@@ -395,7 +421,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             Fetched,
             NotModified,
             Failed,
+            BackedOff,
         }
+
+        private sealed record AssetFetchResult(FetchOutcome Outcome, string? FailureReason = null);
+
+        private sealed record AssetFailureState(int ConsecutiveFailures, DateTimeOffset RetryAfter);
 
         private ConcurrentDictionary<string, DerivedAsset> DerivedMap
         {
@@ -516,11 +547,84 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return null;
         }
 
-        private async Task<FetchOutcome> FetchAssetAsync(ResolvedAsset asset, string path, CancellationToken cancellationToken)
+        private async Task<AssetFetchResult> FetchWithBackoffAsync(
+            ResolvedAsset asset,
+            string path,
+            bool forceRefresh,
+            CancellationToken cancellationToken)
+        {
+            if (IsBackedOff(asset.Key))
+            {
+                return new AssetFetchResult(FetchOutcome.BackedOff);
+            }
+
+            var keyLock = _keyLocks.GetOrAdd(asset.Key, _ => new SemaphoreSlim(1, 1));
+            await keyLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                // A successful on-demand leader makes every waiter a cache hit. Forced refreshes
+                // still serialize, but an outage window suppresses every follower after its one
+                // retry leader records the failure below.
+                if (!forceRefresh && File.Exists(path))
+                {
+                    return new AssetFetchResult(FetchOutcome.NotModified);
+                }
+
+                if (IsBackedOff(asset.Key))
+                {
+                    return new AssetFetchResult(FetchOutcome.BackedOff);
+                }
+
+                var result = await FetchAssetAsync(asset, path, cancellationToken).ConfigureAwait(false);
+                if (result.Outcome == FetchOutcome.Failed)
+                {
+                    RecordFailure(asset, path, result.FailureReason ?? "unknown upstream failure");
+                }
+                else
+                {
+                    ClearFailure(asset.Key);
+                }
+
+                return result;
+            }
+            finally
+            {
+                keyLock.Release();
+            }
+        }
+
+        private bool IsBackedOff(string key)
+            => _failureStates.TryGet(key, out var state) && _timeProvider.GetUtcNow() < state.RetryAfter;
+
+        private void RecordFailure(ResolvedAsset asset, string path, string reason)
+        {
+            var failures = 1;
+            if (_failureStates.TryGet(asset.Key, out var previous))
+            {
+                failures = Math.Min(previous.ConsecutiveFailures + 1, FailureBackoff.Length);
+            }
+
+            var delay = FailureBackoff[Math.Min(failures - 1, FailureBackoff.Length - 1)];
+            var retryAfter = _timeProvider.GetUtcNow().Add(delay);
+            _failureStates.Set(asset.Key, new AssetFailureState(failures, retryAfter), FailureStateTtl);
+            _logger.LogWarning(
+                $"[Asset Cache] Upstream unavailable for '{asset.Key}' ({reason}); retry in {delay}. " +
+                $"Consecutive failures: {failures}; last-good copy: {(File.Exists(path) ? "available" : "missing")}.");
+        }
+
+        private void ClearFailure(string key)
+        {
+            if (_failureStates.Remove(key))
+            {
+                _logger.LogInformation($"[Asset Cache] Upstream recovered for '{key}'; outage backoff cleared.");
+            }
+        }
+
+        private async Task<AssetFetchResult> FetchAssetAsync(ResolvedAsset asset, string path, CancellationToken cancellationToken)
         {
             if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(asset.UpstreamUrl))
             {
-                return FetchOutcome.Failed;
+                return new AssetFetchResult(FetchOutcome.Failed, "invalid cache path or upstream URL");
             }
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -547,52 +651,59 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     }
                 }
 
-                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-                if (response.StatusCode == HttpStatusCode.NotModified && File.Exists(path))
+                await _outboundFetches.WaitAsync(ct).ConfigureAwait(false);
+                try
                 {
-                    WriteMeta(path, meta?.ETag, meta?.LastModified);
-                    return FetchOutcome.NotModified;
-                }
+                    using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                    if (response.StatusCode == HttpStatusCode.NotModified && File.Exists(path))
+                    {
+                        WriteMeta(path, meta?.ETag, meta?.LastModified);
+                        return new AssetFetchResult(FetchOutcome.NotModified);
+                    }
 
-                if (!response.IsSuccessStatusCode)
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        return new AssetFetchResult(FetchOutcome.Failed, $"HTTP {(int)response.StatusCode}");
+                    }
+
+                    var declaredLength = response.Content.Headers.ContentLength;
+                    if (declaredLength.HasValue && declaredLength.Value > asset.MaxBytes)
+                    {
+                        return new AssetFetchResult(
+                            FetchOutcome.Failed,
+                            $"declared size {declaredLength.Value} exceeds {asset.MaxBytes}-byte cap");
+                    }
+
+                    byte[] content;
+                    await using (var upstream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
+                    {
+                        content = await ReadWithCapAsync(upstream, asset.MaxBytes, ct).ConfigureAwait(false);
+                    }
+
+                    if (content.LongLength > asset.MaxBytes)
+                    {
+                        return new AssetFetchResult(FetchOutcome.Failed, $"stream exceeds {asset.MaxBytes}-byte cap");
+                    }
+
+                    if (asset.Rewrite)
+                    {
+                        var (css, derived) = RewriteCss(Encoding.UTF8.GetString(content), asset);
+                        content = Encoding.UTF8.GetBytes(css);
+                        RegisterDerived(derived);
+                    }
+
+                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                    WriteAtomic(path, content);
+                    WriteMeta(
+                        path,
+                        response.Headers.ETag?.ToString(),
+                        response.Content.Headers.LastModified?.ToString("R"));
+                    return new AssetFetchResult(FetchOutcome.Fetched);
+                }
+                finally
                 {
-                    _logger.LogWarning($"[Asset Cache] Upstream returned {(int)response.StatusCode} for '{asset.Key}' ({asset.UpstreamUrl}); keeping last good copy if any.");
-                    return FetchOutcome.Failed;
+                    _outboundFetches.Release();
                 }
-
-                var declaredLength = response.Content.Headers.ContentLength;
-                if (declaredLength.HasValue && declaredLength.Value > asset.MaxBytes)
-                {
-                    _logger.LogWarning($"[Asset Cache] '{asset.Key}' exceeds its size cap ({declaredLength.Value} > {asset.MaxBytes} bytes); rejected.");
-                    return FetchOutcome.Failed;
-                }
-
-                byte[] content;
-                await using (var upstream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
-                {
-                    content = await ReadWithCapAsync(upstream, asset.MaxBytes, ct).ConfigureAwait(false);
-                }
-
-                if (content.LongLength > asset.MaxBytes)
-                {
-                    _logger.LogWarning($"[Asset Cache] '{asset.Key}' exceeds its size cap (> {asset.MaxBytes} bytes); rejected.");
-                    return FetchOutcome.Failed;
-                }
-
-                if (asset.Rewrite)
-                {
-                    var (css, derived) = RewriteCss(Encoding.UTF8.GetString(content), asset);
-                    content = Encoding.UTF8.GetBytes(css);
-                    RegisterDerived(derived);
-                }
-
-                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                WriteAtomic(path, content);
-                WriteMeta(
-                    path,
-                    response.Headers.ETag?.ToString(),
-                    response.Content.Headers.LastModified?.ToString("R"));
-                return FetchOutcome.Fetched;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -600,8 +711,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"[Asset Cache] Fetch failed for '{asset.Key}' ({asset.UpstreamUrl}): {ex.Message}");
-                return FetchOutcome.Failed;
+                return new AssetFetchResult(FetchOutcome.Failed, $"{ex.GetType().Name}: {ex.Message}");
             }
         }
 
@@ -656,7 +766,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             try
             {
-                var meta = new AssetMeta(etag, lastModified, DateTimeOffset.UtcNow);
+                var meta = new AssetMeta(etag, lastModified, _timeProvider.GetUtcNow());
                 WriteAtomic(MetaPath(path), Encoding.UTF8.GetBytes(JsonSerializer.Serialize(meta, JsonOptions)));
             }
             catch (Exception ex)
