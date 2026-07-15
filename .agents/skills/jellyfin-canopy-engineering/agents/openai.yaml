@@ -1,0 +1,4 @@
+interface:
+  display_name: "Jellyfin Canopy Engineering"
+  short_description: "Evidence-driven Canopy changes and reviews"
+  default_prompt: "Use $jellyfin-canopy-engineering to implement and independently verify this Jellyfin Canopy change."
