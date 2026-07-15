@@ -534,8 +534,9 @@ Keep watchlists in step between Seerr and Jellyfin, in either direction. Configu
 
 Close the gap between new items landing in Jellyfin and Seerr noticing them. **Trigger Seerr recently-added scan when new Jellyfin items are added** (default **off**) — when on, the plugin asks Seerr to run its recently-added scan whenever new items are imported into your Jellyfin library, so Seerr marks matching requests as available sooner.
 
-- **Debounce (seconds)** (default **60**, range **5–3600**) — coalesces bursts of item-added events into a single Seerr scan, so a large import triggers one scan after activity settles rather than one per item.
-- Each debounced batch and each manual **Trigger scan now** click sends at most one trigger to every normalized distinct Seerr URL. Comma/newline duplicates and trailing-slash aliases collapse to one identity domain; distinct URLs are independent intended domains, so one domain failing does not prevent the others from being attempted. The manual result reports all-success, partial-success, and all-failed outcomes separately.
+- **Debounce (seconds)** (default **60**, range **5–3600**) — coalesces bursts of item-added events into one scan after activity settles. Continuous imports cannot postpone the scan forever: the first pending event starts a hard deadline of four debounce windows, capped at one hour.
+- Automatic and manual triggers share one worker. Requests never overlap; events received during a scan become at most one coalesced follow-up, and **Trigger scan now** drains a pending timer or joins the equivalent active scan instead of causing a duplicate.
+- Each batch sends at most one trigger to every normalized distinct Seerr URL. The admin button submits all form domains as one owned batch, so draining an automatic timer cannot make its later per-domain calls duplicate work. Comma/newline duplicates and trailing-slash aliases collapse to one identity domain; distinct URLs are independent intended domains, so one domain failing does not prevent the others from being attempted. The manual result reports all-success, partial-success, and all-failed outcomes separately.
 
 ### Parental-rating & tag filtering
 

@@ -498,7 +498,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string SeerrUrlMappings { get; set; }
 
         // On-demand library sync: POST {seerrUrl}/api/v1/settings/jobs/jellyfin-recently-added-scan/run
-        // when Jellyfin reports new items, debounced so a bulk import collapses to one call.
+        // when Jellyfin reports new items. Bursts collapse to one call and continuous events are
+        // capped at four debounce windows (never more than one hour) by the owned trigger worker.
         public bool TriggerSeerrScanOnItemAdded { get; set; }
         public int SeerrScanDebounceSeconds { get; set; } = 60;
         public bool ShowCollectionsInSearch { get; set; }

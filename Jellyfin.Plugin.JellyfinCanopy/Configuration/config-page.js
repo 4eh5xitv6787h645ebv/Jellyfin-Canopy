@@ -4748,35 +4748,50 @@
 
         async function jcDispatchSeerrScanDomains(rawUrls, send, signal) {
             const domains = jcParseSeerrIdentityDomains(rawUrls);
-            const results = [];
+            if (signal && signal.aborted) {
+                return { domains, results: [], cancelled: true };
+            }
 
-            // Every distinct URL is an intended Seerr identity domain. Continue
-            // after both successes and failures: a later URL is not a failover
-            // target for an earlier one, and each domain needs its own scan.
-            for (const domain of domains) {
+            // One server request owns the complete manual batch. This lets the lifecycle state
+            // machine atomically drain a pending automatic timer without a later per-domain call
+            // duplicating work that the drained batch already covered.
+            try {
+                const response = await send(domains, signal);
                 if (signal && signal.aborted) {
-                    return { domains, results, cancelled: true };
+                    return { domains, results: [], cancelled: true };
                 }
 
-                try {
-                    const response = await send(domain, signal);
-                    if (signal && signal.aborted) {
-                        return { domains, results, cancelled: true };
+                const upstream = response && Array.isArray(response.results)
+                    ? response.results
+                    : [];
+                const results = domains.map(domain => {
+                    const row = upstream.find(candidate => candidate
+                        && jcNormalizeSeerrIdentityDomain(candidate.domain) === domain);
+                    if (row) {
+                        return {
+                            domain,
+                            ok: row.ok === true,
+                            error: row.message ? String(row.message) : ''
+                        };
                     }
-                    results.push({
+
+                    return {
                         domain,
                         ok: Boolean(response && response.ok === true),
                         error: response && response.message ? String(response.message) : ''
-                    });
-                } catch (error) {
-                    if (signal && signal.aborted) {
-                        return { domains, results, cancelled: true };
-                    }
-                    results.push({ domain, ok: false, error });
+                    };
+                });
+                return { domains, results, cancelled: false };
+            } catch (error) {
+                if (signal && signal.aborted) {
+                    return { domains, results: [], cancelled: true };
                 }
+                return {
+                    domains,
+                    results: domains.map(domain => ({ domain, ok: false, error })),
+                    cancelled: false
+                };
             }
-
-            return { domains, results, cancelled: false };
         }
 
         function jcSummarizeSeerrScanDispatch(dispatch) {
@@ -4828,8 +4843,8 @@
             status.style.color = '#00a4dc';
 
             try {
-                const dispatch = await jcDispatchSeerrScanDomains(rawUrls, async (domain, signal) => {
-                    const triggerUrl = ApiClient.getUrl('/JellyfinCanopy/seerr/trigger-recently-added-scan', { url: domain });
+                const dispatch = await jcDispatchSeerrScanDomains(rawUrls, async (domains, signal) => {
+                    const triggerUrl = ApiClient.getUrl('/JellyfinCanopy/seerr/trigger-recently-added-scan', { urls: domains.join('\n') });
                     return ApiClient.ajax({
                         type: 'POST',
                         url: triggerUrl,

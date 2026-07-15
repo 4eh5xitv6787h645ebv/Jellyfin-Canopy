@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
@@ -13,68 +12,90 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Services
 {
-    // Debounced bridge from Jellyfin's library ItemAdded event to Seerr's
-    // /api/v1/settings/jobs/jellyfin-recently-added-scan/run endpoint, so admins can
-    // disable Seerr's 5-minute cron and have the scan run only when Jellyfin actually
-    // ingests new content.
-    public class SeerrScanTriggerService : IDisposable
+    // Lifecycle-owned bridge from Jellyfin's library ItemAdded event to Seerr's
+    // recently-added scan. One timer and one worker own automatic and manual
+    // triggers so network calls never overlap and shutdown can cancel and join them.
+    public sealed class SeerrScanTriggerService : IDisposable
     {
         private const string ScanJobId = "jellyfin-recently-added-scan";
         private const int MinDebounceSeconds = 5;
         private const int MaxDebounceSeconds = 3600;
+        private const int MaximumLatencyWindows = 4;
 
         private readonly ILibraryManager _libraryManager;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<SeerrScanTriggerService> _logger;
         private readonly IPluginConfigProvider _configProvider;
-
+        private readonly TimeProvider _timeProvider;
         private readonly object _stateLock = new();
-        private readonly Timer _debounceTimer;
+        private readonly CancellationTokenSource _lifetimeCancellation = new();
+        private readonly TaskCompletionSource _disposeFinished =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ITimer _debounceTimer;
+
+        private DateTimeOffset? _firstPendingAt;
         private int _pendingCount;
         private bool _subscribed;
         private bool _disposed;
+        private DispatchPlan? _activePlan;
+        private DispatchPlan? _queuedPlan;
+        private Task _workerTask = Task.CompletedTask;
+
+        // Deterministic seam for the completion-to-state-transition race. A manual caller that
+        // arrives after results publish but before the worker clears _activePlan must queue a new
+        // scan rather than joining the already-completed one.
+        internal Action? OnAfterPlanCompletedForTest;
 
         public SeerrScanTriggerService(
             ILibraryManager libraryManager,
             IHttpClientFactory httpClientFactory,
             ILogger<SeerrScanTriggerService> logger,
             IPluginConfigProvider configProvider)
+            : this(libraryManager, httpClientFactory, logger, configProvider, TimeProvider.System)
+        {
+        }
+
+        internal SeerrScanTriggerService(
+            ILibraryManager libraryManager,
+            IHttpClientFactory httpClientFactory,
+            ILogger<SeerrScanTriggerService> logger,
+            IPluginConfigProvider configProvider,
+            TimeProvider timeProvider)
         {
             _libraryManager = libraryManager;
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _configProvider = configProvider;
-            _debounceTimer = new Timer(OnDebounceElapsed, null, Timeout.Infinite, Timeout.Infinite);
+            _timeProvider = timeProvider;
+            _debounceTimer = _timeProvider.CreateTimer(
+                OnDebounceElapsed,
+                null,
+                Timeout.InfiniteTimeSpan,
+                Timeout.InfiniteTimeSpan);
         }
 
         public void Initialize()
         {
-            // Always subscribe; the per-event handler re-checks config at fire time so
-            // an admin toggling the feature on doesn't require a Jellyfin restart.
-            // Mirrors the WatchlistMonitor pattern.
             lock (_stateLock)
             {
+                ObjectDisposedException.ThrowIf(_disposed, this);
                 if (_subscribed) return;
                 _libraryManager.ItemAdded += OnItemAdded;
                 _subscribed = true;
             }
+
             _logger.LogInformation("[SeerrScan] Subscribed to library ItemAdded events");
         }
 
         private void OnItemAdded(object? sender, ItemChangeEventArgs e)
         {
-            // PERF(S1): fires synchronously on Jellyfin's library-scan thread — only cheap config/kind
-            // checks then a counter bump + debounce-timer reset here; the Seerr HTTP POST runs off the
-            // timer thread. See docs/advanced/performance-rules.md (S1).
+            // PERF(S1): Jellyfin raises this synchronously on its scan thread. Configuration and
+            // kind checks plus the bounded state update below are the only work done inline.
             try
             {
                 if (_configProvider.ConfigurationOrNull is not PluginConfiguration config) return;
-                if (!config.TriggerSeerrScanOnItemAdded) return;
-                if (!config.SeerrEnabled) return;
+                if (!config.TriggerSeerrScanOnItemAdded || !config.SeerrEnabled) return;
 
-                // Seerr's recently-added scan only inspects movies and series (and crawls
-                // their seasons/episodes itself). Filtering on the parent kinds avoids
-                // triggering on metadata noise (BoxSet, Folder, Audio, Photo, etc).
                 var kind = e.Item?.GetBaseItemKind();
                 if (kind != BaseItemKind.Movie
                     && kind != BaseItemKind.Series
@@ -84,146 +105,377 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     return;
                 }
 
-                var debounce = ClampDebounceSeconds(config.SeerrScanDebounceSeconds);
+                var debounce = TimeSpan.FromSeconds(ClampDebounceSeconds(config.SeerrScanDebounceSeconds));
                 lock (_stateLock)
                 {
                     if (_disposed) return;
-                    _pendingCount++;
-                    // Reset the timer on every event — the actual POST runs `debounce`
-                    // seconds after the LAST event in the burst.
-                    _debounceTimer.Change(TimeSpan.FromSeconds(debounce), Timeout.InfiniteTimeSpan);
+                    var now = _timeProvider.GetUtcNow();
+                    _firstPendingAt ??= now;
+                    if (_pendingCount < int.MaxValue)
+                    {
+                        _pendingCount++;
+                    }
+
+                    _debounceTimer.Change(
+                        ComputeDispatchDelay(_firstPendingAt.Value, now, debounce),
+                        Timeout.InfiniteTimeSpan);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"[SeerrScan] OnItemAdded handler threw: {ex.Message}");
+                _logger.LogWarning(ex, "[SeerrScan] OnItemAdded handler failed");
             }
         }
 
         private void OnDebounceElapsed(object? state)
         {
-            int batchSize;
-            lock (_stateLock)
-            {
-                if (_disposed) return;
-                batchSize = Interlocked.Exchange(ref _pendingCount, 0);
-            }
-            if (batchSize <= 0) return;
-
-            // Fire-and-forget; the timer thread should not block on HTTP.
-            _ = DispatchAsync(batchSize);
-        }
-
-        // Public so the admin "Trigger scan now" button (controller endpoint) can
-        // bypass the debounce and force a scan immediately.
-        public Task<IReadOnlyList<DispatchResult>> TriggerNowAsync()
-        {
-            return DispatchAsync(0);
-        }
-
-        internal async Task<IReadOnlyList<DispatchResult>> DispatchAsync(int batchSize)
-        {
-            var results = new List<DispatchResult>();
             try
             {
-                if (_configProvider.ConfigurationOrNull is not PluginConfiguration config)
+                lock (_stateLock)
                 {
-                    _logger.LogWarning("[SeerrScan] Cannot dispatch: plugin configuration is null");
-                    return results;
-                }
+                    if (_disposed) return;
+                    _debounceTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                    var batchSize = DrainPendingLocked();
+                    if (batchSize <= 0) return;
 
-                var configurationRevision = _configProvider.ConfigurationRevision;
-                var configStamp = SeerrMutationConfigStamp.Capture(
-                    config,
-                    configurationRevision);
-                bool IsConfigurationCurrent() => configStamp.Matches(
-                    _configProvider.ConfigurationOrNull,
-                    _configProvider.ConfigurationRevision);
-
-                // A debounced timer is only authorization to reconsider the
-                // event under the current configuration. Disabling either the
-                // integration or this trigger while the timer is pending must
-                // cancel the queued side effect. Manual calls retain their
-                // explicit semantics but still use one stamped source/key set.
-                if (batchSize > 0
-                    && (!config.SeerrEnabled || !config.TriggerSeerrScanOnItemAdded))
-                {
-                    _logger.LogInformation(
-                        "[SeerrScan] Discarded a pending scan trigger because the feature is no longer enabled");
-                    return results;
-                }
-
-                var apiKey = config.SeerrApiKey;
-                var urls = ParseUrls(config.SeerrUrls);
-                if (urls.Count == 0 || string.IsNullOrEmpty(apiKey) || !IsConfigurationCurrent())
-                {
-                    _logger.LogWarning("[SeerrScan] Cannot dispatch: Seerr URL(s) or API key not configured");
-                    return results;
-                }
-
-                // Each normalized distinct URL is its own Seerr identity domain,
-                // not a failover candidate. PostScanTrigger contains failures so
-                // every configured domain is attempted exactly once per batch.
-                foreach (var url in urls)
-                {
-                    // Never continue a multi-domain mutation batch with a
-                    // retired URL/key snapshot after an admin save lands while
-                    // an earlier domain is in flight.
-                    if (!IsConfigurationCurrent())
-                    {
-                        _logger.LogWarning(
-                            "[SeerrScan] Configuration changed during dispatch; remaining Seerr domains were not triggered");
-                        break;
-                    }
-
-                    var result = await PostScanTrigger(url, apiKey).ConfigureAwait(false);
-                    results.Add(result);
-                    if (result.Success)
-                    {
-                        if (batchSize > 0)
-                            _logger.LogInformation($"[SeerrScan] Triggered Seerr recently-added scan after {batchSize} library item(s) — {url}");
-                        else
-                            _logger.LogInformation($"[SeerrScan] Triggered Seerr recently-added scan (manual) — {url}");
-                    }
-                    else
-                    {
-                        _logger.LogWarning($"[SeerrScan] Trigger failed for {url}: HTTP {result.StatusCode} — {result.Body}");
-                    }
+                    QueueAutomaticPlanLocked(CreateAutomaticPlan(batchSize));
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError($"[SeerrScan] Dispatch threw: {ex.Message}");
+                _logger.LogError(ex, "[SeerrScan] Debounce callback failed");
             }
+        }
+
+        // Manual and timer dispatches enter the same single-flight worker. A manual trigger drains
+        // the trailing timer first. If the same URL/key is already in flight, the caller joins that
+        // exact run; otherwise it occupies (or joins) the sole coalesced follow-up slot.
+        public async Task<DispatchResult> TriggerNowAsync(
+            string url,
+            string apiKey,
+            CancellationToken cancellationToken = default)
+        {
+            var results = await TriggerNowAsync(
+                new[] { url },
+                apiKey,
+                cancellationToken).ConfigureAwait(false);
+            return FindManualResult(results, url, apiKey);
+        }
+
+        public Task<IReadOnlyList<DispatchResult>> TriggerNowAsync(
+            IReadOnlyList<string> urls,
+            string apiKey,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(urls);
+            if (urls.Count == 0) throw new ArgumentException("At least one Seerr URL is required.", nameof(urls));
+
+            DispatchPlan plan;
+            lock (_stateLock)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                _debounceTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                var drainedEvents = DrainPendingLocked();
+                var manualPlan = DispatchPlan.Manual(urls, apiKey, drainedEvents);
+                if (drainedEvents > 0)
+                {
+                    manualPlan.AddTargets(CreateAutomaticPlan(drainedEvents).Targets);
+                }
+
+                if (drainedEvents == 0
+                    && _queuedPlan == null
+                    && _activePlan?.Completion.Task.IsCompleted == false
+                    && _activePlan.ContainsAll(manualPlan.Targets))
+                {
+                    plan = _activePlan;
+                }
+                else if (_activePlan == null)
+                {
+                    plan = manualPlan;
+                    StartPlanLocked(plan);
+                }
+                else
+                {
+                    if (_queuedPlan == null || !_queuedPlan.IsManual)
+                    {
+                        if (_queuedPlan != null)
+                        {
+                            manualPlan.AddTargets(_queuedPlan.Targets);
+                            manualPlan.AddBatchSize(_queuedPlan.BatchSize);
+                        }
+
+                        _queuedPlan?.Completion.TrySetResult(Array.Empty<DispatchResult>());
+                        _queuedPlan = manualPlan;
+                    }
+                    else
+                    {
+                        _queuedPlan.AddTargets(manualPlan.Targets);
+                        _queuedPlan.AddBatchSize(drainedEvents);
+                    }
+
+                    plan = _queuedPlan;
+                }
+            }
+
+            return plan.Completion.Task.WaitAsync(cancellationToken);
+        }
+
+        // Direct execution remains an internal test seam for configuration-generation fencing.
+        // Production timer and controller paths always use the lifecycle-owned worker above.
+        internal Task<IReadOnlyList<DispatchResult>> DispatchAsync(int batchSize)
+            => ExecutePlanAsync(CreateAutomaticPlan(batchSize), _lifetimeCancellation.Token);
+
+        internal static TimeSpan ComputeDispatchDelay(
+            DateTimeOffset firstPendingAt,
+            DateTimeOffset now,
+            TimeSpan debounce)
+        {
+            var maximumLatency = TimeSpan.FromTicks(Math.Min(
+                debounce.Ticks * MaximumLatencyWindows,
+                TimeSpan.FromSeconds(MaxDebounceSeconds).Ticks));
+            var remaining = maximumLatency - (now - firstPendingAt);
+            if (remaining <= TimeSpan.Zero) return TimeSpan.Zero;
+            return remaining < debounce ? remaining : debounce;
+        }
+
+        private static DispatchResult FindManualResult(
+            IReadOnlyList<DispatchResult> results,
+            string url,
+            string apiKey)
+        {
+            return results.FirstOrDefault(result => string.Equals(result.Url, url, StringComparison.Ordinal)
+                    && string.Equals(result.TargetApiKey, apiKey, StringComparison.Ordinal))
+                ?? new DispatchResult
+                {
+                    Url = url,
+                    Success = false,
+                    StatusCode = 409,
+                    ErrorCode = "DispatchSuperseded",
+                    Body = "The joined dispatch ended before it reached this Seerr identity domain; retry the trigger.",
+                };
+        }
+
+        private int DrainPendingLocked()
+        {
+            var batchSize = _pendingCount;
+            _pendingCount = 0;
+            _firstPendingAt = null;
+            return batchSize;
+        }
+
+        private DispatchPlan CreateAutomaticPlan(int batchSize)
+        {
+            if (_configProvider.ConfigurationOrNull is not PluginConfiguration config)
+            {
+                return DispatchPlan.Automatic(batchSize, Array.Empty<DispatchTarget>(), 0);
+            }
+
+            var revision = _configProvider.ConfigurationRevision;
+            var stamp = SeerrMutationConfigStamp.Capture(config, revision);
+            if (!config.SeerrEnabled || !config.TriggerSeerrScanOnItemAdded)
+            {
+                return DispatchPlan.Automatic(batchSize, Array.Empty<DispatchTarget>(), revision);
+            }
+
+            var apiKey = config.SeerrApiKey;
+            var urls = ParseUrls(config.SeerrUrls);
+            var targets = string.IsNullOrEmpty(apiKey)
+                ? Array.Empty<DispatchTarget>()
+                : urls.Select(url => new DispatchTarget(url, apiKey, stamp)).ToArray();
+            return DispatchPlan.Automatic(batchSize, targets, revision);
+        }
+
+        private void QueueAutomaticPlanLocked(DispatchPlan plan)
+        {
+            if (_activePlan == null)
+            {
+                StartPlanLocked(plan);
+                return;
+            }
+
+            if (_queuedPlan == null)
+            {
+                _queuedPlan = plan;
+                return;
+            }
+
+            if (_queuedPlan.IsManual)
+            {
+                // The queued manual scan is the coalesced follow-up for events that arrived while
+                // the active run was in flight. Preserve automatic-only identity domains and their
+                // configuration stamps inside that same single follow-up plan.
+                _queuedPlan.AddTargets(plan.Targets);
+                _queuedPlan.AddBatchSize(plan.BatchSize);
+                plan.Completion.TrySetResult(Array.Empty<DispatchResult>());
+                return;
+            }
+
+            if (_queuedPlan.ConfigurationRevision == plan.ConfigurationRevision)
+            {
+                _queuedPlan.AddBatchSize(plan.BatchSize);
+                plan.Completion.TrySetResult(Array.Empty<DispatchResult>());
+                return;
+            }
+
+            // A configuration replacement retires the older queued mutation generation.
+            _queuedPlan.Completion.TrySetResult(Array.Empty<DispatchResult>());
+            _queuedPlan = plan;
+        }
+
+        private void StartPlanLocked(DispatchPlan plan)
+        {
+            _activePlan = plan;
+            _workerTask = Task.Run(() => RunWorkerAsync(plan));
+        }
+
+        private async Task RunWorkerAsync(DispatchPlan initialPlan)
+        {
+            var plan = initialPlan;
+            while (true)
+            {
+                IReadOnlyList<DispatchResult> results;
+                try
+                {
+                    results = await ExecutePlanAsync(plan, _lifetimeCancellation.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+                {
+                    results = plan.Targets.Select(DispatchResult.CancelledResult).ToArray();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[SeerrScan] Dispatch worker failed");
+                    results = plan.Targets.Select(target => new DispatchResult
+                    {
+                        Url = target.Url,
+                        Success = false,
+                        Body = ex.Message,
+                        TargetApiKey = target.ApiKey,
+                    }).ToArray();
+                }
+
+                plan.Completion.TrySetResult(results);
+                OnAfterPlanCompletedForTest?.Invoke();
+
+                lock (_stateLock)
+                {
+                    if (_disposed)
+                    {
+                        _activePlan = null;
+                        CompleteAsCancelled(_queuedPlan);
+                        _queuedPlan = null;
+                        return;
+                    }
+
+                    if (_queuedPlan == null)
+                    {
+                        _activePlan = null;
+                        return;
+                    }
+
+                    plan = _queuedPlan;
+                    _queuedPlan = null;
+                    _activePlan = plan;
+                }
+            }
+        }
+
+        private async Task<IReadOnlyList<DispatchResult>> ExecutePlanAsync(
+            DispatchPlan plan,
+            CancellationToken cancellationToken)
+        {
+            var results = new List<DispatchResult>();
+            if (plan.Targets.Count == 0)
+            {
+                _logger.LogWarning("[SeerrScan] Cannot dispatch: Seerr URL(s) or API key not configured, or trigger disabled");
+                return results;
+            }
+
+            for (var targetIndex = 0; targetIndex < plan.Targets.Count; targetIndex++)
+            {
+                var target = plan.Targets[targetIndex];
+                cancellationToken.ThrowIfCancellationRequested();
+                if (target.ConfigurationStamp is SeerrMutationConfigStamp stamp
+                    && !stamp.Matches(
+                        _configProvider.ConfigurationOrNull,
+                        _configProvider.ConfigurationRevision))
+                {
+                    _logger.LogWarning(
+                        "[SeerrScan] Configuration changed before dispatch to {Url}; that retired automatic target was not triggered",
+                        target.Url);
+                    results.Add(DispatchResult.ConfigurationChangedResult(target));
+                    continue;
+                }
+
+                var result = await PostScanTrigger(
+                    target.Url,
+                    target.ApiKey,
+                    cancellationToken).ConfigureAwait(false);
+                results.Add(result);
+                if (result.Success)
+                {
+                    if (plan.IsManual)
+                    {
+                        _logger.LogInformation(
+                            "[SeerrScan] Triggered Seerr recently-added scan (manual) - {Url}",
+                            target.Url);
+                    }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "[SeerrScan] Triggered Seerr recently-added scan after {BatchSize} library item(s) - {Url}",
+                            plan.BatchSize,
+                            target.Url);
+                    }
+                }
+                else if (!result.Cancelled)
+                {
+                    _logger.LogWarning(
+                        "[SeerrScan] Trigger failed for {Url}: HTTP {StatusCode} - {Body}",
+                        target.Url,
+                        result.StatusCode,
+                        result.Body);
+                }
+            }
+
             return results;
         }
 
-        private async Task<DispatchResult> PostScanTrigger(string url, string apiKey)
+        private async Task<DispatchResult> PostScanTrigger(
+            string url,
+            string apiKey,
+            CancellationToken cancellationToken)
         {
-            // previously reported `Success = response.IsSuccessStatusCode`,
-            // which is true for a 200 + Cloudflare HTML challenge body — the
-            // background trigger logged "scan dispatched" when the request was
-            // actually intercepted by a reverse-proxy auth challenge. Use the
-            // helper so HTML responses are classified as failures.
             var endpoint = $"{url.TrimEnd('/')}/api/v1/settings/jobs/{ScanJobId}/run";
             try
             {
                 var http = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
                 http.Timeout = TimeSpan.FromSeconds(15);
                 using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
-                    HttpMethod.Post, endpoint, apiKey, bodyJson: "{}");
+                    HttpMethod.Post,
+                    endpoint,
+                    apiKey,
+                    bodyJson: "{}");
 
                 var (json, error, httpStatus) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
                     http,
                     request,
-                    endpoint).ConfigureAwait(false);
+                    endpoint,
+                    cancellationToken).ConfigureAwait(false);
                 return new DispatchResult
                 {
                     Url = url,
                     Success = error == null,
                     StatusCode = error?.HttpStatus ?? httpStatus,
-                    Body = Truncate(error?.Message ?? (json ?? string.Empty), 256)
+                    Body = Truncate(error?.Message ?? (json ?? string.Empty), 256),
+                    ErrorCode = error?.Code.ToString() ?? string.Empty,
+                    CfRay = error?.CfRay ?? string.Empty,
+                    TargetApiKey = apiKey,
                 };
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return DispatchResult.CancelledResult(new DispatchTarget(url, apiKey, null));
             }
             catch (Exception ex)
             {
@@ -231,14 +483,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 {
                     Url = url,
                     Success = false,
-                    StatusCode = 0,
-                    Body = ex.Message
+                    Body = ex.Message,
+                    TargetApiKey = apiKey,
                 };
             }
         }
 
-        // Keep background dispatch on the same comma/newline/trailing-slash
-        // alias rules as all other Seerr source selection.
         internal static List<string> ParseUrls(string? raw)
             => Seerr.SeerrClient.GetConfiguredUrls(raw).ToList();
 
@@ -249,34 +499,174 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return requested;
         }
 
-        private static string Truncate(string s, int max)
+        private static string Truncate(string value, int maximumLength)
         {
-            if (string.IsNullOrEmpty(s)) return string.Empty;
-            return s.Length <= max ? s : s.Substring(0, max) + "…";
+            if (string.IsNullOrEmpty(value)) return string.Empty;
+            return value.Length <= maximumLength
+                ? value
+                : value.Substring(0, maximumLength) + "...";
         }
 
         public void Dispose()
         {
+            Task worker;
+            var ownsDisposal = false;
             lock (_stateLock)
             {
-                if (_disposed) return;
-                _disposed = true;
-                if (_subscribed)
+                if (!_disposed)
                 {
-                    _libraryManager.ItemAdded -= OnItemAdded;
-                    _subscribed = false;
+                    ownsDisposal = true;
+                    _disposed = true;
+                    if (_subscribed)
+                    {
+                        _libraryManager.ItemAdded -= OnItemAdded;
+                        _subscribed = false;
+                    }
+
+                    _pendingCount = 0;
+                    _firstPendingAt = null;
+                    _debounceTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                    _debounceTimer.Dispose();
+                    CompleteAsCancelled(_queuedPlan);
+                    _queuedPlan = null;
+                    _lifetimeCancellation.Cancel();
                 }
-                _debounceTimer.Dispose();
+
+                worker = _workerTask;
             }
-            GC.SuppressFinalize(this);
+
+            if (!ownsDisposal)
+            {
+                _disposeFinished.Task.GetAwaiter().GetResult();
+                return;
+            }
+
+            try
+            {
+                worker.GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when the owned HTTP request observes lifetime cancellation.
+            }
+            finally
+            {
+                _lifetimeCancellation.Dispose();
+                _disposeFinished.TrySetResult();
+                GC.SuppressFinalize(this);
+            }
         }
 
-        public class DispatchResult
+        internal sealed record DispatchTarget(
+            string Url,
+            string ApiKey,
+            SeerrMutationConfigStamp? ConfigurationStamp);
+
+        private static void CompleteAsCancelled(DispatchPlan? plan)
+        {
+            if (plan == null) return;
+            plan.Completion.TrySetResult(
+                plan.Targets.Select(DispatchResult.CancelledResult).ToArray());
+        }
+
+        private sealed class DispatchPlan
+        {
+            private readonly List<DispatchTarget> _targets;
+
+            private DispatchPlan(
+                bool isManual,
+                int batchSize,
+                IEnumerable<DispatchTarget> targets,
+                long configurationRevision)
+            {
+                IsManual = isManual;
+                BatchSize = batchSize;
+                _targets = targets.ToList();
+                ConfigurationRevision = configurationRevision;
+            }
+
+            public bool IsManual { get; }
+            public int BatchSize { get; private set; }
+            public IReadOnlyList<DispatchTarget> Targets => _targets;
+            public long ConfigurationRevision { get; }
+            public TaskCompletionSource<IReadOnlyList<DispatchResult>> Completion { get; } =
+                new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            public static DispatchPlan Manual(
+                IEnumerable<string> urls,
+                string apiKey,
+                int batchSize)
+                => new(
+                    true,
+                    batchSize,
+                    urls.Distinct(StringComparer.Ordinal)
+                        .Select(url => new DispatchTarget(url, apiKey, null)),
+                    0);
+
+            public static DispatchPlan Automatic(
+                int batchSize,
+                IEnumerable<DispatchTarget> targets,
+                long configurationRevision)
+                => new(false, batchSize, targets, configurationRevision);
+
+            public bool ContainsAll(IEnumerable<DispatchTarget> targets)
+                => targets.All(candidate => _targets.Any(target => SameIdentity(target, candidate)));
+
+            public void AddTargets(IEnumerable<DispatchTarget> targets)
+            {
+                foreach (var candidate in targets)
+                {
+                    if (!_targets.Any(target => SameIdentity(target, candidate)))
+                    {
+                        _targets.Add(candidate);
+                    }
+                }
+            }
+
+            private static bool SameIdentity(DispatchTarget left, DispatchTarget right)
+                => string.Equals(left.Url, right.Url, StringComparison.Ordinal)
+                    && string.Equals(left.ApiKey, right.ApiKey, StringComparison.Ordinal);
+
+            public void AddBatchSize(int batchSize)
+            {
+                if (batchSize <= 0 || BatchSize == int.MaxValue) return;
+                BatchSize = batchSize > int.MaxValue - BatchSize
+                    ? int.MaxValue
+                    : BatchSize + batchSize;
+            }
+        }
+
+        public sealed class DispatchResult
         {
             public string Url { get; set; } = string.Empty;
             public bool Success { get; set; }
             public int StatusCode { get; set; }
             public string Body { get; set; } = string.Empty;
+            public string ErrorCode { get; set; } = string.Empty;
+            public string CfRay { get; set; } = string.Empty;
+            public bool Cancelled { get; set; }
+            internal string TargetApiKey { get; set; } = string.Empty;
+
+            internal static DispatchResult CancelledResult(DispatchTarget target)
+                => new()
+                {
+                    Url = target.Url,
+                    Success = false,
+                    Body = "The Seerr scan trigger was cancelled because the service is stopping.",
+                    Cancelled = true,
+                    TargetApiKey = target.ApiKey,
+                };
+
+            internal static DispatchResult ConfigurationChangedResult(DispatchTarget target)
+                => new()
+                {
+                    Url = target.Url,
+                    Success = false,
+                    StatusCode = 409,
+                    ErrorCode = "ConfigurationChanged",
+                    Body = "Seerr configuration changed before this trigger was sent; retry with the current settings.",
+                    TargetApiKey = target.ApiKey,
+                };
         }
     }
 }
