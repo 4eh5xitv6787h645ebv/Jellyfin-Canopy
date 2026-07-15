@@ -79,6 +79,9 @@ public sealed class CountingLibraryManager : ILibraryManager
     /// <summary>When set, backs the user-access projection query.</summary>
     public Func<InternalItemsQuery, IReadOnlyList<Guid>>? GetItemIdsHook { get; set; }
 
+    /// <summary>When set, backs Jellyfin's query access-scope configurator.</summary>
+    public Action<InternalItemsQuery, User>? ConfigureUserAccessHook { get; set; }
+
     // ---- Everything below is an unused NotImplemented stub (per the repo convention). ----
 
     public AggregateFolder RootFolder => throw new NotImplementedException();
@@ -289,7 +292,11 @@ public sealed class CountingLibraryManager : ILibraryManager
 
     public Dictionary<Guid, (int Played, int Total)> GetPlayedAndTotalCountBatch(IReadOnlyList<Guid> folderIds, User user) => throw new NotImplementedException();
 
-    public void ConfigureUserAccess(InternalItemsQuery query, User user) => throw new NotImplementedException();
+    public void ConfigureUserAccess(InternalItemsQuery query, User user)
+    {
+        if (ConfigureUserAccessHook is null) throw new NotImplementedException();
+        ConfigureUserAccessHook(query, user);
+    }
 
     public Task RunMetadataSavers(BaseItem item, ItemUpdateType updateReason) => throw new NotImplementedException();
 

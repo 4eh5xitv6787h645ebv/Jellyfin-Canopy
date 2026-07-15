@@ -2,7 +2,9 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using MediaBrowser.Model.Dto;
@@ -91,7 +93,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             { ("Search", "GetSearchHints"),            ("search",          FilterSearchHints) },
         };
 
-        private delegate void ResponseHandler(ActionExecutedContext executed, HideContext hide, string surface, ILogger<HiddenContentResponseFilter> logger);
+        private delegate void ResponseHandler(
+            ActionExecutedContext executed,
+            HideContext hide,
+            string surface,
+            ILogger<HiddenContentResponseFilter> logger,
+            HiddenContentHierarchyResolver hierarchyResolver,
+            Guid userId,
+            CancellationToken cancellationToken);
 
         // Re-warn at most once per hour so a real Jellyfin upgrade isn't permanently invisible after the first warn.
         private static readonly TimeSpan ShapeMismatchReWarnInterval = TimeSpan.FromHours(1);
@@ -105,6 +114,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             maximumEntries: 2_048,
             maximumWeight: 2_048,
             defaultTtl: static () => TimeSpan.FromDays(7));
+        private static readonly BoundedTtlCache<string, byte> _warnedHierarchyFailure = new(
+            maximumEntries: 16,
+            maximumWeight: 512,
+            weight: static (key, _) => key.Length + 1L,
+            comparer: StringComparer.Ordinal,
+            defaultTtl: static () => TimeSpan.FromHours(1));
 
         private static void WarnShapeMismatchOnce(ILogger<HiddenContentResponseFilter> logger, string surface, string handlerName, IActionResult? result)
         {
@@ -122,12 +137,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly UserConfigurationManager _configManager;
         private readonly ILogger<HiddenContentResponseFilter> _logger;
         private readonly IPluginConfigProvider _configProvider;
+        private readonly HiddenContentHierarchyResolver _hierarchyResolver;
 
-        public HiddenContentResponseFilter(UserConfigurationManager configManager, ILogger<HiddenContentResponseFilter> logger, IPluginConfigProvider configProvider)
+        public HiddenContentResponseFilter(
+            UserConfigurationManager configManager,
+            ILogger<HiddenContentResponseFilter> logger,
+            IPluginConfigProvider configProvider,
+            HiddenContentHierarchyResolver hierarchyResolver)
         {
             _configManager = configManager;
             _logger = logger;
             _configProvider = configProvider;
+            _hierarchyResolver = hierarchyResolver;
         }
 
         public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
@@ -180,7 +201,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var executed = await next().ConfigureAwait(false);
             try
             {
-                route.Handler(executed, hide, surface, _logger);
+                route.Handler(
+                    executed,
+                    hide,
+                    surface,
+                    _logger,
+                    _hierarchyResolver,
+                    userId,
+                    context.HttpContext.RequestAborted);
             }
             catch (Exception ex)
             {
@@ -280,7 +308,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 ? HideContext.Build(read.Value)
                 : (lastKnownGood ?? HideContext.FailClosed);
 
-        private static void FilterQueryResult(ActionExecutedContext executed, HideContext hide, string surface, ILogger<HiddenContentResponseFilter> logger)
+        private static void FilterQueryResult(
+            ActionExecutedContext executed,
+            HideContext hide,
+            string surface,
+            ILogger<HiddenContentResponseFilter> logger,
+            HiddenContentHierarchyResolver hierarchyResolver,
+            Guid userId,
+            CancellationToken cancellationToken)
         {
             if (executed.Result is not ObjectResult or || or.Value is not QueryResult<BaseItemDto> qr)
             {
@@ -305,7 +340,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 kept);
         }
 
-        private static void FilterEnumerable(ActionExecutedContext executed, HideContext hide, string surface, ILogger<HiddenContentResponseFilter> logger)
+        private static void FilterEnumerable(
+            ActionExecutedContext executed,
+            HideContext hide,
+            string surface,
+            ILogger<HiddenContentResponseFilter> logger,
+            HiddenContentHierarchyResolver hierarchyResolver,
+            Guid userId,
+            CancellationToken cancellationToken)
         {
             if (executed.Result is not ObjectResult or || or.Value is not IEnumerable<BaseItemDto> raw)
             {
@@ -324,8 +366,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             or.Value = kept;
         }
 
-        // SearchHint has no SeriesId, so series-scope cascade falls back to the /Items?searchTerm path.
-        private static void FilterSearchHints(ActionExecutedContext executed, HideContext hide, string surface, ILogger<HiddenContentResponseFilter> logger)
+        // SearchHint has no SeriesId. Resolve every Episode/Season candidate at
+        // the shared hierarchy owner before publishing one final policy result.
+        private static void FilterSearchHints(
+            ActionExecutedContext executed,
+            HideContext hide,
+            string surface,
+            ILogger<HiddenContentResponseFilter> logger,
+            HiddenContentHierarchyResolver hierarchyResolver,
+            Guid userId,
+            CancellationToken cancellationToken)
         {
             if (executed.Result is not ObjectResult or || or.Value is not SearchHintResult sh)
             {
@@ -335,16 +385,115 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var hints = sh.SearchHints;
             if (hints is null || hints.Count == 0) return;
 
+            or.Value = FilterSearchHintsCore(
+                sh,
+                hide,
+                surface,
+                logger,
+                hierarchyResolver,
+                userId,
+                cancellationToken);
+        }
+
+        private static SearchHintResult FilterSearchHintsCore(
+            SearchHintResult result,
+            HideContext hide,
+            string surface,
+            ILogger<HiddenContentResponseFilter> logger,
+            HiddenContentHierarchyResolver hierarchyResolver,
+            Guid userId,
+            CancellationToken cancellationToken)
+        {
+            var hints = result.SearchHints;
+            if (hints is null || hints.Count == 0) return result;
+
+            // Explicit item entries and Series rows are decidable from the hint
+            // itself. Parent resolution is needed only while an applicable
+            // series-cascade policy exists; this keeps item-only hiding distinct.
+            var needsSeriesResolution = hide.HasApplicableSeriesScope(surface);
+            var descendantIds = new List<Guid>();
+            if (needsSeriesResolution)
+            {
+                foreach (var hint in hints)
+                {
+                    if (IsDescendantHint(hint) && hint.Id != Guid.Empty)
+                    {
+                        descendantIds.Add(hint.Id);
+                    }
+                }
+            }
+
+            IReadOnlyDictionary<Guid, Guid> seriesByItemId = new Dictionary<Guid, Guid>();
+            if (descendantIds.Count > 0)
+            {
+                var resolution = hierarchyResolver.ResolveSeriesIds(userId, descendantIds, cancellationToken);
+                if (!resolution.IsSuccess)
+                {
+                    var warningKey = resolution.Status.ToString();
+                    if (_warnedHierarchyFailure.TryAdd(warningKey, 0))
+                    {
+                        logger.LogWarning(
+                            $"HC SearchHint hierarchy resolution failed ({warningKey}); dropping the complete hint payload for this request so no partial policy result is published.");
+                    }
+
+                    return new SearchHintResult(new List<SearchHint>(), 0);
+                }
+
+                seriesByItemId = resolution.SeriesByItemId;
+            }
+
             var kept = new List<SearchHint>(hints.Count);
             var dropped = 0;
             foreach (var hint in hints)
             {
-                if (IsHiddenById(hint.Id.ToString(), null, hide, surface)) { dropped++; continue; }
+                if (IsHiddenById(hint.Id.ToString(), null, hide, surface))
+                {
+                    dropped++;
+                    continue;
+                }
+
+                if (needsSeriesResolution && IsDescendantHint(hint))
+                {
+                    // A successful user-scoped query that omits the item means it
+                    // is deleted, malformed, or inaccessible to this user. Any of
+                    // those shapes is dropped while a series cascade is active:
+                    // without a trusted parent identity it cannot be proven safe.
+                    if (!seriesByItemId.TryGetValue(hint.Id, out var seriesId)
+                        || IsHiddenById(hint.Id.ToString(), seriesId.ToString(), hide, surface))
+                    {
+                        dropped++;
+                        continue;
+                    }
+                }
+
                 kept.Add(hint);
             }
-            if (dropped == 0) return;
-            or.Value = new SearchHintResult(kept, Math.Max(0, sh.TotalRecordCount - dropped));
+            if (dropped == 0) return result;
+
+            // #151 owns pre-pagination filtering/backfill and globally honest
+            // totals. Preserve the existing page-local subtraction here; this
+            // issue changes only hierarchy privacy decisions.
+            return new SearchHintResult(kept, Math.Max(0, result.TotalRecordCount - dropped));
         }
+
+        private static bool IsDescendantHint(SearchHint hint)
+            => hint.Type is BaseItemKind.Episode or BaseItemKind.Season;
+
+        // Focused server-policy seam: exercises the real SearchHint decision and
+        // hierarchy owner without depending on MVC response-shape construction.
+        internal SearchHintResult FilterSearchHintsForTest(
+            SearchHintResult result,
+            UserHiddenContent policy,
+            Guid userId,
+            CancellationToken cancellationToken = default)
+            => FilterSearchHintsCore(
+                result,
+                HideContext.Build(policy),
+                "search",
+                _logger,
+                _hierarchyResolver,
+                userId,
+                cancellationToken);
 
         private static bool IsHidden(BaseItemDto item, HideContext hide, string surface)
         {
@@ -456,6 +605,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // Fail-closed is never "empty": the filter must engage so its handlers
             // over-hide. Otherwise emptiness is the absence of any hide scope.
             public bool IsEmpty => !IsFailClosed && ItemIdScopes.Count == 0 && SeriesIdScopes.Count == 0;
+
+            public bool HasApplicableSeriesScope(string surface)
+            {
+                if (IsFailClosed) return false;
+                foreach (var scopes in SeriesIdScopes.Values)
+                {
+                    foreach (var scope in scopes)
+                    {
+                        if (ScopeAppliesToSurface(scope, surface, Settings)) return true;
+                    }
+                }
+
+                return false;
+            }
 
             public static HideContext Build(UserHiddenContent? data)
             {

@@ -50,10 +50,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         private static void Corrupt(string path) => File.WriteAllText(path, "{ this is not : valid json ]");
 
         private HiddenContentResponseFilter NewHcFilter()
-            => new HiddenContentResponseFilter(
+        {
+            var hierarchy = new HiddenContentHierarchyResolver(new CountingLibraryManager(), new StubUserManager());
+            return new HiddenContentResponseFilter(
                 _mgr,
                 NullLogger<HiddenContentResponseFilter>.Instance,
-                new FakePluginConfigProvider(new PluginConfiguration()));
+                new FakePluginConfigProvider(new PluginConfiguration()),
+                hierarchy);
+        }
 
         private SpoilerUserResolver NewResolver()
         {
