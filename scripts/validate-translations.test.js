@@ -168,6 +168,10 @@ test('server loader, workflow, and contributor docs consume the canonical invent
         path.join(root, 'Jellyfin.Plugin.JellyfinCanopy/Controllers/ConfigController.cs'),
         'utf8'
     );
+    const catalog = fs.readFileSync(
+        path.join(root, 'Jellyfin.Plugin.JellyfinCanopy/Controllers/LocaleResourceCatalog.cs'),
+        'utf8'
+    );
     const project = fs.readFileSync(
         path.join(root, 'Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj'),
         'utf8'
@@ -181,8 +185,12 @@ test('server loader, workflow, and contributor docs consume the canonical invent
         'utf8'
     );
     assert.match(project, /EmbeddedResource Include="locale-manifest\.json"/);
-    assert.match(controller, /SupportedLocaleCodes \{ get; \} = LoadSupportedLocaleCodes\(\)/);
-    assert.match(controller, /Contains\(sanitizedLang, StringComparer\.Ordinal\)/);
+    assert.match(controller, /LocaleResourceCatalog\.Load\(Assembly\.GetExecutingAssembly\(\)\)/);
+    assert.match(controller, /LocaleCatalog\.Resolve\(lang\)/);
+    assert.match(controller, /SupportedLocaleCodes =>\s*LocaleCatalog\.SupportedCodes/);
+    assert.match(catalog, /Jellyfin\.Plugin\.JellyfinCanopy\.locale-manifest\.json/);
+    assert.match(catalog, /registered\.SetEquals\(embeddedCodes\)/);
+    assert.match(catalog, /ToFrozenDictionary\(StringComparer\.Ordinal\)/);
     assert.match(loader, /import localeManifest from '\.\.\/\.\.\/locale-manifest\.json'/);
     assert.match(loader, /SUPPORTED_LOCALES\.has\(normalizedLang\)/);
     assert.match(workflow, /locale-manifest\.json/);

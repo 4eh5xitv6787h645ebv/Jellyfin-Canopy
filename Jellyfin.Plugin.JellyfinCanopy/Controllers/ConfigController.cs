@@ -1,12 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using System;
-using System.IO;
-using System.Linq;
 using System.Net.Http;
 using System.Reflection;
 using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
@@ -49,7 +45,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     [ApiController]
     public class ConfigController : JellyfinCanopyControllerBase
     {
+        private const string ImmutableLocaleCacheControl =
+            "public, max-age=86400, immutable";
+        private const string MissingLocaleCacheControl =
+            "public, max-age=300";
+
+        private static readonly LocaleResourceCatalog LocaleCatalog =
+            LocaleResourceCatalog.Load(Assembly.GetExecutingAssembly());
+        private static readonly LocaleMissLogLimiter SharedLocaleMissLogLimiter =
+            new();
+
         private readonly ILiveSessionRegistry _liveSessionRegistry;
+        private readonly LocaleMissLogLimiter _localeMissLogLimiter;
 
         public ConfigController(
             IHttpClientFactory httpClientFactory,
@@ -58,9 +65,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
             ILiveSessionRegistry liveSessionRegistry)
+            : this(
+                httpClientFactory,
+                logger,
+                userManager,
+                seerrCache,
+                configProvider,
+                liveSessionRegistry,
+                SharedLocaleMissLogLimiter)
+        {
+        }
+
+        internal ConfigController(
+            IHttpClientFactory httpClientFactory,
+            ILogger<ConfigController> logger,
+            IUserManager userManager,
+            ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider,
+            ILiveSessionRegistry liveSessionRegistry,
+            LocaleMissLogLimiter localeMissLogLimiter)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _liveSessionRegistry = liveSessionRegistry;
+            _localeMissLogLimiter = localeMissLogLimiter;
         }
 
         [HttpGet("script")]
@@ -209,74 +236,47 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [ResponseCache(Duration = 86400)]
         public ActionResult GetAvailableLocales()
         {
+            Response.Headers["Cache-Control"] = ImmutableLocaleCacheControl;
             return Ok(SupportedLocaleCodes);
         }
 
         [HttpGet("locales/{lang}.json")]
         public ActionResult GetLocale(string lang)
         {
-            var sanitizedLang = Path.GetFileName(lang); // Basic sanitization
-            var selectedLang = SupportedLocaleCodes.Contains(sanitizedLang, StringComparer.Ordinal)
-                ? sanitizedLang
-                : null;
-
-            if (selectedLang == null && sanitizedLang.Contains('-'))
+            var resolution = LocaleCatalog.Resolve(lang);
+            if (resolution.Status is LocaleResolutionStatus.Invalid
+                or LocaleResolutionStatus.Unsupported)
             {
-                // Fall back from regional variant (e.g. de-DE) to the base language (de).
-                // Jellyfin reports BCP-47 codes like de-DE when the user picks "Auto" or a
-                // regional locale, but the plugin only ships base-language files for most
-                // languages. Without this fallback the user gets English instead of German.
-                var baseLang = sanitizedLang.Split('-')[0];
-                if (SupportedLocaleCodes.Contains(baseLang, StringComparer.Ordinal))
+                Response.Headers.Remove("Content-Language");
+                Response.Headers["Cache-Control"] = MissingLocaleCacheControl;
+                if (resolution.Status == LocaleResolutionStatus.Unsupported
+                    && _logger.IsEnabled(LogLevel.Warning)
+                    && _localeMissLogLimiter.ShouldLog(
+                        resolution.NormalizedCode,
+                        StatusCodes.Status404NotFound))
                 {
-                    selectedLang = baseLang;
-                    _logger.LogInformation($"Locale file not found for {sanitizedLang}, falling back to base language {baseLang}");
+                    _logger.LogWarning(
+                        "Unsupported locale {LocaleCode} returned HTTP 404; repeated locale-miss logs are bounded",
+                        resolution.NormalizedCode);
                 }
-            }
 
-            if (selectedLang == null)
-            {
-                _logger.LogWarning($"Locale file not found for language: {sanitizedLang}");
                 return NotFound();
             }
 
-            var resourcePath = $"Jellyfin.Plugin.JellyfinCanopy.js.locales.{selectedLang}.json";
-            var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourcePath);
-            if (stream == null)
-            {
-                throw new InvalidOperationException($"Registered locale resource is missing: {selectedLang}.json");
-            }
+            var resource = resolution.Resource
+                ?? throw new InvalidOperationException(
+                    "Resolved locale has no cached resource");
 
-            return new FileStreamResult(stream, "application/json");
+            // Regional fallback is an ordinary BCP-47 compatibility path. It
+            // is intentionally silent: the selected base locale is conveyed by
+            // Content-Language without producing synchronous log work.
+            Response.Headers["Cache-Control"] = ImmutableLocaleCacheControl;
+            Response.Headers["Content-Language"] = resource.Code;
+            return File(resource.Content, "application/json; charset=utf-8");
         }
 
-        private const string LocaleManifestResource = "Jellyfin.Plugin.JellyfinCanopy.locale-manifest.json";
-
-        internal static IReadOnlyList<string> SupportedLocaleCodes { get; } = LoadSupportedLocaleCodes();
-
-        private static IReadOnlyList<string> LoadSupportedLocaleCodes()
-        {
-            using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(LocaleManifestResource)
-                ?? throw new InvalidOperationException($"Embedded locale inventory is missing: {LocaleManifestResource}");
-            var manifest = JsonSerializer.Deserialize<LocaleManifest>(stream)
-                ?? throw new InvalidOperationException("Embedded locale inventory is empty");
-            if (manifest.Locales.Length == 0
-                || !manifest.Locales.Contains(manifest.BaseLocale, StringComparer.Ordinal))
-            {
-                throw new InvalidOperationException("Embedded locale inventory has no registered base locale");
-            }
-
-            return Array.AsReadOnly(manifest.Locales);
-        }
-
-        private sealed class LocaleManifest
-        {
-            [JsonPropertyName("baseLocale")]
-            public string BaseLocale { get; init; } = string.Empty;
-
-            [JsonPropertyName("locales")]
-            public string[] Locales { get; init; } = Array.Empty<string>();
-        }
+        internal static IReadOnlyList<string> SupportedLocaleCodes =>
+            LocaleCatalog.SupportedCodes;
 
         private ActionResult GetScriptResource(string resourcePath)
         {
