@@ -1,9 +1,15 @@
-name: "Close stale issues and PRs"
+name: "Remind on stale issues and close stale PRs"
 
 on:
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Audit proposed stale operations without changing issues or PRs"
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -19,19 +25,32 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: actions/stale@eb5cf3af3ac0a1aa4c9c45633dd1ae542a27a899
+      - uses: actions/stale@eb5cf3af3ac0a1aa4c9c45633dd1ae542a27a899 # v10.3.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           stale-issue-message: >
-            This issue has been marked as stale because it has had no activity for 15 days.
-            It will be closed in 3 days if no further activity occurs.
+            This issue has had no activity for 30 days. This is a triage reminder only:
+            issue automation never closes issues for inactivity. If the report is still
+            actionable, add the appropriate accepted-state label or milestone. A maintainer
+            must record an explicit triage reason before closing an issue.
           stale-pr-message: >
             This pull request has been marked as stale due to 15 days of inactivity.
             It will be closed in 3 days if no updates are made.
-          days-before-stale: 15
-          days-before-close: 3
+          close-pr-message: >
+            Closing this pull request because it remained inactive for 3 days after the
+            15-day stale reminder. Reopen it or open a replacement when the branch is ready.
+          days-before-issue-stale: 30
+          days-before-issue-close: -1
+          days-before-pr-stale: 15
+          days-before-pr-close: 3
           stale-issue-label: "stale"
           stale-pr-label: "stale"
-          exempt-issue-labels: "help wanted, open-for-discussion, enhancement, no-stale"
+          exempt-issue-labels: >-
+            bug, bug-inventory, security, confirmed, P0, P1, help wanted,
+            open-for-discussion, enhancement, tracking, no-stale
+          exempt-all-issue-milestones: true
+          exempt-all-issue-assignees: true
           exempt-draft-pr: true
-# Registered for Jellyfin Canopy CI (no functional change).
+          debug-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          enable-statistics: true
+# Guarded by scripts/stale-policy.test.js.
