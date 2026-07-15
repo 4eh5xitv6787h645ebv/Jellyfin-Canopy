@@ -24,7 +24,8 @@ export interface BookmarksApi {
         itemId: string,
         tmdbId?: string,
         tvdbId?: string,
-        mediaType?: unknown
+        mediaType?: unknown,
+        identity?: import('./bookmark-identity').BookmarkIdentityRecord
     ): {
         bookmarks: any[];
         hasIdMismatch: boolean;

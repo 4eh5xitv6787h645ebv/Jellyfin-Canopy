@@ -3,7 +3,12 @@ import { JC } from '../../globals';
 import type { ApiApi } from '../../types/jc';
 import type { UserSettingsSaveResult } from '../config';
 import { renderBookmarksLibrary } from './library-render';
-import { findDuplicateBookmarks } from './library-modals';
+import {
+  duplicateMergeSources,
+  duplicateMergeTarget,
+  findDuplicateBookmarks
+} from './library-modals';
+import { compareBookmarkIdentity } from './bookmark-identity';
 
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 
@@ -174,5 +179,74 @@ describe('bookmarks library identity ownership', () => {
     expect(duplicates).toHaveLength(1);
     expect(duplicates[0].providerKey).toBe('movie:tmdb:10');
     expect(Object.keys(duplicates[0].itemGroups)).toEqual(['movie-a', 'movie-b']);
+  });
+
+  it('rejects mixed or internally conflicting identities independent of record order', () => {
+    const v1 = {
+      itemId: 'item-a', identityVersion: 1, itemType: 'movie', mediaType: 'movie',
+      tmdbId: '10', tvdbId: '', name: 'Movie'
+    };
+    const legacy = { itemId: 'item-a', mediaType: 'movie', tmdbId: '10', name: 'Movie' };
+    const otherVersion = { ...v1, itemId: 'item-b' };
+
+    expect(findDuplicateBookmarks({ first: v1, second: legacy, other: otherVersion })).toEqual([]);
+    expect(findDuplicateBookmarks({ second: legacy, first: v1, other: otherVersion })).toEqual([]);
+    expect(findDuplicateBookmarks({
+      first: v1,
+      conflict: { ...v1, tvdbId: 'wrong' },
+      other: { ...otherVersion, tvdbId: 'right' }
+    })).toEqual([]);
+  });
+
+  it('carries one canonical representative from detection through merge in either record order', () => {
+    const tmdbOnly = {
+      itemId: 'item-a', identityVersion: 1, itemType: 'movie', mediaType: 'movie',
+      tmdbId: '10', tvdbId: '', name: 'Movie'
+    };
+    const both = { ...tmdbOnly, tvdbId: '20' };
+    const tvdbOnly = { ...tmdbOnly, itemId: 'item-b', tmdbId: '', tvdbId: '20' };
+
+    for (const records of [
+      { sparse: tmdbOnly, rich: both, alternate: tvdbOnly },
+      { rich: both, sparse: tmdbOnly, alternate: tvdbOnly },
+      { alternate: tvdbOnly, sparse: tmdbOnly, rich: both }
+    ]) {
+      const duplicate = findDuplicateBookmarks(records)[0];
+      expect(duplicate).toBeDefined();
+      const itemIds = Object.keys(duplicate.itemGroups);
+      const target = duplicateMergeTarget(duplicate, itemIds[0]);
+      if (!target) throw new Error('expected canonical duplicate target');
+      const sources = duplicateMergeSources(duplicate, itemIds.slice(1));
+      expect(sources.length).toBeGreaterThan(0);
+      expect(sources.every(source => compareBookmarkIdentity(source, target) === 'logical')).toBe(true);
+      expect(duplicate.canonicalIdentities['item-a']).toMatchObject({ tmdbId: '10', tvdbId: '20' });
+    }
+
+    const wrongTvdb = { ...tvdbOnly, tvdbId: '21' };
+    expect(findDuplicateBookmarks({ sparse: tmdbOnly, rich: both, alternate: wrongTvdb })).toEqual([]);
+    expect(compareBookmarkIdentity(wrongTvdb, both)).toBe('none');
+  });
+
+  it('selects a season-zero rich representative for series-provider-only duplicates in either order', () => {
+    const sparse = {
+      itemId: 'special-a', identityVersion: 1, itemType: 'episode', mediaType: 'tv',
+      tmdbId: 'episode-10', tvdbId: '', seriesTmdbId: 'series-10', seriesTvdbId: '',
+      seasonNumber: null, episodeNumber: 2, episodeEndNumber: 3, name: 'Special 2-3'
+    };
+    const rich = { ...sparse, seasonNumber: 0 };
+    const alternate = {
+      ...rich,
+      itemId: 'special-b',
+      tmdbId: ''
+    };
+
+    for (const records of [
+      { sparse, rich, alternate },
+      { rich, sparse, alternate }
+    ]) {
+      const duplicate = findDuplicateBookmarks(records);
+      expect(duplicate).toHaveLength(1);
+      expect(duplicateMergeTarget(duplicate[0], 'special-a')).toMatchObject({ seasonNumber: 0 });
+    }
   });
 });

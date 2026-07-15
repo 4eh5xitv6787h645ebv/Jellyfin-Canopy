@@ -10,6 +10,7 @@ import { escapeHtml, toast } from '../../core/ui-kit';
 import { formatTimestamp, renderActiveBookmarks } from './library-render';
 import type { IdentityContext } from '../../types/jc';
 import { normalizeBookmarkMediaType } from './media-types';
+import { bookmarkIdentityLabel, compareBookmarkIdentity } from './bookmark-identity';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -176,39 +177,108 @@ export function showOffsetAdjustmentModal(
  * Find duplicate bookmarks (same TMDB/TVDB but different item IDs)
  */
 export function findDuplicateBookmarks(bookmarks: Record<string, any>): any[] {
-  const byProvider: Record<string, any> = {}; // Group by TMDB/TVDB ID
   const duplicateGroups: any[] = [];
-
-  for (const [id, bm] of Object.entries<any>(bookmarks)) {
-    const mediaType = normalizeBookmarkMediaType(bm.mediaType);
-    const tmdbKey = bm.tmdbId ? `${mediaType}:tmdb:${bm.tmdbId}` : null;
-    const tvdbKey = bm.tvdbId ? `${mediaType}:tvdb:${bm.tvdbId}` : null;
-
-    for (const key of [tmdbKey, tvdbKey].filter(Boolean) as string[]) {
-      if (!byProvider[key]) {
-        byProvider[key] = {};
-      }
-      if (!byProvider[key][bm.itemId]) {
-        byProvider[key][bm.itemId] = [];
-      }
-      byProvider[key][bm.itemId].push({ id, ...bm });
-    }
+  const versions = new Map<string, any[]>();
+  for (const [id, bookmark] of Object.entries<any>(bookmarks)) {
+    if (!bookmark || typeof bookmark !== 'object' || !bookmark.itemId) continue;
+    const current = versions.get(bookmark.itemId) || [];
+    current.push({ id, ...bookmark });
+    versions.set(bookmark.itemId, current);
   }
 
-  // Find groups with multiple item IDs
-  for (const [providerKey, itemGroups] of Object.entries<any>(byProvider)) {
-    const itemIds = Object.keys(itemGroups);
-    if (itemIds.length > 1) {
-      duplicateGroups.push({
-        providerKey,
-        itemGroups,
-        totalBookmarks: Object.values<any>(itemGroups).flat().length,
-        name: Object.values<any>(itemGroups)[0][0].name || 'Unknown'
-      });
+  const candidates = [...versions.entries()].flatMap(([itemId, records]) => {
+    const identityFields = (record: any): unknown[] => [
+      record.identityVersion ?? 0, record.itemType ?? '', record.mediaType ?? '',
+      record.tmdbId ?? '', record.tvdbId ?? '', record.seriesTmdbId ?? '', record.seriesTvdbId ?? '',
+      record.seasonNumber ?? '', record.episodeNumber ?? '', record.episodeEndNumber ?? ''
+    ];
+    const ranked = [...records].sort((left, right) => {
+      const leftFields = identityFields(left);
+      const rightFields = identityFields(right);
+      const isPresent = (value: unknown): boolean => value !== null && value !== undefined
+        && (typeof value !== 'string' || value.trim() !== '');
+      const completeness = rightFields.filter(isPresent).length - leftFields.filter(isPresent).length;
+      return completeness || JSON.stringify(leftFields).localeCompare(JSON.stringify(rightFields));
+    });
+    const identity = ranked[0];
+    const consistent = records.every((left, leftIndex) => records.every((right, rightIndex) =>
+      leftIndex === rightIndex || (
+        left.identityVersion === right.identityVersion
+        && compareBookmarkIdentity(
+          { ...left, itemId: `__identity-left-${leftIndex}__` },
+          { ...right, itemId: `__identity-right-${rightIndex}__` }
+        ) === 'logical'
+      )));
+    // Multiple timestamps for one Jellyfin item should carry the same logical
+    // identity. Mixed legacy/v1 or conflicting metadata is retained visibly,
+    // but cannot nominate a merge identity based on insertion order.
+    return consistent ? [{ itemId, records, identity }] : [];
+  });
+  const assigned = new Set<number>();
+  for (let index = 0; index < candidates.length; index++) {
+    if (assigned.has(index)) continue;
+    const members = [index];
+    for (let candidate = index + 1; candidate < candidates.length; candidate++) {
+      if (assigned.has(candidate)) continue;
+      // Requiring a match against every member avoids a transitive merge when
+      // partially populated provider metadata forms an ambiguous bridge.
+      if (members.every(member => compareBookmarkIdentity(
+        candidates[member].identity,
+        candidates[candidate].identity
+      ) === 'logical')) {
+        members.push(candidate);
+      }
     }
+    if (members.length < 2) continue;
+    members.forEach(member => assigned.add(member));
+    const itemGroups = Object.fromEntries(members.map(member => [
+      candidates[member].itemId,
+      candidates[member].records
+    ]));
+    const canonicalIdentities = Object.fromEntries(members.map(member => [
+      candidates[member].itemId,
+      candidates[member].identity
+    ]));
+    duplicateGroups.push({
+      providerKey: bookmarkIdentityLabel(candidates[index].identity),
+      itemGroups,
+      canonicalIdentities,
+      totalBookmarks: Object.values<any>(itemGroups).flat().length,
+      name: candidates[index].identity.name || 'Unknown'
+    });
   }
 
   return duplicateGroups;
+}
+
+/** Carry the exact identity selected during duplicate detection into execution. */
+export function duplicateMergeTarget(duplicate: any, primaryItemId: string): Record<string, any> | null {
+  const identity = duplicate?.canonicalIdentities?.[primaryItemId];
+  if (!identity || typeof identity !== 'object') return null;
+  return {
+    ...identity,
+    itemId: primaryItemId,
+    mediaType: normalizeBookmarkMediaType(identity.mediaType),
+    name: identity.name || 'Unknown'
+  };
+}
+
+/** Enrich every source timestamp with its detection-time canonical identity. */
+export function duplicateMergeSources(duplicate: any, sourceItemIds: string[]): any[] {
+  const identityFields = [
+    'identityVersion', 'itemType', 'tmdbId', 'tvdbId', 'seriesTmdbId',
+    'seriesTvdbId', 'mediaType', 'seasonNumber', 'episodeNumber', 'episodeEndNumber'
+  ];
+  return sourceItemIds.flatMap(itemId => {
+    const canonical = duplicate?.canonicalIdentities?.[itemId];
+    if (!canonical || typeof canonical !== 'object') return [];
+    const identity = Object.fromEntries(identityFields.map(field => [field, canonical[field]]));
+    return (duplicate.itemGroups?.[itemId] || []).map((bookmark: any) => ({
+      ...bookmark,
+      ...identity,
+      itemId
+    }));
+  });
 }
 
 /**
@@ -339,8 +409,7 @@ export function showDuplicatesSyncModal(
       const primaryItemId = itemIds[0]; // First one is primary
       const oldItemIds = itemIds.slice(1);
 
-      const primaryBookmarks = dup.itemGroups[primaryItemId];
-      const oldBookmarks = oldItemIds.flatMap(id => dup.itemGroups[id]);
+      const oldBookmarks = duplicateMergeSources(dup, oldItemIds);
 
       if (!confirm(JC.t!('bookmark_merge_confirm').replace('{count}', String(oldBookmarks.length)))) {
         return;
@@ -351,14 +420,8 @@ export function showDuplicatesSyncModal(
       btn.querySelector('span:last-child')!.innerHTML = '<span class="material-icons" style="animation: spin 1s linear infinite; font-size: 18px;">refresh</span>';
 
       try {
-        // Get primary item details from first primary bookmark
-        const primaryDetails = {
-          itemId: primaryItemId,
-          tmdbId: primaryBookmarks[0].tmdbId,
-          tvdbId: primaryBookmarks[0].tvdbId,
-          mediaType: normalizeBookmarkMediaType(primaryBookmarks[0].mediaType),
-          name: primaryBookmarks[0].name
-        };
+        const primaryDetails = duplicateMergeTarget(dup, primaryItemId);
+        if (!primaryDetails) throw new Error('Duplicate group has no canonical primary identity');
 
         // Sync old bookmarks to primary
         const synced = await JC.bookmarks!.syncBookmarks(oldBookmarks, primaryDetails, 0);

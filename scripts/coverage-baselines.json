@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 16366,
-        "totalLines": 25020
+        "coveredLines": 16412,
+        "totalLines": 25066
       },
       "tolerance": {
         "missingCoveredLines": 2,
-        "rationale": "Two clean reviewed local .NET 10/Coverlet integration runs on 2026-07-16 measured 16366 and 16365 covered lines across the identical 25020-line final scope after adding bounded SearchHint hierarchy resolution and deriving Jellyfin 12 enabled-library TopParentIds before assigning exact item IDs. Focused evidence covers hidden-series descendants plus atomic user, access-configuration, query, cap, and cancellation failures. The existing two-line tolerance remains narrow and covers only the reproduced one-line instrumentation variance (0.0080 percentage points)."
+        "rationale": "Two clean reviewed local .NET 10/Coverlet integration runs on 2026-07-16 both measured 16412 covered lines across the identical 25066-line combined scope after adding bounded SearchHint hierarchy resolution with Jellyfin 12 enabled-library TopParentIds and the versioned bookmark logical-identity schema. The bookmark work added 46 instrumented lines beyond the reviewed 16366/25020 hidden-search baseline and covered all 46 through clone, equality, validation, dedicated-add, batch, and golden persistence evidence. The existing two-line tolerance remains narrow and covers only the previously reproduced one-line instrumentation variance (0.0080 percentage points)."
       }
     }
   }

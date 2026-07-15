@@ -11,14 +11,28 @@ import { getItemCached } from '../helpers';
 import { renderActiveBookmarks } from './library-render';
 import type { IdentityContext } from '../../types/jc';
 import { normalizeBookmarkMediaType, replacementItemTypes } from './media-types';
+import {
+  BOOKMARK_IDENTITY_VERSION,
+  compareBookmarkIdentity,
+  type BookmarkIdentityRecord
+} from './bookmark-identity';
 
 const replacementModalTimers = new Set<number>();
+export const SERIES_ENRICHMENT_CHUNK_SIZE = 50;
+export const SERIES_ENRICHMENT_MAX_URL_LENGTH = 2048;
 
 interface StoredBookmark {
   itemId: string;
   tmdbId: string;
   tvdbId: string;
   mediaType?: string;
+  identityVersion?: number;
+  itemType?: string;
+  seriesTmdbId?: string;
+  seriesTvdbId?: string;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
+  episodeEndNumber?: number | null;
   name: string;
   [key: string]: unknown;
 }
@@ -34,6 +48,11 @@ interface JellyfinReplacementItem {
   Type?: string;
   ProductionYear?: string | number;
   ProviderIds?: { Tmdb?: string; Tvdb?: string };
+  SeriesId?: string;
+  ParentIndexNumber?: number;
+  IndexNumber?: number;
+  IndexNumberEnd?: number;
+  SeriesProviderIds?: { Tmdb?: string; Tvdb?: string };
   ImageTags?: { Primary?: string };
   UserData?: { Key?: string };
 }
@@ -51,6 +70,54 @@ function isJellyfinReplacementItem(value: unknown): value is JellyfinReplacement
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     && 'Id' in value && typeof value.Id === 'string'
     && 'Name' in value && typeof value.Name === 'string';
+}
+
+function replacementIdentity(item: JellyfinReplacementItem): BookmarkIdentityRecord {
+  const isEpisode = item.Type === 'Episode';
+  const isSeason = item.Type === 'Season';
+  const episodeNumber = isEpisode && Number.isSafeInteger(item.IndexNumber) ? item.IndexNumber : null;
+  return {
+    itemId: item.Id,
+    identityVersion: BOOKMARK_IDENTITY_VERSION,
+    itemType: String(item.Type || '').toLowerCase(),
+    mediaType: normalizeBookmarkMediaType(item.Type),
+    tmdbId: item.ProviderIds?.Tmdb || '',
+    tvdbId: item.ProviderIds?.Tvdb || '',
+    seriesTmdbId: item.SeriesProviderIds?.Tmdb || '',
+    seriesTvdbId: item.SeriesProviderIds?.Tvdb || '',
+    seasonNumber: isEpisode
+      ? (Number.isSafeInteger(item.ParentIndexNumber) ? item.ParentIndexNumber : null)
+      : (isSeason && Number.isSafeInteger(item.IndexNumber) ? item.IndexNumber : null),
+    episodeNumber,
+    episodeEndNumber: isEpisode
+      ? (Number.isSafeInteger(item.IndexNumberEnd) ? item.IndexNumberEnd : episodeNumber)
+      : null
+  };
+}
+
+function seriesEnrichmentUrl(userId: string, seriesIds: string[]): string {
+  const ids = seriesIds.map(id => encodeURIComponent(id)).join(',');
+  return `/Users/${userId}/Items?Ids=${ids}&Fields=ProviderIds&Limit=${seriesIds.length}`;
+}
+
+function chunkSeriesIds(userId: string, seriesIds: string[]): string[][] {
+  const chunks: string[][] = [];
+  let current: string[] = [];
+  for (const seriesId of seriesIds) {
+    const candidate = [...current, seriesId];
+    if (current.length > 0 && (
+      candidate.length > SERIES_ENRICHMENT_CHUNK_SIZE
+      || seriesEnrichmentUrl(userId, candidate).length > SERIES_ENRICHMENT_MAX_URL_LENGTH
+    )) {
+      chunks.push(current);
+      current = [];
+    }
+    if (seriesEnrichmentUrl(userId, [seriesId]).length <= SERIES_ENRICHMENT_MAX_URL_LENGTH) {
+      current.push(seriesId);
+    }
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
 }
 
 function currentImageApiClient(): ImageApiClient | null {
@@ -94,10 +161,8 @@ JC.identity.registerReset('bookmarks-library-replacement-modals', () => {
 /**
  * Search Jellyfin for items matching a TMDB/TVDB ID
  */
-async function searchForReplacementItem(
-  tmdbId: string,
-  tvdbId: string,
-  mediaType: unknown,
+export async function searchForReplacementItem(
+  bookmark: StoredBookmark,
   context: IdentityContext
 ): Promise<JellyfinReplacementItem[] | null> {
   if (!JC.identity.isCurrent(context)) return null;
@@ -105,13 +170,13 @@ async function searchForReplacementItem(
 
   try {
     // Search using Jellyfin's provider ID filtering
-    const normalizedMediaType = normalizeBookmarkMediaType(mediaType);
+    const normalizedMediaType = normalizeBookmarkMediaType(bookmark.mediaType);
     const itemTypes = replacementItemTypes(normalizedMediaType);
 
     // Fetch all items of this type and filter by provider ID client-side
     // This is more reliable than relying on AnyProviderIdEquals
     const typeFilter = itemTypes ? `&IncludeItemTypes=${itemTypes}` : '';
-    const url = `/Users/${userId}/Items?Recursive=true${typeFilter}&SortBy=DateCreated&SortOrder=Descending&Limit=500`;
+    const url = `/Users/${userId}/Items?Recursive=true${typeFilter}&Fields=ProviderIds,Type,SeriesId,ParentIndexNumber,IndexNumber,IndexNumberEnd&SortBy=DateCreated&SortOrder=Descending&Limit=500`;
 
     // Routed through the core fetch layer (auth + JSON parse identical to the
     // former ApiClient.ajax call; failures still land in the catch below).
@@ -126,7 +191,7 @@ async function searchForReplacementItem(
 
     console.log(`🪼 Jellyfin Canopy: Bookmarks Library: API Response:`, response);
 
-    const items = response !== null && typeof response === 'object' && !Array.isArray(response)
+    let items = response !== null && typeof response === 'object' && !Array.isArray(response)
       && 'Items' in response && Array.isArray(response.Items)
       ? response.Items.filter(isJellyfinReplacementItem)
       : [];
@@ -137,30 +202,40 @@ async function searchForReplacementItem(
       return null;
     }
 
-    // Filter items by matching provider IDs
-    // Check both ProviderIds and UserData.Key (TMDB ID is often stored there)
-    const matches = items.filter((item) => {
-      const candidateType = normalizeBookmarkMediaType(item.Type);
-      if (item.Type && candidateType !== normalizedMediaType) return false;
-      const providerIds = item.ProviderIds || {};
-      const userData = item.UserData || {};
-
-      if (tmdbId) {
-        // Check ProviderIds.Tmdb
-        if (providerIds.Tmdb === String(tmdbId)) return true;
-        // Check UserData.Key for TMDB ID
-        if (userData.Key === String(tmdbId)) return true;
+    const seriesIds = [...new Set(items.map(item => item.SeriesId).filter((id): id is string => !!id))];
+    if (seriesIds.length > 0) {
+      const seriesProviders = new Map<string, { Tmdb?: string; Tvdb?: string }>();
+      for (const chunk of chunkSeriesIds(userId, seriesIds)) {
+        try {
+          let seriesResponse: unknown = await JC.core.api!.jf(
+            seriesEnrichmentUrl(userId, chunk),
+            { skipCache: true }
+          );
+          if (!JC.identity.isCurrent(context)) return null;
+          if (typeof seriesResponse === 'string') seriesResponse = JSON.parse(seriesResponse) as unknown;
+          const seriesItems = seriesResponse !== null && typeof seriesResponse === 'object'
+            && !Array.isArray(seriesResponse) && 'Items' in seriesResponse && Array.isArray(seriesResponse.Items)
+            ? seriesResponse.Items.filter(isJellyfinReplacementItem)
+            : [];
+          for (const seriesItem of seriesItems) {
+            seriesProviders.set(seriesItem.Id, seriesItem.ProviderIds || {});
+          }
+        } catch (error) {
+          if (!JC.identity.isCurrent(context)) return null;
+          console.warn(`🪼 Jellyfin Canopy: Bookmarks Library: Parent-series enrichment chunk failed; retaining item-provider matches`, error);
+        }
       }
+      items = items.map(item => ({
+        ...item,
+        SeriesProviderIds: item.SeriesId ? seriesProviders.get(item.SeriesId) : undefined
+      }));
+    }
 
-      if (tvdbId) {
-        // Check ProviderIds.Tvdb
-        if (providerIds.Tvdb === String(tvdbId)) return true;
-      }
+    // UserData.Key is deliberately excluded: unlike ProviderIds it does not
+    // carry a namespace and cannot safely identify an episode.
+    const matches = items.filter(item => compareBookmarkIdentity(bookmark, replacementIdentity(item)) === 'logical');
 
-      return false;
-    });
-
-    console.log(`🪼 Jellyfin Canopy: Bookmarks Library: Found ${matches.length} matches for ${tmdbId ? 'TMDB:'+tmdbId : 'TVDB:'+tvdbId}`, matches);
+    console.log(`🪼 Jellyfin Canopy: Bookmarks Library: Found ${matches.length} logical replacement matches`, matches);
     return matches.length > 0 ? matches : null;
   } catch (e) {
     if (!JC.identity.isCurrent(context)) return null;
@@ -181,9 +256,7 @@ export async function findAndOfferReplacement(
   triggerBtn.disabled = true;
 
   const matches = await searchForReplacementItem(
-    group.details.tmdbId,
-    group.details.tvdbId,
-    group.details.mediaType,
+    group.details,
     context
   );
   if (!JC.identity.isCurrent(context)) return;
@@ -322,10 +395,7 @@ function showReplacementSelectionModal(
       if (!JC.identity.isCurrent(context) || !isJellyfinReplacementItem(fullItem)) return;
 
       const newDetails = {
-        itemId: fullItem.Id,
-        tmdbId: fullItem.ProviderIds?.Tmdb || oldGroup.details.tmdbId,
-        tvdbId: fullItem.ProviderIds?.Tvdb || oldGroup.details.tvdbId,
-        mediaType: normalizeBookmarkMediaType(fullItem.Type ?? oldGroup.details.mediaType),
+        ...replacementIdentity(selectedItem),
         name: fullItem.Name
       };
 
@@ -401,7 +471,8 @@ export async function findAllOrphanedAndOfferMigration(
       // destructive migration); keep it and warn.
       const status = (e as { status?: number } | null)?.status;
       if (status === 404) {
-        if (group.details.tmdbId || group.details.tvdbId) {
+        if (group.details.tmdbId || group.details.tvdbId
+          || group.details.seriesTmdbId || group.details.seriesTvdbId) {
           orphanedGroups.push(group);
         }
       } else {
@@ -420,9 +491,7 @@ export async function findAllOrphanedAndOfferMigration(
   for (const group of orphanedGroups) {
     if (!JC.identity.isCurrent(context)) return;
     const matches = await searchForReplacementItem(
-      group.details.tmdbId,
-      group.details.tvdbId,
-      group.details.mediaType,
+      group.details,
       context
     );
     if (!JC.identity.isCurrent(context)) return;

@@ -137,6 +137,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
                     ["item-1:12.25"] = new BookmarkItem
                     {
                         ItemId = "item-1",
+                        IdentityVersion = 1,
+                        ItemType = "movie",
                         TmdbId = "603",
                         MediaType = "movie",
                         Name = "Amélie — 映画",
