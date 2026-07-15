@@ -7,6 +7,9 @@ const test = require('node:test');
 
 const ROOT = path.resolve(__dirname, '../..');
 const seed = fs.readFileSync(path.join(ROOT, 'e2e/docker/seed.sh'), 'utf8');
+const boxsetSeedStart = seed.indexOf('log "creating the TMDB-anchored incomplete collection fixture"');
+const boxsetSeedEnd = seed.indexOf('log "collection fixture ready:', boxsetSeedStart);
+const boxsetSeed = seed.slice(boxsetSeedStart, boxsetSeedEnd);
 
 test('BoxSet is locked atomically before its queued metadata refresh', () => {
     const create = seed.indexOf('&isLocked=true")');
@@ -18,6 +21,20 @@ test('BoxSet is locked atomically before its queued metadata refresh', () => {
     assert.ok(metadataWrite > createdLockCheck);
     assert.match(seed, /\.LockData = true \| \.ProviderIds =/);
     assert.doesNotMatch(seed, /\/Collections\?Name=JC%20E2E%20Fixture%20Collection&Ids=\$\{BOXSET_SEED_IDS\}"/);
+});
+
+test('BoxSet lock verification consumes the Jellyfin 12 LockData DTO field', () => {
+    assert.ok(boxsetSeedStart >= 0);
+    assert.ok(boxsetSeedEnd > boxsetSeedStart);
+    assert.equal(
+        (boxsetSeed.match(/BOXSET_LOCKED="\$\(printf[^\n]+\.LockData \/\/ false/g) || []).length,
+        1
+    );
+    assert.equal(
+        (boxsetSeed.match(/BOXSET_LOCKED="\$\(printf[^\n]+\.LockData \/\/ "missing"/g) || []).length,
+        2
+    );
+    assert.doesNotMatch(boxsetSeed, /\.IsLocked/);
 });
 
 test('BoxSet anchor proof reconciles native and feature-facing state', () => {
