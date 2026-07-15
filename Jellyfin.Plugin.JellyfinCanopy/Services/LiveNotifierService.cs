@@ -55,6 +55,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly ISessionManager _sessionManager;
         private readonly ILiveSessionRegistry _liveSessionRegistry;
         private readonly ISeerrCache _seerrCache;
+        private readonly WatchlistMonitor _watchlistMonitor;
         private readonly ILogger<LiveNotifierService> _logger;
 
         private BasePlugin<PluginConfiguration>? _plugin;
@@ -65,12 +66,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             ISessionManager sessionManager,
             ILiveSessionRegistry liveSessionRegistry,
             ISeerrCache seerrCache,
+            WatchlistMonitor watchlistMonitor,
             ILogger<LiveNotifierService> logger)
         {
             _pluginManager = pluginManager;
             _sessionManager = sessionManager;
             _liveSessionRegistry = liveSessionRegistry;
             _seerrCache = seerrCache;
+            _watchlistMonitor = watchlistMonitor;
             _logger = logger;
         }
 
@@ -129,6 +132,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         internal async Task HandleConfigurationChangedAsync(CancellationToken cancellationToken)
         {
+            _watchlistMonitor.NotifyConfigurationChanged();
+
             try
             {
                 _seerrCache.ClearAllSeerrCachesOnConfigChange();

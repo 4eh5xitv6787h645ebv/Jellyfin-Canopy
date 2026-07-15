@@ -204,6 +204,38 @@ public sealed class WatchlistMonitorAuthorizationTests
         Assert.DoesNotContain("secret", canonical, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void RequestSnapshot_IndexesEachMediaIdentityOnceAndRetainsAllOwners()
+    {
+        var requests = Enumerable.Range(1, 10_000)
+            .Select(tmdbId => new WatchlistMonitor.RequestItemWithUser
+            {
+                TmdbId = tmdbId,
+                MediaType = "movie",
+                SourceUrl = "http://seerr:5055",
+                RequestedBySeerrUserId = tmdbId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                RequestedByJellyfinUserId = Guid.NewGuid().ToString("N"),
+            })
+            .ToList();
+        requests.Add(new WatchlistMonitor.RequestItemWithUser
+        {
+            TmdbId = 5_000,
+            MediaType = "movie",
+            SourceUrl = "http://seerr:5055",
+            RequestedBySeerrUserId = "duplicate-owner",
+            RequestedByJellyfinUserId = Guid.NewGuid().ToString("N"),
+        });
+
+        var snapshot = WatchlistMonitor.RequestSnapshot.Create(requests);
+
+        Assert.Equal(10_001, snapshot.Count);
+        Assert.Equal(20_001, snapshot.Weight); // 10,001 rows + 10,000 unique keys.
+        Assert.True(snapshot.TryGet("movie", 5_000, out var owners));
+        Assert.Equal(2, owners.Count);
+        Assert.False(snapshot.TryGet("tv", 5_000, out var wrongMedia));
+        Assert.Empty(wrongMedia);
+    }
+
     private static WatchlistMonitor CreateMonitor(
         User user,
         RecordingUserDataManager data,

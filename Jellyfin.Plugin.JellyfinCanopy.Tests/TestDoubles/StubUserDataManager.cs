@@ -22,6 +22,9 @@ public sealed class StubUserDataManager : IUserDataManager
     /// <summary>When set, backs <see cref="GetUserData(User, BaseItem)"/>.</summary>
     public Func<User, BaseItem, UserItemData?>? GetUserDataHook { get; set; }
 
+    /// <summary>When set, backs the token-aware <see cref="SaveUserData(User, BaseItem, UserItemData, UserDataSaveReason, CancellationToken)"/>.</summary>
+    public Action<User, BaseItem, UserItemData, UserDataSaveReason, CancellationToken>? SaveUserDataHook { get; set; }
+
     public event EventHandler<UserDataSaveEventArgs>? UserDataSaved
     {
         add => _userDataSaved += value;
@@ -53,7 +56,11 @@ public sealed class StubUserDataManager : IUserDataManager
 
     // ---- Everything below is an unused NotImplemented stub (per the repo convention). ----
 
-    public void SaveUserData(User user, BaseItem item, UserItemData userData, UserDataSaveReason reason, CancellationToken cancellationToken) => throw new NotImplementedException();
+    public void SaveUserData(User user, BaseItem item, UserItemData userData, UserDataSaveReason reason, CancellationToken cancellationToken)
+    {
+        if (SaveUserDataHook == null) throw new NotImplementedException();
+        SaveUserDataHook(user, item, userData, reason, cancellationToken);
+    }
 
     public void SaveUserData(User user, BaseItem item, UpdateUserItemDataDto userDataDto, UserDataSaveReason reason) => throw new NotImplementedException();
 
