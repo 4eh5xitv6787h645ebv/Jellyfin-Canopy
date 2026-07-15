@@ -232,9 +232,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
     public class BookmarkItem
     {
         public string ItemId { get; set; } = string.Empty;
+        public int IdentityVersion { get; set; }
+        public string ItemType { get; set; } = string.Empty;
         public string TmdbId { get; set; } = string.Empty;
         public string TvdbId { get; set; } = string.Empty;
+        public string SeriesTmdbId { get; set; } = string.Empty;
+        public string SeriesTvdbId { get; set; } = string.Empty;
         public string MediaType { get; set; } = string.Empty;
+        public int? SeasonNumber { get; set; }
+        public int? EpisodeNumber { get; set; }
+        public int? EpisodeEndNumber { get; set; }
         public string Name { get; set; } = string.Empty;
         public double Timestamp { get; set; }
         public string Label { get; set; } = string.Empty;

@@ -9,7 +9,12 @@ import { debounce } from '../helpers';
 import { createObserver, disconnectObserver } from '../../core/dom-observer';
 import type { BookmarkCleanupResult, BookmarksApi } from './surface';
 import type { IdentityContext } from '../../types/jc';
-import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types';
+import { normalizeBookmarkMediaType } from './media-types';
+import {
+  compareBookmarkIdentity,
+  persistedBookmarkIdentity,
+  type BookmarkIdentityRecord
+} from './bookmark-identity';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -163,7 +168,9 @@ import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types
 
   function sameBookmark(left: Record<string, any>, right: Record<string, any>): boolean {
     const fields = [
-      'itemId', 'tmdbId', 'tvdbId', 'mediaType', 'name', 'timestamp',
+      'itemId', 'identityVersion', 'itemType', 'tmdbId', 'tvdbId',
+      'seriesTmdbId', 'seriesTvdbId', 'mediaType', 'seasonNumber',
+      'episodeNumber', 'episodeEndNumber', 'name', 'timestamp',
       'label', 'createdAt', 'updatedAt', 'syncedFrom'
     ];
     return fields.every(field => (left[field] ?? '') === (right[field] ?? ''));
@@ -415,7 +422,7 @@ import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types
           type: 'GET',
           url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl(`/Users/${userId}/Items`, {
             Ids: itemId,
-            Fields: 'ProviderIds,Type,Name,SeriesId,ParentIndexNumber,IndexNumber'
+            Fields: 'ProviderIds,Type,Name,SeriesId,ParentIndexNumber,IndexNumber,IndexNumberEnd'
           }),
           dataType: 'json'
         });
@@ -423,8 +430,9 @@ import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types
         const item = result?.Items?.[0];
         if (!item || !isIdentityCurrent(captured)) return null;
 
-        // For episodes/seasons, also get series TMDB/TVDB
-        let sourceItem = item;
+        // Episode/season provider IDs identify that concrete item. Keep them in
+        // their namespace and fetch the parent series IDs into separate fields.
+        let seriesItem: any = null;
         if ((item.Type === 'Season' || item.Type === 'Episode') && item.SeriesId) {
           try {
             const seriesResult: any = await ApiClient.ajax({
@@ -435,33 +443,36 @@ import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types
               }),
               dataType: 'json'
             });
-            const seriesItem = seriesResult?.Items?.[0];
-            if (seriesItem && isIdentityCurrent(captured)) {
-              // Merge: use series TMDB/TVDB but keep episode info
-              sourceItem = {
-                ...item,
-                ProviderIds: {
-                  ...(item.ProviderIds || {}),
-                  Tmdb: seriesItem.ProviderIds?.Tmdb || item.ProviderIds?.Tmdb,
-                  Tvdb: seriesItem.ProviderIds?.Tvdb || item.ProviderIds?.Tvdb
-                }
-              };
-            }
+            seriesItem = seriesResult?.Items?.[0] || null;
           } catch (e) {
             if (!isIdentityCurrent(captured)) return null;
             console.warn(`${logPrefix} Failed to fetch series info:`, e);
           }
         }
 
-        const tmdbId = sourceItem.ProviderIds?.Tmdb || null;
-        const tvdbId = sourceItem.ProviderIds?.Tvdb || null;
+        const tmdbId = item.ProviderIds?.Tmdb || null;
+        const tvdbId = item.ProviderIds?.Tvdb || null;
         const mediaType = normalizeBookmarkMediaType(item.Type);
+        const isEpisode = item.Type === 'Episode';
+        const isSeason = item.Type === 'Season';
+        const episodeNumber = isEpisode && Number.isSafeInteger(item.IndexNumber) ? item.IndexNumber : null;
 
         const details = {
           itemId: item.Id,
+          identityVersion: 1,
+          itemType: String(item.Type || 'other').toLowerCase(),
           tmdbId,
           tvdbId,
+          seriesTmdbId: seriesItem?.ProviderIds?.Tmdb || null,
+          seriesTvdbId: seriesItem?.ProviderIds?.Tvdb || null,
           mediaType,
+          seasonNumber: isEpisode
+            ? (Number.isSafeInteger(item.ParentIndexNumber) ? item.ParentIndexNumber : null)
+            : (isSeason && Number.isSafeInteger(item.IndexNumber) ? item.IndexNumber : null),
+          episodeNumber,
+          episodeEndNumber: isEpisode
+            ? (Number.isSafeInteger(item.IndexNumberEnd) ? item.IndexNumberEnd : episodeNumber)
+            : null,
           name: item.Name || 'Unknown',
           type: item.Type
         };
@@ -502,7 +513,8 @@ import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types
     itemId: string,
     tmdbId?: string,
     tvdbId?: string,
-    mediaType?: unknown
+    mediaType?: unknown,
+    identity?: BookmarkIdentityRecord
   ): { bookmarks: any[]; hasIdMismatch: boolean; exactMatches: any[]; providerMatches: any[] } {
     const allBookmarks = (JC.userConfig as any)?.bookmark?.bookmarks || {};
     const exactMatches: any[] = [];
@@ -512,26 +524,18 @@ import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types
       // Skip invalid bookmarks
       if (typeof bookmark !== 'object' || bookmark === null) continue;
 
-      // Direct itemId match (preferred)
-      if (bookmark.itemId === itemId) {
+      const match = compareBookmarkIdentity(bookmark, {
+        ...(identity || {}),
+        itemId,
+        tmdbId,
+        tvdbId,
+        mediaType
+      });
+      if (match === 'exact') {
         exactMatches.push({ id: bookmarkId, ...bookmark, exactMatch: true });
         continue;
       }
-
-      // Provider ids are not globally unique across Jellyfin media classes.
-      // Apply the same canonical category used by creation and the library so
-      // a movie cannot acquire a TV/legacy-other bookmark by fallback alone.
-      // The fourth argument extends the frozen three-argument public facade;
-      // legacy callers that omit it retain their prior provider-id behavior.
-      if (mediaType !== undefined && !sameBookmarkMediaType(bookmark.mediaType, mediaType)) continue;
-
-      // Fallback: TMDB/TVDB match (different item ID)
-      if (tmdbId && bookmark.tmdbId === tmdbId) {
-        providerMatches.push({ id: bookmarkId, ...bookmark, exactMatch: false });
-        continue;
-      }
-
-      if (tvdbId && bookmark.tvdbId === tvdbId) {
+      if (match === 'logical') {
         providerMatches.push({ id: bookmarkId, ...bookmark, exactMatch: false });
       }
     }
@@ -574,8 +578,7 @@ import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types
 
     const bookmark = {
       itemId: details.itemId || '',
-      tmdbId: details.tmdbId || '',
-      tvdbId: details.tvdbId || '',
+      ...persistedBookmarkIdentity(details),
       mediaType: normalizeBookmarkMediaType(details.mediaType),
       name: details.name || '',
       timestamp: timestamp,
@@ -622,6 +625,23 @@ import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types
     }
 
     const updatedAt = new Date().toISOString();
+    const startingBookmark = root.bookmarks[bookmarkId];
+    let identityUpgrade: Record<string, unknown> = {};
+    let identityUpgradeMediaType: unknown;
+    if (startingBookmark.identityVersion !== 1 && typeof startingBookmark.itemId === 'string') {
+      const details = await fetchItemDetails(startingBookmark.itemId);
+      if (!isBookmarkRootCurrent(captured, root)) return false;
+      if (details?.itemId === startingBookmark.itemId) {
+        identityUpgrade = persistedBookmarkIdentity(details);
+        identityUpgradeMediaType = details.mediaType;
+      }
+    }
+    const safeUpdates = { ...updates };
+    for (const field of [
+      'itemId', 'identityVersion', 'itemType', 'tmdbId', 'tvdbId',
+      'seriesTmdbId', 'seriesTvdbId', 'mediaType', 'seasonNumber',
+      'episodeNumber', 'episodeEndNumber'
+    ]) delete safeUpdates[field];
 
     try {
       const committed = await commitBookmarkBatch(captured, root, state => {
@@ -632,8 +652,9 @@ import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types
           bookmarkId,
           bookmark: {
             ...current,
-            ...updates,
-            mediaType: normalizeBookmarkMediaType(updates.mediaType ?? current.mediaType),
+            ...safeUpdates,
+            ...identityUpgrade,
+            mediaType: normalizeBookmarkMediaType(identityUpgradeMediaType ?? current.mediaType),
             updatedAt
           }
         }];
@@ -699,13 +720,17 @@ import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types
     // Stable ids make a conflict retry (or a replay after a lost response)
     // idempotent rather than creating a second copy.
     for (const oldBookmark of oldBookmarks) {
+      if (compareBookmarkIdentity(oldBookmark, newItemDetails) === 'none') {
+        throw new Error('Refusing to sync bookmarks across different or ambiguous logical media');
+      }
       const newBookmarkId = generateBookmarkId();
       const newTimestamp = Math.max(0, oldBookmark.timestamp + timeOffset);
 
       const newBookmark = {
         itemId: newItemDetails.itemId,
-        tmdbId: newItemDetails.tmdbId,
-        tvdbId: newItemDetails.tvdbId,
+        ...(newItemDetails.itemType
+          ? persistedBookmarkIdentity(newItemDetails)
+          : { tmdbId: newItemDetails.tmdbId || '', tvdbId: newItemDetails.tvdbId || '' }),
         mediaType: normalizeBookmarkMediaType(newItemDetails.mediaType),
         name: newItemDetails.name,
         timestamp: newTimestamp,
@@ -1014,7 +1039,8 @@ import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types
       details.itemId,
       details.tmdbId,
       details.tvdbId,
-      details.mediaType
+      details.mediaType,
+      details
     );
 
     console.log(`${logPrefix} Found ${bookmarksList.length} bookmarks for this item`);
@@ -1055,7 +1081,8 @@ import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types
       details.itemId,
       details.tmdbId,
       details.tvdbId,
-      details.mediaType
+      details.mediaType,
+      details
     );
 
     console.log('🪼 Bookmarks modal: Found', existingBookmarks.length, 'existing bookmarks for item', details.itemId);

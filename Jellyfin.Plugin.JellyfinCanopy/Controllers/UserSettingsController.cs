@@ -673,9 +673,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             public long? Revision { get; set; }
             public string BookmarkId { get; set; } = string.Empty;
             public string ItemId { get; set; } = string.Empty;
+            public int IdentityVersion { get; set; }
+            public string ItemType { get; set; } = string.Empty;
             public string TmdbId { get; set; } = string.Empty;
             public string TvdbId { get; set; } = string.Empty;
+            public string SeriesTmdbId { get; set; } = string.Empty;
+            public string SeriesTvdbId { get; set; } = string.Empty;
             public string MediaType { get; set; } = string.Empty;
+            public int? SeasonNumber { get; set; }
+            public int? EpisodeNumber { get; set; }
+            public int? EpisodeEndNumber { get; set; }
             public string Name { get; set; } = string.Empty;
             public double Timestamp { get; set; }
             public string Label { get; set; } = string.Empty;
@@ -718,9 +725,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 var item = new BookmarkItem
                 {
                     ItemId = payload.ItemId,
+                    IdentityVersion = payload.IdentityVersion,
+                    ItemType = payload.ItemType ?? string.Empty,
                     TmdbId = payload.TmdbId ?? string.Empty,
                     TvdbId = payload.TvdbId ?? string.Empty,
+                    SeriesTmdbId = payload.SeriesTmdbId ?? string.Empty,
+                    SeriesTvdbId = payload.SeriesTvdbId ?? string.Empty,
                     MediaType = payload.MediaType ?? string.Empty,
+                    SeasonNumber = payload.SeasonNumber,
+                    EpisodeNumber = payload.EpisodeNumber,
+                    EpisodeEndNumber = payload.EpisodeEndNumber,
                     Name = payload.Name ?? string.Empty,
                     Timestamp = payload.Timestamp,
                     Label = payload.Label ?? string.Empty,
@@ -1290,9 +1304,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             => new BookmarkItem
             {
                 ItemId = source.ItemId ?? string.Empty,
+                IdentityVersion = source.IdentityVersion,
+                ItemType = source.ItemType ?? string.Empty,
                 TmdbId = source.TmdbId ?? string.Empty,
                 TvdbId = source.TvdbId ?? string.Empty,
+                SeriesTmdbId = source.SeriesTmdbId ?? string.Empty,
+                SeriesTvdbId = source.SeriesTvdbId ?? string.Empty,
                 MediaType = source.MediaType ?? string.Empty,
+                SeasonNumber = source.SeasonNumber,
+                EpisodeNumber = source.EpisodeNumber,
+                EpisodeEndNumber = source.EpisodeEndNumber,
                 Name = source.Name ?? string.Empty,
                 Timestamp = source.Timestamp,
                 Label = source.Label ?? string.Empty,
@@ -1303,9 +1324,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         private static bool BookmarkEquals(BookmarkItem left, BookmarkItem right)
             => string.Equals(left.ItemId, right.ItemId, StringComparison.Ordinal)
+            && left.IdentityVersion == right.IdentityVersion
+            && string.Equals(left.ItemType, right.ItemType, StringComparison.Ordinal)
             && string.Equals(left.TmdbId, right.TmdbId, StringComparison.Ordinal)
             && string.Equals(left.TvdbId, right.TvdbId, StringComparison.Ordinal)
+            && string.Equals(left.SeriesTmdbId, right.SeriesTmdbId, StringComparison.Ordinal)
+            && string.Equals(left.SeriesTvdbId, right.SeriesTvdbId, StringComparison.Ordinal)
             && string.Equals(left.MediaType, right.MediaType, StringComparison.Ordinal)
+            && left.SeasonNumber == right.SeasonNumber
+            && left.EpisodeNumber == right.EpisodeNumber
+            && left.EpisodeEndNumber == right.EpisodeEndNumber
             && string.Equals(left.Name, right.Name, StringComparison.Ordinal)
             && left.Timestamp.Equals(right.Timestamp)
             && string.Equals(left.Label, right.Label, StringComparison.Ordinal)
@@ -1323,9 +1351,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             => bookmark != null
             && !string.IsNullOrWhiteSpace(bookmark.ItemId)
             && bookmark.ItemId.Length <= MaxBookmarkStringLength
+            && (bookmark.IdentityVersion == 0 || bookmark.IdentityVersion == 1)
+            && (bookmark.IdentityVersion == 0 || !string.IsNullOrWhiteSpace(bookmark.ItemType))
+            && (bookmark.ItemType?.Length ?? 0) <= MaxBookmarkStringLength
             && (bookmark.TmdbId?.Length ?? 0) <= MaxBookmarkStringLength
             && (bookmark.TvdbId?.Length ?? 0) <= MaxBookmarkStringLength
+            && (bookmark.SeriesTmdbId?.Length ?? 0) <= MaxBookmarkStringLength
+            && (bookmark.SeriesTvdbId?.Length ?? 0) <= MaxBookmarkStringLength
             && (bookmark.MediaType?.Length ?? 0) <= MaxBookmarkStringLength
+            && IsValidBookmarkIndex(bookmark.SeasonNumber)
+            && IsValidBookmarkIndex(bookmark.EpisodeNumber)
+            && IsValidBookmarkIndex(bookmark.EpisodeEndNumber)
+            && (!bookmark.EpisodeNumber.HasValue || !bookmark.EpisodeEndNumber.HasValue
+                || bookmark.EpisodeEndNumber.Value >= bookmark.EpisodeNumber.Value)
             && (bookmark.Name?.Length ?? 0) <= MaxBookmarkStringLength
             && (bookmark.Label?.Length ?? 0) <= MaxBookmarkStringLength
             && (bookmark.CreatedAt?.Length ?? 0) <= MaxBookmarkStringLength
@@ -1333,6 +1371,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             && (bookmark.SyncedFrom?.Length ?? 0) <= MaxBookmarkStringLength
             && double.IsFinite(bookmark.Timestamp)
             && bookmark.Timestamp >= 0;
+
+        private static bool IsValidBookmarkIndex(int? value)
+            => !value.HasValue || (value.Value >= 0 && value.Value <= 100000);
 
         private bool TryParseIfMatchRevision(out long revision)
         {

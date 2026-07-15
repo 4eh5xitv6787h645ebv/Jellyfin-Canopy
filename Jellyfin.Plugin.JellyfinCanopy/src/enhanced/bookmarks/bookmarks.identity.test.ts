@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { findDuplicateBookmarks } from './library-modals';
+import { searchForReplacementItem } from './library-replacements';
 
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 
@@ -514,7 +516,107 @@ describe('bookmark player identity ownership', () => {
     expect(operation.bookmark.mediaType).toBe('other');
   });
 
-  it('uses the canonical media category for provider fallback matching', async () => {
+  it('persists episode and series providers separately with an inclusive S0 range', async () => {
+    const api = await loadModule({});
+    ajax
+      .mockResolvedValueOnce({ Items: [{
+        Id: 'item-a',
+        Name: 'Special double episode',
+        Type: 'Episode',
+        SeriesId: 'series-a',
+        ParentIndexNumber: 0,
+        IndexNumber: 2,
+        IndexNumberEnd: 3,
+        ProviderIds: { Tmdb: 'episode-tmdb', Tvdb: 'episode-tvdb' }
+      }] })
+      .mockResolvedValueOnce({ Items: [{
+        Id: 'series-a',
+        Type: 'Series',
+        ProviderIds: { Tmdb: 'series-tmdb', Tvdb: 'series-tvdb' }
+      }] });
+
+    await expect(api.add(5, 'Special')).resolves.toMatchObject({ identityVersion: 1 });
+    expect(save.mock.calls[0][1].body.operations[0].bookmark).toMatchObject({
+      identityVersion: 1,
+      itemType: 'episode',
+      tmdbId: 'episode-tmdb',
+      tvdbId: 'episode-tvdb',
+      seriesTmdbId: 'series-tmdb',
+      seriesTvdbId: 'series-tvdb',
+      seasonNumber: 0,
+      episodeNumber: 2,
+      episodeEndNumber: 3
+    });
+  });
+
+  it('uses the shared comparator for episode playback lookup', async () => {
+    const first = {
+      ...bookmark('first', 'S1E1'),
+      identityVersion: 1,
+      itemType: 'episode',
+      mediaType: 'tv',
+      tmdbId: '',
+      tvdbId: '',
+      seriesTmdbId: 'series',
+      seasonNumber: 1,
+      episodeNumber: 1,
+      episodeEndNumber: 1
+    };
+    const second = { ...first, itemId: 'second', episodeNumber: 2, episodeEndNumber: 2 };
+    const api = await loadModule({ first, second });
+    const target = { ...first, itemId: 'alternate-first' };
+
+    expect(api.findForItem(
+      target.itemId, target.tmdbId, target.tvdbId, target.mediaType, target
+    ).bookmarks.map((entry: AnyRecord) => entry.id)).toEqual(['first']);
+  });
+
+  it('keeps playback, duplicate, and replacement episode decisions in parity', async () => {
+    const base = {
+      ...bookmark('original', 'S1E1'),
+      itemId: 'original',
+      name: 'S1E1',
+      identityVersion: 1,
+      itemType: 'episode',
+      mediaType: 'tv',
+      tmdbId: 'episode-900',
+      tvdbId: '',
+      seriesTmdbId: 'series-10',
+      seriesTvdbId: '',
+      seasonNumber: 1,
+      episodeNumber: 1,
+      episodeEndNumber: 1
+    };
+    const alternate = { ...base, itemId: 'alternate' };
+    const sibling = { ...base, itemId: 'sibling', episodeNumber: 2, episodeEndNumber: 2 };
+    const api = await loadModule({ original: base, sibling });
+
+    expect(api.findForItem(
+      alternate.itemId, alternate.tmdbId, alternate.tvdbId, alternate.mediaType, alternate
+    ).bookmarks.map((entry: AnyRecord) => entry.id)).toEqual(['original']);
+
+    const duplicates = findDuplicateBookmarks({ original: base, alternate, sibling });
+    expect(duplicates).toHaveLength(1);
+    expect(Object.keys(duplicates[0].itemGroups)).toEqual(['original', 'alternate']);
+
+    const jf = vi.fn().mockResolvedValueOnce({ Items: [
+      {
+        Id: 'alternate', Name: 'S1E1 alternate', Type: 'Episode',
+        ParentIndexNumber: 1, IndexNumber: 1, IndexNumberEnd: 1,
+        ProviderIds: { Tmdb: 'episode-900' }
+      },
+      {
+        Id: 'sibling', Name: 'S1E2', Type: 'Episode',
+        ParentIndexNumber: 1, IndexNumber: 2, IndexNumberEnd: 2,
+        ProviderIds: { Tmdb: 'episode-900' }
+      }
+    ] });
+    JC.core.api.jf = jf;
+    await expect(searchForReplacementItem(base, JC.identity.capture()))
+      .resolves.toEqual([expect.objectContaining({ Id: 'alternate' })]);
+  });
+
+  it('keeps only unambiguous legacy movie provider fallback matching', async () => {
     const api = await loadModule({
       movie: { ...bookmark('old-movie', 'Movie'), tmdbId: 'shared', mediaType: 'Movie' },
       episode: { ...bookmark('old-episode', 'Episode'), tmdbId: 'shared', mediaType: 'Episode' },
@@ -524,20 +626,22 @@ describe('bookmark player identity ownership', () => {
     expect(api.findForItem('new-movie', 'shared', '', 'movie').bookmarks.map((bm: AnyRecord) => bm.id))
       .toEqual(['movie']);
     expect(api.findForItem('new-series', 'shared', '', 'Series').bookmarks.map((bm: AnyRecord) => bm.id))
-      .toEqual(['episode']);
+      .toEqual([]);
     expect(api.findForItem('new-video', 'shared', '', 'other').bookmarks.map((bm: AnyRecord) => bm.id))
-      .toEqual(['legacy']);
-    expect(api.findForItem('legacy-caller', 'shared').bookmarks).toHaveLength(3);
+      .toEqual([]);
+    expect(api.findForItem('legacy-caller', 'shared').bookmarks).toHaveLength(0);
   });
 
-  it('canonically migrates a legacy type when that bookmark is edited', async () => {
+  it('authoritatively migrates legacy identity when that bookmark is edited', async () => {
     const api = await loadModule({
       legacy: { ...bookmark('item-a', 'Before'), mediaType: 'Podcast' }
     });
 
     await expect(api.update('legacy', { label: 'After' })).resolves.toBe(true);
     const operation = save.mock.calls[0][1].body.operations[0];
-    expect(operation.bookmark).toMatchObject({ label: 'After', mediaType: 'other' });
+    expect(operation.bookmark).toMatchObject({
+      label: 'After', identityVersion: 1, itemType: 'movie', mediaType: 'movie'
+    });
   });
 
   it('does not let a held rejected A add roll back a same-key B bookmark', async () => {
@@ -590,7 +694,7 @@ describe('bookmark player identity ownership', () => {
 
     const pending = api.syncBookmarks(
       [{ id: 'old', ...bookmark('old-item', 'Old') }],
-      { itemId: 'new-item', tmdbId: 'new', tvdbId: '', mediaType: 'movie', name: 'New' },
+      { itemId: 'new-item', tmdbId: 'tmdb-a', tvdbId: '', mediaType: 'movie', name: 'New' },
       0,
       ['old']
     );

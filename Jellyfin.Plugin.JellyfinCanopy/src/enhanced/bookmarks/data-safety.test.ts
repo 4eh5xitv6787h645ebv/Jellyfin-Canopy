@@ -216,7 +216,10 @@ describe('bookmarks data-safety', () => {
 
     describe('syncBookmarks: atomic revisioned transaction', () => {
         const newDetails = { itemId: 'newI', tmdbId: 'x', tvdbId: '', mediaType: 'movie', name: 'New' };
-        const old = () => [{ id: 'old1', itemId: 'oldI', timestamp: 10, label: 'L', createdAt: 't0' }];
+        const old = () => [{
+            id: 'old1', itemId: 'oldI', tmdbId: 'x', mediaType: 'movie',
+            timestamp: 10, label: 'L', createdAt: 't0'
+        }];
 
         it('commits the new copy and original removal in one batch', async () => {
             const api = await loadModule({ old1: { itemId: 'oldI', timestamp: 10, label: 'L', createdAt: 't0' } });
@@ -360,7 +363,7 @@ describe('bookmarks data-safety', () => {
         ['abort', Object.assign(new Error('aborted'), { name: 'AbortError' })]
     ])('keeps exact prior state and emits no success for %s across every mutation class', async (label, failure) => {
         const initial = {
-            one: { itemId: 'item-one', timestamp: 10, label: 'one' },
+            one: { itemId: 'item-one', tmdbId: '123', mediaType: 'movie', timestamp: 10, label: 'one' },
             two: { itemId: 'item-two', timestamp: 20, label: 'two' }
         };
         const api = await loadModule(structuredClone(initial));

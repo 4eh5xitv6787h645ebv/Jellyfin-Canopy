@@ -175,4 +175,21 @@ describe('bookmarks library identity ownership', () => {
     expect(duplicates[0].providerKey).toBe('movie:tmdb:10');
     expect(Object.keys(duplicates[0].itemGroups)).toEqual(['movie-a', 'movie-b']);
   });
+
+  it('rejects mixed or internally conflicting identities independent of record order', () => {
+    const v1 = {
+      itemId: 'item-a', identityVersion: 1, itemType: 'movie', mediaType: 'movie',
+      tmdbId: '10', tvdbId: '', name: 'Movie'
+    };
+    const legacy = { itemId: 'item-a', mediaType: 'movie', tmdbId: '10', name: 'Movie' };
+    const otherVersion = { ...v1, itemId: 'item-b' };
+
+    expect(findDuplicateBookmarks({ first: v1, second: legacy, other: otherVersion })).toEqual([]);
+    expect(findDuplicateBookmarks({ second: legacy, first: v1, other: otherVersion })).toEqual([]);
+    expect(findDuplicateBookmarks({
+      first: v1,
+      conflict: { ...v1, tvdbId: 'wrong' },
+      other: { ...otherVersion, tvdbId: 'right' }
+    })).toEqual([]);
+  });
 });

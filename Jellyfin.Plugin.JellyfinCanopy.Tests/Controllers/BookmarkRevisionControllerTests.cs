@@ -104,6 +104,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             => new UserSettingsController.BookmarkOperationPayload { Type = "delete", BookmarkId = id };
 
         [Fact]
+        public void DedicatedAdd_PersistsVersionedIdentityFields()
+        {
+            Seed();
+            var result = Controller().AddUserBookmark(UserId, new UserSettingsController.AddBookmarkPayload
+            {
+                Revision = 0,
+                BookmarkId = "episode",
+                ItemId = "episode-item",
+                IdentityVersion = 1,
+                ItemType = "episode",
+                TmdbId = "episode-tmdb",
+                SeriesTmdbId = "series-tmdb",
+                MediaType = "tv",
+                SeasonNumber = 0,
+                EpisodeNumber = 2,
+                EpisodeEndNumber = 3,
+                Timestamp = 12.5
+            });
+
+            Assert.IsType<OkObjectResult>(result);
+            var persisted = State().Bookmarks["episode"];
+            Assert.Equal(1, persisted.IdentityVersion);
+            Assert.Equal("episode", persisted.ItemType);
+            Assert.Equal("series-tmdb", persisted.SeriesTmdbId);
+            Assert.Equal(0, persisted.SeasonNumber);
+            Assert.Equal(3, persisted.EpisodeEndNumber);
+        }
+
+        [Fact]
         public void AtomicAddThenStaleFullSnapshot_ReturnsConflictAndPreservesAcknowledgedAdd()
         {
             Seed(("a", Bookmark("item-a")));
@@ -193,6 +222,78 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var final = State();
             Assert.Equal(0, final.Revision);
             Assert.Equal(new[] { "a" }, final.Bookmarks.Keys);
+        }
+
+        [Fact]
+        public void Batch_RoundTripsVersionedEpisodeIdentityThroughCloneAndPersistence()
+        {
+            Seed();
+            var episode = Bookmark("episode-a");
+            episode.IdentityVersion = 1;
+            episode.ItemType = "episode";
+            episode.MediaType = "tv";
+            episode.TmdbId = "episode-tmdb";
+            episode.TvdbId = "episode-tvdb";
+            episode.SeriesTmdbId = "series-tmdb";
+            episode.SeriesTvdbId = "series-tvdb";
+            episode.SeasonNumber = 0;
+            episode.EpisodeNumber = 2;
+            episode.EpisodeEndNumber = 3;
+
+            var result = Controller().BatchUserBookmarks(UserId, new UserSettingsController.BookmarkBatchPayload
+            {
+                Revision = 0,
+                Operations = new List<UserSettingsController.BookmarkOperationPayload>
+                {
+                    new UserSettingsController.BookmarkOperationPayload
+                    {
+                        Type = "add",
+                        BookmarkId = "special",
+                        Bookmark = episode
+                    }
+                }
+            });
+
+            Assert.IsType<OkObjectResult>(result);
+            var persisted = State().Bookmarks["special"];
+            Assert.Equal(1, persisted.IdentityVersion);
+            Assert.Equal("episode", persisted.ItemType);
+            Assert.Equal("episode-tmdb", persisted.TmdbId);
+            Assert.Equal("series-tmdb", persisted.SeriesTmdbId);
+            Assert.Equal(0, persisted.SeasonNumber);
+            Assert.Equal(2, persisted.EpisodeNumber);
+            Assert.Equal(3, persisted.EpisodeEndNumber);
+        }
+
+        [Theory]
+        [InlineData(2, 2, 3)]
+        [InlineData(1, 3, 2)]
+        public void InvalidVersionOrEpisodeRange_IsRejected(int version, int start, int end)
+        {
+            Seed();
+            var episode = Bookmark("episode-a");
+            episode.IdentityVersion = version;
+            episode.ItemType = "episode";
+            episode.EpisodeNumber = start;
+            episode.EpisodeEndNumber = end;
+
+            var result = Controller().BatchUserBookmarks(UserId, new UserSettingsController.BookmarkBatchPayload
+            {
+                Revision = 0,
+                Operations = new List<UserSettingsController.BookmarkOperationPayload>
+                {
+                    new UserSettingsController.BookmarkOperationPayload
+                    {
+                        Type = "add",
+                        BookmarkId = "invalid",
+                        Bookmark = episode
+                    }
+                }
+            });
+
+            Assert.IsType<BadRequestObjectResult>(result);
+            Assert.Empty(State().Bookmarks);
+            Assert.Equal(0, State().Revision);
         }
 
         [Fact]

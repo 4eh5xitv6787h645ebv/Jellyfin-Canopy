@@ -242,10 +242,17 @@ The data structure is (property names are persisted as-is, in PascalCase):
   "Bookmarks": {
     "unique-bookmark-id": {
       "ItemId": "jellyfin-item-id",
-      "TmdbId": "12345",
-      "TvdbId": "67890",
-      "MediaType": "movie" | "tv" | "other",
-      "Name": "Item Name",
+      "IdentityVersion": 1,
+      "ItemType": "episode",
+      "TmdbId": "episode-tmdb-id",
+      "TvdbId": "episode-tvdb-id",
+      "SeriesTmdbId": "series-tmdb-id",
+      "SeriesTvdbId": "series-tvdb-id",
+      "MediaType": "tv",
+      "SeasonNumber": 0,
+      "EpisodeNumber": 2,
+      "EpisodeEndNumber": 3,
+      "Name": "Special episodes 2–3",
       "Timestamp": 123.45,
       "Label": "Epic scene",
       "CreatedAt": "2026-01-03T12:00:00.000Z",
@@ -260,8 +267,15 @@ New client writes normalize Jellyfin Movie and MusicVideo items to `movie`,
 Series/Season/Episode items to `tv`, and every remaining playable type to
 `other`. Existing unknown or missing values remain readable and appear in the
 Other management tab; the next edit or migration writes their canonical
-category. Provider-id fallback matching and duplicate/replacement workflows use
-the same categories so identifiers from different media classes are not merged.
+category. Version-1 identity keeps item and parent-series provider ids in their
+named TMDB/TVDB namespaces and records an inclusive episode start/end range
+(season zero is valid). Exact Jellyfin item id is primary. Otherwise playback,
+duplicate detection, replacement discovery, and migration use one conservative
+logical comparator: shared provider disagreements fail closed; episodes require
+a namespaced episode provider id or matching series provider plus the exact
+season/start/end range. Pre-v1 movie records retain their unambiguous provider
+fallback, while ambiguous legacy TV/other records remain unmatched until an
+authoritative item edit can enrich them.
 
 External applications read and write bookmarks through the endpoints below. `{userId}` is the 32-character hex (`"N"` format) Jellyfin user id. Bookmark state is server-authoritative and revisioned: retain the `Revision` returned by every GET/mutation, submit it with the next operation, and rebase on the authoritative state returned with HTTP `409 Conflict`. Missing preconditions return `428 Precondition Required`. A successful mutation increments the revision once and returns the complete committed state.
 
