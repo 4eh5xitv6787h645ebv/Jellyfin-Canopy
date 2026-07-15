@@ -12,7 +12,7 @@ import { JC } from '../globals';
 import { injectCss } from '../core/ui-kit';
 import type { DiscoveryMediaType, DiscoveryRowSpec } from './rows';
 import type { IdentityContext } from '../types/jc';
-import { resolveRows, genreRowsEnabled } from './rows';
+import { resolveRows } from './rows';
 import { fetchRow, fetchGenres } from './data';
 
 const CSS_ID = 'jc-discovery-feed-css';
@@ -141,13 +141,7 @@ export async function renderFeed(container: HTMLElement, mt: DiscoveryMediaType,
         destroy();
         return { element: feed, destroy };
     }
-    let specs = resolveRows(userRowIds, genres);
-    if (!userRowIds && genreRowsEnabled()) {
-        // Enrich the default feed with a few real genre rows so it's rich out of the box.
-        const genreRowIds = [...genres.keys()].slice(0, 4).map((id) => `genre:${id}`);
-        const genreSpecs = resolveRows(genreRowIds, genres).filter((s) => !specs.some((e) => e.id === s.id));
-        specs = specs.concat(genreSpecs);
-    }
+    const specs = resolveRows(userRowIds, genres);
 
     if (specs.length === 0) {
         const msg = document.createElement('div');

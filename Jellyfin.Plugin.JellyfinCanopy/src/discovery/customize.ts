@@ -9,7 +9,7 @@
 import { JC } from '../globals';
 import { installModalA11y, type ModalA11yHandle } from '../core/modal-a11y';
 import type { DiscoveryMediaType, DiscoveryRowSpec } from './rows';
-import { specFromId, adminDefaultRowIds, genreRowsEnabled, BUILTIN_ORDER } from './rows';
+import { specFromId, defaultRowIds, BUILTIN_ORDER } from './rows';
 import { getUserRowIds, setUserRowIds, clearUserRowIds } from './prefs';
 
 interface Item { id: string; label: string; checked: boolean }
@@ -38,13 +38,6 @@ function buildItems(mt: DiscoveryMediaType, genres: Map<number, string>): Item[]
         if (spec) { items.push({ id, label: labelFor(spec), checked: false }); seen.add(id); }
     }
     return items;
-}
-
-/** The default (uncustomised) row-id set = admin defaults + a few genre rows, mirroring the feed. */
-function defaultRowIds(genres: Map<number, string>): string[] {
-    const ids = adminDefaultRowIds();
-    if (genreRowsEnabled()) ids.push(...[...genres.keys()].slice(0, 4).map((g) => `genre:${g}`));
-    return ids;
 }
 
 /**
