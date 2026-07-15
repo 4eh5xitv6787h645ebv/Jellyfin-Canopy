@@ -14,9 +14,13 @@ import {
     AUTO_SKIP_FIXTURE,
     PLAYWRIGHT_DEVICE_PROFILE,
     TICKS_PER_SECOND,
+    isAutoSkipZeroProgressResponse,
+    preservePrimaryError,
+    resetAutoSkipPlaybackState,
     resolveAutoSkipFixture,
     type FixtureApiClient,
     type JellyfinItem,
+    type PlaybackStateApiClient,
     type PlaybackInfo,
 } from '../scripts/e2e/auto-skip-fixture';
 
@@ -89,37 +93,42 @@ function fixtureApi(baseURL: string, session: Session): FixtureApiClient {
     };
 }
 
-async function resetPlaybackState(
+function playbackStateApi(
     baseURL: string,
-    session: Session,
+    session: Session
+): PlaybackStateApiClient {
+    return {
+        markUnplayed: (itemId) => api<UserData>(
+            baseURL,
+            `/UserPlayedItems/${encodeURIComponent(itemId)}?userId=${encodeURIComponent(session.userId)}`,
+            session.token,
+            { method: 'DELETE' }
+        ),
+        getUserData: (itemId) => api<UserData>(
+            baseURL,
+            `/UserItems/${encodeURIComponent(itemId)}/UserData?userId=${encodeURIComponent(session.userId)}`,
+            session.token
+        ),
+    };
+}
+
+function isZeroProgressResponse(
+    response: import('playwright/test').Response,
     itemId: string
-): Promise<void> {
-    const path = `/UserItems/${encodeURIComponent(itemId)}/UserData?userId=${encodeURIComponent(session.userId)}`;
-    const existing = (await api<UserData>(baseURL, path, session.token)) ?? {};
-    await api<UserData>(baseURL, path, session.token, {
-        method: 'POST',
-        body: JSON.stringify({
-            ...existing,
-            PlaybackPositionTicks: 0,
-            PlayedPercentage: 0,
-            Played: false,
-        }),
-    });
-    const verified = await api<UserData>(baseURL, path, session.token);
-    const position = Number(verified?.PlaybackPositionTicks);
-    const percentage = verified?.PlayedPercentage;
-    if (!verified
-        || !Number.isFinite(position)
-        || position !== 0
-        || (percentage !== null && percentage !== undefined && Number(percentage) !== 0)
-        || verified.Played !== false) {
-        throw new Error(
-            `Auto-Skip fixture ${itemId} playback reset failed: `
-            + `PlaybackPositionTicks=${String(verified?.PlaybackPositionTicks)}, `
-            + `PlayedPercentage=${String(percentage)}, `
-            + `Played=${String(verified?.Played)}`
-        );
+): boolean {
+    const request = response.request();
+    let body: unknown;
+    try {
+        body = request.postDataJSON();
+    } catch {
+        return false;
     }
+    return isAutoSkipZeroProgressResponse({
+        method: request.method(),
+        pathname: new URL(response.url()).pathname,
+        status: response.status(),
+        body: body as { ItemId?: string; PositionTicks?: number },
+    }, itemId);
 }
 
 async function readTrace(page: import('playwright/test').Page): Promise<AutoSkipTrace> {
@@ -161,7 +170,8 @@ test.describe('Auto-Skip v2 (native media segments)', () => {
 
         // Every Playwright retry starts with zero resume state. The finally
         // block repeats the reset so later local runs are isolated as well.
-        await resetPlaybackState(baseURL, session, resolved.id);
+        const resetApi = playbackStateApi(baseURL, session);
+        await resetAutoSkipPlaybackState(resetApi, resolved.id);
 
         const requestedSegmentIds: string[] = [];
         await page.route('**/MediaSegments/**', async (route) => {
@@ -199,6 +209,8 @@ test.describe('Auto-Skip v2 (native media segments)', () => {
             window.localStorage.setItem(`${userId}-language`, 'he');
         }, session.userId);
 
+        let testBodyFailed = false;
+        let testBodyError: unknown;
         try {
             await loginAs(page, 'admin', consoleErrors);
 
@@ -375,14 +387,52 @@ test.describe('Auto-Skip v2 (native media segments)', () => {
                 .unexpected4xx()
                 .filter((response) => /\/JellyfinCanopy\//i.test(response.url));
             expect(pluginFourxx, 'no 4xx from plugin endpoints').toEqual([]);
-        } finally {
-            await page.evaluate(() => {
-                const video = document.querySelector('video');
-                if (!video) return;
-                video.pause();
-                video.currentTime = 0;
-            }).catch(() => undefined);
-            await resetPlaybackState(baseURL, session, resolved.id);
+        } catch (error) {
+            testBodyFailed = true;
+            testBodyError = error;
+        }
+
+        const cleanupErrors: unknown[] = [];
+        const hasVideo = await page.evaluate(
+            () => Boolean(document.querySelector('video'))
+        ).catch(() => false);
+        if (hasVideo) {
+            try {
+                await Promise.all([
+                    page.waitForResponse(
+                        (response) => isZeroProgressResponse(response, resolved.id),
+                        { timeout: 10_000 }
+                    ),
+                    page.evaluate(() => {
+                        const video = document.querySelector('video');
+                        if (!video) throw new Error('Auto-Skip video disappeared during cleanup');
+                        video.currentTime = 0;
+                        video.pause();
+                        video.dispatchEvent(new Event('timeupdate'));
+                    }),
+                ]);
+            } catch (error) {
+                cleanupErrors.push(error);
+            }
+        }
+        try {
+            // Unload the Jellyfin player before resetting server state so its
+            // final playback beacon cannot overwrite the cleanup.
+            await page.goto('about:blank', { waitUntil: 'load' });
+        } catch (error) {
+            cleanupErrors.push(error);
+        }
+        try {
+            await resetAutoSkipPlaybackState(resetApi, resolved.id);
+        } catch (error) {
+            cleanupErrors.push(error);
+        }
+
+        if (testBodyFailed) {
+            throw preservePrimaryError(testBodyError, cleanupErrors);
+        }
+        if (cleanupErrors.length > 0) {
+            throw preservePrimaryError(cleanupErrors[0], cleanupErrors.slice(1));
         }
     });
 });

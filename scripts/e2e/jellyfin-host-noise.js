@@ -61,6 +61,24 @@ function hasCompleteSignedOutEvidence(evidence) {
 }
 
 /**
+ * The two native logout requests are dispatched concurrently. Browser request
+ * index records dispatch order, not the order Jellyfin authenticates and
+ * revokes them, so either request may own the successful 204. Require the
+ * complete response set without assigning server ownership by index.
+ *
+ * @param {{requestIndex: number, status: number, bodyBytes: number}[]} responses
+ */
+function hasValidConcurrentLogoutResponses(responses) {
+    if (!Array.isArray(responses) || responses.length !== 2) return false;
+    const ordered = [...responses].sort((left, right) => left.requestIndex - right.requestIndex);
+    return ordered[0]?.requestIndex === 0
+        && ordered[1]?.requestIndex === 1
+        && ordered.every((response) => response.bodyBytes === 0)
+        && ordered.every((response) => response.status === 204 || response.status === 401)
+        && ordered.some((response) => response.status === 204);
+}
+
+/**
  * Exact read-only Home requests Jellyfin Web can leave in flight while logout
  * revokes the old owner token. Every query field is part of the contract; the
  * only variable values are the proven prior user, a library parent ID, and the
@@ -265,6 +283,7 @@ module.exports = {
     HOME_SELECTED_INDEX_ERROR,
     HOME_TAB_PREFIX,
     SCROLL_HANDLER_ERROR,
+    hasValidConcurrentLogoutResponses,
     isKnownHiddenContentHostNoise,
     isKnownJellyfinWebHostNoise,
     isExpectedSignedOutHostLogout4xx,
