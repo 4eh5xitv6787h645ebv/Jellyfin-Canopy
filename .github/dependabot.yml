@@ -1,6 +1,10 @@
 version: 2
+
+# One manifest owner per ecosystem. All version-update PRs target main and are
+# subject to the same required Build & Test and Security gates as human PRs.
 updates:
-  # Enable version updates for NuGet packages
+  # The root solution owns both the plugin and test projects. A second
+  # subdirectory entry would rediscover the plugin packages with another policy.
   - package-ecosystem: "nuget"
     directory: "/"
     schedule:
@@ -17,23 +21,82 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
-    # Group minor and patch updates together
     groups:
-      jellyfin-dependencies:
+      jellyfin-sdk:
         patterns:
           - "Jellyfin.*"
         update-types:
           - "minor"
           - "patch"
-      development-dependencies:
+      skiasharp:
         patterns:
-          - "*.Analyzers"
-          - "*.CodeAnalysis"
+          - "SkiaSharp*"
+        update-types:
+          - "minor"
+          - "patch"
+      dotnet-test-tooling:
+        patterns:
+          - "Microsoft.NET.Test.Sdk"
+          - "xunit*"
+          - "coverlet*"
         update-types:
           - "minor"
           - "patch"
 
-  # Enable version updates for GitHub Actions
+  # package.json and package-lock.json are both rooted at the repository root.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "4eh5xitv6787h645ebv"
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Compose defaults include the digest-pinned Jellyfin unstable/nightly image
+  # and the Node integration fixture. Jellyfin stays outside tooling groups so
+  # every moving-nightly digest update is an explicit full-E2E PR.
+  - package-ecosystem: "docker-compose"
+    directory: "/e2e/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "4eh5xitv6787h645ebv"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      e2e-tooling-images:
+        patterns:
+          - "node"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Workflow actions remain immutable-SHA pinned. Dependabot updates both the
+  # SHA and its same-line version comment; major runtime changes stay separate.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -51,14 +114,9 @@ updates:
       prefix: "chore(ci)"
       include: "scope"
     groups:
-      github-actions:
+      github-actions-minor-patch:
         patterns:
           - "*"
         update-types:
           - "minor"
           - "patch"
-
-  - package-ecosystem: nuget
-    directory: /Jellyfin.Plugin.JellyfinCanopy
-    schedule:
-      interval: daily

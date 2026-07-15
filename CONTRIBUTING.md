@@ -201,6 +201,33 @@ Beyond the per-feature unit tests, `npm run test:client` runs cross-cutting **gu
 
 ## 🧪 Testing
 
+### Dependency update policy
+
+`.github/dependabot.yml` is the source of truth for routine dependency
+updates. Each manifest has exactly one owner and one weekly schedule:
+
+- NuGet scans the root solution, which owns both the plugin and test projects.
+  Do not add a second plugin-directory entry; it would rediscover packages with
+  a conflicting schedule.
+- npm scans the root `package.json` and `package-lock.json` under the exact
+  Node/npm toolchain contract.
+- Docker Compose scans `e2e/docker/compose.yml`. The required Jellyfin image
+  must remain `jellyfin/jellyfin:unstable@sha256:…`: Dependabot may refresh its
+  nightly digest, but it must not replace the `unstable` channel with an RC or
+  another tag. The Node integration fixture is maintained in the same manifest.
+- GitHub Actions scans `.github/workflows/`; actions remain pinned by immutable
+  commit SHA with their release tag in a same-line comment.
+
+Compatible minor and patch updates may be grouped. Major npm, NuGet, action,
+runtime, and ABI updates stay explicit. Jellyfin image updates are never grouped
+with tooling images. There is no Dependabot auto-merge path: every bot PR must
+pass the normal security, build, unit, coverage, bundle-reproducibility, and six
+shard unstable/nightly E2E gates before a maintainer can merge it.
+
+Dependabot alerts and security updates are enabled for this public repository.
+Version-update scheduling complements those alerts; it does not replace the
+private vulnerability-reporting process in [SECURITY.md](SECURITY.md).
+
 ### Blocking gates and advisory signals
 
 The repository-owned lint verifier gives local checks, pre-commit, CI, and
