@@ -12,7 +12,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
     /// <summary>
     /// The single System.Text.Json configuration for every JSON file the plugin
     /// persists to disk (per-user settings/shortcuts/bookmarks/elsewhere/
-    /// hidden-content/watchlist files, the shared reviews.json, and
+    /// hidden-content/watchlist files, legacy review migration input, and
     /// maintenance-state.json).
     ///
     /// These options replicate the exact on-disk format and read tolerance of

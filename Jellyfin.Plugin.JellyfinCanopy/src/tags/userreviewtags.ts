@@ -27,6 +27,29 @@ const _reviewCache = new Map<string, number | null>();
 // In-flight deduplication
 const _inFlight = new Map<string, { context: IdentityContext; promise: Promise<number | null> }>();
 
+interface ReviewRatingPage {
+    reviews: unknown[];
+    nextCursor: string | null;
+}
+
+function asReviewRatingPage(value: unknown): ReviewRatingPage {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return { reviews: [], nextCursor: null };
+    }
+
+    const record = value as Record<string, unknown>;
+    return {
+        reviews: Array.isArray(record.reviews) ? record.reviews : [],
+        nextCursor: typeof record.nextCursor === 'string' ? record.nextCursor : null,
+    };
+}
+
+function readRating(value: unknown): number | null {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+    const rating = (value as Record<string, unknown>).rating;
+    return typeof rating === 'number' && rating >= 1 && rating <= 5 ? rating : null;
+}
+
 function isCurrent(context: IdentityContext | null | undefined): context is IdentityContext {
     return !!context && JC.identity.isCurrent(context);
 }
@@ -54,15 +77,36 @@ async function fetchUserRating(tmdbKey: string, mediaType: string): Promise<numb
         try {
             // Core throws on non-OK responses, which lands in the catch below —
             // same "cache null, return null" outcome as the old !response.ok branch.
-            const data = await JC.core.api.plugin(`/reviews/${mediaType}/${tmdbKey}`) as any;
-            if (!isCurrent(context)) return null;
-            const rated = (data.reviews || []).filter((r: any) => r.rating);
-            if (rated.length === 0) {
+            let cursor: string | null = null;
+            const seenCursors = new Set<string>();
+            let ratingTotal = 0;
+            let ratingCount = 0;
+            do {
+                const query = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+                const data = asReviewRatingPage(await JC.core.api.plugin(
+                    `/reviews/${mediaType}/${tmdbKey}?pageSize=100${query}`
+                ));
+                if (!isCurrent(context)) return null;
+                for (const review of data.reviews) {
+                    const rating = readRating(review);
+                    if (rating !== null) {
+                        ratingTotal += rating;
+                        ratingCount++;
+                    }
+                }
+
+                const next = data.nextCursor;
+                if (!next || seenCursors.has(next)) break;
+                seenCursors.add(next);
+                cursor = next;
+            } while (isCurrent(context));
+
+            if (ratingCount === 0) {
                 _reviewCache.set(tmdbKey, null);
                 return null;
             }
             // Average across all users, stored as a 1-5 float
-            const avg = rated.reduce((sum: number, r: any) => sum + r.rating, 0) / rated.length;
+            const avg = ratingTotal / ratingCount;
             _reviewCache.set(tmdbKey, avg);
             return avg;
         } catch (e) {

@@ -30,6 +30,11 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <!-- The Jellyfin host supplies SQLite at runtime. Tests bind the Core API to
+         the OS-patched system libsqlite3 instead of bundling e_sqlite3 (whose
+         current 2.1.11 native package is blocked by the vulnerability audit). -->
+    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.9" PrivateAssets="all" />
+    <PackageReference Include="SQLitePCLRaw.provider.sqlite3" Version="2.1.11" PrivateAssets="all" />
     <!-- The plugin references SkiaSharp with ExcludeAssets=runtime (the Jellyfin
          host ships the native libSkiaSharp). The test host is not Jellyfin, so
          pull the native asset in here (TEST project only) to exercise

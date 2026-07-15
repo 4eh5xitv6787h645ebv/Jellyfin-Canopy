@@ -64,7 +64,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             _userConfigurationManager = userConfigurationManager;
         }
 
-        // ─── User Reviews (shared reviews.json at plugin config root) ────────────
+        // ─── User Reviews (indexed SQLite store at plugin config root) ──────────
 
         public sealed class ReviewPayload
         {
@@ -72,26 +72,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             public int? Rating { get; set; }
         }
 
-        private static readonly System.Text.RegularExpressions.Regex _tmdbIdRegex =
-            new System.Text.RegularExpressions.Regex(@"^\d+$", System.Text.RegularExpressions.RegexOptions.Compiled);
-
-        // Extended key for season/episode reviews: {tmdbId}:s{n} or {tmdbId}:s{n}e{n}
-        private static readonly System.Text.RegularExpressions.Regex _tmdbIdExtendedRegex =
-            new System.Text.RegularExpressions.Regex(@"^\d+(:s\d+(:e\d+)?)?$", System.Text.RegularExpressions.RegexOptions.Compiled);
-
-        private static bool IsValidTmdbKey(string tmdbId) =>
-            !string.IsNullOrWhiteSpace(tmdbId) && _tmdbIdExtendedRegex.IsMatch(tmdbId);
-
         [HttpGet("reviews/{mediaType}/{tmdbId}")]
         [Authorize]
         [Produces("application/json")]
-        public IActionResult GetItemReviews(string mediaType, string tmdbId)
+        public IActionResult GetItemReviews(
+            string mediaType,
+            string tmdbId,
+            [FromQuery] int pageSize = ReviewLimits.DefaultPageSize,
+            [FromQuery] string? cursor = null)
         {
             if (mediaType != "movie" && mediaType != "tv")
                 return BadRequest(new { message = "MediaType must be 'movie' or 'tv'." });
 
-            if (!IsValidTmdbKey(tmdbId))
+            if (!ReviewTarget.TryValidate(mediaType, tmdbId, out var canonicalTarget))
                 return BadRequest(new { message = "Invalid TmdbId." });
+
+            if (pageSize < 1 || pageSize > ReviewLimits.MaximumPageSize)
+                return BadRequest(new { message = $"PageSize must be between 1 and {ReviewLimits.MaximumPageSize}." });
 
             var config = _configProvider.ConfigurationOrNull;
             var viewerIsAdmin = IsAdminUser();
@@ -116,14 +113,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 _logger.LogWarning($"GetItemReviews: could not resolve viewer user id from claims on {mediaType}:{tmdbId}; self-review bypass disabled.");
             }
 
-            var suffix = $":{mediaType}:{tmdbId}";
-            var store = _userConfigurationManager.GetAllReviews();
+            ReviewPage page;
+            try
+            {
+                page = _userConfigurationManager.GetItemReviews(mediaType, canonicalTarget, pageSize, cursor);
+            }
+            catch (ArgumentException)
+            {
+                return BadRequest(new { message = "Invalid review cursor." });
+            }
+            catch (ReviewStoreUnavailableException ex)
+            {
+                _logger.LogError(ex, "The review store was unavailable during an item read.");
+                return StatusCode(503, new { message = "The review store is temporarily unavailable." });
+            }
+
             var results = new List<object>();
 
-            foreach (var kvp in store.Reviews)
+            foreach (var review in page.Reviews)
             {
-                if (!kvp.Key.EndsWith(suffix, StringComparison.Ordinal)) continue;
-
                 // Per-review try/catch: if anything blows up while looking up
                 // the author or evaluating their permissions, we skip just
                 // this review with a warning. Without this, a single corrupt
@@ -131,8 +139,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // and hide every other review on the item.
                 try
                 {
-                    var review = kvp.Value;
-
                     string displayName = review.UserId;
                     Jellyfin.Database.Implementations.Entities.User? jellyfinUser = null;
                     if (Guid.TryParseExact(review.UserId, "N", out var userGuid))
@@ -198,22 +204,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning($"Skipping review key={kvp.Key} due to filter error: {ex.Message}");
+                    _logger.LogWarning(ex, "Skipping a review during author visibility filtering.");
                 }
             }
 
-            return Ok(new { reviews = results });
+            return Ok(new { reviews = results, nextCursor = page.NextCursor });
         }
 
         [HttpPost("reviews/{mediaType}/{tmdbId}")]
         [Authorize]
         [Produces("application/json")]
+        [PersistedPayloadLimit(ReviewLimits.RequestBytes)]
         public IActionResult UpsertReview(string mediaType, string tmdbId, [FromBody] ReviewPayload payload)
         {
             if (mediaType != "movie" && mediaType != "tv")
                 return BadRequest(new { success = false, message = "MediaType must be 'movie' or 'tv'." });
 
-            if (!IsValidTmdbKey(tmdbId))
+            if (!ReviewTarget.TryValidate(mediaType, tmdbId, out var canonicalTarget))
                 return BadRequest(new { success = false, message = "Invalid TmdbId." });
 
             if (payload == null)
@@ -224,8 +231,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             if (string.IsNullOrWhiteSpace(normalizedContent) && !payload.Rating.HasValue)
                 return BadRequest(new { success = false, message = "A rating or review text is required." });
 
-            if (normalizedContent.Length > 2000)
-                return BadRequest(new { success = false, message = "Review content must not exceed 2000 characters." });
+            if (!ReviewLimits.IsContentWithinLimit(normalizedContent))
+                return BadRequest(new { success = false, message = $"Review content must not exceed {ReviewLimits.ContentCharacters} characters." });
 
             if (payload.Rating.HasValue && (payload.Rating.Value < 1 || payload.Rating.Value > 5))
                 return BadRequest(new { success = false, message = "Rating must be between 1 and 5." });
@@ -238,13 +245,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             {
                 var now = DateTime.UtcNow.ToString("o");
                 _userConfigurationManager.UpsertReview(
-                    userIdN, mediaType, tmdbId, normalizedContent, payload.Rating, now);
-                _logger.LogInformation($"Saved review for {mediaType}:{tmdbId} by user {ResolveUserDisplay(userIdN)}.");
+                    userIdN, mediaType, canonicalTarget, normalizedContent, payload.Rating, now);
+                _logger.LogInformation("Saved review for {MediaType}:{Target} by user {UserId}.", mediaType, canonicalTarget, userIdN);
                 return Ok(new { success = true });
+            }
+            catch (ReviewQuotaExceededException ex)
+            {
+                return Conflict(new { success = false, code = ex.Code, message = ex.Message });
+            }
+            catch (ReviewStoreUnavailableException ex)
+            {
+                _logger.LogError(ex, "The review store was unavailable during an upsert.");
+                return StatusCode(503, new { success = false, message = "The review store is temporarily unavailable." });
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Failed to save review for user {ResolveUserDisplay(userIdN)}: {ex.Message}");
+                _logger.LogError(ex, "Failed to save a review for user {UserId}.", userIdN);
                 return StatusCode(500, new { success = false, message = "Failed to save review." });
             }
         }
@@ -252,6 +268,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpPost("reviews/admin/{userIdN}/{mediaType}/{tmdbId}")]
         [Authorize(Policy = Policies.RequiresElevation)]
         [Produces("application/json")]
+        [PersistedPayloadLimit(ReviewLimits.RequestBytes)]
         public IActionResult AdminUpsertReview(string userIdN, string mediaType, string tmdbId, [FromBody] ReviewPayload payload)
         {
             if (string.IsNullOrWhiteSpace(userIdN) || !Guid.TryParseExact(userIdN, "N", out _))
@@ -260,7 +277,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             if (mediaType != "movie" && mediaType != "tv")
                 return BadRequest(new { success = false, message = "MediaType must be 'movie' or 'tv'." });
 
-            if (!IsValidTmdbKey(tmdbId))
+            if (!ReviewTarget.TryValidate(mediaType, tmdbId, out var canonicalTarget))
                 return BadRequest(new { success = false, message = "Invalid TmdbId." });
 
             if (payload == null)
@@ -271,8 +288,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             if (string.IsNullOrWhiteSpace(normalizedContent) && !payload.Rating.HasValue)
                 return BadRequest(new { success = false, message = "A rating or review text is required." });
 
-            if (normalizedContent.Length > 2000)
-                return BadRequest(new { success = false, message = "Review content must not exceed 2000 characters." });
+            if (!ReviewLimits.IsContentWithinLimit(normalizedContent))
+                return BadRequest(new { success = false, message = $"Review content must not exceed {ReviewLimits.ContentCharacters} characters." });
 
             if (payload.Rating.HasValue && (payload.Rating.Value < 1 || payload.Rating.Value > 5))
                 return BadRequest(new { success = false, message = "Rating must be between 1 and 5." });
@@ -281,13 +298,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             {
                 var now = DateTime.UtcNow.ToString("o");
                 _userConfigurationManager.UpsertReview(
-                    userIdN, mediaType, tmdbId, normalizedContent, payload.Rating, now);
-                _logger.LogInformation($"Admin saved review for {mediaType}:{tmdbId} on behalf of {ResolveUserDisplay(userIdN)}.");
+                    userIdN, mediaType, canonicalTarget, normalizedContent, payload.Rating, now);
+                _logger.LogInformation("Admin saved review for {MediaType}:{Target} on behalf of {UserId}.", mediaType, canonicalTarget, userIdN);
                 return Ok(new { success = true });
+            }
+            catch (ReviewQuotaExceededException ex)
+            {
+                return Conflict(new { success = false, code = ex.Code, message = ex.Message });
+            }
+            catch (ReviewStoreUnavailableException ex)
+            {
+                _logger.LogError(ex, "The review store was unavailable during an admin upsert.");
+                return StatusCode(503, new { success = false, message = "The review store is temporarily unavailable." });
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Admin failed to save review for user {ResolveUserDisplay(userIdN)}: {ex.Message}");
+                _logger.LogError(ex, "Admin failed to save a review for user {UserId}.", userIdN);
                 return StatusCode(500, new { success = false, message = "Failed to save review." });
             }
         }
@@ -300,7 +326,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             if (mediaType != "movie" && mediaType != "tv")
                 return BadRequest(new { success = false, message = "MediaType must be 'movie' or 'tv'." });
 
-            if (!IsValidTmdbKey(tmdbId))
+            if (!ReviewTarget.TryValidate(mediaType, tmdbId, out var canonicalTarget))
                 return BadRequest(new { success = false, message = "Invalid TmdbId." });
 
             var currentUserId = UserHelper.GetCurrentUserId(User);
@@ -309,13 +335,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             try
             {
-                if (_userConfigurationManager.DeleteReview(userIdN, mediaType, tmdbId))
-                    _logger.LogInformation($"Deleted review for {mediaType}:{tmdbId} by user {ResolveUserDisplay(userIdN)}.");
+                if (_userConfigurationManager.DeleteReview(userIdN, mediaType, canonicalTarget))
+                    _logger.LogInformation("Deleted review for {MediaType}:{Target} by user {UserId}.", mediaType, canonicalTarget, userIdN);
                 return Ok(new { success = true });
+            }
+            catch (ReviewStoreUnavailableException ex)
+            {
+                _logger.LogError(ex, "The review store was unavailable during a delete.");
+                return StatusCode(503, new { success = false, message = "The review store is temporarily unavailable." });
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Failed to delete review for user {ResolveUserDisplay(userIdN)}: {ex.Message}");
+                _logger.LogError(ex, "Failed to delete a review for user {UserId}.", userIdN);
                 return StatusCode(500, new { success = false, message = "Failed to delete review." });
             }
         }
@@ -328,7 +359,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             if (mediaType != "movie" && mediaType != "tv")
                 return BadRequest(new { success = false, message = "MediaType must be 'movie' or 'tv'." });
 
-            if (!IsValidTmdbKey(tmdbId))
+            if (!ReviewTarget.TryValidate(mediaType, tmdbId, out var canonicalTarget))
                 return BadRequest(new { success = false, message = "Invalid TmdbId." });
 
             if (string.IsNullOrWhiteSpace(userIdN) || !Guid.TryParseExact(userIdN, "N", out _))
@@ -336,10 +367,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             try
             {
-                var removed = _userConfigurationManager.DeleteReview(userIdN, mediaType, tmdbId);
+                var removed = _userConfigurationManager.DeleteReview(userIdN, mediaType, canonicalTarget);
                 if (removed)
                 {
-                    _logger.LogInformation($"Admin deleted review for {mediaType}:{tmdbId} by user {ResolveUserDisplay(userIdN)}.");
+                    _logger.LogInformation("Admin deleted review for {MediaType}:{Target} by user {UserId}.", mediaType, canonicalTarget, userIdN);
                     return Ok(new { success = true, removed = true });
                 }
                 // Fail explicitly: nothing to delete means the review was
@@ -349,10 +380,78 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // list that looks the same as before.
                 return NotFound(new { success = false, removed = false, message = "No matching review to delete." });
             }
+            catch (ReviewStoreUnavailableException ex)
+            {
+                _logger.LogError(ex, "The review store was unavailable during an admin delete.");
+                return StatusCode(503, new { success = false, message = "The review store is temporarily unavailable." });
+            }
             catch (Exception ex)
             {
-                _logger.LogError($"Admin failed to delete review for {mediaType}:{tmdbId} user {ResolveUserDisplay(userIdN)}: {ex.Message}");
+                _logger.LogError(ex, "Admin failed to delete a review for {MediaType}:{Target} user {UserId}.", mediaType, canonicalTarget, userIdN);
                 return StatusCode(500, new { success = false, message = "Failed to delete review." });
+            }
+        }
+
+        [HttpGet("reviews/admin")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        public IActionResult GetReviewsForModeration(
+            [FromQuery] int pageSize = ReviewLimits.DefaultPageSize,
+            [FromQuery] string? cursor = null)
+        {
+            if (pageSize < 1 || pageSize > ReviewLimits.MaximumPageSize)
+                return BadRequest(new { message = $"PageSize must be between 1 and {ReviewLimits.MaximumPageSize}." });
+
+            try
+            {
+                var page = _userConfigurationManager.GetAllReviews(pageSize, cursor);
+                return Ok(new { reviews = page.Reviews, nextCursor = page.NextCursor });
+            }
+            catch (ArgumentException)
+            {
+                return BadRequest(new { message = "Invalid review cursor." });
+            }
+            catch (ReviewStoreUnavailableException ex)
+            {
+                _logger.LogError(ex, "The review store was unavailable during moderation listing.");
+                return StatusCode(503, new { message = "The review store is temporarily unavailable." });
+            }
+        }
+
+        [HttpGet("reviews/admin/status")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        public IActionResult GetReviewStoreStatus()
+        {
+            try
+            {
+                return Ok(_userConfigurationManager.GetReviewStoreStatus());
+            }
+            catch (ReviewStoreUnavailableException ex)
+            {
+                _logger.LogError(ex, "The review store was unavailable during a status read.");
+                return StatusCode(503, new { message = "The review store is temporarily unavailable." });
+            }
+        }
+
+        [HttpDelete("reviews/admin/user/{userIdN}")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        public IActionResult DeleteUserReviews(string userIdN, [FromQuery] int limit = ReviewLimits.MaximumPageSize)
+        {
+            if (!Guid.TryParseExact(userIdN, "N", out _) || limit < 1 || limit > ReviewLimits.MaximumPageSize)
+                return BadRequest(new { success = false, message = "Invalid userId or bounded delete limit." });
+
+            try
+            {
+                var removed = _userConfigurationManager.DeleteUserReviews(userIdN, limit);
+                _logger.LogInformation("Admin removed {ReviewCount} reviews for user {UserId}.", removed, userIdN);
+                return Ok(new { success = true, removed, hasMore = removed == limit });
+            }
+            catch (ReviewStoreUnavailableException ex)
+            {
+                _logger.LogError(ex, "The review store was unavailable during a bounded user purge.");
+                return StatusCode(503, new { success = false, message = "The review store is temporarily unavailable." });
             }
         }
     }

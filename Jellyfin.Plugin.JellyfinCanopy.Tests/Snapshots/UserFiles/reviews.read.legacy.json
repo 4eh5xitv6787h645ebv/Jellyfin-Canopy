@@ -1,15 +1,15 @@
 {
   "Reviews": {
-    "abc:movie:603": {
-      "UserId": "abc",
+    "3f2504e04f8941d39a0c0305e82c3301:movie:603": {
+      "UserId": "3f2504e04f8941d39a0c0305e82c3301",
       "TmdbId": "603",
       "MediaType": "movie",
       "Content": "Ancien avis — 素晴らしい",
       "Rating": null,
       "CreatedAt": "2023-01-01T00:00:00.000Z"
     },
-    "def:tv:1399": {
-      "userId": "def",
+    "4f2504e04f8941d39a0c0305e82c3302:tv:1399": {
+      "userId": "4f2504e04f8941d39a0c0305e82c3302",
       "tmdbId": "1399",
       "mediaType": "tv",
       "content": "case-variant keys",

@@ -176,17 +176,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             Directory.CreateDirectory(configDir);
             File.Copy(UserFileFormatGoldenTests.FixturePath("reviews.read.legacy"), Path.Combine(configDir, "reviews.json"), overwrite: true);
 
-            var store = _manager.GetAllReviews();
-            Assert.Equal(2, store.Reviews.Count);
+            Assert.Equal(2, _manager.GetReviewStoreStatus().TotalReviews);
 
-            var movie = store.Reviews["abc:movie:603"];
+            var movie = Assert.IsType<UserReview>(_manager.GetReview("3f2504e04f8941d39a0c0305e82c3301", "movie", "603"));
             Assert.Equal("Ancien avis — 素晴らしい", movie.Content);
             Assert.Null(movie.Rating);
             Assert.Equal(string.Empty, movie.UpdatedAt); // missing member → default
 
-            var tv = store.Reviews["def:tv:1399"]; // camelCase member names bind
+            var tv = Assert.IsType<UserReview>(_manager.GetReview("4f2504e04f8941d39a0c0305e82c3302", "tv", "1399")); // camelCase member names bind
             Assert.Equal(3, tv.Rating);
             Assert.Equal("case-variant keys", tv.Content);
+            Assert.False(File.Exists(Path.Combine(configDir, "reviews.json")));
+            Assert.Single(Directory.GetFiles(configDir, "reviews.json.migrated-*"));
         }
 
         // ─── Lenient read: corruption returns defaults (read-only paths) ─────────
