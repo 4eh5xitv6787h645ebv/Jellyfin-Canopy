@@ -9,30 +9,23 @@
  * (coverlet.collector), computes line coverage for the
  * Jellyfin.Plugin.JellyfinCanopy package and fails below the threshold.
  *
- * The threshold is a RATCHET: it was set just below the measured coverage at
- * introduction (17.72% on 2026-07-04). When you add tests and the number
- * rises, move the threshold up to just below the new number — never down.
+ * The threshold is read from scripts/coverage-baselines.json, shared with the
+ * client gate. The artifact records exact repeated clean measurements, a tiny
+ * instrumentation tolerance, and the complete instrumented scope. Coverage
+ * or scope growth must update that reviewed artifact so gains cannot be lost.
  *
- * Usage: node scripts/check-dotnet-coverage.js [--threshold <percent>]
+ * Usage: node scripts/check-dotnet-coverage.js
  */
 
 const fs = require('fs');
 const path = require('path');
+const {
+    evaluateCoverage,
+    formatCoverage,
+    loadBaselines,
+} = require('./lib/coverage-baseline');
 
-const PACKAGE_NAME = 'Jellyfin.Plugin.JellyfinCanopy';
-const DEFAULT_THRESHOLD = 16;
 const RESULTS_ROOT = path.join(__dirname, '..', 'Jellyfin.Plugin.JellyfinCanopy.Tests', 'TestResults');
-
-function parseThreshold(argv) {
-    const flagIndex = argv.indexOf('--threshold');
-    if (flagIndex === -1) return DEFAULT_THRESHOLD;
-    const value = Number(argv[flagIndex + 1]);
-    if (!Number.isFinite(value) || value < 0 || value > 100) {
-        console.error(`check-dotnet-coverage: invalid --threshold "${argv[flagIndex + 1]}"`);
-        process.exit(2);
-    }
-    return value;
-}
 
 /** Recursively collect every coverage.cobertura.xml under TestResults/. */
 function findReports(dir) {
@@ -62,8 +55,9 @@ function findReports(dir) {
  * count only the class-level <lines> — the authoritative complete set — by
  * stripping each class's <methods> section before counting.
  */
-function measurePackage(xml) {
-    const packagePattern = new RegExp(`<package[^>]*name="${PACKAGE_NAME}"[^>]*>([\\s\\S]*?)</package>`);
+function measurePackage(xml, packageName = 'Jellyfin.Plugin.JellyfinCanopy') {
+    const escapedPackageName = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const packagePattern = new RegExp(`<package[^>]*name="${escapedPackageName}"[^>]*>([\\s\\S]*?)</package>`);
     const match = xml.match(packagePattern);
     if (!match) return null;
 
@@ -86,7 +80,19 @@ function measurePackage(xml) {
 }
 
 function main() {
-    const threshold = parseThreshold(process.argv.slice(2));
+    if (process.argv.length !== 2) {
+        console.error('usage: node scripts/check-dotnet-coverage.js');
+        process.exit(2);
+    }
+    let baselines;
+    try {
+        baselines = loadBaselines();
+    } catch (error) {
+        console.error(`check-dotnet-coverage: invalid coverage baseline — ${error.message}`);
+        process.exit(2);
+    }
+    const profile = baselines.profiles.server;
+    const packageName = profile.package;
     const reports = findReports(RESULTS_ROOT);
     if (reports.length === 0) {
         console.error(`check-dotnet-coverage: no coverage.cobertura.xml under ${RESULTS_ROOT}`);
@@ -100,18 +106,22 @@ function main() {
         .sort((a, b) => b.mtime - a.mtime)[0].file;
 
     const xml = fs.readFileSync(newest, 'utf8');
-    const measured = measurePackage(xml);
-    if (!measured || measured.valid === 0) {
-        console.error(`check-dotnet-coverage: package "${PACKAGE_NAME}" not found in ${newest}`);
+    const rawMeasurement = measurePackage(xml, packageName);
+    if (!rawMeasurement || rawMeasurement.valid === 0) {
+        console.error(`check-dotnet-coverage: package "${packageName}" not found in ${newest}`);
         const found = [...xml.matchAll(/<package[^>]*name="([^"]*)"/g)].map((m) => m[1]);
         console.error(`check-dotnet-coverage: packages present in the report: ${found.length ? found.join(', ') : '(none — empty coverage run)'}`);
         process.exit(2);
     }
 
-    const percent = (100 * measured.covered) / measured.valid;
-    const summary = `${PACKAGE_NAME}: ${measured.covered}/${measured.valid} lines = ${percent.toFixed(2)}% (threshold ${threshold}%)`;
-    if (percent < threshold) {
-        console.error(`check-dotnet-coverage: FAIL — ${summary}`);
+    const measured = {
+        coveredLines: rawMeasurement.covered,
+        totalLines: rawMeasurement.valid,
+    };
+    const result = evaluateCoverage(measured, profile);
+    const summary = formatCoverage(packageName, measured, profile, result);
+    if (!result.ok) {
+        console.error(`check-dotnet-coverage: FAIL (${result.reason}) — ${summary}`);
         process.exit(1);
     }
     console.log(`check-dotnet-coverage: OK — ${summary}`);

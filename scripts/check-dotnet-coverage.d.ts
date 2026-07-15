@@ -2,4 +2,4 @@
 // build script). Declared here so the vitest suite can import measurePackage
 // under the strict src/ tsconfig (types: [], no allowJs).
 
-export function measurePackage(xml: string): { valid: number; covered: number } | null;
+export function measurePackage(xml: string, packageName?: string): { valid: number; covered: number } | null;

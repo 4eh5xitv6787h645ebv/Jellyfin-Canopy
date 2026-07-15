@@ -66,9 +66,9 @@ jobs:
         run: dotnet test Jellyfin.Plugin.JellyfinCanopy.Tests/JellyfinCanopy.Tests.csproj -c Release --logger "console;verbosity=normal"
 
       # Line-coverage ratchet over the plugin assembly (coverlet.collector).
-      # The threshold lives in scripts/check-dotnet-coverage.js — set just
-      # below the measured coverage when introduced; raise it as coverage
-      # grows, never lower it.
+      # The threshold and repeated clean measurement live in the shared
+      # scripts/coverage-baselines.json artifact. Scope or coverage growth
+      # requires an explicit reviewed ratchet update.
       - name: Coverage (plugin assembly line-coverage ratchet)
         run: |
           dotnet test Jellyfin.Plugin.JellyfinCanopy.Tests/JellyfinCanopy.Tests.csproj -c Release --collect:"XPlat Code Coverage"
@@ -120,8 +120,8 @@ jobs:
         run: npm run test:client
 
       # Line-coverage ratchet over src/core/ (the typed platform layer).
-      # The threshold lives in vitest.config.ts — set just below the measured
-      # coverage when introduced; raise it as coverage grows, never lower it.
+      # The threshold and repeated clean measurement live in the same shared
+      # scripts/coverage-baselines.json artifact as the server gate.
       - name: Client coverage gate (src/core)
         run: npm run test:client:coverage
 
