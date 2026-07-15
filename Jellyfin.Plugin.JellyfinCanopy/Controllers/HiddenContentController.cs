@@ -108,6 +108,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpPost("user-settings/{userId}/hidden-content.json")]
         [Authorize]
         [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.HiddenContentRequestBytes)]
         public IActionResult SaveUserHiddenContent(string userId, [FromBody] UserHiddenContent userConfiguration)
         {
             var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
@@ -116,9 +117,37 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
-            if (userConfiguration == null)
+            var validation = PersistedPayloadPolicy.Validate(userConfiguration);
+            if (!validation.IsValid)
             {
-                return BadRequest(new { success = false, message = "Invalid hidden content payload." });
+                var response = new PersistedPayloadErrorResponse
+                {
+                    Code = validation.Code,
+                    Message = validation.Status == PersistedPayloadStatus.TooLarge
+                        ? "The hidden-content payload exceeds the supported size limit."
+                        : "The hidden-content payload is invalid."
+                };
+                return validation.Status == PersistedPayloadStatus.TooLarge
+                    ? StatusCode(StatusCodes.Status413PayloadTooLarge, response)
+                    : BadRequest(response);
+            }
+
+            // Never mutate or retain MVC's bound graph. The validated copy is the
+            // only object allowed to cross the lock/write boundary.
+            var validatedCopy = PersistedPayloadPolicy.CloneValidated(userConfiguration);
+            validation = PersistedPayloadPolicy.Validate(validatedCopy);
+            if (!validation.IsValid)
+            {
+                var response = new PersistedPayloadErrorResponse
+                {
+                    Code = validation.Code,
+                    Message = validation.Status == PersistedPayloadStatus.TooLarge
+                        ? "The normalized hidden-content payload exceeds the supported size limit."
+                        : "The normalized hidden-content payload is invalid."
+                };
+                return validation.Status == PersistedPayloadStatus.TooLarge
+                    ? StatusCode(StatusCodes.Status413PayloadTooLarge, response)
+                    : BadRequest(response);
             }
 
             try
@@ -134,24 +163,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     catch (Exception strictEx) when (strictEx is InvalidDataException
                                                   || strictEx is System.Text.Json.JsonException)
                     {
-                        _logger.LogWarning($"hidden-content.json corrupt for {ResolveUserDisplay(authorizedUserId)} (backed up): {strictEx.Message}");
+                        _logger.LogWarning(
+                            $"hidden-content.json corrupt for {ResolveUserDisplay(authorizedUserId)} " +
+                            $"(backed up; exception={strictEx.GetType().Name}).");
                         return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
                     }
                     catch (IOException ioEx)
                     {
-                        _logger.LogWarning($"hidden-content.json temporarily unreadable for {ResolveUserDisplay(authorizedUserId)}: {ioEx.Message}");
+                        _logger.LogWarning(
+                            $"hidden-content.json temporarily unreadable for {ResolveUserDisplay(authorizedUserId)} " +
+                            $"(exception={ioEx.GetType().Name}).");
                         return StatusCode(500, new { success = false, message = "Hidden-content store is temporarily unavailable. Please retry." });
                     }
 
-                    _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "hidden-content.json", userConfiguration);
+                    _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "hidden-content.json", validatedCopy);
                 }
                 Services.HiddenContentResponseFilter.InvalidateUser(authorizedUserId);
-                _logger.LogInformation($"Saved hidden content for {ResolveUserDisplay(authorizedUserId)} to hidden-content.json");
+                _logger.LogInformation(
+                    $"Saved hidden content for {ResolveUserDisplay(authorizedUserId)} to hidden-content.json " +
+                    $"(items={validatedCopy.Items.Count}, bytes={validation.SerializedBytes}).");
                 return Ok(new { success = true, file = "hidden-content.json" });
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Failed to save hidden content for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
+                _logger.LogError(
+                    $"Failed to save hidden content for {ResolveUserDisplay(authorizedUserId)} " +
+                    $"(exception={ex.GetType().Name}).");
                 return StatusCode(500, new { success = false, message = "Failed to save hidden content." });
             }
         }

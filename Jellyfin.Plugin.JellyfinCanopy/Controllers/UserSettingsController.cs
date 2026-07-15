@@ -172,6 +172,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpPost("user-settings/{userId}/settings.json")]
         [Authorize]
         [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.StandardRequestBytes)]
         public IActionResult SaveUserSettingsSettings(string userId, [FromBody] UserSettings userConfiguration)
         {
             var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
@@ -186,6 +187,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpPost("user-settings/{userId}/shortcuts.json")]
         [Authorize]
         [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.StandardRequestBytes)]
         public IActionResult SaveUserSettingsShortcuts(string userId, [FromBody] UserShortcuts userConfiguration)
         {
             var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
@@ -202,7 +204,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             Success,
             PreconditionRequired,
             Conflict,
-            Invalid
+            Invalid,
+            TooLarge
         }
 
         public sealed class UserFileMutationResponse<T>
@@ -211,6 +214,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             public bool Success { get; set; }
             public bool Conflict { get; set; }
             public string Message { get; set; } = string.Empty;
+            public string Code { get; set; } = string.Empty;
             public string File { get; set; } = string.Empty;
             public long Revision { get; set; }
             public string ContentHash { get; set; } = string.Empty;
@@ -237,13 +241,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 StampServerManagedFields(authorizedUserId, candidate);
             }
 
-            if (candidate == null || !IsValidUserFileState(candidate))
+            var validation = PersistedPayloadPolicy.Validate(candidate);
+            if (candidate == null || !validation.IsValid)
             {
-                return BadRequest(new UserFileMutationResponse<T>
+                var response = new UserFileMutationResponse<T>
                 {
+                    Code = validation.Code,
                     File = fileName,
-                    Message = $"The {displayName} payload is invalid."
-                });
+                    Message = validation.Status == PersistedPayloadStatus.TooLarge
+                        ? $"The {displayName} payload exceeds the supported size limit."
+                        : $"The {displayName} payload is invalid."
+                };
+                return validation.Status == PersistedPayloadStatus.TooLarge
+                    ? StatusCode(StatusCodes.Status413PayloadTooLarge, response)
+                    : BadRequest(response);
             }
 
             if (!TryParseIfMatchRevision(out var expectedRevision))
@@ -282,6 +293,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 {
                     Success = result.Status == UserFileCommitStatus.Success,
                     Conflict = result.Status == UserFileCommitStatus.Conflict,
+                    Code = result.Status == UserFileCommitStatus.TooLarge
+                        ? "payload_too_large"
+                        : result.Status == UserFileCommitStatus.Invalid ? "invalid_payload" : string.Empty,
                     Message = result.Message,
                     File = fileName,
                     Revision = result.State?.Revision ?? 0,
@@ -302,12 +316,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     UserFileCommitStatus.PreconditionRequired => StatusCode(StatusCodes.Status428PreconditionRequired, response),
                     UserFileCommitStatus.Conflict => Conflict(response),
                     UserFileCommitStatus.Invalid => BadRequest(response),
+                    UserFileCommitStatus.TooLarge => StatusCode(StatusCodes.Status413PayloadTooLarge, response),
                     _ => StatusCode(StatusCodes.Status500InternalServerError, response)
                 };
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Failed to save user {displayName} for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
+                _logger.LogError(
+                    $"Failed to save user {displayName} for {ResolveUserDisplay(authorizedUserId)} " +
+                    $"(exception={ex.GetType().Name}).");
                 var response = new UserFileMutationResponse<T>
                 {
                     File = fileName,
@@ -365,6 +382,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 }
 
                 candidate.Revision = checked(current.Revision + 1);
+                var validation = PersistedPayloadPolicy.Validate(candidate);
+                if (!validation.IsValid)
+                {
+                    return new UserFileCommitResult<T>
+                    {
+                        Status = validation.Status == PersistedPayloadStatus.TooLarge
+                            ? UserFileCommitStatus.TooLarge
+                            : UserFileCommitStatus.Invalid,
+                        State = current,
+                        Message = validation.Status == PersistedPayloadStatus.TooLarge
+                            ? "The payload exceeds the supported size limit; no mutation was committed."
+                            : "The payload is invalid; no mutation was committed."
+                    };
+                }
+
                 _userConfigurationManager.SaveUserConfiguration(authorizedUserId, fileName, candidate);
                 return new UserFileCommitResult<T> { Status = UserFileCommitStatus.Success, State = candidate };
             }
@@ -372,70 +404,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         private static bool IsValidUserFileState<T>(T state)
             where T : class, IRevisionedUserConfiguration
-            => state.Revision >= 0 && state switch
-            {
-                UserSettings settings => settings.ExtensionData != null
-                    && settings.ExtensionData.Count <= 1000
-                    && settings.PauseScreenDelaySeconds is >= 1 and <= 60
-                    && settings.SubtitleVerticalPosition is >= 0 and <= 100
-                    && settings.SubtitleHorizontalPosition is >= 0 and <= 100
-                    && HasValidSettingsStrings(settings)
-                    && HasBoundedSerializedSize(settings),
-                UserShortcuts shortcuts => shortcuts.Shortcuts != null
-                    && shortcuts.Shortcuts.Count <= 1000
-                    && shortcuts.Shortcuts.All(shortcut => shortcut != null
-                        && IsBoundedString(shortcut.Name)
-                        && IsBoundedString(shortcut.Key)
-                        && IsBoundedString(shortcut.Label)
-                        && IsBoundedString(shortcut.Category))
-                    && shortcuts.ExtensionData != null
-                    && shortcuts.ExtensionData.Count <= 1000
-                    && HasBoundedSerializedSize(shortcuts),
-                ElsewhereSettings elsewhere => elsewhere.Regions != null
-                    && elsewhere.Services != null
-                    && elsewhere.Regions.Count <= 500
-                    && elsewhere.Services.Count <= 500
-                    && IsBoundedString(elsewhere.Region)
-                    && elsewhere.Regions.All(IsBoundedString)
-                    && elsewhere.Services.All(IsBoundedString)
-                    && elsewhere.ExtensionData != null
-                    && elsewhere.ExtensionData.Count <= 1000
-                    && HasBoundedSerializedSize(elsewhere),
-                _ => false
-            };
-
-        private const int MaxUserFileBytes = 1024 * 1024;
-        private const int MaxUserStringLength = 512;
-
-        private static bool IsBoundedString(string? value)
-            => value != null && value.Length <= MaxUserStringLength;
-
-        private static bool HasValidSettingsStrings(UserSettings settings)
-            => IsBoundedString(settings.CustomSubtitleTextColor)
-                && IsBoundedString(settings.CustomSubtitleBgColor)
-                && IsBoundedString(settings.WatchProgressMode)
-                && IsBoundedString(settings.WatchProgressTimeFormat)
-                && IsBoundedString(settings.QualityTagsPosition)
-                && IsBoundedString(settings.GenreTagsPosition)
-                && IsBoundedString(settings.LanguageTagsPosition)
-                && IsBoundedString(settings.RatingTagsPosition)
-                && IsBoundedString(settings.LastOpenedTab)
-                && IsBoundedString(settings.DisplayLanguage)
-                && IsBoundedString(settings.CalendarDisplayMode)
-                && IsBoundedString(settings.CalendarDefaultViewMode);
-
-        private static bool HasBoundedSerializedSize<T>(T state)
-        {
-            try
-            {
-                return JsonSerializer.SerializeToUtf8Bytes(state, state!.GetType(), PersistedJson.WriteOptions).Length
-                    <= MaxUserFileBytes;
-            }
-            catch (JsonException)
-            {
-                return false;
-            }
-        }
+            => PersistedPayloadPolicy.Validate(state).IsValid;
 
         private void StampServerManagedFields<T>(string authorizedUserId, T state)
             where T : class, IRevisionedUserConfiguration
@@ -1423,6 +1392,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpPost("user-settings/{userId}/elsewhere.json")]
         [Authorize]
         [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.StandardRequestBytes)]
         public IActionResult SaveUserSettingsElsewhere(string userId, [FromBody] ElsewhereSettings userConfiguration)
         {
             var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);

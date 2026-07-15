@@ -211,6 +211,21 @@ curl -X GET \
 - **Non-admin** authenticated callers receive an empty object (`{}`) rather than a `403`, so the client still initialises but never sees admin-only fields.
 - If the plugin configuration is unavailable, the endpoint returns `503`.
 
+### User configuration payload budgets
+
+Complete replacements for `settings.json`, `shortcuts.json`, `elsewhere.json`, and `hidden-content.json` share one server-side payload policy. The request body is bounded **before JSON model binding** for both `Content-Length` and chunked uploads; an oversized body returns HTTP `413` with `{"success":false,"code":"payload_too_large",...}` and is never deserialized, logged, cached, or written. Field/count/range failures return HTTP `400` with a stable non-value-bearing reason code. A rejection leaves the existing file and Hidden Content cache untouched.
+
+| Payload | HTTP body | Persisted JSON | Collection limits |
+| --- | ---: | ---: | --- |
+| `settings.json` | 1 MiB | 1 MiB | Up to 1,000 extension properties |
+| `shortcuts.json` | 1 MiB | 1 MiB | Up to 1,000 shortcuts and 1,000 extension properties |
+| `elsewhere.json` | 1 MiB | 1 MiB | Up to 500 regions, 500 services, and 1,000 extension properties |
+| `hidden-content.json` | 8 MiB | 7 MiB | Up to **10,000 hidden items** (intentionally sized and tested with realistic populated records for large supported libraries) |
+
+Known settings/shortcut/Elsewhere free-text fields are capped at 512 characters. Hidden Content keys are capped at 256 characters; display fields at 512; identifiers and type/timestamp fields use narrower 32–128 character limits. Season and episode numbers accept `0` through `100000`. Legacy `series` hide scope remains accepted alongside `global`, `continuewatching`, `nextup`, and `homesections`.
+
+Forward-compatible `[JsonExtensionData]` remains supported, but unknown JSON is recursively bounded across the complete extension map: property names 256 characters, string values 4,096 characters, depth 16, and 20,000 JSON nodes. Finally, the shared user-configuration store refuses every serialized file over 8 MiB as a caller-independent backstop. Successful logs contain metadata such as file, revision, hash, item count, and byte count—not old/new values or supplied secrets.
+
 ### Bookmark API
 
 Bookmarks are stored **per user** under the plugin's configurations directory. The user id is normalized (dashes stripped, lowercased) to form the folder name, and the file is named `bookmark.json` (singular):
