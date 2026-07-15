@@ -1,7 +1,10 @@
 using Jellyfin.Plugin.JellyfinCanopy.Data;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Model.Querying;
+using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Data
@@ -9,7 +12,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Data
     /// <summary>
     /// Tests for the pure query-building / mapping core of <see cref="ItemLookupService"/>.
     /// They pin down the exact InternalItemsQuery contents produced for given inputs
-    /// and the exact (case-sensitive, first-wins) pair→item mapping semantics.
+    /// and the exact case-sensitive, all-editions pair→item mapping semantics.
     /// </summary>
     public class ItemLookupServiceTests
     {
@@ -130,14 +133,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Data
             var map = ItemLookupService.MapProviderPairs(items, pairs);
 
             Assert.Equal(3, map.Count);
-            Assert.Equal(movieId, map[("Tmdb", "603")]);
-            Assert.Equal(movieId, map[("Imdb", "tt0133093")]);
-            Assert.Equal(otherId, map[("Tmdb", "604")]);
+            Assert.Equal(new[] { new ItemLookupCandidate(movieId, ItemLookupKind.Movie) }, map[("Tmdb", "603")]);
+            Assert.Equal(new[] { new ItemLookupCandidate(movieId, ItemLookupKind.Movie) }, map[("Imdb", "tt0133093")]);
+            Assert.Equal(new[] { new ItemLookupCandidate(otherId, ItemLookupKind.Movie) }, map[("Tmdb", "604")]);
             Assert.False(map.ContainsKey(("Tvdb", "1"))); // unmatched pair absent, like the raw SQL result
         }
 
         [Fact]
-        public void MapProviderPairs_FirstItemWinsForSharedProviderId()
+        public void MapProviderPairs_PreservesEveryEditionForSharedProviderId()
         {
             var firstId = Guid.NewGuid();
             var secondId = Guid.NewGuid();
@@ -149,7 +152,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Data
 
             var map = ItemLookupService.MapProviderPairs(items, new List<(string, string)> { ("Tmdb", "603") });
 
-            Assert.Equal(firstId, map[("Tmdb", "603")]); // DistinctBy-equivalent: first wins
+            Assert.Equal(
+                new[] { firstId, secondId }.OrderBy(id => id),
+                map[("Tmdb", "603")].Select(candidate => candidate.ItemId));
+        }
+
+        [Fact]
+        public void MapProviderPairs_PreservesCandidateMediaType()
+        {
+            var movie = MovieWith(Guid.NewGuid(), ("Tmdb", "42"));
+            var series = new Series { Id = Guid.NewGuid() };
+            series.ProviderIds["Tmdb"] = "42";
+            var episode = new Episode { Id = Guid.NewGuid() };
+            episode.ProviderIds["Tvdb"] = "99";
+
+            var map = ItemLookupService.MapProviderPairs(
+                new BaseItem[] { series, movie, episode },
+                new List<(string, string)> { ("Tmdb", "42"), ("Tvdb", "99") });
+
+            Assert.Contains(map[("Tmdb", "42")], candidate => candidate.Kind == ItemLookupKind.Movie);
+            Assert.Contains(map[("Tmdb", "42")], candidate => candidate.Kind == ItemLookupKind.Series);
+            Assert.Equal(ItemLookupKind.Episode, Assert.Single(map[("Tvdb", "99")]).Kind);
         }
 
         [Fact]
@@ -174,6 +197,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Data
             var map = ItemLookupService.MapProviderPairs(items, new List<(string, string)> { ("Tmdb", "42") });
 
             Assert.Empty(map);
+        }
+
+        [Fact]
+        public void GetAccessibleItemIdsBatch_ConfiguresUserAccessBeforeSettingItemIds()
+        {
+            var requested = Guid.NewGuid();
+            var accessible = Guid.NewGuid();
+            var user = new User("calendar-user", "provider", "password-provider");
+            var configuredBeforeIds = false;
+            var library = new CountingLibraryManager
+            {
+                ConfigureUserAccessHook = (query, configuredUser) =>
+                {
+                    configuredBeforeIds = query.ItemIds.Length == 0 && ReferenceEquals(user, configuredUser);
+                    query.TopParentIds = new[] { Guid.NewGuid() };
+                },
+                GetItemIdsHook = query =>
+                {
+                    Assert.True(configuredBeforeIds);
+                    Assert.Equal(new[] { requested }, query.ItemIds);
+                    Assert.NotEmpty(query.TopParentIds);
+                    return new[] { accessible };
+                }
+            };
+
+            var result = new ItemLookupService(library)
+                .GetAccessibleItemIdsBatch(new[] { requested }, user);
+
+            Assert.Equal(new HashSet<Guid> { accessible }, result);
         }
     }
 }

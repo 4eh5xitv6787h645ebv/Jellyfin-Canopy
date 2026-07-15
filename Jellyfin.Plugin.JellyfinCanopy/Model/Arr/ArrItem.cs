@@ -179,5 +179,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model.Arr {
         /// </summary>
         [JsonIgnore]
         public string? RootFolderPath { get; set; }
+
+        /// <summary>
+        /// Full Arr media path, retained only for authoritative comparison with Jellyfin's
+        /// configured virtual-folder locations. It is never returned to the browser.
+        /// </summary>
+        [JsonIgnore]
+        public string? MediaPath { get; set; }
+
+        /// <summary>
+        /// Stable source/index namespace for one configured Arr instance. Display names are not
+        /// unique, so they cannot safely key access decisions across instances.
+        /// </summary>
+        [JsonIgnore]
+        public string ArrInstanceKey { get; set; } = string.Empty;
     }
 }

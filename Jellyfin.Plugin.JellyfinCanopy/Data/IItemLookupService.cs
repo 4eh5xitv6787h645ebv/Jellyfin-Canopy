@@ -25,14 +25,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Data
         IReadOnlyList<Guid> GetItemIdsByProviders(IDictionary<string, string>? providers, JUser? user = null);
 
         /// <summary>
-        /// Batch-resolves many (Provider, Value) pairs at once and returns a map of each
-        /// matched pair to one item id (first match wins when several items share the
-        /// same provider id). Pairs with a null/blank provider or value are ignored.
-        /// Matching is exact (case-sensitive), like the server's provider-id storage.
+        /// Batch-resolves many (Provider, Value) pairs at once and preserves every matching
+        /// Jellyfin edition. Pairs with a null/blank provider or value are ignored. Matching
+        /// is exact (case-sensitive), like the server's provider-id storage.
         /// </summary>
         /// <param name="providers">The (Provider, Value) pairs to resolve.</param>
-        /// <returns>Map of matched (Provider, Value) pairs to item ids. Unmatched pairs are absent.</returns>
-        Dictionary<(string Provider, string Value), Guid> GetItemIdsByProvidersBatch(
+        /// <returns>Map of matched (Provider, Value) pairs to candidate items. Unmatched pairs are absent.</returns>
+        Dictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>> GetItemCandidatesByProvidersBatch(
             IReadOnlyCollection<(string Provider, string Value)> providers);
+
+        /// <summary>
+        /// Projects a set of item ids through Jellyfin's supported user-scoped query surface.
+        /// The whole set is resolved in one query so calendar access checks never become N+1.
+        /// </summary>
+        IReadOnlySet<Guid> GetAccessibleItemIdsBatch(IReadOnlyCollection<Guid> itemIds, JUser user);
+    }
+
+    /// <summary>The minimum identity needed to choose a type-correct Jellyfin edition.</summary>
+    public sealed record ItemLookupCandidate(Guid ItemId, ItemLookupKind Kind, string? MediaPath = null);
+
+    public enum ItemLookupKind
+    {
+        Other,
+        Movie,
+        Series,
+        Episode
     }
 }

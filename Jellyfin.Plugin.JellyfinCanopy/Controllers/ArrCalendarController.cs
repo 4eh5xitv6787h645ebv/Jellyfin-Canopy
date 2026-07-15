@@ -208,9 +208,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             var sonarrTasks = sonarrInstances.Select((i, idx) => FetchSonarrCalendar(i, idx, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, ct)).ToList();
             var radarrTasks = radarrInstances.Select((i, idx) => FetchRadarrCalendar(i, idx, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, AddRelease, ct)).ToList();
+            var sonarrRootTasks = config.CalendarFilterByLibraryAccess
+                ? sonarrInstances.Select((i, idx) => FetchArrRoots(i, $"sonarr:{idx}", ItemLookupKind.Series, ct)).ToList()
+                : new List<Task<(List<Services.Arr.ArrRootBinding> Bindings, string? Error)>>();
+            var radarrRootTasks = config.CalendarFilterByLibraryAccess
+                ? radarrInstances.Select((i, idx) => FetchArrRoots(i, $"radarr:{idx}", ItemLookupKind.Movie, ct)).ToList()
+                : new List<Task<(List<Services.Arr.ArrRootBinding> Bindings, string? Error)>>();
 
             var sonarrCalResults = await Task.WhenAll(sonarrTasks);
             var radarrCalResults = await Task.WhenAll(radarrTasks);
+            var sonarrRootResults = await Task.WhenAll(sonarrRootTasks);
+            var radarrRootResults = await Task.WhenAll(radarrRootTasks);
+            var rootBindings = sonarrRootResults
+                .SelectMany(result => result.Bindings)
+                .Concat(radarrRootResults.SelectMany(result => result.Bindings))
+                .ToList();
 
             var errors = new List<object>();
             if (config.IsSonarrInstancesCorrupt())
@@ -233,149 +245,72 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 if (radarrCalResults[i].Error != null)
                     errors.Add(new { instanceName = radarrInstances[i].Name, source = "Radarr", reason = radarrCalResults[i].Error });
             }
+            for (int i = 0; i < sonarrRootResults.Length; i++)
+            {
+                if (sonarrRootResults[i].Error != null)
+                    errors.Add(new { instanceName = sonarrInstances[i].Name, source = "Sonarr", reason = $"root policy: {sonarrRootResults[i].Error}" });
+                else if (sonarrRootResults[i].Bindings.Count == 0)
+                    errors.Add(new { instanceName = sonarrInstances[i].Name, source = "Sonarr", reason = "root policy: no authoritative roots returned" });
+            }
+            for (int i = 0; i < radarrRootResults.Length; i++)
+            {
+                if (radarrRootResults[i].Error != null)
+                    errors.Add(new { instanceName = radarrInstances[i].Name, source = "Radarr", reason = $"root policy: {radarrRootResults[i].Error}" });
+                else if (radarrRootResults[i].Bindings.Count == 0)
+                    errors.Add(new { instanceName = radarrInstances[i].Name, source = "Radarr", reason = "root policy: no authoritative roots returned" });
+            }
 
-            // Resolve ItemIds against Jellyfin's library BEFORE dedup so the dedup tie-breaker can
-            // prefer candidates that the current user can actually access (H4). Without this, dedup
-            // might pick an instance-B candidate with HasFile=true in a root folder the user can't
-            // read, and then the subsequent access filter would hide the event entirely — even
-            // though instance-A had the same episode in an accessible root folder.
+            // Resolve every Jellyfin edition for every provider in one query. A single-id map loses
+            // duplicate editions and makes query ordering decide visibility when the first edition
+            // is inaccessible but a later one is accessible.
             var providerKeys = events
                 .SelectMany(ProviderHelper.GetAllProviders)
                 .Distinct()
                 .ToList();
 
-            var itemMap = _itemLookup.GetItemIdsByProvidersBatch(providerKeys);
+            var itemMap = _itemLookup.GetItemCandidatesByProvidersBatch(providerKeys);
+            IReadOnlySet<Guid>? accessibleIds = null;
+            Services.Arr.CalendarAccessPolicy? rootAccessPolicy = null;
+            Dictionary<ArrItem, Services.Arr.CalendarAccessState> accessByEvent;
 
-            foreach (var evt in events)
-            {
-                evt.ItemId = ProviderHelper.GetBestItemId(ProviderHelper.GetProviders(evt), itemMap);
-                evt.ItemEpisodeId = ProviderHelper.GetBestItemId(ProviderHelper.GetEpisodeProviders(evt), itemMap);
-            }
-
-            // Build access info now so the dedup step can consult it.
-            HashSet<Guid>? accessibleIds = null;
-            Dictionary<string, bool>? rootFolderAccessMap = null;
             if (config.CalendarFilterByLibraryAccess)
             {
                 var calendarUserId = UserHelper.GetCurrentUserId(User);
-                if (calendarUserId.HasValue)
+                var calendarUser = calendarUserId.HasValue
+                    ? _userManager.GetUserById(calendarUserId.Value)
+                    : null;
+
+                if (calendarUser != null)
                 {
-                    var calendarUserForFilter = _userManager.GetUserById(calendarUserId.Value);
-                    if (calendarUserForFilter != null)
+                    var candidateIds = itemMap.Values
+                        .SelectMany(candidates => candidates)
+                        .Select(candidate => candidate.ItemId)
+                        .Distinct()
+                        .ToList();
+                    accessibleIds = _itemLookup.GetAccessibleItemIdsBatch(candidateIds, calendarUser);
+
+                    try
                     {
-                        var uniqueItemIds = events
-                            .Select(e => e.ItemId)
-                            .Where(id => id.HasValue)
-                            .Select(id => id!.Value)
-                            .Distinct()
-                            .ToList();
-
-                        accessibleIds = new HashSet<Guid>();
-                        foreach (var id in uniqueItemIds)
-                        {
-                            if (_libraryManager.GetItemById<BaseItem>(id, calendarUserForFilter) != null)
-                                accessibleIds.Add(id);
-                        }
-
-                        rootFolderAccessMap = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-                        foreach (var evt in events.Where(e => e.ItemId.HasValue && !string.IsNullOrEmpty(e.RootFolderPath)))
-                        {
-                            var isAccessible = accessibleIds.Contains(evt.ItemId!.Value);
-                            if (isAccessible || !rootFolderAccessMap.ContainsKey(evt.RootFolderPath!))
-                                rootFolderAccessMap[evt.RootFolderPath!] = isAccessible;
-                        }
+                        rootAccessPolicy = new Services.Arr.CalendarAccessPolicy(
+                            _libraryManager.GetVirtualFolders(), calendarUser, rootBindings);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Safe posture: provider-unresolved events remain unresolved/hidden if the
+                        // authoritative virtual-folder policy cannot be read.
+                        _logger.LogWarning($"Could not resolve Calendar root access policy: {ex.Message}");
                     }
                 }
             }
 
-            // Returns true when the filter is off, or when we have positive evidence the user can
-            // access this event. "No information" defaults to true (same as the final filter).
-            bool IsAccessible(ArrItem evt)
-            {
-                if (accessibleIds == null) return true;
-                if (evt.ItemId.HasValue)
-                    return accessibleIds.Contains(evt.ItemId.Value);
-                if (!string.IsNullOrEmpty(evt.RootFolderPath)
-                    && rootFolderAccessMap != null
-                    && rootFolderAccessMap.TryGetValue(evt.RootFolderPath, out var a))
-                    return a;
-                return true;
-            }
+            accessByEvent = Services.Arr.CalendarEventAccessResolver.Resolve(
+                events, itemMap, accessibleIds, rootAccessPolicy, config.CalendarFilterByLibraryAccess);
 
-            // Deduplicate events across instances. Tie-break priority:
-            //   1. Accessible to the current user (prevents H4 hide-accessible-event bug).
-            //   2. HasFile=true (if one instance has the file downloaded, show that).
-            // The losing candidate's InstanceName is preserved in AlsoInInstances so the UI
-            // can show "also in: X, Y" context instead of silently erasing other instances.
-            var deduped = new Dictionary<string, ArrItem>();
-            foreach (var evt in events)
-            {
-                var dedupeKey = BuildDedupKey(evt);
-
-                if (!deduped.TryGetValue(dedupeKey, out var existing))
-                {
-                    deduped[dedupeKey] = evt;
-                    continue;
-                }
-
-                var existingAccess = IsAccessible(existing);
-                var newAccess = IsAccessible(evt);
-                ArrItem winner, loser;
-                if (newAccess && !existingAccess)
-                {
-                    winner = evt; loser = existing;
-                }
-                else if (newAccess == existingAccess && !existing.HasFile && evt.HasFile)
-                {
-                    winner = evt; loser = existing;
-                }
-                else
-                {
-                    winner = existing; loser = evt;
-                }
-
-                if (!ReferenceEquals(winner, existing))
-                {
-                    deduped[dedupeKey] = winner;
-                }
-
-                // Merge loser's instance name into winner's AlsoInInstances (dedup & skip self).
-                if (!string.IsNullOrEmpty(loser.InstanceName)
-                    && !string.Equals(loser.InstanceName, winner.InstanceName, StringComparison.Ordinal))
-                {
-                    winner.AlsoInInstances ??= new List<string>();
-                    if (!winner.AlsoInInstances.Contains(loser.InstanceName))
-                        winner.AlsoInInstances.Add(loser.InstanceName);
-                }
-                // Preserve loser's own AlsoInInstances entries too.
-                if (loser.AlsoInInstances != null)
-                {
-                    winner.AlsoInInstances ??= new List<string>();
-                    foreach (var name in loser.AlsoInInstances)
-                    {
-                        if (!string.Equals(name, winner.InstanceName, StringComparison.Ordinal)
-                            && !winner.AlsoInInstances.Contains(name))
-                            winner.AlsoInInstances.Add(name);
-                    }
-                }
-            }
-            events = deduped.Values.ToList();
-
-            // Final safety-net access filter (defense in depth — dedup above already respects this,
-            // but if the filter is on and a lone candidate is inaccessible, it must still be hidden).
-            if (config.CalendarFilterByLibraryAccess && accessibleIds != null)
-            {
-                events = events.Where(e =>
-                {
-                    if (e.ItemId.HasValue)
-                        return accessibleIds.Contains(e.ItemId.Value);
-                    if (!string.IsNullOrEmpty(e.RootFolderPath)
-                        && rootFolderAccessMap != null
-                        && rootFolderAccessMap.TryGetValue(e.RootFolderPath, out var hasAccess))
-                        return hasAccess;
-                    return true;
-                }).ToList();
-            }
+            events = Services.Arr.CalendarEventAccessResolver.DeduplicateAndFilter(
+                events,
+                accessByEvent,
+                config.CalendarFilterByLibraryAccess,
+                BuildDedupKey);
 
             return Ok(new { events, errors });
         }
@@ -509,7 +444,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                             BackdropUrl = seriesBackdropUrl,
                             EpisodeTvdbId = ArrIdHelper.ToNullableId((int?)episode?["tvdbId"]),
                             EpisodeImdbId = (string?)episode?["imdbId"],
-                            RootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)series?["path"])
+                            RootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)series?["path"]),
+                            MediaPath = (string?)series?["path"],
+                            ArrInstanceKey = $"sonarr:{instanceIndex}"
                         });
                     }
                     return items;
@@ -612,7 +549,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                                 BackdropUrl = backdropUrl,
                                 TmdbId = ArrIdHelper.ToNullableId((int?)movie?["tmdbId"]),
                                 ImdbId = (string?)movie?["imdbId"],
-                                RootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)movie?["path"])
+                                RootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)movie?["path"]),
+                                MediaPath = (string?)movie?["path"],
+                                ArrInstanceKey = $"radarr:{instanceIndex}"
                             });
                         }
                     }
@@ -624,6 +563,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 timeout: TimeSpan.FromSeconds(15),
                 contextLabel: "Radarr calendar",
                 ct: ct);
+        }
+
+        private Task<(List<Services.Arr.ArrRootBinding> Bindings, string? Error)> FetchArrRoots(
+            ArrInstance instance,
+            string instanceKey,
+            ItemLookupKind kind,
+            CancellationToken ct)
+        {
+            return _arrFetch.FetchAndMapAsync<List<Services.Arr.ArrRootBinding>>(
+                instance,
+                "/api/v3/rootfolder",
+                data => MapArrRootBindings(data, instanceKey, kind),
+                emptyResult: new List<Services.Arr.ArrRootBinding>(),
+                timeout: TimeSpan.FromSeconds(15),
+                contextLabel: $"{kind} root policy",
+                ct: ct);
+        }
+
+        internal static List<Services.Arr.ArrRootBinding> MapArrRootBindings(
+            JsonNode? data,
+            string instanceKey,
+            ItemLookupKind kind)
+        {
+            if (data is not JsonArray roots)
+                return new List<Services.Arr.ArrRootBinding>();
+
+            return roots
+                .Select(root => (string?)root?["path"])
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(path => new Services.Arr.ArrRootBinding(instanceKey, kind, path!))
+                .Distinct()
+                .ToList();
         }
 
         [HttpPost("arr/calendar/user-data")]
@@ -655,12 +626,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 var itemsById = new Dictionary<Guid, BaseItem>();
                 if (ids.Count > 0)
                 {
-                    var items = _libraryManager.GetItemList(new InternalItemsQuery
-                    {
-                        User = user,
-                        ItemIds = ids.ToArray(),
-                        Recursive = true
-                    });
+                    // Build through the shared safe-order owner. Assigning ItemIds before
+                    // ConfigureUserAccess makes Jellyfin skip its top-parent library projection
+                    // and would let a client probe hidden editions by supplying their GUIDs.
+                    var items = _libraryManager.GetItemList(
+                        UserAccessQuery.BuildItemIds(_libraryManager, user, ids));
 
                     foreach (var item in items)
                     {
