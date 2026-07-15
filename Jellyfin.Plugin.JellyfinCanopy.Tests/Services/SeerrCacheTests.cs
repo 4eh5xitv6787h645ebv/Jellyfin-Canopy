@@ -1,7 +1,9 @@
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services;
@@ -27,6 +29,8 @@ public class SeerrCacheTests
         cache.AutoImportFailureThrottle["jf-user-c"] = DateTime.UtcNow;
         cache.ResponseCache["jf-user-a:/api/v1/discover/movies"] = ("{}", DateTime.UtcNow, 1, "test-generation");
         cache.TmdbEnrichmentCache["movie:1"] = (new TmdbEnrichmentResult { Title = "T" }, DateTime.UtcNow, 1);
+        cache.Public4kSettingsCache["http://seerr:5055"] = (true, true, DateTime.UtcNow, 1, "fingerprint");
+        cache.CertScoreCache["movie:1"] = (12, null, null, null, DateTime.UtcNow);
         cache.AvatarCache["avatar-key"] = (new byte[] { 1 }, "image/png", "etag", DateTime.UtcNow);
         cache.SeerrStatusCache = (true, DateTime.UtcNow);
         return cache;
@@ -44,6 +48,8 @@ public class SeerrCacheTests
         Assert.Empty(cache.AutoImportFailureThrottle);
         Assert.Empty(cache.ResponseCache);
         Assert.Empty(cache.TmdbEnrichmentCache);
+        Assert.Empty(cache.Public4kSettingsCache);
+        Assert.Empty(cache.CertScoreCache);
         Assert.Empty(cache.AvatarCache);
         Assert.Null(cache.SeerrStatusCache);
     }
@@ -62,8 +68,43 @@ public class SeerrCacheTests
         // ...but non-user caches keep their entries.
         Assert.Single(cache.ResponseCache);
         Assert.Single(cache.TmdbEnrichmentCache);
+        Assert.Single(cache.Public4kSettingsCache);
+        Assert.Single(cache.CertScoreCache);
         Assert.Single(cache.AvatarCache);
         Assert.NotNull(cache.SeerrStatusCache);
+    }
+
+    [Fact]
+    public void PolicyInvalidation_FencesWatchlistGenerationAndClearsSharedActiveState()
+    {
+        var provider = new FakePluginConfigProvider(new PluginConfiguration
+        {
+            SeerrEnabled = false,
+            SeerrUrls = "http://seerr:5055",
+            SeerrApiKey = "retained-key",
+        });
+        var cache = PopulatedCache();
+        var watchlist = new WatchlistMonitor(
+            null!,
+            null!,
+            null!,
+            null!,
+            null!,
+            NullLogger<WatchlistMonitor>.Instance,
+            provider);
+        var generation = watchlist.ConfigurationGenerationNumber;
+
+        var failures = SeerrIntegrationPolicy.InvalidateCachedActiveState(cache, watchlist);
+
+        Assert.Empty(failures);
+        Assert.Equal(generation + 1, watchlist.ConfigurationGenerationNumber);
+        Assert.Empty(cache.UserCache);
+        Assert.Empty(cache.ResponseCache);
+        Assert.Empty(cache.AvatarCache);
+        Assert.Empty(cache.Public4kSettingsCache);
+        Assert.Empty(cache.CertScoreCache);
+        Assert.Null(cache.SeerrStatusCache);
+        watchlist.Dispose();
     }
 
     [Fact]

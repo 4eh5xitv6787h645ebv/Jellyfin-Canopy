@@ -150,7 +150,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             FetchConfiguration FetchConfig,
             long ConfigurationRevision,
             string ConfigurationIdentity,
-            SeerrMutationConfigStamp ConfigurationStamp);
+            SeerrMutationConfigStamp ConfigurationStamp,
+            SeerrIntegrationSnapshot Integration);
 
         public async Task<SeerrParentalResult> ApplyAsync(string json, string apiPath, SeerrCaller caller)
         {
@@ -255,17 +256,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         // ── Gate resolution (shared fast paths) ───────────────────────────────
         private async Task<GateContext?> ResolveGateAsync(SeerrCaller caller)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || !config.SeerrRespectParentalRatings)
-            {
-                return null;
-            }
-
-            // The gate resolves certifications through Seerr; if Seerr isn't
-            // configured it cannot verify anything, so it stays inactive rather
-            // than fail-closed-blocking every title (which would break the raw
-            // TMDB passthrough for Elsewhere-only setups).
-            if (string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            var config = integration.Configuration;
+            if (!integration.IsActive
+                || config == null
+                || !config.SeerrRespectParentalRatings)
             {
                 return null;
             }
@@ -288,11 +283,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return null;
             }
 
-            var revision = _configProvider.ConfigurationRevision;
+            var revision = integration.ConfigurationRevision;
             var configurationStamp = SeerrMutationConfigStamp.Capture(config, revision);
             var fetchConfig = new FetchConfiguration(
-                config.SeerrUrls ?? string.Empty,
-                config.SeerrApiKey ?? string.Empty,
+                string.Join(',', integration.Urls),
+                integration.ApiKey,
                 config.TMDB_API_KEY ?? string.Empty,
                 TimeSpan.FromMinutes(Math.Max(1, config.SeerrParentalRatingCacheTtlMinutes)));
             var configurationIdentity = BuildConfigurationIdentity(config);
@@ -305,13 +300,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 fetchConfig,
                 revision,
                 configurationIdentity,
-                configurationStamp);
+                configurationStamp,
+                integration);
         }
 
         private bool IsCurrentConfiguration(GateContext gate)
-            => gate.ConfigurationStamp.Matches(
-                _configProvider.ConfigurationOrNull,
-                _configProvider.ConfigurationRevision);
+            => gate.Integration.IsCurrent(_configProvider)
+                && gate.ConfigurationStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision);
 
         private static string BuildConfigurationIdentity(PluginConfiguration config)
         {

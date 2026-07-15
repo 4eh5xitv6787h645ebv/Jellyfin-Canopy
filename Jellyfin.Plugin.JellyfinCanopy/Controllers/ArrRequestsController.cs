@@ -101,7 +101,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             var configurationRevision = _configProvider.ConfigurationRevision;
             var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
-            var seerrEnabled = config.SeerrEnabled;
+            var seerrEnabled = SeerrIntegrationPolicy.HasUsableSavedConfiguration(config);
             var seerrApiKey = config.SeerrApiKey;
             var configuredUrls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
             if (!IsReadConfigurationCurrent(configStamp))
@@ -386,14 +386,44 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             take = Math.Clamp(take, 1, 200);
             skip = Math.Max(0, skip);
 
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null)
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (integration.State == SeerrIntegrationState.Disabled)
+            {
+                return Ok(new
+                {
+                    error = false,
+                    code = "seerr_disabled",
+                    disabled = true,
+                    requests = Array.Empty<object>(),
+                    totalPages = 0,
+                    totalResults = 0,
+                    canApproveRequests = false,
+                });
+            }
+
+            if (!integration.IsActive
+                && integration.State != SeerrIntegrationState.ConfigurationUnavailable)
+            {
+                return Ok(new
+                {
+                    error = false,
+                    code = "seerr_unavailable",
+                    disabled = false,
+                    requests = Array.Empty<object>(),
+                    totalPages = 0,
+                    totalResults = 0,
+                    canApproveRequests = false,
+                });
+            }
+
+            var config = integration.Configuration;
+            if (!integration.IsActive || config == null)
                 return StatusCode(500, "Plugin configuration not available");
 
-            var configurationRevision = _configProvider.ConfigurationRevision;
+            var configurationRevision = integration.ConfigurationRevision;
             var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
-            var seerrApiKey = config.SeerrApiKey;
-            var configuredUrls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
+            var seerrApiKey = integration.ApiKey;
+            var configuredUrls = integration.Urls;
             var enrichmentCacheEnabled = !config.SeerrDisableCache;
             var requestApprovalsEnabled = config.RequestApprovalsEnabled;
             if (!IsReadConfigurationCurrent(configStamp))
@@ -1081,7 +1111,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             var configurationRevision = _configProvider.ConfigurationRevision;
             var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
-            var seerrEnabled = config.SeerrEnabled;
+            var seerrEnabled = SeerrIntegrationPolicy.HasUsableSavedConfiguration(config);
             var seerrApiKey = config.SeerrApiKey;
             var configuredUrls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
             if (!IsReadConfigurationCurrent(configStamp))
@@ -1615,12 +1645,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             var action = HttpContext.Request.Path.Value?.Contains("/approve", StringComparison.OrdinalIgnoreCase) == true ? "approve" : "decline";
 
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null
-                || !config.SeerrEnabled
-                || string.IsNullOrWhiteSpace(config.SeerrUrls)
-                || string.IsNullOrWhiteSpace(config.SeerrApiKey))
-                return StatusCode(503, new { error = true, message = "Seerr not configured." });
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (!integration.IsActive)
+            {
+                return StatusCode(503, new
+                {
+                    error = true,
+                    code = integration.State == SeerrIntegrationState.Disabled
+                        ? "seerr_disabled"
+                        : "seerr_unavailable",
+                    message = integration.State == SeerrIntegrationState.Disabled
+                        ? "Seerr integration is disabled."
+                        : "Seerr is not configured.",
+                    canApproveRequests = false,
+                });
+            }
+
+            var config = integration.Configuration!;
 
             // The admin feature toggle gates the action server-side too — the
             // client hides the buttons when it's off, but the server still
@@ -1630,7 +1671,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             var mutationConfigStamp = SeerrMutationConfigStamp.Capture(
                 config,
-                _configProvider.ConfigurationRevision);
+                integration.ConfigurationRevision);
 
             var jellyfinUserId = UserHelper.GetCurrentUserId(User)?.ToString();
             if (string.IsNullOrEmpty(jellyfinUserId))
@@ -1653,7 +1694,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 });
             }
 
-            var configuredUrls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
+            var configuredUrls = integration.Urls;
             var tokenSource = configuredUrls.FirstOrDefault(url => SeerrSourceToken.MatchesSource(
                 sourceClaims!.SourceKey,
                 config.SeerrApiKey,
@@ -1679,10 +1720,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     currentConfig,
                     _configProvider.ConfigurationRevision)
                 || currentConfig == null
-                || !currentConfig.SeerrEnabled
-                || !currentConfig.RequestApprovalsEnabled
-                || string.IsNullOrWhiteSpace(currentConfig.SeerrUrls)
-                || string.IsNullOrWhiteSpace(currentConfig.SeerrApiKey))
+                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(currentConfig)
+                || !currentConfig.RequestApprovalsEnabled)
             {
                 return StatusCode(409, new
                 {

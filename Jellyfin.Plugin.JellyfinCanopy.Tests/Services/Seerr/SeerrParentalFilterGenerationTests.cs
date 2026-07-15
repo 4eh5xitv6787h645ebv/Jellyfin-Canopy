@@ -149,6 +149,28 @@ public sealed class SeerrParentalFilterGenerationTests
         Assert.Equal(2, cache.CertScoreCache.Keys.Distinct(StringComparer.Ordinal).Count());
     }
 
+    [Fact]
+    public async Task MasterDisabledWithRetainedCredentials_DoesNotUseCacheOrCallUpstream()
+    {
+        var requestCount = 0;
+        var handler = new DelegateHandler((_, _) =>
+        {
+            Interlocked.Increment(ref requestCount);
+            return Task.FromResult(Json(MovieDetail("R")));
+        });
+        var provider = new FakePluginConfigProvider(Configuration("http://seerr:5055", "retained-key"));
+        var cache = new SeerrCache(provider);
+        var filter = BuildFilter(handler, provider, cache);
+
+        Assert.True(await filter.IsBlockedAsync("movie", 703, Caller));
+        Assert.Single(cache.CertScoreCache);
+        Assert.Equal(1, Volatile.Read(ref requestCount));
+
+        provider.Current!.SeerrEnabled = false;
+        Assert.False(await filter.IsBlockedAsync("movie", 703, Caller));
+        Assert.Equal(1, Volatile.Read(ref requestCount));
+    }
+
     private static SeerrParentalFilter BuildFilter(
         HttpMessageHandler handler,
         FakePluginConfigProvider provider,

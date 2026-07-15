@@ -15,6 +15,7 @@ using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 {
@@ -69,9 +70,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
         public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
         {
-            var config = _configProvider.ConfigurationOrNull;
-
-            if (config == null)
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            var config = integration.Configuration;
+            if (!integration.IsActive
+                || config == null
+                || !config.SyncJellyfinWatchlistToSeerr)
             {
                 _logger.LogInformation("[Jellyfin→Seerr Watchlist Sync] Sync is disabled in plugin configuration.");
                 progress?.Report(100);
@@ -83,35 +86,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             // detects a transient A→B→A replacement during staging.
             var mutationConfigStamp = SeerrMutationConfigStamp.Capture(
                 config,
-                _configProvider.ConfigurationRevision);
-            var initialApiKey = config.SeerrApiKey;
-
-            if (!config.SyncJellyfinWatchlistToSeerr || !config.SeerrEnabled)
-            {
-                _logger.LogInformation("[Jellyfin→Seerr Watchlist Sync] Sync is disabled in plugin configuration.");
-                progress?.Report(100);
-                return;
-            }
-
-            if (string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(initialApiKey))
-            {
-                _logger.LogWarning("[Jellyfin→Seerr Watchlist Sync] Seerr URL or API key not configured.");
-                progress?.Report(100);
-                return;
-            }
+                integration.ConfigurationRevision);
+            var initialApiKey = integration.ApiKey;
 
             _logger.LogInformation("[Jellyfin→Seerr Watchlist Sync] Starting sync task...");
             progress?.Report(0);
 
-            var urls = Jellyfin.Plugin.JellyfinCanopy.Services.Seerr.SeerrClient
-                .GetConfiguredUrls(config.SeerrUrls);
-
-            if (urls.Length == 0)
-            {
-                _logger.LogWarning("[Jellyfin→Seerr Watchlist Sync] No valid Seerr URL found.");
-                progress?.Report(100);
-                return;
-            }
+            var urls = integration.Urls;
 
             var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
@@ -442,7 +423,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             var revision = _configProvider.ConfigurationRevision;
             if (!mutationConfigStamp.Matches(candidate, revision)
                 || candidate == null
-                || !candidate.SeerrEnabled
+                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(candidate)
                 || !candidate.SyncJellyfinWatchlistToSeerr
                 || string.IsNullOrWhiteSpace(candidate.SeerrApiKey)
                 || !string.Equals(candidate.SeerrApiKey, initialApiKey, StringComparison.Ordinal))

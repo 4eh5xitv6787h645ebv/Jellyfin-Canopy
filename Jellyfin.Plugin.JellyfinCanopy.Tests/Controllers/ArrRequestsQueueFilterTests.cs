@@ -83,6 +83,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var factory = new RecordingHttpClientFactory(handler);
             var provider = new FakePluginConfigProvider(new PluginConfiguration
             {
+                SeerrEnabled = true,
                 SeerrUrls = "http://seerr:5055",
                 SeerrApiKey = "key",
             });

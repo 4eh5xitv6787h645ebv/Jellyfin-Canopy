@@ -16,6 +16,7 @@ using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 {
@@ -75,7 +76,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
         {
             var config = _configProvider.ConfigurationOrNull;
 
-            if (config == null || !config.SyncSeerrWatchlist || !config.SeerrEnabled)
+            if (config == null
+                || !config.SyncSeerrWatchlist
+                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
             {
                 _logger.LogInformation("[Seerr→Jellyfin Watchlist Sync] Sync is disabled in plugin configuration.");
                 progress?.Report(100);
@@ -262,10 +265,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             }
 
             var commitConfig = _configProvider.ConfigurationOrNull;
-            if (!syncConfigStamp.Matches(
+            if (commitConfig is null
+                || !syncConfigStamp.Matches(
                     commitConfig,
                     _configProvider.ConfigurationRevision)
-                || commitConfig?.SeerrEnabled != true
+                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(commitConfig)
                 || !commitConfig.SyncSeerrWatchlist)
             {
                 _logger.LogWarning(

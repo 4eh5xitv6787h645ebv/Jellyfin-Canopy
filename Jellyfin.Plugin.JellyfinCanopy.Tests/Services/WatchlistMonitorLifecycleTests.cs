@@ -132,6 +132,71 @@ public sealed class WatchlistMonitorLifecycleTests
     }
 
     [Fact]
+    public async Task DisableNotification_AdvancesGenerationAndClearsOwnedRequestCache()
+    {
+        var library = new CountingLibraryManager();
+        var handler = new BlockingEmptyRequestsHandler();
+        var monitor = CreateEventMonitor(library, handler, out var provider);
+
+        monitor.Initialize();
+        library.RaiseItemAdded(Movie(123));
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        handler.Release.TrySetResult();
+        await WaitUntilAsync(() => monitor.QueueMetrics.StateCount == 0);
+        Assert.Equal(1, monitor.RequestsCacheCount);
+        var generation = monitor.ConfigurationGenerationNumber;
+
+        provider.Current = new PluginConfiguration
+        {
+            AddRequestedMediaToWatchlist = true,
+            SeerrEnabled = false,
+            SeerrUrls = "http://seerr:5055",
+            SeerrApiKey = "retained-key",
+        };
+        monitor.NotifyConfigurationChanged();
+
+        Assert.Equal(generation + 1, monitor.ConfigurationGenerationNumber);
+        Assert.Equal(0, monitor.RequestsCacheCount);
+        var requestsBeforeDisabledEvent = handler.RequestCount;
+        library.RaiseItemAdded(Movie(456));
+        await Task.Delay(50);
+        Assert.Equal(requestsBeforeDisabledEvent, handler.RequestCount);
+        monitor.Dispose();
+    }
+
+    [Fact]
+    public async Task DisableNotification_BlockedOldFlightCannotRepopulateClearedCache()
+    {
+        var library = new CountingLibraryManager();
+        var handler = new IgnoringCancellationBlockingEmptyRequestsHandler();
+        var monitor = CreateEventMonitor(library, handler, out var provider);
+
+        monitor.Initialize();
+        library.RaiseItemAdded(Movie(789));
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        provider.Current = new PluginConfiguration
+        {
+            AddRequestedMediaToWatchlist = true,
+            SeerrEnabled = false,
+            SeerrUrls = "http://seerr:5055",
+            SeerrApiKey = "retained-key",
+        };
+        monitor.NotifyConfigurationChanged();
+        Assert.Equal(0, monitor.RequestsCacheCount);
+
+        handler.Release.TrySetResult();
+        await WaitUntilAsync(() => monitor.QueueMetrics.StateCount == 0);
+
+        Assert.Equal(0, monitor.RequestsCacheCount);
+        Assert.Equal(1, handler.RequestCount);
+        library.RaiseItemAdded(Movie(790));
+        await Task.Delay(50);
+        Assert.Equal(1, handler.RequestCount);
+        monitor.Dispose();
+    }
+
+    [Fact]
     public async Task CompletedOlderFlight_DoesNotDeleteNewerReplacement()
     {
         var olderCompletion = new TaskCompletionSource<int>();
@@ -303,6 +368,50 @@ public sealed class WatchlistMonitorLifecycleTests
                 CancellationObserved.TrySetResult();
                 throw;
             }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new
+                    {
+                        page = 1,
+                        totalPages = 1,
+                        totalResults = 0,
+                        pageInfo = new
+                        {
+                            page = 1,
+                            pages = 1,
+                            pageSize = 0,
+                            results = 0,
+                        },
+                        results = Array.Empty<object>(),
+                    }),
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+        }
+    }
+
+    private sealed class IgnoringCancellationBlockingEmptyRequestsHandler : HttpMessageHandler
+    {
+        private int _requestCount;
+
+        public TaskCompletionSource Started { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int RequestCount => Volatile.Read(ref _requestCount);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            _ = request;
+            _ = cancellationToken;
+            Interlocked.Increment(ref _requestCount);
+            Started.TrySetResult();
+            await Release.Task;
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(

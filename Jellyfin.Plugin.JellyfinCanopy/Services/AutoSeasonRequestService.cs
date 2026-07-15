@@ -74,10 +74,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return Seerr.SeerrClient.GetConfiguredUrls(urls);
         }
 
-        internal async Task<string?> GetSeriesDetailsJsonAsync(string tmdbId, string seerrSourceUrl)
+        internal Task<string?> GetSeriesDetailsJsonAsync(string tmdbId, string seerrSourceUrl)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            return !integration.IsActive
+                ? Task.FromResult<string?>(null)
+                : GetSeriesDetailsJsonAsync(
+                    tmdbId,
+                    seerrSourceUrl,
+                    integration.Configuration!,
+                    integration.ConfigurationStamp);
+        }
+
+        private async Task<string?> GetSeriesDetailsJsonAsync(
+            string tmdbId,
+            string seerrSourceUrl,
+            PluginConfiguration config,
+            SeerrMutationConfigStamp operationConfigStamp)
+        {
+            if (!operationConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision))
             {
                 return null;
             }
@@ -94,9 +111,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var configFingerprint = ComputeConfigurationFingerprint(config);
 
             bool IsCapturedConfigurationCurrent()
-                => configStamp.Matches(
-                    _configProvider.ConfigurationOrNull,
-                    _configProvider.ConfigurationRevision);
+            {
+                var current = _configProvider.ConfigurationOrNull;
+                var revision = _configProvider.ConfigurationRevision;
+                return operationConfigStamp.Matches(current, revision)
+                    && configStamp.Matches(current, revision)
+                    && SeerrIntegrationPolicy.HasUsableSavedConfiguration(current);
+            }
 
             if (!IsCapturedConfigurationCurrent())
             {
@@ -134,6 +155,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             async Task<string?> FetchAsync()
             {
+                // A queued single-flight delegate may start after the operation
+                // that created it has been disabled. Recheck at the transport
+                // edge instead of trusting retained credentials in the closure.
+                if (!IsCapturedConfigurationCurrent())
+                {
+                    return null;
+                }
+
                 var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
                 try
@@ -223,7 +252,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             Guid userId)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || !config.AutoSeasonRequestEnabled || !config.SeerrEnabled)
+            if (config == null
+                || !config.AutoSeasonRequestEnabled
+                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
             {
                 return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
@@ -263,7 +294,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             JUser user)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || !config.AutoSeasonRequestEnabled || !config.SeerrEnabled)
+            if (config == null
+                || !config.AutoSeasonRequestEnabled
+                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
             {
                 return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
@@ -295,7 +328,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var totalEpisodesInSeason = await GetTotalEpisodesInSeasonFromTmdb(
                 tmdbId,
                 currentSeasonNumber,
-                seerrSourceUrl);
+                seerrSourceUrl,
+                config,
+                mutationConfigStamp);
             if (totalEpisodesInSeason == null || totalEpisodesInSeason <= 0)
             {
                 _logger.LogWarning($"[Auto-Season-Request] Could not determine total episodes for '{series.Name}' S{currentSeasonNumber} from TMDB");
@@ -406,7 +441,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var nextSeasonEpisodeCount = await GetTotalEpisodesInSeasonFromTmdb(
                     tmdbId,
                     nextSeasonNumber,
-                    seerrSourceUrl).ConfigureAwait(false);
+                    seerrSourceUrl,
+                    config,
+                    mutationConfigStamp).ConfigureAwait(false);
 
                 if (nextSeasonEpisodeCount == null || nextSeasonEpisodeCount <= 0)
                 {
@@ -421,7 +458,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var seerrStatus = await GetSeasonStatusFromSeerr(
                     tmdbId,
                     nextSeasonNumber,
-                    seerrSourceUrl).ConfigureAwait(false);
+                    seerrSourceUrl,
+                    config,
+                    mutationConfigStamp).ConfigureAwait(false);
 
                 if (seerrStatus == null)
                 {
@@ -486,17 +525,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private async Task<int?> GetTotalEpisodesInSeasonFromTmdb(
             string tmdbId,
             int seasonNumber,
-            string seerrSourceUrl)
+            string seerrSourceUrl,
+            PluginConfiguration config,
+            SeerrMutationConfigStamp mutationConfigStamp)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+            if (!mutationConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision))
             {
                 return null;
             }
 
             try
             {
-                var content = await GetSeriesDetailsJsonAsync(tmdbId, seerrSourceUrl);
+                var content = await GetSeriesDetailsJsonAsync(
+                    tmdbId,
+                    seerrSourceUrl,
+                    config,
+                    mutationConfigStamp);
                 if (string.IsNullOrEmpty(content))
                 {
                     return null;
@@ -565,20 +611,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private async Task<SeasonStatus?> GetSeasonStatusFromSeerr(
             string tmdbId,
             int seasonNumber,
-            string seerrSourceUrl)
+            string seerrSourceUrl,
+            PluginConfiguration config,
+            SeerrMutationConfigStamp mutationConfigStamp)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
-            {
-                return null;
-            }
-
             try
             {
                 var pinnedSource = FindConfiguredSource(config.SeerrUrls, seerrSourceUrl);
                 if (pinnedSource == null)
                 {
                     _logger.LogWarning("[Auto-Season-Request] The linked Seerr instance is no longer configured; no season-status lookup was attempted");
+                    return null;
+                }
+
+                // The preceding series-details read can be in flight while the
+                // integration is disabled. Fence this distinct status request
+                // with the original generation immediately before transport.
+                if (!mutationConfigStamp.Matches(
+                        _configProvider.ConfigurationOrNull,
+                        _configProvider.ConfigurationRevision))
+                {
                     return null;
                 }
 
@@ -896,13 +948,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             SeerrMutationConfigStamp mutationConfigStamp)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+            if (!mutationConfigStamp.Matches(
+                    config,
+                    _configProvider.ConfigurationRevision)
+                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
             {
                 _logger.LogWarning("[Auto-Season-Request] Seerr configuration is missing");
                 return AutoRequestDispatchOutcome.NotAttempted;
             }
 
-            var pinnedSource = FindConfiguredSource(config.SeerrUrls, seerrSourceUrl);
+            var pinnedSource = FindConfiguredSource(config!.SeerrUrls, seerrSourceUrl);
             if (seerrUser.Id <= 0 || pinnedSource == null)
             {
                 _logger.LogWarning(
@@ -966,7 +1021,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         currentConfig,
                         _configProvider.ConfigurationRevision)
                     || currentConfig == null
-                    || !currentConfig.SeerrEnabled
+                    || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(currentConfig)
                     || !currentConfig.AutoSeasonRequestEnabled
                     || string.IsNullOrEmpty(currentConfig.SeerrApiKey)
                     || !string.Equals(currentPinnedSource, pinnedSource, StringComparison.Ordinal))

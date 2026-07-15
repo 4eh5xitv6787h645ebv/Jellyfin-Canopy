@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
@@ -98,6 +99,38 @@ public sealed class AutoRequestSourceAffinityTests
     }
 
     [Fact]
+    public async Task AutoMovie_MasterDisabledDuringTmdbAwait_DoesNotStartLaterSeerrRead()
+    {
+        var handler = new BlockingTmdbPrerequisiteHandler();
+        var user = CreateUser("movie-live-disable");
+        var binding = BoundUser(user, 72, SourceB);
+        var config = CreateConfiguration();
+        var provider = new FakePluginConfigProvider(config);
+        var service = new AutoMovieRequestService(
+            new RecordingHttpClientFactory(handler),
+            NullLogger<AutoMovieRequestService>.Instance,
+            new StubUserManager(user),
+            null!,
+            provider,
+            new SequencedSeerrClient(SeerrUserResolution.Found(binding)),
+            new RecordingParentalFilter());
+        var movie = new Movie { Name = "Current Movie" };
+        movie.ProviderIds["Tmdb"] = "100";
+
+        var check = service.CheckMovieForCollectionRequestAsync(movie, user.Id);
+        await handler.TmdbRequestStarted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        config.SeerrEnabled = false;
+        handler.ReleaseTmdbRequest();
+
+        await check;
+
+        Assert.DoesNotContain(
+            handler.Sent,
+            request => request.Authority.StartsWith("source-", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AutoSeason_BBoundUserReadsStatusAndMutatesOnlyB()
     {
         var handler = new AutoRequestRoutingHandler();
@@ -146,6 +179,53 @@ public sealed class AutoRequestSourceAffinityTests
             user);
 
         Assert.Equal(1, seerrClient.ResolveCalls);
+        Assert.Empty(handler.Sent);
+    }
+
+    [Fact]
+    public async Task AutoSeason_MasterDisabledDuringPrecedingAwait_DoesNotStartStatusRead()
+    {
+        var handler = new AutoRequestRoutingHandler();
+        var config = CreateConfiguration();
+        var provider = new FakePluginConfigProvider(config);
+        var service = new AutoSeasonRequestService(
+            new RecordingHttpClientFactory(handler),
+            NullLogger<AutoSeasonRequestService>.Instance,
+            null!,
+            null!,
+            null!,
+            provider,
+            new SequencedSeerrClient(SeerrUserResolution.NotFound()),
+            new RecordingParentalFilter());
+        var stamp = SeerrMutationConfigStamp.Capture(
+            config,
+            provider.ConfigurationRevision);
+        var predecessorStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePredecessor = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var method = typeof(AutoSeasonRequestService).GetMethod(
+            "GetSeasonStatusFromSeerr",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        async Task InvokeAfterPredecessorAsync()
+        {
+            predecessorStarted.TrySetResult();
+            await releasePredecessor.Task;
+            var statusRead = Assert.IsAssignableFrom<Task>(method!.Invoke(
+                service,
+                new object[] { "500", 2, SourceB, config, stamp }));
+            await statusRead;
+        }
+
+        var statusFlight = InvokeAfterPredecessorAsync();
+        await predecessorStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        config.SeerrEnabled = false;
+        releasePredecessor.TrySetResult();
+
+        await statusFlight;
+
         Assert.Empty(handler.Sent);
     }
 
@@ -897,6 +977,55 @@ public sealed class AutoRequestSourceAffinityTests
         }
 
         private static HttpResponseMessage Json(string body, HttpStatusCode statusCode = HttpStatusCode.OK)
+            => new(statusCode)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            };
+    }
+
+    private sealed class BlockingTmdbPrerequisiteHandler : HttpMessageHandler
+    {
+        private readonly TaskCompletionSource _tmdbRequestStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseTmdbRequest =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task TmdbRequestStarted => _tmdbRequestStarted.Task;
+
+        public List<CapturedRequest> Sent { get; } = new();
+
+        public void ReleaseTmdbRequest() => _releaseTmdbRequest.TrySetResult();
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri!;
+            Sent.Add(new CapturedRequest(
+                request.Method,
+                uri.Authority,
+                uri.AbsolutePath,
+                null,
+                string.Empty));
+
+            if (uri.Host == "api.themoviedb.org" && uri.AbsolutePath == "/3/movie/100")
+            {
+                _tmdbRequestStarted.TrySetResult();
+                await _releaseTmdbRequest.Task.WaitAsync(cancellationToken);
+                return Json("{\"belongs_to_collection\":{\"id\":900,\"name\":\"Collection\"}}");
+            }
+
+            if (uri.Host is "source-a" or "source-b")
+            {
+                return Json("{\"parts\":[]}");
+            }
+
+            return Json("{}", HttpStatusCode.NotFound);
+        }
+
+        private static HttpResponseMessage Json(
+            string body,
+            HttpStatusCode statusCode = HttpStatusCode.OK)
             => new(statusCode)
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),

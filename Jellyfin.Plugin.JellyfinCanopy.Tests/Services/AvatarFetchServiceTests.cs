@@ -173,12 +173,37 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
+        public async Task MasterDisabledWithRetainedCredentials_DoesNotServeCachedAvatarOrCallUpstream()
+        {
+            var handler = new SwitchableHandler();
+            var (_, cache, service, provider) = CreateWithService(handler);
+            var fresh = await service.GetAsync(
+                "retained-avatar",
+                "http://seerr/avatar/a.png",
+                () => true,
+                CancellationToken.None);
+            Assert.Equal(AvatarFetchStatus.Available, fresh.Status);
+            Assert.Single(cache.AvatarCache);
+            Assert.Equal(1, handler.Calls);
+
+            provider.Current!.SeerrEnabled = false;
+            var disabled = await service.GetAsync(
+                "retained-avatar",
+                "http://seerr/avatar/a.png",
+                () => true,
+                CancellationToken.None);
+
+            Assert.Equal(AvatarFetchStatus.ConfigurationChanged, disabled.Status);
+            Assert.Equal(1, handler.Calls);
+        }
+
+        [Fact]
         public async Task HighCardinality_StaysWithinEntryAndByteBudgets()
         {
             var handler = new DelegateHandler((_, _) => Task.FromResult(ImageResponse(
                 new MemoryStream(ValidPng, writable: false),
                 "image/png")));
-            var (_, cache, service) = CreateWithService(handler);
+            var (_, cache, service, _) = CreateWithService(handler);
 
             for (var i = 0; i < 200; i++)
             {
@@ -199,7 +224,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             TimeProvider? timeProvider = null,
             long maximumAvatarBytes = AvatarFetchService.DefaultMaximumAvatarBytes)
         {
-            var (_, cache, service) = CreateWithService(handler, timeProvider, maximumAvatarBytes);
+            var (_, cache, service, _) = CreateWithService(handler, timeProvider, maximumAvatarBytes);
             return (service, cache);
         }
 
@@ -214,21 +239,31 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Equal(0, service.InFlightCount);
         }
 
-        private static (RecordingHttpClientFactory Factory, SeerrCache Cache, AvatarFetchService Service) CreateWithService(
+        private static (
+            RecordingHttpClientFactory Factory,
+            SeerrCache Cache,
+            AvatarFetchService Service,
+            FakePluginConfigProvider Provider) CreateWithService(
             HttpMessageHandler handler,
             TimeProvider? timeProvider = null,
             long maximumAvatarBytes = AvatarFetchService.DefaultMaximumAvatarBytes)
         {
-            var provider = new FakePluginConfigProvider(new PluginConfiguration());
+            var provider = new FakePluginConfigProvider(new PluginConfiguration
+            {
+                SeerrEnabled = true,
+                SeerrUrls = "http://seerr",
+                SeerrApiKey = "key",
+            });
             var cache = new SeerrCache(provider);
             var factory = new RecordingHttpClientFactory(handler);
             var service = new AvatarFetchService(
                 factory,
                 cache,
+                provider,
                 NullLogger<AvatarFetchService>.Instance,
                 timeProvider ?? TimeProvider.System,
                 maximumAvatarBytes);
-            return (factory, cache, service);
+            return (factory, cache, service, provider);
         }
 
         private static HttpResponseMessage ImageResponse(Stream stream, string contentType)

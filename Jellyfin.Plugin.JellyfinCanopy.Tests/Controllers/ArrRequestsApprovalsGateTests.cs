@@ -87,9 +87,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
         private static PluginConfiguration Config(
             bool approvalsEnabled,
-            string urls = "http://seerr:5055") => new()
+            string urls = "http://seerr:5055",
+            bool seerrEnabled = true) => new()
         {
-            SeerrEnabled = true,
+            SeerrEnabled = seerrEnabled,
             SeerrUrls = urls,
             SeerrApiKey = "key",
             RequestApprovalsEnabled = approvalsEnabled,
@@ -120,6 +121,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var ok = Assert.IsType<OkObjectResult>(result);
             var json = JsonNode.Parse(JsonSerializer.Serialize(ok.Value))!.AsObject();
             return (bool)json["canApproveRequests"]!;
+        }
+
+        private static JsonObject BodyOf(IActionResult result)
+        {
+            var objectResult = Assert.IsAssignableFrom<ObjectResult>(result);
+            return JsonNode.Parse(JsonSerializer.Serialize(objectResult.Value))!.AsObject();
         }
 
         // ── 1. ActOnRequest is gated server-side, even for an admin ───────────
@@ -202,6 +209,66 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 isAdmin: false);
 
             Assert.True(CanApprove(await controller.GetRequests()));
+        }
+
+        [Fact]
+        public async Task GetRequests_MasterDisabledWithRetainedCredentials_ReportsDisabledWithoutResolutionOrHttp()
+        {
+            var handler = new RecordingHttpMessageHandler();
+            handler.AddResponse("/api/v1/request", @"{ ""results"": [], ""pageInfo"": { ""results"": 0 } }");
+            var seerr = new RecordingSeerrClient(new SeerrUser
+            {
+                Id = CallerSeerrId,
+                Permissions = SeerrPermission.ADMIN,
+                SourceUrl = "http://seerr:5055",
+            });
+            var controller = BuildController(
+                Config(approvalsEnabled: true, seerrEnabled: false),
+                SeerrPermission.ADMIN,
+                handler,
+                seerr,
+                isAdmin: true);
+
+            var result = await controller.GetRequests();
+            var body = BodyOf(result);
+
+            Assert.IsType<OkObjectResult>(result);
+            Assert.Equal("seerr_disabled", (string?)body["code"]);
+            Assert.True((bool?)body["disabled"]);
+            Assert.False((bool?)body["canApproveRequests"]);
+            Assert.Empty(body["requests"]!.AsArray());
+            Assert.Empty(seerr.Resolutions);
+            Assert.Empty(handler.Sent);
+        }
+
+        [Theory]
+        [InlineData("approve")]
+        [InlineData("decline")]
+        public async Task ActOnRequest_MasterDisabledWithRetainedCredentials_ReportsDisabledWithoutResolutionOrHttp(string action)
+        {
+            var handler = new RecordingHttpMessageHandler();
+            var seerr = new RecordingSeerrClient(new SeerrUser
+            {
+                Id = CallerSeerrId,
+                Permissions = SeerrPermission.ADMIN,
+                SourceUrl = "http://seerr:5055",
+            });
+            var controller = BuildController(
+                Config(approvalsEnabled: true, seerrEnabled: false),
+                SeerrPermission.ADMIN,
+                handler,
+                seerr,
+                isAdmin: true,
+                requestPath: $"/JellyfinCanopy/arr/requests/9/{action}");
+
+            var result = await controller.ActOnRequest(9, ActionToken(9));
+            var body = BodyOf(result);
+
+            Assert.Equal(503, Assert.IsType<ObjectResult>(result).StatusCode);
+            Assert.Equal("seerr_disabled", (string?)body["code"]);
+            Assert.False((bool?)body["canApproveRequests"]);
+            Assert.Empty(seerr.Resolutions);
+            Assert.Empty(handler.Sent);
         }
 
         [Fact]

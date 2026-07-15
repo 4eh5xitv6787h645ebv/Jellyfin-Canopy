@@ -50,6 +50,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var avatarFetch = new AvatarFetchService(
                 factory,
                 cache,
+                provider,
                 NullLogger<AvatarFetchService>.Instance);
             var controller = new ItemInfoController(
                 factory,

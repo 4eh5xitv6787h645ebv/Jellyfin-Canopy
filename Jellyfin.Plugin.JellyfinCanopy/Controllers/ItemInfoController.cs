@@ -386,23 +386,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             [FromQuery] string path,
             [FromQuery] string? sourceToken = null)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null
-                || string.IsNullOrWhiteSpace(config.SeerrUrls)
-                || string.IsNullOrWhiteSpace(config.SeerrApiKey)
-                || string.IsNullOrEmpty(path))
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            var config = integration.Configuration;
+            if (!integration.IsActive || config == null || string.IsNullOrEmpty(path))
             {
                 return NotFound();
             }
 
-            var configurationRevision = _configProvider.ConfigurationRevision;
+            var configurationRevision = integration.ConfigurationRevision;
             var configurationStamp = SeerrMutationConfigStamp.Capture(
                 config,
                 configurationRevision);
-            var seerrApiKey = config.SeerrApiKey;
-            bool IsConfigurationCurrent() => configurationStamp.Matches(
-                _configProvider.ConfigurationOrNull,
-                _configProvider.ConfigurationRevision);
+            var seerrApiKey = integration.ApiKey;
+            bool IsConfigurationCurrent() => integration.IsCurrent(_configProvider)
+                && configurationStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision);
             IActionResult ConfigurationChanged() => StatusCode(409, new
             {
                 error = true,
@@ -436,7 +435,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 });
             }
 
-            var seerrUrl = SeerrClient.GetConfiguredUrls(config.SeerrUrls).FirstOrDefault(url => SeerrSourceToken.MatchesSource(
+            var seerrUrl = integration.Urls.FirstOrDefault(url => SeerrSourceToken.MatchesSource(
                 sourceClaims!.SourceKey,
                 seerrApiKey,
                 url));

@@ -88,13 +88,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             // report a typed `reason` so the frontend can display
             // a meaningful banner instead of silently hiding discovery sections.
             // Possible reasons: disabled, no_user, blocked, unlinked, unreachable.
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || !config.SeerrEnabled ||
-                string.IsNullOrEmpty(config.SeerrApiKey) ||
-                string.IsNullOrEmpty(config.SeerrUrls))
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (!integration.IsActive)
             {
                 return Ok(new { active = false, userFound = false, reason = "disabled" });
             }
+
+            var config = integration.Configuration!;
 
             var jellyfinUserId = UserHelper.GetCurrentUserId(User)?.ToString();
             if (string.IsNullOrEmpty(jellyfinUserId))
@@ -108,6 +108,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var resolution = await _seerr.ResolveSeerrUser(
                 jellyfinUserId,
                 cancellationToken: HttpContext.RequestAborted).ConfigureAwait(false);
+            if (!integration.IsCurrent(_configProvider))
+            {
+                return Ok(new { active = false, userFound = false, reason = "disabled" });
+            }
+
             if (resolution.IsFound)
             {
                 var seerrUserId = resolution.User!.Id.ToString();
@@ -116,6 +121,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // 4K permission (degrade-by-hiding), rather than on the admin
                 // toggle alone.
                 var cap = await _seerr.GetSeerr4kCapabilityAsync(jellyfinUserId, IsAdminUser());
+                if (!integration.IsCurrent(_configProvider))
+                {
+                    return Ok(new { active = false, userFound = false, reason = "disabled" });
+                }
+
                 return Ok(new
                 {
                     active = true,
@@ -166,9 +176,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         public async Task<IActionResult> GetPermissionAudit()
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || !config.SeerrEnabled ||
-                string.IsNullOrEmpty(config.SeerrApiKey) ||
-                string.IsNullOrEmpty(config.SeerrUrls))
+            if (config == null
+                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
                 return StatusCode(503, "Seerr integration is not configured or enabled.");
 
             var jellyfinUsers = _userManager.GetUsers()
@@ -367,7 +376,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             try
             {
                 var config = _configProvider.ConfigurationOrNull;
-                if (config == null || !config.SeerrEnabled || !config.SyncSeerrWatchlist)
+                if (config == null
+                    || !config.SyncSeerrWatchlist
+                    || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
                 {
                     return BadRequest(new { error = "Seerr watchlist sync is not enabled" });
                 }
@@ -524,10 +535,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 }
 
                 var commitConfig = _configProvider.ConfigurationOrNull;
-                if (!syncConfigStamp.Matches(
+                if (commitConfig is null
+                    || !syncConfigStamp.Matches(
                         commitConfig,
                         _configProvider.ConfigurationRevision)
-                    || commitConfig?.SeerrEnabled != true
+                    || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(commitConfig)
                     || !commitConfig.SyncSeerrWatchlist)
                 {
                     _logger.LogWarning(
@@ -642,7 +654,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             try
             {
                 var config = _configProvider.ConfigurationOrNull;
-                if (config == null || !config.SeerrEnabled)
+                if (config == null
+                    || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
                 {
                     return BadRequest(new { error = "Seerr integration is not enabled" });
                 }
@@ -690,7 +703,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         return importConfigStamp.Matches(
                                 current,
                                 _configProvider.ConfigurationRevision)
-                            && current?.SeerrEnabled == true;
+                            && SeerrIntegrationPolicy.HasUsableSavedConfiguration(current);
                     }).ConfigureAwait(false);
 
                 // only flush user caches when at least one user

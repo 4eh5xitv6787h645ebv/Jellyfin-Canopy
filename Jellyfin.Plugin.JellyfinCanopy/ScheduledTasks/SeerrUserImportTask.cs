@@ -62,7 +62,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
         {
             var config = _configProvider.ConfigurationOrNull;
 
-            if (config == null || !config.SeerrAutoImportUsers || !config.SeerrEnabled)
+            if (config == null
+                || !config.SeerrAutoImportUsers
+                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
             {
                 _logger.LogInformation("[Seerr User Import] Auto-import is disabled in plugin configuration.");
                 progress?.Report(100);
@@ -105,10 +107,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 () =>
                 {
                     var current = _configProvider.ConfigurationOrNull;
-                    return importConfigStamp.Matches(
+                    return current is not null
+                        && importConfigStamp.Matches(
                             current,
                             _configProvider.ConfigurationRevision)
-                        && current?.SeerrEnabled == true
+                        && SeerrIntegrationPolicy.HasUsableSavedConfiguration(current)
                         && current.SeerrAutoImportUsers;
                 });
 

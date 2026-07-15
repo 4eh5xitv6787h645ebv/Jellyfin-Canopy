@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -49,6 +50,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ISeerrCache _cache;
+        private readonly IPluginConfigProvider _configProvider;
         private readonly ILogger<AvatarFetchService> _logger;
         private readonly TimeProvider _timeProvider;
         private readonly long _maximumAvatarBytes;
@@ -58,14 +60,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         public AvatarFetchService(
             IHttpClientFactory httpClientFactory,
             ISeerrCache cache,
+            IPluginConfigProvider configProvider,
             ILogger<AvatarFetchService> logger)
-            : this(httpClientFactory, cache, logger, TimeProvider.System, DefaultMaximumAvatarBytes)
+            : this(
+                httpClientFactory,
+                cache,
+                configProvider,
+                logger,
+                TimeProvider.System,
+                DefaultMaximumAvatarBytes)
         {
         }
 
         internal AvatarFetchService(
             IHttpClientFactory httpClientFactory,
             ISeerrCache cache,
+            IPluginConfigProvider configProvider,
             ILogger<AvatarFetchService> logger,
             TimeProvider timeProvider,
             long maximumAvatarBytes)
@@ -73,6 +83,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumAvatarBytes);
             _httpClientFactory = httpClientFactory;
             _cache = cache;
+            _configProvider = configProvider;
             _logger = logger;
             _timeProvider = timeProvider;
             _maximumAvatarBytes = maximumAvatarBytes;
@@ -94,6 +105,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             Func<bool> isConfigurationCurrent,
             CancellationToken cancellationToken)
         {
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (!integration.IsActive
+                || !integration.Urls.Any(url => upstreamUrl.StartsWith(
+                    url + "/",
+                    StringComparison.Ordinal)))
+            {
+                return ConfigurationChanged();
+            }
+
+            bool IsAuthorizedGenerationCurrent()
+                => integration.IsCurrent(_configProvider) && isConfigurationCurrent();
+
+            // Authorization precedes last-good and backoff reads: disabling the
+            // master switch must not keep advertising or serving cached active
+            // integration state.
+            if (!IsAuthorizedGenerationCurrent())
+            {
+                return ConfigurationChanged();
+            }
+
             if (TryGetLastGood(cacheKey, out var cached) && IsFresh(cached))
             {
                 return Available(cached);
@@ -102,11 +133,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             if (IsBackedOff(cacheKey))
             {
                 return cached.Content != null ? Available(cached) : Missing();
-            }
-
-            if (!isConfigurationCurrent())
-            {
-                return ConfigurationChanged();
             }
 
             while (true)
@@ -124,7 +150,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     _ = CompleteFlightAsync(
                         cacheKey,
                         upstreamUrl,
-                        isConfigurationCurrent,
+                        IsAuthorizedGenerationCurrent,
                         candidate);
                 }
 

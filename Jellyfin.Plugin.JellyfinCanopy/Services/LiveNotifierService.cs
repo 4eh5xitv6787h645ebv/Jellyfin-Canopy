@@ -132,15 +132,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         internal async Task HandleConfigurationChangedAsync(CancellationToken cancellationToken)
         {
-            _watchlistMonitor.NotifyConfigurationChanged();
-
-            try
+            foreach (var failure in SeerrIntegrationPolicy.InvalidateCachedActiveState(
+                _seerrCache,
+                _watchlistMonitor))
             {
-                _seerrCache.ClearAllSeerrCachesOnConfigChange();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "LiveNotifier: failed to flush Seerr caches on config change.");
+                _logger.LogWarning(
+                    failure.Error,
+                    "LiveNotifier: failed to invalidate {Owner} Seerr state on config change.",
+                    failure.Owner);
             }
 
             try
