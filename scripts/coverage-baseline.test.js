@@ -19,7 +19,7 @@ const baselines = loadBaselines();
 
 test('reviewed coverage baselines match the repeated clean measurements', () => {
     assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 1364, totalLines: 1692 });
-    assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 15210, totalLines: 23760 });
+    assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 15511, totalLines: 24034 });
     assert.equal(baselines.profiles.client.tolerance.missingCoveredLines, 1);
     assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 1);
 });

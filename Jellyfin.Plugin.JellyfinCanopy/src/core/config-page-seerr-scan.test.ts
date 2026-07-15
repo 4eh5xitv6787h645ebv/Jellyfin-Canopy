@@ -21,7 +21,7 @@ interface ScanHelpers {
     jcParseSeerrIdentityDomains(rawUrls: unknown): string[];
     jcDispatchSeerrScanDomains(
         rawUrls: unknown,
-        send: (domain: string, signal?: AbortSignal) => Promise<unknown>,
+        send: (domains: string[], signal?: AbortSignal) => Promise<unknown>,
         signal?: AbortSignal,
     ): Promise<ScanDispatch>;
     jcSummarizeSeerrScanDispatch(dispatch: ScanDispatch): {
@@ -58,15 +58,18 @@ describe('config-page Seerr scan identity domains', () => {
 
     it('collapses comma/newline/trailing-slash aliases into one POST', async () => {
         const sent: string[] = [];
+        let calls = 0;
         const result = await helpers.jcDispatchSeerrScanDomains(
             ' http://seerr:5055/ ,\nhttp://seerr:5055\r\nhttp://seerr:5055/// ',
-            (domain) => {
-                sent.push(domain);
+            (domains) => {
+                calls += 1;
+                sent.push(...domains);
                 return Promise.resolve({ ok: true });
             },
         );
 
         expect(sent).toEqual(['http://seerr:5055']);
+        expect(calls).toBe(1);
         expect(result.domains).toEqual(['http://seerr:5055']);
         expect(result.results.map(row => row.ok)).toEqual([true]);
         expect(result.cancelled).toBe(false);
@@ -87,6 +90,25 @@ describe('config-page Seerr scan identity domains', () => {
         )).toEqual(['http://seerr.example:5055/Tenant']);
     });
 
+    it('normalizes authoritative server result domains before matching rows', async () => {
+        const result = await helpers.jcDispatchSeerrScanDomains(
+            'http://seerr.example:5055/Tenant',
+            () => Promise.resolve({
+                ok: false,
+                results: [{
+                    domain: 'HTTP://SEERR.EXAMPLE:5055/Tenant/',
+                    ok: true,
+                }],
+            }),
+        );
+
+        expect(result.results).toEqual([{
+            domain: 'http://seerr.example:5055/Tenant',
+            ok: true,
+            error: '',
+        }]);
+    });
+
     it('does not repair malformed non-authority URLs differently from the server', () => {
         expect(helpers.jcParseSeerrIdentityDomains(
             'http:seerr.example,http://seerr.example',
@@ -103,14 +125,20 @@ describe('config-page Seerr scan identity domains', () => {
         expect(helpers.jcParseSeerrIdentityDomains('http://.')).toEqual(['http://.']);
     });
 
-    it('attempts every distinct domain once even when the first one fails', async () => {
+    it('reports every distinct domain from one partial server batch', async () => {
         const sent: string[] = [];
         const result = await helpers.jcDispatchSeerrScanDomains(
             'http://first:5055\nhttp://second:5055/',
-            (domain) => {
-                sent.push(domain);
-                if (domain.includes('first')) throw new Error('first unavailable');
-                return Promise.resolve({ ok: true });
+            (domains) => {
+                sent.push(...domains);
+                return Promise.resolve({
+                    ok: false,
+                    outcome: 'partial',
+                    results: [
+                        { domain: domains[0], ok: false, message: 'first unavailable' },
+                        { domain: domains[1], ok: true },
+                    ],
+                });
             },
         );
 
@@ -125,20 +153,20 @@ describe('config-page Seerr scan identity domains', () => {
         expect(result.cancelled).toBe(false);
     });
 
-    it('does not send another domain after page-lifecycle cancellation', async () => {
+    it('marks the one shared batch cancelled after page-lifecycle cancellation', async () => {
         const controller = new AbortController();
         const sent: string[] = [];
         const result = await helpers.jcDispatchSeerrScanDomains(
             'http://first:5055,http://second:5055',
-            (domain) => {
-                sent.push(domain);
+            (domains) => {
+                sent.push(...domains);
                 controller.abort();
                 return Promise.resolve({ ok: true });
             },
             controller.signal,
         );
 
-        expect(sent).toEqual(['http://first:5055']);
+        expect(sent).toEqual(['http://first:5055', 'http://second:5055']);
         expect(result.cancelled).toBe(true);
     });
 });
