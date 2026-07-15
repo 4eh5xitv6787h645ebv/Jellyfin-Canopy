@@ -299,8 +299,10 @@ Good logs turn a vague report into a fixable one. Collect from all three sources
 
 1. Go to **Dashboard → Logs**.
 2. Look for `JellyfinCanopy` entries.
-3. Check the log files named `JellyfinCanopy_yyyy-mm-dd.log`.
+3. Check the log files named `JellyfinCanopy_yyyy-mm-dd.log` (a busy day may also have size-rolled `.001.log`, `.002.log`, and later segments).
 4. Copy the relevant errors.
+
+The dedicated log sink keeps today plus the previous two calendar days, caps each file at 8 MiB, and reserves enough active-file headroom to keep all Canopy log files together within 24 MiB. File writes run through one bounded asynchronous queue, so request and scan threads never wait for disk I/O. If its 2,048-entry queue is full, the newest line is dropped. The file worker flushes accepted batches once per second under normal storage conditions; an abrupt process or host failure can lose the still-buffered tail, while orderly shutdown drains accepted lines for up to five seconds and prints a console warning if that deadline cannot be met.
 
 When you write up the report, include: the plugin version, Jellyfin version, browser and version, operating system, exact steps to reproduce, the console errors, the server-log errors, and screenshots where they help.
 
