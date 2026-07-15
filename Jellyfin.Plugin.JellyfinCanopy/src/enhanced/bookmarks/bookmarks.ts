@@ -9,6 +9,7 @@ import { debounce } from '../helpers';
 import { createObserver, disconnectObserver } from '../../core/dom-observer';
 import type { BookmarkCleanupResult, BookmarksApi } from './surface';
 import type { IdentityContext } from '../../types/jc';
+import { normalizeBookmarkMediaType, sameBookmarkMediaType } from './media-types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -272,7 +273,7 @@ import type { IdentityContext } from '../../types/jc';
    *     itemId: "jellyfin-item-id",
    *     tmdbId: "12345",
    *     tvdbId: "67890",
-   *     mediaType: "movie" | "tv",
+   *     mediaType: "movie" | "tv" | "other",
    *     name: "Item Name",
    *     timestamp: 123.45,
    *     label: "Epic scene" (optional),
@@ -454,9 +455,7 @@ import type { IdentityContext } from '../../types/jc';
 
         const tmdbId = sourceItem.ProviderIds?.Tmdb || null;
         const tvdbId = sourceItem.ProviderIds?.Tvdb || null;
-        const mediaType = item.Type === 'Movie' ? 'movie'
-          : (item.Type === 'Series' || item.Type === 'Episode' || item.Type === 'Season') ? 'tv'
-          : (item.Type || '').toString().toLowerCase();
+        const mediaType = normalizeBookmarkMediaType(item.Type);
 
         const details = {
           itemId: item.Id,
@@ -499,7 +498,12 @@ import type { IdentityContext } from '../../types/jc';
    * Find bookmarks for current item (by itemId or TMDB/TVDB fallback)
    * Returns both exact matches and provider ID matches separately
    */
-  function findBookmarksForItem(itemId: string, tmdbId?: string, tvdbId?: string): { bookmarks: any[]; hasIdMismatch: boolean; exactMatches: any[]; providerMatches: any[] } {
+  function findBookmarksForItem(
+    itemId: string,
+    tmdbId?: string,
+    tvdbId?: string,
+    mediaType?: unknown
+  ): { bookmarks: any[]; hasIdMismatch: boolean; exactMatches: any[]; providerMatches: any[] } {
     const allBookmarks = (JC.userConfig as any)?.bookmark?.bookmarks || {};
     const exactMatches: any[] = [];
     const providerMatches: any[] = [];
@@ -513,6 +517,13 @@ import type { IdentityContext } from '../../types/jc';
         exactMatches.push({ id: bookmarkId, ...bookmark, exactMatch: true });
         continue;
       }
+
+      // Provider ids are not globally unique across Jellyfin media classes.
+      // Apply the same canonical category used by creation and the library so
+      // a movie cannot acquire a TV/legacy-other bookmark by fallback alone.
+      // The fourth argument extends the frozen three-argument public facade;
+      // legacy callers that omit it retain their prior provider-id behavior.
+      if (mediaType !== undefined && !sameBookmarkMediaType(bookmark.mediaType, mediaType)) continue;
 
       // Fallback: TMDB/TVDB match (different item ID)
       if (tmdbId && bookmark.tmdbId === tmdbId) {
@@ -565,7 +576,7 @@ import type { IdentityContext } from '../../types/jc';
       itemId: details.itemId || '',
       tmdbId: details.tmdbId || '',
       tvdbId: details.tvdbId || '',
-      mediaType: details.mediaType || '',
+      mediaType: normalizeBookmarkMediaType(details.mediaType),
       name: details.name || '',
       timestamp: timestamp,
       label: label || '',
@@ -619,7 +630,12 @@ import type { IdentityContext } from '../../types/jc';
         return [{
           type: 'update',
           bookmarkId,
-          bookmark: { ...current, ...updates, updatedAt }
+          bookmark: {
+            ...current,
+            ...updates,
+            mediaType: normalizeBookmarkMediaType(updates.mediaType ?? current.mediaType),
+            updatedAt
+          }
         }];
       });
       if (!committed || !committed.bookmarks[bookmarkId]) return false;
@@ -690,7 +706,7 @@ import type { IdentityContext } from '../../types/jc';
         itemId: newItemDetails.itemId,
         tmdbId: newItemDetails.tmdbId,
         tvdbId: newItemDetails.tvdbId,
-        mediaType: newItemDetails.mediaType,
+        mediaType: normalizeBookmarkMediaType(newItemDetails.mediaType),
         name: newItemDetails.name,
         timestamp: newTimestamp,
         label: oldBookmark.label || '',
@@ -997,7 +1013,8 @@ import type { IdentityContext } from '../../types/jc';
     const { bookmarks: bookmarksList } = findBookmarksForItem(
       details.itemId,
       details.tmdbId,
-      details.tvdbId
+      details.tvdbId,
+      details.mediaType
     );
 
     console.log(`${logPrefix} Found ${bookmarksList.length} bookmarks for this item`);
@@ -1037,7 +1054,8 @@ import type { IdentityContext } from '../../types/jc';
     const { bookmarks: existingBookmarks } = findBookmarksForItem(
       details.itemId,
       details.tmdbId,
-      details.tvdbId
+      details.tvdbId,
+      details.mediaType
     );
 
     console.log('🪼 Bookmarks modal: Found', existingBookmarks.length, 'existing bookmarks for item', details.itemId);

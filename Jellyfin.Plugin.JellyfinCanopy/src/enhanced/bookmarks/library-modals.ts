@@ -9,6 +9,7 @@ import { currentPageHandle } from '../pages/fallback-host';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { formatTimestamp, renderActiveBookmarks } from './library-render';
 import type { IdentityContext } from '../../types/jc';
+import { normalizeBookmarkMediaType } from './media-types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -174,13 +175,14 @@ export function showOffsetAdjustmentModal(
 /**
  * Find duplicate bookmarks (same TMDB/TVDB but different item IDs)
  */
-function findDuplicateBookmarks(bookmarks: Record<string, any>): any[] {
+export function findDuplicateBookmarks(bookmarks: Record<string, any>): any[] {
   const byProvider: Record<string, any> = {}; // Group by TMDB/TVDB ID
   const duplicateGroups: any[] = [];
 
   for (const [id, bm] of Object.entries<any>(bookmarks)) {
-    const tmdbKey = bm.tmdbId ? `tmdb:${bm.tmdbId}` : null;
-    const tvdbKey = bm.tvdbId ? `tvdb:${bm.tvdbId}` : null;
+    const mediaType = normalizeBookmarkMediaType(bm.mediaType);
+    const tmdbKey = bm.tmdbId ? `${mediaType}:tmdb:${bm.tmdbId}` : null;
+    const tvdbKey = bm.tvdbId ? `${mediaType}:tvdb:${bm.tvdbId}` : null;
 
     for (const key of [tmdbKey, tvdbKey].filter(Boolean) as string[]) {
       if (!byProvider[key]) {
@@ -354,7 +356,7 @@ export function showDuplicatesSyncModal(
           itemId: primaryItemId,
           tmdbId: primaryBookmarks[0].tmdbId,
           tvdbId: primaryBookmarks[0].tvdbId,
-          mediaType: primaryBookmarks[0].mediaType,
+          mediaType: normalizeBookmarkMediaType(primaryBookmarks[0].mediaType),
           name: primaryBookmarks[0].name
         };
 

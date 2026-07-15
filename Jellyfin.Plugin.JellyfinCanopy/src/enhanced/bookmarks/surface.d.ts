@@ -23,7 +23,8 @@ export interface BookmarksApi {
     findForItem(
         itemId: string,
         tmdbId?: string,
-        tvdbId?: string
+        tvdbId?: string,
+        mediaType?: unknown
     ): {
         bookmarks: any[];
         hasIdMismatch: boolean;

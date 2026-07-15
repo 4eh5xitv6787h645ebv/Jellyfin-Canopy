@@ -10,6 +10,7 @@ import { escapeHtml, toast } from '../../core/ui-kit';
 import { getItemCached } from '../helpers';
 import { renderActiveBookmarks } from './library-render';
 import type { IdentityContext } from '../../types/jc';
+import { normalizeBookmarkMediaType, replacementItemTypes } from './media-types';
 
 const replacementModalTimers = new Set<number>();
 
@@ -17,7 +18,7 @@ interface StoredBookmark {
   itemId: string;
   tmdbId: string;
   tvdbId: string;
-  mediaType: string;
+  mediaType?: string;
   name: string;
   [key: string]: unknown;
 }
@@ -30,6 +31,7 @@ interface BookmarkGroup {
 interface JellyfinReplacementItem {
   Id: string;
   Name: string;
+  Type?: string;
   ProductionYear?: string | number;
   ProviderIds?: { Tmdb?: string; Tvdb?: string };
   ImageTags?: { Primary?: string };
@@ -95,7 +97,7 @@ JC.identity.registerReset('bookmarks-library-replacement-modals', () => {
 async function searchForReplacementItem(
   tmdbId: string,
   tvdbId: string,
-  mediaType: string,
+  mediaType: unknown,
   context: IdentityContext
 ): Promise<JellyfinReplacementItem[] | null> {
   if (!JC.identity.isCurrent(context)) return null;
@@ -103,11 +105,13 @@ async function searchForReplacementItem(
 
   try {
     // Search using Jellyfin's provider ID filtering
-    const itemTypes = mediaType === 'tv' ? 'Series,Episode' : 'Movie';
+    const normalizedMediaType = normalizeBookmarkMediaType(mediaType);
+    const itemTypes = replacementItemTypes(normalizedMediaType);
 
     // Fetch all items of this type and filter by provider ID client-side
     // This is more reliable than relying on AnyProviderIdEquals
-    const url = `/Users/${userId}/Items?Recursive=true&IncludeItemTypes=${itemTypes}&SortBy=DateCreated&SortOrder=Descending&Limit=500`;
+    const typeFilter = itemTypes ? `&IncludeItemTypes=${itemTypes}` : '';
+    const url = `/Users/${userId}/Items?Recursive=true${typeFilter}&SortBy=DateCreated&SortOrder=Descending&Limit=500`;
 
     // Routed through the core fetch layer (auth + JSON parse identical to the
     // former ApiClient.ajax call; failures still land in the catch below).
@@ -126,7 +130,7 @@ async function searchForReplacementItem(
       && 'Items' in response && Array.isArray(response.Items)
       ? response.Items.filter(isJellyfinReplacementItem)
       : [];
-    console.log(`🪼 Jellyfin Canopy: Bookmarks Library: Fetched ${items.length} total items of type ${itemTypes}`);
+    console.log(`🪼 Jellyfin Canopy: Bookmarks Library: Fetched ${items.length} total items of type ${itemTypes || 'other/legacy'}`);
 
     if (!Array.isArray(items) || items.length === 0) {
       console.warn(`🪼 Jellyfin Canopy: Bookmarks Library: No items found or items is not an array`);
@@ -136,6 +140,8 @@ async function searchForReplacementItem(
     // Filter items by matching provider IDs
     // Check both ProviderIds and UserData.Key (TMDB ID is often stored there)
     const matches = items.filter((item) => {
+      const candidateType = normalizeBookmarkMediaType(item.Type);
+      if (item.Type && candidateType !== normalizedMediaType) return false;
       const providerIds = item.ProviderIds || {};
       const userData = item.UserData || {};
 
@@ -319,7 +325,7 @@ function showReplacementSelectionModal(
         itemId: fullItem.Id,
         tmdbId: fullItem.ProviderIds?.Tmdb || oldGroup.details.tmdbId,
         tvdbId: fullItem.ProviderIds?.Tvdb || oldGroup.details.tvdbId,
-        mediaType: oldGroup.details.mediaType,
+        mediaType: normalizeBookmarkMediaType(fullItem.Type ?? oldGroup.details.mediaType),
         name: fullItem.Name
       };
 
@@ -367,21 +373,23 @@ export async function findAllOrphanedAndOfferMigration(
   const userId = context.userId;
   const orphanedGroups: BookmarkGroup[] = [];
 
-  // Group by item ID
+  // Group by canonical category and item ID.
   const byItem: Record<string, BookmarkGroup> = {};
   for (const [id, bm] of Object.entries(bookmarks)) {
-    if (!byItem[bm.itemId]) {
-      byItem[bm.itemId] = {
+    const key = `${normalizeBookmarkMediaType(bm.mediaType)}:${bm.itemId}`;
+    if (!byItem[key]) {
+      byItem[key] = {
         details: bm,
         bookmarks: []
       };
     }
-    byItem[bm.itemId].bookmarks.push({ id, ...bm });
+    byItem[key].bookmarks.push({ id, ...bm });
   }
 
   // Check each item
-  for (const [itemId, group] of Object.entries(byItem)) {
+  for (const group of Object.values(byItem)) {
     if (!JC.identity.isCurrent(context)) return;
+    const itemId = group.details.itemId;
     try {
       await getItemCached(itemId, { userId });
       if (!JC.identity.isCurrent(context)) return;

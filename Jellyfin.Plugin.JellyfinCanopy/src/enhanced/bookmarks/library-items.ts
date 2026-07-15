@@ -12,6 +12,7 @@ import { formatTimestamp, parseTimestampInput, renderActiveBookmarks } from './l
 import { findAndOfferReplacement } from './library-replacements';
 import { showOffsetAdjustmentModal } from './library-modals';
 import type { IdentityContext } from '../../types/jc';
+import type { BookmarkMediaType } from './media-types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -30,7 +31,7 @@ JC.identity.registerReset('bookmarks-library-playback', () => {
 export async function renderBookmarkItems(
   container: HTMLElement,
   groupedByItem: Record<string, any>,
-  currentTab: string,
+  currentTab: BookmarkMediaType,
   context: IdentityContext | null = JC.identity.capture()
 ): Promise<void> {
   if (!context || !JC.identity.isCurrent(context)) return;
@@ -74,14 +75,14 @@ export async function renderBookmarkItems(
   if (!JC.identity.isCurrent(context)) return;
 
   // Apply tab filter
-  const filtered = results.filter(({ group }) => {
-    if (currentTab === 'tv') return group.type === 'tv';
-    if (currentTab === 'movie') return group.type === 'movie';
-    return true;
-  });
+  const filtered = results.filter(({ group }) => group.type === currentTab);
 
   if (filtered.length === 0) {
-    const emptyTitle = currentTab === 'tv' ? JC.t!('bookmark_empty_tv') : JC.t!('bookmark_empty_movie');
+    const emptyTitle = currentTab === 'tv'
+      ? JC.t!('bookmark_empty_tv')
+      : currentTab === 'movie'
+        ? JC.t!('bookmark_empty_movie')
+        : JC.t!('bookmark_none');
     const emptyHint = JC.t!('bookmark_empty_hint');
     container.innerHTML = `
       <div class="jc-bookmarks-empty">

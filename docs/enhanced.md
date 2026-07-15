@@ -357,7 +357,7 @@ Drop a marker at any moment in a video and jump straight back to it later — gr
 
 Bookmarks **sync across duplicate items** — copies of the same title that share a TMDB/TVDB ID — so a marker you set on one version shows up on the others.
 
-**Managing bookmarks:** a dedicated Bookmarks page collects every bookmark across your library, where you can view them all, **clean up orphaned** bookmarks, **detect and merge duplicates**, and **adjust time offsets** for synced bookmarks.
+**Managing bookmarks:** a dedicated Bookmarks page collects every bookmark across your library, where you can view them all, **clean up orphaned** bookmarks, **detect and merge duplicates**, and **adjust time offsets** for synced bookmarks. Counted **Movies**, **Series**, and **Other** tabs keep generic videos and older bookmarks with unknown or missing media types visible and editable instead of hiding them.
 
 The management page is a real routed destination. Enable Bookmarks under the **Bookmarks** section of **Dashboard** → **Plugins** → **Jellyfin Canopy** → **Pages** tab, and Jellyfin Canopy adds its entry points automatically — a **Bookmarks** link in the **Jellyfin Canopy** section of the sidebar drawer (and the mobile drawer), plus a header-tray icon button and a user-preferences-menu link on the modern layout. Its position among the pages follows the admin **Pages order** setting on the **Pages** tab. You can also open it directly at `/web/index.html#/bookmarks` — browser back/forward, page refresh, and deep links all work.
 

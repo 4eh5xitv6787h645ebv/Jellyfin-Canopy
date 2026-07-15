@@ -452,6 +452,7 @@
   "hidden_content_filter_upcoming_desc": "Hide items from upcoming releases",
   "bookmark_from": "From: {source}",
   "bookmarks_library_tab_series": "Series",
+  "bookmarks_library_tab_other": "Other",
   "toast_translation_cache_cleared": "{{icon:trash}} Translation cache cleared! {count} cached translation(s) removed. Refreshing…",
   "hidden_content_1_hidden_item": "1 hidden item",
   "seerr_advanced_options": "Advanced Options",
