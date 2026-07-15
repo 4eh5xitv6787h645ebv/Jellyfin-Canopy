@@ -40,8 +40,11 @@ updates, and a malformed entry bricks in-app updates for all users.
    - packages one ZIP, with exactly the plugin DLL at the zip root, using
      the established asset name:
      - `Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip` (Jellyfin 12, net10.0)
-   - creates the GitHub Release with a changelog generated from the commit
-     subjects since the previous tag, and attaches the ZIP;
+   - creates the GitHub Release with complete notes from a pre-drafted body or
+     commit subjects since the previous tag, and attaches the ZIP;
+   - derives a separate concise catalog summary, preserves security/breaking/
+     migration/upgrade subjects, and links installed users to the complete
+     GitHub release notes;
    - regenerates `manifest.json` (new entry prepended, MD5 checksum computed
      from the real ZIP, timestamped) and opens a PR with the change.
 
@@ -100,12 +103,33 @@ contract before cutting any tag. Environment approval and source ancestry stay
 mandatory throughout. GitHub's ruleset/environment history plus the issue and
 release summary form the audit trail.
 
-### Custom release notes
+### Release-note and catalog-summary contract
 
-To write the changelog yourself, draft a GitHub release for the tag (with
+To write the release notes yourself, draft a GitHub release for the tag (with
 your notes as the body) *before* pushing the tag, or push the tag from the
-release UI. When a release for the tag already exists, the workflow reuses
-its body as the manifest changelog and only attaches the ZIPs.
+release UI. The complete body remains on the GitHub release. If it already
+fits the catalog limits, it also becomes the catalog summary. For longer
+notes, put the concise installed-client summary between these invisible
+markers in the draft body:
+
+```markdown
+<!-- jellyfin-canopy-catalog-summary:start -->
+- Security: describe security-relevant behavior.
+- Breaking: name any required operator or custom-integration action.
+- Migration: explain state and compatibility behavior.
+<!-- jellyfin-canopy-catalog-summary:end -->
+```
+
+The catalog copy always gains a stable link to the complete release. The
+first-ever release has no meaningful commit delta, so a curated pre-draft is
+mandatory; the workflow refuses to substitute the complete repository
+history. Normal releases without a draft use commit subjects, retaining every
+security, breaking, migration, and upgrade subject before filling the bounded
+summary with other changes. Empty notes and priority information that cannot
+fit are blocking and require a curated draft. Commit-generated bodies carry an
+invisible ownership marker; a workflow rerun verifies and regenerates the same
+body and catalog summary. If someone edits that generated body, the rerun fails
+closed until the marker is removed and an explicit curated summary is added.
 
 ### Plugin versions and the manifest ABI stream
 
@@ -133,8 +157,16 @@ The release tools are dependency-free Node and can be run locally:
 - `node scripts/release/validate-manifest.js manifest.json` — validates the
   manifest: JSON shape, required fields, 4-part versions, MD5 checksum and
   GitHub release-asset URL formats, timestamps, duplicate detection, and
-  strictly-decreasing versions per `targetAbi` stream. Runs on every push/PR
-  (the `manifest` job in `build.yml`) and inside the release workflow.
+  strictly-decreasing versions per `targetAbi` stream. It also blocks any
+  changelog over 4,096 UTF-8 bytes or 60 lines and any serialized manifest
+  over 65,536 bytes. Runs on every push/PR (the `manifest` job in `build.yml`)
+  and inside the release workflow.
+- `scripts/release/manifest-policy.json` — the shared byte/line budget source
+  consumed by the validator and the Jellyfin package-model compatibility test.
+- `node scripts/release/prepare-release-notes.js ...` — keeps complete release
+  notes separate from the bounded catalog summary, enforces the first-release
+  curation rule, preserves priority subjects, neutralizes mention-shaped text,
+  and adds the stable full-notes link.
 - `node scripts/release/update-manifest.js --manifest manifest.json --tag <tag>
   --repo <owner/name> --changelog-file <file> --asset <targetAbi>=<zip> ...` —
   prepends the release entries. Refuses non-monotonic versions, misnamed

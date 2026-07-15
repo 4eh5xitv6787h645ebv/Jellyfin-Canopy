@@ -276,38 +276,36 @@ jobs:
             }' "$RUNNER_TEMP/tag-releases.json" > "$RUNNER_TEMP/release.json"
           fi
 
-      # Changelog precedence: a pre-drafted release body for this tag wins;
-      # otherwise commit subjects since the previous tag, in the same
-      # "- first\n - second" shape the manifest has always used. The text is
-      # only ever passed around as a file — never through the shell.
-      - name: Collect changelog
+      # Keep complete GitHub release notes separate from the concise payload
+      # every Jellyfin server polls through manifest.json. A pre-drafted body
+      # remains the source of truth. On the first release it is mandatory, so
+      # repository history can never accidentally become catalog metadata.
+      - name: Prepare release and catalog notes
         run: |
-          if [ -f "$RUNNER_TEMP/release.json" ]; then
-            jq -r '.body // ""' "$RUNNER_TEMP/release.json" > changelog.txt
-          fi
-          if [ -s changelog.txt ]; then
-            echo "Using existing release body as changelog"
+          prev_tag="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -n "$prev_tag" ]; then
+            range="${prev_tag}..${GITHUB_REF_NAME}"
+            first_release=false
+            echo "Release-note fallback from commits in $range"
           else
-            prev_tag="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
-            if [ -n "$prev_tag" ]; then
-              range="${prev_tag}..${GITHUB_REF_NAME}"
-              echo "Changelog from commits in $range"
-            else
-              range="$GITHUB_REF_NAME"
-              echo "No previous tag found; changelog from all commits"
-            fi
-            # Neutralize @-mention-shaped tokens (e.g. a commit subject citing
-            # "@font-face") by wrapping them in backticks: on the GitHub release
-            # page a bare @word renders as a user mention AND credits that user
-            # in the release's Contributors section.
-            git log --no-merges --pretty='%s' "$range" \
-              | sed -E 's/(^|[^`[:alnum:]])@([[:alnum:]][[:alnum:]-]*)/\1`@\2`/g' \
-              | awk 'NR==1 { print "- " $0; next } { print " - " $0 }' > changelog.txt
+            range="$GITHUB_REF_NAME"
+            first_release=true
+            echo "No previous tag found; a curated pre-draft body is required"
           fi
-          if [ ! -s changelog.txt ]; then
-            echo "::error::Changelog is empty"
-            exit 1
+
+          git log --no-merges --pretty='%s' "$range" > "$RUNNER_TEMP/commit-subjects.txt"
+          args=(
+            --repo "$GITHUB_REPOSITORY"
+            --tag "$GITHUB_REF_NAME"
+            --commit-subjects-file "$RUNNER_TEMP/commit-subjects.txt"
+            --first-release "$first_release"
+            --full-output release-notes.md
+            --catalog-output changelog.txt
+          )
+          if [ -f "$RUNNER_TEMP/release.json" ]; then
+            args+=(--draft-json "$RUNNER_TEMP/release.json")
           fi
+          node scripts/release/prepare-release-notes.js "${args[@]}"
 
       # This is the release-state ownership boundary. It downloads any existing
       # asset before choosing an action and fails closed when published bytes do
@@ -387,22 +385,29 @@ jobs:
               exit 1
             fi
           }
+          sync_draft_notes() {
+            require_existing_draft
+            gh release edit "$GITHUB_REF_NAME" --notes-file release-notes.md
+          }
           case "$ACTION" in
             create-draft)
               gh release create "$GITHUB_REF_NAME" "dist/$zip_name" \
-                --draft --verify-tag --title "v$VERSION" --notes-file changelog.txt
+                --draft --verify-tag --title "v$VERSION" --notes-file release-notes.md
               ;;
             upload-draft-asset)
               require_existing_draft
               gh release upload "$GITHUB_REF_NAME" "dist/$zip_name"
+              sync_draft_notes
               ;;
             reuse-draft-asset|resume-draft-proposal)
               echo "Draft already has the verified immutable asset"
+              sync_draft_notes
               ;;
             replace-draft-asset)
               # The state gate permits this only with no main/proposal contract.
               require_existing_draft
               gh release upload "$GITHUB_REF_NAME" "dist/$zip_name" --clobber
+              sync_draft_notes
               ;;
             noop-main|resume-published-proposal)
               echo "Published release is immutable; no release mutation"

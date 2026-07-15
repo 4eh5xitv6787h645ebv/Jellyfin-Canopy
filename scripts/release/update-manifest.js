@@ -25,6 +25,8 @@
  *     the manifest (monotonic — prevents accidentally re-tagging lower)
  *   - each zip must exist and be named Jellyfin.Plugin.JellyfinCanopy_<abi
  *     minus its 4th part>.zip (the convention the plugin catalog relies on)
+ *   - the prepared catalog changelog and total serialized manifest must stay
+ *     inside the blocking byte/line budgets owned by validate-manifest.js
  *   - the updated manifest is re-validated with validate-manifest.js before
  *     being written; nothing is written if validation fails
  *
