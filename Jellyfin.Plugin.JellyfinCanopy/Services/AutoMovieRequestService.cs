@@ -15,6 +15,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Microsoft.Extensions.Logging;
 
@@ -64,18 +65,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         // Checks a movie to determine if the next movie in collection should be requested.
         // Event-driven entry point called when a user starts watching a movie.
-        public async Task CheckMovieForCollectionRequestAsync(BaseItem movieItem, Guid userId)
+        public async Task<AutoRequestPlaybackOutcome> CheckMovieForCollectionRequestAsync(
+            BaseItem movieItem,
+            Guid userId)
         {
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.AutoMovieRequestEnabled || !config.SeerrEnabled)
             {
-                return;
+                return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
 
             if (string.IsNullOrEmpty(config.TMDB_API_KEY))
             {
                 _logger.LogWarning("[Auto-Movie-Request] TMDB API key is not configured. Auto movie requests require TMDB API access.");
-                return;
+                return AutoRequestPlaybackOutcome.RetryableFailure;
             }
 
             var mutationConfigStamp = SeerrMutationConfigStamp.Capture(
@@ -91,20 +94,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 _logger.LogWarning(
                     "[Auto-Movie-Request] Custom quality mode requires exactly one configured Seerr identity domain because its Radarr server/profile/root ids are not source-bound; no request was attempted");
-                return;
+                return AutoRequestPlaybackOutcome.RetryableFailure;
             }
 
             var user = _userManager.GetUserById(userId);
             if (user == null)
             {
-                return;
+                return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
 
             // Ensure this is a movie
             var movie = movieItem as Movie;
             if (movie == null)
             {
-                return;
+                return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
 
             // Get TMDB ID
@@ -112,7 +115,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             if (string.IsNullOrEmpty(tmdbId))
             {
                 _logger.LogDebug($"[Auto-Movie-Request] '{movie.Name}' has no TMDB ID");
-                return;
+                return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
 
             // Resolve the instance-local user id and its owning Seerr instance once,
@@ -121,18 +124,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var seerrBinding = await ResolvePinnedSeerrUserAsync(user.Id.ToString(), config).ConfigureAwait(false);
             if (!seerrBinding.HasValue)
             {
-                return;
+                return AutoRequestPlaybackOutcome.RetryableFailure;
             }
 
             var (seerrUser, seerrSourceUrl) = seerrBinding.Value;
 
             // Get collection info from TMDB
-            var collectionInfo = await GetTmdbCollectionIdAsync(tmdbId, config);
-            if (collectionInfo == null)
+            var collectionLookup = await GetTmdbCollectionIdAsync(tmdbId, config);
+            if (collectionLookup.Value == null)
             {
-                // _logger.LogDebug($"[Auto-Movie-Request] '{movie.Name}' is not part of a TMDB collection");
-                return;
+                return collectionLookup.Outcome;
             }
+
+            var collectionInfo = collectionLookup.Value!;
 
             _logger.LogInformation($"[Auto-Movie-Request] '{movie.Name}' is part of {collectionInfo.Name} (TMDB collection {collectionInfo.Id})");
 
@@ -146,7 +150,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 _logger.LogWarning(
                     "[Auto-Movie-Request] Original quality state could not be read authoritatively; no request was attempted");
-                return;
+                return AutoRequestPlaybackOutcome.RetryableFailure;
             }
 
             var qualitySettings = qualityResolution.Settings;
@@ -155,22 +159,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 _logger.LogInformation(
                     "[Auto-Movie-Request] Original quality resolved to 4K, but Jellyfin Canopy's 4K movie master switch is disabled; no request was attempted");
-                return;
+                return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
 
             // Get collection details from Seerr and inspect status/status4k for
             // the same quality domain the final POST will target.
-            var nextMovieInfo = await GetNextMovieInCollectionAsync(
+            var nextMovieLookup = await GetNextMovieInCollectionAsync(
                 collectionInfo.Id,
                 tmdbId,
                 seerrSourceUrl,
                 requestIs4k,
                 config);
-            if (nextMovieInfo == null)
+            if (nextMovieLookup.Value == null)
             {
-                // _logger.LogDebug($"[Auto-Movie-Request] No next movie found or next movie is already available/requested");
-                return;
+                return nextMovieLookup.Outcome;
             }
+
+            var nextMovieInfo = nextMovieLookup.Value!;
 
             // Check if we've already requested this movie (in-memory cache with 1-hour expiry)
             // Uses a sentinel pattern: write the entry before async work so concurrent
@@ -188,7 +193,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 if (_requestedMovies.ContainsKey(requestKey))
                 {
                     _logger.LogDebug($"[Auto-Movie-Request] Already requested '{nextMovieInfo.Title}' (cached)");
-                    return;
+                    return AutoRequestPlaybackOutcome.DefinitiveNoop;
                 }
 
                 // Reserve the slot so concurrent callers see it immediately
@@ -196,19 +201,33 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
 
             // Request the movie
-            var outcome = await RequestMovie(
-                nextMovieInfo.TmdbId.ToString(),
-                user.Id.ToString(),
-                user.HasPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator),
-                seerrUser,
-                seerrSourceUrl,
-                qualitySettings,
-                config,
-                mutationConfigStamp);
+            AutoRequestDispatchOutcome outcome;
+            try
+            {
+                outcome = await RequestMovie(
+                    nextMovieInfo.TmdbId.ToString(),
+                    user.Id.ToString(),
+                    user.HasPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator),
+                    seerrUser,
+                    seerrSourceUrl,
+                    qualitySettings,
+                    config,
+                    mutationConfigStamp);
+            }
+            catch (OperationCanceledException)
+            {
+                lock (_movieCacheLock)
+                {
+                    _requestedMovies.Remove(reservation);
+                }
+
+                return AutoRequestPlaybackOutcome.Cancelled;
+            }
 
             if (outcome == AutoRequestDispatchOutcome.Succeeded)
             {
                 _logger.LogInformation($"[Auto-Movie-Request] ✓ Requested '{nextMovieInfo.Title}' (TMDB {nextMovieInfo.TmdbId}) for {user.Username}");
+                return AutoRequestPlaybackOutcome.Committed;
             }
             else if (outcome == AutoRequestDispatchOutcome.NotAttempted)
             {
@@ -219,10 +238,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     _requestedMovies.Remove(reservation);
                 }
                 _logger.LogWarning($"[Auto-Movie-Request] ✗ Failed to request '{nextMovieInfo.Title}' (TMDB {nextMovieInfo.TmdbId}) for {user.Username}");
+                return AutoRequestPlaybackOutcome.RetryableFailure;
             }
             else
             {
                 _logger.LogWarning($"[Auto-Movie-Request] Request outcome for '{nextMovieInfo.Title}' (TMDB {nextMovieInfo.TmdbId}) is ambiguous; retaining the cooldown reservation to prevent replay");
+                return AutoRequestPlaybackOutcome.Committed;
             }
         }
 
@@ -257,6 +278,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             public int TmdbId { get; set; }
             public string Title { get; set; } = string.Empty;
+        }
+
+        private sealed class LookupResult<T>
+            where T : class
+        {
+            private LookupResult(T? value, AutoRequestPlaybackOutcome outcome)
+            {
+                Value = value;
+                Outcome = outcome;
+            }
+
+            public T? Value { get; }
+
+            public AutoRequestPlaybackOutcome Outcome { get; }
+
+            public static LookupResult<T> Found(T value) =>
+                new(value, AutoRequestPlaybackOutcome.Committed);
+
+            public static LookupResult<T> DefinitiveNoop() =>
+                new(null, AutoRequestPlaybackOutcome.DefinitiveNoop);
+
+            public static LookupResult<T> RetryableFailure() =>
+                new(null, AutoRequestPlaybackOutcome.RetryableFailure);
         }
 
         // Quality profile settings for Seerr requests
@@ -311,13 +355,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         }
 
         // Gets TMDB collection ID and name for a movie
-        private async Task<CollectionInfo?> GetTmdbCollectionIdAsync(
+        private async Task<LookupResult<CollectionInfo>> GetTmdbCollectionIdAsync(
             string tmdbId,
             PluginConfiguration config)
         {
             if (string.IsNullOrEmpty(config.TMDB_API_KEY))
             {
-                return null;
+                return LookupResult<CollectionInfo>.RetryableFailure();
             }
 
             try
@@ -329,7 +373,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     _logger.LogDebug($"[Auto-Movie-Request] TMDB returned {response.StatusCode} for movie {tmdbId}");
-                    return null;
+                    return LookupResult<CollectionInfo>.RetryableFailure();
                 }
 
                 var content = await response.Content.ReadAsStringAsync();
@@ -342,21 +386,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             collectionProp.TryGetProperty("id", out var idProp) &&
                             collectionProp.TryGetProperty("name", out var nameProp))
                         {
-                            return new CollectionInfo
-                            {
-                                Id = idProp.GetInt32(),
-                                Name = nameProp.GetString() ?? "Unknown Collection"
-                            };
+                            return LookupResult<CollectionInfo>.Found(
+                                new CollectionInfo
+                                {
+                                    Id = idProp.GetInt32(),
+                                    Name = nameProp.GetString() ?? "Unknown Collection"
+                                });
+                        }
+
+                        if (collectionProp.ValueKind != JsonValueKind.Null)
+                        {
+                            return LookupResult<CollectionInfo>.RetryableFailure();
                         }
                     }
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning($"[Auto-Movie-Request] Error querying TMDB: {ex.Message}");
+                return LookupResult<CollectionInfo>.RetryableFailure();
             }
 
-            return null;
+            return LookupResult<CollectionInfo>.DefinitiveNoop();
         }
 
         /// <summary>
@@ -383,7 +438,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         }
 
         // Gets next movie in collection from Seerr collection endpoint
-        private async Task<MovieInfo?> GetNextMovieInCollectionAsync(
+        private async Task<LookupResult<MovieInfo>> GetNextMovieInCollectionAsync(
             int collectionId,
             string currentTmdbId,
             string seerrSourceUrl,
@@ -392,7 +447,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             if (string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
             {
-                return null;
+                return LookupResult<MovieInfo>.RetryableFailure();
             }
 
             try
@@ -401,7 +456,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 if (pinnedSource == null)
                 {
                     _logger.LogWarning("[Auto-Movie-Request] The linked Seerr instance is no longer configured; no collection lookup was attempted");
-                    return null;
+                    return LookupResult<MovieInfo>.RetryableFailure();
                 }
 
                 var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
@@ -418,7 +473,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     if (error != null)
                     {
                         _logger.LogDebug($"[Auto-Movie-Request] Seerr collection fetch failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
-                        return null;
+                        return LookupResult<MovieInfo>.RetryableFailure();
                     }
 
                     using (JsonDocument doc = JsonDocument.Parse(content!))
@@ -462,7 +517,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                                     {
                                         _logger.LogWarning(
                                             "[Auto-Movie-Request] Next movie carried malformed or incomplete normal/4K media state; no request was attempted");
-                                        return null;
+                                        return LookupResult<MovieInfo>.RetryableFailure();
                                     }
 
                                     if (globallyBlocklisted ||
@@ -470,7 +525,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                                             not SeerrMediaAvailabilityStatus.Deleted)
                                     {
                                         _logger.LogDebug($"[Auto-Movie-Request] Next movie already unavailable for a new {(requestIs4k ? "4K" : "normal")} request (status: {matchingStatus})");
-                                        return null;
+                                        return LookupResult<MovieInfo>.DefinitiveNoop();
                                     }
                                 }
 
@@ -483,13 +538,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                                         !DateTime.TryParse(releaseDateProp.GetString(), out var releaseDate))
                                     {
                                         _logger.LogDebug("[Auto-Movie-Request] Next movie has no authoritative release date; release-date gating fails closed");
-                                        return null;
+                                        return LookupResult<MovieInfo>.DefinitiveNoop();
                                     }
 
                                     if (releaseDate.Date > DateTime.UtcNow.Date)
                                     {
                                         _logger.LogDebug($"[Auto-Movie-Request] Next movie is not yet released (release date: {releaseDate:yyyy-MM-dd}), skipping");
-                                        return null;
+                                        return LookupResult<MovieInfo>.DefinitiveNoop();
                                     }
                                 }
 
@@ -497,32 +552,45 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                                 if (nextPart.TryGetProperty("id", out var nextIdProp) &&
                                     nextPart.TryGetProperty("title", out var titleProp))
                                 {
-                                    return new MovieInfo
-                                    {
-                                        TmdbId = nextIdProp.GetInt32(),
-                                        Title = titleProp.GetString() ?? "Unknown Title"
-                                    };
+                                    return LookupResult<MovieInfo>.Found(
+                                        new MovieInfo
+                                        {
+                                            TmdbId = nextIdProp.GetInt32(),
+                                            Title = titleProp.GetString() ?? "Unknown Title"
+                                        });
                                 }
+
+                                return LookupResult<MovieInfo>.RetryableFailure();
                             }
                             else
                             {
                                 // _logger.LogDebug($"[Auto-Movie-Request] Current movie is the last in collection or not found");
-                                return null;
+                                return LookupResult<MovieInfo>.DefinitiveNoop();
                             }
                         }
+
+                        return LookupResult<MovieInfo>.RetryableFailure();
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
                     _logger.LogDebug($"[Auto-Movie-Request] Error checking Seerr at {pinnedSource}: {ex.Message}");
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning($"[Auto-Movie-Request] Error querying Seerr collection: {ex.Message}");
             }
 
-            return null;
+            return LookupResult<MovieInfo>.RetryableFailure();
         }
 
         private static bool TryReadMovieMediaState(
@@ -697,6 +765,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         Settings = selected,
                     };
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (HttpRequestException ex)
             {
@@ -980,6 +1052,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
 
                 _logger.LogWarning($"[Auto-Movie-Request] Seerr request failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {

@@ -17,6 +17,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.JellyfinCanopy.Services
@@ -152,6 +153,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                     return IsCapturedConfigurationCurrent() ? content : null;
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogDebug($"[Auto-Season-Request] Error checking Seerr at {pinnedSource}: {ex.Message}");
@@ -213,25 +218,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         // Checks a completed episode to determine if next season should be requested.
         // Event-driven entry point called when a user finishes or starts watching an episode.
-        public async Task CheckEpisodeCompletionAsync(BaseItem episodeItem, Guid userId)
+        public async Task<AutoRequestPlaybackOutcome> CheckEpisodeCompletionAsync(
+            BaseItem episodeItem,
+            Guid userId)
         {
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.AutoSeasonRequestEnabled || !config.SeerrEnabled)
             {
-                return;
+                return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
 
             var user = _userManager.GetUserById(userId);
             if (user == null)
             {
-                return;
+                return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
 
             // Get the series this episode belongs to
             var episode = episodeItem as Episode;
             if (episode == null || episode.Series == null || !episode.ParentIndexNumber.HasValue || !episode.IndexNumber.HasValue)
             {
-                return;
+                return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
 
             var series = episode.Series;
@@ -241,16 +248,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _logger.LogInformation($"[Auto-Season-Request] Checking '{series.Name}' S{seasonNumber}E{episodeNumber}");
 
             // Check this specific season for auto-season-request, passing the current episode number
-            await CheckSeasonForAutoRequest(series, seasonNumber, episodeNumber, user);
+            return await CheckSeasonForAutoRequest(
+                series,
+                seasonNumber,
+                episodeNumber,
+                user).ConfigureAwait(false);
         }
 
         // Checks if a specific season needs its next season requested
-        internal async Task CheckSeasonForAutoRequest(Series series, int currentSeasonNumber, int currentEpisodeNumber, JUser user)
+        internal async Task<AutoRequestPlaybackOutcome> CheckSeasonForAutoRequest(
+            Series series,
+            int currentSeasonNumber,
+            int currentEpisodeNumber,
+            JUser user)
         {
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || !config.AutoSeasonRequestEnabled || !config.SeerrEnabled)
             {
-                return;
+                return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
 
             var mutationConfigStamp = SeerrMutationConfigStamp.Capture(
@@ -262,7 +277,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             if (string.IsNullOrEmpty(tmdbId))
             {
                 _logger.LogWarning($"[Auto-Season-Request] Could not find TMDB ID for series '{series.Name}'");
-                return;
+                return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
 
             // Resolve once before the first Seerr read. Seerr user ids, media
@@ -271,7 +286,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var seerrBinding = await ResolvePinnedSeerrUserAsync(user.Id.ToString(), config).ConfigureAwait(false);
             if (!seerrBinding.HasValue)
             {
-                return;
+                return AutoRequestPlaybackOutcome.RetryableFailure;
             }
 
             var (seerrUser, seerrSourceUrl) = seerrBinding.Value;
@@ -284,7 +299,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             if (totalEpisodesInSeason == null || totalEpisodesInSeason <= 0)
             {
                 _logger.LogWarning($"[Auto-Season-Request] Could not determine total episodes for '{series.Name}' S{currentSeasonNumber} from TMDB");
-                return;
+                return AutoRequestPlaybackOutcome.RetryableFailure;
             }
 
             // Calculate remaining episodes based on current episode position and TMDB total
@@ -323,7 +338,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             if (!thresholdMet)
             {
                 _logger.LogDebug($"[Auto-Season-Request] Threshold not met for '{series.Name}' S{currentSeasonNumber}");
-                return;
+                return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
 
             // If "Require All Episodes Watched" is enabled, verify all episodes before the threshold are watched
@@ -352,7 +367,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             if (!shouldRequest)
             {
-                return;
+                return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
 
             // Threshold met - prepare to request next season
@@ -370,87 +385,100 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 if (_requestedSeasons.ContainsKey(cacheKey))
                 {
                     _logger.LogDebug($"[Auto-Season-Request] Already requested S{nextSeasonNumber} for TMDB {tmdbId} (cached)");
-                    return;
+                    return AutoRequestPlaybackOutcome.DefinitiveNoop;
                 }
 
                 // Reserve the slot so concurrent callers see it immediately
                 _requestedSeasons.TrySet(cacheKey, 0, out reservation);
             }
 
-            // Get episode count for next season to verify it has started
-            var nextSeasonEpisodeCount = await GetTotalEpisodesInSeasonFromTmdb(
-                tmdbId,
-                nextSeasonNumber,
-                seerrSourceUrl);
-
-            if (nextSeasonEpisodeCount == null || nextSeasonEpisodeCount <= 0)
+            void ReleaseReservation()
             {
-                _logger.LogInformation($"[Auto-Season-Request] Season {nextSeasonNumber} has not started yet (0 episodes) - not requesting");
-                // drop the sentinel so the next check actually
-                // re-evaluates instead of being stuck for an hour even after
-                // TMDB updates with the new season's data.
                 lock (_requestCacheLock)
                 {
                     _requestedSeasons.Remove(reservation);
                 }
-                return;
             }
 
-            // Check Seerr for season availability/status - always query to get latest status
-            var seerrStatus = await GetSeasonStatusFromSeerr(
-                tmdbId,
-                nextSeasonNumber,
-                seerrSourceUrl);
-
-            if (seerrStatus == null)
+            try
             {
-                _logger.LogDebug($"[Auto-Season-Request] Season {nextSeasonNumber} does not exist for '{series.Name}' (not available on TMDB)");
-                lock (_requestCacheLock)
+                // Get episode count for next season to verify it has started.
+                var nextSeasonEpisodeCount = await GetTotalEpisodesInSeasonFromTmdb(
+                    tmdbId,
+                    nextSeasonNumber,
+                    seerrSourceUrl).ConfigureAwait(false);
+
+                if (nextSeasonEpisodeCount == null || nextSeasonEpisodeCount <= 0)
                 {
-                    _requestedSeasons.Remove(reservation);
+                    _logger.LogInformation($"[Auto-Season-Request] Season {nextSeasonNumber} has not started yet (0 episodes) - not requesting");
+                    // Drop the sentinel so the next check re-evaluates instead
+                    // of being stuck for an hour after TMDB adds season data.
+                    ReleaseReservation();
+                    return AutoRequestPlaybackOutcome.RetryableFailure;
                 }
-                return;
-            }
 
-            if (seerrStatus.IsAvailable)
-            {
-                _logger.LogDebug($"[Auto-Season-Request] Season {nextSeasonNumber} already available on Jellyfin for '{series.Name}'");
-                return;
-            }
+                // Always query Seerr to get the latest season state.
+                var seerrStatus = await GetSeasonStatusFromSeerr(
+                    tmdbId,
+                    nextSeasonNumber,
+                    seerrSourceUrl).ConfigureAwait(false);
 
-            if (seerrStatus.IsRequested)
-            {
-                _logger.LogDebug($"[Auto-Season-Request] Season {nextSeasonNumber} already requested in Seerr for '{series.Name}'");
-                return;
-            }
-
-            // Season exists, not available, not requested - proceed with request
-            var outcome = await RequestNextSeason(
-                tmdbId,
-                nextSeasonNumber,
-                user.Id.ToString(),
-                user.HasPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator),
-                seerrUser,
-                seerrSourceUrl,
-                mutationConfigStamp);
-
-            if (outcome == AutoRequestDispatchOutcome.Succeeded)
-            {
-                _logger.LogInformation($"[Auto-Season-Request] ✓ Requested '{series.Name}' S{nextSeasonNumber} (TMDB: {tmdbId}) for {user.Username}");
-            }
-            else if (outcome == AutoRequestDispatchOutcome.NotAttempted)
-            {
-                // Preparation failed before dispatch, so retrying cannot replay
-                // a possibly committed non-idempotent request.
-                lock (_requestCacheLock)
+                if (seerrStatus == null)
                 {
-                    _requestedSeasons.Remove(reservation);
+                    _logger.LogDebug($"[Auto-Season-Request] Season {nextSeasonNumber} does not exist for '{series.Name}' (not available on TMDB)");
+                    ReleaseReservation();
+                    return AutoRequestPlaybackOutcome.RetryableFailure;
                 }
-                _logger.LogWarning($"[Auto-Season-Request] ✗ Failed to request '{series.Name}' S{nextSeasonNumber} for {user.Username}");
-            }
-            else
-            {
+
+                if (seerrStatus.IsAvailable)
+                {
+                    _logger.LogDebug($"[Auto-Season-Request] Season {nextSeasonNumber} already available on Jellyfin for '{series.Name}'");
+                    return AutoRequestPlaybackOutcome.DefinitiveNoop;
+                }
+
+                if (seerrStatus.IsRequested)
+                {
+                    _logger.LogDebug($"[Auto-Season-Request] Season {nextSeasonNumber} already requested in Seerr for '{series.Name}'");
+                    return AutoRequestPlaybackOutcome.DefinitiveNoop;
+                }
+
+                // Season exists, is unavailable, and has not been requested.
+                var outcome = await RequestNextSeason(
+                    tmdbId,
+                    nextSeasonNumber,
+                    user.Id.ToString(),
+                    user.HasPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator),
+                    seerrUser,
+                    seerrSourceUrl,
+                    mutationConfigStamp).ConfigureAwait(false);
+
+                if (outcome == AutoRequestDispatchOutcome.Succeeded)
+                {
+                    _logger.LogInformation($"[Auto-Season-Request] ✓ Requested '{series.Name}' S{nextSeasonNumber} (TMDB: {tmdbId}) for {user.Username}");
+                    return AutoRequestPlaybackOutcome.Committed;
+                }
+
+                if (outcome == AutoRequestDispatchOutcome.NotAttempted)
+                {
+                    // Preparation failed before dispatch, so retrying cannot
+                    // replay a possibly committed non-idempotent request.
+                    ReleaseReservation();
+                    _logger.LogWarning($"[Auto-Season-Request] ✗ Failed to request '{series.Name}' S{nextSeasonNumber} for {user.Username}");
+                    return AutoRequestPlaybackOutcome.RetryableFailure;
+                }
+
                 _logger.LogWarning($"[Auto-Season-Request] Request outcome for '{series.Name}' S{nextSeasonNumber} is ambiguous; retaining the cooldown reservation to prevent replay");
+                return AutoRequestPlaybackOutcome.Committed;
+            }
+            catch (OperationCanceledException)
+            {
+                ReleaseReservation();
+                return AutoRequestPlaybackOutcome.Cancelled;
+            }
+            catch
+            {
+                ReleaseReservation();
+                throw;
             }
         }
 
@@ -487,6 +515,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                 _logger.LogWarning($"[Auto-Season-Request] Season {seasonNumber} was absent, duplicated, or malformed in TMDB season metadata; refusing to infer that it is requestable");
                 return null;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -582,6 +614,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                 _logger.LogWarning($"[Auto-Season-Request] Season {seasonNumber} had absent, malformed, or conflicting TMDB/media state in the Seerr response; no request was attempted");
                 return null;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -963,6 +999,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
 
                 _logger.LogWarning($"[Auto-Season-Request] Seerr request failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {

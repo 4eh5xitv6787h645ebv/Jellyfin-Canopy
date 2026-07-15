@@ -83,28 +83,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 if (playedToCompletion || completionPercentage >= 0.9)
                 {
                     // Deduplicate stop events for the same user+item (same pattern as OnPlaybackProgress)
-                    if (e.Session?.UserId == null || e.Item?.Id == null)
+                    var session = e.Session;
+                    var item = e.Item;
+                    if (session == null || item == null)
                     {
                         return;
                     }
 
-                    var sessionItemKey = $"stopped_{e.Session.UserId}_{e.Item.Id}";
-                    if (!TryMarkChecked(sessionItemKey))
+                    var userId = session.UserId;
+                    var sessionItemKey = $"stopped_{userId}_{item.Id}";
+                    var executed = await ExecuteDeduplicatedAsync(
+                        sessionItemKey,
+                        async () =>
+                        {
+                            _logger.LogInformation($"[Auto-Season-Request] Episode '{item.Name}' completed by {session.UserName ?? "Unknown"}, checking threshold");
+                            return await _autoSeasonRequestService
+                                .CheckEpisodeCompletionAsync(item, userId)
+                                .ConfigureAwait(false);
+                        }).ConfigureAwait(false);
+                    if (!executed)
                     {
-                        _logger.LogDebug($"[Auto-Season-Request] PlaybackStopped already processed for '{e.Item?.Name}', skipping duplicate");
-                        return;
-                    }
-
-                    _logger.LogInformation($"[Auto-Season-Request] Episode '{e.Item?.Name ?? "Unknown"}' completed by {e.Session?.UserName ?? "Unknown"}, checking threshold");
-
-                    // Process this episode completion
-                    if (e.Item != null && e.Session?.UserId != null)
-                    {
-                        await _autoSeasonRequestService.CheckEpisodeCompletionAsync(e.Item, e.Session.UserId);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("[Auto-Season-Request] Item or Session/UserId is null, cannot process");
+                        _logger.LogDebug($"[Auto-Season-Request] PlaybackStopped already processed for '{item.Name}', skipping duplicate");
                     }
                 }
                 //This probably can be removed but leaving it for now as a debug log
@@ -152,25 +151,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     if (progressMinutes <= 2 && progressPercentage < 0.05)
                     {
                         // Create a unique key using userId and item ID
-                        if (e.Session?.UserId == null || e.Item?.Id == null)
+                        var session = e.Session;
+                        var item = e.Item;
+                        if (session == null || item == null)
                         {
                             return;
                         }
 
-                        var sessionItemKey = $"{e.Session.UserId}_{e.Item.Id}";
+                        var userId = session.UserId;
+                        var sessionItemKey = $"{userId}_{item.Id}";
 
-                        // Skip if we've checked this user+item combination in the last hour
-                        if (!TryMarkChecked(sessionItemKey))
-                        {
-                            return;
-                        }
-
-                        _logger.LogInformation($"[Auto-Season-Request] Episode '{e.Item?.Name ?? "Unknown"}' started by {e.Session?.UserName ?? "Unknown"}, checking threshold");
-
-                        if (e.Item != null && e.Session?.UserId != null)
-                        {
-                            await _autoSeasonRequestService.CheckEpisodeCompletionAsync(e.Item, e.Session.UserId);
-                        }
+                        await ExecuteDeduplicatedAsync(
+                            sessionItemKey,
+                            async () =>
+                            {
+                                _logger.LogInformation($"[Auto-Season-Request] Episode '{item.Name}' started by {session.UserName ?? "Unknown"}, checking threshold");
+                                return await _autoSeasonRequestService
+                                    .CheckEpisodeCompletionAsync(item, userId)
+                                    .ConfigureAwait(false);
+                            }).ConfigureAwait(false);
                     }
                 }
             }
