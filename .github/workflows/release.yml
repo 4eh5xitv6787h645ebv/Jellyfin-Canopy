@@ -198,6 +198,9 @@ jobs:
       - name: Internal Markdown links
         run: npm run check:markdown-links
 
+      - name: Documentation asset ownership and size budgets
+        run: npm run check:docs-assets
+
       - name: Type check (opt-in @ts-check files)
         run: npm run typecheck
 
