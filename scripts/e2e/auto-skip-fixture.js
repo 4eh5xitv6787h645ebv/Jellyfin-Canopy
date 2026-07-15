@@ -5,6 +5,8 @@
 const fixtureManifest = require('../../e2e/fixtures/media-fixtures.json');
 
 const TICKS_PER_SECOND = 10_000_000;
+const PLAYBACK_RESET_ATTEMPTS = 6;
+const PLAYBACK_RESET_SETTLE_MS = 250;
 
 function positiveNumber(value, label) {
     const number = Number(value);
@@ -219,11 +221,117 @@ async function resolveAutoSkipFixture(apiClient, overrideId = '') {
     return validatePlaybackInfo(item, playbackInfo, normalizedOverride);
 }
 
+function playbackStateIsReset(userData) {
+    const position = Number(userData?.PlaybackPositionTicks);
+    const percentage = userData?.PlayedPercentage;
+    return Boolean(userData)
+        && Number.isFinite(position)
+        && position === 0
+        && (percentage === null || percentage === undefined || Number(percentage) === 0)
+        && userData.Played === false;
+}
+
+function playbackStateDiagnostic(userData) {
+    return `PlaybackPositionTicks=${String(userData?.PlaybackPositionTicks)}, `
+        + `PlayedPercentage=${String(userData?.PlayedPercentage)}, `
+        + `Played=${String(userData?.Played)}`;
+}
+
+function errorDetail(error, index) {
+    if (error instanceof Error) {
+        return `[cleanup ${index}] ${error.name}: ${error.message}\n${error.stack || '<no stack>'}`;
+    }
+    return `[cleanup ${index}] ${String(error)}`;
+}
+
+function preservePrimaryError(primary, cleanupErrors = []) {
+    const primaryError = primary instanceof Error
+        ? primary
+        : new Error(`Auto-Skip test failed with a non-Error value: ${String(primary)}`);
+    if (!Array.isArray(cleanupErrors) || cleanupErrors.length === 0) return primaryError;
+
+    const existingCause = primaryError.cause;
+    const cleanupCause = new Error(
+        `Auto-Skip cleanup failures:\n${cleanupErrors
+            .map((error, index) => errorDetail(error, index + 1))
+            .join('\n\n')}`,
+        existingCause === undefined ? undefined : { cause: existingCause }
+    );
+    Object.defineProperty(primaryError, 'cause', {
+        configurable: true,
+        value: cleanupCause,
+    });
+    return primaryError;
+}
+
+function isAutoSkipZeroProgressResponse(candidate, itemId) {
+    const normalizedItemId = String(itemId || '').replaceAll('-', '').toLowerCase();
+    const bodyItemId = String(candidate?.body?.ItemId || '').replaceAll('-', '').toLowerCase();
+    return Boolean(normalizedItemId)
+        && candidate?.method === 'POST'
+        && candidate?.pathname === '/Sessions/Playing/Progress'
+        && Number.isInteger(candidate?.status)
+        && candidate.status >= 200
+        && candidate.status < 300
+        && bodyItemId === normalizedItemId
+        && typeof candidate?.body?.PositionTicks === 'number'
+        && candidate.body.PositionTicks === 0;
+}
+
+async function resetAutoSkipPlaybackState(apiClient, itemId, options = {}) {
+    if (!apiClient
+        || typeof apiClient.markUnplayed !== 'function'
+        || typeof apiClient.getUserData !== 'function') {
+        throw new Error('Auto-Skip playback reset requires an authenticated playback-state ApiClient');
+    }
+
+    const normalizedItemId = String(itemId || '').trim();
+    if (!normalizedItemId) {
+        throw new Error('Auto-Skip playback reset requires a Jellyfin item ID');
+    }
+
+    const attempts = Number.isInteger(options.attempts) && options.attempts > 0
+        ? options.attempts
+        : PLAYBACK_RESET_ATTEMPTS;
+    const settleMs = Number.isFinite(options.settleMs) && options.settleMs >= 0
+        ? options.settleMs
+        : PLAYBACK_RESET_SETTLE_MS;
+    const wait = typeof options.wait === 'function'
+        ? options.wait
+        : (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+    let verified;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        // Jellyfin's canonical unplayed route clears Played, play count,
+        // position, and last-played state together. The generic UserData route
+        // leaves some of those fields behind and can lose a race to a late
+        // playback-session update during Playwright cleanup.
+        await apiClient.markUnplayed(normalizedItemId);
+        verified = await apiClient.getUserData(normalizedItemId);
+        if (!playbackStateIsReset(verified)) continue;
+
+        // Require a second clean read after a short quiet window. A page-unload
+        // beacon can otherwise overwrite the first reset immediately after it
+        // is observed, contaminating the next retry or local run.
+        await wait(settleMs);
+        verified = await apiClient.getUserData(normalizedItemId);
+        if (playbackStateIsReset(verified)) return;
+    }
+
+    throw new Error(
+        `Auto-Skip fixture ${normalizedItemId} playback reset did not converge `
+        + `after ${attempts} attempts: ${playbackStateDiagnostic(verified)}`
+    );
+}
+
 module.exports = {
     AUTO_SKIP_FIXTURE,
     PLAYWRIGHT_DEVICE_PROFILE,
     TICKS_PER_SECOND,
     minimumDurationSeconds,
+    isAutoSkipZeroProgressResponse,
+    preservePrimaryError,
+    resetAutoSkipPlaybackState,
     resolveAutoSkipFixture,
     selectFixtureItem,
     validatePlaybackInfo,

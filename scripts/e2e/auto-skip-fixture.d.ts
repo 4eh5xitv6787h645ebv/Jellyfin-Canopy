@@ -36,6 +36,33 @@ export interface FixtureApiClient {
     ): Promise<PlaybackInfo>;
 }
 
+export interface PlaybackUserData {
+    PlaybackPositionTicks?: number;
+    PlayedPercentage?: number;
+    Played?: boolean;
+}
+
+export interface PlaybackStateApiClient {
+    markUnplayed(itemId: string): Promise<PlaybackUserData | null>;
+    getUserData(itemId: string): Promise<PlaybackUserData | null>;
+}
+
+export interface PlaybackResetOptions {
+    attempts?: number;
+    settleMs?: number;
+    wait?: (milliseconds: number) => Promise<void>;
+}
+
+export interface PlaybackProgressResponseCandidate {
+    method?: string;
+    pathname?: string;
+    status?: number;
+    body?: {
+        ItemId?: string;
+        PositionTicks?: number;
+    };
+}
+
 export interface ResolvedAutoSkipFixture {
     id: string;
     name: string;
@@ -59,3 +86,13 @@ export function resolveAutoSkipFixture(
     apiClient: FixtureApiClient,
     overrideId?: string
 ): Promise<Readonly<ResolvedAutoSkipFixture>>;
+export function isAutoSkipZeroProgressResponse(
+    candidate: PlaybackProgressResponseCandidate,
+    itemId: string
+): boolean;
+export function preservePrimaryError(primary: unknown, cleanupErrors?: unknown[]): Error;
+export function resetAutoSkipPlaybackState(
+    apiClient: PlaybackStateApiClient,
+    itemId: string,
+    options?: PlaybackResetOptions
+): Promise<void>;

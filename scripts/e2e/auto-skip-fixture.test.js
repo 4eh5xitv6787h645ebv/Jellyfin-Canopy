@@ -11,7 +11,10 @@ const {
     AUTO_SKIP_FIXTURE,
     PLAYWRIGHT_DEVICE_PROFILE,
     TICKS_PER_SECOND,
+    isAutoSkipZeroProgressResponse,
     minimumDurationSeconds,
+    preservePrimaryError,
+    resetAutoSkipPlaybackState,
     resolveAutoSkipFixture,
     selectFixtureItem,
     validatePlaybackInfo,
@@ -59,6 +62,22 @@ function fakeApi({ items = [item()], playback = playbackInfo(), overrideItem, fa
         getPlaybackInfo: async (id, options, profile) => {
             calls.push(['getPlaybackInfo', id, options, profile]);
             return playback;
+        },
+    };
+}
+
+function fakePlaybackStateApi(states) {
+    const queue = [...states];
+    const calls = [];
+    return {
+        calls,
+        markUnplayed: async (itemId) => {
+            calls.push(['markUnplayed', itemId]);
+            return { PlaybackPositionTicks: 0, Played: false };
+        },
+        getUserData: async (itemId) => {
+            calls.push(['getUserData', itemId]);
+            return queue.length > 1 ? queue.shift() : queue[0];
         },
     };
 }
@@ -202,6 +221,101 @@ test('lookup and PlaybackInfo errors name the phase and happen before navigation
     );
 });
 
+test('playback reset requires two stable reads after the canonical unplayed write', async () => {
+    const clean = { PlaybackPositionTicks: 0, PlayedPercentage: undefined, Played: false };
+    const api = fakePlaybackStateApi([clean, clean]);
+    const waits = [];
+
+    await resetAutoSkipPlaybackState(api, 'fixture-id', {
+        settleMs: 17,
+        wait: async (milliseconds) => waits.push(milliseconds),
+    });
+
+    assert.deepEqual(api.calls, [
+        ['markUnplayed', 'fixture-id'],
+        ['getUserData', 'fixture-id'],
+        ['getUserData', 'fixture-id'],
+    ]);
+    assert.deepEqual(waits, [17]);
+});
+
+test('zero-progress response matcher owns only the exact successful Jellyfin write', () => {
+    const exact = {
+        method: 'POST',
+        pathname: '/Sessions/Playing/Progress',
+        status: 204,
+        body: { ItemId: 'fixture-id', PositionTicks: 0 },
+    };
+    assert.equal(isAutoSkipZeroProgressResponse(exact, 'fixture-id'), true);
+    assert.equal(isAutoSkipZeroProgressResponse(exact, 'other-id'), false);
+    assert.equal(isAutoSkipZeroProgressResponse({ ...exact, method: 'GET' }, 'fixture-id'), false);
+    assert.equal(isAutoSkipZeroProgressResponse({ ...exact, status: 500 }, 'fixture-id'), false);
+    assert.equal(isAutoSkipZeroProgressResponse({
+        ...exact,
+        body: { ...exact.body, PositionTicks: 1 },
+    }, 'fixture-id'), false);
+    assert.equal(isAutoSkipZeroProgressResponse({
+        ...exact,
+        pathname: '/Sessions/Playing/Stopped',
+    }, 'fixture-id'), false);
+});
+
+test('cleanup diagnostics preserve the primary Error for Playwright cause serialization', () => {
+    const originalCause = new Error('original cause');
+    const primary = new Error('PRIMARY ASSERTION', { cause: originalCause });
+    primary.stack = 'PRIMARY STACK';
+    const firstCleanup = new Error('progress handshake failed');
+    firstCleanup.stack = 'PROGRESS STACK';
+    const secondCleanup = new Error('native reset failed');
+    secondCleanup.stack = 'RESET STACK';
+
+    const preserved = preservePrimaryError(primary, [firstCleanup, secondCleanup]);
+
+    assert.equal(preserved, primary);
+    assert.equal(preserved.message, 'PRIMARY ASSERTION');
+    assert.equal(preserved.stack, 'PRIMARY STACK');
+    assert.ok(preserved.cause instanceof Error);
+    assert.match(preserved.cause.message, /progress handshake failed[\s\S]*native reset failed/);
+    assert.match(preserved.cause.message, /PROGRESS STACK[\s\S]*RESET STACK/);
+    assert.equal(preserved.cause.cause, originalCause);
+});
+
+test('non-Error primary values remain visible while cleanup is attached as cause', () => {
+    const preserved = preservePrimaryError('plain failure', ['plain cleanup']);
+    assert.match(preserved.message, /plain failure/);
+    assert.ok(preserved.cause instanceof Error);
+    assert.match(preserved.cause.message, /plain cleanup/);
+});
+
+test('playback reset repairs a late player-session overwrite before returning', async () => {
+    const clean = { PlaybackPositionTicks: 0, PlayedPercentage: 0, Played: false };
+    const lateStop = { PlaybackPositionTicks: 0, PlayedPercentage: undefined, Played: true };
+    const api = fakePlaybackStateApi([clean, lateStop, clean, clean]);
+
+    await resetAutoSkipPlaybackState(api, 'fixture-id', {
+        settleMs: 0,
+        wait: async () => undefined,
+    });
+
+    assert.equal(api.calls.filter(([name]) => name === 'markUnplayed').length, 2);
+    assert.equal(api.calls.filter(([name]) => name === 'getUserData').length, 4);
+});
+
+test('playback reset is bounded and reports the last server state', async () => {
+    const stale = { PlaybackPositionTicks: 0, PlayedPercentage: undefined, Played: true };
+    const api = fakePlaybackStateApi([stale]);
+
+    await assert.rejects(
+        resetAutoSkipPlaybackState(api, 'fixture-id', {
+            attempts: 3,
+            settleMs: 0,
+            wait: async () => undefined,
+        }),
+        /fixture fixture-id.*did not converge after 3 attempts:.*Played=true/
+    );
+    assert.equal(api.calls.filter(([name]) => name === 'markUnplayed').length, 3);
+});
+
 test('seed, spec, compose, and CI consume the dynamic fixture contract', () => {
     const seed = fs.readFileSync(path.join(ROOT, 'e2e/docker/seed.sh'), 'utf8');
     const spec = fs.readFileSync(path.join(ROOT, 'e2e/auto-skip.spec.ts'), 'utf8');
@@ -214,6 +328,22 @@ test('seed, spec, compose, and CI consume the dynamic fixture contract', () => {
     assert.match(seed, /sine=frequency=\$2:duration=\$\{duration\}/);
     assert.match(seed, /seed-result\.json/);
     assert.match(spec, /resolveAutoSkipFixture/);
+    assert.match(spec, /UserPlayedItems\/\$\{encodeURIComponent\(itemId\)\}/);
+    assert.doesNotMatch(spec, /method: 'POST',[\s\S]{0,200}PlaybackPositionTicks: 0/);
+    assert.match(spec, /page\.waitForResponse/);
+    assert.match(spec, /isZeroProgressResponse\(response, resolved\.id\)/);
+    assert.match(spec, /video\.dispatchEvent\(new Event\('timeupdate'\)\)/);
+    assert.match(spec, /let testBodyFailed = false/);
+    assert.match(spec, /preservePrimaryError\(testBodyError, cleanupErrors\)/);
+    assert.ok(
+        spec.indexOf('testBodyError = error') < spec.lastIndexOf('resetAutoSkipPlaybackState(resetApi'),
+        'the primary test error must be captured before cleanup can fail'
+    );
+    assert.match(spec, /page\.goto\('about:blank'/);
+    assert.ok(
+        spec.indexOf("page.goto('about:blank'") < spec.lastIndexOf('resetAutoSkipPlaybackState('),
+        'the player must unload before the final server-state reset'
+    );
     assert.doesNotMatch(spec, /14ba72cbe419e23f29d748060beef153/);
     assert.ok(
         spec.indexOf('await resolveAutoSkipFixture(') < spec.indexOf('showRoute(page'),
