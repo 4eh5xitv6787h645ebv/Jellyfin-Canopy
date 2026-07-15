@@ -2,6 +2,7 @@ using System.Net;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using System.Reflection;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
@@ -50,6 +51,8 @@ public sealed class WatchlistMonitorLifecycleTests
         monitor.Initialize();
         library.RaiseItemAdded(Movie(123));
         await readStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var throwingRegistration = GetConfigurationCancellation(monitor).Token.Register(
+            static () => throw new InvalidOperationException("synthetic disposal callback failure"));
 
         var disposeTask = Task.Run(monitor.Dispose);
         await WaitUntilAsync(() => library.ItemAddedCount == 0);
@@ -162,6 +165,42 @@ public sealed class WatchlistMonitorLifecycleTests
         await Task.Delay(50);
         Assert.Equal(requestsBeforeDisabledEvent, handler.RequestCount);
         monitor.Dispose();
+    }
+
+    [Fact]
+    public async Task ThrowingCancellationCallback_StillAdvancesGenerationAndClearsOwnedCache()
+    {
+        var library = new CountingLibraryManager();
+        var handler = new BlockingEmptyRequestsHandler();
+        var monitor = CreateEventMonitor(library, handler, out _);
+
+        monitor.Initialize();
+        library.RaiseItemAdded(Movie(123));
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        handler.Release.TrySetResult();
+        await WaitUntilAsync(() => monitor.QueueMetrics.StateCount == 0);
+        Assert.Equal(1, monitor.RequestsCacheCount);
+        var generation = monitor.ConfigurationGenerationNumber;
+
+        var cancellation = GetConfigurationCancellation(monitor);
+        using var registration = cancellation.Token.Register(
+            static () => throw new InvalidOperationException("synthetic cancellation callback failure"));
+
+        monitor.NotifyConfigurationChanged();
+        Assert.Equal(generation + 1, monitor.ConfigurationGenerationNumber);
+        Assert.Equal(0, monitor.RequestsCacheCount);
+        monitor.Dispose();
+    }
+
+    private static CancellationTokenSource GetConfigurationCancellation(WatchlistMonitor monitor)
+    {
+        var generationField = typeof(WatchlistMonitor).GetField(
+            "_configurationGeneration",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var generation = generationField!.GetValue(monitor);
+        Assert.NotNull(generation);
+        var cancellationProperty = generation.GetType().GetProperty("Cancellation");
+        return Assert.IsType<CancellationTokenSource>(cancellationProperty!.GetValue(generation));
     }
 
     [Fact]

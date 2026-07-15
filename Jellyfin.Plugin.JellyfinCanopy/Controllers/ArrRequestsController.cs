@@ -101,6 +101,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             var configurationRevision = _configProvider.ConfigurationRevision;
             var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
             var seerrEnabled = SeerrIntegrationPolicy.HasUsableSavedConfiguration(config);
             var seerrApiKey = config.SeerrApiKey;
             var configuredUrls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
@@ -507,6 +508,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 }
 
                 var requestUrls = new[] { configuredSource };
+                SeerrDispatchFence dispatchFence = integration
+                    .CreateDispatchFence(_configProvider)
+                    .Restrict(() => IsReadConfigurationCurrent(configStamp));
 
                 // Check if user has permission to view all requests
                 // Jellyfin admins can always view all requests regardless of Seerr permissions
@@ -538,6 +542,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     seerrApiKey,
                     upstreamFilter,
                     scopeParam,
+                    dispatchFence,
                     HttpContext.RequestAborted).ConfigureAwait(false);
                 if (!IsReadConfigurationCurrent(configStamp))
                     return ReadConfigurationChanged("the request list");
@@ -1097,7 +1102,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [Authorize]
         public async Task<IActionResult> GetCompleteUserRequestSnapshot([FromQuery] bool userOnly = false)
         {
-            var config = _configProvider.ConfigurationOrNull;
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            var config = integration.Configuration;
             if (config == null)
             {
                 return StatusCode(500, new
@@ -1109,7 +1115,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 });
             }
 
-            var configurationRevision = _configProvider.ConfigurationRevision;
+            var configurationRevision = integration.ConfigurationRevision;
             var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
             var seerrEnabled = SeerrIntegrationPolicy.HasUsableSavedConfiguration(config);
             var seerrApiKey = config.SeerrApiKey;
@@ -1203,11 +1209,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var urls = new[] { configuredSource };
             var client = SeerrHttpHelper.CreateClient(_httpClientFactory);
             client.Timeout = TimeSpan.FromSeconds(15);
+            SeerrDispatchFence dispatchFence = integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(() => IsReadConfigurationCurrent(configStamp));
             var snapshot = await FetchUserRequestSnapshotAsync(
                 client,
                 urls,
                 seerrApiKey,
                 seerrUser.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                dispatchFence,
                 HttpContext.RequestAborted,
                 selfScoped: selfScoped,
                 includeApiUserHeader: selfScoped || !jellyfinAdmin).ConfigureAwait(false);
@@ -1452,6 +1462,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             string apiKey,
             string filter,
             string scopeParam,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken,
             int pageSize = ComingSoonPageSize,
             int maxItems = ComingSoonMaxItems,
@@ -1464,6 +1475,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 apiUserId: null,
                 requestedPageSize: pageSize,
                 RequestRowIdentity,
+                dispatchFence,
                 cancellationToken,
                 maximumPages: maxPages,
                 maximumItems: maxItems);
@@ -1473,6 +1485,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             IEnumerable<string> seerrUrls,
             string apiKey,
             string seerrUserId,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken,
             bool selfScoped = true,
             int pageSize = RequestKeyPageSize,
@@ -1487,6 +1500,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 includeApiUserHeader ? seerrUserId : null,
                 requestedPageSize: pageSize,
                 RequestRowIdentity,
+                dispatchFence,
                 cancellationToken,
                 maximumPages: maxPages,
                 maximumItems: maxItems);
@@ -1501,6 +1515,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             string seerrUrl,
             string apiKey,
             string scopeParam,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken,
             int pageSize = ComingSoonPageSize,
             int maxItems = ComingSoonMaxItems,
@@ -1510,6 +1525,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 new[] { seerrUrl },
                 apiKey,
                 scopeParam,
+                dispatchFence,
                 cancellationToken,
                 pageSize,
                 maxItems,
@@ -1520,6 +1536,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             IEnumerable<string> seerrUrls,
             string apiKey,
             string scopeParam,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken,
             int pageSize = ComingSoonPageSize,
             int maxItems = ComingSoonMaxItems,
@@ -1530,6 +1547,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 apiKey,
                 "processing",
                 scopeParam,
+                dispatchFence,
                 cancellationToken,
                 pageSize,
                 maxItems,
@@ -1790,6 +1808,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return StatusCode(403, new { error = true, message = "You do not have permission to approve or decline requests." });
 
             var requestUri = $"{tokenSource}/api/v1/request/{requestId}/{action}";
+            SeerrDispatchFence dispatchFence = integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(() => mutationConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision)
+                    && _configProvider.ConfigurationOrNull?.RequestApprovalsEnabled == true);
             var client = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
             using var httpRequest = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                 HttpMethod.Post, requestUri, config.SeerrApiKey, seerrUser.Id.ToString());
@@ -1797,6 +1821,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 client,
                 httpRequest,
                 requestUri,
+                dispatchFence,
                 HttpContext.RequestAborted).ConfigureAwait(false);
 
             if (error != null)
@@ -1855,6 +1880,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            SeerrDispatchFence dispatchFence = integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(() => IsReadConfigurationCurrent(configStamp));
             if (!IsReadConfigurationCurrent(configStamp))
             {
                 return default;
@@ -1930,6 +1959,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         client,
                         enrichRequest,
                         enrichUri,
+                        dispatchFence,
                         fetchCancellationToken).ConfigureAwait(false);
 
                     if (!IsReadConfigurationCurrent(configStamp))

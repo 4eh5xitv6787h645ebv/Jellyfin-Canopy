@@ -141,25 +141,54 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
         internal static Task<HttpResponseMessage> SendResponseHeadersReadAsync(
             HttpClient httpClient,
             HttpRequestMessage request,
+            SeerrDispatchFence dispatchFence,
             CancellationToken ct = default)
-            => httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            => dispatchFence.CanDispatch(request.RequestUri)
+                ? httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
+                : Task.FromException<HttpResponseMessage>(
+                    new InvalidOperationException("The Seerr dispatch fence is no longer current."));
 
         public static Task<(string? Json, SeerrError? Error, int HttpStatus)> SendAndReadJsonAsync(
             HttpClient httpClient,
             HttpRequestMessage request,
             string url,
+            SeerrDispatchFence dispatchFence,
             CancellationToken ct = default)
-            => SendAndReadJsonAsync(httpClient, request, url, MaxBodyBytes, ct);
+            => SendAndReadJsonAsync(httpClient, request, url, MaxBodyBytes, dispatchFence, ct);
 
         internal static async Task<(string? Json, SeerrError? Error, int HttpStatus)> SendAndReadJsonAsync(
             HttpClient httpClient,
             HttpRequestMessage request,
             string url,
             int maxBodyBytes,
+            SeerrDispatchFence dispatchFence,
             CancellationToken ct = default)
         {
-            using var response = await SendResponseHeadersReadAsync(httpClient, request, ct).ConfigureAwait(false);
+            using var response = await SendResponseHeadersReadAsync(
+                httpClient,
+                request,
+                dispatchFence,
+                ct).ConfigureAwait(false);
             var (json, error) = await ReadResponseAsync(response, url, maxBodyBytes, ct).ConfigureAwait(false);
+            return (json, error, (int)response.StatusCode);
+        }
+
+        /// <summary>
+        /// Setup-only transport for an exact elevated endpoint validating
+        /// caller-supplied, not-yet-saved credentials. Normal saved-integration
+        /// traffic must use the fence-requiring overload above.
+        /// </summary>
+        internal static async Task<(string? Json, SeerrError? Error, int HttpStatus)> SendSetupAndReadJsonAsync(
+            HttpClient httpClient,
+            HttpRequestMessage request,
+            string url,
+            CancellationToken ct = default)
+        {
+            using var response = await httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                ct).ConfigureAwait(false);
+            var (json, error) = await ReadResponseAsync(response, url, MaxBodyBytes, ct).ConfigureAwait(false);
             return (json, error, (int)response.StatusCode);
         }
 

@@ -114,16 +114,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
             var urls = integration.Urls;
             var apiKey = integration.ApiKey;
+            SeerrDispatchFence dispatchFence = integration.CreateDispatchFence(_configProvider);
             var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
             httpClient.Timeout = TimeSpan.FromSeconds(15);
 
             foreach (var url in urls)
             {
+                // A failed probe may await long enough for an administrator to
+                // disable or replace the integration. Revalidate before every
+                // failover dispatch so retained snapshot credentials are never
+                // used for the next configured URL.
+                if (!integration.IsCurrent(_configProvider))
+                {
+                    return false;
+                }
+
                 var requestUri = $"{url}/api/v1/status";
                 try
                 {
                     using var request = SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, apiKey);
-                    var (_, error, _) = await SeerrHttpHelper.SendAndReadJsonAsync(httpClient, request, requestUri);
+                    var (_, error, _) = await SeerrHttpHelper.SendAndReadJsonAsync(
+                        httpClient,
+                        request,
+                        requestUri,
+                        dispatchFence).ConfigureAwait(false);
                     if (error == null)
                     {
                         return integration.IsCurrent(_configProvider);
@@ -139,28 +153,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
             _logger.LogWarning("Could not establish a connection with any configured Seerr URL. Status is inactive.");
             return false;
-        }
-
-        // Cached wrapper so a Seerr outage doesn't fan out N status probes from
-        // the negative-user-cache window.
-        private async Task<bool> IsSeerrReachableCached()
-        {
-            lock (_seerrCache.SeerrStatusCacheLock)
-            {
-                if (_seerrCache.SeerrStatusCache.HasValue
-                    && DateTime.UtcNow - _seerrCache.SeerrStatusCache.Value.CachedAt < _seerrCache.SeerrStatusCacheTtl)
-                {
-                    return _seerrCache.SeerrStatusCache.Value.Active;
-                }
-            }
-
-            bool active = await GetStatusActiveAsync();
-            lock (_seerrCache.SeerrStatusCacheLock)
-            {
-                _seerrCache.SeerrStatusCache = (active, DateTime.UtcNow);
-            }
-
-            return active;
         }
 
         // ── 4K capability ────────────────────────────────────────────────────
@@ -265,6 +257,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             bool IsConfigurationCurrent() => configStamp.Matches(
                 _configProvider.ConfigurationOrNull,
                 _configProvider.ConfigurationRevision);
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
             var configuredSource = capturedConfiguredUrls
                 .FirstOrDefault(url => string.Equals(url, sourceUrl, StringComparison.Ordinal));
             var apiKey = capturedApiKey;
@@ -315,7 +308,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 var (json, error, _) = await SeerrHttpHelper.SendAndReadJsonAsync(
                     httpClient,
                     request,
-                    requestUri).ConfigureAwait(false);
+                    requestUri,
+                    integration
+                        .CreateDispatchFence(_configProvider)
+                        .Restrict(IsConfigurationCurrent)).ConfigureAwait(false);
                 if (!IsConfigurationCurrent())
                 {
                     return (false, false);
@@ -468,6 +464,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 && importConfigStamp.Matches(
                     _configProvider.ConfigurationOrNull,
                     _configProvider.ConfigurationRevision);
+            SeerrDispatchFence dispatchFence = integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(ConfigurationIsCurrent);
             static SeerrUserResolution ConfigurationChanged() =>
                 SeerrUserResolution.Incomplete(
                     "Seerr configuration changed during user lookup; retry the request.");
@@ -612,6 +611,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     apiUserId: null,
                     requestedPageSize: 1000,
                     UserCollectionIdentity,
+                    dispatchFence,
                     cancellationToken).ConfigureAwait(false);
 
                 if (!ConfigurationIsCurrent())
@@ -772,6 +772,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                         httpClient,
                         config,
                         importConfigStamp,
+                        dispatchFence,
                         cancellationToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -911,6 +912,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             HttpClient httpClient,
             PluginConfiguration capturedConfig,
             SeerrMutationConfigStamp configStamp,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken)
         {
             var apiKey = capturedConfig.SeerrApiKey;
@@ -922,6 +924,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 _logger.LogWarning("Refusing to auto-import a malformed Jellyfin user identity.");
                 return (null, true);
             }
+
+            bool ConfigurationIsCurrent()
+            {
+                var current = _configProvider.ConfigurationOrNull;
+                return current != null
+                    && configStamp.Matches(current, _configProvider.ConfigurationRevision)
+                    && SeerrIntegrationPolicy.HasUsableSavedConfiguration(current)
+                    && current.SeerrAutoImportUsers
+                    && !IsImportBlocked(normalizedUserId, current);
+            }
+            SeerrDispatchFence importDispatchFence = dispatchFence.Restrict(ConfigurationIsCurrent);
 
             var url = urls.FirstOrDefault();
             if (string.IsNullOrWhiteSpace(url))
@@ -944,6 +957,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 apiUserId: null,
                 requestedPageSize: 1000,
                 UserCollectionIdentity,
+                importDispatchFence,
                 cancellationToken).ConfigureAwait(false);
             if (!dispatchSnapshots.IsComplete)
             {
@@ -993,6 +1007,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             // committed import even though this caller cannot prove it.
             try
             {
+                if (!importDispatchFence.CanDispatch())
+                {
+                    return (null, false);
+                }
+
                 var importUri = $"{url}/api/v1/user/import-from-jellyfin";
                 var requestBody = JsonSerializer.Serialize(new { jellyfinUserIds = new[] { normalizedUserId } });
 
@@ -1001,6 +1020,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     httpClient,
                     importRequest,
                     importUri,
+                    importDispatchFence,
                     cancellationToken).ConfigureAwait(false);
 
                 if (importError != null)
@@ -1069,6 +1089,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     apiUserId: null,
                     requestedPageSize: 1000,
                     UserCollectionIdentity,
+                    importDispatchFence,
                     cancellationToken).ConfigureAwait(false);
                 if (freshSnapshot.IsComplete)
                 {
@@ -1381,9 +1402,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             object cacheLock,
             string cacheKey,
             (string Content, DateTime CachedAt, long ConfigurationRevision, string ConfigurationIdentity) entry,
-            Func<bool> isConfigurationCurrent)
+            SeerrDispatchFence dispatchFence)
         {
-            if (!isConfigurationCurrent())
+            if (!dispatchFence.CanDispatch())
             {
                 return false;
             }
@@ -1394,7 +1415,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 cache.TrySet(cacheKey, entry, out publication);
             }
 
-            if (isConfigurationCurrent())
+            if (dispatchFence.CanDispatch())
             {
                 return true;
             }
@@ -1606,6 +1627,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             var requestConfigStamp = SeerrMutationConfigStamp.Capture(
                 config,
                 requestConfigurationRevision);
+            SeerrDispatchFence requestDispatchFence = integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(() => requestConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision));
             var mutationConfigStamp = method != HttpMethod.Get
                 ? requestConfigStamp
                 : (SeerrMutationConfigStamp?)null;
@@ -1657,6 +1683,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                         resolvedUser.Id,
                         pinnedSourceUrl,
                         config.SeerrApiKey,
+                        requestDispatchFence,
                         cancellationToken).ConfigureAwait(false);
                     if (freshUser == null
                         || freshUser.Id != resolvedUser.Id
@@ -2061,6 +2088,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             foreach (var url in urls)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                // Public reads may fail over across several configured Seerr
+                // instances. Every iteration is a separate authorization point:
+                // a completed failed request must not authorize another send
+                // after the master switch or any configuration field changed.
+                if (!integration.IsCurrent(_configProvider))
+                {
+                    var code = method == HttpMethod.Get
+                        ? "read_configuration_changed"
+                        : "mutation_configuration_changed";
+                    var message = method == HttpMethod.Get
+                        ? "Seerr configuration changed before the next request. Please try again."
+                        : "Seerr configuration changed before dispatch. No mutation was attempted; retry with fresh data.";
+                    return new ObjectResult(new
+                    {
+                        error = true,
+                        code,
+                        message,
+                    })
+                    { StatusCode = 409 };
+                }
+
                 var requestUri = $"{url}{apiPath}";
                 // High-frequency endpoints that don't need a per-call INFO line.
                 // also covers /search/keyword (typeahead) and item-
@@ -2103,6 +2152,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                         httpClient,
                         request,
                         requestUri,
+                        requestDispatchFence,
                         cancellationToken).ConfigureAwait(false);
 
                     if (error == null && json != null)
@@ -2136,9 +2186,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                                     _seerrCache.ResponseCacheLock,
                                     cacheKey,
                                     publishedEntry,
-                                    () => requestConfigStamp.Matches(
-                                        _configProvider.ConfigurationOrNull,
-                                        _configProvider.ConfigurationRevision)))
+                                    requestDispatchFence))
                             {
                                 return new ObjectResult(new
                                 {
@@ -2242,6 +2290,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             int seerrUserId,
             string sourceUrl,
             string apiKey,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken)
         {
             if (seerrUserId <= 0) return null;
@@ -2252,6 +2301,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             var requestUri = $"{sourceUrl}/api/v1/user/{seerrUserId}";
             try
             {
+                if (!dispatchFence.CanDispatch()) return null;
                 var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
                 httpClient.Timeout = TimeSpan.FromSeconds(15);
                 using var request = SeerrHttpHelper.BuildRequest(
@@ -2262,6 +2312,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     httpClient,
                     request,
                     requestUri,
+                    dispatchFence,
                     cancellationToken).ConfigureAwait(false);
                 if (error != null || json == null) return null;
 
@@ -2336,6 +2387,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
                 var urls = new[] { configuredSource };
                 var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
+                SeerrDispatchFence dispatchFence = integration.CreateDispatchFence(_configProvider);
                 var snapshot = await SeerrPaginationHelper.FetchAllAsync(
                     httpClient,
                     urls,
@@ -2344,6 +2396,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     seerrUserId,
                     requestedPageSize: 100,
                     WatchlistCollectionIdentity,
+                    dispatchFence,
                     cancellationToken).ConfigureAwait(false);
 
                 if (!snapshot.IsComplete)
@@ -2443,6 +2496,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 var configStamp = SeerrMutationConfigStamp.Capture(
                     capturedConfiguration,
                     configurationRevision);
+                var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+                SeerrDispatchFence dispatchFence = integration
+                    .CreateDispatchFence(_configProvider)
+                    .Restrict(() => configStamp.Matches(
+                        _configProvider.ConfigurationOrNull,
+                        _configProvider.ConfigurationRevision));
                 var configuredUrls = capturedConfiguredUrls.ToArray();
                 var apiKey = capturedApiKey;
                 if (!SeerrIntegrationPolicy.HasUsableSavedConfiguration(capturedConfiguration)
@@ -2477,6 +2536,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     seerrUserId,
                     requestedPageSize: 500,
                     RequestCollectionIdentity,
+                    dispatchFence,
                     cancellationToken).ConfigureAwait(false);
 
                 if (!SeerrIntegrationPolicy.HasUsableSavedConfiguration(

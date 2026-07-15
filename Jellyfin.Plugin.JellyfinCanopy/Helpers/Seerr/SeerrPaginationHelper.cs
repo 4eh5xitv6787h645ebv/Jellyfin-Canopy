@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
 {
@@ -150,6 +151,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             string? apiUserId,
             int requestedPageSize,
             Func<JsonElement, string?> identitySelector,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken = default,
             int maximumPages = DefaultMaximumPages,
             int maximumItems = DefaultMaximumItems)
@@ -158,6 +160,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             ArgumentNullException.ThrowIfNull(baseUrls);
             ArgumentNullException.ThrowIfNull(buildRequestUri);
             ArgumentNullException.ThrowIfNull(identitySelector);
+            ArgumentNullException.ThrowIfNull(dispatchFence);
             if (requestedPageSize <= 0) throw new ArgumentOutOfRangeException(nameof(requestedPageSize));
             if (maximumPages <= 0) throw new ArgumentOutOfRangeException(nameof(maximumPages));
             if (maximumItems <= 0) throw new ArgumentOutOfRangeException(nameof(maximumItems));
@@ -182,6 +185,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             foreach (var source in sources)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (!dispatchFence.CanDispatch())
+                {
+                    return MultiSourceDispatchDenied(source);
+                }
+
                 var snapshot = await FetchAllAsync(
                     httpClient,
                     new[] { source },
@@ -190,9 +198,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                     apiUserId,
                     requestedPageSize,
                     identitySelector,
+                    dispatchFence,
                     cancellationToken,
                     maximumPages,
                     maximumItems).ConfigureAwait(false);
+                if (!dispatchFence.CanDispatch())
+                {
+                    return MultiSourceDispatchDenied(source);
+                }
+
                 if (!snapshot.IsComplete
                     || !string.Equals(snapshot.SourceUrl, source, StringComparison.Ordinal))
                 {
@@ -223,6 +237,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             string? apiUserId,
             int requestedPageSize,
             Func<JsonElement, string?> identitySelector,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken = default,
             int maximumPages = DefaultMaximumPages,
             int maximumItems = DefaultMaximumItems)
@@ -231,6 +246,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             ArgumentNullException.ThrowIfNull(baseUrls);
             ArgumentNullException.ThrowIfNull(buildRequestUri);
             ArgumentNullException.ThrowIfNull(identitySelector);
+            ArgumentNullException.ThrowIfNull(dispatchFence);
             if (requestedPageSize <= 0) throw new ArgumentOutOfRangeException(nameof(requestedPageSize));
             if (maximumPages <= 0) throw new ArgumentOutOfRangeException(nameof(maximumPages));
             if (maximumItems <= 0) throw new ArgumentOutOfRangeException(nameof(maximumItems));
@@ -247,6 +263,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             foreach (var baseUrl in normalizedBaseUrls)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (!dispatchFence.CanDispatch())
+                {
+                    return DispatchDenied(baseUrl);
+                }
 
                 var firstPass = await FetchFromOneUrlAsync(
                     httpClient,
@@ -258,7 +278,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                     identitySelector,
                     cancellationToken,
                     maximumPages,
-                    maximumItems).ConfigureAwait(false);
+                    maximumItems,
+                    dispatchFence).ConfigureAwait(false);
+
+                if (!dispatchFence.CanDispatch())
+                {
+                    return DispatchDenied(baseUrl);
+                }
 
                 if (!firstPass.IsComplete)
                 {
@@ -284,7 +310,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                     identitySelector,
                     cancellationToken,
                     maximumPages,
-                    maximumItems).ConfigureAwait(false);
+                    maximumItems,
+                    dispatchFence).ConfigureAwait(false);
+
+                if (!dispatchFence.CanDispatch())
+                {
+                    return DispatchDenied(baseUrl);
+                }
 
                 if (!secondPass.IsComplete)
                 {
@@ -342,7 +374,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             Func<JsonElement, string?> identitySelector,
             CancellationToken cancellationToken,
             int maximumPages,
-            int maximumItems)
+            int maximumItems,
+            SeerrDispatchFence dispatchFence)
         {
             var items = new List<JsonElement>();
             var identities = new HashSet<string>(StringComparer.Ordinal);
@@ -358,6 +391,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             while (page <= maximumPages)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (!dispatchFence.CanDispatch())
+                {
+                    return DispatchDenied(baseUrl);
+                }
+
                 var requestUri = buildRequestUri(baseUrl, page, skip);
                 SeerrError? responseError = null;
                 string? json = null;
@@ -372,6 +410,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                         httpClient,
                         request,
                         requestUri,
+                        dispatchFence,
                         cancellationToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -595,6 +634,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                 if (completeByPages && completeByResults)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (!dispatchFence.CanDispatch())
+                    {
+                        return DispatchDenied(baseUrl);
+                    }
+
                     return new SeerrPagedCollectionResult(
                         isComplete: true,
                         items,
@@ -719,5 +763,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                 sourceUrl,
                 error: null,
                 failureReason: reason);
+
+        private static SeerrPagedCollectionResult DispatchDenied(string sourceUrl)
+            => Incomplete(sourceUrl, "The Seerr configuration changed before collection dispatch completed.");
+
+        private static SeerrMultiSourceCollectionResult MultiSourceDispatchDenied(string sourceUrl)
+            => new(
+                isComplete: false,
+                Array.Empty<SeerrPagedCollectionResult>(),
+                sourceUrl,
+                error: null,
+                failureReason: "The Seerr configuration changed before collection dispatch completed.");
     }
 }

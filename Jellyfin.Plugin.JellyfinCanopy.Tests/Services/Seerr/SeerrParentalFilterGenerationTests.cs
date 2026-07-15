@@ -171,6 +171,81 @@ public sealed class SeerrParentalFilterGenerationTests
         Assert.Equal(1, Volatile.Read(ref requestCount));
     }
 
+    [Fact]
+    public async Task TmdbFallback_DisabledWhileCertificationRequestIsInFlight_DoesNotSendToSeerr()
+    {
+        var tmdbStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseTmdb = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hosts = new List<string>();
+        var handler = new DelegateHandler(async (request, cancellationToken) =>
+        {
+            hosts.Add(request.RequestUri!.Host);
+            if (request.RequestUri.Host == "api.themoviedb.org")
+            {
+                tmdbStarted.TrySetResult();
+                await releaseTmdb.Task.WaitAsync(cancellationToken);
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                {
+                    Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return Json(MovieDetail("PG-13"));
+        });
+        var configuration = Configuration("http://seerr-one:5055", "one-key");
+        configuration.TMDB_API_KEY = "tmdb-key";
+        var provider = new FakePluginConfigProvider(configuration);
+        var cache = new SeerrCache(provider);
+        var filter = BuildFilter(handler, provider, cache);
+
+        var decisionTask = filter.IsBlockedAsync("movie", 704, Caller);
+        await tmdbStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        provider.Current!.SeerrEnabled = false;
+        releaseTmdb.TrySetResult();
+
+        Assert.True(await decisionTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(new[] { "api.themoviedb.org" }, hosts);
+        Assert.Empty(cache.CertScoreCache);
+    }
+
+    [Fact]
+    public async Task SeerrDetailFailover_DisabledWhileFirstRequestIsInFlight_DoesNotSendToSecondSource()
+    {
+        var firstRequestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstRequest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hosts = new List<string>();
+        var handler = new DelegateHandler(async (request, cancellationToken) =>
+        {
+            hosts.Add(request.RequestUri!.Host);
+            if (hosts.Count == 1)
+            {
+                firstRequestStarted.TrySetResult();
+                await releaseFirstRequest.Task.WaitAsync(cancellationToken);
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                {
+                    Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return Json(MovieDetail("PG-13"));
+        });
+        var provider = new FakePluginConfigProvider(
+            Configuration("http://seerr-one:5055,http://seerr-two:5055", "one-key"));
+        var cache = new SeerrCache(provider);
+        var filter = BuildFilter(handler, provider, cache);
+
+        var decisionTask = filter.IsBlockedAsync("movie", 705, Caller);
+        await firstRequestStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        provider.Current!.SeerrEnabled = false;
+        releaseFirstRequest.TrySetResult();
+
+        Assert.True(await decisionTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(new[] { "seerr-one" }, hosts);
+        Assert.Empty(cache.CertScoreCache);
+    }
+
     private static SeerrParentalFilter BuildFilter(
         HttpMessageHandler handler,
         FakePluginConfigProvider provider,

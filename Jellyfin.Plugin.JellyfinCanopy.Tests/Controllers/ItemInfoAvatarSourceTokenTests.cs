@@ -238,7 +238,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 key,
                 stale,
                 TimeSpan.FromHours(1),
-                () =>
+                SeerrDispatchFenceTestFactory.Create(() =>
                 {
                     if (++checks == 1)
                     {
@@ -249,7 +249,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     // write-to-postcheck interval. Exact cleanup must preserve it.
                     cache[key] = newer;
                     return false;
-                });
+                }));
 
             Assert.False(published);
             Assert.Equal(2, checks);

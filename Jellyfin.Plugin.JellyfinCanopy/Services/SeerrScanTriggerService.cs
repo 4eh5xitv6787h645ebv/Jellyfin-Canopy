@@ -197,7 +197,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     urls,
                     apiKey,
                     drainedEvents,
-                    integration.ConfigurationStamp,
+                    integration.CreateDispatchFence(_configProvider),
                     integration.ConfigurationRevision);
                 if (drainedEvents > 0)
                 {
@@ -303,7 +303,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 .Select(url => new DispatchTarget(
                     url,
                     integration.ApiKey,
-                    integration.ConfigurationStamp))
+                    integration.CreateDispatchFence(_configProvider)))
                 .ToArray();
             return DispatchPlan.Automatic(
                 batchSize,
@@ -421,10 +421,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 var target = plan.Targets[targetIndex];
                 cancellationToken.ThrowIfCancellationRequested();
-                if (target.ConfigurationStamp is SeerrMutationConfigStamp stamp
-                    && !stamp.Matches(
-                        _configProvider.ConfigurationOrNull,
-                        _configProvider.ConfigurationRevision))
+                if (target.DispatchFence?.CanDispatch() != true)
                 {
                     _logger.LogWarning(
                         "[SeerrScan] Configuration changed before dispatch to {Url}; that retired automatic target was not triggered",
@@ -436,6 +433,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var result = await PostScanTrigger(
                     target.Url,
                     target.ApiKey,
+                    target.DispatchFence!,
                     cancellationToken).ConfigureAwait(false);
                 results.Add(result);
                 if (result.Success)
@@ -470,11 +468,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private async Task<DispatchResult> PostScanTrigger(
             string url,
             string apiKey,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken)
         {
             var endpoint = $"{url.TrimEnd('/')}/api/v1/settings/jobs/{ScanJobId}/run";
             try
             {
+                if (!dispatchFence.CanDispatch())
+                {
+                    return DispatchResult.ConfigurationChangedResult(
+                        new DispatchTarget(url, apiKey, null));
+                }
+
                 var http = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
                 http.Timeout = TimeSpan.FromSeconds(15);
                 using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
@@ -487,6 +492,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     http,
                     request,
                     endpoint,
+                    dispatchFence,
                     cancellationToken).ConfigureAwait(false);
                 return new DispatchResult
                 {
@@ -586,7 +592,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         internal sealed record DispatchTarget(
             string Url,
             string ApiKey,
-            SeerrMutationConfigStamp? ConfigurationStamp);
+            SeerrDispatchFence? DispatchFence);
 
         private static void CompleteAsCancelled(DispatchPlan? plan)
         {
@@ -622,13 +628,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 IEnumerable<string> urls,
                 string apiKey,
                 int batchSize,
-                SeerrMutationConfigStamp configurationStamp,
+                SeerrDispatchFence dispatchFence,
                 long configurationRevision)
                 => new(
                     true,
                     batchSize,
                     urls.Distinct(StringComparer.Ordinal)
-                        .Select(url => new DispatchTarget(url, apiKey, configurationStamp)),
+                        .Select(url => new DispatchTarget(url, apiKey, dispatchFence)),
                     configurationRevision);
 
             public static DispatchPlan Automatic(

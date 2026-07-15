@@ -33,6 +33,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 "http://seerr",
                 "key",
                 "&requestedBy=7",
+                SeerrDispatchFenceTestFactory.Create(),
                 CancellationToken.None,
                 pageSize: 100);
 
@@ -60,6 +61,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 "http://seerr",
                 "key",
                 string.Empty,
+                SeerrDispatchFenceTestFactory.Create(),
                 CancellationToken.None,
                 pageSize: 100);
 
@@ -83,6 +85,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 "http://seerr",
                 "key",
                 string.Empty,
+                SeerrDispatchFenceTestFactory.Create(),
                 CancellationToken.None,
                 pageSize: 2,
                 maxItems: 3);
@@ -107,6 +110,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 "http://seerr",
                 "key",
                 string.Empty,
+                SeerrDispatchFenceTestFactory.Create(),
                 CancellationToken.None,
                 pageSize: 1,
                 maxPages: 2);
@@ -132,6 +136,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 "http://seerr",
                 "key",
                 string.Empty,
+                SeerrDispatchFenceTestFactory.Create(),
                 CancellationToken.None);
 
             Assert.False(result.IsComplete);
@@ -155,6 +160,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 new[] { "http://seerr" },
                 "key",
                 "7",
+                SeerrDispatchFenceTestFactory.Create(),
                 CancellationToken.None,
                 pageSize: 500);
 

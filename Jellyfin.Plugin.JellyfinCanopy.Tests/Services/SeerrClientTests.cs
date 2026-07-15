@@ -172,6 +172,34 @@ public class SeerrClientTests
         Assert.Equal(1, handler.Calls);
     }
 
+    [Fact]
+    public async Task StatusFailover_DisabledWhileFirstProbeIsInFlight_DoesNotSendSecondProbe()
+    {
+        var provider = new FakePluginConfigProvider(new PluginConfiguration
+        {
+            SeerrEnabled = true,
+            SeerrUrls = "http://seerr-one:5055,http://seerr-two:5055",
+            SeerrApiKey = "key",
+        });
+        var handler = new BlockingFailedProbeHandler();
+        var client = new SeerrClient(
+            new RecordingHttpClientFactory(handler),
+            NullLogger<SeerrClient>.Instance,
+            null!,
+            new SeerrCache(provider),
+            provider,
+            null!);
+
+        var statusTask = client.GetStatusActiveAsync();
+        await handler.FirstProbeStarted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        provider.Current!.SeerrEnabled = false;
+        handler.ReleaseFirstProbe();
+
+        Assert.False(await statusTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(1, handler.Calls);
+    }
+
     private sealed class ThrowingHttpClientFactory : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) =>
@@ -196,6 +224,42 @@ public class SeerrClientTests
             {
                 Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json"),
             });
+        }
+    }
+
+    private sealed class BlockingFailedProbeHandler : HttpMessageHandler
+    {
+        private readonly TaskCompletionSource _firstProbeStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseFirstProbe =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _calls;
+
+        public Task FirstProbeStarted => _firstProbeStarted.Task;
+
+        public int Calls => Volatile.Read(ref _calls);
+
+        public void ReleaseFirstProbe() => _releaseFirstProbe.TrySetResult();
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            _ = request;
+            var call = Interlocked.Increment(ref _calls);
+            if (call == 1)
+            {
+                _firstProbeStarted.TrySetResult();
+                await _releaseFirstProbe.Task.WaitAsync(cancellationToken);
+            }
+
+            return new HttpResponseMessage(System.Net.HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent(
+                    "{\"message\":\"unavailable\"}",
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            };
         }
     }
 }

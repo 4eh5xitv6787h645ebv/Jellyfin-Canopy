@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 
@@ -22,59 +23,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
     }
 
     /// <summary>
-    /// One immutable authorization snapshot for a non-setup Seerr operation.
-    /// The complete configuration stamp is retained so callers can re-check the
-    /// same generation immediately before publishing data or dispatching a
-    /// mutation.
-    /// </summary>
-    internal sealed class SeerrIntegrationSnapshot
-    {
-        private readonly SeerrMutationConfigStamp _stamp;
-
-        internal SeerrIntegrationSnapshot(
-            SeerrIntegrationState state,
-            PluginConfiguration? configuration,
-            long configurationRevision,
-            string[] urls,
-            string apiKey,
-            SeerrMutationConfigStamp stamp)
-        {
-            State = state;
-            Configuration = configuration;
-            ConfigurationRevision = configurationRevision;
-            Urls = urls;
-            ApiKey = apiKey;
-            _stamp = stamp;
-        }
-
-        public SeerrIntegrationState State { get; }
-
-        public bool IsActive => State == SeerrIntegrationState.Active;
-
-        public PluginConfiguration? Configuration { get; }
-
-        public long ConfigurationRevision { get; }
-
-        public string[] Urls { get; }
-
-        public string ApiKey { get; }
-
-        internal SeerrMutationConfigStamp ConfigurationStamp => _stamp;
-
-        /// <summary>
-        /// Revalidates the entire configuration generation, including in-place
-        /// changes made by test/custom providers. A master-switch disable can
-        /// therefore fence an already-prepared read or mutation.
-        /// </summary>
-        public bool IsCurrent(IPluginConfigProvider provider)
-        {
-            var current = provider.ConfigurationOrNull;
-            return SeerrIntegrationPolicy.HasUsableSavedConfiguration(current)
-                && _stamp.Matches(current, provider.ConfigurationRevision);
-        }
-    }
-
-    /// <summary>
     /// The single semantic owner of the Seerr master switch and saved-credential
     /// contract. Every active (non-setup) read, background operation, advertised
     /// capability and mutation must enter through <see cref="Capture"/> or use
@@ -85,8 +33,182 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
     /// exact endpoints are pinned as named exemptions by
     /// <c>SeerrIntegrationEntryPointGuardTests</c>.
     /// </summary>
-    internal static class SeerrIntegrationPolicy
+    public static class SeerrIntegrationPolicy
     {
+        /// <summary>
+        /// Opaque, fail-closed capability for a single captured Seerr generation.
+        /// Transport APIs accept this type instead of arbitrary boolean delegates,
+        /// so caller restrictions can only narrow the policy-owned base fence.
+        /// </summary>
+        public sealed class SeerrDispatchFence
+        {
+            private readonly SeerrIntegrationSnapshot _snapshot;
+            private readonly IPluginConfigProvider _provider;
+            private readonly Func<bool>? _restriction;
+
+            private SeerrDispatchFence(
+                SeerrIntegrationSnapshot snapshot,
+                IPluginConfigProvider provider,
+                Func<bool>? restriction)
+            {
+                _snapshot = snapshot;
+                _provider = provider;
+                _restriction = restriction;
+            }
+
+            internal static SeerrDispatchFence Create(
+                SeerrIntegrationSnapshot snapshot,
+                IPluginConfigProvider provider)
+                => new(snapshot, provider, restriction: null);
+
+            internal SeerrDispatchFence Restrict(Func<bool> restriction)
+            {
+                ArgumentNullException.ThrowIfNull(restriction);
+                return new SeerrDispatchFence(
+                    _snapshot,
+                    _provider,
+                    _restriction == null
+                        ? restriction
+                        : () => Invoke(_restriction) && Invoke(restriction));
+            }
+
+            internal bool CanDispatch()
+            {
+                try
+                {
+                    return _snapshot.IsActive
+                        && _snapshot.IsCurrent(_provider)
+                        && (_restriction == null || Invoke(_restriction));
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            internal bool CanDispatch(Uri? target)
+                => CanDispatch() && _snapshot.ContainsTarget(target);
+
+            private static bool Invoke(Func<bool> predicate)
+            {
+                try
+                {
+                    return predicate();
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
+
+        /// <summary>
+        /// One immutable authorization snapshot for a non-setup Seerr operation.
+        /// </summary>
+        public sealed class SeerrIntegrationSnapshot
+        {
+            private readonly SeerrMutationConfigStamp _stamp;
+            private readonly string[] _urls;
+
+            private SeerrIntegrationSnapshot(
+                SeerrIntegrationState state,
+                PluginConfiguration? configuration,
+                long configurationRevision,
+                string[] urls,
+                string apiKey,
+                SeerrMutationConfigStamp stamp)
+            {
+                State = state;
+                Configuration = configuration;
+                ConfigurationRevision = configurationRevision;
+                _urls = (string[])urls.Clone();
+                ApiKey = apiKey;
+                _stamp = stamp;
+            }
+
+            internal SeerrIntegrationState State { get; }
+
+            public bool IsActive => State == SeerrIntegrationState.Active;
+
+            public PluginConfiguration? Configuration { get; }
+
+            public long ConfigurationRevision { get; }
+
+            public string[] Urls => (string[])_urls.Clone();
+
+            public string ApiKey { get; }
+
+            internal SeerrMutationConfigStamp ConfigurationStamp => _stamp;
+
+            internal SeerrDispatchFence CreateDispatchFence(IPluginConfigProvider provider)
+                => SeerrDispatchFence.Create(this, provider);
+
+            internal static SeerrIntegrationSnapshot Capture(IPluginConfigProvider provider)
+            {
+                var configuration = provider.ConfigurationOrNull;
+                var revision = provider.ConfigurationRevision;
+                if (configuration == null)
+                {
+                    return Inactive(SeerrIntegrationState.ConfigurationUnavailable, revision);
+                }
+
+                if (!AllowsDeferredScheduling(configuration))
+                {
+                    return Inactive(SeerrIntegrationState.Disabled, revision);
+                }
+
+                if (string.IsNullOrWhiteSpace(configuration.SeerrApiKey))
+                {
+                    return Inactive(SeerrIntegrationState.CredentialsMissing, revision);
+                }
+
+                var urls = SeerrUrlIdentity.ParseConfigured(configuration.SeerrUrls);
+                if (urls.Length == 0)
+                {
+                    return Inactive(SeerrIntegrationState.UrlsInvalid, revision);
+                }
+
+                var stamp = SeerrMutationConfigStamp.Capture(configuration, revision);
+                var snapshot = new SeerrIntegrationSnapshot(
+                    SeerrIntegrationState.Active,
+                    configuration,
+                    revision,
+                    urls,
+                    configuration.SeerrApiKey,
+                    stamp);
+                return snapshot.IsCurrent(provider)
+                    ? snapshot
+                    : Inactive(SeerrIntegrationState.ConfigurationChanged, provider.ConfigurationRevision);
+            }
+
+            public bool IsCurrent(IPluginConfigProvider provider)
+            {
+                var current = provider.ConfigurationOrNull;
+                return HasUsableSavedConfiguration(current)
+                    && _stamp.Matches(current, provider.ConfigurationRevision);
+            }
+
+            internal bool ContainsTarget(Uri? target)
+            {
+                if (target == null || !target.IsAbsoluteUri) return false;
+                var absolute = target.AbsoluteUri;
+                return _urls.Any(source =>
+                    string.Equals(absolute, source, StringComparison.Ordinal)
+                    || absolute.StartsWith(source + "/", StringComparison.Ordinal));
+            }
+
+            private static SeerrIntegrationSnapshot Inactive(
+                SeerrIntegrationState state,
+                long revision)
+                => new(
+                    state,
+                    configuration: null,
+                    revision,
+                    System.Array.Empty<string>(),
+                    string.Empty,
+                    default);
+        }
+
         /// <summary>
         /// Cheap scheduling-only master check for synchronous library-event
         /// handlers. It authorizes no network traffic: the deferred worker must
@@ -111,46 +233,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         /// retained credentials after the master switch is turned off.
         /// </summary>
         public static SeerrIntegrationSnapshot Capture(IPluginConfigProvider provider)
-        {
-            var configuration = provider.ConfigurationOrNull;
-            var revision = provider.ConfigurationRevision;
-            if (configuration == null)
-            {
-                return Inactive(SeerrIntegrationState.ConfigurationUnavailable, revision);
-            }
-
-            if (!AllowsDeferredScheduling(configuration))
-            {
-                return Inactive(SeerrIntegrationState.Disabled, revision);
-            }
-
-            if (string.IsNullOrWhiteSpace(configuration.SeerrApiKey))
-            {
-                return Inactive(SeerrIntegrationState.CredentialsMissing, revision);
-            }
-
-            var urls = SeerrUrlIdentity.ParseConfigured(configuration.SeerrUrls);
-            if (urls.Length == 0)
-            {
-                return Inactive(SeerrIntegrationState.UrlsInvalid, revision);
-            }
-
-            var stamp = SeerrMutationConfigStamp.Capture(configuration, revision);
-            var snapshot = new SeerrIntegrationSnapshot(
-                SeerrIntegrationState.Active,
-                configuration,
-                revision,
-                urls,
-                configuration.SeerrApiKey,
-                stamp);
-
-            // Configuration and revision are separate provider reads. Reject a
-            // replacement or in-place mutation that raced this capture instead
-            // of returning credentials from a mixed generation.
-            return snapshot.IsCurrent(provider)
-                ? snapshot
-                : Inactive(SeerrIntegrationState.ConfigurationChanged, provider.ConfigurationRevision);
-        }
+            => SeerrIntegrationSnapshot.Capture(provider);
 
         /// <summary>
         /// Invalidates both cache domains that can retain active Seerr state.
@@ -184,15 +267,5 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             return failures;
         }
 
-        private static SeerrIntegrationSnapshot Inactive(
-            SeerrIntegrationState state,
-            long revision)
-            => new(
-                state,
-                configuration: null,
-                revision,
-                System.Array.Empty<string>(),
-                string.Empty,
-                default);
     }
 }

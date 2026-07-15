@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
@@ -41,9 +42,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             string apiKey,
             IHttpClientFactory httpClientFactory,
             ILogger logger,
-            CancellationToken cancellationToken = default,
-            Func<bool>? canDispatch = null)
+            SeerrDispatchFence dispatchFence,
+            CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(dispatchFence);
             cancellationToken.ThrowIfCancellationRequested();
             var result = new BulkImportResult();
             var httpClient = SeerrHttpHelper.CreateClient(httpClientFactory);
@@ -94,6 +96,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                 apiUserId: null,
                 requestedPageSize: 1000,
                 UserCollectionIdentity,
+                dispatchFence,
                 cancellationToken).ConfigureAwait(false);
             if (!userSnapshots.IsComplete)
             {
@@ -134,6 +137,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                 apiUserId: null,
                 requestedPageSize: 1000,
                 UserCollectionIdentity,
+                dispatchFence,
                 cancellationToken).ConfigureAwait(false);
             if (!dispatchSnapshots.IsComplete)
             {
@@ -161,7 +165,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            if (canDispatch != null && !canDispatch())
+            if (!dispatchFence.CanDispatch())
             {
                 const string message = "User import authorization or configuration changed during preparation; no users were imported.";
                 logger.LogWarning(message);
@@ -183,6 +187,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                 using var response = await SeerrHttpHelper.SendResponseHeadersReadAsync(
                     httpClient,
                     request,
+                    dispatchFence,
                     cancellationToken).ConfigureAwait(false);
                 result.Reached = true;
 
@@ -238,6 +243,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                 return result;
             }
         }
+
 
         private static string? UserCollectionIdentity(JsonElement item)
         {

@@ -14,8 +14,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers;
 
 public sealed class SeerrUserStatusGenerationFenceTests
 {
-    [Fact]
-    public async Task UserStatus_MasterDisabledByCapabilityCallback_DoesNotPublishLinkedState()
+    [Theory]
+    [InlineData(ConfigurationMutation.MasterDisabled)]
+    [InlineData(ConfigurationMutation.UrlAndKeyChanged)]
+    [InlineData(ConfigurationMutation.RevisionChanged)]
+    public async Task UserStatus_ConfigurationChangesDuringCapabilityAwait_DoesNotPublishLinkedState(
+        ConfigurationMutation mutation)
     {
         var user = new User("status-user", "provider", "password-provider");
         var config = new PluginConfiguration
@@ -25,17 +29,110 @@ public sealed class SeerrUserStatusGenerationFenceTests
             SeerrApiKey = "retained-key",
         };
         var provider = new FakePluginConfigProvider(config);
-        var seerr = new CapabilityCallbackSeerrClient(
+        var seerr = new BlockingSeerrClient(
             new SeerrUser
             {
                 Id = 42,
                 JellyfinUserId = user.Id.ToString("N"),
                 SourceUrl = "http://seerr:5055",
             },
-            () => config.SeerrEnabled = false);
+            BlockedStage.Capability);
+        var controller = BuildController(user, provider, seerr);
+
+        var pending = controller.GetSeerrUserStatus();
+        await seerr.CapabilityStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Mutate(provider, config, mutation);
+        seerr.ReleaseCapability();
+        var result = Assert.IsType<OkObjectResult>(await pending);
+
+        AssertInactive(result);
+        Assert.Equal(1, seerr.ResolutionCalls);
+        Assert.Equal(1, seerr.CapabilityCalls);
+    }
+
+    [Theory]
+    [InlineData(ConfigurationMutation.MasterDisabled)]
+    [InlineData(ConfigurationMutation.UrlAndKeyChanged)]
+    [InlineData(ConfigurationMutation.RevisionChanged)]
+    public async Task UserStatus_ConfigurationChangesDuringResolutionAwait_DoesNotStartCapabilityOrPublishLinkedState(
+        ConfigurationMutation mutation)
+    {
+        var user = new User("status-resolution-user", "provider", "password-provider");
+        var config = new PluginConfiguration
+        {
+            SeerrEnabled = true,
+            SeerrUrls = "http://seerr:5055",
+            SeerrApiKey = "retained-key",
+        };
+        var provider = new FakePluginConfigProvider(config);
+        var seerr = new BlockingSeerrClient(
+            new SeerrUser
+            {
+                Id = 43,
+                JellyfinUserId = user.Id.ToString("N"),
+                SourceUrl = "http://seerr:5055",
+            },
+            BlockedStage.Resolution);
+        var controller = BuildController(user, provider, seerr);
+
+        var pending = controller.GetSeerrUserStatus();
+        await seerr.ResolutionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Mutate(provider, config, mutation);
+        seerr.ReleaseResolution();
+        var result = Assert.IsType<OkObjectResult>(await pending);
+
+        AssertInactive(result);
+        Assert.Equal(1, seerr.ResolutionCalls);
+        Assert.Equal(0, seerr.CapabilityCalls);
+    }
+
+    private static void AssertInactive(OkObjectResult result)
+    {
+        Assert.False(Read<bool>(result.Value, "active"));
+        Assert.False(Read<bool>(result.Value, "userFound"));
+        Assert.Equal("disabled", Read<string>(result.Value, "reason"));
+        Assert.Null(result.Value?.GetType().GetProperty("seerrUserId"));
+        Assert.Null(result.Value?.GetType().GetProperty("movie4kEnabled"));
+        Assert.Null(result.Value?.GetType().GetProperty("series4kEnabled"));
+        Assert.Null(result.Value?.GetType().GetProperty("canRequest4kMovie"));
+        Assert.Null(result.Value?.GetType().GetProperty("canRequest4kTv"));
+    }
+
+    private static void Mutate(
+        FakePluginConfigProvider provider,
+        PluginConfiguration original,
+        ConfigurationMutation mutation)
+    {
+        switch (mutation)
+        {
+            case ConfigurationMutation.MasterDisabled:
+                original.SeerrEnabled = false;
+                break;
+            case ConfigurationMutation.UrlAndKeyChanged:
+                original.SeerrUrls = "http://replacement:5055";
+                original.SeerrApiKey = "replacement-key";
+                break;
+            case ConfigurationMutation.RevisionChanged:
+                provider.Current = new PluginConfiguration
+                {
+                    SeerrEnabled = true,
+                    SeerrUrls = original.SeerrUrls,
+                    SeerrApiKey = original.SeerrApiKey,
+                };
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mutation));
+        }
+    }
+
+    private static SeerrUserController BuildController(
+        User user,
+        FakePluginConfigProvider provider,
+        ISeerrClient seerr)
+    {
         var users = new StubUserManager(user);
         var factory = new RecordingHttpClientFactory(new RecordingHttpMessageHandler());
-        var controller = new SeerrUserController(
+        return new SeerrUserController(
             factory,
             NullLogger<SeerrUserController>.Instance,
             users,
@@ -55,40 +152,62 @@ public sealed class SeerrUserStatusGenerationFenceTests
                 },
             },
         };
-
-        var result = Assert.IsType<OkObjectResult>(await controller.GetSeerrUserStatus());
-
-        Assert.False(Read<bool>(result.Value, "active"));
-        Assert.False(Read<bool>(result.Value, "userFound"));
-        Assert.Equal("disabled", Read<string>(result.Value, "reason"));
-        Assert.Equal(1, seerr.CapabilityCalls);
-        Assert.Equal("retained-key", config.SeerrApiKey);
     }
 
     private static T Read<T>(object? value, string propertyName)
         => Assert.IsType<T>(value?.GetType().GetProperty(propertyName)?.GetValue(value));
 
-    private sealed class CapabilityCallbackSeerrClient : ISeerrClient
+    public enum ConfigurationMutation
+    {
+        MasterDisabled,
+        UrlAndKeyChanged,
+        RevisionChanged,
+    }
+
+    private enum BlockedStage
+    {
+        Resolution,
+        Capability,
+    }
+
+    private sealed class BlockingSeerrClient : ISeerrClient
     {
         private readonly SeerrUser _user;
-        private readonly Action _capabilityCallback;
+        private readonly BlockedStage _blockedStage;
+        private readonly TaskCompletionSource<bool> _releaseResolution = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _releaseCapability = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public CapabilityCallbackSeerrClient(SeerrUser user, Action capabilityCallback)
+        public BlockingSeerrClient(
+            SeerrUser user,
+            BlockedStage blockedStage)
         {
             _user = user;
-            _capabilityCallback = capabilityCallback;
+            _blockedStage = blockedStage;
         }
+
+        public TaskCompletionSource<bool> ResolutionStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> CapabilityStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int ResolutionCalls { get; private set; }
 
         public int CapabilityCalls { get; private set; }
 
-        public Task<SeerrUserResolution> ResolveSeerrUser(
+        public async Task<SeerrUserResolution> ResolveSeerrUser(
             string jellyfinUserId,
             bool bypassCache = false,
             bool allowAutoImport = true,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(SeerrUserResolution.Found(_user));
+            ResolutionCalls++;
+            if (_blockedStage == BlockedStage.Resolution)
+            {
+                ResolutionStarted.TrySetResult(true);
+                await _releaseResolution.Task.WaitAsync(cancellationToken);
+            }
+
+            return SeerrUserResolution.Found(_user);
         }
 
         public Task<SeerrUser?> GetSeerrUser(
@@ -104,14 +223,23 @@ public sealed class SeerrUserStatusGenerationFenceTests
 
         public Task<bool> GetStatusActiveAsync() => Task.FromResult(true);
 
-        public Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(
+        public async Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(
             string jellyfinUserId,
             bool isAdmin = false)
         {
             CapabilityCalls++;
-            _capabilityCallback();
-            return Task.FromResult(new Seerr4kCapability(true, true, true, true));
+            if (_blockedStage == BlockedStage.Capability)
+            {
+                CapabilityStarted.TrySetResult(true);
+                await _releaseCapability.Task;
+            }
+
+            return new Seerr4kCapability(true, true, true, true);
         }
+
+        public void ReleaseResolution() => _releaseResolution.TrySetResult(true);
+
+        public void ReleaseCapability() => _releaseCapability.TrySetResult(true);
 
         public void EvictMediaDetailCache(int tmdbId, string mediaType)
         {

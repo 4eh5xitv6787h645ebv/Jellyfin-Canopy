@@ -470,7 +470,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 var avatar = await _avatarFetch.GetAsync(
                     cacheKey,
                     $"{seerrUrl}{avatarPath}",
-                    IsConfigurationCurrent,
+                    integration
+                        .CreateDispatchFence(_configProvider)
+                        .Restrict(IsConfigurationCurrent),
                     HttpContext.RequestAborted).ConfigureAwait(false);
                 if (avatar.Status == AvatarFetchStatus.ConfigurationChanged || !IsConfigurationCurrent())
                 {

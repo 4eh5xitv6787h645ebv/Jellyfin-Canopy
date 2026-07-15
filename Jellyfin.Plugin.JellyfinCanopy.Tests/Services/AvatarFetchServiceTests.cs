@@ -20,9 +20,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             ValidPng.CopyTo(bytes, 0);
             var stream = new CountingReadStream(bytes);
             var handler = new DelegateHandler((_, _) => Task.FromResult(ImageResponse(stream, "image/png")));
-            var (service, cache) = Create(handler, maximumAvatarBytes: cap);
+            var (service, cache, fence) = Create(handler, maximumAvatarBytes: cap);
 
-            var result = await service.GetAsync("avatar", "http://seerr/avatar/a.png", () => true, CancellationToken.None);
+            var result = await service.GetAsync("avatar", "http://seerr/avatar/a.png", fence, CancellationToken.None);
 
             Assert.Equal(AvatarFetchStatus.Missing, result.Status);
             Assert.Equal(cap + 1, stream.BytesRead);
@@ -33,13 +33,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         public async Task OneHundredConcurrentColdMisses_InvokeUpstreamOnce()
         {
             var handler = new BlockingSuccessHandler();
-            var (service, cache) = Create(handler);
+            var (service, cache, fence) = Create(handler);
 
             var calls = Enumerable.Range(0, 100)
                 .Select(_ => service.GetAsync(
                     "same-avatar",
                     "http://seerr/avatar/a.png",
-                    () => true,
+                    fence,
                     CancellationToken.None))
                 .ToArray();
             await handler.Started.WaitAsync(TimeSpan.FromSeconds(5));
@@ -59,19 +59,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         public async Task LeaderCancellation_DoesNotFailLiveFollowerOrRestartUpstream()
         {
             var handler = new BlockingSuccessHandler();
-            var (service, cache) = Create(handler);
+            var (service, cache, fence) = Create(handler);
             using var leaderCancellation = new CancellationTokenSource();
 
             var leader = service.GetAsync(
                 "shared-avatar",
                 "http://seerr/avatar/a.png",
-                () => true,
+                fence,
                 leaderCancellation.Token);
             await handler.Started.WaitAsync(TimeSpan.FromSeconds(5));
             var follower = service.GetAsync(
                 "shared-avatar",
                 "http://seerr/avatar/a.png",
-                () => true,
+                fence,
                 CancellationToken.None);
 
             leaderCancellation.Cancel();
@@ -94,13 +94,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         {
             var stream = new CancellationObservingStream();
             var handler = new DelegateHandler((_, _) => Task.FromResult(ImageResponse(stream, "image/png")));
-            var (service, cache) = Create(handler);
+            var (service, cache, fence) = Create(handler);
             using var cancellation = new CancellationTokenSource();
 
             var fetch = service.GetAsync(
                 "cancelled-avatar",
                 "http://seerr/avatar/a.png",
-                () => true,
+                fence,
                 cancellation.Token);
             await stream.ReadStarted.WaitAsync(TimeSpan.FromSeconds(5));
             cancellation.Cancel();
@@ -117,9 +117,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var handler = new DelegateHandler((_, _) => Task.FromResult(ImageResponse(
                 new MemoryStream("<html>not an image</html>"u8.ToArray()),
                 "image/png")));
-            var (service, cache) = Create(handler);
+            var (service, cache, fence) = Create(handler);
 
-            var result = await service.GetAsync("invalid", "http://seerr/avatar/a.png", () => true, CancellationToken.None);
+            var result = await service.GetAsync("invalid", "http://seerr/avatar/a.png", fence, CancellationToken.None);
 
             Assert.Equal(AvatarFetchStatus.Missing, result.Status);
             Assert.Empty(cache.AvatarCache);
@@ -131,22 +131,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         {
             var clock = new ManualTimeProvider(new DateTimeOffset(2026, 7, 15, 0, 0, 0, TimeSpan.Zero));
             var handler = new CountingStatusHandler(HttpStatusCode.NotFound);
-            var (service, _) = Create(handler, clock);
+            var (service, _, fence) = Create(handler, clock);
 
             var first = await Task.WhenAll(Enumerable.Range(0, 100)
-                .Select(_ => service.GetAsync("missing", "http://seerr/avatar/missing.png", () => true, CancellationToken.None)));
+                .Select(_ => service.GetAsync("missing", "http://seerr/avatar/missing.png", fence, CancellationToken.None)));
             Assert.All(first, result => Assert.Equal(AvatarFetchStatus.Missing, result.Status));
             Assert.Equal(1, handler.Calls);
 
             clock.Advance(TimeSpan.FromSeconds(14));
             Assert.Equal(
                 AvatarFetchStatus.Missing,
-                (await service.GetAsync("missing", "http://seerr/avatar/missing.png", () => true, CancellationToken.None)).Status);
+                (await service.GetAsync("missing", "http://seerr/avatar/missing.png", fence, CancellationToken.None)).Status);
             Assert.Equal(1, handler.Calls);
 
             clock.Advance(TimeSpan.FromSeconds(1));
             await Task.WhenAll(Enumerable.Range(0, 100)
-                .Select(_ => service.GetAsync("missing", "http://seerr/avatar/missing.png", () => true, CancellationToken.None)));
+                .Select(_ => service.GetAsync("missing", "http://seerr/avatar/missing.png", fence, CancellationToken.None)));
             Assert.Equal(2, handler.Calls);
         }
 
@@ -155,15 +155,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         {
             var clock = new ManualTimeProvider(new DateTimeOffset(2026, 7, 15, 0, 0, 0, TimeSpan.Zero));
             var handler = new SwitchableHandler();
-            var (service, cache) = Create(handler, clock);
+            var (service, cache, fence) = Create(handler, clock);
 
-            var fresh = await service.GetAsync("last-good", "http://seerr/avatar/a.png", () => true, CancellationToken.None);
+            var fresh = await service.GetAsync("last-good", "http://seerr/avatar/a.png", fence, CancellationToken.None);
             Assert.Equal(AvatarFetchStatus.Available, fresh.Status);
             clock.Advance(TimeSpan.FromHours(2));
             handler.Status = HttpStatusCode.ServiceUnavailable;
 
-            var duringFailure = await service.GetAsync("last-good", "http://seerr/avatar/a.png", () => true, CancellationToken.None);
-            var duringBackoff = await service.GetAsync("last-good", "http://seerr/avatar/a.png", () => true, CancellationToken.None);
+            var duringFailure = await service.GetAsync("last-good", "http://seerr/avatar/a.png", fence, CancellationToken.None);
+            var duringBackoff = await service.GetAsync("last-good", "http://seerr/avatar/a.png", fence, CancellationToken.None);
 
             Assert.Equal(AvatarFetchStatus.Available, duringFailure.Status);
             Assert.Equal(ValidPng, duringFailure.Content);
@@ -177,10 +177,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         {
             var handler = new SwitchableHandler();
             var (_, cache, service, provider) = CreateWithService(handler);
+            var fence = CreateFence(provider);
             var fresh = await service.GetAsync(
                 "retained-avatar",
                 "http://seerr/avatar/a.png",
-                () => true,
+                fence,
                 CancellationToken.None);
             Assert.Equal(AvatarFetchStatus.Available, fresh.Status);
             Assert.Single(cache.AvatarCache);
@@ -190,11 +191,61 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var disabled = await service.GetAsync(
                 "retained-avatar",
                 "http://seerr/avatar/a.png",
-                () => true,
+                fence,
                 CancellationToken.None);
 
             Assert.Equal(AvatarFetchStatus.ConfigurationChanged, disabled.Status);
             Assert.Equal(1, handler.Calls);
+        }
+
+        [Fact]
+        public async Task MasterDisabledDuringUpstreamThrow_PublishesNeitherFailureNorAvatar()
+        {
+            var handler = new BlockingFailureHandler(
+                static _ => new InvalidOperationException("upstream failed"));
+            var (_, cache, service, provider) = CreateWithService(handler);
+            var fence = CreateFence(provider);
+
+            var fetch = service.GetAsync(
+                "disabled-during-throw",
+                "http://seerr/avatar/a.png",
+                fence,
+                CancellationToken.None);
+            await handler.Started.WaitAsync(TimeSpan.FromSeconds(5));
+            provider.Current!.SeerrEnabled = false;
+            handler.Release();
+
+            var result = await fetch.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(AvatarFetchStatus.ConfigurationChanged, result.Status);
+            Assert.Equal(0, service.FailureStateCount);
+            Assert.Empty(cache.AvatarCache);
+            await WaitForNoFlightsAsync(service);
+        }
+
+        [Fact]
+        public async Task MasterDisabledDuringNonCallerTimeout_PublishesNeitherFailureNorAvatar()
+        {
+            var handler = new BlockingFailureHandler(
+                static cancellationToken => new OperationCanceledException(cancellationToken));
+            var (_, cache, service, provider) = CreateWithService(handler);
+            var fence = CreateFence(provider);
+
+            var fetch = service.GetAsync(
+                "disabled-during-timeout",
+                "http://seerr/avatar/a.png",
+                fence,
+                CancellationToken.None);
+            await handler.Started.WaitAsync(TimeSpan.FromSeconds(5));
+            provider.Current!.SeerrEnabled = false;
+            handler.Release();
+
+            var result = await fetch.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(AvatarFetchStatus.ConfigurationChanged, result.Status);
+            Assert.Equal(0, service.FailureStateCount);
+            Assert.Empty(cache.AvatarCache);
+            await WaitForNoFlightsAsync(service);
         }
 
         [Fact]
@@ -203,14 +254,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var handler = new DelegateHandler((_, _) => Task.FromResult(ImageResponse(
                 new MemoryStream(ValidPng, writable: false),
                 "image/png")));
-            var (_, cache, service, _) = CreateWithService(handler);
+            var (_, cache, service, provider) = CreateWithService(handler);
+            var fence = CreateFence(provider);
 
             for (var i = 0; i < 200; i++)
             {
                 var result = await service.GetAsync(
                     $"avatar-{i}",
                     $"http://seerr/avatar/{i}.png",
-                    () => true,
+                    fence,
                     CancellationToken.None);
                 Assert.Equal(AvatarFetchStatus.Available, result.Status);
             }
@@ -219,14 +271,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.True(cache.AvatarCache.TotalWeight <= SeerrCache.AvatarMaximumBytes);
         }
 
-        private static (AvatarFetchService Service, SeerrCache Cache) Create(
+        private static (AvatarFetchService Service, SeerrCache Cache, SeerrDispatchFence Fence) Create(
             HttpMessageHandler handler,
             TimeProvider? timeProvider = null,
             long maximumAvatarBytes = AvatarFetchService.DefaultMaximumAvatarBytes)
         {
-            var (_, cache, service, _) = CreateWithService(handler, timeProvider, maximumAvatarBytes);
-            return (service, cache);
+            var (_, cache, service, provider) = CreateWithService(handler, timeProvider, maximumAvatarBytes);
+            return (service, cache, CreateFence(provider));
         }
+
+        private static SeerrDispatchFence CreateFence(FakePluginConfigProvider provider)
+            => SeerrIntegrationPolicy.Capture(provider).CreateDispatchFence(provider);
 
         private static async Task WaitForNoFlightsAsync(AvatarFetchService service)
         {
@@ -303,6 +358,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 _started.TrySetResult();
                 await _release.Task.WaitAsync(cancellationToken);
                 return ImageResponse(new MemoryStream(ValidPng, writable: false), "image/png");
+            }
+        }
+
+        private sealed class BlockingFailureHandler : HttpMessageHandler
+        {
+            private readonly Func<CancellationToken, Exception> _failureFactory;
+            private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            public BlockingFailureHandler(Func<CancellationToken, Exception> failureFactory)
+                => _failureFactory = failureFactory;
+
+            public Task Started => _started.Task;
+
+            public void Release() => _release.TrySetResult();
+
+            protected override async Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                _started.TrySetResult();
+                await _release.Task.WaitAsync(cancellationToken);
+                throw _failureFactory(cancellationToken);
             }
         }
 

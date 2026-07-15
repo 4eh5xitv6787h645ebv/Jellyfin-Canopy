@@ -27,6 +27,7 @@ public class SeerrQuotaPaginationTests
             "http://seerr",
             "key",
             "7",
+            SeerrDispatchFenceTestFactory.Create(),
             CancellationToken.None);
 
         Assert.True(result.IsComplete, result.FailureReason);
@@ -54,6 +55,7 @@ public class SeerrQuotaPaginationTests
             "http://seerr",
             "key",
             "7",
+            SeerrDispatchFenceTestFactory.Create(),
             CancellationToken.None);
 
         Assert.False(result.IsComplete);

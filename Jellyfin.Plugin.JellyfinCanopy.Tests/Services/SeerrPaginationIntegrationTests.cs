@@ -579,7 +579,7 @@ public class SeerrPaginationIntegrationTests
         var result = await client.ResolveSeerrUser(JellyfinUserId);
 
         Assert.Equal(SeerrUserResolutionStatus.Incomplete, result.Status);
-        Assert.Equal(4, getCount);
+        Assert.Equal(3, getCount);
         Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Post);
         Assert.DoesNotContain(NormalizedJellyfinUserId, cache.UserCache.Keys);
     }
@@ -968,6 +968,7 @@ public class SeerrPaginationIntegrationTests
             httpClient,
             new[] { "http://seerr:5055" },
             "key",
+            SeerrDispatchFenceTestFactory.Create(),
             CancellationToken.None);
 
         Assert.True(result.IsComplete, result.FailureReason);
@@ -997,6 +998,7 @@ public class SeerrPaginationIntegrationTests
             httpClient,
             new[] { "http://first:5055", "http://second:5055" },
             "key",
+            SeerrDispatchFenceTestFactory.Create(),
             CancellationToken.None);
 
         Assert.True(result.IsComplete, result.FailureReason);
@@ -1026,6 +1028,7 @@ public class SeerrPaginationIntegrationTests
             httpClient,
             new[] { "http://first:5055", "http://second:5055" },
             "key",
+            SeerrDispatchFenceTestFactory.Create(),
             CancellationToken.None);
 
         Assert.False(result.IsComplete);

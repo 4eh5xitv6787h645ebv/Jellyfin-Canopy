@@ -272,6 +272,7 @@ public sealed class SeerrUserImportHelperTests
     public async Task BulkImport_DispatchAuthorizationChangesAfterStableProof_SendsNoMutation()
     {
         var handler = WithEmptyPreflight(_ => Json(new[] { new { id = 99 } }));
+        var authorizationChecks = 0;
 
         var result = await SeerrUserImportHelper.BulkImportAsync(
             UserIds,
@@ -279,10 +280,12 @@ public sealed class SeerrUserImportHelperTests
             "test-key",
             new ImportHttpClientFactory(handler),
             NullLogger.Instance,
-            CancellationToken.None,
-            canDispatch: static () => false);
+            SeerrDispatchFenceTestFactory.Create(
+                () => Interlocked.Increment(ref authorizationChecks) < 23),
+            CancellationToken.None);
 
         Assert.False(result.Succeeded);
+        Assert.Equal(23, authorizationChecks);
         Assert.Equal(4, Gets(handler).Count());
         Assert.Empty(Posts(handler));
         Assert.Contains(
@@ -354,6 +357,7 @@ public sealed class SeerrUserImportHelperTests
             "test-key",
             new ImportHttpClientFactory(handler),
             NullLogger.Instance,
+            SeerrDispatchFenceTestFactory.Create(),
             cancellationToken);
 
     private static object UserRow(int id, string jellyfinUserId) => new

@@ -119,6 +119,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     && SeerrIntegrationPolicy.HasUsableSavedConfiguration(current);
             }
 
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            SeerrDispatchFence dispatchFence = integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(IsCapturedConfigurationCurrent);
+
             if (!IsCapturedConfigurationCurrent())
             {
                 return null;
@@ -173,7 +178,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     var (content, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
                         httpClient,
                         request,
-                        requestUrl);
+                        requestUrl,
+                        dispatchFence).ConfigureAwait(false);
                     if (error != null)
                     {
                         _logger.LogDebug($"[Auto-Season-Request] Series details fetch for TMDB {tmdbId} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
@@ -617,6 +623,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             try
             {
+                var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+                SeerrDispatchFence dispatchFence = integration
+                    .CreateDispatchFence(_configProvider)
+                    .Restrict(() => mutationConfigStamp.Matches(
+                        _configProvider.ConfigurationOrNull,
+                        _configProvider.ConfigurationRevision)
+                        && _configProvider.ConfigurationOrNull?.AutoSeasonRequestEnabled == true);
                 var pinnedSource = FindConfiguredSource(config.SeerrUrls, seerrSourceUrl);
                 if (pinnedSource == null)
                 {
@@ -641,7 +654,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var (content, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
                     httpClient,
                     statusRequest,
-                    requestUrl);
+                    requestUrl,
+                    dispatchFence).ConfigureAwait(false);
                 if (error != null)
                 {
                     _logger.LogDebug($"[Auto-Season-Request] Status check for TMDB {tmdbId} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
@@ -947,6 +961,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             string seerrSourceUrl,
             SeerrMutationConfigStamp mutationConfigStamp)
         {
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            SeerrDispatchFence dispatchFence = integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(() => mutationConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision)
+                    && _configProvider.ConfigurationOrNull?.AutoSeasonRequestEnabled == true);
             var config = _configProvider.ConfigurationOrNull;
             if (!mutationConfigStamp.Matches(
                     config,
@@ -1040,7 +1061,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var (_, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
                     httpClient,
                     request,
-                    requestUri);
+                    requestUri,
+                    dispatchFence).ConfigureAwait(false);
 
                 if (error == null)
                 {
