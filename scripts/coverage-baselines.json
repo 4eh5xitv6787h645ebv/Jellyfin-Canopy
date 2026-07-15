@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 12781,
-        "totalLines": 20998
+        "coveredLines": 12792,
+        "totalLines": 21005
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Four clean .NET 10/Coverlet runs on 2026-07-15 were identical after deterministic tests covered both valid bookmark update/delete race outcomes; one line permits only negligible instrumentation variance."
+        "rationale": "The 2026-07-15 hosted .NET 10/Coverlet run measured the seven-line locale-manifest loader scope increase and its dedicated embedded-resource test; one line permits only negligible instrumentation variance."
       }
     }
   }

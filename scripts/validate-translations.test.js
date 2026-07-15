@@ -19,11 +19,35 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { extractPlaceholders, validateEntries } = require('./validate-translations.js');
+const {
+    extractPlaceholders,
+    getAvailableLanguages,
+    readLocaleInventory,
+    validateEntries,
+    validateLocaleInventory,
+} = require('./validate-translations.js');
 // The require is side-effect-free: main() is guarded by require.main === module.
 
 const LOCALES_DIR = path.join(__dirname, '../Jellyfin.Plugin.JellyfinCanopy/js/locales');
+const INVENTORY_PATH = path.join(
+    __dirname,
+    '../Jellyfin.Plugin.JellyfinCanopy/locale-manifest.json'
+);
+
+function inventoryFixture(t, locales = ['en', 'fr']) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jc-locales-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const localeDir = path.join(root, 'locales');
+    const inventoryPath = path.join(root, 'locale-manifest.json');
+    fs.mkdirSync(localeDir);
+    fs.writeFileSync(inventoryPath, `${JSON.stringify({ baseLocale: 'en', locales }, null, 2)}\n`);
+    for (const locale of [...new Set(locales)]) {
+        fs.writeFileSync(path.join(localeDir, `${locale}.json`), '{}\n');
+    }
+    return { localeDir, inventoryPath };
+}
 
 // --- MB-5: icon-token + curly placeholder parity ---
 test('extractPlaceholders captures well-formed icon tokens', () => {
@@ -70,12 +94,112 @@ test('a clean matching locale produces no errors', () => {
 
 // --- Class guard over the REAL shipped locales ---
 test('all shipped locales validate clean against en.json', () => {
+    const inventory = validateLocaleInventory();
+    assert.deepStrictEqual(inventory.errors, []);
     const en = JSON.parse(fs.readFileSync(path.join(LOCALES_DIR, 'en.json'), 'utf8'));
-    for (const f of fs.readdirSync(LOCALES_DIR).filter(x => x.endsWith('.json') && x !== 'en.json')) {
-        const t = JSON.parse(fs.readFileSync(path.join(LOCALES_DIR, f), 'utf8'));
-        const { errors } = validateEntries(en, t);
-        assert.deepStrictEqual(errors, [], `${f}: ${errors.join(' | ')}`);
+    for (const locale of inventory.locales.filter(code => code !== inventory.baseLocale)) {
+        const translation = JSON.parse(
+            fs.readFileSync(path.join(LOCALES_DIR, `${locale}.json`), 'utf8')
+        );
+        const { errors } = validateEntries(en, translation);
+        assert.deepStrictEqual(errors, [], `${locale}.json: ${errors.join(' | ')}`);
     }
+});
+
+test('canonical inventory is the exact source for all 26 shipped locale files', () => {
+    const inventory = readLocaleInventory();
+    assert.strictEqual(inventory.baseLocale, 'en');
+    assert.strictEqual(inventory.locales.length, 26);
+    assert.deepStrictEqual(getAvailableLanguages(), inventory.locales);
+    assert.deepStrictEqual(validateLocaleInventory().errors, []);
+});
+
+test('deleting a registered locale is a hard inventory failure', t => {
+    const fixture = inventoryFixture(t);
+    fs.rmSync(path.join(fixture.localeDir, 'fr.json'));
+    assert.match(
+        validateLocaleInventory(fixture.localeDir, fixture.inventoryPath).errors.join('\n'),
+        /Registered locale file is missing: fr\.json/
+    );
+});
+
+test('adding an unregistered locale is a hard inventory failure', t => {
+    const fixture = inventoryFixture(t);
+    fs.writeFileSync(path.join(fixture.localeDir, 'it.json'), '{}\n');
+    assert.match(
+        validateLocaleInventory(fixture.localeDir, fixture.inventoryPath).errors.join('\n'),
+        /Unregistered locale file: it\.json/
+    );
+});
+
+test('case-only locale renames are rejected', t => {
+    const fixture = inventoryFixture(t);
+    fs.renameSync(
+        path.join(fixture.localeDir, 'fr.json'),
+        path.join(fixture.localeDir, 'FR.json')
+    );
+    const errors = validateLocaleInventory(fixture.localeDir, fixture.inventoryPath).errors.join('\n');
+    assert.match(errors, /Invalid locale filename: FR\.json/);
+    assert.match(errors, /Locale filename case mismatch: expected fr\.json, found FR\.json/);
+});
+
+test('locale filename extension casing is rejected', t => {
+    const fixture = inventoryFixture(t);
+    fs.renameSync(
+        path.join(fixture.localeDir, 'fr.json'),
+        path.join(fixture.localeDir, 'fr.JSON')
+    );
+    assert.match(
+        validateLocaleInventory(fixture.localeDir, fixture.inventoryPath).errors.join('\n'),
+        /Invalid locale filename extension casing: fr\.JSON/
+    );
+});
+
+test('region casing and case-colliding inventory entries are rejected', t => {
+    const fixture = inventoryFixture(t, ['en', 'pt-BR', 'pt-br']);
+    const errors = validateLocaleInventory(fixture.localeDir, fixture.inventoryPath).errors.join('\n');
+    assert.match(errors, /Invalid locale code in inventory: pt-br/);
+    assert.match(errors, /Case-colliding locales in inventory: pt-BR and pt-br/);
+});
+
+test('server loader, workflow, and contributor docs consume the canonical inventory', () => {
+    const root = path.join(__dirname, '..');
+    const controller = fs.readFileSync(
+        path.join(root, 'Jellyfin.Plugin.JellyfinCanopy/Controllers/ConfigController.cs'),
+        'utf8'
+    );
+    const project = fs.readFileSync(
+        path.join(root, 'Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj'),
+        'utf8'
+    );
+    const loader = fs.readFileSync(
+        path.join(root, 'Jellyfin.Plugin.JellyfinCanopy/src/bootstrap/translations.ts'),
+        'utf8'
+    );
+    const workflow = fs.readFileSync(
+        path.join(root, '.github/workflows/translation_validation.yml'),
+        'utf8'
+    );
+    assert.match(project, /EmbeddedResource Include="locale-manifest\.json"/);
+    assert.match(controller, /SupportedLocaleCodes \{ get; \} = LoadSupportedLocaleCodes\(\)/);
+    assert.match(controller, /Contains\(sanitizedLang, StringComparer\.Ordinal\)/);
+    assert.match(loader, /import localeManifest from '\.\.\/\.\.\/locale-manifest\.json'/);
+    assert.match(loader, /SUPPORTED_LOCALES\.has\(normalizedLang\)/);
+    assert.match(workflow, /locale-manifest\.json/);
+    assert.match(workflow, /npm run validate-translations/);
+
+    for (const file of ['README.md', 'CONTRIBUTING.md', 'docs/help.md']) {
+        assert.match(
+            fs.readFileSync(path.join(root, file), 'utf8'),
+            /locale-manifest\.json/,
+            `${file} must point to the canonical supported-locale list`
+        );
+    }
+    assert.match(
+        fs.readFileSync(path.join(root, 'README.md'), 'utf8'),
+        new RegExp(`${readLocaleInventory().locales.length} synchronized language catalogs`)
+    );
+    assert.ok(fs.existsSync(INVENTORY_PATH));
 });
 
 // --- Presence of the localized nav/calendar labels ---

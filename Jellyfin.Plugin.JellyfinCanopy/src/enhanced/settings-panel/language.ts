@@ -78,8 +78,11 @@ export function wireLanguageControls(ctx: PanelContext): void {
                     cultureMap[c.TwoLetterISOLanguageName.toLowerCase()] = c;
                 });
 
-                const localeSet = new Set(localeCodes.map((c: any) => c.toLowerCase()));
-                const options = localeCodes.map((code: any) => {
+                // Generic English is the fallback catalog, not a selectable
+                // language alongside the en-GB and en-US variants.
+                const selectableLocaleCodes = localeCodes.filter((code: any) => code !== 'en');
+                const localeSet = new Set(selectableLocaleCodes.map((c: any) => c.toLowerCase()));
+                const options = selectableLocaleCodes.map((code: any) => {
                     let displayName = CUSTOM_DISPLAY_NAMES[code]
                         || cultureMap[code.toLowerCase()]?.DisplayName;
                     if (!displayName && code.includes('-')) {

@@ -220,7 +220,7 @@ Jellyfin Canopy is developed **entirely with AI** (agentic coding tools driving 
 
 - 🐛 [Report issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues)
 - 💡 [Suggest features](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions)
-- 🌍 Help translate — Canopy ships 26 synchronized language catalogs, and better translations are always welcome
+- 🌍 Help translate — Canopy ships [26 synchronized language catalogs](Jellyfin.Plugin.JellyfinCanopy/locale-manifest.json), and better translations are always welcome
 
 Developers: [CONTRIBUTING.md](CONTRIBUTING.md) has the workflow, quality gates, and the paved road for new features.
 

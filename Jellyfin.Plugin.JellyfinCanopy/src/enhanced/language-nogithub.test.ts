@@ -37,5 +37,6 @@ describe('language control locale source', () => {
         // The server locale endpoint WAS used.
         expect(plugin).toHaveBeenCalledWith('/locales');
         expect(jf).toHaveBeenCalledWith('/Localization/Cultures');
+        expect(Array.from(select.options, option => option.value).sort()).toEqual(['de', 'fr']);
     });
 });

@@ -209,48 +209,73 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [ResponseCache(Duration = 86400)]
         public ActionResult GetAvailableLocales()
         {
-            var prefix = "Jellyfin.Plugin.JellyfinCanopy.js.locales.";
-            var suffix = ".json";
-            var locales = Assembly.GetExecutingAssembly()
-                .GetManifestResourceNames()
-                .Where(n => n.StartsWith(prefix, StringComparison.Ordinal) && n.EndsWith(suffix, StringComparison.Ordinal))
-                .Select(n => n.Substring(prefix.Length, n.Length - prefix.Length - suffix.Length))
-                .Where(code => code != "en") // Exclude base English (en-GB and en-US are the usable variants)
-                .OrderBy(code => code, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-
-            return Ok(locales);
+            return Ok(SupportedLocaleCodes);
         }
 
         [HttpGet("locales/{lang}.json")]
         public ActionResult GetLocale(string lang)
         {
             var sanitizedLang = Path.GetFileName(lang); // Basic sanitization
-            var resourcePath = $"Jellyfin.Plugin.JellyfinCanopy.js.locales.{sanitizedLang}.json";
-            var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourcePath);
+            var selectedLang = SupportedLocaleCodes.Contains(sanitizedLang, StringComparer.Ordinal)
+                ? sanitizedLang
+                : null;
 
-            if (stream == null && sanitizedLang.Contains('-'))
+            if (selectedLang == null && sanitizedLang.Contains('-'))
             {
                 // Fall back from regional variant (e.g. de-DE) to the base language (de).
                 // Jellyfin reports BCP-47 codes like de-DE when the user picks "Auto" or a
                 // regional locale, but the plugin only ships base-language files for most
                 // languages. Without this fallback the user gets English instead of German.
                 var baseLang = sanitizedLang.Split('-')[0];
-                var fallbackPath = $"Jellyfin.Plugin.JellyfinCanopy.js.locales.{baseLang}.json";
-                stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(fallbackPath);
-                if (stream != null)
+                if (SupportedLocaleCodes.Contains(baseLang, StringComparer.Ordinal))
                 {
+                    selectedLang = baseLang;
                     _logger.LogInformation($"Locale file not found for {sanitizedLang}, falling back to base language {baseLang}");
                 }
             }
 
-            if (stream == null)
+            if (selectedLang == null)
             {
                 _logger.LogWarning($"Locale file not found for language: {sanitizedLang}");
                 return NotFound();
             }
 
+            var resourcePath = $"Jellyfin.Plugin.JellyfinCanopy.js.locales.{selectedLang}.json";
+            var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourcePath);
+            if (stream == null)
+            {
+                throw new InvalidOperationException($"Registered locale resource is missing: {selectedLang}.json");
+            }
+
             return new FileStreamResult(stream, "application/json");
+        }
+
+        private const string LocaleManifestResource = "Jellyfin.Plugin.JellyfinCanopy.locale-manifest.json";
+
+        internal static IReadOnlyList<string> SupportedLocaleCodes { get; } = LoadSupportedLocaleCodes();
+
+        private static IReadOnlyList<string> LoadSupportedLocaleCodes()
+        {
+            using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(LocaleManifestResource)
+                ?? throw new InvalidOperationException($"Embedded locale inventory is missing: {LocaleManifestResource}");
+            var manifest = JsonSerializer.Deserialize<LocaleManifest>(stream)
+                ?? throw new InvalidOperationException("Embedded locale inventory is empty");
+            if (manifest.Locales.Length == 0
+                || !manifest.Locales.Contains(manifest.BaseLocale, StringComparer.Ordinal))
+            {
+                throw new InvalidOperationException("Embedded locale inventory has no registered base locale");
+            }
+
+            return Array.AsReadOnly(manifest.Locales);
+        }
+
+        private sealed class LocaleManifest
+        {
+            [JsonPropertyName("baseLocale")]
+            public string BaseLocale { get; init; } = string.Empty;
+
+            [JsonPropertyName("locales")]
+            public string[] Locales { get; init; } = Array.Empty<string>();
         }
 
         private ActionResult GetScriptResource(string resourcePath)

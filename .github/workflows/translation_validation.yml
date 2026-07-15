@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - 'Jellyfin.Plugin.JellyfinCanopy/js/locales/**.json'
+      - 'Jellyfin.Plugin.JellyfinCanopy/locale-manifest.json'
+      - 'scripts/validate-translations.js'
+      - 'scripts/validate-translations.test.js'
 
 permissions:
   contents: read
@@ -30,76 +33,17 @@ jobs:
       - name: Verify Node toolchain
         run: node scripts/check-node-toolchain.js
 
-      - name: Get changed translation files
-        id: changed_files
+      - name: Record added, deleted, and renamed locale paths
         run: |
-          # Get all changed locale files in the PR
-          changed_files=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}...${{ github.sha }} -- 'Jellyfin.Plugin.JellyfinCanopy/js/locales/*.json')
-          new_files=$(git diff --name-only --diff-filter=A origin/${{ github.event.pull_request.base.ref }}...${{ github.sha }} -- 'Jellyfin.Plugin.JellyfinCanopy/js/locales/*.json')
+          git diff --name-status --find-renames \
+            "origin/${{ github.event.pull_request.base.ref }}...${{ github.sha }}" -- \
+            'Jellyfin.Plugin.JellyfinCanopy/js/locales/*.json' \
+            'Jellyfin.Plugin.JellyfinCanopy/locale-manifest.json'
 
-          echo "changed_files<<EOF" >> $GITHUB_OUTPUT
-          echo "$changed_files" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+      # Validate the complete registered set. A deleted file is absent from the
+      # tree but remains registered, so it cannot become a successful skip.
+      - name: Validate canonical inventory and every translation
+        run: npm run validate-translations
 
-          echo "new_files<<EOF" >> $GITHUB_OUTPUT
-          echo "$new_files" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-          # Count number of changed files
-          count=$(echo "$changed_files" | grep -c . || echo "0")
-          echo "count=$count" >> $GITHUB_OUTPUT
-
-          echo "Changed files:"
-          echo "$changed_files"
-          echo "New files:"
-          echo "$new_files"
-
-      - name: Validate new language file naming
-        if: steps.changed_files.outputs.new_files != ''
-        run: |
-          echo "${{ steps.changed_files.outputs.new_files }}" | while IFS= read -r file; do
-            if [ -z "$file" ]; then
-              continue
-            fi
-
-            filename=$(basename "$file")
-            echo "Checking filename: $filename"
-
-            # Check if filename is a two-letter code or region-specific code (e.g., en.json, zh-HK.json)
-            if ! [[ "$filename" =~ ^[a-z]{2}(-[A-Z]{2})?\.json$ ]]; then
-              echo "::error file=$file::Invalid filename. Filename must be ISO 639-1 language code, optionally with ISO 3166-1 region (e.g., es.json, zh-HK.json, pt-BR.json)."
-              exit 1
-            fi
-          done
-
-      - name: Validate changed translation files
-        if: steps.changed_files.outputs.changed_files != ''
-        run: |
-          echo "${{ steps.changed_files.outputs.changed_files }}" | while IFS= read -r file; do
-            if [ -z "$file" ] || [ ! -f "$file" ]; then
-              continue
-            fi
-
-            lang=$(basename "$file" .json)
-            if [ "$lang" = "en" ]; then
-              echo "Skipping base language (en.json)"
-              continue
-            fi
-
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "Validating: $lang"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            node scripts/validate-translations.js validate "$lang"
-            if [ $? -ne 0 ]; then
-              exit 1
-            fi
-          done
-
-      - name: Show completion statistics (multiple files changed)
-        if: steps.changed_files.outputs.count > 1
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Translation Completion Statistics"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          # Registered for Jellyfin Canopy CI (no functional change).
-          node scripts/validate-translations.js stats
+      - name: Show completion statistics
+        run: node scripts/validate-translations.js stats
