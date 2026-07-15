@@ -235,7 +235,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                 // PERF(S1): the scan-thread handler ends here — record the id +
                 // schedule a coalesced off-thread sweep; no DB query or file I/O
-                // runs synchronously. See docs/advanced/performance-rules.md (S1).
+                // runs synchronously. See docs/developers.md#performance-rules (S1).
                 ScheduleSweep(pendingKey, item.Id, item.Name ?? string.Empty, item is Series);
             }
             catch (Exception ex)

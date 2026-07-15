@@ -287,7 +287,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
             // PERF(S1): ItemRemoved fires synchronously on Jellyfin's library-scan thread. Record only
             // the id here (O(1)) and (re)arm the debounce timer; the user enumeration and the per-user
             // hidden-content prune (file I/O) run once, off the scan thread, on the timer thread. See
-            // docs/advanced/performance-rules.md (S1).
+            // docs/developers.md#performance-rules (S1).
             var id = e?.Item?.Id ?? Guid.Empty;
             if (id == Guid.Empty) return;
             _pendingRemovals.TryAdd(id.ToString(), 0);

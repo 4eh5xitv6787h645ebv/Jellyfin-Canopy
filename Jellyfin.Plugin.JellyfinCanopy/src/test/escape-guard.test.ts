@@ -1,7 +1,7 @@
 // src/test/escape-guard.test.ts
 //
 // Architecture guard for SEC(X1) — the client HTML-escaping convention
-// (docs/advanced/client-security.md). Every template-literal interpolation
+// (docs/developers.md#client-security). Every template-literal interpolation
 // that builds HTML must be *recognizably safe*:
 //
 //   (a) compile-time constant / trusted producer  -> raw is OK
@@ -55,7 +55,7 @@ import { describe, expect, it } from 'vitest';
 import * as ts from 'typescript';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Safe-pattern vocabulary (SEC X1) — see docs/advanced/client-security.md.
+// Safe-pattern vocabulary (SEC X1) — see docs/developers.md#client-security.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Escapers: calls that HTML-escape their input (class (c)). */
@@ -1673,7 +1673,7 @@ describe('escape-guard (SEC X1): HTML-template interpolations are recognizably s
         );
         expect(
             unmatched,
-            'Unrecognized interpolation(s) building HTML (SEC X1 — docs/advanced/client-security.md):\n'
+            'Unrecognized interpolation(s) building HTML (SEC X1 — docs/developers.md#client-security):\n'
             + formatViolations(unmatched)
             + '\n\nFix: wrap item/API/user-derived values in escapeHtml(...); coerce numerics via '
             + 'Number(x) || 0; route plugin-owned markup through a recognized producer; and remember '
@@ -1752,7 +1752,7 @@ describe('escape-guard (SEC X1): HTML-template interpolations are recognizably s
                 (v) => `  ${v.file}:${v.line}  ${v.producer}: ${v.reason} — \`${v.text}\``
             ),
             'Pre-escaping producer(s) violate the escape-first contract '
-            + '(docs/advanced/client-security.md). Each producer must escape its whole first '
+            + '(docs/developers.md#client-security). Each producer must escape its whole first '
             + 'parameter up front (escapeHtml(p) or an inline &<>" replace chain) and use the raw '
             + 'parameter only in value-neutral guards afterward — never in the markup it builds.'
         ).toEqual([]);

@@ -60,7 +60,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // these events synchronously on the library-scan thread (once per item, many times
             // during a scan), so the heavy BuildEntryForItem work is coalesced and run
             // off-thread by the service. See TagCacheService.EnqueueUpdate and
-            // docs/advanced/performance-rules.md (S1).
+            // docs/developers.md#performance-rules (S1).
             _tagCacheService.EnqueueUpdate(item.Id);
 
             // An episode change can alter its parent Series/Season derived data

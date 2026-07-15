@@ -4,7 +4,7 @@
 // /Users/AuthenticateByName endpoint — no pre-provisioned API key is needed,
 // so the same specs run against any seeded server (local dev or CI compose).
 //
-// Jellyfin 12 gotcha (docs/v12-platform.md §6.9): legacy auth carriers
+// Jellyfin 12 gotcha (docs/developers.md#breaking-assumption-checklist): legacy auth carriers
 // (?api_key=, X-Emby-Token) are ignored — only the full
 // `Authorization: MediaBrowser Token="..."` header works.
 

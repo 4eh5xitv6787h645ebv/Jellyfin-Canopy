@@ -18,7 +18,7 @@ You can contribute code through:
 
 Help make Jellyfin Canopy accessible to more users by contributing translations. Locale JSON files live in `Jellyfin.Plugin.JellyfinCanopy/js/locales/` (one per language, `en.json` is the base). The exact supported list lives only in [`locale-manifest.json`](Jellyfin.Plugin.JellyfinCanopy/locale-manifest.json). To add or update a language, edit the relevant file and open a pull request; `npm run validate-translations` must pass, and all registered locales must stay in sync with `en.json`.
 
-See the [Contributing Translations](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/faq-support/contributing-translations/) section for details.
+See [Translate Jellyfin Canopy](docs/help.md#translate-jellyfin-canopy) for the complete contribution guide.
 
 ### Issue triage and inactivity
 
@@ -55,9 +55,9 @@ The plugin is one C# project (server) plus one TypeScript module tree (client), 
 - `Jellyfin.Plugin.JellyfinCanopy/Configuration/` — `PluginConfiguration.cs` (admin settings), `SettingDescriptors.cs` (the settings registry — the single source of truth for what reaches clients), the admin config page.
 - `Jellyfin.Plugin.JellyfinCanopy.Tests/` — xUnit tests, including golden snapshots that pin the config payload contract.
 - `e2e/` — the committed Playwright suite + `e2e/docker/` (dockerized, seeded Jellyfin 12 for CI and local runs).
-- `docs/` — the MkDocs site, including **[`docs/v12-platform.md`](docs/v12-platform.md) — read this before touching injection, navigation or websocket code.** It is the evidence-based reference for how the Jellyfin 12 web client actually behaves (stable anchors, re-render survival, router traps, auth policy contract).
+- `docs/` — the MkDocs site, including **the [Jellyfin 12 platform guide](docs/developers.md#the-jellyfin-12-platform) — read this before touching injection, navigation or websocket code.** It is the evidence-based reference for how the Jellyfin 12 web client actually behaves (stable anchors, re-render survival, router traps, auth policy contract).
 
-See the [Project Structure](README.md#-project-structure) section in the README for the full breakdown.
+The [Developer Guide](docs/developers.md) covers the platform contracts and architecture behind these directories.
 
 ## 🛣️ The Paved Road — adding a feature
 
@@ -86,7 +86,7 @@ It generates a typed client module, a controller, an e2e spec stub and a docs st
 
 ### Performance rules
 
-Injected UI must never jank the host client — and must never silently fail to appear on a slow server or connection. The full doctrine — each rule with its reasoning and the pattern to copy — is [docs/advanced/performance-rules.md](docs/advanced/performance-rules.md); the implementation sites are marked `// PERF(Rn):` in the source. Check your PR against all nine:
+Injected UI must never jank the host client — and must never silently fail to appear on a slow server or connection. The full doctrine — each rule with its reasoning and the pattern to copy — is in the [performance rules](docs/developers.md#performance-rules); the implementation sites are marked `// PERF(Rn):` in the source. Check your PR against all nine:
 
 - [ ] **R1** Injected UI is pre-paint (`ensureInjected(..., { prePaint: true })`) or occupies reserved dimensions (`min-width` chips / `expandIn`). No insert-then-move, no placeholder-then-swap-width.
 - [ ] **R2** Decorations on existing content (tags, badges, buttons on cards) are `position:absolute` overlays — they cannot shift layout.
@@ -100,7 +100,7 @@ Injected UI must never jank the host client — and must never silently fail to 
 
 And one server-side rule (guarded by `LibraryScanEventGuardTests`):
 
-- [ ] **S1** Any handler for `ILibraryManager.ItemAdded/ItemUpdated/ItemRemoved` (raised synchronously on the library-scan thread) does only O(1) record-and-defer work — no DB query, no `GetMediaSources`, no I/O; heavy work runs on a debounced off-thread worker that coalesces by id. See [S1](docs/advanced/performance-rules.md) and `TagCacheMonitor`/`TagCacheService`.
+- [ ] **S1** Any handler for `ILibraryManager.ItemAdded/ItemUpdated/ItemRemoved` (raised synchronously on the library-scan thread) does only O(1) record-and-defer work — no DB query, no `GetMediaSources`, no I/O; heavy work runs on a debounced off-thread worker that coalesces by id. See [S1](docs/developers.md#performance-rules) and `TagCacheMonitor`/`TagCacheService`.
 
 ### Security rules
 
@@ -109,11 +109,11 @@ Two client-side security rules, each backed by a source-scan guard test that fai
 - [ ] **X1** Every `${...}` interpolated into HTML (templates, `innerHTML`, `toast()`, `insertAdjacentHTML`) is a compile-time constant / trusted producer, a coerced number (`Number(x) || 0`), or wrapped in `escapeHtml(...)` — in attribute **and** text positions; `toast()` renders innerHTML and `JC.t()` does **not** escape params. Guarded by `src/test/escape-guard.test.ts`.
 - [ ] **X2** Every config/user-derived value entering a CSS context (`style="..."`, a stylesheet rule, `insertRule`, `color-mix()`, a CSS `var()`) is validated — colours through `cssColorOr(...)`/`isCssColor(...)` (`src/core/css-safe.ts`), because `escapeHtml` does not neutralize a CSS payload. Guarded by `src/test/css-injection-guard.test.ts`.
 
-See [Client Security](docs/advanced/client-security.md).
+See [Client Security](docs/developers.md#client-security).
 
 ### Guard tests
 
-Beyond the per-feature unit tests, `npm run test:client` runs cross-cutting **guard tests** in `src/test/` that parse the shipped source and fail on a whole *class* of regression: `escape-guard` and `css-injection-guard` (injection, above), `leak-guard` (object URLs, un-torn-down observers, unbounded caches/retry loops), `perf-rules-guard` (the [performance rules](docs/advanced/performance-rules.md)), and `error-as-empty-guard` (a failed fetch must surface an error, never a silent empty state). Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber. The config-bridge tests in `Jellyfin.Plugin.JellyfinCanopy.Tests/Configuration/` apply the same idea to settings wiring: over one shared config-page parser (`ConfigPageSource.cs`), `ConfigControlCoverageTests` fails if an admin-settable descriptor has no config-page control and `ClientConfigKeyLivenessTests` fails if a `JC.pluginConfig.X` client read has no projecting descriptor (an always-`undefined` knob). A PR that reintroduces one of these bug classes fails CI without anyone having to spot it in review.
+Beyond the per-feature unit tests, `npm run test:client` runs cross-cutting **guard tests** in `src/test/` that parse the shipped source and fail on a whole *class* of regression: `escape-guard` and `css-injection-guard` (injection, above), `leak-guard` (object URLs, un-torn-down observers, unbounded caches/retry loops), `perf-rules-guard` (the [performance rules](docs/developers.md#performance-rules)), and `error-as-empty-guard` (a failed fetch must surface an error, never a silent empty state). Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber. The config-bridge tests in `Jellyfin.Plugin.JellyfinCanopy.Tests/Configuration/` apply the same idea to settings wiring: over one shared config-page parser (`ConfigPageSource.cs`), `ConfigControlCoverageTests` fails if an admin-settable descriptor has no config-page control and `ClientConfigKeyLivenessTests` fails if a `JC.pluginConfig.X` client read has no projecting descriptor (an always-`undefined` knob). A PR that reintroduces one of these bug classes fails CI without anyone having to spot it in review.
 
 ## 📝 Code Contribution Guidelines
 
@@ -126,7 +126,7 @@ Beyond the per-feature unit tests, `npm run test:client` runs cross-cutting **gu
 2. **Comments are Essential**
 
    - Use JSDoc/XML-doc comments for functions and classes
-   - Add inline comments to explain complex logic — especially anything that exists because of a Jellyfin 12 platform quirk (link the `docs/v12-platform.md` section)
+   - Add inline comments to explain complex logic — especially anything that exists because of a Jellyfin 12 platform quirk (link the relevant `docs/developers.md` section)
    - Document parameters, return values, and side effects
 
 3. **Code Understanding**
@@ -317,6 +317,7 @@ documented test credentials to a LAN or public interface.
 If you touch `docs/` (any user- or admin-visible change should), the site must build strictly:
 
 ```bash
+npm run check:markdown-links
 mkdocs build --strict
 ```
 
@@ -330,7 +331,7 @@ Before submitting a PR, ensure you've tested:
 - [ ] Works on different browsers (Chrome, Firefox, Edge)
 - [ ] Doesn't break existing functionality
 - [ ] Mobile compatibility (if applicable)
-- [ ] Injected UI survives navigation and the `/video` round trip (see `docs/v12-platform.md` §3)
+- [ ] Injected UI survives navigation and the `/video` round trip (see the [React re-render survival guide](docs/developers.md#react-re-render-survival))
 
 ## 📋 Feature Request Guidelines
 

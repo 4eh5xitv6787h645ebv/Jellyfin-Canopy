@@ -222,12 +222,14 @@ async function bouncedToSignIn(page) {
     return !authed;
 }
 
-// ── SPA navigation helpers (v12 router — docs/v12-platform.md §6) ──────────────
+// ── SPA navigation helpers (v12 router; see the breaking-assumption checklist
+//    in docs/developers.md) ───────────────────────────────────────────────────
 
 /**
  * NEVER await Emby.Page.show(): its promise resolves on the next viewshow, which
  * param-only navigations never fire — awaiting deadlocks every later show()
- * (docs/v12-platform.md §6.3). Callers wait on a DOM/hash condition instead.
+ * (docs/developers.md#breaking-assumption-checklist). Callers wait on a
+ * DOM/hash condition instead.
  */
 async function showRoute(page, route) {
     await page.evaluate((r) => { void window.Emby.Page.show(r); }, route);

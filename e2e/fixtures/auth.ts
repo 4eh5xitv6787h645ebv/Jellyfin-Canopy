@@ -50,7 +50,7 @@ const CONSOLE_NOISE: RegExp[] = [
     /favicon/i,
     // Narrowed from a blanket /WebSocket/i to the dead legacy apiclient probe:
     // v12 keeps opening `wss://host/socket`, which 403s by design
-    // (docs/v12-platform.md §"WebSocket / server messages"). A WebSocket error
+    // (docs/developers.md#script-injection-and-navigation-events). A WebSocket error
     // to any OTHER url is a real failure and is no longer swallowed.
     /WebSocket.*\/socket/i,
     /ERR_CONNECTION/i,
@@ -68,7 +68,7 @@ const CONSOLE_NOISE: RegExp[] = [
 //                                 headless test env
 //   - /JellyfinCanopy/admin/ : RequiresElevation endpoints a non-admin
 //                                 session legitimately hits and degrades on
-//                                 (bare 403 — docs/v12-platform.md §5)
+//                                 (bare 403 — docs/developers.md#authorization-policies)
 // Config-page-only chrome noise (admin dashboard branding previews, the admin's
 // absent avatar, jellyfin-web's own dashboard pageerror) is NOT listed here — it
 // is scoped locally by each config-page spec so this web-client net stays tight
@@ -515,7 +515,7 @@ export async function loginAs(page: Page, role: Role, consoleErrors?: ConsoleErr
  *
  * NEVER await Emby.Page.show(): its promise is resolved by the next
  * `viewshow`, which param-only navigations never fire — awaiting it deadlocks
- * the router for every later show() (docs/v12-platform.md §6.3). Callers wait
+ * the router for every later show() (docs/developers.md#breaking-assumption-checklist). Callers wait
  * on a DOM/hash condition instead.
  */
 export async function showRoute(page: Page, route: string): Promise<void> {
