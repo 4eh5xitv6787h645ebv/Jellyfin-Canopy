@@ -1,13 +1,22 @@
 // Unit tests for src/core/api-client.ts — the pure retry/backoff decision
 // logic and the in-flight request deduplication.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { calculateBackoff, deduplicatedFetch, fetchWithRetry, isRetryable } from './api-client';
+import {
+    calculateBackoff,
+    deduplicatedFetch,
+    fetchWithRetry,
+    isRetryable,
+} from './api-client';
+import { classifyObjectDetails } from './cache-policy';
+import { waitForSharedResult } from './shared-result';
 import { JC } from '../globals';
 import type { IdentityApi, IdentityContext, RetryConfig } from '../types/jc';
 
 const originalApiClient = ApiClient;
 const originalIdentity = (JC as typeof JC & { identity?: IdentityApi }).identity;
 const originalMaxConcurrent = JC.core.api!.manager.CONFIG.concurrency.maxConcurrent;
+const originalMaxCacheEntries = JC.core.api!.manager.CONFIG.cache.maxEntries;
+const originalMaxCacheBytes = JC.core.api!.manager.CONFIG.cache.maxBytes;
 
 function responseJson(value: unknown): Response {
     const text = JSON.stringify(value);
@@ -17,6 +26,13 @@ function responseJson(value: unknown): Response {
         text: () => Promise.resolve(text),
         clone() { return responseJson(value); }
     } as unknown as Response;
+}
+
+function responseError(status: number, value: unknown = {}): Response {
+    const response = responseJson(value) as Response & { ok: boolean; status: number };
+    response.ok = false;
+    response.status = status;
+    return response;
 }
 
 function installApiClient(userId: string, token: string, serverId = 'server-a'): JellyfinApiClient {
@@ -73,6 +89,8 @@ afterEach(() => {
     try { JC.core.api!.manager.abortAllRequests(); } catch { /* test cleanup */ }
     JC.core.api!.manager.clearCache();
     JC.core.api!.manager.CONFIG.concurrency.maxConcurrent = originalMaxConcurrent;
+    JC.core.api!.manager.CONFIG.cache.maxEntries = originalMaxCacheEntries;
+    JC.core.api!.manager.CONFIG.cache.maxBytes = originalMaxCacheBytes;
     window.ApiClient = originalApiClient;
     (globalThis as Record<string, unknown>).ApiClient = originalApiClient;
     if (originalIdentity) {
@@ -221,6 +239,46 @@ describe('deduplicatedFetch', () => {
         ]);
         expect(fetchFn).toHaveBeenCalledTimes(2);
     });
+
+    it('shares one transport while independently aborting a feature waiter', async () => {
+        installIdentity();
+        installApiClient('user-a', 'token-a');
+        let resolveFetch!: (response: Response) => void;
+        const heldFetch = new Promise<Response>(resolve => { resolveFetch = resolve; });
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockReturnValue(heldFetch);
+        const api = JC.core.api!;
+        const url = 'http://jellyfin.test/shared-lifecycle';
+        const firstController = new AbortController();
+        const secondController = new AbortController();
+
+        const first = waitForSharedResult(
+            api.fetch(url, { cacheKey: 'shared-lifecycle' }),
+            firstController.signal,
+        );
+        const second = waitForSharedResult(
+            api.fetch(url, { cacheKey: 'shared-lifecycle' }),
+            secondController.signal,
+        );
+        await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+
+        firstController.abort();
+        await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+        resolveFetch(responseJson({ payload: 'shared' }));
+
+        await expect(second).resolves.toEqual({ payload: 'shared' });
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps an already-started shared rejection observed for an aborted waiter', async () => {
+        const controller = new AbortController();
+        controller.abort();
+        const shared = Promise.reject(new Error('transport failed later'));
+        const observeSpy = vi.spyOn(shared, 'catch');
+
+        await expect(waitForSharedResult(shared, controller.signal))
+            .rejects.toMatchObject({ name: 'AbortError' });
+        expect(observeSpy).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('deduplicatedFetch identity eviction', () => {
@@ -295,6 +353,140 @@ describe('getCached / coreFetch falsy-cache sentinel', () => {
 
         expect(result).toBe(false);
         expect(fetchSpy).not.toHaveBeenCalled();
+    });
+});
+
+describe('response cache memory budgets', () => {
+    it('uses a short TTL only for a successful authoritative null', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+        installIdentity();
+        installApiClient('user-a', 'token-a');
+        const api = JC.core.api!;
+        const url = 'http://jellyfin.test/semantic-missing';
+        const fetchSpy = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(responseJson(null))
+            .mockResolvedValueOnce(responseJson({ id: 1 }));
+
+        const options = {
+            cacheKey: 'semantic-missing',
+            cacheDisposition: classifyObjectDetails,
+        } as const;
+        await expect(api.fetch(url, options)).resolves.toBeNull();
+        await expect(api.fetch(url, options)).resolves.toBeNull();
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+        vi.advanceTimersByTime(api.manager.CONFIG.cache.negativeTtlMs + 1);
+
+        await expect(api.fetch(url, options)).resolves.toEqual({ id: 1 });
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not guess that an unclassified successful null is authoritative', async () => {
+        installIdentity();
+        installApiClient('user-a', 'token-a');
+        const api = JC.core.api!;
+        const url = 'http://jellyfin.test/unclassified-null';
+        const fetchSpy = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValue(responseJson(null));
+
+        await expect(api.fetch(url, { cacheKey: 'unclassified-null' })).resolves.toBeNull();
+        await expect(api.fetch(url, { cacheKey: 'unclassified-null' })).resolves.toBeNull();
+
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('short-caches only explicitly authoritative 404 responses', async () => {
+        installIdentity();
+        installApiClient('user-a', 'token-a');
+        const api = JC.core.api!;
+        const url = 'http://jellyfin.test/missing-details';
+        const fetchSpy = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValue(responseError(404, { code: 'not_found' }));
+
+        await expect(api.fetch(url, {
+            cacheKey: 'missing-details',
+            cacheNotFound: true,
+        })).resolves.toBeNull();
+        await expect(api.fetch(url, {
+            cacheKey: 'missing-details',
+            cacheNotFound: true,
+        })).resolves.toBeNull();
+
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('enforces byte and entry caps with least-recently-used eviction', () => {
+        const manager = JC.core.api!.manager;
+        manager.CONFIG.cache.maxEntries = 3;
+        manager.CONFIG.cache.maxBytes = 10;
+
+        manager.setCache('a', { id: 'a' }, 4);
+        manager.setCache('b', { id: 'b' }, 4);
+        manager.setCache('c', { id: 'c' }, 4);
+
+        expect(manager.getCached('a')).toBeUndefined();
+        expect(manager.getCacheUsage()).toEqual({ entries: 2, bytes: 8 });
+
+        // Touch b so c becomes least recently used. A 6-byte response then
+        // evicts c and fits exactly at the byte ceiling.
+        expect(manager.getCached('b')).toEqual({ id: 'b' });
+        manager.setCache('d', { id: 'd' }, 6);
+
+        expect(manager.getCached('c')).toBeUndefined();
+        expect(manager.getCached('b')).toEqual({ id: 'b' });
+        expect(manager.getCached('d')).toEqual({ id: 'd' });
+        expect(manager.getCacheUsage()).toEqual({ entries: 2, bytes: 10 });
+    });
+
+    it('does not retain a single response larger than the total byte budget', () => {
+        const manager = JC.core.api!.manager;
+        manager.CONFIG.cache.maxEntries = 200;
+        manager.CONFIG.cache.maxBytes = 5;
+
+        manager.setCache('oversize', { payload: 'large' }, 6);
+
+        expect(manager.getCached('oversize')).toBeUndefined();
+        expect(manager.getCacheUsage()).toEqual({ entries: 0, bytes: 0 });
+    });
+
+    it('releases byte ownership when matching entries are cleared', () => {
+        const manager = JC.core.api!.manager;
+        manager.setCache('discovery:one', 1, 3);
+        manager.setCache('other:two', 2, 4);
+
+        manager.clearCacheMatching('discovery:');
+
+        expect(manager.getCacheUsage()).toEqual({ entries: 1, bytes: 4 });
+        expect(manager.getCached('other:two')).toBe(2);
+    });
+
+    it('bounds high-cardinality real response bytes through coreFetch', async () => {
+        installIdentity();
+        installApiClient('user-a', 'token-a');
+        const api = JC.core.api!;
+        api.manager.CONFIG.cache.maxEntries = 20;
+        api.manager.CONFIG.cache.maxBytes = 500;
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(input => {
+            const url = typeof input === 'string'
+                ? input
+                : input instanceof URL
+                    ? input.href
+                    : input.url;
+            return Promise.resolve(responseJson({ url, payload: 'x'.repeat(40) }));
+        });
+
+        for (let index = 0; index < 100; index++) {
+            await api.fetch(`http://jellyfin.test/high-cardinality/${index}`, {
+                cacheKey: `high-cardinality:${index}`,
+            });
+        }
+
+        const usage = api.manager.getCacheUsage();
+        expect(fetchSpy).toHaveBeenCalledTimes(100);
+        expect(usage.entries).toBeGreaterThan(0);
+        expect(usage.entries).toBeLessThanOrEqual(20);
+        expect(usage.bytes).toBeLessThanOrEqual(500);
     });
 });
 

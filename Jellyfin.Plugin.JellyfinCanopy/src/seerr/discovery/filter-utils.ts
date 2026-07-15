@@ -2,6 +2,7 @@
 // Shared utilities for discovery section content type filtering
 import { JC } from '../../globals';
 import { getVisibleDetailsPage } from '../../core/details-view';
+import { waitForSharedResult } from '../../core/shared-result';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -33,6 +34,8 @@ export interface DiscoveryFilterApi {
 
 interface ManagedRequestOptions {
     signal?: AbortSignal;
+    cacheDisposition?: (data: unknown) => 'positive' | 'negative' | 'skip';
+    cacheNotFound?: boolean;
 }
 
 declare module '../../types/jc' {
@@ -392,15 +395,17 @@ async function fetchWithManagedRequest(
     cachePrefix: string,
     options: ManagedRequestOptions = {}
 ): Promise<any> {
-    const { signal } = options;
+    const { signal, cacheDisposition, cacheNotFound } = options;
     // The core paved road owns auth, per-identity cache keys, parsing fences,
     // abort-on-transition, dedup and concurrency. Calling manager primitives
     // directly here previously allowed an unsignalled A response to parse and
     // setCache after B had become current.
-    return JC.core.api!.jf(path, {
-        signal,
+    const sharedRequest = JC.core.api!.jf(path, {
         cacheKey: `${cachePrefix}:${path}`,
+        cacheDisposition,
+        cacheNotFound,
     });
+    return waitForSharedResult(sharedRequest, signal);
 }
 
 /**

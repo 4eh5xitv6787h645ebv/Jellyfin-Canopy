@@ -367,7 +367,7 @@ export interface RetryConfig {
 
 export interface ApiClientConfig {
     retry: RetryConfig;
-    cache: { ttlMs: number; maxEntries: number };
+    cache: { ttlMs: number; negativeTtlMs: number; maxEntries: number; maxBytes: number };
     concurrency: { maxConcurrent: number; maxQueueSize: number };
 }
 
@@ -401,9 +401,10 @@ export interface RequestManagerApi {
     abortAllRequests(): void;
     abortRequest(pageKey: string): void;
     getCached(key: string): unknown;
-    setCache(key: string, data: unknown): void;
+    setCache(key: string, data: unknown, sizeBytes?: number, ttlMs?: number): void;
     clearCache(): void;
     clearCacheMatching(pattern: string): void;
+    getCacheUsage(): { entries: number; bytes: number };
     metrics: { enabled: boolean; sections: Map<string, SectionMetrics>; requests: RequestMetric[] };
     startMeasurement(sectionName: string): void;
     recordRequest(sectionName: string, bytes: number, fromCache?: boolean): void;
@@ -420,6 +421,10 @@ export interface CoreFetchOptions {
     signal?: AbortSignal;
     /** Enables response cache + in-flight dedup (GET only). */
     cacheKey?: string;
+    /** Classifies a successful JSON response for positive, short negative, or no caching. */
+    cacheDisposition?: (data: unknown) => 'positive' | 'negative' | 'skip';
+    /** Treat an HTTP 404 as an authoritative short-lived negative result. */
+    cacheNotFound?: boolean;
     skipCache?: boolean;
     skipRetry?: boolean;
     /** Include the Jellyfin auth headers (default true). */

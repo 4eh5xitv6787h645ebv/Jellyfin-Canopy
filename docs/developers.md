@@ -889,7 +889,7 @@ Jellyfin.Plugin.JellyfinCanopy/
     │   ├── lifecycle.ts     # Per-feature teardown registry (observers, intervals, listeners)
     │   ├── dom-observer.ts  # Multiplexed body MutationObserver, waitForElement, ensureInjected
     │   │                    # (keyed, idempotent, re-render-proof injection)
-    │   ├── api-client.ts    # One fetch wrapper: auth headers, retry/dedup/concurrency
+    │   ├── api-client.ts    # One fetch wrapper: auth, retry/dedup/concurrency, identity-scoped response LRU
     │   ├── asset-urls.ts    # CDN-URL ↔ local-asset map: same-origin when the asset cache
     │   │                    # is on (AssetCacheEnabled, default ON), original CDN URL when off (R6)
     │   ├── ui-kit.ts        # escapeHtml, toast, injectCss + the theme-token MUI component kit
