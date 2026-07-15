@@ -322,14 +322,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(
-                    $"Failed to save user {displayName} for {ResolveUserDisplay(authorizedUserId)} " +
-                    $"(exception={ex.GetType().Name}).");
                 var response = new UserFileMutationResponse<T>
                 {
                     File = fileName,
-                    Message = $"The {displayName} store is unavailable; no write was acknowledged."
+                    Message = ex is UserStoreUnhealthyException
+                        ? $"The {displayName} store is quarantined. Retry alone cannot recover it; an administrator must inspect and reset or repair it."
+                        : $"The {displayName} store is unavailable; no write was acknowledged."
                 };
+                if (ex is UserStoreUnhealthyException)
+                {
+                    // The central store logged the generation exactly once when it
+                    // published the marker. Do not amplify logs on client retries.
+                    return StatusCode(StatusCodes.Status503ServiceUnavailable, response);
+                }
+
+                _logger.LogError(
+                    $"Failed to save user {displayName} for {ResolveUserDisplay(authorizedUserId)} " +
+                    $"(exception={ex.GetType().Name}).");
                 if (ex is InvalidDataException || ex is JsonException || ex is IOException || ex is UnauthorizedAccessException)
                 {
                     return StatusCode(StatusCodes.Status503ServiceUnavailable, response);
@@ -498,11 +507,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             string? detail)
             where T : class, IRevisionedUserConfiguration, new()
         {
-            _logger.LogWarning($"Refusing to publish {fileName} (status={status}, detail={detail ?? "invalid-state"}).");
+            var quarantined = string.Equals(detail, "quarantined-recovery-required", StringComparison.Ordinal);
+            if (!quarantined)
+            {
+                _logger.LogWarning($"Refusing to publish {fileName} (status={status}, detail={detail ?? "invalid-state"}).");
+            }
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new UserFileMutationResponse<T>
             {
                 File = fileName,
-                Message = "User settings are corrupt or temporarily unavailable. No empty replacement state was published."
+                Message = quarantined
+                    ? "User settings are quarantined. Retry alone cannot recover them; an administrator must inspect and reset or repair the store."
+                    : "User settings are corrupt or temporarily unavailable. No empty replacement state was published."
             });
         }
 
@@ -1369,6 +1384,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         private IActionResult BookmarkWriteFailure(string authorizedUserId, string operation, Exception ex)
         {
+            if (ex is UserStoreUnhealthyException)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new BookmarkMutationResponse
+                {
+                    Success = false,
+                    Message = "Bookmark state is quarantined. Retry alone cannot recover it; an administrator must inspect and reset or repair the store."
+                });
+            }
+
             _logger.LogError($"Failed to {operation} for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
             if (ex is InvalidDataException || ex is JsonException || ex is IOException || ex is UnauthorizedAccessException)
             {
@@ -1460,6 +1484,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                             return 1;
                         });
                     Services.HiddenContentResponseFilter.InvalidateUser(userId);
+                }
+                catch (UserStoreUnhealthyException)
+                {
+                    // The durable transition was already logged once. Report this
+                    // user in the response without amplifying logs on admin retries.
+                    skippedHc.Add(userId);
                 }
                 catch (Exception ex) when (ex is InvalidDataException
                                         || ex is System.Text.Json.JsonException

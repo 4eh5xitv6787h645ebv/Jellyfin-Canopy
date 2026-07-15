@@ -240,7 +240,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
-        public void CorruptStore_FailsReadAndWriteWithoutReplacingRawBytes()
+        public void CorruptStore_FailsReadAndWriteWhileQuarantiningExactRawBytes()
         {
             SeedSettings();
             File.WriteAllText(FilePath("settings.json"), "{ malformed settings");
@@ -253,7 +253,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 UserId,
                 new UserSettings { Revision = 0, WatchProgressMode = "time" });
             Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<ObjectResult>(save).StatusCode);
-            Assert.Equal(raw, File.ReadAllText(FilePath("settings.json")));
+            var settingsPath = FilePath("settings.json");
+            Assert.False(File.Exists(settingsPath));
+            Assert.True(File.Exists(settingsPath + ".unhealthy"));
+            Assert.Equal(
+                raw,
+                File.ReadAllText(Assert.Single(Directory.GetFiles(Path.GetDirectoryName(settingsPath)!, "settings.json.corrupt-*"))));
         }
 
         [Fact]
@@ -283,6 +288,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 UserId,
                 new UserSettings { Revision = 8, WatchProgressMode = "percentage" });
             Assert.IsType<ConflictObjectResult>(stale);
+        }
+
+        [Fact]
+        public void AdminReset_ReportsQuarantinedHiddenContentAndContinuesOtherUsers()
+        {
+            SeedSettings(revision: 4, mode: "time");
+            Directory.CreateDirectory(Path.GetDirectoryName(FilePath("hidden-content.json"))!);
+            File.WriteAllText(FilePath("hidden-content.json"), "{{{ corrupt hidden content");
+            Assert.Throws<UserStoreUnhealthyException>(() =>
+                _manager.GetUserConfigurationStrict<UserHiddenContent>(UserId, "hidden-content.json"));
+
+            var reset = Assert.IsType<OkObjectResult>(Controller().ResetAllUsersSettings());
+
+            Assert.Equal(5, _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json").Revision);
+            Assert.True(File.Exists(FilePath("hidden-content.json.unhealthy")));
+            var responseJson = JsonSerializer.Serialize(reset.Value);
+            Assert.Contains(UserId, responseJson, StringComparison.Ordinal);
+            Assert.Contains("skippedHcUserIds", responseJson, StringComparison.Ordinal);
         }
     }
 }

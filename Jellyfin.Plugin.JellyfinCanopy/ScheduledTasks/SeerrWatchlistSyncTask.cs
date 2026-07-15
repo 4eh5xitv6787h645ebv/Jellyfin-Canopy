@@ -841,7 +841,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
         // Serialize the processed-watchlist marker append through the locked RMW primitive so this
         // scheduled task can't clobber a marker the event monitor just added (or vice versa). The
-        // in-lock re-check keeps the append idempotent; strict-read corruption is logged + skipped
+        // in-lock re-check keeps the append idempotent; strict-read quarantine is skipped silently
         // so a single corrupt user file can't fail the whole sync task.
         private void TryMarkProcessed(Guid userId, int tmdbId, string mediaType, string source)
         {
@@ -863,6 +863,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                     });
                     return 1;
                 });
+            }
+            catch (UserStoreUnhealthyException)
+            {
+                // The durable generation was logged once when quarantined.
             }
             catch (Exception ex)
             {

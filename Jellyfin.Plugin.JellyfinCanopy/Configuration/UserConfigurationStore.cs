@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -20,6 +21,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         private readonly string _configBaseDir;
         private readonly ILogger _logger;
         private const int MaxCorruptBackupsPerFile = 5;
+        private const long MaxCorruptBackupBytesPerFile = 32L * 1024 * 1024;
+        private const string UnhealthySuffix = ".unhealthy";
+
+        private static readonly HashSet<string> RecoverableFileNames = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "settings.json",
+            "shortcuts.json",
+            "elsewhere.json",
+            "bookmark.json",
+            "hidden-content.json",
+            "spoilerblur.json",
+            "processed-watchlist-items.json"
+        };
 
         // Static so the Singleton ResponseFilter and the Scoped IEventConsumer share one pool.
         private static readonly ConcurrentDictionary<string, object> _userFileLocks = new ConcurrentDictionary<string, object>();
@@ -73,7 +87,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             try
             {
                 var configPath = ResolveUserFile(userId, fileName);
-                return File.Exists(configPath);
+                // A quarantined file is deliberately absent from its authoritative
+                // path, but it is not a first-run/missing store. Treat the durable
+                // marker as existence so initialization paths cannot silently seed
+                // defaults and bypass explicit recovery.
+                return File.Exists(configPath) || UnhealthyMarkerExists(configPath);
             }
             catch (Exception ex)
             {
@@ -86,6 +104,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public T GetUserConfiguration<T>(string userId, string fileName) where T : new()
         {
             var configPath = ResolveUserFile(userId, fileName);
+
+            // Lenient presentation reads keep their historical default-value
+            // contract, but never reparse or relog a quarantined generation.
+            try
+            {
+                if (UnhealthyMarkerExists(configPath)) return new T();
+            }
+            catch
+            {
+                // Preserve the lenient read contract for ordinary display state.
+                // Strict and typed security reads below surface this as unavailable.
+                return new T();
+            }
 
             if (File.Exists(configPath))
             {
@@ -126,61 +157,88 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             return new T();
         }
 
-        // Strict read for RMW: existing empty/null/garbage is corruption; backs up to .corrupt-{ts} and throws.
+        // Strict read for RMW: existing empty/null/garbage enters a durable,
+        // fail-closed recovery state. The original bytes are atomically moved to
+        // bounded forensic storage once; subsequent retries inspect only the
+        // marker and cannot create more files or logs.
         public T GetUserConfigurationStrict<T>(string userId, string fileName) where T : new()
         {
-            var configPath = ResolveUserFile(userId, fileName);
-            if (!File.Exists(configPath)) return new T();
-
-            string json;
-            try
+            lock (GetUserFileLock(userId, fileName))
             {
-                json = File.ReadAllText(configPath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Failed to read '{fileName}' for user '{userId}': {ex.Message}");
-                BackupCorruptFile(configPath);
-                throw;
-            }
-
-            if (string.IsNullOrWhiteSpace(json)
-                || string.Equals(json.Trim(), "null", StringComparison.Ordinal))
-            {
-                _logger.LogError($"'{fileName}' for user '{userId}' exists but is empty or literal-null; refusing to overwrite.");
-                BackupCorruptFile(configPath);
-                throw new InvalidDataException($"'{fileName}' is empty or literal null; refusing to overwrite.");
-            }
-
-            try
-            {
-                // Tolerate the SAME legacy nulls the lenient GET path skips: a field
-                // that was once nullable (bool?/int?/string?) left a literal JSON null
-                // on disk and has since become non-nullable. Binding it directly throws,
-                // which used to 500 every save of an otherwise-fine file while the GET
-                // path read it correctly. Strip null members first (constructor defaults
-                // kept), exactly like GetUserConfiguration. Genuine corruption still
-                // fails: empty/whitespace/literal-null is rejected above, malformed JSON
-                // throws in JsonNode.Parse, and a non-object payload deserializes to null
-                // (or throws) — both caught below and backed up.
-                var parsed = TryDeserializeStripped<T>(json);
-                if (parsed == null)
+                var configPath = ResolveUserFile(userId, fileName);
+                if (UnhealthyMarkerExists(configPath))
                 {
-                    _logger.LogError($"'{fileName}' for user '{userId}' deserialized to null; refusing to overwrite.");
-                    BackupCorruptFile(configPath);
-                    throw new InvalidDataException($"'{fileName}' deserialized to null.");
+                    throw new UserStoreUnhealthyException(fileName, newlyQuarantined: false);
                 }
-                return parsed;
-            }
-            catch (InvalidDataException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Failed to parse '{fileName}' for user '{userId}': {ex.Message}");
-                BackupCorruptFile(configPath);
-                throw;
+
+                if (!File.Exists(configPath)) return new T();
+
+                var sourceLength = new FileInfo(configPath).Length;
+                if (sourceLength > PersistedPayloadPolicy.AbsolutePersistedBytes)
+                {
+                    string sourceHash;
+                    using (var source = File.OpenRead(configPath))
+                    {
+                        sourceHash = Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant();
+                    }
+
+                    var fault = new InvalidDataException(
+                        $"'{fileName}' exceeds the absolute {PersistedPayloadPolicy.AbsolutePersistedBytes}-byte store limit.");
+                    throw QuarantineCorruptFile(userId, fileName, configPath, sourceHash, sourceLength, fault);
+                }
+
+                byte[] sourceBytes;
+                string json;
+                try
+                {
+                    sourceBytes = File.ReadAllBytes(configPath);
+                    using var reader = new StreamReader(
+                        new MemoryStream(sourceBytes, writable: false),
+                        Encoding.UTF8,
+                        detectEncodingFromByteOrderMarks: true);
+                    json = reader.ReadToEnd();
+                }
+                catch (Exception ex)
+                {
+                    // An unavailable file is not proof of corrupt content. Do not
+                    // create a misleading marker or copy when the bytes could not
+                    // be read; callers surface the transient storage failure.
+                    _logger.LogError($"Failed to read '{fileName}' for user '{userId}': {ex.Message}");
+                    throw;
+                }
+
+                if (string.IsNullOrWhiteSpace(json)
+                    || string.Equals(json.Trim(), "null", StringComparison.Ordinal))
+                {
+                    var fault = new InvalidDataException($"'{fileName}' is empty or literal null; refusing to overwrite.");
+                    throw QuarantineCorruptFile(userId, fileName, configPath, sourceBytes, fault);
+                }
+
+                try
+                {
+                    // Tolerate the SAME legacy nulls the lenient GET path skips: a field
+                    // that was once nullable (bool?/int?/string?) left a literal JSON null
+                    // on disk and has since become non-nullable. Binding it directly throws,
+                    // which used to 500 every save of an otherwise-fine file while the GET
+                    // path read it correctly. Strip null members first (constructor defaults
+                    // kept), exactly like GetUserConfiguration. Genuine corruption still
+                    // fails: empty/whitespace/literal-null is rejected above, malformed JSON
+                    // throws in JsonNode.Parse, and a non-object payload deserializes to null.
+                    var parsed = TryDeserializeStripped<T>(json);
+                    if (parsed == null)
+                    {
+                        throw new InvalidDataException($"'{fileName}' deserialized to null.");
+                    }
+                    return parsed;
+                }
+                catch (UserStoreUnhealthyException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    throw QuarantineCorruptFile(userId, fileName, configPath, sourceBytes, ex);
+                }
             }
         }
 
@@ -226,6 +284,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 // Fail closed: treat as Unavailable so callers retain protection.
                 _logger.LogError($"Refusing to resolve policy file '{fileName}' for user '{userId}': {ex.Message}");
                 return new UserConfigReadResult<T>(UserConfigReadStatus.Unavailable, default, ex.Message);
+            }
+
+            try
+            {
+                if (UnhealthyMarkerExists(configPath))
+                {
+                    return new UserConfigReadResult<T>(UserConfigReadStatus.Corrupt, default, "quarantined-recovery-required");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Unable to inspect recovery marker for policy file '{fileName}' for user '{userId}' — treating as UNAVAILABLE (protection retained): {ex.Message}");
+                return new UserConfigReadResult<T>(UserConfigReadStatus.Unavailable, default, "recovery-marker-unavailable");
             }
 
             // Read directly and let the exception type classify the outcome. A
@@ -317,9 +388,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 // Resolve only after validation so a rejected future caller cannot
                 // create a user directory as a side effect of an oversized write.
                 var configPath = ResolveUserFile(userId, fileName);
+                lock (GetUserFileLock(userId, fileName))
+                {
+                    if (UnhealthyMarkerExists(configPath))
+                    {
+                        throw new UserStoreUnhealthyException(fileName, newlyQuarantined: false);
+                    }
 
-                // AtomicFile owns the per-call temp sibling + rename + temp cleanup.
-                AtomicFile.WriteAllText(configPath, jsonToSave);
+                    // AtomicFile owns the per-call temp sibling + rename + temp cleanup.
+                    AtomicFile.WriteAllText(configPath, jsonToSave);
+                }
+            }
+            catch (UserStoreUnhealthyException)
+            {
+                // The transition was logged once when the marker was published.
+                // Ordinary save retries must not amplify that event.
+                throw;
             }
             catch (Exception ex)
             {
@@ -330,67 +414,314 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             }
         }
 
-        private void BackupCorruptFile(string filePath)
+        private UserStoreUnhealthyException QuarantineCorruptFile(
+            string userId,
+            string fileName,
+            string filePath,
+            byte[] sourceBytes,
+            Exception cause)
+            => QuarantineCorruptFile(
+                userId,
+                fileName,
+                filePath,
+                Convert.ToHexString(SHA256.HashData(sourceBytes)).ToLowerInvariant(),
+                sourceBytes.LongLength,
+                cause);
+
+        private UserStoreUnhealthyException QuarantineCorruptFile(
+            string userId,
+            string fileName,
+            string filePath,
+            string hash,
+            long sourceLength,
+            Exception cause)
         {
+            var markerPath = GetUnhealthyMarkerPath(filePath);
+            if (UnhealthyMarkerExists(filePath))
+            {
+                return new UserStoreUnhealthyException(fileName, newlyQuarantined: false, cause);
+            }
+
+            var stamp = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
+            var quarantineFileName = $"{fileName}.corrupt-{stamp}-{hash.Substring(0, 16)}-{Guid.NewGuid():N}";
+            var marker = new UserStoreUnhealthyMarker
+            {
+                FileName = fileName,
+                QuarantineFileName = quarantineFileName,
+                ContentSha256 = hash,
+                SourceBytes = sourceLength,
+                DetectedAtUtc = DateTime.UtcNow.ToString("O")
+            };
+
+            // Publish the fail-closed marker first. A crash before the following
+            // rename leaves the source plus marker (still unhealthy and recoverable),
+            // never an absent source that can be mistaken for first-run defaults.
+            AtomicFile.WriteAllText(markerPath, JsonSerializer.Serialize(marker, PersistedJson.WriteOptions));
+
+            var quarantinePath = Path.Combine(Path.GetDirectoryName(filePath)!, quarantineFileName);
+            var moved = false;
             try
             {
-                var existingBackups = Directory.GetFiles(
-                    Path.GetDirectoryName(filePath)!,
-                    Path.GetFileName(filePath) + ".corrupt-*");
-                foreach (var existing in existingBackups)
+                File.Move(filePath, quarantinePath);
+                moved = true;
+                PruneCorruptBackups(filePath);
+            }
+            catch (Exception ex)
+            {
+                // The marker remains authoritative. Do not remove it merely because
+                // the best-effort rename/prune failed; the admin recovery surface can
+                // safely finish or reset this generation later.
+                _logger.LogError(
+                    $"Per-user store '{fileName}' entered recovery state but its quarantine move did not complete " +
+                    $"(exception={ex.GetType().Name}).");
+            }
+
+            _logger.LogWarning(
+                $"Per-user store '{fileName}' entered recovery state for user '{NormalizeUserId(userId)}' " +
+                $"(bytes={sourceLength}, sha256Prefix={hash.Substring(0, 16)}, quarantineComplete={moved}).");
+            return new UserStoreUnhealthyException(fileName, newlyQuarantined: true, cause);
+        }
+
+        public IReadOnlyList<UserStoreRecoveryStatus> GetUnhealthyUserStores()
+        {
+            var results = new List<UserStoreRecoveryStatus>();
+            if (!Directory.Exists(_configBaseDir)) return results;
+
+            foreach (var userDir in Directory.GetDirectories(_configBaseDir))
+            {
+                var userId = Path.GetFileName(userDir);
+                if (!Guid.TryParseExact(userId, "N", out _)) continue;
+
+                foreach (var markerPath in Directory.GetFiles(userDir, "*" + UnhealthySuffix))
                 {
+                    var markerFileName = Path.GetFileName(markerPath);
+                    var fileName = markerFileName.Substring(0, markerFileName.Length - UnhealthySuffix.Length);
+                    if (!IsRecoverableFileName(fileName)) continue;
+
+                    var status = new UserStoreRecoveryStatus
+                    {
+                        UserId = userId,
+                        FileName = fileName
+                    };
                     try
                     {
-                        if (FilesHaveSameContent(filePath, existing))
+                        var marker = ReadValidMarker(markerPath, fileName);
+                        status.MarkerReadable = true;
+                        status.DetectedAtUtc = marker.DetectedAtUtc;
+                        status.SourceBytes = marker.SourceBytes;
+                        status.ContentSha256 = marker.ContentSha256;
+                        status.QuarantineFileName = marker.QuarantineFileName;
+                        status.QuarantineComplete = File.Exists(Path.Combine(userDir, marker.QuarantineFileName));
+                    }
+                    catch
+                    {
+                        // A malformed marker is itself a fail-closed recovery state.
+                        // Surface it to the admin without trusting any of its fields.
+                        status.MarkerReadable = false;
+                        status.QuarantineComplete = false;
+                    }
+
+                    results.Add(status);
+                }
+            }
+
+            return results
+                .OrderBy(status => status.UserId, StringComparer.Ordinal)
+                .ThenBy(status => status.FileName, StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        public bool ResetUnhealthyUserStore(string userId, string fileName)
+        {
+            if (!IsRecoverableFileName(fileName))
+            {
+                throw new ArgumentException($"Unsupported recoverable user-config filename: '{fileName}'", nameof(fileName));
+            }
+
+            lock (GetUserFileLock(userId, fileName))
+            {
+                var filePath = ResolveUserFile(userId, fileName);
+                var markerPath = GetUnhealthyMarkerPath(filePath);
+                if (!UnhealthyMarkerExists(filePath)) return false;
+
+                UserStoreUnhealthyMarker? validMarker = null;
+                try
+                {
+                    validMarker = ReadValidMarker(markerPath, fileName);
+                }
+                catch when (File.Exists(filePath))
+                {
+                    // A source left in place is still preservable under a fresh,
+                    // validated name even when the marker itself was damaged.
+                }
+
+                // Preserve any source left by a crash/failed rename before clearing
+                // the marker. The marker is deleted last, so every interruption is
+                // retry-safe and can never publish an unacknowledged default state.
+                if (File.Exists(filePath))
+                {
+                    var sourceLength = new FileInfo(filePath).Length;
+                    string sourceHash;
+                    using (var source = File.OpenRead(filePath))
+                    {
+                        sourceHash = Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant();
+                    }
+                    string? preferredName = null;
+                    if (validMarker != null
+                        && string.Equals(validMarker.ContentSha256, sourceHash, StringComparison.Ordinal))
+                    {
+                        preferredName = validMarker.QuarantineFileName;
+                    }
+
+                    PreserveSourceForReset(filePath, fileName, sourceLength, sourceHash, preferredName);
+                }
+                else if (validMarker == null
+                    || !File.Exists(Path.Combine(Path.GetDirectoryName(filePath)!, validMarker.QuarantineFileName)))
+                {
+                    throw new InvalidDataException(
+                        "The unhealthy marker has no readable source or completed quarantine artifact; refusing to discard the recovery record.");
+                }
+
+                File.Delete(markerPath);
+                PruneCorruptBackups(filePath);
+                _logger.LogInformation(
+                    $"Explicitly reset unhealthy per-user store '{fileName}' for user '{NormalizeUserId(userId)}'; " +
+                    "the next normal access will initialize defaults.");
+                return true;
+            }
+        }
+
+        private void PreserveSourceForReset(
+            string filePath,
+            string fileName,
+            long sourceLength,
+            string sourceHash,
+            string? preferredName)
+        {
+            var directory = Path.GetDirectoryName(filePath)!;
+            foreach (var existing in Directory.GetFiles(directory, fileName + ".corrupt-*"))
+            {
+                try
+                {
+                    var info = new FileInfo(existing);
+                    if (info.Length == sourceLength)
+                    {
+                        using var candidate = File.OpenRead(existing);
+                        if (Convert.ToHexString(SHA256.HashData(candidate)).Equals(sourceHash, StringComparison.OrdinalIgnoreCase))
                         {
-                            _logger.LogWarning($"Corrupt config already preserved at {existing} — skipping duplicate backup.");
+                            File.Delete(filePath);
                             return;
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        // A stale/unreadable old backup must not prevent the
-                        // newly observed corrupt bytes from being preserved.
-                        _logger.LogWarning($"Could not compare corrupt config backup {existing}; preserving a new copy: {ex.Message}");
-                    }
                 }
-
-                // Millisecond resolution so two corruption events in the same UTC second get distinct backups.
-                var backupPath = filePath + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
-                if (File.Exists(backupPath))
+                catch
                 {
-                    _logger.LogWarning($"Corrupt config backup already exists at {backupPath} — skipping new copy.");
-                    return;
+                    // An unreadable older artifact cannot authorize deleting the
+                    // current source. Preserve the current bytes under a new name.
                 }
-                File.Copy(filePath, backupPath);
-                _logger.LogWarning($"Corrupt config backed up to {backupPath}");
+            }
 
-                foreach (var stale in Directory.GetFiles(
+            var targetName = preferredName;
+            if (string.IsNullOrEmpty(targetName)
+                || !IsValidQuarantineFileName(fileName, targetName)
+                || File.Exists(Path.Combine(directory, targetName)))
+            {
+                targetName = $"{fileName}.corrupt-{DateTime.UtcNow:yyyyMMddHHmmssfff}-{sourceHash.Substring(0, 16)}-{Guid.NewGuid():N}";
+            }
+
+            File.Move(filePath, Path.Combine(directory, targetName));
+        }
+
+        private void PruneCorruptBackups(string filePath)
+        {
+            try
+            {
+                var retainedBytes = 0L;
+                var index = 0;
+                foreach (var path in Directory.GetFiles(
                     Path.GetDirectoryName(filePath)!,
                     Path.GetFileName(filePath) + ".corrupt-*")
-                    .OrderByDescending(path => path, StringComparer.Ordinal)
-                    .Skip(MaxCorruptBackupsPerFile))
+                    .OrderByDescending(candidate => candidate, StringComparer.Ordinal))
                 {
-                    File.Delete(stale);
-                    _logger.LogWarning($"Removed stale corrupt config backup {stale} (retaining newest {MaxCorruptBackupsPerFile}).");
+                    var length = new FileInfo(path).Length;
+                    // Always retain the newest generation even when an externally
+                    // created corrupt source already exceeds the byte budget. Moving
+                    // it adds no disk usage; every older generation is then removed.
+                    var keep = index == 0
+                        || (index < MaxCorruptBackupsPerFile
+                            && retainedBytes <= MaxCorruptBackupBytesPerFile - length);
+                    if (keep)
+                    {
+                        retainedBytes += length;
+                        index++;
+                        continue;
+                    }
+
+                    File.Delete(path);
+                    _logger.LogWarning(
+                        $"Removed stale corrupt config backup for '{Path.GetFileName(filePath)}' " +
+                        $"(retaining at most {MaxCorruptBackupsPerFile} generations / {MaxCorruptBackupBytesPerFile} bytes).");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Failed to back up corrupt config: {ex.Message}");
+                // Retention maintenance is secondary to preserving the new evidence
+                // and publishing the unhealthy marker.
+                _logger.LogWarning(
+                    $"Could not fully enforce corrupt-backup retention for '{Path.GetFileName(filePath)}' " +
+                    $"(exception={ex.GetType().Name}).");
             }
         }
 
-        private static bool FilesHaveSameContent(string leftPath, string rightPath)
+        private static UserStoreUnhealthyMarker ReadValidMarker(string markerPath, string expectedFileName)
         {
-            var leftInfo = new FileInfo(leftPath);
-            var rightInfo = new FileInfo(rightPath);
-            if (leftInfo.Length != rightInfo.Length) return false;
+            var marker = JsonSerializer.Deserialize<UserStoreUnhealthyMarker>(
+                File.ReadAllText(markerPath),
+                PersistedJson.ReadOptions)
+                ?? throw new InvalidDataException("Unhealthy marker deserialized to null.");
 
-            using var left = File.OpenRead(leftPath);
-            using var right = File.OpenRead(rightPath);
-            return SHA256.HashData(left).AsSpan().SequenceEqual(SHA256.HashData(right));
+            if (marker.Version != UserStoreUnhealthyMarker.CurrentVersion
+                || !string.Equals(marker.FileName, expectedFileName, StringComparison.Ordinal)
+                || marker.SourceBytes < 0
+                || marker.ContentSha256.Length != 64
+                || !marker.ContentSha256.All(Uri.IsHexDigit)
+                || !IsValidQuarantineFileName(expectedFileName, marker.QuarantineFileName))
+            {
+                throw new InvalidDataException("Unhealthy marker failed validation.");
+            }
+
+            return marker;
         }
+
+        private static bool IsValidQuarantineFileName(string fileName, string quarantineFileName)
+            => string.Equals(Path.GetFileName(quarantineFileName), quarantineFileName, StringComparison.Ordinal)
+                && quarantineFileName.StartsWith(fileName + ".corrupt-", StringComparison.Ordinal);
+
+        private static string GetUnhealthyMarkerPath(string filePath) => filePath + UnhealthySuffix;
+
+        private static bool UnhealthyMarkerExists(string filePath)
+        {
+            var markerPath = GetUnhealthyMarkerPath(filePath);
+            try
+            {
+                _ = File.GetAttributes(markerPath);
+                return true;
+            }
+            catch (FileNotFoundException)
+            {
+                return false;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return false;
+            }
+        }
+
+        private static bool IsRecoverableFileName(string fileName)
+            => RecoverableFileNames.Contains(fileName);
+
+        private static string NormalizeUserId(string userId)
+            => (userId ?? string.Empty).Replace("-", string.Empty, StringComparison.Ordinal).ToLowerInvariant();
 
         /// <summary>
         /// Gets all canonical user IDs that have configuration directories.

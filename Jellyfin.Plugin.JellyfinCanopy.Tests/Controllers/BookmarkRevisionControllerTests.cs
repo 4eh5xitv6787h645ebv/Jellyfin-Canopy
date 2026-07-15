@@ -539,7 +539,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 }
             });
             Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<ObjectResult>(migration).StatusCode);
-            Assert.Equal(raw, File.ReadAllText(BookmarkPath));
+            Assert.False(File.Exists(BookmarkPath));
+            Assert.True(File.Exists(BookmarkPath + ".unhealthy"));
+            Assert.Equal(
+                raw,
+                File.ReadAllText(Assert.Single(Directory.GetFiles(Path.GetDirectoryName(BookmarkPath)!, "bookmark.json.corrupt-*"))));
         }
     }
 }

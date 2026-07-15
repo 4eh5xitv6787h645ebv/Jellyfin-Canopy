@@ -53,6 +53,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         private readonly UserConfigurationManager _userConfigurationManager;
         private readonly ILibraryManager _libraryManager;
 
+        private IActionResult QuarantinedHiddenStore()
+            => StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                success = false,
+                message = "Hidden-content state is quarantined. Retry alone cannot recover it; an administrator must inspect and reset or repair the store."
+            });
+
         public HiddenContentController(
             IHttpClientFactory httpClientFactory,
             ILogger<HiddenContentController> logger,
@@ -101,8 +108,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 }
             }
 
-            var userConfig = _userConfigurationManager.GetUserConfiguration<UserHiddenContent>(authorizedUserId, "hidden-content.json");
-            return Ok(userConfig);
+            var read = _userConfigurationManager.ReadUserConfiguration<UserHiddenContent>(authorizedUserId, "hidden-content.json");
+            if (!read.HasUsableValue || read.Value == null)
+            {
+                return string.Equals(read.FaultDetail, "quarantined-recovery-required", StringComparison.Ordinal)
+                    ? QuarantinedHiddenStore()
+                    : StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                    {
+                        success = false,
+                        message = "Hidden-content state is corrupt or temporarily unavailable. No empty replacement state was published."
+                    });
+            }
+
+            return Ok(read.Value);
         }
 
         [HttpPost("user-settings/{userId}/hidden-content.json")]
@@ -154,19 +172,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             {
                 lock (_userConfigurationManager.GetUserFileLock(authorizedUserId, "hidden-content.json"))
                 {
-                    // Pre-write strict read so a corrupt existing file 503s + backs up instead of being overwritten.
+                    // Pre-write strict read so a corrupt existing file enters recovery
+                    // and returns 503 instead of being overwritten.
                     try
                     {
                         _userConfigurationManager.GetUserConfigurationStrict<UserHiddenContent>(
                             authorizedUserId, "hidden-content.json");
+                    }
+                    catch (UserStoreUnhealthyException)
+                    {
+                        return QuarantinedHiddenStore();
                     }
                     catch (Exception strictEx) when (strictEx is InvalidDataException
                                                   || strictEx is System.Text.Json.JsonException)
                     {
                         _logger.LogWarning(
                             $"hidden-content.json corrupt for {ResolveUserDisplay(authorizedUserId)} " +
-                            $"(backed up; exception={strictEx.GetType().Name}).");
-                        return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
+                            $"(recovery required; exception={strictEx.GetType().Name}).");
+                        return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt and requires administrator recovery." });
                     }
                     catch (IOException ioEx)
                     {
@@ -183,6 +206,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     $"Saved hidden content for {ResolveUserDisplay(authorizedUserId)} to hidden-content.json " +
                     $"(items={validatedCopy.Items.Count}, bytes={validation.SerializedBytes}).");
                 return Ok(new { success = true, file = "hidden-content.json" });
+            }
+            catch (UserStoreUnhealthyException)
+            {
+                return QuarantinedHiddenStore();
             }
             catch (Exception ex)
             {
@@ -338,7 +365,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             try
             {
                 var removed = 0;
-                // RMW holds the per-user file lock, strict-reads (corruption → backup + throw), applies
+                // RMW holds the per-user file lock, strict-reads (corruption → quarantine + throw), applies
                 // the mutation, and persists only when it reports a change (returns > 0).
                 _userConfigurationManager.RmwUserConfiguration<UserHiddenContent>(userIdN, "hidden-content.json", cfg =>
                 {
@@ -358,10 +385,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 _logger.LogInformation($"Admin unhid {removed} item(s) for {ResolveUserDisplay(userIdN)}.");
                 return Ok(new { success = true, removed });
             }
+            catch (UserStoreUnhealthyException)
+            {
+                return QuarantinedHiddenStore();
+            }
             catch (Exception ex) when (ex is InvalidDataException || ex is System.Text.Json.JsonException)
             {
-                _logger.LogWarning($"hidden-content.json corrupt for {ResolveUserDisplay(userIdN)} during admin unhide (backed up): {ex.Message}");
-                return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
+                _logger.LogWarning($"hidden-content.json corrupt for {ResolveUserDisplay(userIdN)} during admin unhide (recovery required): {ex.Message}");
+                return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt and requires administrator recovery." });
             }
             catch (IOException ioEx)
             {
@@ -446,10 +477,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 _logger.LogInformation($"Admin hid {added} item(s) for {ResolveUserDisplay(userIdN)}.");
                 return Ok(new { success = true, added });
             }
+            catch (UserStoreUnhealthyException)
+            {
+                return QuarantinedHiddenStore();
+            }
             catch (Exception ex) when (ex is InvalidDataException || ex is System.Text.Json.JsonException)
             {
-                _logger.LogWarning($"hidden-content.json corrupt for {ResolveUserDisplay(userIdN)} during admin hide (backed up): {ex.Message}");
-                return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
+                _logger.LogWarning($"hidden-content.json corrupt for {ResolveUserDisplay(userIdN)} during admin hide (recovery required): {ex.Message}");
+                return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt and requires administrator recovery." });
             }
             catch (IOException ioEx)
             {
@@ -627,9 +662,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 Services.HiddenContentResponseFilter.InvalidateUser(authorizedUserId);
                 return Ok(new { success = true, key, entry });
             }
+            catch (UserStoreUnhealthyException)
+            {
+                return QuarantinedHiddenStore();
+            }
             catch (Exception ex) when (ex is InvalidDataException || ex is System.Text.Json.JsonException)
             {
-                return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
+                return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt and requires administrator recovery." });
             }
             catch (Exception ex)
             {
@@ -693,9 +732,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 Services.HiddenContentResponseFilter.InvalidateUser(authorizedUserId);
                 return Ok(new { success = true });
             }
+            catch (UserStoreUnhealthyException)
+            {
+                return QuarantinedHiddenStore();
+            }
             catch (Exception ex) when (ex is InvalidDataException || ex is System.Text.Json.JsonException)
             {
-                return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt; backed up. Please retry." });
+                return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt and requires administrator recovery." });
             }
             catch (Exception ex)
             {

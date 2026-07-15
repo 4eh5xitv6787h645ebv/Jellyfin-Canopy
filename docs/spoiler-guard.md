@@ -247,9 +247,18 @@ Spoiler Guard **fails closed** whenever it can't read your spoiler policy — it
 
 - If your `spoilerblur.json` becomes corrupt or is temporarily unreadable (a disk or permission fault), the server keeps protecting your **last known-good** list.
 - If the fault happens before any good copy was ever loaded — for example right after a server restart — it protects **everything** until the file is readable.
-- The server logs the fault, and protection returns to normal automatically on the next successful read, or on any change you make to your Spoiler Guard list.
+- A temporary I/O or permission fault recovers on the next successful read. Confirmed malformed JSON is quarantined and stays fail-closed until an administrator explicitly repairs or resets it.
 
-Separately, when a corrupt file is *detected* (truncated by a power loss mid-write, mangled by a backup tool, and so on), the plugin backs it up to `spoilerblur.json.corrupt-{timestamp}`, resets the on-disk state to defaults, and records the event so the affected user knows to re-enable their items. This is automatic and needs no configuration.
+When corruption is *detected* (truncated by a power loss mid-write, mangled by a
+backup tool, and so on), the plugin moves the exact bytes once to a bounded
+`spoilerblur.json.corrupt-*` artifact and publishes a durable
+`spoilerblur.json.unhealthy` marker. It does **not** silently reset or allow an
+ordinary save to overwrite that state. An administrator can inspect all marked
+stores at `GET /JellyfinCanopy/admin/user-store-recovery`, then either repair the
+JSON offline or deliberately reset this store with
+`POST /JellyfinCanopy/admin/user-store-recovery/{userId}/spoilerblur.json/reset`.
+Reset preserves the forensic artifact and starts Spoiler Guard from defaults on
+the next access.
 
 ### Health and diagnostics endpoints
 
@@ -290,4 +299,4 @@ Most issues come down to one of two things: a master switch that isn't on yet, o
 - Clear the client's image cache once (or force-stop and reopen) so it refetches fresh, marker-carrying URLs; or
 - configure the proxy to send `X-Forwarded-For` and add it under **Dashboard → Networking → Known proxies**, restoring real client IPs for the fallback path. The **Per-user image identity tags** setting must stay enabled (it is by default) for marker-based identification.
 
-**Everything is suddenly blurred, even shows I never opted in.** That's Spoiler Guard [failing closed](#fail-closed-behavior) because it couldn't read your spoiler policy — for example a corrupt or temporarily unreadable `spoilerblur.json`. Protection returns to normal automatically once the file is readable again (the next successful read, or any change you make to your list). The server logs the fault so an operator can investigate.
+**Everything is suddenly blurred, even shows I never opted in.** That's Spoiler Guard [failing closed](#fail-closed-behavior) because it couldn't read your spoiler policy. A temporarily unreadable `spoilerblur.json` recovers when storage is readable again. A malformed file is quarantined and requires the administrator to repair it offline or use the explicit recovery reset; ordinary retries and list changes cannot bypass the marker. The server records the first corruption transition so an operator can investigate without retry-log amplification.

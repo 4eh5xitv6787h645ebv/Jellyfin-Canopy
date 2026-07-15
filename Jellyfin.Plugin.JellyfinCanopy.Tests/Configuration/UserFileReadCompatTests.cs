@@ -1,6 +1,8 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -20,7 +22,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
     /// save permanently overwrites the user's real data.
     ///
     /// Also pins the STRICT read-modify-write semantics: corrupt files must
-    /// throw (never silently become defaults) and leave a .corrupt-* backup.
+    /// throw (never silently become defaults), enter one durable recovery state,
+    /// and leave bounded .corrupt-* forensic evidence.
     /// </summary>
     public class UserFileReadCompatTests : IDisposable
     {
@@ -28,6 +31,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
 
         private readonly string _baseDir;
         private readonly UserConfigurationManager _manager;
+
+        private sealed class CollectingLogger : ILogger<UserConfigurationManager>
+        {
+            public ConcurrentQueue<string> Messages { get; } = new();
+
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+                => Messages.Enqueue(formatter(state, exception));
+        }
 
         public UserFileReadCompatTests()
         {
@@ -219,29 +239,72 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
         [InlineData("   \n")]      // whitespace only
         [InlineData("null")]       // literal JSON null
         [InlineData("{{{ nope")]   // parse failure
-        public void StrictRead_CorruptFile_Throws_And_BacksUp(string content)
+        public void StrictRead_CorruptFile_QuarantinesOnce_AndPublishesRecoveryMarker(string content)
         {
             SeedUserFileRaw("settings.json", content);
 
-            Assert.ThrowsAny<Exception>(() => _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
+            var error = Assert.Throws<UserStoreUnhealthyException>(
+                () => _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
 
-            // Original bytes are preserved twice over: in place and as a forensic backup.
-            Assert.Equal(content, File.ReadAllText(Path.Combine(UserDir, "settings.json")));
-            Assert.Single(Directory.GetFiles(UserDir, "settings.json.corrupt-*"));
+            Assert.True(error.NewlyQuarantined);
+            Assert.False(File.Exists(Path.Combine(UserDir, "settings.json")));
+            Assert.True(File.Exists(Path.Combine(UserDir, "settings.json.unhealthy")));
+            var quarantine = Assert.Single(Directory.GetFiles(UserDir, "settings.json.corrupt-*"));
+            Assert.Equal(content, File.ReadAllText(quarantine));
+
+            var status = Assert.Single(_manager.GetUnhealthyUserStores());
+            Assert.Equal(UserId, status.UserId);
+            Assert.Equal("settings.json", status.FileName);
+            Assert.True(status.MarkerReadable);
+            Assert.True(status.QuarantineComplete);
         }
 
         [Fact]
-        public void StrictRead_RepeatedSameCorruption_ReusesOneBoundedForensicBackup()
+        public void StrictRead_OneHundredConcurrentRetries_CreateExactlyOneQuarantine()
         {
             SeedUserFileRaw("settings.json", "{{{ repeated corruption");
+            var outcomes = new ConcurrentBag<UserStoreUnhealthyException>();
 
-            for (var attempt = 0; attempt < 10; attempt++)
+            Parallel.For(0, 100, _ =>
             {
-                Assert.ThrowsAny<Exception>(() =>
-                    _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
+                try
+                {
+                    _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json");
+                }
+                catch (UserStoreUnhealthyException ex)
+                {
+                    outcomes.Add(ex);
+                }
+            });
+
+            Assert.Equal(100, outcomes.Count);
+            Assert.Single(outcomes, outcome => outcome.NewlyQuarantined);
+            Assert.Single(Directory.GetFiles(UserDir, "settings.json.corrupt-*"));
+            Assert.True(File.Exists(Path.Combine(UserDir, "settings.json.unhealthy")));
+            Assert.False(File.Exists(Path.Combine(UserDir, "settings.json")));
+        }
+
+        [Fact]
+        public void StrictRead_RepeatedRetries_DoNotAmplifyStoreLogs()
+        {
+            var logger = new CollectingLogger();
+            var manager = new UserConfigurationManager(new StubAppPaths(_baseDir), logger);
+            SeedUserFileRaw("settings.json", "{{{ one logged transition");
+
+            Assert.Throws<UserStoreUnhealthyException>(() =>
+                manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
+            var afterTransition = logger.Messages.Count;
+
+            for (var attempt = 0; attempt < 20; attempt++)
+            {
+                Assert.Throws<UserStoreUnhealthyException>(() =>
+                    manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
+                Assert.Throws<UserStoreUnhealthyException>(() =>
+                    manager.SaveUserConfiguration(UserId, "settings.json", new UserSettings()));
             }
 
-            Assert.Single(Directory.GetFiles(UserDir, "settings.json.corrupt-*"));
+            Assert.Equal(afterTransition, logger.Messages.Count);
+            Assert.Single(logger.Messages, message => message.Contains("entered recovery state", StringComparison.Ordinal));
         }
 
         [Fact]
@@ -250,32 +313,103 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             for (var version = 0; version < 8; version++)
             {
                 SeedUserFileRaw("settings.json", $"{{{{{{ corruption-{version}");
-                Assert.ThrowsAny<Exception>(() =>
+                Assert.Throws<UserStoreUnhealthyException>(() =>
                     _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
+                if (version < 7)
+                {
+                    Assert.True(_manager.ResetUnhealthyUserStore(UserId, "settings.json"));
+                }
                 System.Threading.Thread.Sleep(2);
             }
 
             Assert.Equal(5, Directory.GetFiles(UserDir, "settings.json.corrupt-*").Length);
-            Assert.Equal("{{{ corruption-7", File.ReadAllText(Path.Combine(UserDir, "settings.json")));
+            Assert.False(File.Exists(Path.Combine(UserDir, "settings.json")));
+            Assert.Contains(
+                Directory.GetFiles(UserDir, "settings.json.corrupt-*"),
+                path => File.ReadAllText(path) == "{{{ corruption-7");
         }
 
         [Fact]
-        public void StrictRead_UnreadableOldBackup_DoesNotPreventPreservingNewCorruptBytes()
+        public void StrictRead_DistinctLargeGenerations_StayWithinByteBudget()
         {
-            const string content = "{{{ current-corrupt";
-            SeedUserFileRaw("settings.json", content);
-            var unreadable = Path.Combine(UserDir, "settings.json.corrupt-20000101000000000");
-            File.WriteAllText(unreadable, new string('x', content.Length));
-
-            using (File.Open(unreadable, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            var contentBytes = 8 * 1024 * 1024 + 256 * 1024;
+            for (var version = 0; version < 4; version++)
             {
-                Assert.ThrowsAny<Exception>(() =>
+                SeedUserFileRaw("settings.json", new string((char)('a' + version), contentBytes));
+                Assert.Throws<UserStoreUnhealthyException>(() =>
                     _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
+                if (version < 3)
+                {
+                    Assert.True(_manager.ResetUnhealthyUserStore(UserId, "settings.json"));
+                }
+                System.Threading.Thread.Sleep(2);
             }
 
             var backups = Directory.GetFiles(UserDir, "settings.json.corrupt-*");
-            Assert.Equal(2, backups.Length);
-            Assert.Contains(backups, path => path != unreadable && File.ReadAllText(path) == content);
+            Assert.Equal(3, backups.Length);
+            Assert.True(backups.Sum(path => new FileInfo(path).Length) <= 32L * 1024 * 1024);
+        }
+
+        [Fact]
+        public void ResetUnhealthyStore_PreservesEvidence_ClearsMarker_AndRestoresWrites()
+        {
+            SeedUserFileRaw("settings.json", "{{{ needs explicit reset");
+            Assert.Throws<UserStoreUnhealthyException>(() =>
+                _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
+
+            Assert.Throws<UserStoreUnhealthyException>(() =>
+                _manager.SaveUserConfiguration(UserId, "settings.json", new UserSettings()));
+            Assert.True(_manager.UserConfigurationExists(UserId, "settings.json"));
+
+            Assert.True(_manager.ResetUnhealthyUserStore(UserId, "settings.json"));
+            Assert.False(File.Exists(Path.Combine(UserDir, "settings.json.unhealthy")));
+            Assert.Single(Directory.GetFiles(UserDir, "settings.json.corrupt-*"));
+            Assert.False(_manager.UserConfigurationExists(UserId, "settings.json"));
+
+            var defaults = _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json");
+            Assert.Equal(5, defaults.PauseScreenDelaySeconds);
+            defaults.LastOpenedTab = "recovered";
+            _manager.SaveUserConfiguration(UserId, "settings.json", defaults);
+            Assert.Equal("recovered", _manager.GetUserConfiguration<UserSettings>(UserId, "settings.json").LastOpenedTab);
+            Assert.Empty(_manager.GetUnhealthyUserStores());
+        }
+
+        [Fact]
+        public void ResetUnhealthyStore_CompletesMarkerFirstInterruptedQuarantine()
+        {
+            const string corrupt = "{{{ interrupted after marker publish";
+            SeedUserFileRaw("settings.json", corrupt);
+            Assert.Throws<UserStoreUnhealthyException>(() =>
+                _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
+
+            var primary = Path.Combine(UserDir, "settings.json");
+            var quarantine = Assert.Single(Directory.GetFiles(UserDir, "settings.json.corrupt-*"));
+            File.Move(quarantine, primary);
+            Assert.False(Assert.Single(_manager.GetUnhealthyUserStores()).QuarantineComplete);
+
+            Assert.True(_manager.ResetUnhealthyUserStore(UserId, "settings.json"));
+
+            Assert.False(File.Exists(primary));
+            Assert.False(File.Exists(primary + ".unhealthy"));
+            Assert.Equal(
+                corrupt,
+                File.ReadAllText(Assert.Single(Directory.GetFiles(UserDir, "settings.json.corrupt-*"))));
+        }
+
+        [Fact]
+        public void ResetUnhealthyStore_MissingSourceAndQuarantine_LeavesMarkerFailClosed()
+        {
+            SeedUserFileRaw("settings.json", "{{{ evidence will vanish");
+            Assert.Throws<UserStoreUnhealthyException>(() =>
+                _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
+
+            File.Delete(Assert.Single(Directory.GetFiles(UserDir, "settings.json.corrupt-*")));
+
+            Assert.Throws<InvalidDataException>(() =>
+                _manager.ResetUnhealthyUserStore(UserId, "settings.json"));
+            Assert.True(File.Exists(Path.Combine(UserDir, "settings.json.unhealthy")));
+            Assert.Throws<UserStoreUnhealthyException>(() =>
+                _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json"));
         }
 
         /// <summary>
@@ -315,10 +449,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
         {
             SeedUserFileRaw("hidden-content.json", "{{{ corrupt");
 
-            Assert.ThrowsAny<Exception>(() =>
+            Assert.Throws<UserStoreUnhealthyException>(() =>
                 _manager.RmwUserConfiguration<UserHiddenContent>(UserId, "hidden-content.json", hc => 1));
 
-            Assert.Equal("{{{ corrupt", File.ReadAllText(Path.Combine(UserDir, "hidden-content.json")));
+            Assert.False(File.Exists(Path.Combine(UserDir, "hidden-content.json")));
+            Assert.Equal(
+                "{{{ corrupt",
+                File.ReadAllText(Assert.Single(Directory.GetFiles(UserDir, "hidden-content.json.corrupt-*"))));
+            Assert.True(File.Exists(Path.Combine(UserDir, "hidden-content.json.unhealthy")));
         }
 
         [Fact]

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using MediaBrowser.Common.Configuration;
 using Microsoft.Extensions.Logging;
@@ -51,7 +52,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public T GetUserConfiguration<T>(string userId, string fileName) where T : new()
             => _store.GetUserConfiguration<T>(userId, fileName);
 
-        // Strict read for RMW: existing empty/null/garbage is corruption; backs up to .corrupt-{ts} and throws.
+        // Strict read for RMW: existing empty/null/garbage enters durable quarantine and throws.
         public T GetUserConfigurationStrict<T>(string userId, string fileName) where T : new()
             => _store.GetUserConfigurationStrict<T>(userId, fileName);
 
@@ -76,6 +77,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         /// </summary>
         public string[] GetAllUserIds()
             => _store.GetAllUserIds();
+
+        /// <summary>
+        /// Returns durable per-user corruption markers for the elevation-gated
+        /// recovery surface. No quarantined payload bytes are exposed.
+        /// </summary>
+        internal IReadOnlyList<UserStoreRecoveryStatus> GetUnhealthyUserStores()
+            => _store.GetUnhealthyUserStores();
+
+        /// <summary>
+        /// Explicitly retires one unhealthy generation after preserving any
+        /// source bytes left by an interrupted quarantine. The next ordinary
+        /// access initializes the file's normal defaults.
+        /// </summary>
+        internal bool ResetUnhealthyUserStore(string userId, string fileName)
+            => _store.ResetUnhealthyUserStore(userId, fileName);
 
         // ─── Indexed shared reviews (ReviewsStore) ───────────────────────────────
 
@@ -133,7 +149,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         /// (WatchlistMonitor + SeerrWatchlistSyncTask) MUST go through this so
         /// concurrent event/scheduled writers cannot lose each other's markers. The
         /// mutator returns the number of changes; a return of 0 skips the save.
-        /// Strict-read semantics apply (a corrupt file backs up + throws), so callers
+        /// Strict-read semantics apply (a corrupt file is quarantined + throws), so callers
         /// running off the request path must catch/log/skip rather than propagate.
         /// </summary>
         public int RmwProcessedWatchlistItems(Guid userId, Func<ProcessedWatchlistItems, int> mutate)
@@ -160,6 +176,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                     }
                     return removed;
                 });
+            }
+            catch (UserStoreUnhealthyException)
+            {
+                // The quarantine transition was logged once by the store.
             }
             catch (Exception ex)
             {

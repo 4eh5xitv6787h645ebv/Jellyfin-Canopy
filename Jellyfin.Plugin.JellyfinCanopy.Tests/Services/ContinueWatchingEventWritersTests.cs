@@ -5,6 +5,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -18,6 +19,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
     /// </summary>
     public sealed class ContinueWatchingEventWritersTests
     {
+        private sealed class CollectingLogger<T> : ILogger<T>
+        {
+            public List<string> Messages { get; } = new();
+
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+                => Messages.Add(formatter(state, exception));
+        }
+
         [Fact]
         public async Task Consumer_OnResume_InvalidatesHcFilterCache()
         {
@@ -57,6 +75,45 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             finally
             {
                 try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort cleanup */ }
+            }
+        }
+
+        [Fact]
+        public async Task Consumer_QuarantinedStore_SkipsRepeatedPlaybackWithoutLogging()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-quarantine-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var ucm = new UserConfigurationManager(new StubAppPaths(tempDir), NullLogger<UserConfigurationManager>.Instance);
+                var userId = Guid.NewGuid();
+                var userDir = Path.Combine(
+                    tempDir,
+                    "configurations",
+                    "Jellyfin.Plugin.JellyfinCanopy",
+                    userId.ToString("N"));
+                Directory.CreateDirectory(userDir);
+                File.WriteAllText(Path.Combine(userDir, "hidden-content.json"), "{{{ corrupt");
+                Assert.Throws<UserStoreUnhealthyException>(() =>
+                    ucm.GetUserConfigurationStrict<UserHiddenContent>(userId.ToString("N"), "hidden-content.json"));
+
+                var logger = new CollectingLogger<ContinueWatchingPlaybackConsumer>();
+                var provider = new FakePluginConfigProvider(new PluginConfiguration { RemoveContinueWatchingEnabled = true });
+                var consumer = new ContinueWatchingPlaybackConsumer(ucm, logger, provider);
+                var args = new PlaybackStartEventArgs
+                {
+                    Item = new Movie { Id = Guid.NewGuid() },
+                    Session = new SessionInfo(null!, NullLogger.Instance) { UserId = userId }
+                };
+
+                await consumer.OnEvent(args);
+                await consumer.OnEvent(args);
+
+                Assert.Empty(logger.Messages);
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
             }
         }
 

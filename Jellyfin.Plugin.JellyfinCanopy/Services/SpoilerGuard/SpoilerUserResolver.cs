@@ -310,8 +310,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         // Track per-user corruption events so the admin can surface a banner in the
         // JC management UI. Populated by the controller/tag-cache STRICT read+write
-        // path when a mutation hits a corrupt spoilerblur.json (it backs the file up
-        // to .corrupt-* and refuses to overwrite). Note the runtime ENFORCEMENT read
+        // path when a mutation hits a corrupt spoilerblur.json (it quarantines the
+        // bytes to .corrupt-* and refuses to overwrite). Note the runtime ENFORCEMENT read
         // (LoadUserState) no longer fails open on corruption: it retains
         // last-known-good or fails CLOSED, so protection is preserved rather than
         // silently no-op'd. The banner still lets the user know a repair is needed.
@@ -326,12 +326,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         public static void RecordCorruption(string userKey, string userDisplay, string reason)
         {
-            _corruptionLog[userKey] = new CorruptionEvent
+            // TryAdd makes marker hits idempotent: retries do not refresh the event
+            // timestamp, while the first hit after a process restart reconstructs
+            // the in-memory banner from the still-durable marker.
+            _corruptionLog.TryAdd(userKey, new CorruptionEvent
             {
                 UserDisplay = userDisplay,
                 At = DateTime.UtcNow,
                 Reason = reason,
-            };
+            });
         }
 
         public static IReadOnlyDictionary<string, CorruptionEvent> GetCorruptionLog()

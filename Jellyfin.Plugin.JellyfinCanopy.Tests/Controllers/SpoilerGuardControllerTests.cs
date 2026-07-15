@@ -315,6 +315,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             }
         }
 
+        [Fact]
+        public void CorruptionBanner_RepeatedMarkerHitsKeepFirstEvent()
+        {
+            var userKey = Guid.NewGuid().ToString("N");
+            try
+            {
+                SpoilerUserResolver.RecordCorruption(userKey, "user", "first marker hit");
+                var first = SpoilerUserResolver.GetCorruptionLog()[userKey];
+
+                SpoilerUserResolver.RecordCorruption(userKey, "changed", "retry");
+                var afterRetry = SpoilerUserResolver.GetCorruptionLog()[userKey];
+
+                Assert.Same(first, afterRetry);
+                Assert.Equal("first marker hit", afterRetry.Reason);
+            }
+            finally
+            {
+                SpoilerUserResolver.ClearCorruption(userKey);
+            }
+        }
+
         // ─── F4: movie scope probe endpoint ───────────────────────────────────────
 
         [Fact]

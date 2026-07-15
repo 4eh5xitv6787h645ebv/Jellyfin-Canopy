@@ -113,6 +113,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
                         return keysToDrop.Count + keysToDemote.Count;
                     });
                 }
+                catch (UserStoreUnhealthyException)
+                {
+                    return Task.CompletedTask;
+                }
                 catch (InvalidDataException ex)
                 {
                     _logger.LogWarning($"CW: skipping playback drop for user {userId} due to corrupt hidden-content.json: {ex.Message}");
@@ -293,6 +297,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
                 {
                     HiddenContentResponseFilter.InvalidateUser(userId.ToString("N"));
                 }
+            }
+            catch (UserStoreUnhealthyException)
+            {
+                // The marker transition is already logged centrally. Repeated
+                // library events must remain silent until explicit recovery.
             }
             catch (InvalidDataException ex)
             {

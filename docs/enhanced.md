@@ -426,10 +426,11 @@ When enabled, the Hidden Content management page is a routed destination reachab
     keeps enforcing your **last known-good** list; and if the fault happens
     before any good copy was loaded (e.g. right after a server restart) the
     affected rows are **hidden entirely** rather than risk your hidden items
-    reappearing. The fault is logged for the operator, and normal filtering
-    resumes automatically once the file is readable again (or the moment you
-    next change your hidden list). A storage fault can never silently *reveal*
-    what you hid.
+    reappearing. A temporary read/permission fault resumes automatically once the
+    file is readable. Confirmed malformed JSON is quarantined once and requires an
+    administrator to inspect and repair it or explicitly reset that one store;
+    repeatedly saving or reloading cannot overwrite the forensic copy. A storage
+    fault can never silently *reveal* what you hid.
 
 #### Admin: other users' hidden content
 
