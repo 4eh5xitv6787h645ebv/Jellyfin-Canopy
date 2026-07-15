@@ -255,7 +255,12 @@ if ! "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1; then
 fi
 rm -rf -- "${CONFIG_DIR}" "${CACHE_DIR}" "${MEDIA_DIR}" "${MOCK_STATE_DIR}"
 rm -f -- "${SEED_RESULT}" "${SEED_RESULT_TMP}"
-mkdir -p -- "${CONFIG_DIR}/plugins/JellyfinCanopy_e2e" "${CACHE_DIR}" "${MEDIA_DIR}" "${MOCK_STATE_DIR}"
+mkdir -p -- \
+    "${CONFIG_DIR}/plugins/JellyfinCanopy_e2e" \
+    "${CONFIG_DIR}/data/collections" \
+    "${CACHE_DIR}" \
+    "${MEDIA_DIR}" \
+    "${MOCK_STATE_DIR}"
 cp -- "${PLUGIN_DLL}" "${CONFIG_DIR}/plugins/JellyfinCanopy_e2e/"
 log "installed plugin DLL into the isolated config volume"
 
@@ -447,10 +452,15 @@ log "creating the Shows library"
 api POST "/Library/VirtualFolders?name=Shows&collectionType=tvshows&paths=%2Fmedia%2FShows&refreshLibrary=false" \
     '{"LibraryOptions":{"EnableRealtimeMonitor":false}}'
 
-# A refresh per library creates two independent scans. Their state can briefly
-# become Idle between runs, and the later scan can overwrite deterministic
-# ProviderIds written below. Capture a high-resolution timestamp and trigger
-# exactly one scan after both libraries exist; metadata writes later require a
+log "creating the Collections library without an implicit scan"
+api POST "/Library/VirtualFolders?name=Collections&collectionType=boxsets&paths=%2Fconfig%2Fdata%2Fcollections&refreshLibrary=false" \
+    '{"LibraryOptions":{"EnableRealtimeMonitor":false,"SaveLocalMetadata":true}}'
+
+# A refresh per library creates independent scans. First-use collection
+# creation also adds this boxsets virtual folder with refresh enabled when
+# it is absent. Those queued scans can overwrite deterministic ProviderIds
+# written below. Capture a high-resolution timestamp and trigger exactly one
+# scan after all three libraries exist; metadata writes later require a
 # completed run whose own start time is strictly later than this trigger bound.
 LIBRARY_SCAN_TRIGGERED_AT="$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)"
 log "starting one explicit library scan"
