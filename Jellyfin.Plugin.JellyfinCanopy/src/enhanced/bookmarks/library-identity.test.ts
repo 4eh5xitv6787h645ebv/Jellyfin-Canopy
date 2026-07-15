@@ -3,7 +3,12 @@ import { JC } from '../../globals';
 import type { ApiApi } from '../../types/jc';
 import type { UserSettingsSaveResult } from '../config';
 import { renderBookmarksLibrary } from './library-render';
-import { findDuplicateBookmarks } from './library-modals';
+import {
+  duplicateMergeSources,
+  duplicateMergeTarget,
+  findDuplicateBookmarks
+} from './library-modals';
+import { compareBookmarkIdentity } from './bookmark-identity';
 
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 
@@ -191,5 +196,47 @@ describe('bookmarks library identity ownership', () => {
       conflict: { ...v1, tvdbId: 'wrong' },
       other: { ...otherVersion, tvdbId: 'right' }
     })).toEqual([]);
+  });
+
+  it('carries one canonical representative from detection through merge in either record order', () => {
+    const tmdbOnly = {
+      itemId: 'item-a', identityVersion: 1, itemType: 'movie', mediaType: 'movie',
+      tmdbId: '10', tvdbId: '', name: 'Movie'
+    };
+    const both = { ...tmdbOnly, tvdbId: '20' };
+    const tvdbOnly = { ...tmdbOnly, itemId: 'item-b', tmdbId: '', tvdbId: '20' };
+
+    for (const records of [
+      { sparse: tmdbOnly, rich: both, alternate: tvdbOnly },
+      { rich: both, sparse: tmdbOnly, alternate: tvdbOnly },
+      { alternate: tvdbOnly, sparse: tmdbOnly, rich: both }
+    ]) {
+      const duplicate = findDuplicateBookmarks(records)[0];
+      expect(duplicate).toBeDefined();
+      const itemIds = Object.keys(duplicate.itemGroups);
+      const target = duplicateMergeTarget(duplicate, itemIds[0]);
+      if (!target) throw new Error('expected canonical duplicate target');
+      const sources = duplicateMergeSources(duplicate, itemIds.slice(1));
+      expect(sources.length).toBeGreaterThan(0);
+      expect(sources.every(source => compareBookmarkIdentity(source, target) === 'logical')).toBe(true);
+      expect(duplicate.canonicalIdentities['item-a']).toMatchObject({ tmdbId: '10', tvdbId: '20' });
+    }
+
+    const wrongTvdb = { ...tvdbOnly, tvdbId: '21' };
+    expect(findDuplicateBookmarks({ sparse: tmdbOnly, rich: both, alternate: wrongTvdb })).toEqual([]);
+    expect(compareBookmarkIdentity(wrongTvdb, both)).toBe('none');
+  });
+
+  it('detects season-zero series-provider-only episode duplicates', () => {
+    const special = {
+      itemId: 'special-a', identityVersion: 1, itemType: 'episode', mediaType: 'tv',
+      tmdbId: '', tvdbId: '', seriesTmdbId: 'series-10', seriesTvdbId: '',
+      seasonNumber: 0, episodeNumber: 2, episodeEndNumber: 3, name: 'Special 2-3'
+    };
+    const alternate = { ...special, itemId: 'special-b' };
+
+    const duplicate = findDuplicateBookmarks({ special, alternate });
+    expect(duplicate).toHaveLength(1);
+    expect(duplicateMergeTarget(duplicate[0], 'special-a')).toMatchObject({ seasonNumber: 0 });
   });
 });

@@ -18,6 +18,8 @@ import {
 } from './bookmark-identity';
 
 const replacementModalTimers = new Set<number>();
+export const SERIES_ENRICHMENT_CHUNK_SIZE = 50;
+export const SERIES_ENRICHMENT_MAX_URL_LENGTH = 2048;
 
 interface StoredBookmark {
   itemId: string;
@@ -91,6 +93,31 @@ function replacementIdentity(item: JellyfinReplacementItem): BookmarkIdentityRec
       ? (Number.isSafeInteger(item.IndexNumberEnd) ? item.IndexNumberEnd : episodeNumber)
       : null
   };
+}
+
+function seriesEnrichmentUrl(userId: string, seriesIds: string[]): string {
+  const ids = seriesIds.map(id => encodeURIComponent(id)).join(',');
+  return `/Users/${userId}/Items?Ids=${ids}&Fields=ProviderIds&Limit=${seriesIds.length}`;
+}
+
+function chunkSeriesIds(userId: string, seriesIds: string[]): string[][] {
+  const chunks: string[][] = [];
+  let current: string[] = [];
+  for (const seriesId of seriesIds) {
+    const candidate = [...current, seriesId];
+    if (current.length > 0 && (
+      candidate.length > SERIES_ENRICHMENT_CHUNK_SIZE
+      || seriesEnrichmentUrl(userId, candidate).length > SERIES_ENRICHMENT_MAX_URL_LENGTH
+    )) {
+      chunks.push(current);
+      current = [];
+    }
+    if (seriesEnrichmentUrl(userId, [seriesId]).length <= SERIES_ENRICHMENT_MAX_URL_LENGTH) {
+      current.push(seriesId);
+    }
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
 }
 
 function currentImageApiClient(): ImageApiClient | null {
@@ -177,17 +204,27 @@ export async function searchForReplacementItem(
 
     const seriesIds = [...new Set(items.map(item => item.SeriesId).filter((id): id is string => !!id))];
     if (seriesIds.length > 0) {
-      let seriesResponse: unknown = await JC.core.api!.jf(
-        `/Users/${userId}/Items?Ids=${encodeURIComponent(seriesIds.join(','))}&Fields=ProviderIds&Limit=${seriesIds.length}`,
-        { skipCache: true }
-      );
-      if (!JC.identity.isCurrent(context)) return null;
-      if (typeof seriesResponse === 'string') seriesResponse = JSON.parse(seriesResponse) as unknown;
-      const seriesItems = seriesResponse !== null && typeof seriesResponse === 'object'
-        && !Array.isArray(seriesResponse) && 'Items' in seriesResponse && Array.isArray(seriesResponse.Items)
-        ? seriesResponse.Items.filter(isJellyfinReplacementItem)
-        : [];
-      const seriesProviders = new Map(seriesItems.map(item => [item.Id, item.ProviderIds || {}]));
+      const seriesProviders = new Map<string, { Tmdb?: string; Tvdb?: string }>();
+      for (const chunk of chunkSeriesIds(userId, seriesIds)) {
+        try {
+          let seriesResponse: unknown = await JC.core.api!.jf(
+            seriesEnrichmentUrl(userId, chunk),
+            { skipCache: true }
+          );
+          if (!JC.identity.isCurrent(context)) return null;
+          if (typeof seriesResponse === 'string') seriesResponse = JSON.parse(seriesResponse) as unknown;
+          const seriesItems = seriesResponse !== null && typeof seriesResponse === 'object'
+            && !Array.isArray(seriesResponse) && 'Items' in seriesResponse && Array.isArray(seriesResponse.Items)
+            ? seriesResponse.Items.filter(isJellyfinReplacementItem)
+            : [];
+          for (const seriesItem of seriesItems) {
+            seriesProviders.set(seriesItem.Id, seriesItem.ProviderIds || {});
+          }
+        } catch (error) {
+          if (!JC.identity.isCurrent(context)) return null;
+          console.warn(`🪼 Jellyfin Canopy: Bookmarks Library: Parent-series enrichment chunk failed; retaining item-provider matches`, error);
+        }
+      }
       items = items.map(item => ({
         ...item,
         SeriesProviderIds: item.SeriesId ? seriesProviders.get(item.SeriesId) : undefined

@@ -221,6 +221,25 @@ describe('bookmarks data-safety', () => {
             timestamp: 10, label: 'L', createdAt: 't0'
         }];
 
+        it('accepts and rejects the same canonical provider decision used by duplicate detection', async () => {
+            const api = await loadModule({});
+            const target = {
+                itemId: 'item-a', identityVersion: 1, itemType: 'movie', mediaType: 'movie',
+                tmdbId: '10', tvdbId: '20', name: 'Movie'
+            };
+            const tvdbOnly = [{
+                id: 'old', itemId: 'item-b', identityVersion: 1, itemType: 'movie', mediaType: 'movie',
+                tmdbId: '', tvdbId: '20', name: 'Movie', timestamp: 10
+            }];
+
+            await expect(api.syncBookmarks(tvdbOnly, target)).resolves.toHaveLength(1);
+            const callsAfterMatch = plugin.mock.calls.length;
+            await expect(api.syncBookmarks(
+                [{ ...tvdbOnly[0], tvdbId: '21' }], target
+            )).rejects.toThrow('different or ambiguous logical media');
+            expect(plugin).toHaveBeenCalledTimes(callsAfterMatch);
+        });
+
         it('commits the new copy and original removal in one batch', async () => {
             const api = await loadModule({ old1: { itemId: 'oldI', timestamp: 10, label: 'L', createdAt: 't0' } });
 

@@ -195,7 +195,9 @@ export function findDuplicateBookmarks(bookmarks: Record<string, any>): any[] {
     const ranked = [...records].sort((left, right) => {
       const leftFields = identityFields(left);
       const rightFields = identityFields(right);
-      const completeness = rightFields.filter(Boolean).length - leftFields.filter(Boolean).length;
+      const isPresent = (value: unknown): boolean => value !== null && value !== undefined
+        && (typeof value !== 'string' || value.trim() !== '');
+      const completeness = rightFields.filter(isPresent).length - leftFields.filter(isPresent).length;
       return completeness || JSON.stringify(leftFields).localeCompare(JSON.stringify(rightFields));
     });
     const identity = ranked[0];
@@ -233,15 +235,50 @@ export function findDuplicateBookmarks(bookmarks: Record<string, any>): any[] {
       candidates[member].itemId,
       candidates[member].records
     ]));
+    const canonicalIdentities = Object.fromEntries(members.map(member => [
+      candidates[member].itemId,
+      candidates[member].identity
+    ]));
     duplicateGroups.push({
       providerKey: bookmarkIdentityLabel(candidates[index].identity),
       itemGroups,
+      canonicalIdentities,
       totalBookmarks: Object.values<any>(itemGroups).flat().length,
       name: candidates[index].identity.name || 'Unknown'
     });
   }
 
   return duplicateGroups;
+}
+
+/** Carry the exact identity selected during duplicate detection into execution. */
+export function duplicateMergeTarget(duplicate: any, primaryItemId: string): Record<string, any> | null {
+  const identity = duplicate?.canonicalIdentities?.[primaryItemId];
+  if (!identity || typeof identity !== 'object') return null;
+  return {
+    ...identity,
+    itemId: primaryItemId,
+    mediaType: normalizeBookmarkMediaType(identity.mediaType),
+    name: identity.name || 'Unknown'
+  };
+}
+
+/** Enrich every source timestamp with its detection-time canonical identity. */
+export function duplicateMergeSources(duplicate: any, sourceItemIds: string[]): any[] {
+  const identityFields = [
+    'identityVersion', 'itemType', 'tmdbId', 'tvdbId', 'seriesTmdbId',
+    'seriesTvdbId', 'mediaType', 'seasonNumber', 'episodeNumber', 'episodeEndNumber'
+  ];
+  return sourceItemIds.flatMap(itemId => {
+    const canonical = duplicate?.canonicalIdentities?.[itemId];
+    if (!canonical || typeof canonical !== 'object') return [];
+    const identity = Object.fromEntries(identityFields.map(field => [field, canonical[field]]));
+    return (duplicate.itemGroups?.[itemId] || []).map((bookmark: any) => ({
+      ...bookmark,
+      ...identity,
+      itemId
+    }));
+  });
 }
 
 /**
@@ -372,8 +409,7 @@ export function showDuplicatesSyncModal(
       const primaryItemId = itemIds[0]; // First one is primary
       const oldItemIds = itemIds.slice(1);
 
-      const primaryBookmarks = dup.itemGroups[primaryItemId];
-      const oldBookmarks = oldItemIds.flatMap(id => dup.itemGroups[id]);
+      const oldBookmarks = duplicateMergeSources(dup, oldItemIds);
 
       if (!confirm(JC.t!('bookmark_merge_confirm').replace('{count}', String(oldBookmarks.length)))) {
         return;
@@ -384,13 +420,8 @@ export function showDuplicatesSyncModal(
       btn.querySelector('span:last-child')!.innerHTML = '<span class="material-icons" style="animation: spin 1s linear infinite; font-size: 18px;">refresh</span>';
 
       try {
-        // Get primary item details from first primary bookmark
-        const primaryDetails = {
-          ...primaryBookmarks[0],
-          itemId: primaryItemId,
-          mediaType: normalizeBookmarkMediaType(primaryBookmarks[0].mediaType),
-          name: primaryBookmarks[0].name
-        };
+        const primaryDetails = duplicateMergeTarget(dup, primaryItemId);
+        if (!primaryDetails) throw new Error('Duplicate group has no canonical primary identity');
 
         // Sync old bookmarks to primary
         const synced = await JC.bookmarks!.syncBookmarks(oldBookmarks, primaryDetails, 0);
