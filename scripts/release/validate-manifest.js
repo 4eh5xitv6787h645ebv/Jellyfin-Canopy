@@ -22,6 +22,8 @@
  *   - duplicate (version, targetAbi) pair
  *   - versions not strictly decreasing within each targetAbi stream
  *     (entries are newest-first; two ABI streams are interleaved by date)
+ *   - changelog over 4,096 UTF-8 bytes or 60 lines
+ *   - serialized manifest over 65,536 bytes
  *
  * Warnings (exit 0, printed for review):
  *   - zip filename doesn't follow the modern convention
@@ -48,6 +50,7 @@ const path = require('path');
 
 const { computeZipChecksum } = require('../lib/md5.js');
 const { expectedDllFromZipName, inspectZipLayout } = require('../lib/zip-layout.js');
+const manifestPolicy = require('./manifest-policy.json');
 
 const VERSION_RE = /^\d+\.\d+\.\d+\.\d+$/;
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -57,6 +60,9 @@ const SOURCE_URL_RE =
     /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/releases\/download\/[^/\s]+\/([^/\s]+\.zip)$/;
 
 const REQUIRED_ENTRY_FIELDS = ['changelog', 'targetAbi', 'version', 'sourceUrl', 'checksum', 'timestamp'];
+const MAX_CHANGELOG_BYTES = manifestPolicy.maxChangelogBytes;
+const MAX_CHANGELOG_LINES = manifestPolicy.maxChangelogLines;
+const MAX_MANIFEST_BYTES = manifestPolicy.maxManifestBytes;
 
 /** Compares two 4-part dotted versions. Returns <0, 0 or >0 like a comparator. */
 function compareVersions(a, b) {
@@ -77,15 +83,26 @@ function expectedZipName(targetAbi) {
 /**
  * Validates parsed manifest data.
  * @param {unknown} data Parsed JSON content of manifest.json.
+ * @param {{ manifestBytes?: number, enforcePayloadBudgets?: boolean }} [options]
+ *   Serialized payload evidence. Payload enforcement may be disabled only when
+ *   validating a frozen pre-policy comparison manifest; current catalogs must
+ *   always use the default strict behavior.
  * @returns {{ errors: string[], warnings: string[] }}
  */
-function validateManifest(data) {
+function validateManifest(data, options = {}) {
     const errors = [];
     const warnings = [];
+    const enforcePayloadBudgets = options.enforcePayloadBudgets !== false;
 
     if (!Array.isArray(data) || data.length === 0) {
         errors.push('manifest must be a non-empty JSON array of plugin objects');
         return { errors, warnings };
+    }
+
+    const manifestBytes = options.manifestBytes
+        ?? Buffer.byteLength(`${JSON.stringify(data, null, 2)}\n`, 'utf8');
+    if (enforcePayloadBudgets && manifestBytes > MAX_MANIFEST_BYTES) {
+        errors.push(`manifest is ${manifestBytes} bytes; maximum is ${MAX_MANIFEST_BYTES}`);
     }
 
     data.forEach((plugin, pi) => {
@@ -123,6 +140,20 @@ function validateManifest(data) {
             for (const field of REQUIRED_ENTRY_FIELDS) {
                 if (typeof entry[field] !== 'string' || entry[field].length === 0) {
                     errors.push(`${at}: missing or non-string "${field}"`);
+                }
+            }
+            if (typeof entry.changelog === 'string') {
+                const changelogBytes = Buffer.byteLength(entry.changelog, 'utf8');
+                const changelogLines = entry.changelog.replace(/\r\n?/g, '\n').split('\n').length;
+                if (enforcePayloadBudgets && changelogBytes > MAX_CHANGELOG_BYTES) {
+                    errors.push(
+                        `${at}: changelog is ${changelogBytes} bytes; maximum is ${MAX_CHANGELOG_BYTES}`
+                    );
+                }
+                if (enforcePayloadBudgets && changelogLines > MAX_CHANGELOG_LINES) {
+                    errors.push(
+                        `${at}: changelog is ${changelogLines} lines; maximum is ${MAX_CHANGELOG_LINES}`
+                    );
                 }
             }
             // Field-level checks below only make sense on strings.
@@ -295,7 +326,9 @@ function main() {
         process.exit(1);
     }
 
-    const { errors, warnings } = validateManifest(data);
+    const { errors, warnings } = validateManifest(data, {
+        manifestBytes: Buffer.byteLength(raw, 'utf8'),
+    });
 
     // Opt-in: when --assets-dir is passed (the release path, after packaging),
     // verify checksum CORRECTNESS and exact root-DLL layout against the actual
@@ -323,4 +356,12 @@ if (require.main === module) {
     main();
 }
 
-module.exports = { validateManifest, verifyChecksums, compareVersions, expectedZipName };
+module.exports = {
+    MAX_CHANGELOG_BYTES,
+    MAX_CHANGELOG_LINES,
+    MAX_MANIFEST_BYTES,
+    compareVersions,
+    expectedZipName,
+    validateManifest,
+    verifyChecksums,
+};

@@ -114,6 +114,29 @@ test.before(async () => {
                 response.end(JSON.stringify(publicManifest));
                 break;
             }
+            case '/manifest-legacy': {
+                const legacyManifest = manifestWith(manifestEntry(
+                    'https://github.com/example/catalog/releases/download/2.0.0.0/plugin.zip',
+                    goodZip,
+                    { changelog: 'x'.repeat(4097) }
+                ));
+                response.writeHead(200, { 'Content-Type': 'application/json' });
+                response.end(JSON.stringify(legacyManifest));
+                break;
+            }
+            case '/manifest-padded': {
+                const publicManifest = manifestWith(manifestEntry(
+                    'https://github.com/example/catalog/releases/download/2.0.0.0/plugin.zip',
+                    goodZip
+                ));
+                const body = `${JSON.stringify(publicManifest)}${' '.repeat(70_000)}`;
+                response.writeHead(200, {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(body),
+                });
+                response.end(body);
+                break;
+            }
             case '/icon.png':
                 response.writeHead(200, { 'Content-Type': 'image/png' });
                 response.end(pngImage);
@@ -327,6 +350,48 @@ test('the advertised manifest endpoint must itself return valid JSON with HTTP 2
         allowInsecureLocalhost: true,
     });
     assert.match(missing.errors.join('\n'), /HTTP 404/);
+});
+
+test('public endpoint permits only the exact structurally valid pre-policy base payload', async () => {
+    const legacyReference = manifestWith(manifestEntry(
+        'https://github.com/example/catalog/releases/download/2.0.0.0/plugin.zip',
+        goodZip,
+        { changelog: 'x'.repeat(4097) }
+    ));
+    const strict = await verifyManifestEndpoint(`${baseUrl}/manifest-legacy`, {
+        allowInsecureLocalhost: true,
+    });
+    assert.match(strict.errors.join('\n'), /changelog is 4097 bytes/);
+
+    const migration = await verifyManifestEndpoint(`${baseUrl}/manifest-legacy`, {
+        allowInsecureLocalhost: true,
+        legacyPayloadReference: legacyReference,
+    });
+    assert.deepEqual(migration.errors, []);
+
+    legacyReference[0].versions[0].checksum = '0'.repeat(32);
+    const mismatch = await verifyManifestEndpoint(`${baseUrl}/manifest-legacy`, {
+        allowInsecureLocalhost: true,
+        legacyPayloadReference: legacyReference,
+    });
+    assert.match(mismatch.errors.join('\n'), /changelog is 4097 bytes/);
+});
+
+test('public endpoint enforces wire bytes and a compliant base cannot authorize overflow', async () => {
+    const strictReference = manifestWith(manifestEntry(
+        'https://github.com/example/catalog/releases/download/2.0.0.0/plugin.zip',
+        goodZip
+    ));
+    const strict = await verifyManifestEndpoint(`${baseUrl}/manifest-padded`, {
+        allowInsecureLocalhost: true,
+    });
+    assert.match(strict.errors.join('\n'), /manifest is \d+ bytes; maximum is 65536/);
+
+    const cannotReuseMigration = await verifyManifestEndpoint(`${baseUrl}/manifest-padded`, {
+        allowInsecureLocalhost: true,
+        legacyPayloadReference: strictReference,
+    });
+    assert.match(cannotReuseMigration.errors.join('\n'), /manifest is \d+ bytes; maximum is 65536/);
 });
 
 test('download size is bounded even when the server declares a larger body', async () => {

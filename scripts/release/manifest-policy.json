@@ -1,0 +1,5 @@
+{
+  "maxChangelogBytes": 4096,
+  "maxChangelogLines": 60,
+  "maxManifestBytes": 65536
+}

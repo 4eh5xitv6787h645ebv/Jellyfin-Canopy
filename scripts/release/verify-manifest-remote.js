@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const https = require('node:https');
 const path = require('node:path');
+const { isDeepStrictEqual } = require('node:util');
 const { URL } = require('node:url');
 
 const { validateManifest } = require('./validate-manifest.js');
@@ -56,6 +57,10 @@ function isAuthenticationUrl(url) {
  * @property {number} [timeoutMs]
  * @property {number} [maxBytes]
  * @property {boolean} [allowInsecureLocalhost]
+ */
+
+/**
+ * @typedef {RequestOptions & {legacyPayloadReference?: unknown}} ManifestEndpointOptions
  */
 
 /**
@@ -337,7 +342,7 @@ function selectChangedEntries(data, baseData) {
 /**
  * Proves that the documented catalog itself is anonymously readable and valid.
  * @param {string} manifestUrl
- * @param {RequestOptions} [options]
+ * @param {ManifestEndpointOptions} [options]
  * @returns {Promise<{errors: string[], entryCount: number}>}
  */
 async function verifyManifestEndpoint(manifestUrl, options = {}) {
@@ -347,7 +352,29 @@ async function verifyManifestEndpoint(manifestUrl, options = {}) {
             maxBytes: options.maxBytes || DEFAULT_MAX_MANIFEST_BYTES,
         });
         const parsed = JSON.parse(body.toString('utf8'));
-        const { errors } = validateManifest(parsed);
+        let { errors } = validateManifest(parsed, { manifestBytes: body.length });
+        // During the one-time policy migration, main still serves the exact
+        // pre-policy base catalog until this pull request merges. Permit only
+        // that byte-budget legacy shape: it must match the reviewed base data
+        // exactly, the base itself must require migration, and both must still
+        // pass every non-payload manifest invariant. A later compliant base can
+        // never authorize an oversized wire response.
+        const referenceStrict = options.legacyPayloadReference === undefined
+            ? null
+            : validateManifest(options.legacyPayloadReference);
+        const referenceLegacy = options.legacyPayloadReference === undefined
+            ? null
+            : validateManifest(options.legacyPayloadReference, { enforcePayloadBudgets: false });
+        if (errors.length > 0
+            && options.legacyPayloadReference !== undefined
+            && referenceStrict !== null
+            && referenceStrict.errors.length > 0
+            && referenceLegacy !== null
+            && referenceLegacy.errors.length === 0
+            && isDeepStrictEqual(parsed, options.legacyPayloadReference)) {
+            const legacy = validateManifest(parsed, { enforcePayloadBudgets: false });
+            if (legacy.errors.length === 0) errors = [];
+        }
         const entryCount = Array.isArray(parsed)
             ? parsed.reduce((count, plugin) => count + (Array.isArray(plugin?.versions) ? plugin.versions.length : 0), 0)
             : 0;
@@ -410,10 +437,11 @@ async function main() {
     const local = validateManifest(data);
     const errors = [...local.errors];
     let sourceData = data;
+    let baseData = null;
     if (errors.length === 0 && options.baseManifestPath) {
         try {
-            const baseData = JSON.parse(fs.readFileSync(options.baseManifestPath, 'utf8'));
-            const baseValidation = validateManifest(baseData);
+            baseData = JSON.parse(fs.readFileSync(options.baseManifestPath, 'utf8'));
+            const baseValidation = validateManifest(baseData, { enforcePayloadBudgets: false });
             if (baseValidation.errors.length > 0) {
                 errors.push(...baseValidation.errors.map(error => `base manifest: ${error}`));
             } else {
@@ -425,7 +453,9 @@ async function main() {
     }
     let publicEntries = null;
     if (errors.length === 0 && options.manifestUrl) {
-        const endpoint = await verifyManifestEndpoint(options.manifestUrl);
+        const endpoint = await verifyManifestEndpoint(options.manifestUrl, {
+            legacyPayloadReference: baseData === null ? undefined : baseData,
+        });
         errors.push(...endpoint.errors);
         publicEntries = endpoint.entryCount;
     }
