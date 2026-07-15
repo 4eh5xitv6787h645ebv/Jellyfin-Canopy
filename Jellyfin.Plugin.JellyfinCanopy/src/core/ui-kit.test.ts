@@ -7,7 +7,8 @@ import {
     muiIconButton,
     muiMenuItem,
     removeCss,
-    sectionContainer
+    sectionContainer,
+    toast
 } from './ui-kit';
 
 describe('escapeHtml', () => {
@@ -196,5 +197,39 @@ describe('expandIn', () => {
         expect(el.style.width).toBe('');
         expect(el.style.transition).toBe('');
         el.remove();
+    });
+});
+
+describe('toast scheduling', () => {
+    it('shows, hides, and removes the toast on deterministic timers', () => {
+        vi.useFakeTimers();
+        try {
+            toast('<strong>Saved</strong>', 1_000);
+
+            const node = document.querySelector<HTMLElement>('.jellyfin-canopy-toast');
+            expect(node).not.toBeNull();
+            expect(node?.innerHTML).toBe('<strong>Saved</strong>');
+            expect(node?.style.transform).toBe('translateX(100%)');
+
+            vi.advanceTimersByTime(9);
+            expect(node?.style.transform).toBe('translateX(100%)');
+
+            vi.advanceTimersByTime(1);
+            expect(node?.style.transform).toBe('translateX(0)');
+
+            vi.advanceTimersByTime(990);
+            expect(node?.style.transform).toBe('translateX(100%)');
+            expect(node?.isConnected).toBe(true);
+
+            vi.advanceTimersByTime(299);
+            expect(node?.isConnected).toBe(true);
+
+            vi.advanceTimersByTime(1);
+            expect(node?.isConnected).toBe(false);
+        } finally {
+            vi.runOnlyPendingTimers();
+            vi.useRealTimers();
+            document.querySelectorAll('.jellyfin-canopy-toast').forEach((node) => node.remove());
+        }
     });
 });

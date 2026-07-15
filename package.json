@@ -3,7 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "description": "Development tooling for the Jellyfin Canopy plugin (lint, type-check, translation validation). The plugin itself ships as embedded resources from the C# project.",
+  "engines": {
+    "node": "22.20.0",
+    "npm": "10.9.3"
+  },
+  "packageManager": "npm@10.9.3",
   "scripts": {
+    "check:toolchain": "node scripts/check-node-toolchain.js",
     "lint": "eslint --exit-on-fatal-error --max-warnings 6586 \"Jellyfin.Plugin.JellyfinCanopy/js/**/*.js\" \"Jellyfin.Plugin.JellyfinCanopy/src/**/*.ts\" \"Jellyfin.Plugin.JellyfinCanopy/Configuration/*.js\" \"scripts/**/*.js\"",
     "lint:fix": "eslint --fix \"Jellyfin.Plugin.JellyfinCanopy/js/**/*.js\" \"Jellyfin.Plugin.JellyfinCanopy/src/**/*.ts\" \"Jellyfin.Plugin.JellyfinCanopy/Configuration/*.js\" \"scripts/**/*.js\"",
     "typecheck": "tsc -p jsconfig.json",

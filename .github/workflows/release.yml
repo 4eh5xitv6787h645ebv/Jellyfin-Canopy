@@ -61,6 +61,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Verify Node toolchain
+        run: node scripts/check-node-toolchain.js
+
       - name: Validate plugin version and Jellyfin ABI policy
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -135,8 +143,11 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
+
+      - name: Verify Node toolchain
+        run: npm run check:toolchain
 
       # Keep the plugin version and Jellyfin target ABI as separate outputs.
       # The same policy already ran in the provenance job, before the reusable

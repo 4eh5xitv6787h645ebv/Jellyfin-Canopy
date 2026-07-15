@@ -9,12 +9,12 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 1361,
+        "coveredLines": 1364,
         "totalLines": 1692
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Two clean Node 22/V8 runs on 2026-07-15 were identical; one line permits only negligible instrumentation variance."
+        "rationale": "Focused fake-timer coverage removes host-scheduling variance; repeated clean Node 22/V8 runs on 2026-07-15 were identical, and one line permits only negligible instrumentation variance."
       }
     },
     "server": {

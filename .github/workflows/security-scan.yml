@@ -44,6 +44,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Verify Node toolchain
+        run: node scripts/check-node-toolchain.js
+
       - name: Verify live release policy matches the committed contract
         env:
           GH_TOKEN: ${{ github.token }}
@@ -70,6 +78,14 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Verify Node toolchain
+        run: node scripts/check-node-toolchain.js
 
       # Pinned by IMMUTABLE DIGEST (the same v3.95.6 release the repo trusts via the
       # TruffleHog action) — this image is the gate's root of trust, so it must not

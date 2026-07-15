@@ -5,7 +5,7 @@
 // nested in a list row is a list row (skipped), a bare card is not, and the legacy
 // no-image `.listItemImage.cardImageContainer` variant — the one shape the modern
 // card scan selector could otherwise surface — is still caught.
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
 import { getItemCached } from './helpers';
 import {
@@ -16,6 +16,16 @@ import {
     readProjectionIdentity,
     TagProjectionDependencyIndex,
 } from './tag-pipeline';
+
+afterAll(async () => {
+    // Retire identity-owned scans while jsdom is still alive, then let the
+    // uncancellable requestIdleCallback fallback drain its generation guard.
+    // Otherwise a real 16 ms timer can reach runScan() after environment
+    // teardown and turn an entirely passing suite into an unhandled failure.
+    JC.identity.transition('', '', 'tag-pipeline-test-teardown');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    document.body.innerHTML = '';
+});
 
 /** Build a `.cardImageContainer` nested inside a `.listItem` row. */
 function listRowImage(): HTMLElement {
