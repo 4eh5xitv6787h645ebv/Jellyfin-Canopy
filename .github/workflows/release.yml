@@ -195,6 +195,9 @@ jobs:
       - name: Script unit tests (translation validator hardening)
         run: npm run test:scripts
 
+      - name: Client performance architecture guard (isolated CPU budget)
+        run: npm run check:performance-rules
+
       - name: Internal Markdown links
         run: npm run check:markdown-links
 

@@ -113,7 +113,7 @@ See [Client Security](docs/developers.md#client-security).
 
 ### Guard tests
 
-Beyond the per-feature unit tests, `npm run test:client` runs cross-cutting **guard tests** in `src/test/` that parse the shipped source and fail on a whole *class* of regression: `escape-guard` and `css-injection-guard` (injection, above), `leak-guard` (object URLs, un-torn-down observers, unbounded caches/retry loops), `perf-rules-guard` (the [performance rules](docs/developers.md#performance-rules)), and `error-as-empty-guard` (a failed fetch must surface an error, never a silent empty state). Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber. The config-bridge tests in `Jellyfin.Plugin.JellyfinCanopy.Tests/Configuration/` apply the same idea to settings wiring: over one shared config-page parser (`ConfigPageSource.cs`), `ConfigControlCoverageTests` fails if an admin-settable descriptor has no config-page control and `ClientConfigKeyLivenessTests` fails if a `JC.pluginConfig.X` client read has no projecting descriptor (an always-`undefined` knob). A PR that reintroduces one of these bug classes fails CI without anyone having to spot it in review.
+Beyond the per-feature unit tests, cross-cutting **guard tests** parse the shipped source and fail on a whole *class* of regression. `npm run test:client` owns `escape-guard` and `css-injection-guard` (injection, above), `leak-guard` (object URLs, un-torn-down observers, unbounded caches/retry loops), and `error-as-empty-guard` (a failed fetch must surface an error, never a silent empty state). The [performance rules](docs/developers.md#performance-rules) use the separate `npm run check:performance-rules` gate: one parse and traversal per production TypeScript file in an isolated Node process, with a strict five-second current-thread CPU budget that client coverage instrumentation cannot distort. Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber. The config-bridge tests in `Jellyfin.Plugin.JellyfinCanopy.Tests/Configuration/` apply the same idea to settings wiring: over one shared config-page parser (`ConfigPageSource.cs`), `ConfigControlCoverageTests` fails if an admin-settable descriptor has no config-page control and `ClientConfigKeyLivenessTests` fails if a `JC.pluginConfig.X` client read has no projecting descriptor (an always-`undefined` knob). A PR that reintroduces one of these bug classes fails CI without anyone having to spot it in review.
 
 ## 📝 Code Contribution Guidelines
 
@@ -247,6 +247,7 @@ npm ci
 npm run typecheck:src          # tsc --strict over the TypeScript module tree (src/)
 npm run test:client            # vitest unit tests for src/ modules
 npm run test:client:coverage   # the same full suite once + the src/core ratchet
+npm run check:performance-rules # isolated one-pass R3/R5/R6 scan + 5s CPU budget
 npm run build:bundle           # esbuild bundle — fails on unreachable src/ modules
 npm run syntax                 # node --check on the frozen legacy js/ tree
 npm run typecheck              # opt-in @ts-check over legacy js/ files
