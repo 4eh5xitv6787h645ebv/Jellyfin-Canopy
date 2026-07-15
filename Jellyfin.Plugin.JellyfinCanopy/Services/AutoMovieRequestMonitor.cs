@@ -95,25 +95,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     if (shouldTrigger)
                     {
                         // Create a unique key using userId and item ID
-                        if (e.Session?.UserId == null || e.Item?.Id == null)
+                        var session = e.Session;
+                        var item = e.Item;
+                        if (session == null || item == null)
                         {
                             return;
                         }
 
-                        var sessionItemKey = $"{e.Session.UserId}_{e.Item.Id}";
+                        var userId = session.UserId;
+                        var sessionItemKey = $"{userId}_{item.Id}";
 
-                        // Skip if we've checked this user+item combination in the last hour
-                        if (!TryMarkChecked(sessionItemKey))
-                        {
-                            return;
-                        }
-
-                        _logger.LogInformation($"[Auto-Movie-Request] Movie '{e.Item?.Name ?? "Unknown"}' started by {e.Session?.UserName ?? "Unknown"}, checking for collection");
-
-                        if (e.Item != null && e.Session?.UserId != null)
-                        {
-                            await _autoMovieRequestService.CheckMovieForCollectionRequestAsync(e.Item, e.Session.UserId);
-                        }
+                        await ExecuteDeduplicatedAsync(
+                            sessionItemKey,
+                            async () =>
+                            {
+                                _logger.LogInformation($"[Auto-Movie-Request] Movie '{item.Name}' started by {session.UserName ?? "Unknown"}, checking for collection");
+                                return await _autoMovieRequestService
+                                    .CheckMovieForCollectionRequestAsync(item, userId)
+                                    .ConfigureAwait(false);
+                            }).ConfigureAwait(false);
                     }
                 }
             }

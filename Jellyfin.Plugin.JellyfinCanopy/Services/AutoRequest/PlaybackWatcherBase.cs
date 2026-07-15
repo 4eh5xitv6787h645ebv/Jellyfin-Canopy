@@ -1,7 +1,6 @@
 using System;
-using System.Linq;
+using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
-using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Logging;
@@ -11,7 +10,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
     /// <summary>
     /// Shared plumbing for the auto-request playback monitors (movie collections and
     /// next seasons): dependency fields, enable-gated Initialize/Dispose subscription
-    /// management, and the checked-session dedup cache with 1-hour expiry.
+    /// management, and outcome-aware playback-event deduplication. Concurrent
+    /// duplicates share one reservation; successful and definitive checks retain
+    /// a one-hour cooldown, while retryable and cancelled checks release it.
     ///
     /// Subclasses keep only their trigger predicate and handling logic. The playback
     /// event handlers themselves stay in the subclasses as async void with their own
@@ -30,14 +31,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
         protected readonly ILogger _logger;
         protected readonly IPluginConfigProvider _configProvider;
 
-        // Track which user+item combinations have already been checked to avoid duplicate checks
-        private static readonly TimeSpan CheckedSessionTtl = TimeSpan.FromHours(1);
-        private readonly BoundedTtlCache<string, byte> _checkedSessions = new(
-            maximumEntries: 16_384,
-            maximumWeight: 16_384,
-            comparer: StringComparer.Ordinal,
-            defaultTtl: () => CheckedSessionTtl);
-        private readonly object _sessionLock = new();
+        private readonly PlaybackRequestDeduplicator _playbackDeduplicator;
         private readonly object _subLock = new();
         private bool _subscribed;
 
@@ -46,13 +40,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
             IUserManager userManager,
             ILibraryManager libraryManager,
             ILogger logger,
-            IPluginConfigProvider configProvider)
+            IPluginConfigProvider configProvider,
+            TimeProvider? timeProvider = null)
         {
             _sessionManager = sessionManager;
             _userManager = userManager;
             _libraryManager = libraryManager;
             _logger = logger;
             _configProvider = configProvider;
+            _playbackDeduplicator = new PlaybackRequestDeduplicator(timeProvider);
         }
 
         /// <summary>Log prefix including brackets, e.g. "[Auto-Movie-Request]".</summary>
@@ -119,25 +115,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
         }
 
         /// <summary>
-        /// Thread-safe dedup: prunes cache entries older than 1 hour, then returns false
-        /// if <paramref name="sessionItemKey"/> was already checked within the last hour,
-        /// or marks it checked and returns true.
+        /// Reserves one user/item playback check, invokes it at most once across
+        /// concurrent duplicate events, then commits or releases the reservation
+        /// from its typed outcome.
         /// </summary>
-        protected bool TryMarkChecked(string sessionItemKey)
-        {
-            lock (_sessionLock)
-            {
-                // Skip if we've checked this user+item combination in the last hour
-                if (_checkedSessions.ContainsKey(sessionItemKey))
-                {
-                    return false;
-                }
-
-                // Mark as checked with current timestamp
-                _checkedSessions.Set(sessionItemKey, 0, CheckedSessionTtl);
-                return true;
-            }
-        }
+        protected Task<bool> ExecuteDeduplicatedAsync(
+            string sessionItemKey,
+            Func<Task<AutoRequestPlaybackOutcome>> operation)
+            => _playbackDeduplicator.ExecuteAsync(sessionItemKey, operation);
 
         // Cleanup when the plugin is disposed.
         public void Dispose()

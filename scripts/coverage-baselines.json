@@ -20,13 +20,13 @@
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
-    "measured": {
-      "coveredLines": 15558,
-      "totalLines": 24072
+      "measured": {
+        "coveredLines": 15648,
+        "totalLines": 24215
       },
       "tolerance": {
         "missingCoveredLines": 1,
-      "rationale": "Two independent clean 2026-07-15 .NET 10/Coverlet runs (GitHub Actions and local .NET 10.0.9) both measured 15558 covered lines across the same 24072-line scope. They include the drain-owned Continue Watching identifier index, one-time removed-ID normalization, O(1) mixed GUID/opaque membership, and the 15000-by-15000 linear-work regression; one line retains only the existing negligible instrumentation tolerance."
+        "rationale": "Two clean reviewed 2026-07-15 .NET 10/Coverlet runs measured 15647 and 15648 covered lines across the 24215-line combined scope after the Continue Watching linear-index change and deterministic coverage for outcome-aware playback singleflight, immediate transient retry, cancellation release, definitive cooldown, and bounded backoff. The one-line tolerance covers that reproduced instrumentation variance."
       }
     }
   }
