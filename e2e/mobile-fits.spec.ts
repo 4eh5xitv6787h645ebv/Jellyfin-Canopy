@@ -9,7 +9,8 @@
 //     horizontally and the Hidden Content heading clears the header,
 //   - the collection "Missing from …" cards are native-grid-sized (≈3 across),
 //     not the vw-based giants (≈2 across) they used to be.
-import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
+import { test, expect, loginAs, assertNoRuntimeErrors, USERS } from './fixtures/auth';
+import { api, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -22,6 +23,33 @@ test.use({
     hasTouch: true,
     deviceScaleFactor: 3,
 });
+
+const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
+
+interface StandaloneFeatureFlags {
+    CalendarPageEnabled: boolean;
+    DownloadsPageEnabled: boolean;
+}
+
+async function writePluginConfig(
+    baseURL: string,
+    admin: Session,
+    config: Record<string, unknown>
+): Promise<void> {
+    await api(baseURL, CONFIG_PATH, admin.token, {
+        method: 'POST',
+        body: JSON.stringify(config),
+    });
+}
+
+async function readClientFeatureFlags(page: any): Promise<StandaloneFeatureFlags> {
+    return page.evaluate(() => ({
+        CalendarPageEnabled:
+            (window as any).JellyfinCanopy?.pluginConfig?.CalendarPageEnabled === true,
+        DownloadsPageEnabled:
+            (window as any).JellyfinCanopy?.pluginConfig?.DownloadsPageEnabled === true,
+    }));
+}
 
 /** Horizontal overflow of the whole document (px). 0 = no horizontal scroll. */
 async function docOverflow(page: any): Promise<number> {
@@ -191,6 +219,76 @@ async function deleteBoxSet(page: any, id: string): Promise<void> {
 }
 
 test.describe('mobile viewport fits', () => {
+    let admin: Session | undefined;
+    let originalConfig: Record<string, unknown> | undefined;
+    let configMutated = false;
+
+    test.beforeAll(async ({ baseURL }) => {
+        admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
+        const config = await api<Record<string, unknown>>(
+            baseURL!,
+            CONFIG_PATH,
+            admin.token
+        );
+        expect(config, 'mobile fixture must be able to read the saved plugin configuration').toBeTruthy();
+        originalConfig = config!;
+        expect({
+            CalendarPageEnabled: config!.CalendarPageEnabled,
+            DownloadsPageEnabled: config!.DownloadsPageEnabled,
+        }, 'clean E2E seed must enable Calendar and Downloads before mobile navigation').toEqual({
+            CalendarPageEnabled: true,
+            DownloadsPageEnabled: true,
+        });
+    });
+
+    test.afterAll(async ({ baseURL }) => {
+        if (!configMutated || !admin || !originalConfig) return;
+        await writePluginConfig(baseURL!, admin, originalConfig);
+        configMutated = false;
+    });
+
+    test('disabled Calendar and Downloads stay unavailable without leaking configuration', async ({
+        page,
+        consoleErrors,
+        baseURL,
+    }) => {
+        expect(admin, 'admin session must exist before the disabled-feature proof').toBeTruthy();
+        expect(originalConfig, 'original plugin configuration must be captured').toBeTruthy();
+
+        await writePluginConfig(baseURL!, admin!, {
+            ...originalConfig!,
+            CalendarPageEnabled: false,
+            DownloadsPageEnabled: false,
+        });
+        configMutated = true;
+
+        try {
+            await loginAs(page, 'admin', consoleErrors);
+            expect(
+                await readClientFeatureFlags(page),
+                'disabled fixture must reach the client before page entry points run'
+            ).toEqual({
+                CalendarPageEnabled: false,
+                DownloadsPageEnabled: false,
+            });
+
+            await page.evaluate(() => {
+                (window as any).JellyfinCanopy.calendarPage.showPage();
+                (window as any).JellyfinCanopy.downloadsPage.showPage();
+            });
+            await page.waitForTimeout(250);
+
+            await expect(page.locator('#jc-calendar-container')).toHaveCount(0);
+            await expect(page.locator('#jc-downloads-container')).toHaveCount(0);
+            expect(page.url()).not.toContain('#/calendar');
+            expect(page.url()).not.toContain('#/downloads');
+            assertNoRuntimeErrors(consoleErrors);
+        } finally {
+            await writePluginConfig(baseURL!, admin!, originalConfig!);
+            configMutated = false;
+        }
+    });
+
     test('settings panel + shortcuts fit the phone (no clipping)', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
 
@@ -259,6 +357,14 @@ test.describe('mobile viewport fits', () => {
 
     test('standalone pages do not scroll horizontally', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
+
+        expect(
+            await readClientFeatureFlags(page),
+            'mobile standalone-page precondition failed: Calendar and Downloads must be enabled'
+        ).toEqual({
+            CalendarPageEnabled: true,
+            DownloadsPageEnabled: true,
+        });
 
         await page.evaluate(() => { (window as any).JellyfinCanopy.calendarPage.showPage(); });
         await page.waitForSelector('#jc-calendar-container', { state: 'visible', timeout: 30_000 });
