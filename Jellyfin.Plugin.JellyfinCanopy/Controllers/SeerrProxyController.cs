@@ -138,8 +138,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             {
                 using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                     HttpMethod.Get, requestUri, apiKey);
-                using var resp = await http.SendAsync(request);
-                var (_, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(resp, requestUri);
+                var (_, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(http, request, requestUri);
                 if (error == null) return Ok(new { ok = true });
 
                 _logger.LogWarning($"Seerr validate failed for {url}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
@@ -199,9 +198,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             {
                 using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                     HttpMethod.Post, requestUri, apiKey, bodyJson: "{}");
-                using var resp = await http.SendAsync(request, HttpContext.RequestAborted).ConfigureAwait(false);
-                var (_, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(
-                    resp,
+                var (_, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
+                    http,
+                    request,
                     requestUri,
                     HttpContext.RequestAborted).ConfigureAwait(false);
                 if (error == null)
@@ -1296,11 +1295,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                 using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                     HttpMethod.Get, requestUri, apiKey);
-                using var response = await httpClient.SendAsync(
+                var (responseContent, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
+                    httpClient,
                     request,
-                    HttpContext.RequestAborted).ConfigureAwait(false);
-                var (responseContent, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(
-                    response,
                     requestUri,
                     HttpContext.RequestAborted).ConfigureAwait(false);
 

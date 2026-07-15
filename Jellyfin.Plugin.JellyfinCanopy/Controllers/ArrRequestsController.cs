@@ -1754,11 +1754,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var client = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
             using var httpRequest = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                 HttpMethod.Post, requestUri, config.SeerrApiKey, seerrUser.Id.ToString());
-            using var response = await client.SendAsync(
+            var (content, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
+                client,
                 httpRequest,
-                HttpContext.RequestAborted).ConfigureAwait(false);
-            var (content, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(
-                response,
                 requestUri,
                 HttpContext.RequestAborted).ConfigureAwait(false);
 
@@ -1889,11 +1887,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     var enrichUri = $"{normalizedSource}/api/v1/{endpoint}/{tmdbId}";
                     using var enrichRequest = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                         HttpMethod.Get, enrichUri, apiKey);
-                    using var response = await client.SendAsync(
+                    var (content, enrichError, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
+                        client,
                         enrichRequest,
-                        fetchCancellationToken).ConfigureAwait(false);
-                    var (content, enrichError) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(
-                        response,
                         enrichUri,
                         fetchCancellationToken).ConfigureAwait(false);
 

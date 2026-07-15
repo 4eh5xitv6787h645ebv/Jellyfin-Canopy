@@ -213,13 +213,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                     HttpMethod.Post, endpoint, apiKey, bodyJson: "{}");
 
-                using var response = await http.SendAsync(request).ConfigureAwait(false);
-                var (json, error) = await Helpers.Seerr.SeerrHttpHelper.ReadResponseAsync(response, endpoint).ConfigureAwait(false);
+                var (json, error, httpStatus) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
+                    http,
+                    request,
+                    endpoint).ConfigureAwait(false);
                 return new DispatchResult
                 {
                     Url = url,
                     Success = error == null,
-                    StatusCode = error?.HttpStatus ?? (int)response.StatusCode,
+                    StatusCode = error?.HttpStatus ?? httpStatus,
                     Body = Truncate(error?.Message ?? (json ?? string.Empty), 256)
                 };
             }

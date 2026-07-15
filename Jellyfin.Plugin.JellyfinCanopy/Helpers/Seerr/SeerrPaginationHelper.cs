@@ -368,9 +368,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                         requestUri,
                         apiKey,
                         apiUserId);
-                    using var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-                    (json, responseError) = await SeerrHttpHelper.ReadResponseAsync(
-                        response,
+                    (json, responseError, _) = await SeerrHttpHelper.SendAndReadJsonAsync(
+                        httpClient,
+                        request,
                         requestUri,
                         cancellationToken).ConfigureAwait(false);
                 }
