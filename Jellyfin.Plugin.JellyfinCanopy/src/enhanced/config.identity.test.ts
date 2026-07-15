@@ -76,7 +76,7 @@ describe('identity-owned user settings', () => {
             file: 'shortcuts.json',
             revision: 1,
             contentHash: 'a'.repeat(64),
-            data: { Revision: 1, Shortcuts: [{ Name: 'A', Key: 'a' }] }
+            data: { Revision: 1, Shortcuts: [{ Name: 'A', Key: 'A' }] }
         });
         const originalCoreApi = JC.core.api;
         delete JC.core.api;
@@ -101,7 +101,7 @@ describe('identity-owned user settings', () => {
             file: 'shortcuts.json',
             revision: 1,
             contentHash: 'b'.repeat(64),
-            data: { Revision: 1, Shortcuts: [{ Name: 'Open', Key: 'o' }] }
+            data: { Revision: 1, Shortcuts: [{ Name: 'Open', Key: 'O' }] }
         };
         const ajax = vi.spyOn(ApiClient, 'ajax')
             .mockReturnValueOnce(firstPost)
@@ -147,6 +147,6 @@ describe('identity-owned user settings', () => {
 
         JC.initializeShortcuts!();
 
-        expect(JC.state!.activeShortcuts).toEqual({ Default: 'd', UserB: 'b' });
+        expect(JC.state!.activeShortcuts).toEqual({ Default: 'D', UserB: 'B' });
     });
 });

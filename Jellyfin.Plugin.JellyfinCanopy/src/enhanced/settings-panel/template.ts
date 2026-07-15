@@ -7,6 +7,7 @@
 
 import { JC } from '../../globals';
 import { assetUrl } from '../../core/asset-urls';
+import { formatShortcut } from '../shortcut-codec';
 import { escapeHtml } from '../../core/ui-kit';
 import { cssColorOr } from '../../core/css-safe';
 import { GITHUB_REPO } from './release-notes';
@@ -116,7 +117,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                             <div style="display: grid; gap: 8px; font-size: 14px;">
                                 ${((JC.pluginConfig.Shortcuts as any[]) || []).filter((s: any, index: number, self: any[]) => s.Category === 'Global' && index === self.findIndex((t: any) => t.Name === s.Name)).map((action: any) => `
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span class="shortcut-key" tabindex="0" data-action="${escapeHtml(action.Name)}" style="background:${kbdBackground}; padding:2px 8px; border-radius:3px; cursor:pointer; transition: all 0.2s;">${escapeHtml(JC.state!.activeShortcuts[action.Name] || '')}</span>
+                                        <span class="shortcut-key" tabindex="0" data-action="${escapeHtml(action.Name)}" style="background:${kbdBackground}; padding:2px 8px; border-radius:3px; cursor:pointer; transition: all 0.2s;">${escapeHtml(formatShortcut(JC.state!.activeShortcuts[action.Name]))}</span>
                                         <div style="display: flex; align-items: center; gap: 8px;">
                                             ${userShortcuts.hasOwnProperty(action.Name) ? `<span title="Modified by user" class="modified-indicator" style="color:${primaryAccentColor}; font-size: 20px; line-height: 1;">•</span>` : ''}
                                             <span>${escapeHtml(tWithFallback('shortcut_' + action.Name, action.Label))}</span>
@@ -133,7 +134,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                     const fallbackLabel = a?.Label || action;
                                     return `
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span class="shortcut-key" tabindex="0" data-action="${escapeHtml(action)}" style="background:${kbdBackground}; padding:2px 8px; border-radius:3px; cursor:pointer; transition: all 0.2s;">${escapeHtml(JC.state!.activeShortcuts[action] || '')}</span>
+                                        <span class="shortcut-key" tabindex="0" data-action="${escapeHtml(action)}" style="background:${kbdBackground}; padding:2px 8px; border-radius:3px; cursor:pointer; transition: all 0.2s;">${escapeHtml(formatShortcut(JC.state!.activeShortcuts[action]))}</span>
                                         <div style="display: flex; align-items: center; gap: 8px;">
                                             ${userShortcuts.hasOwnProperty(action) ? `<span class="modified-indicator" title="Modified by user" style="color:${primaryAccentColor}; font-size: 20px; line-height: 1;">•</span>` : ''}
                                             <span>${escapeHtml(tWithFallback('shortcut_' + action, fallbackLabel))}${action === 'OpenEpisodePreview' ? ' <span style="font-size: 11px; opacity: 0.7;" title="Requires InPlayerEpisodePreview plugin from https://github.com/Namo2/InPlayerEpisodePreview/">ⓘ</span>' : ''}</span>

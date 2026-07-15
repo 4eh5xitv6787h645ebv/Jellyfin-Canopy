@@ -7,6 +7,7 @@ import { JC } from '../globals';
 import type { UserSettings } from '../types/jc';
 import { adminDefaultsView } from '../core/config-resolve';
 import { escapeHtml, toast } from '../core/ui-kit';
+import { canonicalizeShortcut, normalizeShortcutEntries } from './shortcut-codec';
 
 function normalizeIdentityPart(value: unknown): string {
     if (typeof value !== 'string' && typeof value !== 'number') return '';
@@ -178,7 +179,9 @@ function wireValue(fileName: string, settings: unknown): Record<string, unknown>
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         throw new UserSettingsPersistenceError(`Invalid ${fileName} payload`, { kind: 'validation' });
     }
-    return cloneRecord(value as Record<string, unknown>);
+    const wire = cloneRecord(value as Record<string, unknown>);
+    if (fileName === 'shortcuts.json') normalizeShortcutEntries(wire.Shortcuts);
+    return wire;
 }
 
 function localValue(fileName: string, wire: Record<string, unknown>): Record<string, unknown> {
@@ -833,17 +836,18 @@ JC.initializeShortcuts = function (): void {
     const pluginDefaults = JC.pluginConfig || {};
     const userShortcutsConfig = JC.userConfig?.shortcuts || {};
     JC.rememberUserSettingsSnapshot?.('shortcuts.json', userShortcutsConfig);
+    normalizeShortcutEntries(userShortcutsConfig.Shortcuts);
 
     const defaultShortcuts = Array.isArray(pluginDefaults.Shortcuts)
         ? (pluginDefaults.Shortcuts as ShortcutEntry[]).reduce<Record<string, string>>((acc, s) => {
-            if (s && s.Name && s.Key !== undefined) acc[s.Name] = s.Key;
+            if (s && s.Name && s.Key !== undefined) acc[s.Name] = canonicalizeShortcut(s.Key);
             return acc;
           }, {})
         : {};
 
     const userShortcuts = Array.isArray(userShortcutsConfig.Shortcuts)
         ? (userShortcutsConfig.Shortcuts as ShortcutEntry[]).reduce<Record<string, string>>((acc, s) => {
-            if (s && s.Name && s.Key !== undefined) acc[s.Name] = s.Key;
+            if (s && s.Name && s.Key !== undefined) acc[s.Name] = canonicalizeShortcut(s.Key);
             return acc;
           }, {})
         : {};
