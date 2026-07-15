@@ -27,11 +27,13 @@ public sealed class SeerrScheduledTaskPaginationTests
                 client,
                 new[] { "http://first", "http://second" },
                 "key",
+                SeerrDispatchFenceTestFactory.Create(),
                 token),
             static (client, token) => JellyfinToSeerrWatchlistSyncTask.FetchSeerrUserMapSnapshotsAsync(
                 client,
                 new[] { "http://first", "http://second" },
                 "key",
+                SeerrDispatchFenceTestFactory.Create(),
                 token),
         };
 
@@ -76,6 +78,7 @@ public sealed class SeerrScheduledTaskPaginationTests
             client,
             new[] { "http://first" },
             "key",
+            SeerrDispatchFenceTestFactory.Create(),
             CancellationToken.None);
 
         Assert.True(snapshots.IsComplete, snapshots.FailureReason);
@@ -91,11 +94,13 @@ public sealed class SeerrScheduledTaskPaginationTests
                 client,
                 new[] { "http://first", "http://second" },
                 "key",
+                SeerrDispatchFenceTestFactory.Create(),
                 token),
             static (client, token) => JellyfinToSeerrWatchlistSyncTask.FetchSeerrUserMapSnapshotsAsync(
                 client,
                 new[] { "http://first", "http://second" },
                 "key",
+                SeerrDispatchFenceTestFactory.Create(),
                 token),
         };
 
@@ -201,6 +206,189 @@ public sealed class SeerrScheduledTaskPaginationTests
         Assert.Equal(
             new[] { "first", "first", "second", "second", "first", "first", "second" },
             handler.Requests.Select(request => request.Uri.Host));
+    }
+
+    [Fact]
+    public async Task JellyfinToSeerrTask_DisabledDuringFirstWatchlistSend_DoesNotDispatchLaterTraffic()
+    {
+        var user = new User("generation-user", "provider", "password-provider");
+        var provider = new FakePluginConfigProvider(OutboundConfig());
+        var watchlistStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWatchlist = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new AsyncRequestRoutingHandler(async (request, cancellationToken) =>
+        {
+            var uri = request.RequestUri!;
+            if (uri.AbsolutePath == "/api/v1/user")
+            {
+                return UserMap(user, 7);
+            }
+
+            if (uri.AbsolutePath == "/api/v1/user/7/watchlist")
+            {
+                watchlistStarted.TrySetResult();
+                await releaseWatchlist.Task.WaitAsync(cancellationToken);
+                return EmptyWatchlist();
+            }
+
+            if (request.Method == HttpMethod.Post)
+            {
+                return Json(new { id = 1 });
+            }
+
+            throw new Xunit.Sdk.XunitException($"Unexpected request {request.Method} {uri}.");
+        });
+        var task = CreateOutboundTask(
+            user,
+            new[] { MovieWithTmdbId("Generation movie", "101") },
+            handler,
+            provider);
+
+        var executeTask = task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+        await watchlistStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        provider.Current!.SeerrEnabled = false;
+        releaseWatchlist.TrySetResult();
+
+        await executeTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Single(handler.Requests, request =>
+            request.Uri.AbsolutePath == "/api/v1/user/7/watchlist");
+        Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Post);
+    }
+
+    [Fact]
+    public async Task SeerrToJellyfinTask_DisabledDuringFirstWatchlistSend_DoesNotDispatchRequestCollection()
+    {
+        var user = new User("generation-user", "provider", "password-provider");
+        var provider = new FakePluginConfigProvider(new PluginConfiguration
+        {
+            SeerrEnabled = true,
+            SyncSeerrWatchlist = true,
+            AddRequestedMediaToWatchlist = true,
+            SeerrUrls = "http://only",
+            SeerrApiKey = "key",
+        });
+        var watchlistStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWatchlist = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new AsyncRequestRoutingHandler(async (request, cancellationToken) =>
+        {
+            var uri = request.RequestUri!;
+            if (uri.AbsolutePath == "/api/v1/user")
+            {
+                return UserMap(user, 7);
+            }
+
+            if (uri.AbsolutePath == "/api/v1/user/7/watchlist")
+            {
+                watchlistStarted.TrySetResult();
+                await releaseWatchlist.Task.WaitAsync(cancellationToken);
+                return EmptyWatchlist();
+            }
+
+            if (uri.AbsolutePath == "/api/v1/request")
+            {
+                return Json(new
+                {
+                    results = Array.Empty<object>(),
+                    pageInfo = new { page = 1, pages = 1, results = 0 },
+                });
+            }
+
+            throw new Xunit.Sdk.XunitException($"Unexpected request {request.Method} {uri}.");
+        });
+        var task = new SeerrWatchlistSyncTask(
+            new CountingLibraryManager(),
+            new StubUserManager(user),
+            new StubUserDataManager(),
+            new RecordingHttpClientFactory(handler),
+            userConfigurationManager: null!,
+            NullLogger<SeerrWatchlistSyncTask>.Instance,
+            provider);
+
+        var executeTask = task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+        await watchlistStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        provider.Current!.SeerrEnabled = false;
+        releaseWatchlist.TrySetResult();
+
+        await executeTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Single(handler.Requests, request =>
+            request.Uri.AbsolutePath == "/api/v1/user/7/watchlist");
+        Assert.DoesNotContain(handler.Requests, request =>
+            request.Uri.AbsolutePath == "/api/v1/request");
+    }
+
+    [Fact]
+    public async Task SeerrToJellyfinTask_DisabledByFirstLocalSave_StopsRemainingItemMutations()
+    {
+        var user = new User("commit-generation-user", "provider", "password-provider");
+        var firstMovie = MovieWithTmdbId("First commit movie", "601");
+        var secondMovie = MovieWithTmdbId("Second commit movie", "602");
+        var handler = new RequestRoutingHandler(request =>
+        {
+            var uri = request.RequestUri!;
+            if (uri.AbsolutePath == "/api/v1/user")
+            {
+                return UserMap(user, 7);
+            }
+
+            if (uri.AbsolutePath == "/api/v1/user/7/watchlist")
+            {
+                return Json(new
+                {
+                    page = 1,
+                    totalPages = 1,
+                    totalResults = 2,
+                    results = new[]
+                    {
+                        new { tmdbId = 601, mediaType = "movie", title = "First commit movie" },
+                        new { tmdbId = 602, mediaType = "movie", title = "Second commit movie" },
+                    },
+                });
+            }
+
+            throw new Xunit.Sdk.XunitException($"Unexpected request {request.Method} {uri}.");
+        });
+        var provider = new FakePluginConfigProvider(new PluginConfiguration
+        {
+            SeerrEnabled = true,
+            SyncSeerrWatchlist = true,
+            AddRequestedMediaToWatchlist = false,
+            PreventWatchlistReAddition = false,
+            SeerrUrls = "http://only",
+            SeerrApiKey = "key",
+        });
+        var saveCalls = 0;
+        var userData = new StubUserDataManager
+        {
+            GetUserDataHook = (_, item) => new UserItemData
+            {
+                Key = item.Id.ToString("N"),
+                Likes = false,
+            },
+            SaveUserDataHook = (_, _, _, _, _) =>
+            {
+                if (Interlocked.Increment(ref saveCalls) == 1)
+                {
+                    provider.Current!.SeerrEnabled = false;
+                }
+            },
+        };
+        var library = new CountingLibraryManager
+        {
+            GetItemListHook = _ => new BaseItem[] { firstMovie, secondMovie },
+        };
+        var task = new SeerrWatchlistSyncTask(
+            library,
+            new StubUserManager(user),
+            userData,
+            new RecordingHttpClientFactory(handler),
+            userConfigurationManager: null!,
+            NullLogger<SeerrWatchlistSyncTask>.Instance,
+            provider);
+
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        Assert.Equal(1, Volatile.Read(ref saveCalls));
     }
 
     [Theory]
@@ -504,12 +692,14 @@ public sealed class SeerrScheduledTaskPaginationTests
                 "http://seerr",
                 "7",
                 "key",
+                SeerrDispatchFenceTestFactory.Create(),
                 token),
             static (client, token) => JellyfinToSeerrWatchlistSyncTask.FetchSeerrWatchlistSnapshotAsync(
                 client,
                 "http://seerr",
                 "7",
                 "key",
+                SeerrDispatchFenceTestFactory.Create(),
                 token),
         };
 
@@ -560,6 +750,7 @@ public sealed class SeerrScheduledTaskPaginationTests
             "http://seerr",
             "7",
             "key",
+            SeerrDispatchFenceTestFactory.Create(),
             CancellationToken.None);
 
         Assert.True(result.IsComplete, result.FailureReason);
@@ -595,6 +786,7 @@ public sealed class SeerrScheduledTaskPaginationTests
             client,
             new[] { "http://first", "http://second" },
             "key",
+            SeerrDispatchFenceTestFactory.Create(),
             CancellationToken.None);
 
         Assert.True(result.IsComplete, result.FailureReason);
@@ -619,6 +811,7 @@ public sealed class SeerrScheduledTaskPaginationTests
                 "http://seerr",
                 "7",
                 "key",
+                SeerrDispatchFenceTestFactory.Create(),
                 cts.Token));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             JellyfinToSeerrWatchlistSyncTask.FetchSeerrWatchlistSnapshotAsync(
@@ -626,6 +819,7 @@ public sealed class SeerrScheduledTaskPaginationTests
                 "http://seerr",
                 "7",
                 "key",
+                SeerrDispatchFenceTestFactory.Create(),
                 cts.Token));
         Assert.Empty(handler.Requests);
     }
@@ -805,6 +999,26 @@ public sealed class SeerrScheduledTaskPaginationTests
             cancellationToken.ThrowIfCancellationRequested();
             Requests.Add(new CapturedRequest(request.Method, request.RequestUri!));
             return Task.FromResult(_route(request));
+        }
+    }
+
+    private sealed class AsyncRequestRoutingHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _route;
+
+        public AsyncRequestRoutingHandler(
+            Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> route)
+            => _route = route;
+
+        public List<CapturedRequest> Requests { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Requests.Add(new CapturedRequest(request.Method, request.RequestUri!));
+            return _route(request, cancellationToken);
         }
     }
 }

@@ -2,6 +2,7 @@ using System.Net;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using System.Reflection;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
@@ -50,6 +51,8 @@ public sealed class WatchlistMonitorLifecycleTests
         monitor.Initialize();
         library.RaiseItemAdded(Movie(123));
         await readStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var throwingRegistration = GetConfigurationCancellation(monitor).Token.Register(
+            static () => throw new InvalidOperationException("synthetic disposal callback failure"));
 
         var disposeTask = Task.Run(monitor.Dispose);
         await WaitUntilAsync(() => library.ItemAddedCount == 0);
@@ -127,6 +130,107 @@ public sealed class WatchlistMonitorLifecycleTests
 
         // The active request was cancelled on the save event. The queued item from the replaced
         // generation is drained before making any additional remote call.
+        Assert.Equal(1, handler.RequestCount);
+        monitor.Dispose();
+    }
+
+    [Fact]
+    public async Task DisableNotification_AdvancesGenerationAndClearsOwnedRequestCache()
+    {
+        var library = new CountingLibraryManager();
+        var handler = new BlockingEmptyRequestsHandler();
+        var monitor = CreateEventMonitor(library, handler, out var provider);
+
+        monitor.Initialize();
+        library.RaiseItemAdded(Movie(123));
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        handler.Release.TrySetResult();
+        await WaitUntilAsync(() => monitor.QueueMetrics.StateCount == 0);
+        Assert.Equal(1, monitor.RequestsCacheCount);
+        var generation = monitor.ConfigurationGenerationNumber;
+
+        provider.Current = new PluginConfiguration
+        {
+            AddRequestedMediaToWatchlist = true,
+            SeerrEnabled = false,
+            SeerrUrls = "http://seerr:5055",
+            SeerrApiKey = "retained-key",
+        };
+        monitor.NotifyConfigurationChanged();
+
+        Assert.Equal(generation + 1, monitor.ConfigurationGenerationNumber);
+        Assert.Equal(0, monitor.RequestsCacheCount);
+        var requestsBeforeDisabledEvent = handler.RequestCount;
+        library.RaiseItemAdded(Movie(456));
+        await Task.Delay(50);
+        Assert.Equal(requestsBeforeDisabledEvent, handler.RequestCount);
+        monitor.Dispose();
+    }
+
+    [Fact]
+    public async Task ThrowingCancellationCallback_StillAdvancesGenerationAndClearsOwnedCache()
+    {
+        var library = new CountingLibraryManager();
+        var handler = new BlockingEmptyRequestsHandler();
+        var monitor = CreateEventMonitor(library, handler, out _);
+
+        monitor.Initialize();
+        library.RaiseItemAdded(Movie(123));
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        handler.Release.TrySetResult();
+        await WaitUntilAsync(() => monitor.QueueMetrics.StateCount == 0);
+        Assert.Equal(1, monitor.RequestsCacheCount);
+        var generation = monitor.ConfigurationGenerationNumber;
+
+        var cancellation = GetConfigurationCancellation(monitor);
+        using var registration = cancellation.Token.Register(
+            static () => throw new InvalidOperationException("synthetic cancellation callback failure"));
+
+        monitor.NotifyConfigurationChanged();
+        Assert.Equal(generation + 1, monitor.ConfigurationGenerationNumber);
+        Assert.Equal(0, monitor.RequestsCacheCount);
+        monitor.Dispose();
+    }
+
+    private static CancellationTokenSource GetConfigurationCancellation(WatchlistMonitor monitor)
+    {
+        var generationField = typeof(WatchlistMonitor).GetField(
+            "_configurationGeneration",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var generation = generationField!.GetValue(monitor);
+        Assert.NotNull(generation);
+        var cancellationProperty = generation.GetType().GetProperty("Cancellation");
+        return Assert.IsType<CancellationTokenSource>(cancellationProperty!.GetValue(generation));
+    }
+
+    [Fact]
+    public async Task DisableNotification_BlockedOldFlightCannotRepopulateClearedCache()
+    {
+        var library = new CountingLibraryManager();
+        var handler = new IgnoringCancellationBlockingEmptyRequestsHandler();
+        var monitor = CreateEventMonitor(library, handler, out var provider);
+
+        monitor.Initialize();
+        library.RaiseItemAdded(Movie(789));
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        provider.Current = new PluginConfiguration
+        {
+            AddRequestedMediaToWatchlist = true,
+            SeerrEnabled = false,
+            SeerrUrls = "http://seerr:5055",
+            SeerrApiKey = "retained-key",
+        };
+        monitor.NotifyConfigurationChanged();
+        Assert.Equal(0, monitor.RequestsCacheCount);
+
+        handler.Release.TrySetResult();
+        await WaitUntilAsync(() => monitor.QueueMetrics.StateCount == 0);
+
+        Assert.Equal(0, monitor.RequestsCacheCount);
+        Assert.Equal(1, handler.RequestCount);
+        library.RaiseItemAdded(Movie(790));
+        await Task.Delay(50);
         Assert.Equal(1, handler.RequestCount);
         monitor.Dispose();
     }
@@ -303,6 +407,50 @@ public sealed class WatchlistMonitorLifecycleTests
                 CancellationObserved.TrySetResult();
                 throw;
             }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new
+                    {
+                        page = 1,
+                        totalPages = 1,
+                        totalResults = 0,
+                        pageInfo = new
+                        {
+                            page = 1,
+                            pages = 1,
+                            pageSize = 0,
+                            results = 0,
+                        },
+                        results = Array.Empty<object>(),
+                    }),
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+        }
+    }
+
+    private sealed class IgnoringCancellationBlockingEmptyRequestsHandler : HttpMessageHandler
+    {
+        private int _requestCount;
+
+        public TaskCompletionSource Started { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int RequestCount => Volatile.Read(ref _requestCount);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            _ = request;
+            _ = cancellationToken;
+            Interlocked.Increment(ref _requestCount);
+            Started.TrySetResult();
+            await Release.Task;
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(

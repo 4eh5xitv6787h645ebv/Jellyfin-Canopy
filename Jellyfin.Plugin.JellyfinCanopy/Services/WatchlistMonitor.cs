@@ -15,6 +15,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -92,7 +93,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
-            if (!config.AddRequestedMediaToWatchlist || !config.SeerrEnabled)
+            if (!config.AddRequestedMediaToWatchlist
+                || !SeerrIntegrationPolicy.AllowsDeferredScheduling(config))
             {
                 _logger.LogInformation("[Watchlist] Watchlist monitoring is disabled in configuration - not subscribing to library events");
                 return;
@@ -129,7 +131,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var configRevision = _configProvider.ConfigurationRevision;
             var config = _configProvider.ConfigurationOrNull;
             if (_configProvider.ConfigurationRevision != configRevision) return;
-            if (config?.AddRequestedMediaToWatchlist != true || !config.SeerrEnabled) return;
+            if (config?.AddRequestedMediaToWatchlist != true
+                || !SeerrIntegrationPolicy.AllowsDeferredScheduling(config)) return;
 
             long configurationGeneration;
             lock (_configurationCancellationLock)
@@ -200,6 +203,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         internal CoalescingWorkerMetrics QueueMetrics => _workQueue.Metrics;
 
+        internal int RequestsCacheCount
+        {
+            get
+            {
+                lock (_requestsCacheLock)
+                {
+                    return _requestsCache.Count;
+                }
+            }
+        }
+
+        internal long ConfigurationGenerationNumber
+        {
+            get
+            {
+                lock (_configurationCancellationLock)
+                {
+                    return _configurationGeneration.Number;
+                }
+            }
+        }
+
         internal void NotifyConfigurationChanged()
         {
             lock (_lifecycleLock)
@@ -218,10 +243,47 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // Cancel outside locks because callbacks can complete the active operation inline.
             // Cancel-before-dispose guarantees already-captured tokens observe cancellation; .NET
             // cancellation tokens remain readable after their source is disposed.
-            previous.Cancellation.Cancel();
-            previous.Cancellation.Dispose();
+            CancelWithoutThrow(previous.Cancellation, "configuration invalidation");
+            DisposeCancellationWithoutThrow(previous.Cancellation, "configuration invalidation");
+
+            try
+            {
+                lock (_requestsCacheLock)
+                {
+                    _requestsCache.Clear();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Watchlist] Failed to clear the owned request cache during configuration invalidation.");
+            }
+
             _logger.LogInformation(
-                "[Watchlist] Configuration changed; cancelled the active generation and invalidated queued work.");
+                "[Watchlist] Configuration changed; cancelled the active generation and invalidated queued work and cached Seerr requests.");
+        }
+
+        private void CancelWithoutThrow(CancellationTokenSource cancellation, string operation)
+        {
+            try
+            {
+                cancellation.Cancel();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Watchlist] A cancellation callback failed during {Operation}; teardown will continue.", operation);
+            }
+        }
+
+        private void DisposeCancellationWithoutThrow(CancellationTokenSource cancellation, string operation)
+        {
+            try
+            {
+                cancellation.Dispose();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Watchlist] Cancellation-source disposal failed during {Operation}; teardown will continue.", operation);
+            }
         }
 
         // Deterministic test seam over the same operation scheduled by library events. Keeping
@@ -252,7 +314,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // _logger.LogInformation($"[Watchlist] {eventType} event triggered for: {e.Item?.Name ?? "Unknown"} (Type: {itemKind})");
 
                 // Check if watchlist feature is enabled
-                var config = _configProvider.ConfigurationOrNull as PluginConfiguration;
+                var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+                var config = integration.Configuration;
                 if (config == null)
                 {
                     _logger.LogWarning("[Watchlist] Configuration is null");
@@ -265,7 +328,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     return;
                 }
 
-                if (!config.SeerrEnabled)
+                if (!integration.IsActive)
                 {
                     _logger.LogDebug("[Watchlist] SeerrEnabled is disabled");
                     return;
@@ -275,8 +338,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // configuration digest plus monotonic object revision prevents an admin save,
                 // including an A→B→A replacement, from authorizing a local write prepared with
                 // stale URLs, credentials, ownership, blocklists, or feature settings.
-                var configRevision = _configProvider.ConfigurationRevision;
+                var configRevision = integration.ConfigurationRevision;
                 var configStamp = SeerrMutationConfigStamp.Capture(config, configRevision);
+                SeerrDispatchFence dispatchFence = integration
+                    .CreateDispatchFence(_configProvider)
+                    .Restrict(() => IsCurrentMutationAuthorized(configStamp));
 
                 // Check if item has TMDB ID
                 if (item.ProviderIds == null)
@@ -302,12 +368,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // _logger.LogInformation($"[Watchlist] New {mediaType} added to library: '{e.Item.Name}' (TMDB: {tmdbId})");
 
                 // Query Seerr for one complete snapshot of every request.
-                var seerrUrls = Seerr.SeerrClient.GetConfiguredUrls(config.SeerrUrls);
-                if (seerrUrls.Length == 0 || string.IsNullOrEmpty(config.SeerrApiKey))
-                {
-                    _logger.LogWarning("[Watchlist] Seerr URL or API key not configured");
-                    return;
-                }
+                var seerrUrls = integration.Urls;
 
                 var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
 
@@ -315,8 +376,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var allRequests = await GetAllSeerrRequests(
                     httpClient,
                     seerrUrls,
-                    config.SeerrApiKey,
+                    integration.ApiKey,
                     configRevision,
+                    dispatchFence,
                     cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
                 if (allRequests == null || allRequests.Count == 0)
@@ -338,7 +400,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var preparedUserSnapshots = await FetchAllUserSnapshotsAsync(
                     httpClient,
                     seerrUrls,
-                    config.SeerrApiKey,
+                    integration.ApiKey,
+                    dispatchFence,
                     cancellationToken).ConfigureAwait(false);
                 if (!SeerrUserIdentityDomains.TryParse(preparedUserSnapshots, out var preparedDomains))
                 {
@@ -419,7 +482,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var dispatchUserSnapshots = await FetchAllUserSnapshotsAsync(
                     httpClient,
                     seerrUrls,
-                    config.SeerrApiKey,
+                    integration.ApiKey,
+                    dispatchFence,
                     cancellationToken).ConfigureAwait(false);
                 if (!SeerrUserIdentityDomains.TryParse(dispatchUserSnapshots, out var dispatchDomains)
                     || !UserIdentityDomainsMatch(preparedDomains, dispatchDomains))
@@ -535,9 +599,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             IReadOnlyList<string> seerrUrls,
             string apiKey,
             long configRevision,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (!dispatchFence.CanDispatch()) return null;
             var cacheKey = BuildRequestsCacheKey(seerrUrls, apiKey, configRevision);
             var cacheTtl = GetRequestsCacheTtl();
 
@@ -545,7 +611,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 if (_requestsCache.TryGetValue(cacheKey, out var cached))
                 {
-                    return cached;
+                    return dispatchFence.CanDispatch() ? cached : null;
                 }
             }
 
@@ -557,6 +623,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         httpClient,
                         seerrUrls,
                         apiKey,
+                        dispatchFence,
                         cancellationToken).ConfigureAwait(false);
                     if (!snapshots.IsComplete)
                     {
@@ -615,10 +682,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 {
                     // Populate the result cache before the shared task completes.
                     // This closes the completion/removal window in which a new
-                    // caller could otherwise start a duplicate fetch.
-                    lock (_requestsCacheLock)
+                    // caller could otherwise start a duplicate fetch. The
+                    // configuration-generation lock closes the disable/clear
+                    // race: an old worker either publishes before notification
+                    // (and is then cleared) or observes its cancelled token.
+                    lock (_configurationCancellationLock)
                     {
-                        _requestsCache.Set(cacheKey, fetchedSnapshot, cacheTtl);
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            return null;
+                        }
+
+                        if (!dispatchFence.CanDispatch()) return null;
+
+                        lock (_requestsCacheLock)
+                        {
+                            _requestsCache.Set(cacheKey, fetchedSnapshot, cacheTtl);
+                        }
                     }
                 }
 
@@ -668,6 +748,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             HttpClient httpClient,
             IEnumerable<string> seerrUrls,
             string apiKey,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken)
             => SeerrPaginationHelper.FetchAllSourcesAsync(
                 httpClient,
@@ -677,6 +758,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 apiUserId: null,
                 requestedPageSize: 1000,
                 UserCollectionIdentity,
+                dispatchFence,
                 cancellationToken);
 
         private bool IsCurrentMutationAuthorized(SeerrMutationConfigStamp configStamp)
@@ -686,7 +768,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var current = _configProvider.ConfigurationOrNull;
                 var currentRevision = _configProvider.ConfigurationRevision;
                 return current != null
-                    && current.SeerrEnabled
+                    && SeerrIntegrationPolicy.HasUsableSavedConfiguration(current)
                     && current.AddRequestedMediaToWatchlist
                     && configStamp.Matches(current, currentRevision);
             }
@@ -755,6 +837,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             HttpClient httpClient,
             IEnumerable<string> seerrUrls,
             string apiKey,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken)
             => Helpers.Seerr.SeerrPaginationHelper.FetchAllAsync(
                 httpClient,
@@ -764,12 +847,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 apiUserId: null,
                 requestedPageSize: 1000,
                 RequestCollectionIdentity,
+                dispatchFence,
                 cancellationToken);
 
         internal static Task<Helpers.Seerr.SeerrMultiSourceCollectionResult> FetchAllRequestsSnapshotsAsync(
             HttpClient httpClient,
             IEnumerable<string> seerrUrls,
             string apiKey,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken)
             => Helpers.Seerr.SeerrPaginationHelper.FetchAllSourcesAsync(
                 httpClient,
@@ -779,6 +864,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 apiUserId: null,
                 requestedPageSize: 1000,
                 RequestCollectionIdentity,
+                dispatchFence,
                 cancellationToken);
 
         // Parses one request row. A null parsed item with true means a valid
@@ -890,12 +976,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 configurationGeneration = _configurationGeneration;
             }
 
-            configurationGeneration.Cancellation.Cancel();
+            CancelWithoutThrow(configurationGeneration.Cancellation, "plugin disposal");
 
             // Complete/cancel and synchronously join the one owned worker so no operation can
             // outlive plugin disposal or perform a late local write.
-            _workQueue.Dispose();
-            configurationGeneration.Cancellation.Dispose();
+            try
+            {
+                _workQueue.Dispose();
+            }
+            finally
+            {
+                DisposeCancellationWithoutThrow(configurationGeneration.Cancellation, "plugin disposal");
+            }
             var metrics = _workQueue.Metrics;
             _logger.LogInformation(
                 "[Watchlist] Worker stopped: capacity={Capacity}, peakDepth={PeakQueueDepth}, enqueued={Enqueued}, coalesced={Coalesced}, dropped={Dropped}, processed={Processed}, failures={Failures}, retries={Retried}, cancelled={Cancelled}.",

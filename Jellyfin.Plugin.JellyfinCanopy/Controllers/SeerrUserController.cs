@@ -88,13 +88,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             // report a typed `reason` so the frontend can display
             // a meaningful banner instead of silently hiding discovery sections.
             // Possible reasons: disabled, no_user, blocked, unlinked, unreachable.
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || !config.SeerrEnabled ||
-                string.IsNullOrEmpty(config.SeerrApiKey) ||
-                string.IsNullOrEmpty(config.SeerrUrls))
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (!integration.IsActive)
             {
                 return Ok(new { active = false, userFound = false, reason = "disabled" });
             }
+
+            var config = integration.Configuration!;
 
             var jellyfinUserId = UserHelper.GetCurrentUserId(User)?.ToString();
             if (string.IsNullOrEmpty(jellyfinUserId))
@@ -108,6 +108,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var resolution = await _seerr.ResolveSeerrUser(
                 jellyfinUserId,
                 cancellationToken: HttpContext.RequestAborted).ConfigureAwait(false);
+            if (!integration.IsCurrent(_configProvider))
+            {
+                return Ok(new { active = false, userFound = false, reason = "disabled" });
+            }
+
             if (resolution.IsFound)
             {
                 var seerrUserId = resolution.User!.Id.ToString();
@@ -116,6 +121,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // 4K permission (degrade-by-hiding), rather than on the admin
                 // toggle alone.
                 var cap = await _seerr.GetSeerr4kCapabilityAsync(jellyfinUserId, IsAdminUser());
+                if (!integration.IsCurrent(_configProvider))
+                {
+                    return Ok(new { active = false, userFound = false, reason = "disabled" });
+                }
+
                 return Ok(new
                 {
                     active = true,
@@ -165,11 +175,60 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [Authorize(Policy = Policies.RequiresElevation)]
         public async Task<IActionResult> GetPermissionAudit()
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || !config.SeerrEnabled ||
-                string.IsNullOrEmpty(config.SeerrApiKey) ||
-                string.IsNullOrEmpty(config.SeerrUrls))
-                return StatusCode(503, "Seerr integration is not configured or enabled.");
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (!integration.IsActive || integration.Configuration == null)
+            {
+                return StatusCode(503, new
+                {
+                    error = true,
+                    active = false,
+                    code = "seerr_disabled",
+                    message = "Seerr integration is not configured or enabled. No permission audit was published."
+                });
+            }
+
+            var config = integration.Configuration;
+            var auditConfigStamp = SeerrMutationConfigStamp.Capture(
+                config,
+                integration.ConfigurationRevision);
+
+            bool AuditIsCurrent()
+            {
+                try
+                {
+                    return integration.IsCurrent(_configProvider)
+                        && auditConfigStamp.Matches(
+                            _configProvider.ConfigurationOrNull,
+                            _configProvider.ConfigurationRevision);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            IActionResult ConfigurationChanged()
+            {
+                var current = SeerrIntegrationPolicy.Capture(_configProvider);
+                if (!current.IsActive)
+                {
+                    return StatusCode(503, new
+                    {
+                        error = true,
+                        active = false,
+                        code = "seerr_disabled",
+                        message = "Seerr integration was disabled while preparing the audit. No partial permission audit was published."
+                    });
+                }
+
+                return Conflict(new
+                {
+                    error = true,
+                    active = false,
+                    code = "audit_configuration_changed",
+                    message = "Seerr configuration changed while preparing the audit. No partial permission audit was published."
+                });
+            }
 
             var jellyfinUsers = _userManager.GetUsers()
                 .GroupBy(u => u.Id)
@@ -179,6 +238,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             foreach (var jfUser in jellyfinUsers)
             {
+                if (!AuditIsCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
                 var userId = jfUser.Id.ToString("N");
                 // allowAutoImport: false — audit must be read-only and must not
                 // create Seerr users as a side effect.
@@ -187,6 +251,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     bypassCache: true,
                     allowAutoImport: false,
                     cancellationToken: HttpContext.RequestAborted).ConfigureAwait(false);
+                if (!AuditIsCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
                 var seerrUser = resolution.User;
 
                 if (resolution.Status is SeerrUserResolutionStatus.Incomplete or SeerrUserResolutionStatus.Unavailable)
@@ -294,6 +363,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 });
             }
 
+            if (!AuditIsCurrent())
+            {
+                return ConfigurationChanged();
+            }
+
             return Ok(results);
         }
 
@@ -366,8 +440,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var cancellationToken = HttpContext.RequestAborted;
             try
             {
-                var config = _configProvider.ConfigurationOrNull;
-                if (config == null || !config.SeerrEnabled || !config.SyncSeerrWatchlist)
+                var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+                var config = integration.Configuration;
+                if (!integration.IsActive
+                    || config == null
+                    || !config.SyncSeerrWatchlist
+                    || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
                 {
                     return BadRequest(new { error = "Seerr watchlist sync is not enabled" });
                 }
@@ -380,7 +458,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                 var syncConfigStamp = SeerrMutationConfigStamp.Capture(
                     config,
-                    _configProvider.ConfigurationRevision);
+                    integration.ConfigurationRevision);
+                bool CanCommit()
+                {
+                    try
+                    {
+                        var current = _configProvider.ConfigurationOrNull;
+                        return integration.IsCurrent(_configProvider)
+                            && syncConfigStamp.Matches(
+                                current,
+                                _configProvider.ConfigurationRevision)
+                            && current?.SyncSeerrWatchlist == true;
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                }
+
+                SeerrDispatchFence dispatchFence = integration
+                    .CreateDispatchFence(_configProvider)
+                    .Restrict(CanCommit);
 
                 _logger.LogInformation("[Manual Watchlist Sync] Starting manual Seerr watchlist sync...");
 
@@ -394,10 +492,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // failover replicas. Prove a complete, stable user map for every
                 // normalized distinct domain before resolving any instance-local id.
                 var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
+                if (!integration.IsCurrent(_configProvider))
+                {
+                    return Conflict(new
+                    {
+                        error = true,
+                        code = "sync_configuration_changed",
+                        message = "Seerr configuration changed while staging the sync. No local changes were applied."
+                    });
+                }
+
                 var userSnapshots = await SeerrWatchlistSyncTask.FetchSeerrUserMapSnapshotsAsync(
                     httpClient,
                     urls,
                     config.SeerrApiKey,
+                    dispatchFence,
                     cancellationToken).ConfigureAwait(false);
                 if (!userSnapshots.IsComplete)
                 {
@@ -448,6 +557,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     foreach (var binding in bindings)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
+                        if (!integration.IsCurrent(_configProvider))
+                        {
+                            return Conflict(new
+                            {
+                                error = true,
+                                code = "sync_configuration_changed",
+                                message = "Seerr configuration changed while staging the sync. No local changes were applied."
+                            });
+                        }
+
                         var watchlistItems = await _seerr.GetWatchlistForUser(
                             binding.SeerrUserId,
                             binding.SourceUrl,
@@ -470,6 +589,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         if (!config.AddRequestedMediaToWatchlist)
                         {
                             continue;
+                        }
+
+                        if (!integration.IsCurrent(_configProvider))
+                        {
+                            return Conflict(new
+                            {
+                                error = true,
+                                code = "sync_configuration_changed",
+                                message = "Seerr configuration changed while staging the sync. No local changes were applied."
+                            });
                         }
 
                         var requestItems = await _seerr.GetRequestsForUser(
@@ -500,10 +629,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // that boundary the small local batch runs to completion instead of
                 // leaving a cancellation-created partial prefix.
                 cancellationToken.ThrowIfCancellationRequested();
+                if (!integration.IsCurrent(_configProvider))
+                {
+                    return Conflict(new
+                    {
+                        error = true,
+                        code = "sync_configuration_changed",
+                        message = "Seerr configuration changed while staging the sync. No local changes were applied."
+                    });
+                }
+
                 var commitUserSnapshots = await SeerrWatchlistSyncTask.FetchSeerrUserMapSnapshotsAsync(
                     httpClient,
                     urls,
                     config.SeerrApiKey,
+                    dispatchFence,
                     cancellationToken).ConfigureAwait(false);
                 if (!commitUserSnapshots.IsComplete
                     || !SeerrUserIdentityDomains.TryParse(
@@ -524,10 +664,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 }
 
                 var commitConfig = _configProvider.ConfigurationOrNull;
-                if (!syncConfigStamp.Matches(
+                if (commitConfig is null
+                    || !syncConfigStamp.Matches(
                         commitConfig,
                         _configProvider.ConfigurationRevision)
-                    || commitConfig?.SeerrEnabled != true
+                    || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(commitConfig)
                     || !commitConfig.SyncSeerrWatchlist)
                 {
                     _logger.LogWarning(
@@ -546,6 +687,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 var errors = new List<string>();
                 foreach (var user in users)
                 {
+                    if (!CanCommit())
+                    {
+                        return Conflict(new
+                        {
+                            error = true,
+                            code = "sync_configuration_changed",
+                            message = "Seerr configuration changed during the local commit. Remaining changes were stopped."
+                        });
+                    }
+
                     if (!stagedItems.TryGetValue(user.Id, out var items))
                     {
                         continue;
@@ -553,6 +704,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                     foreach (var item in items)
                     {
+                        if (!CanCommit())
+                        {
+                            return Conflict(new
+                            {
+                                error = true,
+                                code = "sync_configuration_changed",
+                                message = "Seerr configuration changed during the local commit. Remaining changes were stopped."
+                            });
+                        }
+
                         itemsProcessed++;
 
                         // Find the item in Jellyfin library by TMDB ID
@@ -566,6 +727,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                             }
                             else if (userData.Likes != true)
                             {
+                                if (!CanCommit())
+                                {
+                                    return Conflict(new
+                                    {
+                                        error = true,
+                                        code = "sync_configuration_changed",
+                                        message = "Seerr configuration changed during the local commit. Remaining changes were stopped."
+                                    });
+                                }
+
                                 userData.Likes = true;
                                 _userDataManager.SaveUserData(
                                     user,
@@ -573,6 +744,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                                     userData,
                                     UserDataSaveReason.UpdateUserRating,
                                     CancellationToken.None);
+                                if (!CanCommit())
+                                {
+                                    return Conflict(new
+                                    {
+                                        error = true,
+                                        code = "sync_configuration_changed",
+                                        message = "Seerr configuration changed during the local commit. Remaining changes were stopped."
+                                    });
+                                }
+
                                 itemsAdded++;
                                 _logger.LogInformation($"[Manual Watchlist Sync] Added '{libraryItem.Name}' to watchlist for {user.Username}");
                             }
@@ -641,8 +822,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             try
             {
-                var config = _configProvider.ConfigurationOrNull;
-                if (config == null || !config.SeerrEnabled)
+                var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+                var config = integration.Configuration;
+                if (!integration.IsActive || config == null)
                 {
                     return BadRequest(new { error = "Seerr integration is not enabled" });
                 }
@@ -654,7 +836,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                 var importConfigStamp = SeerrMutationConfigStamp.Capture(
                     config,
-                    _configProvider.ConfigurationRevision);
+                    integration.ConfigurationRevision);
+                SeerrDispatchFence dispatchFence = integration
+                    .CreateDispatchFence(_configProvider)
+                    .Restrict(() => importConfigStamp.Matches(
+                        _configProvider.ConfigurationOrNull,
+                        _configProvider.ConfigurationRevision));
 
                 // Claim the throttle slot atomically to prevent concurrent imports
                 lock (_seerrCache.ImportThrottleLock)
@@ -683,15 +870,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     config.SeerrApiKey,
                     _httpClientFactory,
                     _logger,
-                    HttpContext.RequestAborted,
-                    () =>
-                    {
-                        var current = _configProvider.ConfigurationOrNull;
-                        return importConfigStamp.Matches(
-                                current,
-                                _configProvider.ConfigurationRevision)
-                            && current?.SeerrEnabled == true;
-                    }).ConfigureAwait(false);
+                    dispatchFence,
+                    HttpContext.RequestAborted).ConfigureAwait(false);
 
                 // only flush user caches when at least one user
                 // was actually imported. Previously a 0-imported "success" (all

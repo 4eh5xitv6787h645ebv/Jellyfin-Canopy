@@ -60,9 +60,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
         public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
         {
-            var config = _configProvider.ConfigurationOrNull;
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            var config = integration.Configuration;
 
-            if (config == null || !config.SeerrAutoImportUsers || !config.SeerrEnabled)
+            if (!integration.IsActive
+                || config == null
+                || !config.SeerrAutoImportUsers)
             {
                 _logger.LogInformation("[Seerr User Import] Auto-import is disabled in plugin configuration.");
                 progress?.Report(100);
@@ -78,7 +81,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
             var importConfigStamp = SeerrMutationConfigStamp.Capture(
                 config,
-                _configProvider.ConfigurationRevision);
+                integration.ConfigurationRevision);
+            SeerrDispatchFence dispatchFence = integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(() =>
+                {
+                    var current = _configProvider.ConfigurationOrNull;
+                    return importConfigStamp.Matches(
+                            current,
+                            _configProvider.ConfigurationRevision)
+                        && current?.SeerrAutoImportUsers == true;
+                });
 
             _logger.LogInformation("[Seerr User Import] Starting Seerr user import task...");
             progress?.Report(0);
@@ -101,16 +114,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 config.SeerrApiKey,
                 _httpClientFactory,
                 _logger,
-                cancellationToken,
-                () =>
-                {
-                    var current = _configProvider.ConfigurationOrNull;
-                    return importConfigStamp.Matches(
-                            current,
-                            _configProvider.ConfigurationRevision)
-                        && current?.SeerrEnabled == true
-                        && current.SeerrAutoImportUsers;
-                });
+                dispatchFence,
+                cancellationToken);
 
             if (importResult.Succeeded && importResult.Imported > 0)
             {

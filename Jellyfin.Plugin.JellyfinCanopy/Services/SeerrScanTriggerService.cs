@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
@@ -94,7 +95,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             try
             {
                 if (_configProvider.ConfigurationOrNull is not PluginConfiguration config) return;
-                if (!config.TriggerSeerrScanOnItemAdded || !config.SeerrEnabled) return;
+                if (!config.TriggerSeerrScanOnItemAdded
+                    || !SeerrIntegrationPolicy.AllowsDeferredScheduling(config)) return;
 
                 var kind = e.Item?.GetBaseItemKind();
                 if (kind != BaseItemKind.Movie
@@ -170,13 +172,33 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             ArgumentNullException.ThrowIfNull(urls);
             if (urls.Count == 0) throw new ArgumentException("At least one Seerr URL is required.", nameof(urls));
 
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            var allowedUrls = integration.Urls.ToHashSet(StringComparer.Ordinal);
+            if (!integration.IsActive
+                || !string.Equals(apiKey, integration.ApiKey, StringComparison.Ordinal)
+                || urls.Any(url => !allowedUrls.Contains(url)))
+            {
+                return Task.FromResult<IReadOnlyList<DispatchResult>>(
+                    urls.Distinct(StringComparer.Ordinal)
+                        .Select(url => DispatchResult.PolicyDeniedResult(
+                            url,
+                            apiKey,
+                            integration.State))
+                        .ToArray());
+            }
+
             DispatchPlan plan;
             lock (_stateLock)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 _debounceTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
                 var drainedEvents = DrainPendingLocked();
-                var manualPlan = DispatchPlan.Manual(urls, apiKey, drainedEvents);
+                var manualPlan = DispatchPlan.Manual(
+                    urls,
+                    apiKey,
+                    drainedEvents,
+                    integration.CreateDispatchFence(_configProvider),
+                    integration.ConfigurationRevision);
                 if (drainedEvents > 0)
                 {
                     manualPlan.AddTargets(CreateAutomaticPlan(drainedEvents).Targets);
@@ -265,24 +287,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         private DispatchPlan CreateAutomaticPlan(int batchSize)
         {
-            if (_configProvider.ConfigurationOrNull is not PluginConfiguration config)
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            var config = integration.Configuration;
+            if (!integration.IsActive
+                || config == null
+                || !config.TriggerSeerrScanOnItemAdded)
             {
-                return DispatchPlan.Automatic(batchSize, Array.Empty<DispatchTarget>(), 0);
+                return DispatchPlan.Automatic(
+                    batchSize,
+                    Array.Empty<DispatchTarget>(),
+                    integration.ConfigurationRevision);
             }
 
-            var revision = _configProvider.ConfigurationRevision;
-            var stamp = SeerrMutationConfigStamp.Capture(config, revision);
-            if (!config.SeerrEnabled || !config.TriggerSeerrScanOnItemAdded)
-            {
-                return DispatchPlan.Automatic(batchSize, Array.Empty<DispatchTarget>(), revision);
-            }
-
-            var apiKey = config.SeerrApiKey;
-            var urls = ParseUrls(config.SeerrUrls);
-            var targets = string.IsNullOrEmpty(apiKey)
-                ? Array.Empty<DispatchTarget>()
-                : urls.Select(url => new DispatchTarget(url, apiKey, stamp)).ToArray();
-            return DispatchPlan.Automatic(batchSize, targets, revision);
+            var targets = integration.Urls
+                .Select(url => new DispatchTarget(
+                    url,
+                    integration.ApiKey,
+                    integration.CreateDispatchFence(_configProvider)))
+                .ToArray();
+            return DispatchPlan.Automatic(
+                batchSize,
+                targets,
+                integration.ConfigurationRevision);
         }
 
         private void QueueAutomaticPlanLocked(DispatchPlan plan)
@@ -395,10 +421,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 var target = plan.Targets[targetIndex];
                 cancellationToken.ThrowIfCancellationRequested();
-                if (target.ConfigurationStamp is SeerrMutationConfigStamp stamp
-                    && !stamp.Matches(
-                        _configProvider.ConfigurationOrNull,
-                        _configProvider.ConfigurationRevision))
+                if (target.DispatchFence?.CanDispatch() != true)
                 {
                     _logger.LogWarning(
                         "[SeerrScan] Configuration changed before dispatch to {Url}; that retired automatic target was not triggered",
@@ -410,6 +433,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var result = await PostScanTrigger(
                     target.Url,
                     target.ApiKey,
+                    target.DispatchFence!,
                     cancellationToken).ConfigureAwait(false);
                 results.Add(result);
                 if (result.Success)
@@ -444,11 +468,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private async Task<DispatchResult> PostScanTrigger(
             string url,
             string apiKey,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken)
         {
             var endpoint = $"{url.TrimEnd('/')}/api/v1/settings/jobs/{ScanJobId}/run";
             try
             {
+                if (!dispatchFence.CanDispatch())
+                {
+                    return DispatchResult.ConfigurationChangedResult(
+                        new DispatchTarget(url, apiKey, null));
+                }
+
                 var http = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
                 http.Timeout = TimeSpan.FromSeconds(15);
                 using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
@@ -461,6 +492,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     http,
                     request,
                     endpoint,
+                    dispatchFence,
                     cancellationToken).ConfigureAwait(false);
                 return new DispatchResult
                 {
@@ -560,7 +592,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         internal sealed record DispatchTarget(
             string Url,
             string ApiKey,
-            SeerrMutationConfigStamp? ConfigurationStamp);
+            SeerrDispatchFence? DispatchFence);
 
         private static void CompleteAsCancelled(DispatchPlan? plan)
         {
@@ -595,13 +627,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             public static DispatchPlan Manual(
                 IEnumerable<string> urls,
                 string apiKey,
-                int batchSize)
+                int batchSize,
+                SeerrDispatchFence dispatchFence,
+                long configurationRevision)
                 => new(
                     true,
                     batchSize,
                     urls.Distinct(StringComparer.Ordinal)
-                        .Select(url => new DispatchTarget(url, apiKey, null)),
-                    0);
+                        .Select(url => new DispatchTarget(url, apiKey, dispatchFence)),
+                    configurationRevision);
 
             public static DispatchPlan Automatic(
                 int batchSize,
@@ -666,6 +700,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     ErrorCode = "ConfigurationChanged",
                     Body = "Seerr configuration changed before this trigger was sent; retry with the current settings.",
                     TargetApiKey = target.ApiKey,
+                };
+
+            internal static DispatchResult PolicyDeniedResult(
+                string url,
+                string apiKey,
+                SeerrIntegrationState state)
+                => new()
+                {
+                    Url = url,
+                    Success = false,
+                    StatusCode = 503,
+                    ErrorCode = state == SeerrIntegrationState.Disabled
+                        ? "SeerrDisabled"
+                        : "ConfigurationChanged",
+                    Body = state == SeerrIntegrationState.Disabled
+                        ? "Seerr integration is disabled; no scan trigger was sent."
+                        : "The supplied Seerr target is not the active saved integration; no scan trigger was sent.",
+                    TargetApiKey = apiKey,
                 };
         }
     }

@@ -34,7 +34,7 @@ public sealed class SeerrScanTriggerControllerTests
         handler.AddResponse(
             "/api/v1/settings/jobs/jellyfin-recently-added-scan/run",
             "{}");
-        using var service = CreateService(handler);
+        using var service = CreateService(handler, "http://localhost:5055", "key");
         var controller = CreateController(service);
 
         var action = await controller.TriggerSeerrRecentlyAddedScan(
@@ -51,7 +51,10 @@ public sealed class SeerrScanTriggerControllerTests
     [Fact]
     public async Task ManualEndpoint_PreservesTypedUpstreamStatus()
     {
-        using var service = CreateService(new JsonFailureHandler(HttpStatusCode.Unauthorized));
+        using var service = CreateService(
+            new JsonFailureHandler(HttpStatusCode.Unauthorized),
+            "http://localhost:5055",
+            "bad-key");
         var controller = CreateController(service);
 
         var action = await controller.TriggerSeerrRecentlyAddedScan(
@@ -69,7 +72,10 @@ public sealed class SeerrScanTriggerControllerTests
         handler.AddResponse(
             "/api/v1/settings/jobs/jellyfin-recently-added-scan/run",
             "{}");
-        using var service = CreateService(handler);
+        using var service = CreateService(
+            handler,
+            "http://localhost:5055,http://127.0.0.1:5055",
+            "key");
         var controller = CreateController(service);
 
         var action = await controller.TriggerSeerrRecentlyAddedScan(
@@ -84,7 +90,10 @@ public sealed class SeerrScanTriggerControllerTests
     [Fact]
     public async Task ManualEndpoint_ServiceStopping_ReturnsServiceUnavailable()
     {
-        var service = CreateService(new JsonFailureHandler(HttpStatusCode.OK));
+        var service = CreateService(
+            new JsonFailureHandler(HttpStatusCode.OK),
+            "http://localhost:5055",
+            "key");
         service.Dispose();
         var controller = CreateController(service);
 
@@ -96,12 +105,20 @@ public sealed class SeerrScanTriggerControllerTests
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, result.StatusCode);
     }
 
-    private static SeerrScanTriggerService CreateService(HttpMessageHandler handler)
+    private static SeerrScanTriggerService CreateService(
+        HttpMessageHandler handler,
+        string urls,
+        string apiKey)
         => new(
             new CountingLibraryManager(),
             new RecordingHttpClientFactory(handler),
             NullLogger<SeerrScanTriggerService>.Instance,
-            new FakePluginConfigProvider(new PluginConfiguration()));
+            new FakePluginConfigProvider(new PluginConfiguration
+            {
+                SeerrEnabled = true,
+                SeerrUrls = urls,
+                SeerrApiKey = apiKey,
+            }));
 
     private static SeerrScanTriggerController CreateController(SeerrScanTriggerService service)
         => new(service, NullLogger<SeerrScanTriggerController>.Instance)

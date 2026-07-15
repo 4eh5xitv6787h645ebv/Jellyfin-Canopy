@@ -381,39 +381,26 @@ public sealed class SeerrScanTriggerServiceTests
     }
 
     [Fact]
-    public async Task RetiredAutomaticTarget_DoesNotBlockLaterExplicitManualTarget()
+    public async Task ManualTrigger_MasterDisabledWithRetainedCredentials_DoesNotPost()
     {
-        var provider = EnabledProvider();
-        provider.Current!.SeerrUrls = "http://automatic:5055";
-        var clock = new ManualTimeProvider(Epoch);
-        var library = new CountingLibraryManager();
-        var handler = LifecycleHandler.BlockingFirst();
-        using var service = CreateService(provider, handler, library, clock);
-        service.Initialize();
-        library.RaiseItemAdded(Movie());
-        clock.Advance(TimeSpan.FromSeconds(5));
-        await handler.FirstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-        library.RaiseItemAdded(Movie());
-        var firstManual = service.TriggerNowAsync(new[] { "http://manual-one:5055" }, "key");
-        var secondManual = service.TriggerNowAsync("http://manual-two:5055", "key");
-        provider.Current = new PluginConfiguration
+        var provider = new FakePluginConfigProvider(new PluginConfiguration
         {
-            SeerrEnabled = true,
+            SeerrEnabled = false,
             TriggerSeerrScanOnItemAdded = true,
-            SeerrScanDebounceSeconds = 5,
-            SeerrUrls = "http://replacement:5055",
-            SeerrApiKey = "replacement-key",
-        };
-        handler.ReleaseFirst.TrySetResult();
+            SeerrUrls = "http://retained:5055",
+            SeerrApiKey = "retained-key",
+        });
+        var handler = LifecycleHandler.Immediate();
+        using var service = CreateService(provider, handler);
 
-        var results = await firstManual.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.True((await secondManual.WaitAsync(TimeSpan.FromSeconds(5))).Success);
-        Assert.Equal(new[] { "automatic", "manual-one", "manual-two" },
-            handler.Requests.Select(request => request.Host));
-        Assert.Equal(new[] { true, false, true }, results.Select(result => result.Success));
-        Assert.Equal("ConfigurationChanged", results[1].ErrorCode);
-        Assert.Equal(1, handler.MaximumConcurrency);
+        var result = await service.TriggerNowAsync(
+            "http://retained:5055",
+            "retained-key");
+
+        Assert.False(result.Success);
+        Assert.Equal("SeerrDisabled", result.ErrorCode);
+        Assert.Equal(503, result.StatusCode);
+        Assert.Equal(0, handler.RequestCount);
     }
 
     private static FakePluginConfigProvider EnabledProvider()

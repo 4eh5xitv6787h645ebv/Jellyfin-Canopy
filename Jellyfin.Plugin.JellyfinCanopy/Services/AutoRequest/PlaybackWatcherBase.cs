@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Logging;
@@ -80,7 +81,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
                 return;
             }
 
-            if (!IsFeatureEnabled(config) || !config.SeerrEnabled)
+            if (!IsFeatureEnabled(config)
+                || !SeerrIntegrationPolicy.AllowsDeferredScheduling(config))
             {
                 _logger.LogInformation($"{LogPrefix} {DisabledMonitoringName} monitoring is disabled in configuration - not subscribing to playback events");
                 return;
@@ -106,7 +108,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
         protected PluginConfiguration? GetEnabledConfiguration()
         {
             var config = _configProvider.ConfigurationOrNull as PluginConfiguration;
-            if (config == null || !IsFeatureEnabled(config) || !config.SeerrEnabled)
+            if (config == null
+                || !IsFeatureEnabled(config)
+                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
             {
                 return null;
             }

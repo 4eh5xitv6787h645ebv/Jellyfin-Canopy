@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -49,6 +50,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ISeerrCache _cache;
+        private readonly IPluginConfigProvider _configProvider;
         private readonly ILogger<AvatarFetchService> _logger;
         private readonly TimeProvider _timeProvider;
         private readonly long _maximumAvatarBytes;
@@ -58,14 +60,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         public AvatarFetchService(
             IHttpClientFactory httpClientFactory,
             ISeerrCache cache,
+            IPluginConfigProvider configProvider,
             ILogger<AvatarFetchService> logger)
-            : this(httpClientFactory, cache, logger, TimeProvider.System, DefaultMaximumAvatarBytes)
+            : this(
+                httpClientFactory,
+                cache,
+                configProvider,
+                logger,
+                TimeProvider.System,
+                DefaultMaximumAvatarBytes)
         {
         }
 
         internal AvatarFetchService(
             IHttpClientFactory httpClientFactory,
             ISeerrCache cache,
+            IPluginConfigProvider configProvider,
             ILogger<AvatarFetchService> logger,
             TimeProvider timeProvider,
             long maximumAvatarBytes)
@@ -73,6 +83,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumAvatarBytes);
             _httpClientFactory = httpClientFactory;
             _cache = cache;
+            _configProvider = configProvider;
             _logger = logger;
             _timeProvider = timeProvider;
             _maximumAvatarBytes = maximumAvatarBytes;
@@ -91,9 +102,31 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         internal async Task<AvatarFetchResult> GetAsync(
             string cacheKey,
             string upstreamUrl,
-            Func<bool> isConfigurationCurrent,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken)
         {
+            ArgumentNullException.ThrowIfNull(dispatchFence);
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (!integration.IsActive
+                || !integration.Urls.Any(url => upstreamUrl.StartsWith(
+                    url + "/",
+                    StringComparison.Ordinal)))
+            {
+                return ConfigurationChanged();
+            }
+
+            SeerrDispatchFence authorizedFence = integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(dispatchFence.CanDispatch);
+
+            // Authorization precedes last-good and backoff reads: disabling the
+            // master switch must not keep advertising or serving cached active
+            // integration state.
+            if (!authorizedFence.CanDispatch())
+            {
+                return ConfigurationChanged();
+            }
+
             if (TryGetLastGood(cacheKey, out var cached) && IsFresh(cached))
             {
                 return Available(cached);
@@ -102,11 +135,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             if (IsBackedOff(cacheKey))
             {
                 return cached.Content != null ? Available(cached) : Missing();
-            }
-
-            if (!isConfigurationCurrent())
-            {
-                return ConfigurationChanged();
             }
 
             while (true)
@@ -124,7 +152,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     _ = CompleteFlightAsync(
                         cacheKey,
                         upstreamUrl,
-                        isConfigurationCurrent,
+                        authorizedFence,
                         candidate);
                 }
 
@@ -155,14 +183,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             string cacheKey,
             (byte[] Content, string ContentType, string ETag, DateTime CachedAt) entry,
             TimeSpan retention,
-            Func<bool> isConfigurationCurrent)
+            SeerrDispatchFence dispatchFence)
         {
-            if (!isConfigurationCurrent() || !cache.TrySet(cacheKey, entry, retention, out var publication))
+            if (!dispatchFence.CanDispatch() || !cache.TrySet(cacheKey, entry, retention, out var publication))
             {
                 return false;
             }
 
-            if (isConfigurationCurrent())
+            if (dispatchFence.CanDispatch())
             {
                 return true;
             }
@@ -174,7 +202,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         private async Task CompleteFlightAsync(
             string cacheKey,
             string upstreamUrl,
-            Func<bool> isConfigurationCurrent,
+            SeerrDispatchFence dispatchFence,
             AvatarFlight flight)
         {
             var flightCancellationToken = flight.CancellationToken;
@@ -183,7 +211,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 var result = await FetchLeaderAsync(
                     cacheKey,
                     upstreamUrl,
-                    isConfigurationCurrent,
+                    dispatchFence,
                     flightCancellationToken).ConfigureAwait(false);
                 flight.Completion.TrySetResult(result);
             }
@@ -194,7 +222,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Avatar fetch flight failed unexpectedly for key {AvatarKey}.", LogKey(cacheKey));
-                flight.Completion.TrySetResult(FailureResult(cacheKey, "internal fetch failure"));
+                flight.Completion.TrySetResult(FailureResult(
+                    cacheKey,
+                    "internal fetch failure",
+                    dispatchFence));
             }
             finally
             {
@@ -206,7 +237,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         private async Task<AvatarFetchResult> FetchLeaderAsync(
             string cacheKey,
             string upstreamUrl,
-            Func<bool> isConfigurationCurrent,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken)
         {
             TryGetLastGood(cacheKey, out var lastGood);
@@ -220,7 +251,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return lastGood.Content != null ? Available(lastGood) : Missing();
             }
 
-            if (!isConfigurationCurrent())
+            if (!dispatchFence.CanDispatch())
             {
                 return ConfigurationChanged();
             }
@@ -235,25 +266,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 using var request = new HttpRequestMessage(HttpMethod.Get, upstreamUrl);
                 request.Headers.UserAgent.ParseAdd(Helpers.Seerr.SeerrHttpHelper.UserAgent);
                 request.Headers.Accept.ParseAdd("image/*");
+                if (!dispatchFence.CanDispatch(request.RequestUri))
+                {
+                    return ConfigurationChanged();
+                }
+
                 using var response = await client.SendAsync(
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
                     fetchToken).ConfigureAwait(false);
 
-                if (!isConfigurationCurrent())
+                if (!dispatchFence.CanDispatch(request.RequestUri))
                 {
                     return ConfigurationChanged();
                 }
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    return FailureResult(cacheKey, $"HTTP {(int)response.StatusCode}", lastGood);
+                    return FailureResult(
+                        cacheKey,
+                        $"HTTP {(int)response.StatusCode}",
+                        dispatchFence,
+                        lastGood);
                 }
 
                 var contentType = response.Content.Headers.ContentType?.MediaType;
                 if (!IsAllowedContentType(contentType))
                 {
-                    return FailureResult(cacheKey, $"disallowed content type '{contentType ?? "missing"}'", lastGood);
+                    return FailureResult(
+                        cacheKey,
+                        $"disallowed content type '{contentType ?? "missing"}'",
+                        dispatchFence,
+                        lastGood);
                 }
 
                 var declaredLength = response.Content.Headers.ContentLength;
@@ -262,6 +306,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     return FailureResult(
                         cacheKey,
                         $"declared size {declaredLength.Value} exceeds {_maximumAvatarBytes}-byte cap",
+                        dispatchFence,
                         lastGood);
                 }
 
@@ -273,15 +318,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
                 if (content == null)
                 {
-                    return FailureResult(cacheKey, $"stream exceeds {_maximumAvatarBytes}-byte cap", lastGood);
+                    return FailureResult(
+                        cacheKey,
+                        $"stream exceeds {_maximumAvatarBytes}-byte cap",
+                        dispatchFence,
+                        lastGood);
                 }
 
                 if (!HasMatchingSignature(content, contentType!))
                 {
-                    return FailureResult(cacheKey, $"signature does not match {contentType}", lastGood);
+                    return FailureResult(
+                        cacheKey,
+                        $"signature does not match {contentType}",
+                        dispatchFence,
+                        lastGood);
                 }
 
-                if (!isConfigurationCurrent())
+                if (!dispatchFence.CanDispatch())
                 {
                     return ConfigurationChanged();
                 }
@@ -297,10 +350,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     cacheKey,
                     entry,
                     LastGoodRetention,
-                    isConfigurationCurrent))
+                    dispatchFence))
                 {
-                    return isConfigurationCurrent()
-                        ? FailureResult(cacheKey, "cache capacity rejected avatar", lastGood)
+                    return dispatchFence.CanDispatch()
+                        ? FailureResult(
+                            cacheKey,
+                            "cache capacity rejected avatar",
+                            dispatchFence,
+                            lastGood)
                         : ConfigurationChanged();
                 }
 
@@ -313,19 +370,33 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             }
             catch (OperationCanceledException)
             {
-                return FailureResult(cacheKey, "upstream timed out", lastGood);
+                return FailureResult(
+                    cacheKey,
+                    "upstream timed out",
+                    dispatchFence,
+                    lastGood);
             }
             catch (Exception ex)
             {
-                return FailureResult(cacheKey, ex.GetType().Name, lastGood);
+                return FailureResult(
+                    cacheKey,
+                    ex.GetType().Name,
+                    dispatchFence,
+                    lastGood);
             }
         }
 
         private AvatarFetchResult FailureResult(
             string cacheKey,
             string reason,
+            SeerrDispatchFence dispatchFence,
             (byte[] Content, string ContentType, string ETag, DateTime CachedAt) lastGood = default)
         {
+            if (!dispatchFence.CanDispatch())
+            {
+                return ConfigurationChanged();
+            }
+
             var failures = 1;
             if (_failures.TryGet(cacheKey, out var previous))
             {
@@ -333,10 +404,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             }
 
             var delay = FailureBackoff[Math.Min(failures - 1, FailureBackoff.Length - 1)];
-            _failures.Set(
+            _failures.TrySet(
                 cacheKey,
                 new FailureState(failures, _timeProvider.GetUtcNow().Add(delay)),
-                FailureStateRetention);
+                FailureStateRetention,
+                out var publication);
+            if (!dispatchFence.CanDispatch())
+            {
+                _failures.Remove(publication);
+                return ConfigurationChanged();
+            }
+
             _logger.LogWarning(
                 "Avatar upstream unavailable for key {AvatarKey} ({Reason}); retry in {Delay}. Consecutive failures: {Failures}; last-good: {LastGood}.",
                 LogKey(cacheKey),

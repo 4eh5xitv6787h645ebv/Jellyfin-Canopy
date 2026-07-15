@@ -34,7 +34,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 "7",
                 requestedPageSize: 100,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.True(result.IsComplete, result.FailureReason);
             Assert.Equal(21, result.Items.Count);
@@ -66,7 +67,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 500,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.True(result.IsComplete, result.FailureReason);
             Assert.Equal(21, result.Items.Count);
@@ -102,7 +104,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 20,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.True(result.IsComplete, result.FailureReason);
             Assert.Equal("http://second", result.SourceUrl);
@@ -132,7 +135,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 2,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -166,7 +170,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 2,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -193,7 +198,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 3,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -219,7 +225,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 2,
-                static row => SeerrPaginationHelper.CanonicalPositiveIntegerPropertyIdentity(row, "id"));
+                static row => SeerrPaginationHelper.CanonicalPositiveIntegerPropertyIdentity(row, "id"),
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -249,7 +256,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 1,
-                static row => SeerrPaginationHelper.CanonicalPositiveIntegerPropertyIdentity(row, "id"));
+                static row => SeerrPaginationHelper.CanonicalPositiveIntegerPropertyIdentity(row, "id"),
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -275,7 +283,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 1,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -301,7 +310,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 1,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -328,7 +338,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 1,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -355,7 +366,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 2,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -381,7 +393,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 1,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -402,7 +415,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 1000,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -432,7 +446,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 1,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -457,7 +472,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 1,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -483,7 +499,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 2,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -510,7 +527,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 1,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
@@ -543,6 +561,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                         cancellation.Cancel();
                         return Id(item);
                     },
+                    SeerrDispatchFenceTestFactory.Create(),
                     cancellation.Token));
         }
 
@@ -559,11 +578,172 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
                 "key",
                 apiUserId: null,
                 requestedPageSize: 1,
-                Id);
+                Id,
+                SeerrDispatchFenceTestFactory.Create());
 
             Assert.False(result.IsComplete);
             Assert.Empty(result.Items);
             Assert.Contains("root", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public async Task DispatchFenceClosesAfterFirstPage_DoesNotSendContinuationPage()
+        {
+            var allowed = true;
+            var handler = new RoutingHandler(uri =>
+            {
+                allowed = false;
+                return Json(new
+                {
+                    page = QueryInt(uri, "page"),
+                    totalPages = 2,
+                    totalResults = 2,
+                    results = new[] { new { id = 1 } },
+                });
+            });
+            using var client = new HttpClient(handler);
+
+            var result = await SeerrPaginationHelper.FetchAllAsync(
+                client,
+                new[] { "http://seerr" },
+                static (url, page, _) => $"{url}/items?page={page}",
+                "key",
+                apiUserId: null,
+                requestedPageSize: 1,
+                Id,
+                dispatchFence: SeerrDispatchFenceTestFactory.Create(() => allowed));
+
+            Assert.False(result.IsComplete);
+            Assert.Empty(result.Items);
+            Assert.Contains("configuration changed", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+            Assert.Single(handler.Requests);
+        }
+
+        [Fact]
+        public async Task DispatchFenceClosesAfterFirstScan_DoesNotSendConfirmationScan()
+        {
+            var allowed = true;
+            var handler = new RoutingHandler(_ =>
+            {
+                allowed = false;
+                return Json(new
+                {
+                    page = 1,
+                    totalPages = 1,
+                    totalResults = 1,
+                    results = new[] { new { id = 1 } },
+                });
+            });
+            using var client = new HttpClient(handler);
+
+            var result = await SeerrPaginationHelper.FetchAllAsync(
+                client,
+                new[] { "http://seerr" },
+                static (url, page, _) => $"{url}/items?page={page}",
+                "key",
+                apiUserId: null,
+                requestedPageSize: 1,
+                Id,
+                dispatchFence: SeerrDispatchFenceTestFactory.Create(() => allowed));
+
+            Assert.False(result.IsComplete);
+            Assert.Single(handler.Requests);
+        }
+
+        [Fact]
+        public async Task DispatchFenceClosesAfterFailedReplica_DoesNotSendFailoverReplica()
+        {
+            var allowed = true;
+            var handler = new RoutingHandler(_ =>
+            {
+                allowed = false;
+                return Json(new { error = true }, HttpStatusCode.BadGateway);
+            });
+            using var client = new HttpClient(handler);
+
+            var result = await SeerrPaginationHelper.FetchAllAsync(
+                client,
+                new[] { "http://first", "http://second" },
+                static (url, page, _) => $"{url}/items?page={page}",
+                "key",
+                apiUserId: null,
+                requestedPageSize: 1,
+                Id,
+                dispatchFence: SeerrDispatchFenceTestFactory.Create(() => allowed));
+
+            Assert.False(result.IsComplete);
+            var request = Assert.Single(handler.Requests);
+            Assert.Equal("first", request.Host);
+        }
+
+        [Fact]
+        public async Task DispatchFenceClosesAfterStableFirstSource_DoesNotSendNextIdentityDomain()
+        {
+            var firstSourceRequests = 0;
+            var allowed = true;
+            var handler = new RoutingHandler(uri =>
+            {
+                if (uri.Host == "first" && ++firstSourceRequests == 2)
+                {
+                    allowed = false;
+                }
+
+                return Json(new
+                {
+                    page = 1,
+                    totalPages = 1,
+                    totalResults = 1,
+                    results = new[] { new { id = 1 } },
+                });
+            });
+            using var client = new HttpClient(handler);
+
+            var result = await SeerrPaginationHelper.FetchAllSourcesAsync(
+                client,
+                new[] { "http://first", "http://second" },
+                static (url, page, _) => $"{url}/items?page={page}",
+                "key",
+                apiUserId: null,
+                requestedPageSize: 1,
+                Id,
+                dispatchFence: SeerrDispatchFenceTestFactory.Create(() => allowed));
+
+            Assert.False(result.IsComplete);
+            Assert.Equal(2, handler.Requests.Count);
+            Assert.All(handler.Requests, request => Assert.Equal("first", request.Host));
+        }
+
+        [Fact]
+        public async Task DispatchFenceThrowsAfterFirstResponse_FailsClosedWithoutLaterSend()
+        {
+            var throwOnCheck = false;
+            var handler = new RoutingHandler(_ =>
+            {
+                throwOnCheck = true;
+                return Json(new
+                {
+                    page = 1,
+                    totalPages = 2,
+                    totalResults = 2,
+                    results = new[] { new { id = 1 } },
+                });
+            });
+            using var client = new HttpClient(handler);
+
+            var result = await SeerrPaginationHelper.FetchAllAsync(
+                client,
+                new[] { "http://seerr" },
+                static (url, page, _) => $"{url}/items?page={page}",
+                "key",
+                apiUserId: null,
+                requestedPageSize: 1,
+                Id,
+                dispatchFence: SeerrDispatchFenceTestFactory.Create(() => throwOnCheck
+                    ? throw new InvalidOperationException("provider failed")
+                    : true));
+
+            Assert.False(result.IsComplete);
+            Assert.Single(handler.Requests);
         }
 
         private static string? Id(JsonElement item)

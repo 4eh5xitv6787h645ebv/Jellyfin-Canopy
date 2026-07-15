@@ -4,6 +4,7 @@ using System.Text.Json;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Controllers;
+using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using MediaBrowser.Controller.Entities;
@@ -200,15 +201,131 @@ public sealed class SeerrUserManualWatchlistSyncTests
         Assert.All(handler.Requests, request => Assert.Equal("seerr", request.Uri.Host));
     }
 
+    [Fact]
+    public async Task ConfigurationDisabledDuringWatchlistAwait_DoesNotStartRequestCollection()
+    {
+        var user = new User("generation-user", "provider", "password-provider");
+        var handler = new RoutingHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/v1/user")
+            {
+                return Page(new { id = 44, jellyfinUserId = user.Id.ToString() });
+            }
+
+            throw new Xunit.Sdk.XunitException(
+                $"Unexpected direct request {request.Method} {request.RequestUri}.");
+        });
+        var provider = new FakePluginConfigProvider(new PluginConfiguration
+        {
+            SeerrEnabled = true,
+            SyncSeerrWatchlist = true,
+            AddRequestedMediaToWatchlist = true,
+            SeerrUrls = "http://seerr",
+            SeerrApiKey = "key",
+        });
+        var seerr = new BlockingWatchlistClient();
+        var controller = BuildController(
+            user,
+            handler,
+            new CountingLibraryManager(),
+            new StubUserDataManager(),
+            "http://seerr",
+            addRequests: true,
+            provider,
+            seerr);
+
+        var syncTask = controller.SyncSeerrWatchlist();
+        await seerr.WatchlistStarted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        provider.Current!.SeerrEnabled = false;
+        seerr.ReleaseWatchlist();
+
+        var conflict = Assert.IsType<ConflictObjectResult>(
+            await syncTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        var body = JsonSerializer.SerializeToElement(conflict.Value);
+        Assert.Equal("sync_configuration_changed", body.GetProperty("code").GetString());
+        Assert.Equal(0, seerr.RequestCalls);
+    }
+
+    [Fact]
+    public async Task ConfigurationDisabledByFirstLocalSave_StopsRemainingItemMutations()
+    {
+        var user = new User("commit-generation-user", "provider", "password-provider");
+        var firstMovie = MovieWithTmdbId(501);
+        var secondMovie = MovieWithTmdbId(502);
+        var handler = new RoutingHandler(request =>
+        {
+            var uri = request.RequestUri!;
+            if (uri.AbsolutePath == "/api/v1/user")
+            {
+                return Page(new { id = 44, jellyfinUserId = user.Id.ToString() });
+            }
+
+            if (uri.AbsolutePath == "/api/v1/user/44/watchlist")
+            {
+                return Page(
+                    new { tmdbId = 501, mediaType = "movie" },
+                    new { tmdbId = 502, mediaType = "movie" });
+            }
+
+            throw new Xunit.Sdk.XunitException($"Unexpected request {request.Method} {uri}.");
+        });
+        var provider = new FakePluginConfigProvider(new PluginConfiguration
+        {
+            SeerrEnabled = true,
+            SyncSeerrWatchlist = true,
+            AddRequestedMediaToWatchlist = false,
+            SeerrUrls = "http://seerr",
+            SeerrApiKey = "key",
+        });
+        var saveCalls = 0;
+        var userData = new StubUserDataManager
+        {
+            GetUserDataHook = (_, item) => new UserItemData
+            {
+                Key = item.Id.ToString("N"),
+                Likes = false,
+            },
+            SaveUserDataHook = (_, _, _, _, _) =>
+            {
+                if (Interlocked.Increment(ref saveCalls) == 1)
+                {
+                    provider.Current!.SeerrEnabled = false;
+                }
+            },
+        };
+        var library = new CountingLibraryManager
+        {
+            GetItemListHook = _ => new BaseItem[] { firstMovie, secondMovie },
+        };
+        var controller = BuildController(
+            user,
+            handler,
+            library,
+            userData,
+            "http://seerr",
+            addRequests: false,
+            provider);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(
+            await controller.SyncSeerrWatchlist());
+
+        Assert.Equal(1, Volatile.Read(ref saveCalls));
+        var body = JsonSerializer.SerializeToElement(conflict.Value);
+        Assert.Equal("sync_configuration_changed", body.GetProperty("code").GetString());
+    }
+
     private static SeerrUserController BuildController(
         User user,
         RoutingHandler handler,
         CountingLibraryManager library,
         StubUserDataManager userData,
         string seerrUrls,
-        bool addRequests)
+        bool addRequests,
+        FakePluginConfigProvider? provider = null,
+        ISeerrClient? seerrOverride = null)
     {
-        var config = new PluginConfiguration
+        var config = provider?.ConfigurationOrNull ?? new PluginConfiguration
         {
             SeerrEnabled = true,
             SyncSeerrWatchlist = true,
@@ -216,11 +333,11 @@ public sealed class SeerrUserManualWatchlistSyncTests
             SeerrUrls = seerrUrls,
             SeerrApiKey = "key",
         };
-        var provider = new FakePluginConfigProvider(config);
+        provider ??= new FakePluginConfigProvider(config);
         var users = new StubUserManager(user);
         var factory = new RecordingHttpClientFactory(handler);
         var cache = new SeerrCache(provider);
-        var seerr = new SeerrClient(
+        var seerr = seerrOverride ?? new SeerrClient(
             factory,
             NullLogger<SeerrClient>.Instance,
             users,
@@ -286,6 +403,62 @@ public sealed class SeerrUserManualWatchlistSyncTests
             cancellationToken.ThrowIfCancellationRequested();
             Requests.Add(new CapturedRequest(request.Method, request.RequestUri!));
             return Task.FromResult(_route(request));
+        }
+    }
+
+    private sealed class BlockingWatchlistClient : ISeerrClient
+    {
+        private readonly TaskCompletionSource _watchlistStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseWatchlist =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task WatchlistStarted => _watchlistStarted.Task;
+
+        public int RequestCalls { get; private set; }
+
+        public void ReleaseWatchlist() => _releaseWatchlist.TrySetResult();
+
+        public Task<SeerrUser?> GetSeerrUser(
+            string jellyfinUserId,
+            bool bypassCache = false,
+            bool allowAutoImport = true)
+            => throw new NotImplementedException();
+
+        public Task<string?> GetSeerrUserId(string jellyfinUserId, bool allowAutoImport = true)
+            => throw new NotImplementedException();
+
+        public bool IsImportBlocked(string jellyfinUserId, PluginConfiguration config) => false;
+
+        public Task<bool> GetStatusActiveAsync() => throw new NotImplementedException();
+
+        public Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(
+            string jellyfinUserId,
+            bool isAdmin = false)
+            => throw new NotImplementedException();
+
+        public void EvictMediaDetailCache(int tmdbId, string mediaType)
+        {
+        }
+
+        public Task<IActionResult> ProxyRequestAsync(
+            string apiPath,
+            HttpMethod method,
+            string? content,
+            SeerrCaller caller)
+            => throw new NotImplementedException();
+
+        public async Task<List<WatchlistItem>?> GetWatchlistForUser(string seerrUserId)
+        {
+            _watchlistStarted.TrySetResult();
+            await _releaseWatchlist.Task;
+            return new List<WatchlistItem>();
+        }
+
+        public Task<List<WatchlistItem>?> GetRequestsForUser(string seerrUserId)
+        {
+            RequestCalls++;
+            return Task.FromResult<List<WatchlistItem>?>(new List<WatchlistItem>());
         }
     }
 }

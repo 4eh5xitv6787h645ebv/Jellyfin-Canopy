@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 16412,
-        "totalLines": 25066
+        "coveredLines": 17188,
+        "totalLines": 25800
       },
       "tolerance": {
         "missingCoveredLines": 2,
-        "rationale": "Two clean reviewed local .NET 10/Coverlet integration runs on 2026-07-16 both measured 16412 covered lines across the identical 25066-line combined scope after adding bounded SearchHint hierarchy resolution with Jellyfin 12 enabled-library TopParentIds and the versioned bookmark logical-identity schema. The bookmark work added 46 instrumented lines beyond the reviewed 16366/25020 hidden-search baseline and covered all 46 through clone, equality, validation, dedicated-add, batch, and golden persistence evidence. The existing two-line tolerance remains narrow and covers only the previously reproduced one-line instrumentation variance (0.0080 percentage points)."
+        "rationale": "Two clean reviewed local .NET 10.0.9/Coverlet integration runs on 2026-07-16 each passed 1510 tests and measured the identical 25800-line assembly scope at 17188 and 17187 covered lines; the reviewed high-water is 17188. This final #163 scope replaces forgeable caller boolean predicates with a policy-owned opaque SeerrDispatchFence whose snapshot and capability constructors are private, whose source set is clone-isolated, whose optional restrictions can only narrow the base policy, and whose lowest-level normal transport checks the actual request URI against the captured normalized sources immediately before sending. The separately named unsaved-setup transport is pinned to its exact elevated owner and call graph. Architecture evidence inventories every normal, setup, raw-helper, non-Seerr, and delegated outbound edge; rejects fail-open predicates, truth-named gates, parameterized raw clients, unfenced helper additions, ordinary-gated setup calls, and post-await dispatches; and confines arbitrary Func<bool> storage to the fence's private AND-only restriction. Deterministic regressions also cover paginator page, confirmation-scan, failover, and identity-domain suppression; user-status and permission-audit publication changes; avatar throw/timeout failure-cache races; status/proxy/parental/scan/auto-request transports; both scheduled directions and manual local commit loops; response/avatar cache publication; and cancellation-callback failures during watchlist generation invalidation and disposal. The existing two-line tolerance is unchanged and covers only the reproduced one-line Coverlet instrumentation variance between otherwise identical clean runs (about 0.0039 percentage points)."
       }
     }
   }

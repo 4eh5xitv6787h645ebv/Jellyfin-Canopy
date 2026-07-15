@@ -72,6 +72,34 @@ public sealed class SeerrReadGenerationFenceTests
     }
 
     [Fact]
+    public async Task GenericProxy_PublicFailoverDisabledDuringFirstRequest_DoesNotSendToSecondSource()
+    {
+        var provider = new FakePluginConfigProvider(Configuration($"{SourceA},{SourceB}", "key-a"));
+        var cache = new SeerrCache(provider);
+        var handler = new BlockingFailedReadHandler();
+        var client = CreateClient(handler, provider, cache, new PassthroughParentalFilter());
+
+        var requestTask = client.ProxyRequestAsync(
+            "/api/v1/keyword?query=space",
+            HttpMethod.Get,
+            content: null,
+            new SeerrCaller(JellyfinUserId, IsAdmin: false),
+            BoundUser());
+        await handler.FirstRequestStarted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        provider.Current!.SeerrEnabled = false;
+        handler.ReleaseFirstRequest();
+
+        var conflict = Assert.IsType<ObjectResult>(
+            await requestTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(409, conflict.StatusCode);
+        Assert.Equal(
+            "read_configuration_changed",
+            conflict.Value?.GetType().GetProperty("code")?.GetValue(conflict.Value));
+        Assert.Equal(new[] { "source-a" }, handler.Hosts);
+    }
+
+    [Fact]
     public async Task GenericProxy_UncachedParentalFilterFaultReturnsStructuredUnavailableNotRawBody()
     {
         const string apiPath = "/api/v1/keyword?query=space";
@@ -252,7 +280,7 @@ public sealed class SeerrReadGenerationFenceTests
             cacheLock,
             key,
             stale,
-            () =>
+            SeerrDispatchFenceTestFactory.Create(() =>
             {
                 if (++checks == 1)
                 {
@@ -265,7 +293,7 @@ public sealed class SeerrReadGenerationFenceTests
                 }
 
                 return false;
-            });
+            }));
 
         Assert.False(published);
         Assert.Equal(2, checks);
@@ -381,6 +409,40 @@ public sealed class SeerrReadGenerationFenceTests
     }
 
     private sealed record CapturedRequest(string Host, string Path, string? ApiKey);
+
+    private sealed class BlockingFailedReadHandler : HttpMessageHandler
+    {
+        private readonly TaskCompletionSource _firstRequestStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseFirstRequest =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task FirstRequestStarted => _firstRequestStarted.Task;
+
+        public List<string> Hosts { get; } = new();
+
+        public void ReleaseFirstRequest() => _releaseFirstRequest.TrySetResult();
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Hosts.Add(request.RequestUri!.Host);
+            if (Hosts.Count == 1)
+            {
+                _firstRequestStarted.TrySetResult();
+                await _releaseFirstRequest.Task.WaitAsync(cancellationToken);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent(
+                    "{\"message\":\"unavailable\"}",
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+        }
+    }
 
     private sealed class ChunkedOversizeHandler : HttpMessageHandler
     {

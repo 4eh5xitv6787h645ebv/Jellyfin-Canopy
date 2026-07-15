@@ -138,7 +138,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             {
                 using var request = Helpers.Seerr.SeerrHttpHelper.BuildRequest(
                     HttpMethod.Get, requestUri, apiKey);
-                var (_, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(http, request, requestUri);
+                var (_, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendSetupAndReadJsonAsync(
+                    http,
+                    request,
+                    requestUri);
                 if (error == null) return Ok(new { ok = true });
 
                 _logger.LogWarning($"Seerr validate failed for {url}: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
@@ -326,11 +329,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [Authorize]
         public async Task<IActionResult> GetSeerrQuota()
         {
-            var requestConfig = _configProvider.Configuration;
-            var requestConfigRevision = _configProvider.ConfigurationRevision;
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (!integration.IsActive || integration.Configuration == null)
+            {
+                return StatusCode(503, new
+                {
+                    error = true,
+                    code = "seerr_disabled",
+                    message = "Seerr integration is not configured or enabled."
+                });
+            }
+
+            var requestConfig = integration.Configuration;
+            var requestConfigRevision = integration.ConfigurationRevision;
             var requestConfigStamp = SeerrMutationConfigStamp.Capture(
                 requestConfig,
                 requestConfigRevision);
+            SeerrDispatchFence dispatchFence = integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(() => requestConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision));
             IActionResult ConfigurationChanged() => StatusCode(409, new
             {
                 error = true,
@@ -419,7 +438,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         quota,
                         seerrUserId,
                         seerrUser.SourceUrl,
-                        requestConfig).ConfigureAwait(false);
+                        requestConfig,
+                        dispatchFence).ConfigureAwait(false);
                     if (!requestConfigStamp.Matches(
                             _configProvider.ConfigurationOrNull,
                             _configProvider.ConfigurationRevision))
@@ -467,7 +487,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             JsonObject quota,
             string seerrUserId,
             string? sourceUrl,
-            PluginConfiguration config)
+            PluginConfiguration config,
+            SeerrDispatchFence dispatchFence)
         {
             // This endpoint owns the projection; never preserve an upstream or
             // cached value that was not computed from this exact snapshot.
@@ -487,6 +508,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     sourceUrl ?? string.Empty,
                     config.SeerrApiKey,
                     seerrUserId,
+                    dispatchFence,
                     HttpContext.RequestAborted);
             });
             var projectionNow = DateTime.UtcNow;
@@ -827,6 +849,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             string sourceUrl,
             string apiKey,
             string seerrUserId,
+            SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken,
             int pageSize = 100,
             int maximumPages = SeerrPaginationHelper.DefaultMaximumPages,
@@ -840,6 +863,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 seerrUserId,
                 requestedPageSize: pageSize,
                 static row => SeerrPaginationHelper.CanonicalPositiveIntegerPropertyIdentity(row, "id"),
+                dispatchFence,
                 cancellationToken,
                 maximumPages,
                 maximumItems);
@@ -1135,8 +1159,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [Authorize]
         public async Task<IActionResult> GetSeerrPartialRequestsSetting()
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || !config.SeerrEnabled || string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (!integration.IsActive)
             {
                 // previously returned 200+false, which made the
                 // frontend silently flip the request modal to whole-season
@@ -1146,10 +1170,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return StatusCode(503, new { error = true, code = "disabled", message = "Seerr integration not configured." });
             }
 
-            var configurationRevision = _configProvider.ConfigurationRevision;
+            var config = integration.Configuration!;
+            var configurationRevision = integration.ConfigurationRevision;
             var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
-            var apiKey = config.SeerrApiKey;
-            var configuredUrls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
+            var apiKey = integration.ApiKey;
+            var configuredUrls = integration.Urls;
             IActionResult ConfigurationChanged() => StatusCode(409, new
             {
                 error = true,
@@ -1157,9 +1182,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 message = "Seerr configuration changed while reading request settings. Retry the request."
             });
 
-            bool IsConfigurationCurrent() => configStamp.Matches(
-                _configProvider.ConfigurationOrNull,
-                _configProvider.ConfigurationRevision);
+            bool IsConfigurationCurrent() => integration.IsCurrent(_configProvider)
+                && configStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision);
+            SeerrDispatchFence dispatchFence = integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(IsConfigurationCurrent);
 
             if (!IsConfigurationCurrent())
             {
@@ -1226,6 +1255,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     httpClient,
                     request,
                     requestUri,
+                    dispatchFence,
                     HttpContext.RequestAborted).ConfigureAwait(false);
 
                 if (!IsConfigurationCurrent())
@@ -1453,12 +1483,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var queryString = string.Join("&", queryParts);
             var apiPath = string.IsNullOrWhiteSpace(queryString) ? "/api/v1/issue" : $"/api/v1/issue?{queryString}";
 
-            var config = _configProvider.ConfigurationOrNull;
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            var config = integration.Configuration;
             var caller = SeerrCaller();
-            if (config == null
-                || !config.SeerrEnabled
-                || string.IsNullOrWhiteSpace(config.SeerrUrls)
-                || string.IsNullOrWhiteSpace(config.SeerrApiKey))
+            if (!integration.IsActive || config == null)
             {
                 return StatusCode(503, new { error = true, code = "unavailable", message = "Seerr integration is not available." });
             }
@@ -1468,10 +1496,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return Forbid();
             }
 
-            var configurationRevision = _configProvider.ConfigurationRevision;
+            var configurationRevision = integration.ConfigurationRevision;
             var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
-            var apiKey = config.SeerrApiKey;
-            var configuredUrls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
+            var apiKey = integration.ApiKey;
+            var configuredUrls = integration.Urls;
             bool IsConfigurationCurrent() => configStamp.Matches(
                 _configProvider.ConfigurationOrNull,
                 _configProvider.ConfigurationRevision);

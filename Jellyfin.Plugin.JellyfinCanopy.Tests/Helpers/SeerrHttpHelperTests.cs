@@ -167,7 +167,12 @@ public class SeerrHttpHelperTests
         using var client = new HttpClient(new StaticResponseHandler(StreamingJsonResponse(stream)));
         using var request = new HttpRequestMessage(HttpMethod.Get, "http://seerr/api");
 
-        var resultTask = SeerrHttpHelper.SendAndReadJsonAsync(client, request, request.RequestUri!.ToString(), cap);
+        var resultTask = SeerrHttpHelper.SendAndReadJsonAsync(
+            client,
+            request,
+            request.RequestUri!.ToString(),
+            cap,
+            SeerrDispatchFenceTestFactory.Create());
         var completed = await Task.WhenAny(resultTask, Task.Delay(TimeSpan.FromSeconds(2)));
 
         Assert.Same(resultTask, completed);
@@ -190,6 +195,7 @@ public class SeerrHttpHelperTests
             request,
             request.RequestUri!.ToString(),
             8,
+            SeerrDispatchFenceTestFactory.Create(),
             cts.Token);
         await stream.ReadStarted.WaitAsync(TimeSpan.FromSeconds(2));
         cts.Cancel();
@@ -212,6 +218,7 @@ public class SeerrHttpHelperTests
             request,
             request.RequestUri!.ToString(),
             8,
+            SeerrDispatchFenceTestFactory.Create(),
             cts.Token);
         await handler.SendStarted.WaitAsync(TimeSpan.FromSeconds(2));
         cts.Cancel();

@@ -70,7 +70,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             Guid userId)
         {
             var config = _configProvider.ConfigurationOrNull;
-            if (config == null || !config.AutoMovieRequestEnabled || !config.SeerrEnabled)
+            if (config == null
+                || !config.AutoMovieRequestEnabled
+                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
             {
                 return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
@@ -145,7 +147,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var qualityResolution = await ResolveQualityProfileAsync(
                 tmdbId,
                 seerrSourceUrl,
-                config);
+                config,
+                mutationConfigStamp);
             if (!qualityResolution.IsComplete)
             {
                 _logger.LogWarning(
@@ -169,7 +172,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 tmdbId,
                 seerrSourceUrl,
                 requestIs4k,
-                config);
+                config,
+                mutationConfigStamp);
             if (nextMovieLookup.Value == null)
             {
                 return nextMovieLookup.Outcome;
@@ -443,19 +447,33 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             string currentTmdbId,
             string seerrSourceUrl,
             bool requestIs4k,
-            PluginConfiguration config)
+            PluginConfiguration config,
+            SeerrMutationConfigStamp mutationConfigStamp)
         {
-            if (string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
-            {
-                return LookupResult<MovieInfo>.RetryableFailure();
-            }
-
             try
             {
+                var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+                SeerrDispatchFence dispatchFence = integration
+                    .CreateDispatchFence(_configProvider)
+                    .Restrict(() => mutationConfigStamp.Matches(
+                        _configProvider.ConfigurationOrNull,
+                        _configProvider.ConfigurationRevision)
+                        && _configProvider.ConfigurationOrNull?.AutoMovieRequestEnabled == true);
                 var pinnedSource = FindConfiguredSource(config.SeerrUrls, seerrSourceUrl);
                 if (pinnedSource == null)
                 {
                     _logger.LogWarning("[Auto-Movie-Request] The linked Seerr instance is no longer configured; no collection lookup was attempted");
+                    return LookupResult<MovieInfo>.RetryableFailure();
+                }
+
+                // Earlier profile/TMDB reads may have yielded while an admin
+                // disabled Seerr or changed its credentials. Revalidate the
+                // operation's complete generation at the final transport edge;
+                // retained URL/key fields must never revive a stale flight.
+                if (!mutationConfigStamp.Matches(
+                        _configProvider.ConfigurationOrNull,
+                        _configProvider.ConfigurationRevision))
+                {
                     return LookupResult<MovieInfo>.RetryableFailure();
                 }
 
@@ -469,7 +487,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     var (content, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
                         httpClient,
                         request,
-                        requestUrl);
+                        requestUrl,
+                        dispatchFence).ConfigureAwait(false);
                     if (error != null)
                     {
                         _logger.LogDebug($"[Auto-Movie-Request] Seerr collection fetch failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
@@ -638,9 +657,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private async Task<OriginalProfileReadResult> GetOriginalMovieQualityProfileAsync(
             string tmdbId,
             string seerrSourceUrl,
-            PluginConfiguration config)
+            PluginConfiguration config,
+            SeerrMutationConfigStamp mutationConfigStamp)
         {
-            if (string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            SeerrDispatchFence dispatchFence = integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(() => mutationConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision)
+                    && _configProvider.ConfigurationOrNull?.AutoMovieRequestEnabled == true);
+            if (!mutationConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision))
             {
                 return new OriginalProfileReadResult { Status = OriginalProfileReadStatus.Incomplete };
             }
@@ -662,7 +691,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var (content, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
                     httpClient,
                     request,
-                    requestUrl);
+                    requestUrl,
+                    dispatchFence).ConfigureAwait(false);
                 if (error != null)
                 {
                     _logger.LogDebug($"[Auto-Movie-Request] Quality profile lookup for movie {tmdbId} failed: code={error.Code} status={error.HttpStatus} cf-ray={error.CfRay}");
@@ -851,7 +881,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private async Task<QualityProfileResolution> ResolveQualityProfileAsync(
             string watchedTmdbId,
             string seerrSourceUrl,
-            PluginConfiguration config)
+            PluginConfiguration config,
+            SeerrMutationConfigStamp mutationConfigStamp)
         {
             var mode = config.AutoMovieRequestQualityMode ?? "default";
 
@@ -860,7 +891,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var original = await GetOriginalMovieQualityProfileAsync(
                     watchedTmdbId,
                     seerrSourceUrl,
-                    config);
+                    config,
+                    mutationConfigStamp);
                 if (original.Status == OriginalProfileReadStatus.Incomplete)
                 {
                     return QualityProfileResolution.Incomplete();
@@ -937,7 +969,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             PluginConfiguration config,
             SeerrMutationConfigStamp mutationConfigStamp)
         {
-            if (string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            SeerrDispatchFence dispatchFence = integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(() => mutationConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision)
+                    && _configProvider.ConfigurationOrNull?.AutoMovieRequestEnabled == true);
+            if (!mutationConfigStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision)
+                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
             {
                 _logger.LogWarning("[Auto-Movie-Request] Seerr configuration is missing");
                 return AutoRequestDispatchOutcome.NotAttempted;
@@ -1018,7 +1060,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         currentConfig,
                         _configProvider.ConfigurationRevision)
                     || currentConfig == null
-                    || !currentConfig.SeerrEnabled
+                    || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(currentConfig)
                     || !currentConfig.AutoMovieRequestEnabled
                     || (qualitySettings?.Is4k == true && !currentConfig.SeerrEnable4KRequests)
                     || string.IsNullOrEmpty(currentConfig.SeerrApiKey)
@@ -1038,7 +1080,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var (_, error, _) = await Helpers.Seerr.SeerrHttpHelper.SendAndReadJsonAsync(
                     httpClient,
                     request,
-                    requestUri);
+                    requestUri,
+                    dispatchFence).ConfigureAwait(false);
 
                 if (error == null)
                 {

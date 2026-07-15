@@ -150,7 +150,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             FetchConfiguration FetchConfig,
             long ConfigurationRevision,
             string ConfigurationIdentity,
-            SeerrMutationConfigStamp ConfigurationStamp);
+            SeerrMutationConfigStamp ConfigurationStamp,
+            SeerrIntegrationSnapshot Integration);
 
         public async Task<SeerrParentalResult> ApplyAsync(string json, string apiPath, SeerrCaller caller)
         {
@@ -255,17 +256,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         // ── Gate resolution (shared fast paths) ───────────────────────────────
         private async Task<GateContext?> ResolveGateAsync(SeerrCaller caller)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null || !config.SeerrRespectParentalRatings)
-            {
-                return null;
-            }
-
-            // The gate resolves certifications through Seerr; if Seerr isn't
-            // configured it cannot verify anything, so it stays inactive rather
-            // than fail-closed-blocking every title (which would break the raw
-            // TMDB passthrough for Elsewhere-only setups).
-            if (string.IsNullOrEmpty(config.SeerrUrls) || string.IsNullOrEmpty(config.SeerrApiKey))
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            var config = integration.Configuration;
+            if (!integration.IsActive
+                || config == null
+                || !config.SeerrRespectParentalRatings)
             {
                 return null;
             }
@@ -288,11 +283,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return null;
             }
 
-            var revision = _configProvider.ConfigurationRevision;
+            var revision = integration.ConfigurationRevision;
             var configurationStamp = SeerrMutationConfigStamp.Capture(config, revision);
             var fetchConfig = new FetchConfiguration(
-                config.SeerrUrls ?? string.Empty,
-                config.SeerrApiKey ?? string.Empty,
+                string.Join(',', integration.Urls),
+                integration.ApiKey,
                 config.TMDB_API_KEY ?? string.Empty,
                 TimeSpan.FromMinutes(Math.Max(1, config.SeerrParentalRatingCacheTtlMinutes)));
             var configurationIdentity = BuildConfigurationIdentity(config);
@@ -305,13 +300,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 fetchConfig,
                 revision,
                 configurationIdentity,
-                configurationStamp);
+                configurationStamp,
+                integration);
         }
 
         private bool IsCurrentConfiguration(GateContext gate)
-            => gate.ConfigurationStamp.Matches(
-                _configProvider.ConfigurationOrNull,
-                _configProvider.ConfigurationRevision);
+            => gate.Integration.IsCurrent(_configProvider)
+                && gate.ConfigurationStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision);
 
         private static string BuildConfigurationIdentity(PluginConfiguration config)
         {
@@ -886,7 +883,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             var (detail, hasTagData) = await FetchDetailAsync(
                 mediaType,
                 tmdbId,
-                gate.FetchConfig,
+                gate,
                 needTags,
                 cts.Token).ConfigureAwait(false);
             if (detail is null || !IsCurrentConfiguration(gate))
@@ -957,10 +954,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         private async Task<(JsonElement? Detail, bool HasTagData)> FetchDetailAsync(
             string mediaType,
             int tmdbId,
-            FetchConfiguration config,
+            GateContext gate,
             bool needTags,
             CancellationToken ct)
         {
+            if (!IsCurrentConfiguration(gate))
+            {
+                return (null, false);
+            }
+
+            var config = gate.FetchConfig;
             if (!needTags && !string.IsNullOrEmpty(config.TmdbApiKey))
             {
                 var fromTmdb = await FetchCertFromTmdbAsync(mediaType, tmdbId, config, ct).ConfigureAwait(false);
@@ -970,7 +973,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 }
             }
 
-            var fromSeerr = await FetchDetailFromSeerrAsync(mediaType, tmdbId, config, ct).ConfigureAwait(false);
+            // The TMDB prerequisite is an await boundary. If the integration
+            // changed while it was in flight, do not fall back using the old
+            // Seerr URL/key snapshot.
+            if (!IsCurrentConfiguration(gate))
+            {
+                return (null, false);
+            }
+
+            var fromSeerr = await FetchDetailFromSeerrAsync(mediaType, tmdbId, gate, ct).ConfigureAwait(false);
             return (fromSeerr, fromSeerr is not null);
         }
 
@@ -1015,9 +1026,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         private async Task<JsonElement?> FetchDetailFromSeerrAsync(
             string mediaType,
             int tmdbId,
-            FetchConfiguration config,
+            GateContext gate,
             CancellationToken ct)
         {
+            var config = gate.FetchConfig;
             var urls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
             if (urls.Length == 0 || string.IsNullOrEmpty(config.SeerrApiKey))
             {
@@ -1027,9 +1039,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             var relative = $"/api/v1/{(mediaType == "tv" ? "tv" : "movie")}/{tmdbId.ToString(CultureInfo.InvariantCulture)}";
             var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
             httpClient.Timeout = PerFetchTimeout;
+            SeerrDispatchFence dispatchFence = gate.Integration
+                .CreateDispatchFence(_configProvider)
+                .Restrict(() => IsCurrentConfiguration(gate));
 
             foreach (var url in urls)
             {
+                // A failed detail request may be followed by another configured
+                // source. Revalidate the complete gate generation before each
+                // send so disable/config edits fence that failover.
+                if (!IsCurrentConfiguration(gate))
+                {
+                    return null;
+                }
+
                 var requestUri = $"{url}{relative}";
                 try
                 {
@@ -1040,6 +1063,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                         httpClient,
                         request,
                         requestUri,
+                        dispatchFence,
                         ct).ConfigureAwait(false);
                     if (error != null || string.IsNullOrEmpty(body))
                     {
