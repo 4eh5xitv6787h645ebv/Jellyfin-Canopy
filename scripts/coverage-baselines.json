@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 13540,
-        "totalLines": 21712
+        "coveredLines": 13705,
+        "totalLines": 21906
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "The 2026-07-15 .NET 10/Coverlet run measured asset-cache same-key outage storms, fake-clock retry windows, globally bounded different-key fetches, last-good recovery, and no-remote-browser fallback coverage; one line permits only negligible instrumentation variance."
+        "rationale": "The 2026-07-15 .NET 10/Coverlet run measured bounded avatar streaming, cap-plus-one rejection, signature validation, reference-counted same-key singleflight cancellation, fake-clock negative backoff, last-good recovery, and high-cardinality cache budgets; one line permits only negligible instrumentation variance."
       }
     }
   }

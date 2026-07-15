@@ -47,11 +47,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         {
             var factory = new RecordingHttpClientFactory(handler);
             var library = new CountingLibraryManager();
+            var avatarFetch = new AvatarFetchService(
+                factory,
+                cache,
+                NullLogger<AvatarFetchService>.Instance);
             var controller = new ItemInfoController(
                 factory,
                 NullLogger<ItemInfoController>.Instance,
                 new StubUserManager(),
                 cache,
+                avatarFetch,
                 provider,
                 library,
                 new ItemLookupService(library));
@@ -193,12 +198,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 await oldRequest.WaitAsync(TimeSpan.FromSeconds(5)));
             Assert.Equal(409, staleResult.StatusCode);
 
-            var newKey = ItemInfoController.BuildAvatarCacheKey(
+            var newKey = AvatarFetchService.BuildCacheKey(
                 SourceB,
                 Path,
                 newRevision,
                 "new-key");
-            var oldKey = ItemInfoController.BuildAvatarCacheKey(
+            var oldKey = AvatarFetchService.BuildCacheKey(
                 SourceB,
                 Path,
                 oldRevision,
@@ -227,10 +232,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var newer = (new byte[] { 2 }, "image/png", "\"new\"", DateTime.UtcNow);
             var checks = 0;
 
-            var published = ItemInfoController.TryPublishAvatarCacheEntry(
+            var published = AvatarFetchService.TryPublishCacheEntry(
                 cache,
                 key,
                 stale,
+                TimeSpan.FromHours(1),
                 () =>
                 {
                     if (++checks == 1)
@@ -260,7 +266,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 CancellationToken cancellationToken)
             {
                 Requests.Add(request);
-                var content = new ByteArrayContent(new byte[] { 137, 80, 78, 71 });
+                var content = new ByteArrayContent(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10, 1 });
                 content.Headers.ContentType = new MediaTypeHeaderValue("image/png");
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
             }
@@ -268,8 +274,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
         private sealed class BlockingAvatarGenerationHandler : HttpMessageHandler
         {
-            public static readonly byte[] OldBytes = { 1, 2, 3 };
-            public static readonly byte[] NewBytes = { 4, 5, 6 };
+            public static readonly byte[] OldBytes = { 137, 80, 78, 71, 13, 10, 26, 10, 1 };
+            public static readonly byte[] NewBytes = { 137, 80, 78, 71, 13, 10, 26, 10, 2 };
 
             private readonly TaskCompletionSource _oldRequestStarted = new(
                 TaskCreationOptions.RunContinuationsAsynchronously);

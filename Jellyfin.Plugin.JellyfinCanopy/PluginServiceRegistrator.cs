@@ -81,6 +81,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // holder). Must stay a singleton: controllers, the user-import task
             // and the plugin's config-change hook all share one instance.
             serviceCollection.AddSingleton<Services.Seerr.ISeerrCache, Services.Seerr.SeerrCache>();
+            // One process-wide owner for bounded avatar streaming, per-key cold-flight
+            // coalescing, outage backoff and last-good publication.
+            serviceCollection.AddSingleton<Services.Seerr.AvatarFetchService>();
             // Server-side parental-rating filter for Seerr search/discovery results.
             // Injected into SeerrClient; must NOT depend on ISeerrClient
             // (that would be a DI cycle) — it fetches per-item certifications via the

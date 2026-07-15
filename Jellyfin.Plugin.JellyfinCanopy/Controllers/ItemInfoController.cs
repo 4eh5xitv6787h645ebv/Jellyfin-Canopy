@@ -4,13 +4,10 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Reflection;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-using System.Collections.Concurrent;
-using System.Security.Cryptography;
 using Jellyfin.Data;
 using Jellyfin.Data.Enums;
 using MediaBrowser.Controller.Dto;
@@ -48,12 +45,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     {
         private readonly ILibraryManager _libraryManager;
         private readonly IItemLookupService _itemLookup;
+        private readonly AvatarFetchService _avatarFetch;
 
         public ItemInfoController(
             IHttpClientFactory httpClientFactory,
             ILogger<ItemInfoController> logger,
             IUserManager userManager,
             ISeerrCache seerrCache,
+            AvatarFetchService avatarFetch,
             IPluginConfigProvider configProvider,
             ILibraryManager libraryManager,
             IItemLookupService itemLookup)
@@ -61,6 +60,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             _libraryManager = libraryManager;
             _itemLookup = itemLookup;
+            _avatarFetch = avatarFetch;
         }
 
         /// <summary>
@@ -462,121 +462,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // rotation must not reuse bytes fetched by the prior identity
                 // generation, including when a custom provider mutates its
                 // configuration object in place without advancing revision.
-                var cacheKey = BuildAvatarCacheKey(
+                var cacheKey = AvatarFetchService.BuildCacheKey(
                     seerrUrl,
                     avatarPath,
                     configurationRevision,
                     seerrApiKey);
 
-                // Check server-side cache first to avoid hitting upstream Seerr
-                // on every request. This is critical for large avatars (e.g., animated
-                // GIFs) that would otherwise be re-downloaded on every conditional request.
-                if (_seerrCache.AvatarCache.TryGetValue(cacheKey, out var cached)
-                    && DateTime.UtcNow - cached.CachedAt < _seerrCache.AvatarCacheDuration)
-                {
-                    if (!IsConfigurationCurrent())
-                    {
-                        return ConfigurationChanged();
-                    }
-
-                    // Serve 304 if client already has this version
-                    if (Request.Headers.TryGetValue("If-None-Match", out var cachedIfNoneMatch)
-                        && cachedIfNoneMatch.ToString().Contains(cached.ETag))
-                    {
-                        Response.Headers["Cache-Control"] = "private, no-cache";
-                        Response.Headers["ETag"] = cached.ETag;
-                        return StatusCode(304);
-                    }
-
-                    Response.Headers["Cache-Control"] = "private, no-cache";
-                    Response.Headers["ETag"] = cached.ETag;
-                    return File(cached.Content, cached.ContentType);
-                }
-
-                var client = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
-                client.Timeout = TimeSpan.FromSeconds(10);
-
-                if (!IsConfigurationCurrent())
-                {
-                    return ConfigurationChanged();
-                }
-
-                using var avatarRequest = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, $"{seerrUrl}{avatarPath}");
-                // explicit User-Agent + Accept so Cloudflare's bot
-                // mode doesn't return an HTML challenge page that we'd try to
-                // serve as an image.
-                avatarRequest.Headers.UserAgent.ParseAdd(Helpers.Seerr.SeerrHttpHelper.UserAgent);
-                avatarRequest.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("image/*"));
-                using var response = await client.SendAsync(
-                    avatarRequest,
-                    HttpContext.RequestAborted).ConfigureAwait(false);
-                if (!IsConfigurationCurrent())
-                {
-                    return ConfigurationChanged();
-                }
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    return NotFound();
-                }
-
-                // Closed-set MIME whitelist. previously
-                // accepted `image/svg+xml`, so a compromised Seerr could serve
-                // an SVG with embedded `<script>` that we'd cache for 1 hour.
-                // SVG is intentionally excluded — TMDB avatars are always
-                // raster formats.
-                var contentType = response.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
-                var allowedAvatarTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    "image/png", "image/jpeg", "image/jpg", "image/gif",
-                    "image/webp", "image/avif", "image/bmp"
-                };
-                if (!allowedAvatarTypes.Contains(contentType))
-                {
-                    _logger.LogDebug($"ProxyAvatar rejected unsafe content-type: {contentType}");
-                    return NotFound();
-                }
-
-                var content = await response.Content.ReadAsByteArrayAsync(
-                    HttpContext.RequestAborted).ConfigureAwait(false);
-                if (!IsConfigurationCurrent())
-                {
-                    return ConfigurationChanged();
-                }
-
-                // Compute ETag from content hash for conditional request support.
-                var hash = SHA256.HashData(content);
-                var etag = $"\"{Convert.ToHexString(hash)}\"";
-
-                // Store only in the captured generation. The post-write check
-                // closes the narrow check-to-publication race; exact removal
-                // cannot delete a newer flight's replacement at the same key.
-                var publishedEntry = (
-                    Content: content,
-                    ContentType: contentType,
-                    ETag: etag,
-                    CachedAt: DateTime.UtcNow);
-                if (!TryPublishAvatarCacheEntry(
-                    _seerrCache.AvatarCache,
+                var avatar = await _avatarFetch.GetAsync(
                     cacheKey,
-                    publishedEntry,
-                    IsConfigurationCurrent))
+                    $"{seerrUrl}{avatarPath}",
+                    IsConfigurationCurrent,
+                    HttpContext.RequestAborted).ConfigureAwait(false);
+                if (avatar.Status == AvatarFetchStatus.ConfigurationChanged || !IsConfigurationCurrent())
                 {
                     return ConfigurationChanged();
                 }
 
-                if (!IsConfigurationCurrent())
+                if (avatar.Status != AvatarFetchStatus.Available
+                    || avatar.Content == null
+                    || avatar.ContentType == null
+                    || avatar.ETag == null)
                 {
-                    _seerrCache.AvatarCache.Remove(cacheKey, publishedEntry);
-                    return ConfigurationChanged();
+                    return NotFound();
                 }
 
                 // Serve 304 if client already has this version
                 if (Request.Headers.TryGetValue("If-None-Match", out var ifNoneMatch)
-                    && ifNoneMatch.ToString().Contains(etag))
+                    && ifNoneMatch.ToString().Contains(avatar.ETag))
                 {
                     Response.Headers["Cache-Control"] = "private, no-cache";
-                    Response.Headers["ETag"] = etag;
+                    Response.Headers["ETag"] = avatar.ETag;
                     return StatusCode(304);
                 }
 
@@ -586,47 +501,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // bytes but must revalidate; the server-side AvatarCache still
                 // avoids another upstream download and can answer with 304.
                 Response.Headers["Cache-Control"] = "private, no-cache";
-                Response.Headers["ETag"] = etag;
+                Response.Headers["ETag"] = avatar.ETag;
 
-                return File(content, contentType);
+                return File(avatar.Content, avatar.ContentType);
+            }
+            catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                return new EmptyResult();
             }
             catch (Exception ex)
             {
                 _logger.LogWarning($"ProxyAvatar exception: {ex.Message}");
                 return NotFound();
             }
-        }
-
-        internal static string BuildAvatarCacheKey(
-            string seerrUrl,
-            string avatarPath,
-            long configurationRevision,
-            string seerrApiKey)
-        {
-            var apiKeyFingerprint = Convert.ToHexString(
-                SHA256.HashData(Encoding.UTF8.GetBytes(seerrApiKey)));
-            return $"{configurationRevision.ToString(System.Globalization.CultureInfo.InvariantCulture)}:{apiKeyFingerprint}:{seerrUrl.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)}:{seerrUrl}{avatarPath}";
-        }
-
-        internal static bool TryPublishAvatarCacheEntry(
-            BoundedTtlCache<string, (byte[] Content, string ContentType, string ETag, DateTime CachedAt)> cache,
-            string cacheKey,
-            (byte[] Content, string ContentType, string ETag, DateTime CachedAt) entry,
-            Func<bool> isConfigurationCurrent)
-        {
-            if (!isConfigurationCurrent())
-            {
-                return false;
-            }
-
-            cache.TrySet(cacheKey, entry, out var publication);
-            if (isConfigurationCurrent())
-            {
-                return true;
-            }
-
-            cache.Remove(publication);
-            return false;
         }
 
         [Authorize]
