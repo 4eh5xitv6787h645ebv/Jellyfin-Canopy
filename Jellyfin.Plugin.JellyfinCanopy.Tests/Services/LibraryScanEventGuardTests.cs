@@ -53,7 +53,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         {
             "TagCacheMonitor.cs",             // record id -> TagCacheService debounced flush worker
             "SeerrScanTriggerService.cs",     // cheap config/kind check -> counter + debounce timer
-            "WatchlistMonitor.cs",            // cheap Movie/Series reject -> Task.Run (lookup + writes off-thread)
+            "WatchlistMonitor.cs",            // constant-time gates -> bounded coalescing channel worker
             "ContinueWatchingPlaybackEvents.cs", // record id -> debounced timer drain (GetUsers + per-user prune off-thread, coalesced)
             "SpoilerSeerrPendingPromoter.cs", // cheap gate ContainsKey -> coalesced Task.Run sweep (GetItemById + RMW off-thread)
         };
@@ -66,9 +66,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         // would hide the exact regression this guard exists to catch. One justification per file.
         private static readonly Dictionary<string, string[]> OffThreadWorkerMethods = new(StringComparer.Ordinal)
         {
-            // ScheduleWatchlistCheck (sync handler) defers to Task.Run(() => ProcessItemForWatchlist(...));
-            // that method resolves ids, GetUsers() and writes watchlists off the scan thread.
-            ["WatchlistMonitor.cs"] = new[] { "ProcessItemForWatchlist" },
+            // ScheduleWatchlistCheck (sync handler) performs a non-blocking bounded enqueue;
+            // ProcessQueuedItemAsync / ProcessItemForWatchlist run on the owned channel worker.
+            ["WatchlistMonitor.cs"] = new[] { "ProcessQueuedItemAsync", "ProcessItemForWatchlist" },
             // OnItemRemoved (sync handler) only records ids + arms a debounce Timer; Drain is the
             // timer callback and DrainBatch/PruneOrphans are its per-user workers (GetUsers + prune).
             ["ContinueWatchingPlaybackEvents.cs"] = new[] { "Drain", "DrainBatch", "PruneOrphans" },

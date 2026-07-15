@@ -34,21 +34,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly UserConfigurationManager _userConfigurationManager;
         private readonly ILogger<WatchlistMonitor> _logger;
         private readonly IPluginConfigProvider _configProvider;
-        private readonly BoundedTtlCache<string, List<RequestItemWithUser>> _requestsCache = new(
+        private const int WorkQueueCapacity = 1024;
+        // A local mutation batch can be partially committed before an unexpected exception.
+        // Do not replay it automatically; the next Jellyfin update event is the safe re-drive.
+        private const int WorkMaximumAttempts = 1;
+        private readonly BoundedTtlCache<string, RequestSnapshot> _requestsCache = new(
             maximumEntries: 64,
             maximumWeight: 100_000,
-            weight: static (key, items) => key.Length + items.Count,
+            weight: static (key, snapshot) => key.Length + snapshot.Weight,
             comparer: StringComparer.Ordinal,
             defaultTtl: GetRequestsCacheTtl);
         private readonly object _requestsCacheLock = new();
-        private readonly ConcurrentDictionary<string, Lazy<Task<List<RequestItemWithUser>?>>> _requestsInFlight = new();
+        private readonly ConcurrentDictionary<string, Lazy<Task<RequestSnapshot?>>> _requestsInFlight = new();
         private readonly object _lifecycleLock = new();
-        private readonly HashSet<Task> _activeTasks = new();
-        private readonly CancellationTokenSource _lifetimeCts = new();
+        private readonly object _configurationCancellationLock = new();
+        private readonly BoundedCoalescingWorker<Guid, WatchlistWorkItem> _workQueue;
+        private ConfigurationGeneration _configurationGeneration = new(0);
         private bool _subscribed;
         private bool _disposed;
-        private bool _cancellationIssued;
-        private bool _lifetimeCtsDisposed;
+        private bool _configurationCtsDisposed;
 
         public WatchlistMonitor(
             ILibraryManager libraryManager,
@@ -66,6 +70,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _userConfigurationManager = userConfigurationManager;
             _configProvider = configProvider;
             _logger = logger;
+            _workQueue = new BoundedCoalescingWorker<Guid, WatchlistWorkItem>(
+                WorkQueueCapacity,
+                WorkMaximumAttempts,
+                ProcessQueuedItemAsync);
         }
 
         private static TimeSpan GetRequestsCacheTtl()
@@ -109,61 +117,111 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // Handle library item updated events (fires after metadata refresh) to check if they match pending watchlist items.
         private void OnItemUpdated(object? sender, ItemChangeEventArgs e) => ScheduleWatchlistCheck(e, "ItemUpdated");
 
-        // PERF(S1): ItemAdded/ItemUpdated fire synchronously on Jellyfin's library-scan thread. Do only
-        // the cheap Movie/Series reject here, then run the Seerr request lookup + per-user watchlist
-        // writes off-thread. (Awaiting ProcessItemForWatchlist is NOT enough: GetAllSeerrRequests
-        // returns synchronously on a cache hit, so the continuation would run on the scan thread.)
+        // PERF(S1): ItemAdded/ItemUpdated fire synchronously on Jellyfin's library-scan thread. Do
+        // only constant-time gates and a non-blocking bounded enqueue here. One lifecycle-owned
+        // worker performs the Seerr request lookup + per-user watchlist writes off-thread.
         // See docs/advanced/performance-rules.md (S1).
         private void ScheduleWatchlistCheck(ItemChangeEventArgs e, string eventType)
         {
             var kind = e.Item?.GetBaseItemKind();
             if (kind != BaseItemKind.Movie && kind != BaseItemKind.Series) return;
 
-            Task task;
+            var configRevision = _configProvider.ConfigurationRevision;
+            var config = _configProvider.ConfigurationOrNull;
+            if (_configProvider.ConfigurationRevision != configRevision) return;
+            if (config?.AddRequestedMediaToWatchlist != true || !config.SeerrEnabled) return;
+
+            long configurationGeneration;
+            lock (_configurationCancellationLock)
+            {
+                if (_configurationCtsDisposed) return;
+                configurationGeneration = _configurationGeneration.Number;
+            }
+
+            var work = new WatchlistWorkItem(
+                e.Item!,
+                eventType,
+                configRevision,
+                configurationGeneration);
+            if (!_workQueue.TryEnqueue(e.Item!.Id, work))
+            {
+                var metrics = _workQueue.Metrics;
+                if (metrics.Dropped == 1 || (metrics.Dropped & (metrics.Dropped - 1)) == 0)
+                {
+                    _logger.LogWarning(
+                        "[Watchlist] Bounded event queue rejected work: depth={QueueDepth}, states={StateCount}, capacity={Capacity}, dropped={Dropped}.",
+                        metrics.QueueDepth,
+                        metrics.StateCount,
+                        metrics.Capacity,
+                        metrics.Dropped);
+                }
+            }
+        }
+
+        private async Task ProcessQueuedItemAsync(WatchlistWorkItem work, CancellationToken cancellationToken)
+        {
+            ConfigurationGeneration configurationGeneration;
+            CancellationToken configurationToken;
+            lock (_configurationCancellationLock)
+            {
+                if (_configurationCtsDisposed) return;
+                configurationGeneration = _configurationGeneration;
+                configurationToken = configurationGeneration.Cancellation.Token;
+            }
+
+            // The explicit generation is advanced by the ConfigurationChanged event and does not
+            // depend on when the provider first observes the replacement object. Capturing the
+            // state object before both checks means a concurrent save either changes the number or
+            // cancels this exact token; old work can never adopt a new generation's token.
+            if (configurationGeneration.Number != work.ConfigurationGeneration
+                || _configProvider.ConfigurationRevision != work.ConfigurationRevision)
+            {
+                return;
+            }
+
+            using var operationCts = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                configurationToken);
+            try
+            {
+                await ProcessItemForWatchlist(
+                    work.Item,
+                    work.EventType,
+                    operationCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                configurationToken.IsCancellationRequested
+                && !cancellationToken.IsCancellationRequested)
+            {
+                // A plugin configuration/account save superseded this generation. Queued keys
+                // carry the prior revision and are discarded before their next remote read.
+            }
+        }
+
+        internal CoalescingWorkerMetrics QueueMetrics => _workQueue.Metrics;
+
+        internal void NotifyConfigurationChanged()
+        {
             lock (_lifecycleLock)
             {
                 if (_disposed) return;
-
-                var cancellationToken = _lifetimeCts.Token;
-                task = Task.Run(
-                    () => ProcessItemForWatchlist(e, eventType, cancellationToken),
-                    CancellationToken.None);
-                _activeTasks.Add(task);
             }
 
-            _ = task.ContinueWith(
-                completedTask => OnScheduledTaskCompleted(completedTask),
-                CancellationToken.None,
-                TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
-        }
-
-        private void OnScheduledTaskCompleted(Task completedTask)
-        {
-            // ProcessItemForWatchlist handles operation failures itself. Observe any unexpected
-            // scheduling fault here so a fire-and-forget task can never become unobserved.
-            if (completedTask.IsFaulted)
+            ConfigurationGeneration previous;
+            lock (_configurationCancellationLock)
             {
-                _logger.LogError(
-                    completedTask.Exception,
-                    "[Watchlist] Unexpected failure in scheduled watchlist processing");
+                if (_configurationCtsDisposed) return;
+                previous = _configurationGeneration;
+                _configurationGeneration = new ConfigurationGeneration(previous.Number + 1);
             }
 
-            CancellationTokenSource? ctsToDispose = null;
-            lock (_lifecycleLock)
-            {
-                _activeTasks.Remove(completedTask);
-                if (_disposed
-                    && _cancellationIssued
-                    && _activeTasks.Count == 0
-                    && !_lifetimeCtsDisposed)
-                {
-                    _lifetimeCtsDisposed = true;
-                    ctsToDispose = _lifetimeCts;
-                }
-            }
-
-            ctsToDispose?.Dispose();
+            // Cancel outside locks because callbacks can complete the active operation inline.
+            // Cancel-before-dispose guarantees already-captured tokens observe cancellation; .NET
+            // cancellation tokens remain readable after their source is disposed.
+            previous.Cancellation.Cancel();
+            previous.Cancellation.Dispose();
+            _logger.LogInformation(
+                "[Watchlist] Configuration changed; cancelled the active generation and invalidated queued work.");
         }
 
         // Deterministic test seam over the same operation scheduled by library events. Keeping
@@ -172,14 +230,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         internal Task ProcessItemForWatchlistForTestAsync(
             BaseItem item,
             CancellationToken cancellationToken = default)
-            => ProcessItemForWatchlist(
-                new ItemChangeEventArgs { Item = item },
-                "Test",
-                cancellationToken);
+            => ProcessItemForWatchlist(item, "Test", cancellationToken);
 
         // Process an item from library events to check if it matches any Seerr requests.
         private async Task ProcessItemForWatchlist(
-            ItemChangeEventArgs e,
+            BaseItem item,
             string eventType,
             CancellationToken cancellationToken)
         {
@@ -188,7 +243,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 cancellationToken.ThrowIfCancellationRequested();
 
                 // Only process movies and TV series - check this first to avoid spam
-                var itemKind = e.Item?.GetBaseItemKind();
+                var itemKind = item.GetBaseItemKind();
                 if (itemKind != BaseItemKind.Movie && itemKind != BaseItemKind.Series)
                 {
                     return;
@@ -224,15 +279,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var configStamp = SeerrMutationConfigStamp.Capture(config, configRevision);
 
                 // Check if item has TMDB ID
-                if (e.Item?.ProviderIds == null)
+                if (item.ProviderIds == null)
                 {
-                    _logger.LogDebug($"[Watchlist] [{eventType}] Item has no ProviderIds yet: {e.Item?.Name}");
+                    _logger.LogDebug($"[Watchlist] [{eventType}] Item has no ProviderIds yet: {item.Name}");
                     return;
                 }
 
-                if (!e.Item.ProviderIds.TryGetValue("Tmdb", out var tmdbIdString))
+                if (!item.ProviderIds.TryGetValue("Tmdb", out var tmdbIdString))
                 {
-                    _logger.LogDebug($"[Watchlist] [{eventType}] Item has no TMDB ID yet: {e.Item.Name}");
+                    _logger.LogDebug($"[Watchlist] [{eventType}] Item has no TMDB ID yet: {item.Name}");
                     return;
                 }
 
@@ -269,14 +324,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     return;
                 }
 
-                // Find requests matching this TMDB ID and media type. Every row retained here
-                // already carries its normalized source, positive source-local Seerr owner id,
-                // and canonical Jellyfin GUID.
-                var matchingRequests = allRequests
-                    .Where(r => r.TmdbId == tmdbId && r.MediaType == mediaType)
-                    .ToList();
-
-                if (matchingRequests.Count == 0)
+                // The complete request projection is indexed once when its cache snapshot is
+                // built, so each library item performs one O(1) key lookup rather than rescanning
+                // every Seerr request.
+                if (!allRequests.TryGet(mediaType, tmdbId, out var matchingRequests))
                 {
                     return;
                 }
@@ -347,7 +398,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         }
                     }
 
-                    var userData = _userDataManager.GetUserData(user, e.Item);
+                    var userData = _userDataManager.GetUserData(user, item);
                     if (userData != null && userData.Likes != true)
                     {
                         pendingMutations.Add(new PendingWatchlistMutation(user, userData, addLike: true));
@@ -405,7 +456,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         pending.UserData.Likes = true;
                         _userDataManager.SaveUserData(
                             pending.User,
-                            e.Item,
+                            item,
                             pending.UserData,
                             UserDataSaveReason.UpdateUserRating,
                             cancellationToken);
@@ -427,17 +478,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // Only log if we actually added the item to at least one watchlist
                 if (addedCount > 0)
                 {
-                    _logger.LogInformation($"[Watchlist] ✓ Added '{e.Item.Name}' to watchlist for {string.Join(", ", addedUsers)}");
+                    _logger.LogInformation($"[Watchlist] ✓ Added '{item.Name}' to watchlist for {string.Join(", ", addedUsers)}");
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                // The lifetime token is cancelled only by Dispose. Shutdown cancellation is an
-                // expected completion path and must not be reported as an operation failure.
+                throw;
             }
             catch (Exception ex)
             {
                 _logger.LogError($"[Watchlist] Error in ProcessItemForWatchlist: {ex.Message}\nStack trace: {ex.StackTrace}");
+                throw;
             }
         }
 
@@ -475,7 +526,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // Get a complete request snapshot from every configured Seerr identity
         // domain. No domain's rows are cached or acted on unless all domains
         // complete independently.
-        private async Task<List<RequestItemWithUser>?> GetAllSeerrRequests(
+        private async Task<RequestSnapshot?> GetAllSeerrRequests(
             HttpClient httpClient,
             IReadOnlyList<string> seerrUrls,
             string apiKey,
@@ -494,7 +545,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
             }
 
-            async Task<List<RequestItemWithUser>?> FetchAsync()
+            async Task<RequestSnapshot?> FetchAsync()
             {
                 try
                 {
@@ -540,7 +591,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         }
                     }
 
-                    return items;
+                    return RequestSnapshot.Create(items);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -553,30 +604,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
             }
 
-            async Task<List<RequestItemWithUser>?> FetchAndCacheAsync()
+            async Task<RequestSnapshot?> FetchAndCacheAsync()
             {
-                var fetchedItems = await FetchAsync().ConfigureAwait(false);
-                if (fetchedItems != null)
+                var fetchedSnapshot = await FetchAsync().ConfigureAwait(false);
+                if (fetchedSnapshot != null)
                 {
                     // Populate the result cache before the shared task completes.
                     // This closes the completion/removal window in which a new
                     // caller could otherwise start a duplicate fetch.
                     lock (_requestsCacheLock)
                     {
-                        _requestsCache.Set(cacheKey, fetchedItems, cacheTtl);
+                        _requestsCache.Set(cacheKey, fetchedSnapshot, cacheTtl);
                     }
                 }
 
-                return fetchedItems;
+                return fetchedSnapshot;
             }
 
             var fetchTask = Helpers.AsyncSingleFlight.GetOrAdd(
                 _requestsInFlight,
                 cacheKey,
                 FetchAndCacheAsync);
-            var items = await fetchTask.ConfigureAwait(false);
+            var snapshot = await fetchTask.ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            return items;
+            return snapshot;
         }
 
         internal static string BuildRequestsCacheKey(
@@ -828,24 +879,50 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 _subscribed = false;
             }
 
-            // Cancellation runs outside the lifecycle lock because token callbacks are allowed to
-            // complete scheduled tasks synchronously. The CTS is disposed only after every task
-            // that captured its token has completed.
-            _lifetimeCts.Cancel();
-
-            CancellationTokenSource? ctsToDispose = null;
-            lock (_lifecycleLock)
+            ConfigurationGeneration configurationGeneration;
+            lock (_configurationCancellationLock)
             {
-                _cancellationIssued = true;
-                if (_activeTasks.Count == 0 && !_lifetimeCtsDisposed)
-                {
-                    _lifetimeCtsDisposed = true;
-                    ctsToDispose = _lifetimeCts;
-                }
+                _configurationCtsDisposed = true;
+                configurationGeneration = _configurationGeneration;
             }
 
-            ctsToDispose?.Dispose();
+            configurationGeneration.Cancellation.Cancel();
+
+            // Complete/cancel and synchronously join the one owned worker so no operation can
+            // outlive plugin disposal or perform a late local write.
+            _workQueue.Dispose();
+            configurationGeneration.Cancellation.Dispose();
+            var metrics = _workQueue.Metrics;
+            _logger.LogInformation(
+                "[Watchlist] Worker stopped: capacity={Capacity}, peakDepth={PeakQueueDepth}, enqueued={Enqueued}, coalesced={Coalesced}, dropped={Dropped}, processed={Processed}, failures={Failures}, retries={Retried}, cancelled={Cancelled}.",
+                metrics.Capacity,
+                metrics.PeakQueueDepth,
+                metrics.Enqueued,
+                metrics.Coalesced,
+                metrics.Dropped,
+                metrics.Processed,
+                metrics.Failures,
+                metrics.Retried,
+                metrics.Cancelled);
             GC.SuppressFinalize(this);
+        }
+
+        private sealed record WatchlistWorkItem(
+            BaseItem Item,
+            string EventType,
+            long ConfigurationRevision,
+            long ConfigurationGeneration);
+
+        private sealed class ConfigurationGeneration
+        {
+            public ConfigurationGeneration(long number)
+            {
+                Number = number;
+            }
+
+            public long Number { get; }
+
+            public CancellationTokenSource Cancellation { get; } = new();
         }
 
         private sealed class PendingWatchlistMutation
@@ -865,7 +942,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         }
 
         // Model for Seerr request items with requesting user
-        private sealed class RequestItemWithUser
+        internal sealed class RequestItemWithUser
         {
             public int TmdbId { get; set; }
             public string MediaType { get; set; } = string.Empty;
@@ -873,5 +950,60 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             public string RequestedBySeerrUserId { get; set; } = string.Empty;
             public string RequestedByJellyfinUserId { get; set; } = string.Empty;
         }
+
+        internal sealed class RequestSnapshot
+        {
+            private readonly IReadOnlyDictionary<RequestKey, IReadOnlyList<RequestItemWithUser>> _index;
+
+            private RequestSnapshot(
+                int count,
+                IReadOnlyDictionary<RequestKey, IReadOnlyList<RequestItemWithUser>> index)
+            {
+                Count = count;
+                _index = index;
+            }
+
+            public int Count { get; }
+
+            public int Weight => Count + _index.Count;
+
+            public bool TryGet(
+                string mediaType,
+                int tmdbId,
+                out IReadOnlyList<RequestItemWithUser> requests)
+            {
+                if (_index.TryGetValue(new RequestKey(mediaType, tmdbId), out var found))
+                {
+                    requests = found;
+                    return true;
+                }
+
+                requests = Array.Empty<RequestItemWithUser>();
+                return false;
+            }
+
+            public static RequestSnapshot Create(IReadOnlyCollection<RequestItemWithUser> items)
+            {
+                var mutable = new Dictionary<RequestKey, List<RequestItemWithUser>>();
+                foreach (var item in items)
+                {
+                    var key = new RequestKey(item.MediaType, item.TmdbId);
+                    if (!mutable.TryGetValue(key, out var requests))
+                    {
+                        requests = new List<RequestItemWithUser>();
+                        mutable.Add(key, requests);
+                    }
+
+                    requests.Add(item);
+                }
+
+                var index = mutable.ToDictionary(
+                    pair => pair.Key,
+                    pair => (IReadOnlyList<RequestItemWithUser>)pair.Value);
+                return new RequestSnapshot(items.Count, index);
+            }
+        }
+
+        internal readonly record struct RequestKey(string MediaType, int TmdbId);
     }
 }

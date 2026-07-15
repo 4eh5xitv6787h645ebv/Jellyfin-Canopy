@@ -11,7 +11,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
 {
     /// <summary>
     /// Regression net for W4-LEAK-4: the processed-watchlist file is mutated by both
-    /// the event-driven <c>WatchlistMonitor</c> (off-thread <c>Task.Run</c>) and the
+    /// the event-driven <c>WatchlistMonitor</c> (bounded off-thread worker) and the
     /// scheduled <c>SeerrWatchlistSyncTask</c>, plus a periodic cleanup. Before the
     /// fix each did an UNLOCKED get → mutate → save, so a writer's stale-read save could
     /// clobber another writer's just-added "processed" marker (lost update → the item is

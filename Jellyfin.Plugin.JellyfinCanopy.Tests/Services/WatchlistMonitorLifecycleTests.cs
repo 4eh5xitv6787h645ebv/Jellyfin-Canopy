@@ -1,10 +1,16 @@
 using System.Net;
 using System.Collections.Concurrent;
+using System.Text;
+using System.Text.Json;
+using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -12,6 +18,119 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services;
 
 public sealed class WatchlistMonitorLifecycleTests
 {
+    [Fact]
+    public async Task DisposeDuringPreparedMutation_JoinsWorkerAndPreventsLateSave()
+    {
+        var library = new CountingLibraryManager();
+        var user = new User("dispose-user", "provider", "password-provider");
+        var readStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var allowRead = new ManualResetEventSlim(false);
+        var saveCalls = 0;
+        var userData = new UserItemData { Key = "dispose-watchlist-test" };
+        var data = new StubUserDataManager
+        {
+            GetUserDataHook = (_, _) =>
+            {
+                readStarted.TrySetResult();
+                allowRead.Wait();
+                return userData;
+            },
+            SaveUserDataHook = (_, _, _, _, _) => Interlocked.Increment(ref saveCalls),
+        };
+        var handler = new AuthorizedResponsesHandler(user);
+        var monitor = new WatchlistMonitor(
+            library,
+            new StubUserManager(user),
+            data,
+            new RecordingHttpClientFactory(handler),
+            null!,
+            NullLogger<WatchlistMonitor>.Instance,
+            new FakePluginConfigProvider(EnabledConfiguration()));
+
+        monitor.Initialize();
+        library.RaiseItemAdded(Movie(123));
+        await readStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var disposeTask = Task.Run(monitor.Dispose);
+        await WaitUntilAsync(() => library.ItemAddedCount == 0);
+        await Task.Delay(20);
+        Assert.False(disposeTask.IsCompleted);
+        allowRead.Set();
+        await disposeTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(0, Volatile.Read(ref saveCalls));
+        Assert.NotEqual(true, userData.Likes);
+    }
+
+    [Fact]
+    public async Task TenThousandDuplicateLibraryEvents_CoalesceOnOneBoundedWorker()
+    {
+        var library = new CountingLibraryManager();
+        var handler = new BlockingEmptyRequestsHandler();
+        var monitor = CreateEventMonitor(library, handler, out _);
+        var movie = Movie(123);
+
+        monitor.Initialize();
+        library.RaiseItemAdded(movie);
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        for (var index = 0; index < 10_000; index++)
+        {
+            library.RaiseItemAdded(movie);
+        }
+
+        var busy = monitor.QueueMetrics;
+        Assert.Equal(1, busy.WorkerTasks);
+        Assert.Equal(1, busy.StateCount);
+        Assert.Equal(10_000, busy.Coalesced);
+        Assert.Equal(0, busy.Dropped);
+
+        handler.Release.TrySetResult();
+        await WaitUntilAsync(() => monitor.QueueMetrics.StateCount == 0);
+
+        Assert.InRange(monitor.QueueMetrics.Processed, 1, 2);
+        // The pagination helper deliberately reads each complete source twice for a stable
+        // snapshot. The coalesced follow-up hits the populated 30-second cache, so it adds no call.
+        Assert.Equal(2, handler.RequestCount);
+        monitor.Dispose();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConfigurationReplacement_CancelsActiveAndDrainsQueuedOldGeneration(
+        bool notifyBeforeProviderObservation)
+    {
+        var library = new CountingLibraryManager();
+        var handler = new BlockingEmptyRequestsHandler();
+        var monitor = CreateEventMonitor(library, handler, out var provider);
+
+        monitor.Initialize();
+        library.RaiseItemAdded(Movie(123));
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        library.RaiseItemAdded(Movie(456));
+        Assert.Equal(2, monitor.QueueMetrics.StateCount);
+
+        if (notifyBeforeProviderObservation)
+        {
+            // Model the provider revision being observed only after the event callback. The
+            // monitor's explicit generation must invalidate old work independently of that timing.
+            monitor.NotifyConfigurationChanged();
+            provider.Current = EnabledConfiguration();
+        }
+        else
+        {
+            provider.Current = EnabledConfiguration();
+            monitor.NotifyConfigurationChanged();
+        }
+        await handler.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => monitor.QueueMetrics.StateCount == 0);
+
+        // The active request was cancelled on the save event. The queued item from the replaced
+        // generation is drained before making any additional remote call.
+        Assert.Equal(1, handler.RequestCount);
+        monitor.Dispose();
+    }
+
     [Fact]
     public async Task CompletedOlderFlight_DoesNotDeleteNewerReplacement()
     {
@@ -114,6 +233,151 @@ public sealed class WatchlistMonitorLifecycleTests
         }
 
         Assert.True(condition(), "Timed out waiting for the expected single-flight state.");
+    }
+
+    private static WatchlistMonitor CreateEventMonitor(
+        CountingLibraryManager library,
+        HttpMessageHandler handler,
+        out FakePluginConfigProvider provider)
+    {
+        provider = new FakePluginConfigProvider(EnabledConfiguration());
+        return new WatchlistMonitor(
+            library,
+            null!,
+            null!,
+            new RecordingHttpClientFactory(handler),
+            null!,
+            NullLogger<WatchlistMonitor>.Instance,
+            provider);
+    }
+
+    private static PluginConfiguration EnabledConfiguration()
+        => new()
+        {
+            AddRequestedMediaToWatchlist = true,
+            SeerrEnabled = true,
+            SeerrUrls = "http://seerr:5055",
+            SeerrApiKey = "key",
+            PreventWatchlistReAddition = false,
+        };
+
+    private static Movie Movie(int tmdbId)
+    {
+        var movie = new Movie
+        {
+            Id = Guid.NewGuid(),
+            Name = $"Movie {tmdbId}",
+        };
+        movie.ProviderIds["Tmdb"] = tmdbId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return movie;
+    }
+
+    private sealed class BlockingEmptyRequestsHandler : HttpMessageHandler
+    {
+        private int _requestCount;
+
+        public TaskCompletionSource Started { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource CancellationObserved { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int RequestCount => Volatile.Read(ref _requestCount);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            _ = request;
+            Interlocked.Increment(ref _requestCount);
+            Started.TrySetResult();
+            try
+            {
+                await Release.Task.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                CancellationObserved.TrySetResult();
+                throw;
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new
+                    {
+                        page = 1,
+                        totalPages = 1,
+                        totalResults = 0,
+                        pageInfo = new
+                        {
+                            page = 1,
+                            pages = 1,
+                            pageSize = 0,
+                            results = 0,
+                        },
+                        results = Array.Empty<object>(),
+                    }),
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+        }
+    }
+
+    private sealed class AuthorizedResponsesHandler : HttpMessageHandler
+    {
+        private readonly User _user;
+
+        public AuthorizedResponsesHandler(User user)
+        {
+            _user = user;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            object row = request.RequestUri!.AbsolutePath switch
+            {
+                "/api/v1/request" => new
+                {
+                    id = 1,
+                    type = "movie",
+                    requestedBy = new { id = 7, jellyfinUserId = _user.Id.ToString() },
+                    media = new { tmdbId = 123, mediaType = "movie" },
+                },
+                "/api/v1/user" => new
+                {
+                    id = 7,
+                    jellyfinUserId = _user.Id.ToString(),
+                },
+                var path => throw new Xunit.Sdk.XunitException($"Unexpected path {path}."),
+            };
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new
+                    {
+                        page = 1,
+                        totalPages = 1,
+                        totalResults = 1,
+                        pageInfo = new
+                        {
+                            page = 1,
+                            pages = 1,
+                            pageSize = 1,
+                            results = 1,
+                        },
+                        results = new[] { row },
+                    }),
+                    Encoding.UTF8,
+                    "application/json"),
+            });
+        }
     }
 
     private sealed class CancellationObservingHandler : HttpMessageHandler
