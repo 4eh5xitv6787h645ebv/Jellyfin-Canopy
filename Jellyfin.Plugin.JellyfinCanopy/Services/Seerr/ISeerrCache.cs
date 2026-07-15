@@ -62,7 +62,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         /// Short-lived retry guard for non-authoritative automatic user-import
         /// failures. A fresh timestamp also reserves an in-flight attempt so a
         /// burst of callers cannot fan out duplicate import POSTs. This is not
-        /// an authoritative negative-user cache.
+        /// an authoritative negative-user cache. Keys bind the normalized user
+        /// to the policy-owned configuration generation, so a late old-server
+        /// completion cannot throttle import against a replacement server.
         /// </summary>
         BoundedTtlCache<string, DateTime> AutoImportFailureThrottle { get; }
 
@@ -75,10 +77,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         object ResponseCacheLock { get; }
 
-        /// <summary>Throttle for manual user import.</summary>
-        DateTime LastManualImport { get; set; }
+        /// <summary>
+        /// Atomically claims the short manual-import throttle for one exact
+        /// policy-owned configuration generation. A replacement generation
+        /// never inherits the old reservation.
+        /// </summary>
+        bool TryReserveManualImport(string generationIdentity, DateTime utcNow);
 
-        object ImportThrottleLock { get; }
+        /// <summary>
+        /// Releases a manual-import reservation only when it is still owned by
+        /// the supplied configuration generation.
+        /// </summary>
+        void ReleaseManualImport(string generationIdentity);
 
         /// <summary>
         /// Caches the result of /api/v1/status probes so a Seerr outage doesn't

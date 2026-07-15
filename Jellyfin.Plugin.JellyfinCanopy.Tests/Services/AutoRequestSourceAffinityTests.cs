@@ -6,6 +6,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
+using Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using MediaBrowser.Controller.Entities.Movies;
@@ -284,6 +285,132 @@ public sealed class AutoRequestSourceAffinityTests
         Assert.Equal(2, seasonHandler.Sent.Count(request => request.Method == HttpMethod.Post));
         Assert.Contains(seasonHandler.Sent, request => request.Method == HttpMethod.Post && request.Authority == "source-a:5055");
         Assert.Contains(seasonHandler.Sent, request => request.Method == HttpMethod.Post && request.Authority == "source-b:5055");
+    }
+
+    [Fact]
+    public async Task AutoRequestReservations_IdenticalSourceAfterConfigSaveUseNewGeneration()
+    {
+        var movieHandler = new AutoRequestRoutingHandler();
+        var movieUser = CreateUser("movie-config-generation");
+        var movieBinding = BoundUser(movieUser, 72, SourceB);
+        var movieClient = new SequencedSeerrClient(
+            SeerrUserResolution.Found(movieBinding),
+            SeerrUserResolution.Found(movieBinding),
+            SeerrUserResolution.Found(movieBinding),
+            SeerrUserResolution.Found(movieBinding));
+        var movieConfigA = CreateConfiguration();
+        movieConfigA.SeerrUrls = SourceB;
+        movieConfigA.SeerrApiKey = "key-a";
+        var movieProvider = new FakePluginConfigProvider(movieConfigA);
+        var movieService = new AutoMovieRequestService(
+            new RecordingHttpClientFactory(movieHandler),
+            NullLogger<AutoMovieRequestService>.Instance,
+            new StubUserManager(movieUser),
+            null!,
+            movieProvider,
+            movieClient,
+            new RecordingParentalFilter());
+        var movie = new Movie { Name = "Current Movie" };
+        movie.ProviderIds["Tmdb"] = "100";
+
+        Assert.Equal(
+            AutoRequestPlaybackOutcome.Committed,
+            await movieService.CheckMovieForCollectionRequestAsync(movie, movieUser.Id));
+        var movieConfigB = CreateConfiguration();
+        movieConfigB.SeerrUrls = SourceB;
+        movieConfigB.SeerrApiKey = "key-b";
+        movieProvider.Current = movieConfigB;
+        Assert.Equal(
+            AutoRequestPlaybackOutcome.Committed,
+            await movieService.CheckMovieForCollectionRequestAsync(movie, movieUser.Id));
+
+        Assert.Equal(2, movieHandler.Sent.Count(request => request.Method == HttpMethod.Post));
+
+        var seasonHandler = new AutoRequestRoutingHandler();
+        var seasonUser = CreateUser("season-config-generation");
+        var seasonBinding = BoundUser(seasonUser, 83, SourceB);
+        var seasonClient = new SequencedSeerrClient(
+            SeerrUserResolution.Found(seasonBinding),
+            SeerrUserResolution.Found(seasonBinding),
+            SeerrUserResolution.Found(seasonBinding),
+            SeerrUserResolution.Found(seasonBinding));
+        var seasonConfigA = CreateConfiguration();
+        seasonConfigA.SeerrUrls = SourceB;
+        seasonConfigA.SeerrApiKey = "key-a";
+        var seasonProvider = new FakePluginConfigProvider(seasonConfigA);
+        var seasonService = new AutoSeasonRequestService(
+            new RecordingHttpClientFactory(seasonHandler),
+            NullLogger<AutoSeasonRequestService>.Instance,
+            null!,
+            null!,
+            null!,
+            seasonProvider,
+            seasonClient,
+            new RecordingParentalFilter());
+
+        Assert.Equal(
+            AutoRequestPlaybackOutcome.Committed,
+            await seasonService.CheckSeasonForAutoRequest(CreateSeries(), 1, 10, seasonUser));
+        var seasonConfigB = CreateConfiguration();
+        seasonConfigB.SeerrUrls = SourceB;
+        seasonConfigB.SeerrApiKey = "key-b";
+        seasonProvider.Current = seasonConfigB;
+        Assert.Equal(
+            AutoRequestPlaybackOutcome.Committed,
+            await seasonService.CheckSeasonForAutoRequest(CreateSeries(), 1, 10, seasonUser));
+
+        Assert.Equal(2, seasonHandler.Sent.Count(request => request.Method == HttpMethod.Post));
+    }
+
+    [Fact]
+    public async Task MovieWatcher_SaveAtServiceBoundaryRejectsAAndRunsBWithOneSnapshot()
+    {
+        var handler = new AutoRequestRoutingHandler();
+        var user = CreateUser("movie-monitor-generation-boundary");
+        var binding = BoundUser(user, 72, SourceB);
+        var configA = CreateConfiguration();
+        configA.SeerrUrls = SourceB;
+        configA.SeerrApiKey = "key-a";
+        configA.AutoMovieRequestTriggerType = "OnStart";
+        var provider = new FakePluginConfigProvider(configA);
+        var service = new AutoMovieRequestService(
+            new RecordingHttpClientFactory(handler),
+            NullLogger<AutoMovieRequestService>.Instance,
+            new StubUserManager(user),
+            null!,
+            provider,
+            new MappedSeerrClient(binding),
+            new RecordingParentalFilter());
+        var watcher = new BoundaryWatcher(provider);
+        var integrationA = SeerrIntegrationPolicy.Capture(provider);
+        var movie = new Movie { Name = "Current Movie" };
+        movie.ProviderIds["Tmdb"] = "100";
+
+        var oldExecuted = await watcher.Execute(
+            integrationA,
+            "movie:user:item",
+            async () =>
+            {
+                var configB = CreateConfiguration();
+                configB.SeerrUrls = SourceB;
+                configB.SeerrApiKey = "key-b";
+                configB.AutoMovieRequestTriggerType = "OnMinutesWatched";
+                provider.Current = configB;
+                return await service.CheckMovieForCollectionRequestAsync(
+                    movie,
+                    user.Id,
+                    integrationA);
+            });
+
+        Assert.True(oldExecuted);
+        Assert.Empty(handler.Sent);
+
+        var integrationB = SeerrIntegrationPolicy.Capture(provider);
+        Assert.True(await watcher.Execute(
+            integrationB,
+            "movie:user:item",
+            () => service.CheckMovieForCollectionRequestAsync(movie, user.Id, integrationB)));
+        Assert.Single(handler.Sent, request => request.Method == HttpMethod.Post);
     }
 
     [Fact]
@@ -752,6 +879,37 @@ public sealed class AutoRequestSourceAffinityTests
 
         public Task<bool> IsTmdbProxyPathBlockedAsync(string tmdbApiPath, SeerrCaller caller)
             => Task.FromResult(false);
+    }
+
+    private sealed class BoundaryWatcher(IPluginConfigProvider provider) : PlaybackWatcherBase(
+        null!,
+        null!,
+        null!,
+        NullLogger.Instance,
+        provider)
+    {
+        protected override string LogPrefix => "[Boundary-Test]";
+
+        protected override string FeatureNoun => "boundary-test";
+
+        protected override string DisabledMonitoringName => "Boundary test";
+
+        protected override bool IsFeatureEnabled(PluginConfiguration config)
+            => config.AutoMovieRequestEnabled;
+
+        public Task<bool> Execute(
+            SeerrIntegrationPolicy.SeerrIntegrationSnapshot integration,
+            string key,
+            Func<Task<AutoRequestPlaybackOutcome>> operation)
+            => ExecuteDeduplicatedAsync(integration, key, operation);
+
+        protected override void SubscribeEvents()
+        {
+        }
+
+        protected override void UnsubscribeEvents()
+        {
+        }
     }
 
     private static User CreateUser(string name)

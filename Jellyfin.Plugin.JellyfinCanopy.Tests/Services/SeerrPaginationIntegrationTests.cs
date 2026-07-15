@@ -331,7 +331,68 @@ public class SeerrPaginationIntegrationTests
         Assert.DoesNotContain(NormalizedJellyfinUserId, cache.UserCache.Keys);
         var post = Assert.Single(handler.Requests, request => request.Method == HttpMethod.Post);
         Assert.Equal("first", post.Uri.Host);
-        Assert.Contains(NormalizedJellyfinUserId, cache.AutoImportFailureThrottle.Keys);
+        Assert.Contains(cache.AutoImportFailureThrottle.Keys, IsCurrentUserThrottleKey);
+    }
+
+    [Fact]
+    public async Task ResolveSeerrUser_OldImportCompletionAfterConfigSaveCannotThrottleNewGeneration()
+    {
+        var oldImportStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOldImport = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new QueryAwareHandler(async (request, cancellationToken) =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                return Page(page: 1, totalPages: 0, totalResults: 0, Array.Empty<object>());
+            }
+
+            var apiKey = Assert.Single(request.Headers.GetValues("X-Api-Key"));
+            if (apiKey == "key-a")
+            {
+                oldImportStarted.TrySetResult();
+                await releaseOldImport.Task.WaitAsync(cancellationToken);
+                return Json(new { error = "old generation failed late" }, HttpStatusCode.BadGateway);
+            }
+
+            Assert.Equal("key-b", apiKey);
+            return Json(new[] { UserRow(84, NormalizedJellyfinUserId) });
+        });
+        var oldConfig = Config("http://same-source:5055");
+        oldConfig.SeerrApiKey = "key-a";
+        oldConfig.SeerrAutoImportUsers = true;
+        var provider = new FakePluginConfigProvider(oldConfig);
+        var cache = new SeerrCache(provider);
+        var client = NewClient(handler, provider, cache);
+
+        var oldResolution = client.ResolveSeerrUser(JellyfinUserId);
+        await oldImportStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var newConfig = Config("http://same-source:5055");
+        newConfig.SeerrApiKey = "key-b";
+        newConfig.SeerrAutoImportUsers = true;
+        provider.Current = newConfig;
+        cache.ClearAllSeerrCachesOnConfigChange();
+
+        // The client serializes same-user transactions, so B waits for A to
+        // unwind. A's late failure may retain ambiguity for A, but it must not
+        // publish a user-only throttle that suppresses B's independent import.
+        var newResolution = client.ResolveSeerrUser(JellyfinUserId);
+        releaseOldImport.TrySetResult();
+
+        var oldResult = await oldResolution.WaitAsync(TimeSpan.FromSeconds(5));
+        var newResult = await newResolution.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(SeerrUserResolutionStatus.Incomplete, oldResult.Status);
+        Assert.True(newResult.IsFound);
+        Assert.Equal(84, newResult.User!.Id);
+        Assert.Equal(
+            new[] { "key-a", "key-b" },
+            handler.Requests
+                .Where(request => request.Method == HttpMethod.Post)
+                .Select(request => request.ApiKey));
+        Assert.Empty(cache.AutoImportFailureThrottle);
     }
 
     [Fact]
@@ -359,7 +420,7 @@ public class SeerrPaginationIntegrationTests
         Assert.DoesNotContain(NormalizedJellyfinUserId, cache.UserCache.Keys);
         var post = Assert.Single(handler.Requests, request => request.Method == HttpMethod.Post);
         Assert.Equal("first", post.Uri.Host);
-        Assert.Contains(NormalizedJellyfinUserId, cache.AutoImportFailureThrottle.Keys);
+        Assert.Contains(cache.AutoImportFailureThrottle.Keys, IsCurrentUserThrottleKey);
     }
 
     [Fact]
@@ -445,7 +506,7 @@ public class SeerrPaginationIntegrationTests
         var post = Assert.Single(handler.Requests, request => request.Method == HttpMethod.Post);
         Assert.Equal("first", post.Uri.Host);
         Assert.Equal(1, postCount);
-        Assert.Contains(NormalizedJellyfinUserId, cache.AutoImportFailureThrottle.Keys);
+        Assert.Contains(cache.AutoImportFailureThrottle.Keys, IsCurrentUserThrottleKey);
     }
 
     [Fact]
@@ -615,7 +676,7 @@ public class SeerrPaginationIntegrationTests
         Assert.Equal("http://seerr:5055", forced.User.SourceUrl);
         Assert.Equal(2, handler.Requests.Count(request => request.Method == HttpMethod.Post));
         Assert.DoesNotContain(NormalizedJellyfinUserId, cache.UserCache.Keys);
-        Assert.DoesNotContain(NormalizedJellyfinUserId, cache.AutoImportFailureThrottle.Keys);
+        Assert.DoesNotContain(cache.AutoImportFailureThrottle.Keys, IsCurrentUserThrottleKey);
     }
 
     [Fact]
@@ -631,13 +692,13 @@ public class SeerrPaginationIntegrationTests
                 new[] { UserRow(74, NormalizedJellyfinUserId) });
         });
         var (client, cache) = NewClient(handler);
-        cache.AutoImportFailureThrottle[NormalizedJellyfinUserId] = DateTime.UtcNow;
+        cache.AutoImportFailureThrottle[AutoImportThrottleKey()] = DateTime.UtcNow;
 
         var result = await client.ResolveSeerrUser(JellyfinUserId);
 
         Assert.True(result.IsFound);
         Assert.Equal(74, result.User!.Id);
-        Assert.DoesNotContain(NormalizedJellyfinUserId, cache.AutoImportFailureThrottle.Keys);
+        Assert.DoesNotContain(cache.AutoImportFailureThrottle.Keys, IsCurrentUserThrottleKey);
     }
 
     [Fact]
@@ -673,7 +734,7 @@ public class SeerrPaginationIntegrationTests
         Assert.Equal(SeerrUserResolutionStatus.Incomplete, concurrent.Status);
         Assert.Single(handler.Requests, request => request.Method == HttpMethod.Post);
         Assert.DoesNotContain(NormalizedJellyfinUserId, cache.UserCache.Keys);
-        Assert.Contains(NormalizedJellyfinUserId, cache.AutoImportFailureThrottle.Keys);
+        Assert.Contains(cache.AutoImportFailureThrottle.Keys, IsCurrentUserThrottleKey);
     }
 
     [Fact]
@@ -712,7 +773,7 @@ public class SeerrPaginationIntegrationTests
         Assert.Equal(75, concurrent.User!.Id);
         Assert.Single(handler.Requests, request => request.Method == HttpMethod.Post);
         Assert.Equal(4, handler.Requests.Count(request => request.Method == HttpMethod.Get));
-        Assert.DoesNotContain(NormalizedJellyfinUserId, cache.AutoImportFailureThrottle.Keys);
+        Assert.DoesNotContain(cache.AutoImportFailureThrottle.Keys, IsCurrentUserThrottleKey);
     }
 
     [Fact]
@@ -1079,6 +1140,18 @@ public class SeerrPaginationIntegrationTests
         SeerrApiKey = "test-key",
     };
 
+    private static bool IsCurrentUserThrottleKey(string key)
+        => key.EndsWith($":{NormalizedJellyfinUserId}", StringComparison.Ordinal);
+
+    private static string AutoImportThrottleKey()
+    {
+        var provider = new FakePluginConfigProvider(Config());
+        var integration = SeerrIntegrationPolicy.Capture(provider);
+        return SeerrClient.BuildAutoImportThrottleKey(
+            NormalizedJellyfinUserId,
+            integration.GenerationIdentity);
+    }
+
     private static (SeerrClient Client, SeerrCache Cache) NewClient(
         QueryAwareHandler handler,
         PluginConfiguration? config = null)
@@ -1190,7 +1263,11 @@ public class SeerrPaginationIntegrationTests
         return null;
     }
 
-    private sealed record CapturedRequest(HttpMethod Method, Uri Uri, string? ApiUserId);
+    private sealed record CapturedRequest(
+        HttpMethod Method,
+        Uri Uri,
+        string? ApiUserId,
+        string? ApiKey);
 
     private sealed class QueryAwareHandler : HttpMessageHandler
     {
@@ -1213,7 +1290,10 @@ public class SeerrPaginationIntegrationTests
             var apiUserId = request.Headers.TryGetValues("X-Api-User", out var values)
                 ? values.Single()
                 : null;
-            Requests.Add(new CapturedRequest(request.Method, request.RequestUri!, apiUserId));
+            var apiKey = request.Headers.TryGetValues("X-Api-Key", out var apiKeys)
+                ? apiKeys.Single()
+                : null;
+            Requests.Add(new CapturedRequest(request.Method, request.RequestUri!, apiUserId, apiKey));
             return await _route(request, cancellationToken);
         }
     }

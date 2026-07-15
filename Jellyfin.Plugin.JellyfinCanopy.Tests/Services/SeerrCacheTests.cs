@@ -33,6 +33,7 @@ public class SeerrCacheTests
         cache.CertScoreCache["movie:1"] = (12, null, null, null, DateTime.UtcNow);
         cache.AvatarCache["avatar-key"] = (new byte[] { 1 }, "image/png", "etag", DateTime.UtcNow);
         cache.SeerrStatusCache = (true, DateTime.UtcNow);
+        Assert.True(cache.TryReserveManualImport("generation-a", DateTime.UtcNow));
         return cache;
     }
 
@@ -52,6 +53,7 @@ public class SeerrCacheTests
         Assert.Empty(cache.CertScoreCache);
         Assert.Empty(cache.AvatarCache);
         Assert.Null(cache.SeerrStatusCache);
+        Assert.True(cache.TryReserveManualImport("generation-a", DateTime.UtcNow));
     }
 
     [Fact]
@@ -72,6 +74,24 @@ public class SeerrCacheTests
         Assert.Single(cache.CertScoreCache);
         Assert.Single(cache.AvatarCache);
         Assert.NotNull(cache.SeerrStatusCache);
+        Assert.False(cache.TryReserveManualImport("generation-a", DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void ManualImportThrottle_IsGenerationScopedAndOldReleaseCannotClearReplacement()
+    {
+        var cache = NewCache();
+        var now = new DateTime(2026, 7, 16, 0, 0, 0, DateTimeKind.Utc);
+
+        Assert.True(cache.TryReserveManualImport("generation-a", now));
+        Assert.False(cache.TryReserveManualImport("generation-a", now.AddSeconds(1)));
+        Assert.True(cache.TryReserveManualImport("generation-b", now.AddSeconds(1)));
+
+        cache.ReleaseManualImport("generation-a");
+        Assert.False(cache.TryReserveManualImport("generation-b", now.AddSeconds(2)));
+
+        cache.ReleaseManualImport("generation-b");
+        Assert.True(cache.TryReserveManualImport("generation-b", now.AddSeconds(2)));
     }
 
     [Fact]

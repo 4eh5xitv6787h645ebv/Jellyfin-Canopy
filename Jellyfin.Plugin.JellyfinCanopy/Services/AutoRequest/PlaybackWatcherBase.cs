@@ -102,20 +102,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
         }
 
         /// <summary>
-        /// Returns the plugin configuration when this watcher's feature (and Seerr)
-        /// is enabled, otherwise null. Event handlers use this as their fast-exit gate.
+        /// Returns one policy-owned integration snapshot when this watcher's
+        /// feature (and Seerr) is enabled, otherwise null. The same snapshot
+        /// supplies both trigger options and the playback-dedup generation.
         /// </summary>
-        protected PluginConfiguration? GetEnabledConfiguration()
+        protected SeerrIntegrationPolicy.SeerrIntegrationSnapshot? GetEnabledIntegration()
         {
-            var config = _configProvider.ConfigurationOrNull as PluginConfiguration;
-            if (config == null
-                || !IsFeatureEnabled(config)
-                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (!integration.IsActive
+                || integration.Configuration is not PluginConfiguration config
+                || !IsFeatureEnabled(config))
             {
                 return null;
             }
 
-            return config;
+            return integration;
         }
 
         /// <summary>
@@ -124,9 +125,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
         /// from its typed outcome.
         /// </summary>
         protected Task<bool> ExecuteDeduplicatedAsync(
+            SeerrIntegrationPolicy.SeerrIntegrationSnapshot integration,
             string sessionItemKey,
             Func<Task<AutoRequestPlaybackOutcome>> operation)
-            => _playbackDeduplicator.ExecuteAsync(sessionItemKey, operation);
+        {
+            ArgumentNullException.ThrowIfNull(integration);
+            return integration.IsCurrent(_configProvider)
+                ? _playbackDeduplicator.ExecuteAsync(
+                    integration.GenerationIdentity,
+                    sessionItemKey,
+                    operation)
+                : Task.FromResult(false);
+        }
 
         // Cleanup when the plugin is disposed.
         public void Dispose()

@@ -1,4 +1,9 @@
+using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services;
@@ -12,6 +17,7 @@ public sealed class PlaybackRequestDeduplicatorTests
         var calls = 0;
 
         Assert.True(await deduplicator.ExecuteAsync(
+            "generation-a",
             "movie:user:item",
             () =>
             {
@@ -20,6 +26,7 @@ public sealed class PlaybackRequestDeduplicatorTests
             }));
 
         Assert.True(await deduplicator.ExecuteAsync(
+            "generation-a",
             "movie:user:item",
             () =>
             {
@@ -28,6 +35,7 @@ public sealed class PlaybackRequestDeduplicatorTests
             }));
 
         Assert.False(await deduplicator.ExecuteAsync(
+            "generation-a",
             "movie:user:item",
             () =>
             {
@@ -44,6 +52,7 @@ public sealed class PlaybackRequestDeduplicatorTests
         var calls = 0;
 
         Assert.True(await deduplicator.ExecuteAsync(
+            "generation-a",
             "season:user:item",
             () =>
             {
@@ -51,6 +60,7 @@ public sealed class PlaybackRequestDeduplicatorTests
                 return Task.FromResult(AutoRequestPlaybackOutcome.Cancelled);
             }));
         Assert.True(await deduplicator.ExecuteAsync(
+            "generation-a",
             "season:user:item",
             () =>
             {
@@ -68,6 +78,7 @@ public sealed class PlaybackRequestDeduplicatorTests
         var calls = 0;
 
         Assert.True(await deduplicator.ExecuteAsync(
+            "generation-a",
             "movie:user:cancelled",
             () =>
             {
@@ -76,6 +87,7 @@ public sealed class PlaybackRequestDeduplicatorTests
                     new OperationCanceledException());
             }));
         Assert.True(await deduplicator.ExecuteAsync(
+            "generation-a",
             "movie:user:cancelled",
             () =>
             {
@@ -105,12 +117,14 @@ public sealed class PlaybackRequestDeduplicatorTests
         }
 
         var first = deduplicator.ExecuteAsync(
+            "generation-a",
             "season:user:concurrent",
             BlockingOperation);
         await operationStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         var duplicates = Enumerable.Range(0, 32)
             .Select(_ => deduplicator.ExecuteAsync(
+                "generation-a",
                 "season:user:concurrent",
                 BlockingOperation))
             .ToArray();
@@ -140,14 +154,14 @@ public sealed class PlaybackRequestDeduplicatorTests
             return Task.FromResult(outcome);
         }
 
-        Assert.True(await deduplicator.ExecuteAsync("movie:user:definitive", Operation));
-        Assert.False(await deduplicator.ExecuteAsync("movie:user:definitive", Operation));
+        Assert.True(await deduplicator.ExecuteAsync("generation-a", "movie:user:definitive", Operation));
+        Assert.False(await deduplicator.ExecuteAsync("generation-a", "movie:user:definitive", Operation));
 
         clock.Advance(PlaybackRequestDeduplicator.CommittedTtl - TimeSpan.FromTicks(1));
-        Assert.False(await deduplicator.ExecuteAsync("movie:user:definitive", Operation));
+        Assert.False(await deduplicator.ExecuteAsync("generation-a", "movie:user:definitive", Operation));
 
         clock.Advance(TimeSpan.FromTicks(1));
-        Assert.True(await deduplicator.ExecuteAsync("movie:user:definitive", Operation));
+        Assert.True(await deduplicator.ExecuteAsync("generation-a", "movie:user:definitive", Operation));
         Assert.Equal(2, calls);
     }
 
@@ -164,15 +178,15 @@ public sealed class PlaybackRequestDeduplicatorTests
             return Task.FromResult(AutoRequestPlaybackOutcome.RetryableFailure);
         }
 
-        Assert.True(await deduplicator.ExecuteAsync("season:user:retry", Fail));
-        Assert.True(await deduplicator.ExecuteAsync("season:user:retry", Fail));
-        Assert.False(await deduplicator.ExecuteAsync("season:user:retry", Fail));
+        Assert.True(await deduplicator.ExecuteAsync("generation-a", "season:user:retry", Fail));
+        Assert.True(await deduplicator.ExecuteAsync("generation-a", "season:user:retry", Fail));
+        Assert.False(await deduplicator.ExecuteAsync("generation-a", "season:user:retry", Fail));
 
         clock.Advance(PlaybackRequestDeduplicator.InitialBackoff - TimeSpan.FromTicks(1));
-        Assert.False(await deduplicator.ExecuteAsync("season:user:retry", Fail));
+        Assert.False(await deduplicator.ExecuteAsync("generation-a", "season:user:retry", Fail));
 
         clock.Advance(TimeSpan.FromTicks(1));
-        Assert.True(await deduplicator.ExecuteAsync("season:user:retry", Fail));
+        Assert.True(await deduplicator.ExecuteAsync("generation-a", "season:user:retry", Fail));
         Assert.Equal(3, calls);
 
         Assert.Equal(
@@ -187,13 +201,135 @@ public sealed class PlaybackRequestDeduplicatorTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             deduplicator.ExecuteAsync(
+                "generation-a",
                 "movie:user:exception",
                 () => Task.FromException<AutoRequestPlaybackOutcome>(
                     new InvalidOperationException("transient"))));
 
         Assert.True(await deduplicator.ExecuteAsync(
+            "generation-a",
             "movie:user:exception",
             () => Task.FromResult(AutoRequestPlaybackOutcome.Committed)));
+    }
+
+    [Fact]
+    public async Task CommittedAndRetryState_DoNotSuppressReplacementGeneration()
+    {
+        var deduplicator = new PlaybackRequestDeduplicator();
+        var calls = 0;
+
+        Assert.True(await deduplicator.ExecuteAsync(
+            "generation-a",
+            "movie:user:same-item",
+            () => Task.FromResult(AutoRequestPlaybackOutcome.Committed)));
+        Assert.True(await deduplicator.ExecuteAsync(
+            "generation-b",
+            "movie:user:same-item",
+            () =>
+            {
+                calls++;
+                return Task.FromResult(AutoRequestPlaybackOutcome.RetryableFailure);
+            }));
+        Assert.True(await deduplicator.ExecuteAsync(
+            "generation-b",
+            "movie:user:same-item",
+            () =>
+            {
+                calls++;
+                return Task.FromResult(AutoRequestPlaybackOutcome.RetryableFailure);
+            }));
+        Assert.False(await deduplicator.ExecuteAsync(
+            "generation-b",
+            "movie:user:same-item",
+            () => Task.FromResult(AutoRequestPlaybackOutcome.Committed)));
+        Assert.True(await deduplicator.ExecuteAsync(
+            "generation-c",
+            "movie:user:same-item",
+            () => Task.FromResult(AutoRequestPlaybackOutcome.Committed)));
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task Watcher_OldInFlightCompletionCannotReserveOrCommitReplacementGeneration()
+    {
+        var provider = new FakePluginConfigProvider(Configuration());
+        var watcher = new TestWatcher(provider);
+        var oldIntegration = Assert.IsType<SeerrIntegrationPolicy.SeerrIntegrationSnapshot>(
+            watcher.CaptureEnabled());
+        var oldStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var oldOperation = watcher.Execute(
+            oldIntegration,
+            "season:user:same-item",
+            async () =>
+            {
+                oldStarted.TrySetResult();
+                await releaseOld.Task;
+                return AutoRequestPlaybackOutcome.Committed;
+            });
+        await oldStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        provider.Current = Configuration();
+        var replacementIntegration = Assert.IsType<SeerrIntegrationPolicy.SeerrIntegrationSnapshot>(
+            watcher.CaptureEnabled());
+        Assert.NotEqual(
+            oldIntegration.GenerationIdentity,
+            replacementIntegration.GenerationIdentity);
+        Assert.True(await watcher.Execute(
+            replacementIntegration,
+            "season:user:same-item",
+            () => Task.FromResult(AutoRequestPlaybackOutcome.Committed)));
+
+        releaseOld.TrySetResult();
+        Assert.True(await oldOperation.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.False(await watcher.Execute(
+            replacementIntegration,
+            "season:user:same-item",
+            () => Task.FromResult(AutoRequestPlaybackOutcome.Committed)));
+    }
+
+    private static PluginConfiguration Configuration()
+        => new()
+        {
+            SeerrEnabled = true,
+            SeerrUrls = "http://seerr",
+            SeerrApiKey = "key",
+            AutoMovieRequestEnabled = true,
+        };
+
+    private sealed class TestWatcher(IPluginConfigProvider provider) : PlaybackWatcherBase(
+        null!,
+        null!,
+        null!,
+        NullLogger.Instance,
+        provider)
+    {
+        protected override string LogPrefix => "[Test]";
+
+        protected override string FeatureNoun => "test";
+
+        protected override string DisabledMonitoringName => "Test";
+
+        protected override bool IsFeatureEnabled(PluginConfiguration config)
+            => config.AutoMovieRequestEnabled;
+
+        public SeerrIntegrationPolicy.SeerrIntegrationSnapshot? CaptureEnabled()
+            => GetEnabledIntegration();
+
+        public Task<bool> Execute(
+            SeerrIntegrationPolicy.SeerrIntegrationSnapshot integration,
+            string key,
+            Func<Task<AutoRequestPlaybackOutcome>> operation)
+            => ExecuteDeduplicatedAsync(integration, key, operation);
+
+        protected override void SubscribeEvents()
+        {
+        }
+
+        protected override void UnsubscribeEvents()
+        {
+        }
     }
 
     private sealed class ManualTimeProvider : TimeProvider

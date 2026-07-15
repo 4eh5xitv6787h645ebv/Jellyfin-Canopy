@@ -29,6 +29,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         internal const int Public4kMaximumEntries = 64;
 
         private readonly IPluginConfigProvider _configProvider;
+        private readonly object _importThrottleLock = new();
+        private DateTime _lastManualImport = DateTime.MinValue;
+        private string _lastManualImportGenerationIdentity = string.Empty;
 
         public SeerrCache(IPluginConfigProvider configProvider)
         {
@@ -97,10 +100,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         public object UserCacheLock { get; } = new();
 
-        // A non-authoritative, short-lived retry guard for failed automatic
-        // imports. The timestamp is written before the POST and retained only
-        // when its outcome is incomplete, preventing concurrent/repeated
-        // requests from creating an import storm without publishing absence.
+        // A generation-scoped, non-authoritative short retry guard for failed
+        // automatic imports. The timestamp is written before the POST and
+        // retained only when its outcome is incomplete, preventing a same-
+        // generation storm without suppressing a replacement Seerr endpoint.
         public BoundedTtlCache<string, DateTime> AutoImportFailureThrottle { get; }
 
         public object AutoImportFailureThrottleLock { get; } = new();
@@ -112,10 +115,43 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         public object ResponseCacheLock { get; } = new();
 
-        // Throttle for manual user import
-        public DateTime LastManualImport { get; set; } = DateTime.MinValue;
+        public bool TryReserveManualImport(string generationIdentity, DateTime utcNow)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(generationIdentity);
+            lock (_importThrottleLock)
+            {
+                if (string.Equals(
+                        _lastManualImportGenerationIdentity,
+                        generationIdentity,
+                        StringComparison.Ordinal)
+                    && (utcNow - _lastManualImport).TotalSeconds < 30)
+                {
+                    return false;
+                }
 
-        public object ImportThrottleLock { get; } = new();
+                _lastManualImport = utcNow;
+                _lastManualImportGenerationIdentity = generationIdentity;
+                return true;
+            }
+        }
+
+        public void ReleaseManualImport(string generationIdentity)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(generationIdentity);
+            lock (_importThrottleLock)
+            {
+                if (!string.Equals(
+                    _lastManualImportGenerationIdentity,
+                    generationIdentity,
+                    StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                _lastManualImport = DateTime.MinValue;
+                _lastManualImportGenerationIdentity = string.Empty;
+            }
+        }
 
         // cache the result of /api/v1/status probes so a Seerr outage
         // doesn't cause every failed proxy call to issue a fresh status check.
@@ -277,6 +313,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             // Flush the cached 4K capability so a changed Seerr URL / key
             // re-resolves movie4kEnabled/series4kEnabled immediately.
             lock (Public4kSettingsCacheLock) { Public4kSettingsCache.Clear(); }
+            lock (_importThrottleLock)
+            {
+                _lastManualImport = DateTime.MinValue;
+                _lastManualImportGenerationIdentity = string.Empty;
+            }
         }
     }
 }

@@ -53,8 +53,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             try
             {
                 // Check if auto-movie-request is enabled
-                var config = GetEnabledConfiguration();
-                if (config == null)
+                var integration = GetEnabledIntegration();
+                if (integration?.Configuration is not PluginConfiguration config)
                 {
                     return;
                 }
@@ -106,12 +106,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         var sessionItemKey = $"{userId}_{item.Id}";
 
                         await ExecuteDeduplicatedAsync(
+                            integration,
                             sessionItemKey,
                             async () =>
                             {
                                 _logger.LogInformation($"[Auto-Movie-Request] Movie '{item.Name}' started by {session.UserName ?? "Unknown"}, checking for collection");
                                 return await _autoMovieRequestService
-                                    .CheckMovieForCollectionRequestAsync(item, userId)
+                                    .CheckMovieForCollectionRequestAsync(item, userId, integration)
                                     .ConfigureAwait(false);
                             }).ConfigureAwait(false);
                     }
