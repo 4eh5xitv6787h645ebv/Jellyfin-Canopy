@@ -29,7 +29,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
         private static readonly HashSet<string> Allowed = new(StringComparer.Ordinal)
         {
             "AtomicFile.cs",                         // the sanctioned temp+rename helper itself
-            "JellyfinCanopyFileLoggerProvider.cs", // append-only log writer (AppendAllText), torn append loses only the tail
+            "JellyfinCanopyFileLoggerProvider.cs", // bounded append-only log stream; torn append loses only the tail
         };
 
         [Fact]

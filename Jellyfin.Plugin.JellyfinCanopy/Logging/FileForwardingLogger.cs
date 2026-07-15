@@ -34,24 +34,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Logging
             where TState : notnull
             => _hostLogger.BeginScope(state);
 
-        // Enabled for any real level: the host sink accepts all levels; the file sink additionally
-        // level-floors itself in FileLogger.IsEnabled, so below-floor lines are dropped there.
-        public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None;
+        // Composite enablement is the union of the actual sinks. In particular,
+        // Debug/Trace formatters are never invoked when the host rejects them and
+        // they are below the dedicated file floor.
+        public bool IsEnabled(LogLevel logLevel)
+            => logLevel != LogLevel.None
+                && (_fileLogger.IsEnabled(logLevel) || _hostLogger.IsEnabled(logLevel));
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            if (logLevel == LogLevel.None)
+            var fileEnabled = _fileLogger.IsEnabled(logLevel);
+            var hostEnabled = _hostLogger.IsEnabled(logLevel);
+            if (logLevel == LogLevel.None || (!fileEnabled && !hostEnabled))
             {
                 return;
             }
 
             var sanitizedMessage = JellyfinCanopyFileLoggerProvider.SanitizeForLog(formatter(state, exception));
 
-            _fileLogger.Log(logLevel, eventId, sanitizedMessage, exception, static (s, _) => s);
+            if (fileEnabled)
+            {
+                _fileLogger.Log(logLevel, eventId, sanitizedMessage, exception, static (s, _) => s);
+            }
 
             // Also forward to Jellyfin's main logger for visibility (same
             // pass-as-argument shape the old Logger used).
-            if (_hostLogger.IsEnabled(logLevel))
+            if (hostEnabled)
             {
                 _hostLogger.Log(logLevel, eventId, exception, "{Message}", sanitizedMessage);
             }

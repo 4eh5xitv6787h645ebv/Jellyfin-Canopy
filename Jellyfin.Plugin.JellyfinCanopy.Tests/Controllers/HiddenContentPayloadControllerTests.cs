@@ -104,7 +104,7 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
     }
 
     [Fact]
-    public void AcceptedPayload_LogsMetadataOnlyToHostAndDedicatedSinks()
+    public async Task AcceptedPayload_LogsMetadataOnlyToHostAndDedicatedSinks()
     {
         const string secret = "api-key-SUPER-SECRET-sentinel";
         var hostProvider = new CapturingLoggerProvider();
@@ -129,6 +129,7 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
         };
 
         var result = Controller(logger).SaveUserHiddenContent(UserId, candidate);
+        Assert.True(await fileProvider.FlushAsync(TimeSpan.FromSeconds(5)));
 
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(secret, candidate.Items["safe-key"].Name);
