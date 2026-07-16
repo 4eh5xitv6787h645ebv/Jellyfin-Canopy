@@ -146,6 +146,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model.Arr
         [JsonPropertyName("timeRemaining")] public string? TimeRemaining { get; set; }
     }
 
+    /// <summary>
+    /// Complete queue-status snapshot for post-action feedback. Consumers must treat
+    /// <see cref="IsComplete"/> false as unknown rather than as an empty/completed queue.
+    /// </summary>
+    public sealed class ArrQueueStatusDto
+    {
+        [JsonPropertyName("items")] public List<ArrQueueRowDto> Items { get; set; } = new();
+        [JsonPropertyName("errors")] public List<ArrErrorDto> Errors { get; set; } = new();
+        [JsonPropertyName("isComplete")] public bool IsComplete { get; set; } = true;
+    }
+
     public sealed class ArrErrorDto
     {
         [JsonPropertyName("instanceName")] public string InstanceName { get; set; } = string.Empty;

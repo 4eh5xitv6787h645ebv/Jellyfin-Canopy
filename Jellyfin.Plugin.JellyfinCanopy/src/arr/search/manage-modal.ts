@@ -31,6 +31,7 @@ export async function openManage(itemId: string): Promise<void> {
 class ManageView {
     private ctx: ArrContext | null = null;
     private queue: ArrQueueRow[] = [];
+    private queueError: string | null = null;
 
     constructor(private modal: ArrModalHandle, private itemId: string) {}
 
@@ -38,10 +39,16 @@ class ManageView {
         if (!this.modal.isActive()) return;
         this.modal.body.replaceChildren(centered(spinner()));
         try {
-            const [ctx, queue] = await Promise.all([fetchContext(this.itemId), fetchStatus(this.itemId).catch(() => [])]);
+            const [ctx, queueResult] = await Promise.all([
+                fetchContext(this.itemId),
+                fetchStatus(this.itemId)
+                    .then(queue => ({ queue, error: null as string | null }))
+                    .catch(error => ({ queue: [] as ArrQueueRow[], error: errorMessage(error) })),
+            ]);
             if (!this.modal.isActive()) return;
             this.ctx = ctx;
-            this.queue = queue;
+            this.queue = queueResult.queue;
+            this.queueError = queueResult.error;
         } catch (e) {
             if (!this.modal.isActive()) return;
             this.modal.body.replaceChildren(centered(message('error', errorMessage(e))));
@@ -67,6 +74,8 @@ class ManageView {
         const frag = document.createDocumentFragment();
 
         // Live download progress (shared with the Downloads page).
+        // An incomplete upstream collection is unknown, not an empty/completed queue.
+        if (this.queueError) frag.appendChild(message('error', this.queueError));
         if (this.queue.length > 0) frag.appendChild(this.buildProgress());
 
         // Tracked instances with a monitor toggle.

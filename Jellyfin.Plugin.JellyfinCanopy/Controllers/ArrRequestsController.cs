@@ -279,98 +279,96 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             return tmdbOk || tvdbOk;
         }
 
-        private Task<(List<object> Items, string? Error)> FetchSonarrQueue(ArrInstance instance, int instanceIndex, HashSet<(int TmdbId, string MediaType)>? allowedRequests, HashSet<int>? allowedTvTvdb, CancellationToken ct)
+        private async Task<(List<object> Items, string? Error)> FetchSonarrQueue(ArrInstance instance, int instanceIndex, HashSet<(int TmdbId, string MediaType)>? allowedRequests, HashSet<int>? allowedTvTvdb, CancellationToken ct)
         {
-            return _arrFetch.FetchAndMapAsync<List<object>>(
+            var result = await _arrFetch.FetchQueueCollectionAsync<object>(
                 instance,
-                "/api/v3/queue?includeEpisode=true&includeSeries=true&sortKey=timeleft&sortDirection=ascending&pageSize=1000",
-                data =>
+                (page, pageSize) => $"/api/v3/queue?includeEpisode=true&includeSeries=true&sortKey=timeleft&sortDirection=ascending&page={page}&pageSize={pageSize}",
+                pageSize: Services.Arr.ArrFetchService.MaxQueuePageSize,
+                identity: record => record["id"]?.ToJsonString(),
+                projector: record =>
                 {
-                    var items = new List<object>();
-                    if (data?["records"] is not JsonArray records) return items;
-                    foreach (var record in records)
-                    {
-                        var series = record?["series"];
-                        var episode = record?["episode"];
-                        int? tmdbId = ArrIdHelper.ToNullableId((int?)series?["tmdbId"]);
-                        int? tvdbId = ArrIdHelper.ToNullableId((int?)series?["tvdbId"]);
-                        if (!IsSonarrQueueItemAllowed(tmdbId, tvdbId, allowedRequests, allowedTvTvdb))
-                            continue;
+                    var series = record["series"];
+                    var episode = record["episode"];
+                    int? tmdbId = ArrIdHelper.ToNullableId((int?)series?["tmdbId"]);
+                    int? tvdbId = ArrIdHelper.ToNullableId((int?)series?["tvdbId"]);
+                    if (!IsSonarrQueueItemAllowed(tmdbId, tvdbId, allowedRequests, allowedTvTvdb))
+                        return null;
 
-                        var seasonNumber = (int?)episode?["seasonNumber"];
-                        var episodeNumber = (int?)episode?["episodeNumber"];
-                        items.Add(new
-                        {
-                            // Namespace the per-instance queue id by source + the instance's unique
-                            // position so two Sonarr instances that both number queue records from 1 —
-                            // even with an identical or blank display name — can't collide.
-                            id = ArrIdHelper.NamespacedId(nameof(ArrType.Sonarr), instanceIndex, record?["id"]),
-                            source = nameof(ArrType.Sonarr),
-                            instanceName = instance.Name,
-                            title = (string?)series?["title"] ?? "Unknown",
-                            subtitle = $"S{seasonNumber:D2}E{episodeNumber:D2} - {(string?)episode?["title"]}",
-                            seasonNumber = seasonNumber,
-                            episodeNumber = episodeNumber,
-                            status = (string?)record?["status"] ?? "Unknown",
-                            progress = CalculateProgress((double?)record?["size"], (double?)record?["sizeleft"]),
-                            totalSize = (long?)record?["size"],
-                            sizeRemaining = (long?)record?["sizeleft"],
-                            timeRemaining = (string?)record?["timeleft"],
-                            posterUrl = PosterFromImages(series?["images"]),
-                            tmdbId = tmdbId
-                        });
-                    }
-                    return items;
+                    var seasonNumber = (int?)episode?["seasonNumber"];
+                    var episodeNumber = (int?)episode?["episodeNumber"];
+                    return new
+                    {
+                        // Namespace the per-instance queue id by source + the instance's unique
+                        // position so two Sonarr instances that both number queue records from 1 —
+                        // even with an identical or blank display name — can't collide.
+                        id = ArrIdHelper.NamespacedId(nameof(ArrType.Sonarr), instanceIndex, record["id"]),
+                        source = nameof(ArrType.Sonarr),
+                        instanceName = instance.Name,
+                        title = (string?)series?["title"] ?? "Unknown",
+                        subtitle = $"S{seasonNumber:D2}E{episodeNumber:D2} - {(string?)episode?["title"]}",
+                        seasonNumber = seasonNumber,
+                        episodeNumber = episodeNumber,
+                        status = (string?)record["status"] ?? "Unknown",
+                        progress = CalculateProgress((double?)record["size"], (double?)record["sizeleft"]),
+                        totalSize = (long?)record["size"],
+                        sizeRemaining = (long?)record["sizeleft"],
+                        timeRemaining = (string?)record["timeleft"],
+                        posterUrl = PosterFromImages(series?["images"]),
+                        tmdbId = tmdbId
+                    };
                 },
-                emptyResult: new List<object>(),
-                timeout: TimeSpan.FromSeconds(10),
+                requestTimeout: TimeSpan.FromSeconds(10),
                 contextLabel: "Sonarr queue",
-                ct: ct);
+                ct: ct).ConfigureAwait(false);
+
+            return result.IsComplete
+                ? (result.Items, null)
+                : (new List<object>(), result.Error ?? "incomplete queue collection");
         }
 
-        private Task<(List<object> Items, string? Error)> FetchRadarrQueue(ArrInstance instance, int instanceIndex, HashSet<(int TmdbId, string MediaType)>? allowedRequests, CancellationToken ct)
+        private async Task<(List<object> Items, string? Error)> FetchRadarrQueue(ArrInstance instance, int instanceIndex, HashSet<(int TmdbId, string MediaType)>? allowedRequests, CancellationToken ct)
         {
-            return _arrFetch.FetchAndMapAsync<List<object>>(
+            var result = await _arrFetch.FetchQueueCollectionAsync<object>(
                 instance,
-                "/api/v3/queue?includeMovie=true&pageSize=1000",
-                data =>
+                (page, pageSize) => $"/api/v3/queue?includeMovie=true&page={page}&pageSize={pageSize}",
+                pageSize: Services.Arr.ArrFetchService.MaxQueuePageSize,
+                identity: record => record["id"]?.ToJsonString(),
+                projector: record =>
                 {
-                    var items = new List<object>();
-                    if (data?["records"] is not JsonArray records) return items;
-                    foreach (var record in records)
-                    {
-                        var movie = record?["movie"];
-                        int? tmdbId = ArrIdHelper.ToNullableId((int?)movie?["tmdbId"]);
-                        if (allowedRequests != null && (!tmdbId.HasValue || !allowedRequests.Contains((tmdbId.Value, "movie"))))
-                            continue;
+                    var movie = record["movie"];
+                    int? tmdbId = ArrIdHelper.ToNullableId((int?)movie?["tmdbId"]);
+                    if (allowedRequests != null && (!tmdbId.HasValue || !allowedRequests.Contains((tmdbId.Value, "movie"))))
+                        return null;
 
-                        items.Add(new
-                        {
-                            // Namespace the per-instance queue id by source + the instance's unique
-                            // position so two Radarr instances that both number queue records from 1 —
-                            // even with an identical or blank display name — can't collide.
-                            id = ArrIdHelper.NamespacedId(nameof(ArrType.Radarr), instanceIndex, record?["id"]),
-                            source = nameof(ArrType.Radarr),
-                            instanceName = instance.Name,
-                            title = (string?)movie?["title"] ?? "Unknown",
-                            subtitle = movie?["year"]?.ToString(),
-                            seasonNumber = (int?)null,
-                            episodeNumber = (int?)null,
-                            status = (string?)record?["status"] ?? "Unknown",
-                            progress = CalculateProgress((double?)record?["size"], (double?)record?["sizeleft"]),
-                            totalSize = (long?)record?["size"],
-                            sizeRemaining = (long?)record?["sizeleft"],
-                            timeRemaining = (string?)record?["timeleft"],
-                            posterUrl = PosterFromImages(movie?["images"]),
-                            tmdbId = tmdbId
-                        });
-                    }
-                    return items;
+                    return new
+                    {
+                        // Namespace the per-instance queue id by source + the instance's unique
+                        // position so two Radarr instances that both number queue records from 1 —
+                        // even with an identical or blank display name — can't collide.
+                        id = ArrIdHelper.NamespacedId(nameof(ArrType.Radarr), instanceIndex, record["id"]),
+                        source = nameof(ArrType.Radarr),
+                        instanceName = instance.Name,
+                        title = (string?)movie?["title"] ?? "Unknown",
+                        subtitle = movie?["year"]?.ToString(),
+                        seasonNumber = (int?)null,
+                        episodeNumber = (int?)null,
+                        status = (string?)record["status"] ?? "Unknown",
+                        progress = CalculateProgress((double?)record["size"], (double?)record["sizeleft"]),
+                        totalSize = (long?)record["size"],
+                        sizeRemaining = (long?)record["sizeleft"],
+                        timeRemaining = (string?)record["timeleft"],
+                        posterUrl = PosterFromImages(movie?["images"]),
+                        tmdbId = tmdbId
+                    };
                 },
-                emptyResult: new List<object>(),
-                timeout: TimeSpan.FromSeconds(10),
+                requestTimeout: TimeSpan.FromSeconds(10),
                 contextLabel: "Radarr queue",
-                ct: ct);
+                ct: ct).ConfigureAwait(false);
+
+            return result.IsComplete
+                ? (result.Items, null)
+                : (new List<object>(), result.Error ?? "incomplete queue collection");
         }
 
         private static double CalculateProgress(double? size, double? sizeleft)
