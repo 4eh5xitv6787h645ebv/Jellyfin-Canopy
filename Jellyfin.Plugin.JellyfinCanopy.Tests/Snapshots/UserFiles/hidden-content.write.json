@@ -5,6 +5,12 @@
       "Name": "Inception",
       "Type": "Movie",
       "TmdbId": "27205",
+      "Identity": {
+        "Version": 1,
+        "Provider": "tmdb",
+        "MediaType": "movie",
+        "Id": "27205"
+      },
       "HiddenAt": "2024-06-01T08:00:00.000Z",
       "PosterPath": "/poster.jpg",
       "SeriesId": "",

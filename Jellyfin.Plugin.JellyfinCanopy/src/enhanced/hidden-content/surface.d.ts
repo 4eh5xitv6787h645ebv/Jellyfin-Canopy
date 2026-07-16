@@ -4,7 +4,8 @@
 // user scripts keep reading JC.hiddenContent / calling JC.initializeHiddenContent
 // by these exact names.
 import type {} from '../../types/jc';
-import type { HiddenItem, HideItemParams, HiddenContentSettings } from './data';
+import type { HiddenItem, HideItemParams, HiddenContentSettings, HiddenMediaCandidate } from './data';
+import type { HiddenMediaType } from './media-identity';
 import type { HideDialogOptions } from './dialogs';
 import type { HiddenContentUser } from './save';
 
@@ -12,7 +13,9 @@ declare module '../../types/jc' {
     /** The frozen public JC.hiddenContent surface. */
     interface HiddenContentApi {
         isHidden(jellyfinItemId: string): boolean;
-        isHiddenByTmdbId(tmdbId: string | number): boolean;
+        isHiddenByTmdbId(tmdbId: string | number, mediaType?: string): boolean;
+        isHiddenMedia(candidate: HiddenMediaCandidate): boolean;
+        getHiddenStorageKey(candidate: HiddenMediaCandidate): string | null;
         isHiddenOnSurface(itemId: string, surface: string): boolean;
         hideItem(params: HideItemParams): void;
         unhideItem(itemId: string): void;
@@ -33,6 +36,7 @@ declare module '../../types/jc' {
         removeLibraryHideButtons(): void;
         refresh(): Promise<boolean>;
         markScopedHidden(itemId: string, scope?: string): void;
+        resolveLegacyIdentity(storageKey: string, mediaType: HiddenMediaType): boolean;
         flushPendingSave(): Promise<void>;
         // Admin-only cross-user visibility + editing
         fetchHiddenContentUsers(): Promise<HiddenContentUser[] | null>;

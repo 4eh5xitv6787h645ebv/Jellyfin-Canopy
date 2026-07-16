@@ -13,6 +13,15 @@ import type { IdentityContext } from '../../types/jc';
 import { debouncedSave } from './save';
 import { showUndoToast } from './dialogs';
 import { refreshNativeCardVisibility, restoreNativeCardsForIds } from './filter';
+import {
+    createTmdbIdentity,
+    hiddenIdentityKey,
+    hiddenIdentityStatus,
+    identityFromSource,
+    normalizeHiddenMediaType,
+    sameHiddenIdentity,
+} from './media-identity';
+import type { HiddenContentIdentity, HiddenIdentityStatus, HiddenMediaType } from './media-identity';
 
 // ============================================================
 // Shared shapes
@@ -24,6 +33,7 @@ export interface HiddenItem {
     name?: string;
     type?: string;
     tmdbId?: string;
+    identity?: HiddenContentIdentity;
     hiddenAt?: string;
     posterPath?: string;
     seriesId?: string;
@@ -33,6 +43,10 @@ export interface HiddenItem {
     hideScope?: string;
     /** Storage key attached by getAllHiddenItems / admin fetches. */
     _key?: string;
+    /** Derived management state; never persisted. */
+    _identityStatus?: HiddenIdentityStatus;
+    /** Cross-user admin rows can be reviewed but not resolved in the current user's store. */
+    _identityReadOnly?: boolean;
     [key: string]: unknown;
 }
 
@@ -69,11 +83,28 @@ export interface HiddenContentSettings {
 // ============================================================
 
 export const hiddenIdSet = new Set<string>();
-const hiddenTmdbIdSet = new Set<string>();
+const hiddenProviderIdentitySet = new Set<string>();
 let hiddenData: HiddenContentData | null = null;
 
 function emptyHiddenData(): HiddenContentData {
     return { items: {}, settings: {} };
+}
+
+function upgradeSafeLegacyIdentities(data: HiddenContentData): { data: HiddenContentData; changed: boolean } {
+    let changed = false;
+    // Storage keys are opaque user data. A normal object plus assignment would
+    // invoke Object.prototype.__proto__ and silently lose that tracked row.
+    const items = { __proto__: null } as unknown as HiddenContentData['items'];
+    for (const [key, item] of Object.entries(data.items || {})) {
+        const identity = identityFromSource(item);
+        if (!item.identity && identity) {
+            items[key] = { ...item, identity };
+            changed = true;
+        } else {
+            items[key] = item;
+        }
+    }
+    return changed ? { data: { ...data, items }, changed } : { data, changed };
 }
 
 function contextFor(data: HiddenContentData): IdentityContext | null {
@@ -110,7 +141,7 @@ function commitHiddenData(data: HiddenContentData, previous: HiddenContentData):
 function clearIdentityData(): void {
     hiddenData = null;
     hiddenIdSet.clear();
-    hiddenTmdbIdSet.clear();
+    hiddenProviderIdentitySet.clear();
 }
 
 JC.identity?.registerReset?.('hidden-content-data', clearIdentityData);
@@ -182,7 +213,7 @@ export function getSettings(): HiddenContentSettings {
  */
 export function rebuildSets(): void {
     hiddenIdSet.clear();
-    hiddenTmdbIdSet.clear();
+    hiddenProviderIdentitySet.clear();
     const data = getHiddenData();
     const items = data.items || {};
     for (const key of Object.keys(items)) {
@@ -190,7 +221,8 @@ export function rebuildSets(): void {
         const scope = item.hideScope || 'global';
         if (scope !== 'global') continue;
         if (item.itemId) hiddenIdSet.add(item.itemId);
-        if (item.tmdbId) hiddenTmdbIdSet.add(String(item.tmdbId));
+        const identity = identityFromSource(item);
+        if (identity) hiddenProviderIdentitySet.add(hiddenIdentityKey(identity));
     }
 }
 
@@ -267,9 +299,11 @@ export async function refresh(): Promise<boolean> {
         const camelCased = typeof JC.transformUserFileCase === 'function'
             ? JC.transformUserFileCase('hidden-content.json', fresh, 'load')
             : (typeof JC.toCamelCase === 'function' ? JC.toCamelCase(fresh) : fresh);
-        const next = camelCased && typeof camelCased === 'object'
+        const loaded = camelCased && typeof camelCased === 'object'
             ? camelCased as HiddenContentData
             : emptyHiddenData();
+        const upgraded = upgradeSafeLegacyIdentities(loaded);
+        const next = upgraded.data;
         if (context) {
             if (!replaceHiddenData(next, context)) return false;
         } else {
@@ -278,6 +312,7 @@ export async function refresh(): Promise<boolean> {
             hiddenData = next;
         }
         rebuildSets();
+        if (upgraded.changed) debouncedSave();
         emitChange();
         return true;
     } catch (e) {
@@ -310,6 +345,44 @@ function widestScope(a: string, b: string | undefined): string {
     return ra >= rb ? la : lb;
 }
 
+/** Merge duplicate storage rows without discarding exact ids or typed provider metadata. */
+function mergeHiddenRows(preferred: HiddenItem, additional: HiddenItem): HiddenItem {
+    const merged: HiddenItem = { ...additional, ...preferred };
+    merged.itemId = preferred.itemId || additional.itemId || '';
+    merged.name = preferred.name || additional.name || '';
+    merged.type = preferred.type || additional.type || '';
+    // Select identity + TMDB as one pair. Explicit typed metadata outranks a
+    // derivable legacy row, so one GUID variant cannot contribute identity 551
+    // while another contributes a stale TMDB 550.
+    const identitySource = preferred.identity
+        ? preferred
+        : (additional.identity ? additional : null);
+    const explicitIdentity = identitySource ? identityFromSource(identitySource) : null;
+    if (explicitIdentity) {
+        merged.identity = { ...explicitIdentity };
+        merged.tmdbId = explicitIdentity.id;
+    } else if (identitySource?.identity) {
+        // Preserve unsupported explicit schemas atomically; never reinterpret
+        // them as legacy metadata during a scoped-key collapse.
+        merged.identity = { ...identitySource.identity };
+        merged.tmdbId = identitySource.tmdbId || '';
+    } else {
+        const derivedIdentity = identityFromSource(preferred) || identityFromSource(additional);
+        merged.identity = derivedIdentity ? { ...derivedIdentity } : undefined;
+        merged.tmdbId = derivedIdentity?.id || preferred.tmdbId || additional.tmdbId || '';
+    }
+    merged.hiddenAt = !preferred.hiddenAt
+        ? (additional.hiddenAt || '')
+        : (!additional.hiddenAt || preferred.hiddenAt <= additional.hiddenAt ? preferred.hiddenAt : additional.hiddenAt);
+    merged.posterPath = preferred.posterPath || additional.posterPath || '';
+    merged.seriesId = preferred.seriesId || additional.seriesId || '';
+    merged.seriesName = preferred.seriesName || additional.seriesName || '';
+    merged.seasonNumber = preferred.seasonNumber ?? additional.seasonNumber ?? null;
+    merged.episodeNumber = preferred.episodeNumber ?? additional.episodeNumber ?? null;
+    merged.hideScope = widestScope(preferred.hideScope || '', additional.hideScope) || 'global';
+    return merged;
+}
+
 // Local-cache mirror of a server-side hide write — preserves existing metadata + merges scopes via mergeCwScope.
 // Looks up under hyphenated AND N-format keys (server canonical is hyphenated; some callers pass N-format from data-id).
 export function markScopedHidden(itemId: string, scope?: string): void {
@@ -337,18 +410,16 @@ export function markScopedHidden(itemId: string, scope?: string): void {
         if (!v?.hiddenAt) continue;
         if (!earliestHiddenAt || v.hiddenAt < earliestHiddenAt) earliestHiddenAt = v.hiddenAt;
     }
+    const reconciled = variants.reduce<HiddenItem | null>(
+        (current, variant) => current ? mergeHiddenRows(current, variant) : { ...variant },
+        null,
+    );
     const merged: HiddenItem = {
+        ...(reconciled || {}),
         itemId,
-        name: existing?.name || '',
-        type: existing?.type || '',
-        tmdbId: existing?.tmdbId || '',
         hiddenAt: earliestHiddenAt || new Date().toISOString(),
-        posterPath: existing?.posterPath || '',
-        seriesId: existing?.seriesId || '',
-        seriesName: existing?.seriesName || '',
-        seasonNumber: existing?.seasonNumber ?? null,
-        episodeNumber: existing?.episodeNumber ?? null,
         hideScope: finalScope,
+        ...(reconciled?.identity ? { identity: { ...reconciled.identity } } : {}),
     };
     const nextItems = { ...items, [itemId]: merged };
     if (hyphenated !== itemId) delete nextItems[hyphenated];
@@ -379,11 +450,55 @@ export function isHidden(jellyfinItemId: string): boolean {
  * @param tmdbId The TMDB ID.
  * @returns `true` if the item is hidden.
  */
-export function isHiddenByTmdbId(tmdbId: string | number): boolean {
-    if (!tmdbId) return false;
+export function isHiddenByTmdbId(tmdbId: string | number, mediaType?: string): boolean {
+    const identity = createTmdbIdentity(tmdbId, mediaType);
+    if (!identity) return false;
     const settings = getSettings();
     if (!settings.enabled) return false;
-    return hiddenTmdbIdSet.has(String(tmdbId));
+    return hiddenProviderIdentitySet.has(hiddenIdentityKey(identity));
+}
+
+export interface HiddenMediaCandidate {
+    itemId?: string | null;
+    jellyfinMediaId?: string | null;
+    itemEpisodeId?: string | null;
+    tmdbId?: string | number | null;
+    id?: string | number | null;
+    mediaType?: string | null;
+    type?: string | null;
+}
+
+/** One comparator shared by cards, requests, calendar and management lookups. */
+export function isHiddenMedia(candidate: HiddenMediaCandidate): boolean {
+    const settings = getSettings();
+    if (!settings.enabled) return false;
+    const localIds = [candidate.itemId, candidate.jellyfinMediaId, candidate.itemEpisodeId];
+    if (localIds.some((id) => !!id && hiddenIdSet.has(String(id)))) return true;
+    const identity = createTmdbIdentity(
+        candidate.tmdbId || candidate.id,
+        candidate.mediaType || candidate.type,
+    );
+    return !!identity && hiddenProviderIdentitySet.has(hiddenIdentityKey(identity));
+}
+
+/** Returns the exact persisted row owned by a media candidate, if any. */
+export function getHiddenStorageKey(candidate: HiddenMediaCandidate): string | null {
+    const items = getHiddenData().items || {};
+    const localIds = [candidate.itemId, candidate.jellyfinMediaId, candidate.itemEpisodeId]
+        .filter((id): id is string => typeof id === 'string' && !!id);
+    for (const [key, item] of Object.entries(items)) {
+        if (localIds.includes(item.itemId || '') || localIds.includes(key)) return key;
+    }
+    const wanted = createTmdbIdentity(
+        candidate.tmdbId || candidate.id,
+        candidate.mediaType || candidate.type,
+    );
+    if (!wanted) return null;
+    const wantedKey = hiddenIdentityKey(wanted);
+    return Object.entries(items).find(([, item]) => {
+        const current = identityFromSource(item);
+        return !!current && hiddenIdentityKey(current) === wantedKey;
+    })?.[0] || null;
 }
 
 /** Item data accepted by hideItem. */
@@ -396,6 +511,8 @@ export interface HideItemParams {
     type?: string;
     /** TMDB ID. */
     tmdbId?: string | number;
+    /** Optional explicit provider identity. Normally derived from type + tmdbId. */
+    identity?: HiddenContentIdentity;
     /** TMDB poster path. */
     posterPath?: string;
     /** Parent series Jellyfin ID. */
@@ -416,14 +533,30 @@ export interface HideItemParams {
  * shows an undo toast, and refreshes native card visibility.
  * @param params Item data to hide.
  */
-export function hideItem({ itemId, name, type, tmdbId, posterPath, seriesId, seriesName, seasonNumber, episodeNumber, hideScope }: HideItemParams): void {
+export function hideItem({ itemId, name, type, tmdbId, identity: suppliedIdentity, posterPath, seriesId, seriesName, seasonNumber, episodeNumber, hideScope }: HideItemParams): void {
     const data = getHiddenData();
-    const key = itemId || `tmdb-${tmdbId}`;
+    const explicitIdentity = suppliedIdentity
+        ? identityFromSource({ identity: suppliedIdentity })
+        : null;
+    if (suppliedIdentity && (!explicitIdentity
+        || (tmdbId != null && String(tmdbId).trim() !== explicitIdentity.id))) return;
+    const identity = explicitIdentity || identityFromSource({ tmdbId, type });
+    if (!itemId && !identity) return;
+    const existingIdentityEntry = identity && Object.entries(data.items).find(([, item]) => {
+        const current = identityFromSource(item);
+        return current
+            && hiddenIdentityKey(current) === hiddenIdentityKey(identity)
+            && (!itemId || !item.itemId || item.itemId === itemId);
+    });
+    const existingIdentityKey = existingIdentityEntry?.[0];
+    const existingIdentityItem = existingIdentityEntry?.[1];
+    const key = existingIdentityKey || itemId || hiddenIdentityKey(identity!);
     const newItem: HiddenItem = {
-        itemId: itemId || '',
+        itemId: itemId || existingIdentityItem?.itemId || '',
         name: name || '',
         type: type || '',
-        tmdbId: tmdbId ? String(tmdbId) : '',
+        tmdbId: identity?.id || (tmdbId ? String(tmdbId) : ''),
+        ...(identity ? { identity } : {}),
         hiddenAt: new Date().toISOString(),
         posterPath: posterPath || '',
         seriesId: seriesId || '',
@@ -455,7 +588,7 @@ export function unhideItem(itemId: string): void {
     const newItems = { ...data.items };
     let restoredJellyfinId = '';
 
-    // Try direct key match first (covers storage keys like "tmdb-12345")
+    // Try direct key match first (covers legacy and versioned provider keys).
     if (newItems[itemId]) {
         restoredJellyfinId = newItems[itemId].itemId || '';
         delete newItems[itemId];
@@ -475,7 +608,9 @@ export function unhideItem(itemId: string): void {
 
     const idsToRestore = new Set<string>();
     if (restoredJellyfinId) idsToRestore.add(restoredJellyfinId);
-    else if (itemId && !String(itemId).startsWith('tmdb-')) idsToRestore.add(itemId);
+    else if (itemId
+        && !String(itemId).startsWith('tmdb-')
+        && !String(itemId).startsWith('hc1:')) idsToRestore.add(itemId);
     restoreNativeCardsForIds(idsToRestore);
     refreshNativeCardVisibility();
 }
@@ -504,7 +639,47 @@ export function updateSettings(partial: Record<string, unknown>): void {
 export function getAllHiddenItems(): HiddenItem[] {
     const data = getHiddenData();
     const items = data.items || {};
-    return Object.entries(items).map(([key, item]) => ({ ...item, _key: key }));
+    return Object.entries(items).map(([key, item]) => ({
+        ...item,
+        _key: key,
+        _identityStatus: hiddenIdentityStatus(item),
+    }));
+}
+
+/** Explicitly resolves an ambiguous legacy TMDB row selected in management UI. */
+export function resolveLegacyIdentity(storageKey: string, mediaType: HiddenMediaType): boolean {
+    const data = getHiddenData();
+    const item = data.items[storageKey];
+    if (!item?.tmdbId || item.identity || identityFromSource(item)) return false;
+    const normalizedType = normalizeHiddenMediaType(mediaType);
+    const identity = createTmdbIdentity(item.tmdbId, normalizedType);
+    if (!identity) return false;
+    const nextItem: HiddenItem = {
+        ...item,
+        identity,
+        type: normalizedType === 'tv' ? 'Series' : 'Movie',
+    };
+    const nextItems = { ...data.items, [storageKey]: nextItem };
+    const matchingEntries = Object.entries(nextItems).filter(([key, candidate]) =>
+        key !== storageKey && sameHiddenIdentity(identityFromSource(candidate), identity));
+    const candidates = [[storageKey, nextItem], ...matchingEntries] as Array<[string, HiddenItem]>;
+    const survivor = candidates.find(([, candidate]) => !!candidate.itemId) || candidates[0];
+    let merged: HiddenItem = { ...survivor[1], identity: { ...identity } };
+    for (const [key, candidate] of candidates) {
+        if (key === survivor[0]) continue;
+        const mergeable = !candidate.itemId || !merged.itemId || candidate.itemId === merged.itemId;
+        if (!mergeable) continue;
+        merged = mergeHiddenRows(merged, candidate);
+        merged.identity = { ...identity };
+        delete nextItems[key];
+    }
+    nextItems[survivor[0]] = merged;
+    if (!commitHiddenData({ ...data, items: nextItems }, data)) return false;
+    rebuildSets();
+    debouncedSave();
+    emitChange();
+    refreshNativeCardVisibility();
+    return true;
 }
 
 /**
@@ -525,15 +700,11 @@ export function getHiddenCount(): number {
 export function filterSeerrResults(results: any[], surface: string): any[] {
     if (!shouldFilterSurface(surface)) return results;
     if (!Array.isArray(results)) return results;
-    return results.filter((item) => {
-        const tmdbId = item.id || item.tmdbId;
-        return !hiddenTmdbIdSet.has(String(tmdbId));
-    });
+    return results.filter((item) => !isHiddenMedia(item));
 }
 
 /**
- * Filters calendar events, removing hidden items by TMDB ID, Jellyfin ID,
- * or normalised name match (for Sonarr events without TMDB IDs).
+ * Filters calendar events by the shared exact local/provider comparator.
  * @param events Array of calendar event objects.
  * @returns Filtered array.
  */
@@ -541,27 +712,7 @@ export function filterCalendarEvents(events: any[]): any[] {
     if (!shouldFilterSurface('calendar')) return events;
     if (!Array.isArray(events)) return events;
 
-    // Build a set of normalised hidden-item names for fuzzy matching
-    const hiddenNames = new Set<string>();
-    const items = (getHiddenData().items) || {};
-    for (const key of Object.keys(items)) {
-        const name = items[key].name;
-        if (name) {
-            const lower = name.toLowerCase();
-            hiddenNames.add(lower);
-            // Also store without trailing parenthetical qualifier
-            // so "Hell's Kitchen (US)" matches "Hell's Kitchen" and vice-versa.
-            const stripped = lower.replace(/\s*\([^)]*\)\s*$/, '');
-            if (stripped !== lower) hiddenNames.add(stripped);
-        }
-    }
-
-    return events.filter((event) => {
-        if (event.tmdbId && hiddenTmdbIdSet.has(String(event.tmdbId))) return false;
-        if (event.itemId && hiddenIdSet.has(event.itemId)) return false;
-        if (event.title && hiddenNames.has(event.title.toLowerCase())) return false;
-        return true;
-    });
+    return events.filter((event) => !isHiddenMedia(event));
 }
 
 /**
@@ -572,12 +723,7 @@ export function filterCalendarEvents(events: any[]): any[] {
 export function filterRequestItems(items: any[]): any[] {
     if (!shouldFilterSurface('requests')) return items;
     if (!Array.isArray(items)) return items;
-    return items.filter((item) => {
-        const tmdbId = item.tmdbId || item.id;
-        if (tmdbId && hiddenTmdbIdSet.has(String(tmdbId))) return false;
-        if (item.jellyfinMediaId && hiddenIdSet.has(item.jellyfinMediaId)) return false;
-        return true;
-    });
+    return items.filter((item) => !isHiddenMedia(item));
 }
 
 /**
@@ -602,15 +748,18 @@ export function unhideAll(): void {
 export function resetFromUserConfig(): void {
     const context = JC.identity?.capture?.() || null;
     const configured = (JC.userConfig?.hiddenContent as HiddenContentData | undefined) || emptyHiddenData();
+    const upgraded = upgradeSafeLegacyIdentities(configured);
     if (context) {
         const owner = JC.identity.ownerOf(configured);
         hiddenData = owner && !JC.identity.isOwned(configured, context)
             ? emptyHiddenData()
-            : configured;
+            : upgraded.data;
         JC.identity.own(hiddenData, context);
         if (JC.userConfig) JC.userConfig.hiddenContent = hiddenData;
     } else {
-        hiddenData = configured;
+        hiddenData = upgraded.data;
+        if (JC.userConfig) JC.userConfig.hiddenContent = hiddenData;
     }
     rebuildSets();
+    if (upgraded.changed && hiddenData === upgraded.data) debouncedSave();
 }

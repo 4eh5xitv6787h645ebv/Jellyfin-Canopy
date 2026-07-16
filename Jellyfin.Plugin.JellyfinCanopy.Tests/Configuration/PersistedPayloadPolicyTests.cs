@@ -254,6 +254,43 @@ public sealed class PersistedPayloadPolicyTests
     }
 
     [Fact]
+    public void HiddenContent_VersionedIdentity_IsValidatedAndClonedWithoutAliasing()
+    {
+        var identity = new HiddenContentIdentity
+        {
+            Version = 1,
+            Provider = "tmdb",
+            MediaType = "movie",
+            Id = "550"
+        };
+        var payload = new UserHiddenContent
+        {
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                ["hc1:tmdb:movie:550"] = new HiddenContentItem { TmdbId = "550", Identity = identity }
+            }
+        };
+
+        Assert.True(PersistedPayloadPolicy.Validate(payload).IsValid);
+        var clone = PersistedPayloadPolicy.CloneValidated(payload);
+        Assert.NotSame(identity, clone.Items["hc1:tmdb:movie:550"].Identity);
+        Assert.Equal("movie", clone.Items["hc1:tmdb:movie:550"].Identity?.MediaType);
+
+        identity.MediaType = "tv";
+        Assert.True(PersistedPayloadPolicy.Validate(payload).IsValid);
+        identity.Provider = "other";
+        AssertHiddenInvalid("key", new HiddenContentItem { TmdbId = "550", Identity = identity });
+        identity.Provider = "tmdb";
+        identity.Version = 2;
+        AssertHiddenInvalid("key", new HiddenContentItem { TmdbId = "550", Identity = identity });
+        identity.Version = 1;
+        identity.Id = "movie-550";
+        AssertHiddenInvalid("key", new HiddenContentItem { TmdbId = "movie-550", Identity = identity });
+        identity.Id = "551";
+        AssertHiddenInvalid("key", new HiddenContentItem { TmdbId = "550", Identity = identity });
+    }
+
+    [Fact]
     public void AggregateByteBudget_AcceptsExactBoundaryAndRejectsNPlusOne()
     {
         Assert.True(PersistedPayloadPolicy.ValidateByteCount(1024, 1024).IsValid);

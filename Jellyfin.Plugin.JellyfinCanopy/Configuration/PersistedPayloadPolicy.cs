@@ -122,6 +122,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                     Name = item.Name ?? string.Empty,
                     Type = item.Type ?? string.Empty,
                     TmdbId = item.TmdbId ?? string.Empty,
+                    Identity = item.Identity == null ? null : new HiddenContentIdentity
+                    {
+                        Version = item.Identity.Version,
+                        Provider = item.Identity.Provider ?? string.Empty,
+                        MediaType = item.Identity.MediaType ?? string.Empty,
+                        Id = item.Identity.Id ?? string.Empty
+                    },
                     HiddenAt = item.HiddenAt ?? string.Empty,
                     PosterPath = item.PosterPath ?? string.Empty,
                     SeriesId = item.SeriesId ?? string.Empty,
@@ -257,6 +264,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 && IsOptionalBoundedString(item.Name, 512)
                 && IsOptionalBoundedString(item.Type, 64)
                 && IsOptionalBoundedString(item.TmdbId, 32)
+                && IsValidHiddenIdentity(item.Identity)
+                && (item.Identity == null || string.IsNullOrEmpty(item.TmdbId)
+                    || string.Equals(item.Identity.Id, item.TmdbId, StringComparison.Ordinal))
                 && IsOptionalBoundedString(item.HiddenAt, 64)
                 && IsOptionalBoundedString(item.PosterPath, 512)
                 && IsOptionalBoundedString(item.SeriesId, 128)
@@ -264,6 +274,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 && IsOptionalNonNegativeRange(item.SeasonNumber, 100_000)
                 && IsOptionalNonNegativeRange(item.EpisodeNumber, 100_000)
                 && item.HideScope is null or "" or "global" or "series" or "continuewatching" or "nextup" or "homesections";
+
+        private static bool IsValidHiddenIdentity(HiddenContentIdentity? identity)
+            => identity == null
+                || (identity.Version == 1
+                    && string.Equals(identity.Provider, "tmdb", StringComparison.Ordinal)
+                    && (string.Equals(identity.MediaType, "movie", StringComparison.Ordinal)
+                        || string.Equals(identity.MediaType, "tv", StringComparison.Ordinal))
+                    && IsPositiveDecimalId(identity.Id));
+
+        private static bool IsPositiveDecimalId(string? value)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length > 32) return false;
+            var nonZero = false;
+            foreach (var c in value)
+            {
+                if (c < '0' || c > '9') return false;
+                if (c != '0') nonZero = true;
+            }
+            return nonZero;
+        }
 
         private static bool HasValidExtensionData(Dictionary<string, JsonElement>? extensionData)
         {

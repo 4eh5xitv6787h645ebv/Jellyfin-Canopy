@@ -348,7 +348,11 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
             const hiddenLabel = JC.t!('hidden_content_already_hidden') !== 'hidden_content_already_hidden' ? JC.t!('hidden_content_already_hidden') : 'Hidden';
             const unhideLabel = JC.t!('hidden_content_unhide') !== 'hidden_content_unhide' ? JC.t!('hidden_content_unhide') : 'Unhide';
             const hideLabel = JC.t!('hidden_content_hide_button') !== 'hidden_content_hide_button' ? JC.t!('hidden_content_hide_button') : 'Hide';
-            const unhideKey = jellyfinMediaId || `tmdb-${item.id}`;
+            const mediaCandidate = {
+                jellyfinMediaId: jellyfinMediaId || '',
+                tmdbId: item.id,
+                mediaType: item.mediaType,
+            };
 
             /**
              * Replaces the hide button's content with a material icon.
@@ -380,8 +384,10 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
                     e.preventDefault();
                     e.stopPropagation();
                     if (!isCurrent()) return;
-                    JC.hiddenContent?.unhideItem(unhideKey);
-                    setHideState();
+                    const unhideKey = JC.hiddenContent?.getHiddenStorageKey(mediaCandidate);
+                    if (unhideKey) JC.hiddenContent?.unhideItem(unhideKey);
+                    if (JC.hiddenContent?.isHiddenMedia(mediaCandidate)) setHiddenState();
+                    else setHideState();
                 };
             }
 
@@ -413,7 +419,7 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
                 };
             }
 
-            if (JC.hiddenContent.isHiddenByTmdbId(item.id)) {
+            if (JC.hiddenContent.isHiddenMedia(mediaCandidate)) {
                 setHiddenState();
             } else {
                 setHideState();

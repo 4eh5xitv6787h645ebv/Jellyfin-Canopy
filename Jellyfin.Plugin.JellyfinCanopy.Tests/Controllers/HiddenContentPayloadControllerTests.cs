@@ -6,6 +6,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Logging;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
+using MediaBrowser.Controller.Entities.Movies;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -143,7 +144,260 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
         Assert.Contains("items=1", fileText, StringComparison.Ordinal);
     }
 
-    private HiddenContentController Controller(ILogger<HiddenContentController> logger)
+    [Fact]
+    public void AdminHide_UsesTypedProviderKeysAndNeverCreatesAnAmbiguousBareTmdbRow()
+    {
+        _manager.SaveUserConfiguration(UserId, "hidden-content.json", new UserHiddenContent
+        {
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                ["tmdb-549"] = new() { Name = "Legacy movie", Type = "Movie", TmdbId = "549" }
+            }
+        });
+        var controller = Controller(NullLogger<HiddenContentController>.Instance);
+        var result = controller.AdminHideForUser(UserId, new List<HiddenContentItem>
+        {
+            new() { Name = "Legacy movie", Type = "Movie", TmdbId = "549" },
+            new() { Name = "Movie 550", Type = "Movie", TmdbId = "550" },
+            new() { Name = "TV 550", Type = "Series", TmdbId = "550" },
+            new() { Name = "Ambiguous 551", TmdbId = "551" },
+            new() { ItemId = "jf-exact", Name = "Local", TmdbId = "552" }
+        });
+
+        Assert.IsType<OkObjectResult>(result);
+        var stored = _manager.GetUserConfigurationStrict<UserHiddenContent>(UserId, "hidden-content.json");
+        Assert.Equal(4, stored.Items.Count);
+        Assert.True(stored.Items.ContainsKey("tmdb-549"));
+        Assert.False(stored.Items.ContainsKey("hc1:tmdb:movie:549"));
+        Assert.Equal("movie", stored.Items["hc1:tmdb:movie:550"].Identity?.MediaType);
+        Assert.Equal("tv", stored.Items["hc1:tmdb:tv:550"].Identity?.MediaType);
+        Assert.True(stored.Items.ContainsKey("jf-exact"));
+        Assert.Equal(
+            new[] { "tmdb-549" },
+            stored.Items.Keys.Where(static key => key.StartsWith("tmdb-", StringComparison.Ordinal)));
+
+        Assert.IsType<OkObjectResult>(controller.AdminUnhideForUser(
+            UserId,
+            new List<string> { "hc1:tmdb:movie:550" }));
+        stored = _manager.GetUserConfigurationStrict<UserHiddenContent>(UserId, "hidden-content.json");
+        Assert.False(stored.Items.ContainsKey("hc1:tmdb:movie:550"));
+        Assert.True(stored.Items.ContainsKey("hc1:tmdb:tv:550"));
+    }
+
+    [Fact]
+    public void AdminHide_SkipsInvalidExplicitIdentitiesAndPreservesDistinctExactItems()
+    {
+        var controller = Controller(NullLogger<HiddenContentController>.Instance);
+        var result = controller.AdminHideForUser(UserId, new List<HiddenContentItem>
+        {
+            new()
+            {
+                ItemId = "jf-1",
+                Name = "Edition one",
+                Type = "Movie",
+                TmdbId = "550",
+                Identity = new HiddenContentIdentity
+                {
+                    Version = 1,
+                    Provider = "tmdb",
+                    MediaType = "movie",
+                    Id = "550"
+                }
+            },
+            new()
+            {
+                ItemId = "jf-2",
+                Name = "Edition two",
+                Type = "Movie",
+                TmdbId = "550",
+                Identity = new HiddenContentIdentity
+                {
+                    Version = 1,
+                    Provider = "tmdb",
+                    MediaType = "movie",
+                    Id = "550"
+                }
+            },
+            new()
+            {
+                ItemId = "future",
+                Type = "Movie",
+                TmdbId = "551",
+                Identity = new HiddenContentIdentity
+                {
+                    Version = 2,
+                    Provider = "tmdb",
+                    MediaType = "movie",
+                    Id = "551"
+                }
+            },
+            new()
+            {
+                ItemId = "malformed",
+                Type = "Movie",
+                TmdbId = "552",
+                Identity = new HiddenContentIdentity
+                {
+                    Version = 1,
+                    Provider = "tmdb",
+                    MediaType = "movie",
+                    Id = "not-decimal"
+                }
+            }
+        });
+
+        Assert.IsType<OkObjectResult>(result);
+        var stored = _manager.GetUserConfigurationStrict<UserHiddenContent>(UserId, "hidden-content.json");
+        Assert.Equal(new[] { "jf-1", "jf-2" }, stored.Items.Keys.Order(StringComparer.Ordinal));
+        Assert.All(stored.Items.Values, item =>
+        {
+            Assert.Equal("550", item.TmdbId);
+            Assert.Equal("movie", item.Identity?.MediaType);
+        });
+    }
+
+    [Fact]
+    public void ScopedHide_AtomicallyPrefersAlternateTypedMetadataOverCanonicalLegacyMetadata()
+    {
+        var itemId = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        var dashed = itemId.ToString();
+        var compact = itemId.ToString("N");
+        _manager.SaveUserConfiguration(UserId, "hidden-content.json", new UserHiddenContent
+        {
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                [dashed] = new()
+                {
+                    ItemId = dashed,
+                    Name = "Legacy Movie 550",
+                    TmdbId = "550",
+                    HideScope = "continuewatching"
+                },
+                [compact] = new()
+                {
+                    ItemId = compact,
+                    Name = "Movie 551",
+                    Type = "Movie",
+                    TmdbId = "551",
+                    Identity = new HiddenContentIdentity
+                    {
+                        Version = 1,
+                        Provider = "tmdb",
+                        MediaType = "movie",
+                        Id = "551"
+                    },
+                    HideScope = "nextup"
+                }
+            }
+        });
+        var library = new CountingLibraryManager
+        {
+            GetItemByIdUserHook = (id, _) => id == itemId
+                ? new Movie { Id = itemId, Name = "Movie 550" }
+                : null
+        };
+
+        var result = Controller(NullLogger<HiddenContentController>.Instance, library)
+            .HideFromContinueWatching(compact);
+
+        Assert.IsType<OkObjectResult>(result);
+        var stored = _manager.GetUserConfigurationStrict<UserHiddenContent>(UserId, "hidden-content.json");
+        var item = Assert.Single(stored.Items, pair => pair.Key == dashed).Value;
+        Assert.Equal(dashed, item.ItemId);
+        Assert.Equal("551", item.TmdbId);
+        Assert.Equal("movie", item.Identity?.MediaType);
+        Assert.Equal("551", item.Identity?.Id);
+        Assert.Equal("homesections", item.HideScope);
+    }
+
+    [Fact]
+    public void ScopedHide_ReconcilesFreshTypedIdentityWithLegacyTmdbMetadata()
+    {
+        var itemId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var dashed = itemId.ToString();
+        var compact = itemId.ToString("N");
+        _manager.SaveUserConfiguration(UserId, "hidden-content.json", new UserHiddenContent
+        {
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                [compact] = new()
+                {
+                    ItemId = compact,
+                    Name = "Legacy Movie 550",
+                    Type = "Movie",
+                    TmdbId = "550",
+                    HideScope = "continuewatching"
+                }
+            }
+        });
+        var movie = new Movie { Id = itemId, Name = "Movie 551" };
+        movie.ProviderIds["Tmdb"] = "551";
+        var library = new CountingLibraryManager
+        {
+            GetItemByIdUserHook = (id, _) => id == itemId ? movie : null
+        };
+
+        var result = Controller(NullLogger<HiddenContentController>.Instance, library)
+            .HideFromNextUp(dashed);
+
+        Assert.IsType<OkObjectResult>(result);
+        var stored = _manager.GetUserConfigurationStrict<UserHiddenContent>(UserId, "hidden-content.json");
+        var item = Assert.Single(stored.Items, pair => pair.Key == dashed).Value;
+        Assert.Equal("551", item.TmdbId);
+        Assert.Equal("tmdb", item.Identity?.Provider);
+        Assert.Equal("movie", item.Identity?.MediaType);
+        Assert.Equal("551", item.Identity?.Id);
+        Assert.Equal("homesections", item.HideScope);
+    }
+
+    [Fact]
+    public void ScopedHide_PreservesUnsupportedIdentityAndTmdbAsAnOpaquePair()
+    {
+        var itemId = Guid.Parse("99999999-8888-7777-6666-555555555555");
+        var dashed = itemId.ToString();
+        _manager.SaveUserConfiguration(UserId, "hidden-content.json", new UserHiddenContent
+        {
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                [dashed] = new()
+                {
+                    ItemId = dashed,
+                    Name = "Future identity",
+                    Type = "Movie",
+                    TmdbId = "550",
+                    Identity = new HiddenContentIdentity
+                    {
+                        Version = 2,
+                        Provider = "imdb",
+                        MediaType = "movie",
+                        Id = "tt123"
+                    },
+                    HideScope = "continuewatching"
+                }
+            }
+        });
+        var library = new CountingLibraryManager
+        {
+            GetItemByIdUserHook = (id, _) => id == itemId
+                ? new Movie { Id = itemId, Name = "Future identity" }
+                : null
+        };
+
+        var result = Controller(NullLogger<HiddenContentController>.Instance, library)
+            .HideFromContinueWatching(dashed);
+
+        Assert.IsType<OkObjectResult>(result);
+        var stored = _manager.GetUserConfigurationStrict<UserHiddenContent>(UserId, "hidden-content.json");
+        var item = Assert.Single(stored.Items).Value;
+        Assert.Equal("550", item.TmdbId);
+        Assert.Equal(2, item.Identity?.Version);
+        Assert.Equal("imdb", item.Identity?.Provider);
+        Assert.Equal("tt123", item.Identity?.Id);
+    }
+
+    private HiddenContentController Controller(
+        ILogger<HiddenContentController> logger,
+        CountingLibraryManager? libraryManager = null)
     {
         var controller = new HiddenContentController(
             new RecordingHttpClientFactory(new HttpClientHandler()),
@@ -152,7 +406,7 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
             new SeerrCache(_provider),
             _provider,
             _manager,
-            new CountingLibraryManager());
+            libraryManager ?? new CountingLibraryManager());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

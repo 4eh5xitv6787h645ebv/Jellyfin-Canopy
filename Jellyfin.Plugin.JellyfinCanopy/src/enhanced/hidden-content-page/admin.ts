@@ -17,6 +17,7 @@ import {
 } from './state';
 import type { HiddenContentPageFence } from './state';
 import { isCssColor } from '../../core/css-safe';
+import { createTmdbIdentity, hiddenIdentityKey, identityFromSource } from '../hidden-content/media-identity';
 // Cross-module reference (defined in hidden-content-page/render.ts). ES-module
 // cyclic edge — only ever invoked at call time, never during module evaluation.
 import { renderPage } from './render';
@@ -284,11 +285,13 @@ async function adminUnhide(keys: string[], fence: HiddenContentPageFence): Promi
  */
 async function adminAddItem(targetUserId: string, result: any, fence: HiddenContentPageFence): Promise<boolean> {
     if (!isPageFenceCurrent(fence) || state.selectedAdminUserId !== targetUserId) return false;
+    const identity = createTmdbIdentity(result.tmdbId, result.type);
     const item = {
         itemId: result.itemId || '',
         name: result.name || '',
         type: result.type || '',
         tmdbId: result.tmdbId ? String(result.tmdbId) : '',
+        ...(identity ? { identity } : {}),
         // Store the TMDB poster path for Seerr-sourced items (not in the library) so the hidden card
         // can render a poster; library items render from their Jellyfin image, so leave it blank.
         posterPath: result.source === 'seerr' ? (result.posterPath || '') : '',
@@ -305,7 +308,7 @@ async function adminAddItem(targetUserId: string, result: any, fence: HiddenCont
     // The server returns the number of items it newly added; 0 means the user already had it hidden.
     // Only update the local cache + dropdown count for a real add, so the count can't drift upward.
     const didAdd = typeof added === 'number' ? added > 0 : true;
-    const key = item.itemId || ('tmdb-' + item.tmdbId);
+    const key = item.itemId || (identity ? hiddenIdentityKey(identity) : '');
     if (didAdd && Array.isArray(state.adminItems) && !state.adminItems.some((i) => (i._key || i.itemId) === key)) {
         state.adminItems = state.adminItems.concat([{ ...item, _key: key }]);
     }
@@ -401,8 +404,12 @@ export function openAdminAddModal(): void {
     document.addEventListener('keydown', esc);
 
     const buildResultCard = (n: any): HTMLElement => {
-        const key = n.itemId || ('tmdb-' + n.tmdbId);
-        const alreadyHidden = (state.adminItems || []).some((i) => (i._key || i.itemId) === key);
+        const identity = createTmdbIdentity(n.tmdbId, n.type);
+        const alreadyHidden = (state.adminItems || []).some((i) => {
+            if (n.itemId && (i.itemId === n.itemId || i._key === n.itemId)) return true;
+            const current = identityFromSource(i);
+            return !!identity && !!current && hiddenIdentityKey(current) === hiddenIdentityKey(identity);
+        });
         const card = document.createElement('div');
         card.className = 'jc-hidden-item-card';
         card.dataset.jcIdentityOwned = 'true';
@@ -509,18 +516,21 @@ export function openAdminAddModal(): void {
         if (!isModalCurrent() || token !== searchToken) return;
 
         const normalized: any[] = [];
-        const seenTmdb = new Set<string>();
+        const seenProviderIdentities = new Set<string>();
         for (const r of libItems) {
             const tmdb = (r.ProviderIds && (r.ProviderIds.Tmdb || r.ProviderIds.tmdb)) || '';
-            if (tmdb) seenTmdb.add(String(tmdb));
+            const identity = createTmdbIdentity(tmdb, r.Type);
+            if (identity) seenProviderIdentities.add(hiddenIdentityKey(identity));
             normalized.push({ source: 'library', itemId: r.Id, name: r.Name, type: r.Type,
                 tmdbId: tmdb ? String(tmdb) : '', posterPath: '', year: r.ProductionYear || '' });
         }
         for (const r of seerrItems) {
             if (r.mediaType !== 'movie' && r.mediaType !== 'tv') continue; // skip people
             const tmdb = String(r.id);
-            if (seenTmdb.has(tmdb)) continue; // already shown from the library
-            seenTmdb.add(tmdb);
+            const identity = createTmdbIdentity(tmdb, r.mediaType);
+            const identityKey = identity && hiddenIdentityKey(identity);
+            if (identityKey && seenProviderIdentities.has(identityKey)) continue; // already shown from the library
+            if (identityKey) seenProviderIdentities.add(identityKey);
             normalized.push({ source: 'seerr', itemId: '', name: r.title || r.name || '',
                 type: r.mediaType === 'tv' ? 'Series' : 'Movie', tmdbId: tmdb,
                 posterPath: r.posterPath || r.poster_path || '',

@@ -196,6 +196,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
                         Name = "Inception",
                         Type = "Movie",
                         TmdbId = "27205",
+                        Identity = new HiddenContentIdentity
+                        {
+                            Version = 1,
+                            Provider = "tmdb",
+                            MediaType = "movie",
+                            Id = "27205"
+                        },
                         HiddenAt = "2024-06-01T08:00:00.000Z",
                         PosterPath = "/poster.jpg",
                         HideScope = "global",
@@ -227,6 +234,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
 
             var back = _manager.GetUserConfiguration<UserHiddenContent>(UserId, "hidden-content.json");
             Assert.Null(back.Items["movie-27205"].SeasonNumber);
+            Assert.Equal("movie", back.Items["movie-27205"].Identity?.MediaType);
             Assert.Equal(2, back.Items["episode-42"].SeasonNumber);
             Assert.True(back.Settings.FilterSearch);
             Assert.False(back.Settings.ShowHideConfirmation);
