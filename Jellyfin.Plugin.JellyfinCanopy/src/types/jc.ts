@@ -51,6 +51,76 @@ export interface CacheManager {
     cancelPending(): void;
 }
 
+/** Typed result states for every browser-storage operation. */
+export type BrowserStorageState = 'Missing' | 'Valid' | 'Corrupt' | 'Unavailable' | 'QuotaFailure';
+export type BrowserStorageRecovery = 'Removed' | 'Unavailable' | 'QuotaFailure';
+
+export type BrowserStorageResult<T> =
+    | Readonly<{ state: 'Valid'; value: T }>
+    | Readonly<{ state: 'Missing' | 'Unavailable' | 'QuotaFailure'; value: null }>
+    | Readonly<{ state: 'Corrupt'; value: null; recovery: BrowserStorageRecovery }>;
+
+export type BrowserStorageMutationResult<T> =
+    | Readonly<{ state: 'Valid'; value: T }>
+    | Readonly<{ state: 'Unavailable' | 'QuotaFailure'; value: null }>;
+
+/** Safe access to one Storage object; implemented by the classic boot loader. */
+export interface BrowserStorageAdapter {
+    read(feature: string, key: string, keyLabel?: string): BrowserStorageResult<string>;
+    readJson<T>(
+        feature: string,
+        key: string,
+        validate?: (value: unknown) => value is T,
+        keyLabel?: string,
+    ): BrowserStorageResult<T>;
+    /** Read one canonical base-10 safe integer; other spellings are corrupt. */
+    readNumber(
+        feature: string,
+        key: string,
+        validate?: (value: number) => boolean,
+        keyLabel?: string,
+    ): BrowserStorageResult<number>;
+    write(feature: string, key: string, value: string, keyLabel?: string): BrowserStorageMutationResult<string>;
+    remove(feature: string, key: string, keyLabel?: string): BrowserStorageMutationResult<null>;
+    /** Record corruption and remove only this exact caller-owned key. */
+    quarantine(
+        feature: string,
+        key: string,
+        keyLabel?: string,
+    ): Readonly<{ state: 'Corrupt'; value: null; recovery: BrowserStorageRecovery }>;
+    keys(feature: string, keyLabel?: string): BrowserStorageMutationResult<string[]>;
+}
+
+export interface BrowserStorageApi {
+    readonly local: BrowserStorageAdapter;
+    readonly session: BrowserStorageAdapter;
+}
+
+export interface BootDiagnosticEntry {
+    readonly epoch: number;
+    readonly feature: string;
+    readonly phase: string;
+    readonly operation: string;
+    readonly state: BrowserStorageState | 'FeatureFailure';
+    readonly storage: 'local' | 'session' | 'none';
+    /** Non-identifying logical key label, never the raw browser-storage key. */
+    readonly key: string;
+    /** Number of identical faults coalesced into this bounded record. */
+    readonly count: number;
+}
+
+export interface BootDiagnosticsApi {
+    beginEpoch(epoch: number): void;
+    record(entry: Omit<BootDiagnosticEntry, 'epoch' | 'count'>): BootDiagnosticEntry;
+    snapshot(): Readonly<{
+        epoch: number;
+        degraded: boolean;
+        entries: readonly BootDiagnosticEntry[];
+    }>;
+    readonly size: number;
+    readonly limit: number;
+}
+
 /**
  * The Map subset every in-memory item cache uses, backed by a size-capped +
  * lazily-TTL-swept LRU (src/core/bounded-cache.ts). Drop-in for the raw
@@ -630,6 +700,10 @@ export interface JEGlobal extends JellyfinCanopyPublicApi {
     escapeHtml: (value: unknown) => string;
     toast?: (html: string, duration?: number) => void;
     requestManager?: RequestManagerApi;
+    /** Fail-open browser-storage owner installed before any feature code runs. */
+    storage: BrowserStorageApi;
+    /** Generation-scoped bounded degraded-boot telemetry (no raw keys/errors). */
+    bootDiagnostics: BootDiagnosticsApi;
     _cacheManager?: CacheManager;
     _hotCache?: HotCache;
     /**

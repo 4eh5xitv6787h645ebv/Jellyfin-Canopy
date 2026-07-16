@@ -458,10 +458,16 @@ JC.initializeCanopyScript = function() {
 
     // Check if local storage needs to be cleared by admin request
     const serverClearTimestamp = JC.pluginConfig.ClearLocalStorageTimestamp || 0;
-    const localClearedTimestamp = parseInt(localStorage.getItem('jellyfinCanopyLastCleared') || '0', 10);
+    const clearTimestamp = JC.storage.local.readNumber(
+        'canopy',
+        'jellyfinCanopyLastCleared',
+        (value) => value >= 0,
+        'clear-timestamp',
+    );
+    const localClearedTimestamp = clearTimestamp.state === 'Valid' ? clearTimestamp.value : 0;
     if (serverClearTimestamp > localClearedTimestamp) {
-        localStorage.removeItem('jellyfinCanopySettings');
-        localStorage.setItem('jellyfinCanopyLastCleared', serverClearTimestamp.toString());
+        JC.storage.local.remove('canopy', 'jellyfinCanopySettings', 'legacy-settings');
+        JC.storage.local.write('canopy', 'jellyfinCanopyLastCleared', serverClearTimestamp.toString(), 'clear-timestamp');
     }
 
     // Initial UI setup

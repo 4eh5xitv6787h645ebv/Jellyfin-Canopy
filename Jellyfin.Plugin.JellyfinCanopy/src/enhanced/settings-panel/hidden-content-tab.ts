@@ -93,7 +93,7 @@ export function wireHiddenContentListeners(ctx: PanelContext): void {
         if (confirmToggle) {
             confirmToggle.addEventListener('change', (e) => {
                 (JC as any).hiddenContent.updateSettings({ showHideConfirmation: (e.target as HTMLInputElement).checked });
-                localStorage.removeItem('jc_hide_confirm_suppressed_until');
+                JC.storage.local.remove('hidden-content-settings', 'jc_hide_confirm_suppressed_until', 'legacy-suppression');
                 resetAutoCloseTimer();
             });
         }

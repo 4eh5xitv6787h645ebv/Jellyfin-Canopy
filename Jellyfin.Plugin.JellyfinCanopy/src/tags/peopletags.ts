@@ -20,15 +20,22 @@ interface PersonData {
     birthPlace?: string | null;
 }
 
-function parseRecord<T>(raw: string): Record<string, T> {
-    const parsed: unknown = JSON.parse(raw);
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? parsed as Record<string, T>
-        : {};
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isPersonData(value: unknown): value is PersonData {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isPersonCache(value: unknown): value is Record<string, PersonData> {
+    return isRecord(value) && Object.values(value).every(isPersonData);
+}
+
+function isTimestampCache(value: unknown): value is Record<string, number> {
+    return isRecord(value) && Object.values(value).every(
+        (timestamp) => typeof timestamp === 'number' && Number.isFinite(timestamp) && timestamp >= 0,
+    );
 }
 
 /**
@@ -158,22 +165,24 @@ JC.initializePeopleTags = function() {
     };
 
     const expectedCacheOwner = `${context.serverId}:${context.userId}`;
-    if (localStorage.getItem(CACHE_OWNER_KEY) !== expectedCacheOwner) {
+    const owner = JC.storage.local.read('people-tags', CACHE_OWNER_KEY, 'cache-owner');
+    if (owner.state !== 'Valid' || owner.value !== expectedCacheOwner) {
         // Older builds stored an unowned cache. It cannot safely be replayed
         // after login as a different Jellyfin user.
-        localStorage.removeItem(CACHE_KEY);
-        localStorage.removeItem(CACHE_TIMESTAMP_KEY);
-        localStorage.setItem(CACHE_OWNER_KEY, expectedCacheOwner);
+        JC.storage.local.remove('people-tags', CACHE_KEY, 'cache-payload');
+        JC.storage.local.remove('people-tags', CACHE_TIMESTAMP_KEY, 'cache-timestamps');
+        JC.storage.local.write('people-tags', CACHE_OWNER_KEY, expectedCacheOwner, 'cache-owner');
     }
-    let peopleCache: Record<string, PersonData> = {};
-    let peopleCacheTimestamp: Record<string, number> = {};
-    try {
-        peopleCache = parseRecord<PersonData>(localStorage.getItem(CACHE_KEY) || '{}');
-        peopleCacheTimestamp = parseRecord<number>(localStorage.getItem(CACHE_TIMESTAMP_KEY) || '{}');
-    } catch {
-        localStorage.removeItem(CACHE_KEY);
-        localStorage.removeItem(CACHE_TIMESTAMP_KEY);
-    }
+    const cachedPeople = JC.storage.local.readJson('people-tags', CACHE_KEY, isPersonCache, 'cache-payload');
+    const cachedTimestamps = JC.storage.local.readJson(
+        'people-tags', CACHE_TIMESTAMP_KEY, isTimestampCache, 'cache-timestamps',
+    );
+    let peopleCache: Record<string, PersonData> = cachedPeople.state === 'Valid'
+        ? cachedPeople.value
+        : {};
+    let peopleCacheTimestamp: Record<string, number> = cachedTimestamps.state === 'Valid'
+        ? cachedTimestamps.value
+        : {};
     const Hot = (JC._hotCache = JC._hotCache || { ttl: CACHE_TTL });
     const previousHot = Hot.peopleTags as BoundedCache<string, unknown> | undefined;
     previousHot?.clear?.();
@@ -199,9 +208,9 @@ JC.initializePeopleTags = function() {
         peopleCache = {};
         peopleCacheTimestamp = {};
         if (clearPersistent) {
-            localStorage.removeItem(CACHE_KEY);
-            localStorage.removeItem(CACHE_TIMESTAMP_KEY);
-            localStorage.removeItem(CACHE_OWNER_KEY);
+            JC.storage.local.remove('people-tags', CACHE_KEY, 'cache-payload');
+            JC.storage.local.remove('people-tags', CACHE_TIMESTAMP_KEY, 'cache-timestamps');
+            JC.storage.local.remove('people-tags', CACHE_OWNER_KEY, 'cache-owner');
         }
     };
 
@@ -328,9 +337,9 @@ JC.initializePeopleTags = function() {
                 hotPeopleTags.set(cacheKey, { data: ownedData, timestamp: now });
 
                 if (!isCurrent()) return null;
-                localStorage.setItem(CACHE_OWNER_KEY, expectedCacheOwner);
-                localStorage.setItem(CACHE_KEY, JSON.stringify(peopleCache));
-                localStorage.setItem(CACHE_TIMESTAMP_KEY, JSON.stringify(peopleCacheTimestamp));
+                JC.storage.local.write('people-tags', CACHE_OWNER_KEY, expectedCacheOwner, 'cache-owner');
+                JC.storage.local.write('people-tags', CACHE_KEY, JSON.stringify(peopleCache), 'cache-payload');
+                JC.storage.local.write('people-tags', CACHE_TIMESTAMP_KEY, JSON.stringify(peopleCacheTimestamp), 'cache-timestamps');
 
                 return ownedData;
             }

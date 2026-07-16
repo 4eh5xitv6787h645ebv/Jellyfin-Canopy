@@ -72,22 +72,32 @@ export function isDisableSnoozed(): boolean {
     const uid = snoozeUid();
     if (!uid) return false;
     const key = snoozeStorageKey(uid);
-    try {
-        const legacyKey = `jc-spoiler-disable-snooze:${uid}`;
-        if (localStorage.getItem(key) === null) {
-            const legacy = localStorage.getItem(legacyKey);
-            if (legacy !== null) localStorage.setItem(key, legacy);
+    const legacyKey = `jc-spoiler-disable-snooze:${uid}`;
+    const current = JC.storage.local.read('spoiler-guard', key, 'snooze-expiry');
+    if (current.state === 'Missing') {
+        const legacy = JC.storage.local.read('spoiler-guard', legacyKey, 'legacy-snooze-expiry');
+        if (legacy.state === 'Valid') {
+            if (JC.storage.local.write('spoiler-guard', key, legacy.value, 'snooze-expiry').state === 'Valid') {
+                JC.storage.local.remove('spoiler-guard', legacyKey, 'legacy-snooze-expiry');
+            }
+        } else if (legacy.state === 'Missing') {
+            JC.storage.local.remove('spoiler-guard', legacyKey, 'legacy-snooze-expiry');
         }
-        localStorage.removeItem(legacyKey);
-        const raw = localStorage.getItem(key);
-        if (!raw) return false;
-        const verdict = classifySnoozeExpiry(Number(raw), Date.now());
-        if (verdict === 'active') return true;
-        // 'expired' or 'invalid' — drop the stale key.
-        localStorage.removeItem(key);
-    } catch (e) {
-        console.warn(`${logPrefix} snooze read failed:`, e);
+    } else if (current.state === 'Valid') {
+        JC.storage.local.remove('spoiler-guard', legacyKey, 'legacy-snooze-expiry');
     }
+    const now = Date.now();
+    const expiry = JC.storage.local.readNumber(
+        'spoiler-guard',
+        key,
+        (value) => classifySnoozeExpiry(value, now) !== 'invalid',
+        'snooze-expiry',
+    );
+    if (expiry.state !== 'Valid') return false;
+    const verdict = classifySnoozeExpiry(expiry.value, now);
+    if (verdict === 'active') return true;
+    // 'expired' or 'invalid' — drop the stale key.
+    JC.storage.local.remove('spoiler-guard', key, 'snooze-expiry');
     return false;
 }
 
@@ -95,9 +105,7 @@ export function isDisableSnoozed(): boolean {
 export function setDisableSnooze(): void {
     const uid = snoozeUid();
     if (!uid) return;
-    try {
-        localStorage.setItem(snoozeStorageKey(uid), String(Date.now() + SNOOZE_MS));
-    } catch (e) {
-        console.warn(`${logPrefix} snooze persist failed:`, e);
-    }
+    JC.storage.local.write(
+        'spoiler-guard', snoozeStorageKey(uid), String(Date.now() + SNOOZE_MS), 'snooze-expiry',
+    );
 }

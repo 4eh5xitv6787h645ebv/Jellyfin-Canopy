@@ -4,7 +4,14 @@
 // bundle loads — the window.JellyfinCanopy bootstrap namespace and the
 // jellyfin-web globals the core modules touch at import time.
 
-import type { IdentityApi, IdentityChange, IdentityContext, JEGlobal } from '../types/jc';
+import type {
+    BootDiagnosticsApi,
+    BrowserStorageAdapter,
+    IdentityApi,
+    IdentityChange,
+    IdentityContext,
+    JEGlobal,
+} from '../types/jc';
 
 let testIdentity: IdentityContext | null = Object.freeze({
     serverId: 'test-server-id',
@@ -76,7 +83,7 @@ const identity: IdentityApi = {
     async activate(context = testIdentity) {
         if (!context || !this.isCurrent(context)) return;
         const work: Promise<void>[] = [];
-        for (const record of activateHandlers.values()) {
+        for (const [name, record] of activateHandlers.entries()) {
             if (record.epoch === context.epoch) continue;
             if (record.pendingEpoch === context.epoch && record.pending) {
                 work.push(record.pending);
@@ -90,6 +97,20 @@ const identity: IdentityApi = {
                     // retryable, and late older success cannot replace newer.
                     if (record.epoch < context.epoch) record.epoch = context.epoch;
                 })
+                .catch((error: unknown) => {
+                    const errorName = (error as { name?: string } | null)?.name;
+                    if (errorName === 'IdentityChangedError' || errorName === 'AbortError'
+                        || !this.isCurrent(context)) return;
+                    bootDiagnostics.record({
+                        feature: name,
+                        phase: 'feature-initialization',
+                        operation: 'initialize',
+                        state: 'FeatureFailure',
+                        storage: 'none',
+                        key: 'none',
+                    });
+                    console.error(`Test identity activate handler "${name}" failed`, error);
+                })
                 .finally(() => {
                     if (record.pending === invocation) {
                         record.pending = null;
@@ -101,13 +122,7 @@ const identity: IdentityApi = {
             work.push(invocation);
         }
 
-        const results = await Promise.allSettled(work);
-        const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-        if (failure) {
-            throw failure.reason instanceof Error
-                ? failure.reason
-                : new Error('Test identity activation failed', { cause: failure.reason });
-        }
+        await Promise.all(work);
     },
     getEpoch: () => testEpoch,
     getResetHandlerCount: () => resetHandlers.size,
@@ -116,6 +131,107 @@ const identity: IdentityApi = {
     getInitializationControllerCount: () => 0,
 };
 
+const diagnosticEntries: ReturnType<BootDiagnosticsApi['snapshot']>['entries'][number][] = [];
+let diagnosticEpoch = testEpoch;
+const bootDiagnostics: BootDiagnosticsApi = {
+    beginEpoch(epoch) {
+        const previousEpoch = diagnosticEpoch;
+        diagnosticEpoch = epoch;
+        if (previousEpoch === 0 && epoch > 0) {
+            const carried = diagnosticEntries.map((entry) => Object.freeze({ ...entry, epoch }));
+            diagnosticEntries.splice(0, diagnosticEntries.length, ...carried);
+        } else {
+            diagnosticEntries.length = 0;
+        }
+    },
+    record(entry) {
+        const value = Object.freeze({ epoch: diagnosticEpoch, count: 1, ...entry });
+        diagnosticEntries.push(value);
+        if (diagnosticEntries.length > 64) diagnosticEntries.shift();
+        return value;
+    },
+    snapshot: () => Object.freeze({
+        epoch: diagnosticEpoch,
+        degraded: diagnosticEntries.length > 0,
+        entries: Object.freeze([...diagnosticEntries]),
+    }),
+    get size() { return diagnosticEntries.length; },
+    get limit() { return 64; },
+};
+
+function testStorageAdapter(getStorage: () => Storage): BrowserStorageAdapter {
+    const classify = (error: unknown): 'QuotaFailure' | 'Unavailable' =>
+        (error as { name?: string } | null)?.name === 'QuotaExceededError' ? 'QuotaFailure' : 'Unavailable';
+    return {
+        read(_feature, key) {
+            try {
+                const value = getStorage().getItem(key);
+                return value === null ? { state: 'Missing', value: null } : { state: 'Valid', value };
+            } catch (error) { return { state: classify(error), value: null }; }
+        },
+        readJson<T>(feature: string, key: string, validate?: (value: unknown) => value is T) {
+            const raw = this.read(feature, key);
+            if (raw.state !== 'Valid') return raw;
+            try {
+                const value: unknown = JSON.parse(raw.value);
+                if (validate && !validate(value)) throw new Error('invalid');
+                return { state: 'Valid', value: value as T };
+            } catch {
+                const recovery = this.remove(feature, key);
+                return {
+                    state: 'Corrupt',
+                    value: null,
+                    recovery: recovery.state === 'Valid' ? 'Removed' : recovery.state,
+                };
+            }
+        },
+        readNumber(feature, key, validate) {
+            const raw = this.read(feature, key);
+            if (raw.state !== 'Valid') return raw;
+            if (!/^(?:0|-?[1-9]\d*)$/.test(raw.value)) {
+                const recovery = this.remove(feature, key);
+                return {
+                    state: 'Corrupt',
+                    value: null,
+                    recovery: recovery.state === 'Valid' ? 'Removed' : recovery.state,
+                };
+            }
+            const value = Number(raw.value);
+            if (Number.isSafeInteger(value) && (!validate || validate(value))) return { state: 'Valid', value };
+            const recovery = this.remove(feature, key);
+            return {
+                state: 'Corrupt',
+                value: null,
+                recovery: recovery.state === 'Valid' ? 'Removed' : recovery.state,
+            };
+        },
+        write(_feature, key, value) {
+            try { getStorage().setItem(key, value); return { state: 'Valid', value }; }
+            catch (error) { return { state: classify(error), value: null }; }
+        },
+        remove(_feature, key) {
+            try { getStorage().removeItem(key); return { state: 'Valid', value: null }; }
+            catch (error) { return { state: classify(error), value: null }; }
+        },
+        quarantine(feature, key) {
+            const recovery = this.remove(feature, key);
+            return {
+                state: 'Corrupt',
+                value: null,
+                recovery: recovery.state === 'Valid' ? 'Removed' : recovery.state,
+            };
+        },
+        keys() {
+            try {
+                const storage = getStorage();
+                const value = Array.from({ length: storage.length }, (_, index) => storage.key(index))
+                    .filter((key): key is string => key !== null);
+                return { state: 'Valid', value };
+            } catch (error) { return { state: classify(error), value: null }; }
+        },
+    };
+}
+
 const bootstrapJE = {
     core: { identity },
     identity,
@@ -123,6 +239,11 @@ const bootstrapJE = {
     translations: {},
     pluginVersion: 'test',
     escapeHtml: (value: unknown) => (typeof value === 'string' ? value : ''),
+    storage: {
+        local: testStorageAdapter(() => window.localStorage),
+        session: testStorageAdapter(() => window.sessionStorage),
+    },
+    bootDiagnostics,
 } as unknown as JEGlobal;
 
 window.JellyfinCanopy = bootstrapJE;
