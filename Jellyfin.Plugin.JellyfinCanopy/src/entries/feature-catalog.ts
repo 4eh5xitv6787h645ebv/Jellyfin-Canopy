@@ -9,6 +9,7 @@ import {
     isSubtitleStylesEnabled,
     isVideoPlaybackRoute,
 } from './playback-policy';
+import { seerrFeatureDescriptors } from './seerr-descriptors';
 
 function cardTagsEnabled(): boolean {
     const settings = JC.currentSettings;
@@ -65,6 +66,7 @@ function arrSearchEnabled(): boolean {
  * absent from the boot graph.
  */
 export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Object.freeze([
+    ...seerrFeatureDescriptors,
     {
         id: 'settings-launcher',
         entry: 'settings-launcher',

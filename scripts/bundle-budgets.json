@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "limits": {
-    "maxOutputCount": 124,
+    "maxOutputCount": 152,
     "maxEsmEntryCount": 32,
-    "maxEsmOutputCount": 64,
+    "maxEsmOutputCount": 72,
     "maxIndividualEsmRawBytes": 262144,
     "maxBootRequests": 16,
     "maxBootRawBytes": 524288,
     "maxBootGzipBytes": 196608,
-    "maxFeatureRequests": 14,
+    "maxFeatureRequests": 16,
     "maxFeatureRawBytes": 524288,
     "maxFeatureGzipBytes": 196608,
     "maxFeatureExpandedRequests": 20,

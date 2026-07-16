@@ -1845,14 +1845,6 @@
     /** Stage-6 activation. Old-epoch teardown always ran before these gates. */
     function activateFeatures(context) {
         activateFeature(context, 'canopy', typeof JC.initializeCanopyScript === 'function', JC.initializeCanopyScript);
-        activateFeature(context, 'seerr', JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowSearchResults !== false, JC.initializeSeerrScript);
-        activateFeature(
-            context,
-            'seerr-issue-reporter',
-            JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowReportButton
-                && typeof JC.seerrIssueReporter?.initialize === 'function',
-            () => JC.seerrIssueReporter.initialize()
-        );
     }
 
     async function runInitialization(context, client, scope) {

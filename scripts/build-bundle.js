@@ -59,6 +59,10 @@ const ESM_ENTRIES = Object.freeze({
     'remove-home-actions': path.join(SRC_ROOT, 'entries', 'remove-home-actions.ts'),
     reviews: path.join(SRC_ROOT, 'elsewhere', 'reviews.feature.ts'),
     'settings-launcher': path.join(SRC_ROOT, 'entries', 'settings-launcher.ts'),
+    'seerr-core': path.join(SRC_ROOT, 'entries', 'seerr-core.ts'),
+    'seerr-details': path.join(SRC_ROOT, 'entries', 'seerr-details.ts'),
+    'seerr-discovery': path.join(SRC_ROOT, 'entries', 'seerr-discovery.ts'),
+    'seerr-search': path.join(SRC_ROOT, 'entries', 'seerr-search.ts'),
     'subtitle-styles': path.join(SRC_ROOT, 'entries', 'subtitle-styles.ts'),
     'theme-selector': path.join(SRC_ROOT, 'extras', 'theme-selector.feature.ts'),
 });
