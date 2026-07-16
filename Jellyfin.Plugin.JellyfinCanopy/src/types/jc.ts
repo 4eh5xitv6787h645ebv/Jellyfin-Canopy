@@ -666,6 +666,10 @@ export interface JECore {
     api?: ApiApi;
     tagRenderer?: TagRendererApi;
     live?: LiveApi;
+    /** Internal boot-owned bridge used after acknowledged local settings saves. */
+    clientRuntime?: {
+        reconcileUserSettings(context: IdentityContext): Promise<readonly unknown[]>;
+    };
 }
 
 /**

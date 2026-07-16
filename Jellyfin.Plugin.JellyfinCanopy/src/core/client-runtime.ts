@@ -248,6 +248,9 @@ let activeRuntime: ClientRuntime | null = null;
 /** Boot installs one runtime; later identity initializations reuse it. */
 export function initializeClientRuntime(options: ClientRuntimeOptions): ClientRuntime {
     activeRuntime ??= createClientRuntime(options);
+    JC.core.clientRuntime ??= Object.freeze({
+        reconcileUserSettings: reconcileActiveClientRuntime,
+    });
     return activeRuntime;
 }
 
@@ -255,4 +258,16 @@ export function initializeClientRuntime(options: ClientRuntimeOptions): ClientRu
 export function registerFeatureDescriptors(descriptors: readonly ClientFeatureDescriptor[]): void {
     if (!activeRuntime) throw new Error('Client runtime is not initialized');
     activeRuntime.registerFeatureDescriptors(descriptors);
+}
+
+/**
+ * Re-evaluate the active feature catalog after an identity-owned local settings
+ * snapshot changes. Unlike configurationPublished(), this does not advance the
+ * server-config generation or restart otherwise-stable identity features.
+ */
+export function reconcileActiveClientRuntime(
+    context: IdentityContext,
+): Promise<readonly FeatureActivationResult[]> {
+    if (!activeRuntime || !JC.identity.isCurrent(context)) return Promise.resolve([]);
+    return activeRuntime.reconcile();
 }
