@@ -26,7 +26,7 @@ describe('hide-favorites-tab', () => {
         // Stub only the injectCss primitive the module reaches for.
         (JC.core as unknown as { ui: { injectCss: typeof injectCss } }).ui = { injectCss };
         JC.currentSettings = {};
-        window.location.hash = '#/home';
+        history.replaceState({}, '', '/web/#/home');
         document.documentElement.classList.remove(HTML_CLASS);
     });
 
@@ -53,6 +53,28 @@ describe('hide-favorites-tab', () => {
 
         // Library pages reuse data-index="1" for their own second tab, so the
         // rule must never apply outside Home.
+        expect(document.documentElement.classList.contains(HTML_CLASS)).toBe(false);
+    });
+
+    it('adds the gate class for the explicit modern /home route with search params', async () => {
+        history.replaceState({}, '', '/home?tab=1');
+        await loadModule();
+        JC.currentSettings!.hideFavoritesTab = true;
+
+        JC.applyHideFavoritesTab!();
+
+        expect(window.location.hash).toBe('');
+        expect(document.documentElement.classList.contains(HTML_CLASS)).toBe(true);
+    });
+
+    it.each(['/', '/movies', '/web/', '/home.html', '/home/'])('does NOT treat modern non-Home route %s as Home', async (route) => {
+        history.replaceState({}, '', route);
+        await loadModule();
+        JC.currentSettings!.hideFavoritesTab = true;
+
+        JC.applyHideFavoritesTab!();
+
+        expect(window.location.hash).toBe('');
         expect(document.documentElement.classList.contains(HTML_CLASS)).toBe(false);
     });
 

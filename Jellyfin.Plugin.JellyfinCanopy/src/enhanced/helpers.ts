@@ -350,15 +350,20 @@ export function addCSS(id: string, css: string): void {
 }
 
 /**
- * Whether the current route is the Home page (the `#/home` view that owns the
- * native Home/Favorites tab strip). Shared by native-tabs (custom tab injection)
- * and hide-favorites-tab so both agree on exactly which routes count as "home",
- * including the `?tab=N` param-only variants.
+ * Whether the current route is the Home page that owns the native
+ * Home/Favorites tab strip. Legacy clients route in the hash; modern clients
+ * leave the hash empty and route through pathname/search. Shared by native-tabs
+ * and hide-favorites-tab so both follow core/navigation's route dialect split.
  */
 export function isOnHomePage(): boolean {
     const hash = window.location.hash;
-    return hash === '' || hash === '#/home' || hash === '#/home.html'
-        || hash.indexOf('#/home?') !== -1 || hash.indexOf('#/home.html?') !== -1;
+    if (hash) {
+        const legacyRoute = hash.split('?')[0];
+        return legacyRoute === '#/home' || legacyRoute === '#/home.html';
+    }
+
+    const modernRoute = `${window.location.pathname}${window.location.search}`;
+    return modernRoute === '/home' || modernRoute.startsWith('/home?');
 }
 
 export interface ExternalLinkOptions {

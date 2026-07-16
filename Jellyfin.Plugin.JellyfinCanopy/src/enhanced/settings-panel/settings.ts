@@ -22,6 +22,7 @@ function reapplyAcknowledgedSideEffects(): void {
         'reinitializeRatingTags',
         'initializePeopleTags',
         'addRandomButton',
+        'applyHideFavoritesTab',
         'applySavedStylesWhenReady',
         'applySubtitlePosition',
     ]) {
@@ -46,7 +47,6 @@ function reconcileSettingsPanelAfterFailure(): Promise<void> {
             if (!JC.identity.isCurrent(context)) return;
             await JC.showEnhancedPanel!();
             if (!JC.identity.isCurrent(context)) return;
-            reapplyAcknowledgedSideEffects();
         } finally {
             reconcileInFlight = null;
         }
@@ -55,10 +55,16 @@ function reconcileSettingsPanelAfterFailure(): Promise<void> {
 }
 
 function persistSettings(): Promise<boolean> {
+    const context = JC.identity.capture();
     return Promise.resolve(JC.saveUserSettings!('settings.json', JC.currentSettings)).then(
         () => true,
         async () => {
             await reconcileSettingsPanelAfterFailure();
+            // Persistence restores JC.currentSettings before rejecting. Reapply
+            // optimistic page effects even when the user already closed the
+            // panel, because panel rebuilding is optional UI reconciliation.
+            // A stale panel save must not mutate the next active identity's UI.
+            if (!context || JC.identity.isCurrent(context)) reapplyAcknowledgedSideEffects();
             return false;
         }
     );
