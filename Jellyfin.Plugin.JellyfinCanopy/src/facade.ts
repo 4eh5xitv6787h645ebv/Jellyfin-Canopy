@@ -35,7 +35,7 @@ export interface JellyfinCanopyPublicApi {
     translations: Record<string, string>;
     /** Plugin version string (cache-buster + display). */
     pluginVersion: string;
-    /** Boot-complete marker: true once every enabled feature has initialized. */
+    /** Boot-complete marker: true once every enabled feature was independently attempted. */
     initialized?: boolean;
     /** Escapes HTML special characters for safe interpolation. */
     escapeHtml: (value: unknown) => string;

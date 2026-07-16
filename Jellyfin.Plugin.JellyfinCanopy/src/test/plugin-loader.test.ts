@@ -70,9 +70,229 @@ type InitializationRegistry = {
     getControllerCount(): number;
 };
 
+type StorageState = 'Missing' | 'Valid' | 'Corrupt' | 'Unavailable' | 'QuotaFailure';
+type StorageResult<T> = { state: StorageState; value: T | null; recovery?: string };
+type SafeStorage = {
+    read(feature: string, key: string, label?: string): StorageResult<string>;
+    readJson<T>(feature: string, key: string, validate?: (value: unknown) => value is T, label?: string): StorageResult<T>;
+    readNumber(feature: string, key: string, validate?: (value: number) => boolean, label?: string): StorageResult<number>;
+    write(feature: string, key: string, value: string, label?: string): StorageResult<string>;
+    remove(feature: string, key: string, label?: string): StorageResult<null>;
+    quarantine(feature: string, key: string, label?: string): StorageResult<null>;
+    keys(feature: string, label?: string): StorageResult<string[]>;
+};
+
+function memoryStorage(): Storage {
+    const values = new Map<string, string>();
+    return {
+        get length() { return values.size; },
+        clear: () => values.clear(),
+        getItem: (key) => values.get(key) ?? null,
+        key: (index) => [...values.keys()][index] ?? null,
+        removeItem: (key) => { values.delete(key); },
+        setItem: (key, value) => { values.set(key, String(value)); },
+    };
+}
+
 describe('plugin.js loader guards', () => {
     it('loaded the loader source', () => {
         expect(SRC.length).toBeGreaterThan(0);
+    });
+
+    it('classifies every storage fault and quarantines only the corrupt owned key', () => {
+        const diagnosticsSource = extractFunctionSource('createBootDiagnostics');
+        const classifySource = extractFunctionSource('classifyStorageFailure');
+        const adapterSource = extractFunctionSource('createStorageAdapter');
+        expect(diagnosticsSource, 'createBootDiagnostics not found').toBeTruthy();
+        expect(classifySource, 'classifyStorageFailure not found').toBeTruthy();
+        expect(adapterSource, 'createStorageAdapter not found').toBeTruthy();
+
+        const createDiagnostics = eval(`(${diagnosticsSource})`) as (limit?: number) => {
+            beginEpoch(epoch: number): void;
+            snapshot(): { epoch: number; degraded: boolean; entries: Array<Record<string, unknown>> };
+            readonly size: number;
+            readonly limit: number;
+        };
+        const classify = eval(`(${classifySource})`) as (error: unknown) => StorageState;
+        const makeAdapter = eval(
+            `(function(classifyStorageFailure) { ${adapterSource}; return createStorageAdapter; })`,
+        ) as (
+            classifyStorageFailure: (error: unknown) => StorageState,
+        ) => (name: string, getStorage: () => Storage, diagnostics: unknown) => SafeStorage;
+        const diagnostics = createDiagnostics(4);
+        diagnostics.beginEpoch(9);
+        const storage = memoryStorage();
+        storage.setItem('owned', '{not-json');
+        storage.setItem('unrelated-private-key', 'leave-me');
+        const adapter = makeAdapter(classify)('local', () => storage, diagnostics);
+
+        expect(adapter.read('probe', 'missing', 'probe-payload')).toEqual({ state: 'Missing', value: null });
+        expect(adapter.readJson('probe', 'owned', Array.isArray, 'probe-payload')).toEqual({
+            state: 'Corrupt', value: null, recovery: 'Removed',
+        });
+        expect(storage.getItem('owned')).toBeNull();
+        expect(storage.getItem('unrelated-private-key')).toBe('leave-me');
+
+        // Every JSON-backed runtime family shares this exact owner path. One
+        // malformed entry cannot poison the next family or unrelated storage.
+        const ownedJsonKeys = [
+            'JC_translation_en_test',
+            'JellyfinCanopy-qualityTagsCache',
+            'JellyfinCanopy-genreTagsCache',
+            'JellyfinCanopy-languageTagsCache',
+            'JellyfinCanopy-ratingTagsCache',
+            'JellyfinCanopy-peopleTagsCache',
+            'JellyfinCanopy-peopleTagsCacheTimestamp',
+            'jc-discovery-rows:server:user:movie',
+        ];
+        for (const key of ownedJsonKeys) storage.setItem(key, '{malformed');
+        for (const key of ownedJsonKeys) {
+            expect(adapter.readJson('owned-cache-inventory', key, undefined, 'owned-json').state)
+                .toBe('Corrupt');
+            expect(storage.getItem(key)).toBeNull();
+        }
+        expect(storage.getItem('unrelated-private-key')).toBe('leave-me');
+
+        const security = Object.assign(new Error('blocked'), { name: 'SecurityError' });
+        const quota = Object.assign(new Error('full'), { name: 'QuotaExceededError' });
+        expect(makeAdapter(classify)('local', () => { throw security; }, diagnostics)
+            .read('getter-probe', 'secret-user-id', 'redacted-key').state).toBe('Unavailable');
+        expect(makeAdapter(classify)('local', () => ({
+            ...memoryStorage(),
+            setItem: () => { throw quota; },
+        }), diagnostics).write('writer', 'secret-user-id', 'x', 'redacted-key').state)
+            .toBe('QuotaFailure');
+
+        const removeFails = memoryStorage();
+        removeFails.setItem('owned', '{');
+        removeFails.removeItem = () => { throw quota; };
+        expect(makeAdapter(classify)('local', () => removeFails, diagnostics)
+            .readJson('remove-probe', 'owned', undefined, 'owned-json')).toEqual({
+                state: 'Corrupt', value: null, recovery: 'QuotaFailure',
+            });
+
+        // The ring is bounded and diagnostics contain only the caller's logical
+        // label, never the raw key or exception message.
+        const snapshot = diagnostics.snapshot();
+        expect(snapshot.epoch).toBe(9);
+        expect(snapshot.degraded).toBe(true);
+        expect(snapshot.entries.length).toBeLessThanOrEqual(4);
+        expect(JSON.stringify(snapshot)).not.toContain('secret-user-id');
+        expect(JSON.stringify(snapshot)).not.toContain('full');
+        expect(snapshot.entries.some((entry) => entry.state === 'Corrupt')).toBe(true);
+        expect(snapshot.entries.some((entry) => entry.state === 'QuotaFailure')).toBe(true);
+        diagnostics.beginEpoch(10);
+        expect(diagnostics.snapshot()).toMatchObject({ epoch: 10, degraded: false, entries: [] });
+    });
+
+    it('contains throwing get/set/remove/length paths with deterministic states', () => {
+        const classifySource = extractFunctionSource('classifyStorageFailure')!;
+        const adapterSource = extractFunctionSource('createStorageAdapter')!;
+        const classify = eval(`(${classifySource})`) as (error: unknown) => StorageState;
+        const makeAdapter = eval(
+            `(function(classifyStorageFailure) { ${adapterSource}; return createStorageAdapter; })`,
+        ) as (
+            classifyStorageFailure: (error: unknown) => StorageState,
+        ) => (name: string, getStorage: () => Storage, diagnostics?: unknown) => SafeStorage;
+        const security = Object.assign(new Error('blocked'), { name: 'SecurityError' });
+        const quota = Object.assign(new Error('full'), { name: 'QuotaExceededError' });
+
+        const throwing = memoryStorage();
+        throwing.getItem = () => { throw security; };
+        throwing.setItem = () => { throw quota; };
+        throwing.removeItem = () => { throw security; };
+        Object.defineProperty(throwing, 'length', { get: () => { throw security; } });
+        const adapter = makeAdapter(classify)('session', () => throwing);
+
+        expect(adapter.read('probe', 'x').state).toBe('Unavailable');
+        expect(adapter.write('probe', 'x', 'y').state).toBe('QuotaFailure');
+        expect(adapter.remove('probe', 'x').state).toBe('Unavailable');
+        expect(adapter.keys('probe').state).toBe('Unavailable');
+    });
+
+    it('continues later feature owners after sync/async degradation and still reaches the boot marker', async () => {
+        const recordSource = extractFunctionSource('recordFeatureFailure');
+        const oneSource = extractFunctionSource('activateFeature');
+        const allSource = extractFunctionSource('activateFeatures');
+        expect(recordSource, 'recordFeatureFailure not found').toBeTruthy();
+        expect(oneSource, 'activateFeature not found').toBeTruthy();
+        expect(allSource, 'activateFeatures not found').toBeTruthy();
+        const later = vi.fn();
+        const records: Array<Record<string, unknown>> = [];
+        const context = { serverId: 'server', userId: 'user', epoch: 3 };
+        const jc: Record<string, unknown> = {
+            pluginConfig: {},
+            currentSettings: {},
+            initializeCanopyScript: () => { throw new Error('corrupt owned cache'); },
+            initializeBookmarks: later,
+            initializePagesFramework: () => Promise.reject(new Error('late feature failure')),
+        };
+        const identity = { isCurrent: () => true };
+        const activate = eval(
+            `(function(JC, identity, bootDiagnostics, requireCurrentIdentity) {`
+            + recordSource + oneSource + allSource + '; return activateFeatures; })',
+        ) as (
+            jc: Record<string, unknown>,
+            identity: { isCurrent(context: IdentityContext): boolean },
+            diagnostics: { record(entry: Record<string, unknown>): void },
+            requireCurrent: (context: IdentityContext) => void,
+        ) => (context: IdentityContext) => void;
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+        expect(() => activate(jc, identity, { record: (entry) => records.push(entry) }, () => undefined)(context))
+            .not.toThrow();
+        jc.initialized = true; // the next runInitialization statement remains reachable
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(later).toHaveBeenCalledTimes(1);
+        expect(jc.initialized).toBe(true);
+        expect(records).toEqual([
+            expect.objectContaining({
+                feature: 'canopy', phase: 'feature-initialization', state: 'FeatureFailure',
+            }),
+            expect.objectContaining({
+                feature: 'pages-framework', phase: 'feature-initialization', state: 'FeatureFailure',
+            }),
+        ]);
+        expect(error).toHaveBeenCalledTimes(2);
+
+        const run = extractFunctionSource('runInitialization') || '';
+        expect(run.indexOf('activateFeatures(context)')).toBeGreaterThanOrEqual(0);
+        expect(run.indexOf('JC.initialized = true')).toBeGreaterThan(run.indexOf('activateFeatures(context)'));
+    });
+
+    it('routes every runtime TypeScript storage access through the loader-owned adapter', () => {
+        const files = ts.sys.readDirectory(
+            SRC_ROOT,
+            ['.ts'],
+            ['**/*.test.ts', '**/*.d.ts', '**/test/setup.ts'],
+        );
+        const direct: string[] = [];
+        for (const file of files) {
+            const text = ts.sys.readFile(file) || '';
+            const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text);
+            for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+                if (token !== ts.SyntaxKind.Identifier) continue;
+                const name = scanner.getTokenText();
+                if (name === 'localStorage' || name === 'sessionStorage' || name === 'indexedDB') {
+                    const line = text.slice(0, scanner.getTokenPos()).split('\n').length;
+                    direct.push(`${file}:${line}:${name}`);
+                }
+            }
+        }
+        expect(direct).toEqual([]);
+        const loaderStorageIdentifiers: string[] = [];
+        const loaderScanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, SRC);
+        for (let token = loaderScanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = loaderScanner.scan()) {
+            if (token === ts.SyntaxKind.Identifier) {
+                const name = loaderScanner.getTokenText();
+                if (name === 'localStorage' || name === 'sessionStorage') loaderStorageIdentifiers.push(name);
+            }
+        }
+        expect(loaderStorageIdentifiers.filter((name) => name === 'localStorage')).toHaveLength(1);
+        expect(loaderStorageIdentifiers.filter((name) => name === 'sessionStorage')).toHaveLength(1);
+        expect(SRC).toContain("createStorageAdapter('local', () => window.localStorage");
+        expect(SRC).toContain("createStorageAdapter('session', () => window.sessionStorage");
     });
 
     it('owns one immutable server/user epoch and resets synchronously on every real transition', () => {

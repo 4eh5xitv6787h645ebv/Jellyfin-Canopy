@@ -130,6 +130,182 @@
 
     const JC = window.JellyfinCanopy; // Alias for internal use
 
+    /** Classify browser-storage exceptions without depending on DOMException. */
+    function classifyStorageFailure(error) {
+        const name = String(error?.name || '');
+        const code = Number(error?.code);
+        return name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED'
+            || code === 22 || code === 1014
+            ? 'QuotaFailure'
+            : 'Unavailable';
+    }
+
+    /**
+     * Generation-scoped, bounded boot telemetry. Records intentionally omit raw
+     * keys and exception messages because storage keys may contain user ids.
+     */
+    function createBootDiagnostics(limit = 64) {
+        const maxEntries = Math.max(1, Math.min(256, Number(limit) || 64));
+        let epoch = 0;
+        let entries = [];
+
+        function beginEpoch(nextEpoch) {
+            epoch = Math.max(0, Number(nextEpoch) || 0);
+            entries = [];
+        }
+
+        function record(entry) {
+            const candidate = {
+                epoch,
+                feature: String(entry?.feature || 'unknown'),
+                phase: String(entry?.phase || 'storage'),
+                operation: String(entry?.operation || 'unknown'),
+                state: String(entry?.state || 'Unavailable'),
+                storage: entry?.storage === 'session'
+                    ? 'session'
+                    : (entry?.storage === 'none' ? 'none' : 'local'),
+                key: String(entry?.key || 'owned-key')
+            };
+            const duplicateIndex = entries.findIndex((existing) =>
+                existing.feature === candidate.feature
+                && existing.phase === candidate.phase
+                && existing.operation === candidate.operation
+                && existing.state === candidate.state
+                && existing.storage === candidate.storage
+                && existing.key === candidate.key);
+            if (duplicateIndex >= 0) {
+                const existing = entries[duplicateIndex];
+                const repeated = Object.freeze({ ...candidate, count: existing.count + 1 });
+                entries.splice(duplicateIndex, 1);
+                entries.push(repeated);
+                return repeated;
+            }
+            const safe = Object.freeze({ ...candidate, count: 1 });
+            entries.push(safe);
+            if (entries.length > maxEntries) entries.splice(0, entries.length - maxEntries);
+            return safe;
+        }
+
+        return Object.freeze({
+            beginEpoch,
+            record,
+            snapshot: () => Object.freeze({
+                epoch,
+                degraded: entries.length > 0,
+                entries: Object.freeze(entries.slice())
+            }),
+            get size() { return entries.length; },
+            get limit() { return maxEntries; }
+        });
+    }
+
+    /**
+     * Safe adapter for one browser Storage owner. Every operation reacquires the
+     * object so a throwing `window.localStorage`/`sessionStorage` getter is also
+     * contained. JSON corruption quarantines only the exact caller-owned key.
+     */
+    function createStorageAdapter(storageName, getStorage, diagnostics) {
+        const storage = storageName === 'session' ? 'session' : 'local';
+
+        function report(feature, operation, state, key) {
+            if (state === 'Valid' || state === 'Missing') return;
+            diagnostics?.record?.({ feature, phase: 'storage', operation, state, storage, key });
+        }
+
+        function failure(feature, operation, error, key) {
+            const state = classifyStorageFailure(error);
+            report(feature, operation, state, key);
+            return { state, value: null };
+        }
+
+        function read(feature, key, keyLabel = 'owned-key') {
+            try {
+                const value = getStorage().getItem(key);
+                return value === null
+                    ? { state: 'Missing', value: null }
+                    : { state: 'Valid', value };
+            } catch (error) {
+                return failure(feature, 'read', error, keyLabel);
+            }
+        }
+
+        function write(feature, key, value, keyLabel = 'owned-key') {
+            try {
+                getStorage().setItem(key, String(value));
+                return { state: 'Valid', value: String(value) };
+            } catch (error) {
+                return failure(feature, 'write', error, keyLabel);
+            }
+        }
+
+        function remove(feature, key, keyLabel = 'owned-key') {
+            try {
+                getStorage().removeItem(key);
+                return { state: 'Valid', value: null };
+            } catch (error) {
+                return failure(feature, 'remove', error, keyLabel);
+            }
+        }
+
+        function keys(feature, keyLabel = 'owned-prefix-scan') {
+            try {
+                const target = getStorage();
+                const result = [];
+                // Snapshot first: removals by callers cannot reorder this scan.
+                for (let i = 0; i < target.length; i++) {
+                    const key = target.key(i);
+                    if (typeof key === 'string') result.push(key);
+                }
+                return { state: 'Valid', value: result };
+            } catch (error) {
+                return failure(feature, 'keys', error, keyLabel);
+            }
+        }
+
+        function quarantine(feature, key, keyLabel = 'owned-key') {
+            report(feature, 'parse', 'Corrupt', keyLabel);
+            const recovery = remove(feature, key, keyLabel);
+            return {
+                state: 'Corrupt',
+                value: null,
+                recovery: recovery.state === 'Valid' ? 'Removed' : recovery.state
+            };
+        }
+
+        function readJson(feature, key, validate, keyLabel = 'owned-json') {
+            const result = read(feature, key, keyLabel);
+            if (result.state !== 'Valid') return result;
+            try {
+                const value = JSON.parse(result.value);
+                if (typeof validate === 'function' && !validate(value)) {
+                    return quarantine(feature, key, keyLabel);
+                }
+                return { state: 'Valid', value };
+            } catch (_) {
+                return quarantine(feature, key, keyLabel);
+            }
+        }
+
+        function readNumber(feature, key, validate, keyLabel = 'owned-number') {
+            const result = read(feature, key, keyLabel);
+            if (result.state !== 'Valid') return result;
+            const value = Number(result.value);
+            if (!Number.isFinite(value) || (typeof validate === 'function' && !validate(value))) {
+                return quarantine(feature, key, keyLabel);
+            }
+            return { state: 'Valid', value };
+        }
+
+        return Object.freeze({ read, readJson, readNumber, write, remove, quarantine, keys });
+    }
+
+    const bootDiagnostics = createBootDiagnostics();
+    JC.bootDiagnostics = bootDiagnostics;
+    JC.storage = Object.freeze({
+        local: createStorageAdapter('local', () => window.localStorage, bootDiagnostics),
+        session: createStorageAdapter('session', () => window.sessionStorage, bootDiagnostics)
+    });
+
     /**
      * Create the document-lifetime identity owner. The controller is deliberately
      * defined in this classic loader (rather than only in the later bundle):
@@ -348,6 +524,7 @@
      * shared globals replaced with owner-tagged empty state.
      */
     function finalizeIdentityTransition(change) {
+        bootDiagnostics.beginEpoch(change.epoch);
         // Abort and logically drain every older loader initialization before any
         // B-owned global is published. Raw host ajax implementations sometimes
         // ignore AbortSignal; the registry cancellation race still settles and
@@ -356,11 +533,9 @@
         // Jellyfin's compatibility language key is user-only. Remove A's live
         // projection synchronously; B republishes it from a server+user scoped
         // Canopy key after its settings file is loaded.
-        try {
-            for (const userId of identityStorageUserIdVariants(change.previous)) {
-                localStorage.removeItem(`${userId}-language`);
-            }
-        } catch (_) { /* storage can be disabled */ }
+        for (const userId of identityStorageUserIdVariants(change.previous)) {
+            JC.storage.local.remove('identity-transition', `${userId}-language`, 'compatibility-language');
+        }
         JC._cacheManager?.cancelPending?.();
         JC.initialized = false;
         JC._tagCachePrefetch = null;
@@ -1164,58 +1339,40 @@
             const mode = config && config.LayoutEnforcement;
             if (!mode || mode === 'None') return false;
 
-            let stored = null;
-            try {
-                stored = localStorage.getItem(LAYOUT_STORAGE_KEY);
-            } catch (e) {
-                return false; // storage unavailable — nothing we can safely do
-            }
+            const storedResult = JC.storage.local.read('layout-enforcement', LAYOUT_STORAGE_KEY, 'host-layout');
+            if (storedResult.state !== 'Valid' && storedResult.state !== 'Missing') return false;
+            const stored = storedResult.value;
 
             const decision = resolveLayoutEnforcement(mode, stored);
             if (!decision.changed) {
                 // Converged (or nothing to do): clear the loop marker so a future
                 // divergence can be re-enforced with one reload.
-                try {
-                    sessionStorage.removeItem(LAYOUT_ENFORCED_SESSION_KEY);
-                } catch (e) { /* ignore */ }
+                JC.storage.session.remove('layout-enforcement', LAYOUT_ENFORCED_SESSION_KEY, 'reload-guard');
                 return false;
             }
 
-            try {
-                localStorage.setItem(LAYOUT_STORAGE_KEY, decision.value);
-                // Read-back guard: some environments accept setItem but do not
-                // actually persist (ephemeral/in-memory/quota-broken storage). If
-                // the write did not stick, reloading would land right back here —
-                // an infinite reload loop in the storage's own failing domain
-                // (sessionStorage would fail identically, so the session guard
-                // below could not catch it). Bail without reloading instead.
-                if (localStorage.getItem(LAYOUT_STORAGE_KEY) !== decision.value) {
-                    return false;
-                }
-            } catch (e) {
-                return false; // cannot persist — do not reload into an unchanged state
-            }
+            const writeResult = JC.storage.local.write('layout-enforcement', LAYOUT_STORAGE_KEY, decision.value, 'host-layout');
+            if (writeResult.state !== 'Valid') return false;
+            // Read-back guard: some environments accept setItem but do not
+            // actually persist (ephemeral/in-memory/quota-broken storage). If
+            // the write did not stick, reloading would land right back here.
+            const persisted = JC.storage.local.read('layout-enforcement', LAYOUT_STORAGE_KEY, 'host-layout');
+            if (persisted.state !== 'Valid' || persisted.value !== decision.value) return false;
 
             if (!decision.reload) {
                 // Persisted the target without a reload (device already paints it):
                 // we are at the target, so clear any stale loop marker.
-                try {
-                    sessionStorage.removeItem(LAYOUT_ENFORCED_SESSION_KEY);
-                } catch (e) { /* ignore */ }
+                JC.storage.session.remove('layout-enforcement', LAYOUT_ENFORCED_SESSION_KEY, 'reload-guard');
                 return false;
             }
 
             // Loop guard: bail only if we ALREADY reloaded toward this exact target
             // this session and the value still has not stuck (a write that never
             // persists) — otherwise a genuine new divergence gets its one reload.
-            try {
-                if (sessionStorage.getItem(LAYOUT_ENFORCED_SESSION_KEY) === decision.value) {
-                    return false;
-                }
-                sessionStorage.setItem(LAYOUT_ENFORCED_SESSION_KEY, decision.value);
-            } catch (e) {
-                return false; // no sessionStorage → skip reload rather than risk a loop
-            }
+            const guard = JC.storage.session.read('layout-enforcement', LAYOUT_ENFORCED_SESSION_KEY, 'reload-guard');
+            if (guard.state !== 'Valid' && guard.state !== 'Missing') return false;
+            if (guard.value === decision.value) return false;
+            if (JC.storage.session.write('layout-enforcement', LAYOUT_ENFORCED_SESSION_KEY, decision.value, 'reload-guard').state !== 'Valid') return false;
 
             window.location.reload();
             return true;
@@ -1272,8 +1429,9 @@
         try {
             if (typeof ApiClient === 'undefined') return false;
 
-            const creds = localStorage.getItem('jellyfin_credentials');
-            if (!creds) return false;
+            const credentials = JC.storage.local.read('server-identity-check', 'jellyfin_credentials', 'host-credentials');
+            if (credentials.state !== 'Valid') return false;
+            const creds = credentials.value;
 
             const servers = JSON.parse(creds)?.Servers;
             if (!Array.isArray(servers) || servers.length === 0) return false;
@@ -1516,34 +1674,85 @@
         });
     }
 
+    function recordFeatureFailure(context, name, error) {
+        // A late rejection from an old generation belongs to teardown, not the
+        // current boot's diagnostics. Identity cancellation is expected too.
+        if (error?.name === 'IdentityChangedError' || error?.name === 'AbortError'
+            || !identity.isCurrent(context)) return;
+        bootDiagnostics.record({
+            feature: name,
+            phase: 'feature-initialization',
+            operation: 'initialize',
+            state: 'FeatureFailure',
+            storage: 'none',
+            key: 'none'
+        });
+        console.error(`🪼 Jellyfin Canopy: feature "${name}" initialized in degraded mode`, error);
+    }
+
+    /** Contain one feature owner without downgrading identity/auth/config failures. */
+    function activateFeature(context, name, enabled, initializer) {
+        if (!enabled || typeof initializer !== 'function') return;
+        requireCurrentIdentity(context);
+        try {
+            // Preserve the historical root-namespace receiver for feature
+            // methods that consult `this`; nested owners use explicit wrappers.
+            const produced = initializer.call(JC);
+            if (produced && typeof produced.then === 'function') {
+                Promise.resolve(produced).catch((error) => {
+                    recordFeatureFailure(context, name, error);
+                });
+            }
+        } catch (error) {
+            if (error?.name === 'IdentityChangedError' || !identity.isCurrent(context)) throw error;
+            recordFeatureFailure(context, name, error);
+        }
+        requireCurrentIdentity(context);
+    }
+
     /** Stage-6 activation. Old-epoch teardown always ran before these gates. */
     function activateFeatures(context) {
-        requireCurrentIdentity(context);
-        if (typeof JC.initializeCanopyScript === 'function') JC.initializeCanopyScript();
-        if (typeof JC.initializeElsewhereScript === 'function' && JC.pluginConfig?.ElsewhereEnabled) JC.initializeElsewhereScript();
-        if (typeof JC.initializeSeerrScript === 'function' && JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowSearchResults !== false) JC.initializeSeerrScript();
-        if (typeof JC.seerrIssueReporter?.initialize === 'function' && JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowReportButton) JC.seerrIssueReporter.initialize();
-        if (typeof JC.initializePauseScreen === 'function') JC.initializePauseScreen();
-        if (typeof JC.initializeBookmarks === 'function') JC.initializeBookmarks();
-        if (typeof JC.initializeQualityTags === 'function' && JC.currentSettings?.qualityTagsEnabled) JC.initializeQualityTags();
-        if (typeof JC.initializeGenreTags === 'function' && JC.currentSettings?.genreTagsEnabled) JC.initializeGenreTags();
-        if (typeof JC.initializeRatingTags === 'function' && JC.currentSettings?.ratingTagsEnabled) JC.initializeRatingTags();
-        if (typeof JC.initializeUserReviewTags === 'function' && JC.pluginConfig?.ShowUserReviews && JC.pluginConfig?.ShowUserRatingOnPosters && JC.currentSettings?.ratingTagsEnabled) JC.initializeUserReviewTags();
-        if (typeof JC.initializeArrLinksScript === 'function' && JC.pluginConfig?.ArrLinksEnabled) JC.initializeArrLinksScript();
-        if (typeof JC.initializeArrTagLinksScript === 'function' && JC.pluginConfig?.ArrTagsShowAsLinks) JC.initializeArrTagLinksScript();
-        if (typeof JC.initializeLetterboxdLinksScript === 'function' && JC.pluginConfig?.LetterboxdEnabled) JC.initializeLetterboxdLinksScript();
-        if (typeof JC.initializeReviewsScript === 'function' && (JC.pluginConfig?.ShowReviews || JC.pluginConfig?.ShowUserReviews)) JC.initializeReviewsScript();
-        if (typeof JC.initializeLanguageTags === 'function' && JC.currentSettings?.languageTagsEnabled) JC.initializeLanguageTags();
-        if (typeof JC.initializePeopleTags === 'function' && JC.currentSettings?.peopleTagsEnabled) JC.initializePeopleTags();
-        if (typeof JC.tagPipeline?.initialize === 'function') JC.tagPipeline.initialize();
-        if (typeof JC.initializeOsdRating === 'function') JC.initializeOsdRating();
-        if (typeof JC.initializeHiddenContent === 'function' && JC.pluginConfig?.HiddenContentEnabled) JC.initializeHiddenContent();
-        if (JC.pluginConfig?.ColoredRatingsEnabled && typeof JC.initializeColoredRatings === 'function') JC.initializeColoredRatings();
-        if (JC.pluginConfig?.ThemeSelectorEnabled && typeof JC.initializeThemeSelector === 'function') JC.initializeThemeSelector();
-        if (JC.pluginConfig?.ColoredActivityIconsEnabled && typeof JC.initializeActivityIcons === 'function') JC.initializeActivityIcons();
-        if (JC.pluginConfig?.PluginIconsEnabled && typeof JC.initializePluginIcons === 'function') JC.initializePluginIcons();
-        if (JC.pluginConfig?.ActiveStreamsEnabled && typeof JC.activeStreams?.initialize === 'function') JC.activeStreams.initialize();
-        if (typeof JC.initializePagesFramework === 'function') JC.initializePagesFramework();
+        activateFeature(context, 'canopy', typeof JC.initializeCanopyScript === 'function', JC.initializeCanopyScript);
+        activateFeature(context, 'elsewhere', JC.pluginConfig?.ElsewhereEnabled, JC.initializeElsewhereScript);
+        activateFeature(context, 'seerr', JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowSearchResults !== false, JC.initializeSeerrScript);
+        activateFeature(
+            context,
+            'seerr-issue-reporter',
+            JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowReportButton
+                && typeof JC.seerrIssueReporter?.initialize === 'function',
+            () => JC.seerrIssueReporter.initialize()
+        );
+        activateFeature(context, 'pause-screen', typeof JC.initializePauseScreen === 'function', JC.initializePauseScreen);
+        activateFeature(context, 'bookmarks', typeof JC.initializeBookmarks === 'function', JC.initializeBookmarks);
+        activateFeature(context, 'quality-tags', JC.currentSettings?.qualityTagsEnabled, JC.initializeQualityTags);
+        activateFeature(context, 'genre-tags', JC.currentSettings?.genreTagsEnabled, JC.initializeGenreTags);
+        activateFeature(context, 'rating-tags', JC.currentSettings?.ratingTagsEnabled, JC.initializeRatingTags);
+        activateFeature(context, 'user-review-tags', JC.pluginConfig?.ShowUserReviews && JC.pluginConfig?.ShowUserRatingOnPosters && JC.currentSettings?.ratingTagsEnabled, JC.initializeUserReviewTags);
+        activateFeature(context, 'arr-links', JC.pluginConfig?.ArrLinksEnabled, JC.initializeArrLinksScript);
+        activateFeature(context, 'arr-tag-links', JC.pluginConfig?.ArrTagsShowAsLinks, JC.initializeArrTagLinksScript);
+        activateFeature(context, 'letterboxd-links', JC.pluginConfig?.LetterboxdEnabled, JC.initializeLetterboxdLinksScript);
+        activateFeature(context, 'reviews', JC.pluginConfig?.ShowReviews || JC.pluginConfig?.ShowUserReviews, JC.initializeReviewsScript);
+        activateFeature(context, 'language-tags', JC.currentSettings?.languageTagsEnabled, JC.initializeLanguageTags);
+        activateFeature(context, 'people-tags', JC.currentSettings?.peopleTagsEnabled, JC.initializePeopleTags);
+        activateFeature(
+            context,
+            'tag-pipeline',
+            typeof JC.tagPipeline?.initialize === 'function',
+            () => JC.tagPipeline.initialize()
+        );
+        activateFeature(context, 'osd-rating', typeof JC.initializeOsdRating === 'function', JC.initializeOsdRating);
+        activateFeature(context, 'hidden-content', JC.pluginConfig?.HiddenContentEnabled, JC.initializeHiddenContent);
+        activateFeature(context, 'colored-ratings', JC.pluginConfig?.ColoredRatingsEnabled, JC.initializeColoredRatings);
+        activateFeature(context, 'theme-selector', JC.pluginConfig?.ThemeSelectorEnabled, JC.initializeThemeSelector);
+        activateFeature(context, 'activity-icons', JC.pluginConfig?.ColoredActivityIconsEnabled, JC.initializeActivityIcons);
+        activateFeature(context, 'plugin-icons', JC.pluginConfig?.PluginIconsEnabled, JC.initializePluginIcons);
+        activateFeature(
+            context,
+            'active-streams',
+            JC.pluginConfig?.ActiveStreamsEnabled && typeof JC.activeStreams?.initialize === 'function',
+            () => JC.activeStreams.initialize()
+        );
+        activateFeature(context, 'pages-framework', typeof JC.initializePagesFramework === 'function', JC.initializePagesFramework);
     }
 
     async function runInitialization(context, client, scope) {
@@ -1581,15 +1790,21 @@
 
             let nextTranslations = translations || {};
             const serverTranslationClearTs = pluginConfig.ClearTranslationCacheTimestamp || 0;
-            const localTranslationClearTs = parseInt(localStorage.getItem('JC_translation_clear_ts') || '0', 10);
+            const translationClear = JC.storage.local.readNumber(
+                'translations',
+                'JC_translation_clear_ts',
+                (value) => value >= 0,
+                'clear-timestamp'
+            );
+            const localTranslationClearTs = translationClear.state === 'Valid' ? translationClear.value : 0;
             if (serverTranslationClearTs > localTranslationClearTs) {
-                for (let i = localStorage.length - 1; i >= 0; i--) {
-                    const key = localStorage.key(i);
+                const storedKeys = JC.storage.local.keys('translations', 'translation-cache-prefix');
+                for (const key of storedKeys.value || []) {
                     if (key && (key.startsWith('JC_translation_') || key.startsWith('JC_translation_ts_'))) {
-                        localStorage.removeItem(key);
+                        JC.storage.local.remove('translations', key, 'translation-cache-entry');
                     }
                 }
-                localStorage.setItem('JC_translation_clear_ts', serverTranslationClearTs.toString());
+                JC.storage.local.write('translations', 'JC_translation_clear_ts', serverTranslationClearTs.toString(), 'clear-timestamp');
                 nextTranslations = await scope.race(loadTranslations()) || {};
                 requireCurrentIdentity(context);
             }
@@ -1648,8 +1863,8 @@
                 : (parts.length === 1
                     ? parts[0].toLowerCase()
                     : (parts.length === 2 ? `${parts[0].toLowerCase()}-${parts[1].toUpperCase()}` : desiredLanguage));
-            localStorage.setItem(scopedLanguageKey, normalizedLanguage);
-            localStorage.setItem(languageKey, normalizedLanguage);
+            JC.storage.local.write('display-language', scopedLanguageKey, normalizedLanguage, 'scoped-language');
+            JC.storage.local.write('display-language', languageKey, normalizedLanguage, 'compatibility-language');
 
             if (typeof JC.themer?.init === 'function') JC.themer.init();
             installCacheUnloadOnce();
@@ -1665,7 +1880,11 @@
             JC.initialized = true;
             document.dispatchEvent(new CustomEvent('jc:identityactivated', { detail: context }));
             JC.hideSplashScreen?.();
-            console.log(`🪼 Jellyfin Canopy: identity epoch ${context.epoch} initialized successfully.`);
+            const diagnostics = bootDiagnostics.snapshot();
+            if (diagnostics.degraded) {
+                console.warn('🪼 Jellyfin Canopy: initialization completed with degraded feature/storage state', diagnostics);
+            }
+            console.log(`🪼 Jellyfin Canopy: identity epoch ${context.epoch} initialization completed.`);
         } catch (error) {
             if (error?.name === 'IdentityChangedError') return;
             if (identity.isCurrent(context)) {

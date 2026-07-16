@@ -4,7 +4,14 @@
 // bundle loads — the window.JellyfinCanopy bootstrap namespace and the
 // jellyfin-web globals the core modules touch at import time.
 
-import type { IdentityApi, IdentityChange, IdentityContext, JEGlobal } from '../types/jc';
+import type {
+    BootDiagnosticsApi,
+    BrowserStorageAdapter,
+    IdentityApi,
+    IdentityChange,
+    IdentityContext,
+    JEGlobal,
+} from '../types/jc';
 
 let testIdentity: IdentityContext | null = Object.freeze({
     serverId: 'test-server-id',
@@ -116,6 +123,93 @@ const identity: IdentityApi = {
     getInitializationControllerCount: () => 0,
 };
 
+const diagnosticEntries: ReturnType<BootDiagnosticsApi['snapshot']>['entries'][number][] = [];
+let diagnosticEpoch = testEpoch;
+const bootDiagnostics: BootDiagnosticsApi = {
+    beginEpoch(epoch) {
+        diagnosticEpoch = epoch;
+        diagnosticEntries.length = 0;
+    },
+    record(entry) {
+        const value = Object.freeze({ epoch: diagnosticEpoch, count: 1, ...entry });
+        diagnosticEntries.push(value);
+        if (diagnosticEntries.length > 64) diagnosticEntries.shift();
+        return value;
+    },
+    snapshot: () => Object.freeze({
+        epoch: diagnosticEpoch,
+        degraded: diagnosticEntries.length > 0,
+        entries: Object.freeze([...diagnosticEntries]),
+    }),
+    get size() { return diagnosticEntries.length; },
+    get limit() { return 64; },
+};
+
+function testStorageAdapter(getStorage: () => Storage): BrowserStorageAdapter {
+    const classify = (error: unknown): 'QuotaFailure' | 'Unavailable' =>
+        (error as { name?: string } | null)?.name === 'QuotaExceededError' ? 'QuotaFailure' : 'Unavailable';
+    return {
+        read(_feature, key) {
+            try {
+                const value = getStorage().getItem(key);
+                return value === null ? { state: 'Missing', value: null } : { state: 'Valid', value };
+            } catch (error) { return { state: classify(error), value: null }; }
+        },
+        readJson<T>(feature: string, key: string, validate?: (value: unknown) => value is T) {
+            const raw = this.read(feature, key);
+            if (raw.state !== 'Valid') return raw;
+            try {
+                const value: unknown = JSON.parse(raw.value);
+                if (validate && !validate(value)) throw new Error('invalid');
+                return { state: 'Valid', value: value as T };
+            } catch {
+                const recovery = this.remove(feature, key);
+                return {
+                    state: 'Corrupt',
+                    value: null,
+                    recovery: recovery.state === 'Valid' ? 'Removed' : recovery.state,
+                };
+            }
+        },
+        readNumber(feature, key, validate) {
+            const raw = this.read(feature, key);
+            if (raw.state !== 'Valid') return raw;
+            const value = Number(raw.value);
+            if (Number.isFinite(value) && (!validate || validate(value))) return { state: 'Valid', value };
+            const recovery = this.remove(feature, key);
+            return {
+                state: 'Corrupt',
+                value: null,
+                recovery: recovery.state === 'Valid' ? 'Removed' : recovery.state,
+            };
+        },
+        write(_feature, key, value) {
+            try { getStorage().setItem(key, value); return { state: 'Valid', value }; }
+            catch (error) { return { state: classify(error), value: null }; }
+        },
+        remove(_feature, key) {
+            try { getStorage().removeItem(key); return { state: 'Valid', value: null }; }
+            catch (error) { return { state: classify(error), value: null }; }
+        },
+        quarantine(feature, key) {
+            const recovery = this.remove(feature, key);
+            return {
+                state: 'Corrupt',
+                value: null,
+                recovery: recovery.state === 'Valid' ? 'Removed' : recovery.state,
+            };
+        },
+        keys() {
+            try {
+                const storage = getStorage();
+                const value = Array.from({ length: storage.length }, (_, index) => storage.key(index))
+                    .filter((key): key is string => key !== null);
+                return { state: 'Valid', value };
+            } catch (error) { return { state: classify(error), value: null }; }
+        },
+    };
+}
+
 const bootstrapJE = {
     core: { identity },
     identity,
@@ -123,6 +217,11 @@ const bootstrapJE = {
     translations: {},
     pluginVersion: 'test',
     escapeHtml: (value: unknown) => (typeof value === 'string' ? value : ''),
+    storage: {
+        local: testStorageAdapter(() => window.localStorage),
+        session: testStorageAdapter(() => window.sessionStorage),
+    },
+    bootDiagnostics,
 } as unknown as JEGlobal;
 
 window.JellyfinCanopy = bootstrapJE;

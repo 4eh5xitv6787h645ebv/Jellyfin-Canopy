@@ -111,38 +111,40 @@ function showUnmonitoredStorageKey(context: IdentityContext): string {
 function getStoredShowUnmonitored(): boolean | null {
     const context = currentIdentity();
     if (!context) return null;
-    try {
-        const storage = window.localStorage;
-        const key = showUnmonitoredStorageKey(context);
-        let stored = storage?.getItem(key);
+    const key = showUnmonitoredStorageKey(context);
+    let stored = JC.storage.local.read('arr-calendar', key, 'show-unmonitored');
 
-        // Upgrade the old process-global preference exactly once. It has no
-        // identity metadata, so the only safe compatibility choice is to give
-        // it to the first authenticated identity that reads it, then remove it
-        // before another account/server can inherit the same value.
-        if (stored === null) {
-            const legacy = storage?.getItem(LEGACY_SHOW_UNMONITORED_KEY);
-            if (legacy === 'true' || legacy === 'false') {
-                storage?.setItem(key, legacy);
-                stored = legacy;
+    // Upgrade the old process-global preference exactly once. It has no
+    // identity metadata, so the only safe compatibility choice is to give
+    // it to the first authenticated identity that reads it, then remove it
+    // before another account/server can inherit the same value.
+    if (stored.state === 'Missing') {
+        const legacy = JC.storage.local.read('arr-calendar', LEGACY_SHOW_UNMONITORED_KEY, 'legacy-show-unmonitored');
+        if (legacy.state === 'Valid' && (legacy.value === 'true' || legacy.value === 'false')) {
+            if (JC.storage.local.write('arr-calendar', key, legacy.value, 'show-unmonitored').state === 'Valid') {
+                stored = { state: 'Valid', value: legacy.value };
+                JC.storage.local.remove('arr-calendar', LEGACY_SHOW_UNMONITORED_KEY, 'legacy-show-unmonitored');
             }
+        } else if (legacy.state === 'Valid') {
+            JC.storage.local.quarantine('arr-calendar', LEGACY_SHOW_UNMONITORED_KEY, 'legacy-show-unmonitored');
+        } else if (legacy.state === 'Missing') {
+            JC.storage.local.remove('arr-calendar', LEGACY_SHOW_UNMONITORED_KEY, 'legacy-show-unmonitored');
         }
-        storage?.removeItem(LEGACY_SHOW_UNMONITORED_KEY);
-        if (stored === null) return null;
-        return stored === 'true';
-    } catch {
+    } else if (stored.state === 'Valid') {
+        JC.storage.local.remove('arr-calendar', LEGACY_SHOW_UNMONITORED_KEY, 'legacy-show-unmonitored');
+    }
+    if (stored.state !== 'Valid') return null;
+    if (stored.value !== 'true' && stored.value !== 'false') {
+        JC.storage.local.quarantine('arr-calendar', key, 'show-unmonitored');
         return null;
     }
+    return stored.value === 'true';
 }
 
 export function setStoredShowUnmonitored(value: boolean): void {
     const context = currentIdentity();
     if (!context) return;
-    try {
-        window.localStorage?.setItem(showUnmonitoredStorageKey(context), String(!!value));
-    } catch {
-        // ignore storage errors
-    }
+    JC.storage.local.write('arr-calendar', showUnmonitoredStorageKey(context), String(!!value), 'show-unmonitored');
 }
 
 /**

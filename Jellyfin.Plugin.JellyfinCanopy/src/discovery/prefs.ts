@@ -8,6 +8,10 @@
 import type { DiscoveryMediaType } from './rows';
 import { JC } from '../globals';
 
+function isStringArray(value: unknown): value is string[] {
+    return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
 function storageOwner(): { serverId: string; userId: string; legacyUserId: string } | null {
     const uid = (typeof ApiClient !== 'undefined' && ApiClient.getCurrentUserId?.()) || '';
     if (!uid) return null;
@@ -38,37 +42,42 @@ function storageKey(mt: DiscoveryMediaType): string | null {
  * "customized to empty" round-trips instead of silently reverting to the admin defaults.
  */
 export function getUserRowIds(mt: DiscoveryMediaType): string[] | null {
-    try {
-        const key = storageKey(mt);
-        const owner = storageOwner();
-        if (!key || !owner) return null;
-        // One-time adoption of the pre-server-scope key. It can belong to only
-        // one server, so remove it immediately after assigning it to the first
-        // authenticated server that reads it.
-        const legacyKey = `jc-discovery-rows:${owner.legacyUserId}:${mt}`;
-        if (localStorage.getItem(key) === null) {
-            const legacy = localStorage.getItem(legacyKey);
-            if (legacy !== null) localStorage.setItem(key, legacy);
+    const key = storageKey(mt);
+    const owner = storageOwner();
+    if (!key || !owner) return null;
+    // One-time adoption of the pre-server-scope key. It can belong to only
+    // one server, so remove it immediately after assigning it to the first
+    // authenticated server that reads it.
+    const legacyKey = `jc-discovery-rows:${owner.legacyUserId}:${mt}`;
+    const current = JC.storage.local.read('discovery-preferences', key, 'row-order');
+    if (current.state === 'Missing') {
+        const legacy = JC.storage.local.read('discovery-preferences', legacyKey, 'legacy-row-order');
+        if (legacy.state === 'Valid') {
+            if (JC.storage.local.write('discovery-preferences', key, legacy.value, 'row-order').state === 'Valid') {
+                JC.storage.local.remove('discovery-preferences', legacyKey, 'legacy-row-order');
+            }
+        } else if (legacy.state === 'Missing') {
+            JC.storage.local.remove('discovery-preferences', legacyKey, 'legacy-row-order');
         }
-        localStorage.removeItem(legacyKey);
-        const raw = localStorage.getItem(key);
-        if (!raw) return null;
-        const parsed: unknown = JSON.parse(raw);
-        if (!Array.isArray(parsed)) return null;
-        return parsed.filter((x): x is string => typeof x === 'string');
-    } catch { return null; }
+    } else if (current.state === 'Valid') {
+        JC.storage.local.remove('discovery-preferences', legacyKey, 'legacy-row-order');
+    }
+    const parsed = JC.storage.local.readJson(
+        'discovery-preferences', key, isStringArray, 'row-order',
+    );
+    return parsed.state === 'Valid' ? parsed.value : null;
 }
 
 /** Persists the user's row-id order for a media type. */
 export function setUserRowIds(mt: DiscoveryMediaType, ids: string[]): void {
     const key = storageKey(mt);
     if (!key) return;
-    try { localStorage.setItem(key, JSON.stringify(ids)); } catch { /* quota / private mode */ }
+    JC.storage.local.write('discovery-preferences', key, JSON.stringify(ids), 'row-order');
 }
 
 /** Clears the user's customization so the feed reverts to the admin/default rows. */
 export function clearUserRowIds(mt: DiscoveryMediaType): void {
     const key = storageKey(mt);
     if (!key) return;
-    try { localStorage.removeItem(key); } catch { /* ignore */ }
+    JC.storage.local.remove('discovery-preferences', key, 'row-order');
 }

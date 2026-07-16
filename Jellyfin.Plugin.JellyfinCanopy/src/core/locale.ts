@@ -33,8 +33,8 @@ export function getDisplayLocale(): string {
         const userId = (typeof ApiClient !== 'undefined' && ApiClient.getCurrentUserId)
             ? ApiClient.getCurrentUserId() : null;
         if (userId) {
-            const stored = window.localStorage?.getItem(`${userId}-language`);
-            if (stored) return normalize(stored);
+            const stored = JC.storage.local.read('locale', `${userId}-language`, 'host-language');
+            if (stored.state === 'Valid' && stored.value) return normalize(stored.value);
         }
 
         const docLang = document.documentElement.lang;

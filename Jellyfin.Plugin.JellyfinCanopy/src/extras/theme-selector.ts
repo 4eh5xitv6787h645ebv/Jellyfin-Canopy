@@ -58,39 +58,30 @@ const getStorageKey = (context: IdentityContext, key: string): string =>
 const getCompatibilityKey = (context: IdentityContext, key: string): string => `${context.userId}-${key}`;
 
 const getLocalStorageValue = (context: IdentityContext, key: string, defaultValue: string | null = null): string | null => {
-    try {
-        const value = localStorage.getItem(getStorageKey(context, key));
-        return value === null ? defaultValue : value;
-    } catch (e) {
-        console.error('🪼 Jellyfin Canopy: Theme selector storage read error', e);
-        return defaultValue;
-    }
+    const result = JC.storage.local.read('theme-selector', getStorageKey(context, key), `theme-${key}`);
+    return result.state === 'Valid' ? result.value : defaultValue;
 };
 
 const setLocalStorageValue = (context: IdentityContext, key: string, value: string): boolean => {
-    try {
-        localStorage.setItem(getStorageKey(context, key), value);
-        if (key === 'customCss' && JC.identity.isCurrent(context)) {
-            localStorage.setItem(getCompatibilityKey(context, key), value);
-        }
-        return true;
-    } catch (e) {
-        console.error('🪼 Jellyfin Canopy: Theme selector storage write error', e);
-        return false;
+    const canonical = JC.storage.local.write('theme-selector', getStorageKey(context, key), value, `theme-${key}`);
+    if (canonical.state !== 'Valid') return false;
+    if (key === 'customCss' && JC.identity.isCurrent(context)) {
+        return JC.storage.local.write(
+            'theme-selector', getCompatibilityKey(context, key), value, 'compatibility-theme',
+        ).state === 'Valid';
     }
+    return true;
 };
 
 const removeLocalStorageValue = (context: IdentityContext, key: string): boolean => {
-    try {
-        localStorage.removeItem(getStorageKey(context, key));
-        if (key === 'customCss' && JC.identity.isCurrent(context)) {
-            localStorage.removeItem(getCompatibilityKey(context, key));
-        }
-        return true;
-    } catch (e) {
-        console.error('🪼🎨Jellyfish Theme Selector : localStorage remove error:', e);
-        return false;
+    const canonical = JC.storage.local.remove('theme-selector', getStorageKey(context, key), `theme-${key}`);
+    if (key === 'customCss' && JC.identity.isCurrent(context)) {
+        const compatibility = JC.storage.local.remove(
+            'theme-selector', getCompatibilityKey(context, key), 'compatibility-theme',
+        );
+        return canonical.state === 'Valid' && compatibility.state === 'Valid';
     }
+    return canonical.state === 'Valid';
 };
 
 // --- Random Theme Functions ---
@@ -195,28 +186,33 @@ const getNotificationKey = (context: IdentityContext): string =>
  * to match across servers.
  */
 const migrateLegacyStorageOnce = (context: IdentityContext): void => {
-    try {
-        if (localStorage.getItem(STORAGE_MIGRATION_KEY) !== 'true') {
-            for (const key of ['customCss', 'randomThemeEnabled', 'lastRandomThemeDate']) {
-                const scopedKey = getStorageKey(context, key);
-                const legacyKey = getCompatibilityKey(context, key);
-                if (localStorage.getItem(scopedKey) === null) {
-                    const legacyValue = localStorage.getItem(legacyKey);
-                    if (legacyValue !== null) localStorage.setItem(scopedKey, legacyValue);
-                }
-            }
-            localStorage.setItem(STORAGE_MIGRATION_KEY, 'true');
+    const migration = JC.storage.local.read('theme-selector', STORAGE_MIGRATION_KEY, 'migration-marker');
+    if (migration.state === 'Missing' || (migration.state === 'Valid' && migration.value !== 'true')) {
+        let complete = true;
+        for (const key of ['customCss', 'randomThemeEnabled', 'lastRandomThemeDate']) {
+            const scopedKey = getStorageKey(context, key);
+            const scoped = JC.storage.local.read('theme-selector', scopedKey, `theme-${key}`);
+            if (scoped.state === 'Missing') {
+                const legacy = JC.storage.local.read(
+                    'theme-selector', getCompatibilityKey(context, key), `legacy-theme-${key}`,
+                );
+                if (legacy.state === 'Valid') {
+                    complete = JC.storage.local.write(
+                        'theme-selector', scopedKey, legacy.value, `theme-${key}`,
+                    ).state === 'Valid' && complete;
+                } else if (legacy.state !== 'Missing') complete = false;
+            } else if (scoped.state !== 'Valid') complete = false;
         }
-
-        // Keep Jellyfish's boot-time compatibility key synchronized with the
-        // current canonical value. A missing B value removes A's old mirror.
-        const currentTheme = getCurrentTheme(context);
-        const compatibilityKey = getCompatibilityKey(context, 'customCss');
-        if (currentTheme) localStorage.setItem(compatibilityKey, currentTheme);
-        else localStorage.removeItem(compatibilityKey);
-    } catch (e) {
-        console.error('Jellyfin Canopy: Theme selector storage migration error', e);
+        if (complete) JC.storage.local.write('theme-selector', STORAGE_MIGRATION_KEY, 'true', 'migration-marker');
     }
+
+    if (migration.state !== 'Valid' && migration.state !== 'Missing') return;
+    // Keep Jellyfish's boot-time compatibility key synchronized with the
+    // current canonical value. A missing B value removes A's old mirror.
+    const currentTheme = getCurrentTheme(context);
+    const compatibilityKey = getCompatibilityKey(context, 'customCss');
+    if (currentTheme) JC.storage.local.write('theme-selector', compatibilityKey, currentTheme, 'compatibility-theme');
+    else JC.storage.local.remove('theme-selector', compatibilityKey, 'compatibility-theme');
 };
 
 // --- Notifications ---
@@ -236,24 +232,26 @@ const showNotification = (message: string): void => {
 };
 
 const checkPostRefreshNotification = (context: IdentityContext, expectedGeneration: number): void => {
-    try {
-        const notificationKey = getNotificationKey(context);
-        let pendingNotification = sessionStorage.getItem(notificationKey);
-        // Compatibility with a reload initiated by a pre-upgrade bundle. The
-        // unscoped value is consumed once and cannot survive an SPA switch.
-        if (!pendingNotification) pendingNotification = sessionStorage.getItem('jellyfin-theme-applied');
-        sessionStorage.removeItem(LEGACY_NOTIFICATION_KEY);
-        if (pendingNotification) {
-            sessionStorage.removeItem(notificationKey);
-            notificationTimer = window.setTimeout(() => {
-                notificationTimer = null;
-                if (isActive(context, expectedGeneration)) {
-                    showNotification(`Theme applied: ${escapeHtml(pendingNotification)}`);
-                }
-            }, NOTIFICATION_DELAY);
-        }
-    } catch (e) {
-        console.error('🪼🎨Jellyfish Theme Selector :  Session storage error:', e);
+    const notificationKey = getNotificationKey(context);
+    let pendingNotification = JC.storage.session.read(
+        'theme-selector', notificationKey, 'pending-notification',
+    ).value;
+    // Compatibility with a reload initiated by a pre-upgrade bundle. The
+    // unscoped value is consumed once and cannot survive an SPA switch.
+    if (!pendingNotification) {
+        pendingNotification = JC.storage.session.read(
+            'theme-selector', LEGACY_NOTIFICATION_KEY, 'legacy-notification',
+        ).value;
+    }
+    JC.storage.session.remove('theme-selector', LEGACY_NOTIFICATION_KEY, 'legacy-notification');
+    if (pendingNotification) {
+        JC.storage.session.remove('theme-selector', notificationKey, 'pending-notification');
+        notificationTimer = window.setTimeout(() => {
+            notificationTimer = null;
+            if (isActive(context, expectedGeneration)) {
+                showNotification(`Theme applied: ${escapeHtml(pendingNotification)}`);
+            }
+        }, NOTIFICATION_DELAY);
     }
 };
 
@@ -273,11 +271,12 @@ const applyRandomThemeIfNeeded = (context: IdentityContext, expectedGeneration: 
         setTheme(context, randomThemeFilename, randomThemeName);
         setLastRandomDate(context, today);
 
-        try {
-            sessionStorage.setItem(getNotificationKey(context), `Random Daily (${randomThemeName})`);
-        } catch (e) {
-            console.error('🪼🎨Jellyfish Theme Selector :  Could not set session storage:', e);
-        }
+        JC.storage.session.write(
+            'theme-selector',
+            getNotificationKey(context),
+            `Random Daily (${randomThemeName})`,
+            'pending-notification',
+        );
         if (isActive(context, expectedGeneration)) window.location.reload();
     } else {
         console.log('🪼🎨Jellyfish Theme Selector :  Random theme already applied for today.');
@@ -342,11 +341,9 @@ const createThemeSelect = (
         setTheme(context, newThemeFilename, newThemeName);
 
         // Store notification for after reload
-        try {
-            sessionStorage.setItem(getNotificationKey(context), newThemeName);
-        } catch (e) {
-            console.error('🪼🎨Jellyfish Theme Selector :  Session storage error:', e);
-        }
+        JC.storage.session.write(
+            'theme-selector', getNotificationKey(context), newThemeName, 'pending-notification',
+        );
 
         // Wait for fade-out transition, then reload
         if (reloadTimer) clearTimeout(reloadTimer);
@@ -560,18 +557,16 @@ const initialize = (attempt = 0): void => {
 
 JC.identity.registerReset('theme-selector', (change) => {
     reset();
-    try {
-        if (change.previous) {
-            localStorage.removeItem(getCompatibilityKey(change.previous, 'customCss'));
-            sessionStorage.removeItem(getNotificationKey(change.previous));
-        }
-        if (change.current) {
-            const currentTheme = getCurrentTheme(change.current);
-            const compatibilityKey = getCompatibilityKey(change.current, 'customCss');
-            if (currentTheme) localStorage.setItem(compatibilityKey, currentTheme);
-            else localStorage.removeItem(compatibilityKey);
-        }
-        sessionStorage.removeItem(LEGACY_NOTIFICATION_KEY);
-    } catch { /* storage may be blocked */ }
+    if (change.previous) {
+        JC.storage.local.remove('theme-selector', getCompatibilityKey(change.previous, 'customCss'), 'compatibility-theme');
+        JC.storage.session.remove('theme-selector', getNotificationKey(change.previous), 'pending-notification');
+    }
+    if (change.current) {
+        const currentTheme = getCurrentTheme(change.current);
+        const compatibilityKey = getCompatibilityKey(change.current, 'customCss');
+        if (currentTheme) JC.storage.local.write('theme-selector', compatibilityKey, currentTheme, 'compatibility-theme');
+        else JC.storage.local.remove('theme-selector', compatibilityKey, 'compatibility-theme');
+    }
+    JC.storage.session.remove('theme-selector', LEGACY_NOTIFICATION_KEY, 'legacy-notification');
 });
 JC.initializeThemeSelector = initialize;

@@ -23,6 +23,11 @@ import localeManifest from '../../locale-manifest.json';
 
     type LangResult = { translations: Record<string, string>; usedLang: string };
 
+    function isTranslationRecord(value: unknown): value is Record<string, string> {
+        return value !== null && typeof value === 'object' && !Array.isArray(value)
+            && Object.values(value as Record<string, unknown>).every((entry) => typeof entry === 'string');
+    }
+
     function normalizeLangCode(code: string | null | undefined): string {
         if (!code) return '';
         const parts = code.split('-');
@@ -74,36 +79,32 @@ import localeManifest from '../../locale-manifest.json';
     }
 
     function cleanOldTranslationCache(pluginVersion: string): void {
-        try {
-            for (let i = localStorage.length - 1; i >= 0; i--) {
-                const key = localStorage.key(i);
-                if (key && (key.startsWith('JC_translation_') || key.startsWith('JC_translation_ts_'))) {
-                    if (!key.includes(`_${pluginVersion}`)) {
-                        localStorage.removeItem(key);
-                        console.log(`🪼 Jellyfin Canopy: Removed old translation cache: ${key}`);
-                    }
+        const storedKeys = JC.storage.local.keys('translations', 'translation-cache-prefix');
+        for (const key of storedKeys.value || []) {
+            if (key.startsWith('JC_translation_') || key.startsWith('JC_translation_ts_')) {
+                if (!key.includes(`_${pluginVersion}`)) {
+                    JC.storage.local.remove('translations', key, 'translation-cache-entry');
+                    console.log(`🪼 Jellyfin Canopy: Removed old translation cache: ${key}`);
                 }
             }
-        } catch (e) {
-            console.warn('🪼 Jellyfin Canopy: Failed to clean up old translation caches', e);
         }
     }
 
     async function tryLoadSingleLanguage(code: string, pluginVersion: string): Promise<LangResult> {
         const cacheKey = `JC_translation_${code}_${pluginVersion}`;
         const timestampKey = `JC_translation_ts_${code}_${pluginVersion}`;
-        const cachedTranslations = localStorage.getItem(cacheKey);
-        const cachedTimestamp = localStorage.getItem(timestampKey);
+        const cachedTranslations = JC.storage.local.readJson(
+            'translations', cacheKey, isTranslationRecord, 'translation-cache-payload',
+        );
+        const cachedTimestamp = JC.storage.local.readNumber(
+            'translations', timestampKey, (value) => value >= 0, 'translation-cache-timestamp',
+        );
 
-        if (cachedTranslations && cachedTimestamp) {
-            const age = Date.now() - parseInt(cachedTimestamp, 10);
+        if (cachedTranslations.state === 'Valid' && cachedTimestamp.state === 'Valid') {
+            const age = Date.now() - cachedTimestamp.value;
             if (age < CACHE_DURATION) {
                 console.log(`🪼 Jellyfin Canopy: Using cached translations for ${code} (age: ${Math.round(age / 1000 / 60)} minutes, version: ${pluginVersion})`);
-                try {
-                    return { translations: JSON.parse(cachedTranslations) as Record<string, string>, usedLang: code };
-                } catch (e) {
-                    console.warn('🪼 Jellyfin Canopy: Failed to parse cached translations, will fetch fresh', e);
-                }
+                return { translations: cachedTranslations.value, usedLang: code };
             }
         }
 
@@ -112,11 +113,9 @@ import localeManifest from '../../locale-manifest.json';
             const bundledResponse = await fetch(ApiClient.getUrl(`/JellyfinCanopy/locales/${code}.json`));
             if (bundledResponse.ok) {
                 const translations = await bundledResponse.json() as Record<string, string>;
-                try {
-                    localStorage.setItem(cacheKey, JSON.stringify(translations));
-                    localStorage.setItem(timestampKey, Date.now().toString());
-                    console.log(`🪼 Jellyfin Canopy: Successfully loaded and cached bundled translations for ${code} (version: ${pluginVersion})`);
-                } catch (e) { /* ignore */ }
+                JC.storage.local.write('translations', cacheKey, JSON.stringify(translations), 'translation-cache-payload');
+                JC.storage.local.write('translations', timestampKey, Date.now().toString(), 'translation-cache-timestamp');
+                console.log(`🪼 Jellyfin Canopy: Successfully loaded and cached bundled translations for ${code} (version: ${pluginVersion})`);
                 return { translations, usedLang: code };
             }
         } catch (bundledError) {
@@ -144,12 +143,10 @@ import localeManifest from '../../locale-manifest.json';
 
             if (githubResponse.ok) {
                 const translations = await githubResponse.json() as Record<string, string>;
-                try {
-                    localStorage.setItem(cacheKey, JSON.stringify(translations));
-                    localStorage.setItem(timestampKey, Date.now().toString());
+                const payloadWrite = JC.storage.local.write('translations', cacheKey, JSON.stringify(translations), 'translation-cache-payload');
+                const timestampWrite = JC.storage.local.write('translations', timestampKey, Date.now().toString(), 'translation-cache-timestamp');
+                if (payloadWrite.state === 'Valid' && timestampWrite.state === 'Valid') {
                     console.log(`🪼 Jellyfin Canopy: Successfully fetched and cached translations for ${code} from GitHub (version: ${pluginVersion})`);
-                } catch (storageError) {
-                    console.warn('🪼 Jellyfin Canopy: Failed to cache translations (localStorage full?)', storageError);
                 }
                 return { translations, usedLang: code };
             }
@@ -164,12 +161,10 @@ import localeManifest from '../../locale-manifest.json';
 
                 if (englishResponse.ok) {
                     const translations = await englishResponse.json() as Record<string, string>;
-                    try {
-                        const enCacheKey = `JC_translation_en_${pluginVersion}`;
-                        const enTimestampKey = `JC_translation_ts_en_${pluginVersion}`;
-                        localStorage.setItem(enCacheKey, JSON.stringify(translations));
-                        localStorage.setItem(enTimestampKey, Date.now().toString());
-                    } catch (e) { /* ignore */ }
+                    const enCacheKey = `JC_translation_en_${pluginVersion}`;
+                    const enTimestampKey = `JC_translation_ts_en_${pluginVersion}`;
+                    JC.storage.local.write('translations', enCacheKey, JSON.stringify(translations), 'translation-cache-payload');
+                    JC.storage.local.write('translations', enTimestampKey, Date.now().toString(), 'translation-cache-timestamp');
                     return { translations, usedLang: 'en' };
                 }
             }
@@ -190,10 +185,8 @@ import localeManifest from '../../locale-manifest.json';
 
         if (response.ok) {
             const translations = await response.json() as Record<string, string>;
-            try {
-                localStorage.setItem(cacheKey, JSON.stringify(translations));
-                localStorage.setItem(timestampKey, Date.now().toString());
-            } catch (e) { /* ignore */ }
+            JC.storage.local.write('translations', cacheKey, JSON.stringify(translations), 'translation-cache-payload');
+            JC.storage.local.write('translations', timestampKey, Date.now().toString(), 'translation-cache-timestamp');
             return { translations, usedLang: code };
         }
 
@@ -219,9 +212,9 @@ import localeManifest from '../../locale-manifest.json';
             let lang = 'en';
             if (userId) {
                 const storageKey = `${userId}-language`;
-                const storedLang = localStorage.getItem(storageKey);
-                if (storedLang) {
-                    lang = normalizeLangCode(storedLang);
+                const storedLang = JC.storage.local.read('translations', storageKey, 'host-language');
+                if (storedLang.state === 'Valid' && storedLang.value) {
+                    lang = normalizeLangCode(storedLang.value);
                 } else {
                     // Fall back to the HTML lang attribute set by Jellyfin's web client.
                     // This covers the Android app and other clients where the localStorage

@@ -104,6 +104,10 @@ interface CacheEntry {
     [key: string]: unknown;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 /**
  * Build a tag instance (state + ctx + lifecycle) for one renderer.
  * @param name - Pipeline renderer name (e.g. 'genre').
@@ -203,18 +207,20 @@ function createTag(name: string, spec: TagSpec): TagInstance {
         }
         if (state.localStorageEnabled) {
             const expectedOwner = ownerValue(context);
-            if (localStorage.getItem(ownerStorageKey) !== expectedOwner) {
+            const owner = JC.storage.local.read(`${name}-tags`, ownerStorageKey, 'cache-owner');
+            if (owner.state !== 'Valid' || owner.value !== expectedOwner) {
                 // Legacy entries had no owner. Treat them as untrusted rather
                 // than exposing one user's projection to the next login.
-                localStorage.removeItem(spec.cache.key);
-                localStorage.setItem(ownerStorageKey, expectedOwner);
+                JC.storage.local.remove(`${name}-tags`, spec.cache.key, 'cache-payload');
+                JC.storage.local.write(`${name}-tags`, ownerStorageKey, expectedOwner, 'cache-owner');
             }
-            try {
-                state.cache = (JSON.parse(localStorage.getItem(spec.cache.key) || '{}') || {}) as Record<string, unknown>;
-            } catch {
-                state.cache = {};
-                localStorage.removeItem(spec.cache.key);
-            }
+            const cached = JC.storage.local.readJson(
+                `${name}-tags`,
+                spec.cache.key,
+                isRecord,
+                'cache-payload',
+            );
+            state.cache = cached.state === 'Valid' ? cached.value : {};
         } else {
             state.cache = {};
         }
@@ -239,8 +245,14 @@ function createTag(name: string, spec: TagSpec): TagInstance {
                     }
                 }
             }
-            localStorage.setItem(ownerStorageKey, ownerValue(context));
-            localStorage.setItem(spec.cache.key, JSON.stringify(state.cache));
+            JC.storage.local.write(`${name}-tags`, ownerStorageKey, ownerValue(context), 'cache-owner');
+            const saved = JC.storage.local.write(
+                `${name}-tags`,
+                spec.cache.key,
+                JSON.stringify(state.cache),
+                'cache-payload',
+            );
+            if (saved.state !== 'Valid') throw new Error(`browser storage ${saved.state}`);
         } catch (e) {
             console.warn(`${logPrefix} Failed to save cache`, e);
         }
@@ -277,8 +289,8 @@ function createTag(name: string, spec: TagSpec): TagInstance {
         const legacy = spec.cache.legacyPrefix;
 
         const stale: string[] = [];
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
+        const storedKeys = JC.storage.local.keys(`${name}-tags`, 'legacy-cache-prefix');
+        for (const key of storedKeys.value || []) {
             if (key &&
                 (key.startsWith(`${legacy}-`) || key === legacy || key === `${legacy}Timestamp`) &&
                 key !== CACHE_KEY && key !== TIMESTAMP_KEY) {
@@ -287,15 +299,21 @@ function createTag(name: string, spec: TagSpec): TagInstance {
         }
         for (const key of stale) {
             console.log(`${logPrefix} Removing old cache: ${key}`);
-            localStorage.removeItem(key);
+            JC.storage.local.remove(`${name}-tags`, key, 'legacy-cache-entry');
         }
 
         const serverClearTimestamp = JC.pluginConfig?.ClearLocalStorageTimestamp || 0;
-        const localCacheTimestamp = parseInt(localStorage.getItem(TIMESTAMP_KEY) || '0', 10);
+        const timestamp = JC.storage.local.readNumber(
+            `${name}-tags`,
+            TIMESTAMP_KEY,
+            (value) => value >= 0,
+            'cache-timestamp',
+        );
+        const localCacheTimestamp = timestamp.state === 'Valid' ? timestamp.value : 0;
         if (serverClearTimestamp > localCacheTimestamp) {
             console.log(`${logPrefix} Server triggered cache clear (${new Date(serverClearTimestamp).toISOString()})`);
-            localStorage.removeItem(CACHE_KEY);
-            localStorage.setItem(TIMESTAMP_KEY, serverClearTimestamp.toString());
+            JC.storage.local.remove(`${name}-tags`, CACHE_KEY, 'cache-payload');
+            JC.storage.local.write(`${name}-tags`, TIMESTAMP_KEY, serverClearTimestamp.toString(), 'cache-timestamp');
             state.cache = {};
             if (state.hot) state.hot.clear();
         }
@@ -522,8 +540,8 @@ function createTag(name: string, spec: TagSpec): TagInstance {
         if (spec.cache) {
             // The frozen cache key stays unchanged, but an unscoped snapshot is
             // never allowed to survive an authenticated identity transition.
-            localStorage.removeItem(spec.cache.key);
-            localStorage.removeItem(ownerStorageKey);
+            JC.storage.local.remove(`${name}-tags`, spec.cache.key, 'cache-payload');
+            JC.storage.local.remove(`${name}-tags`, ownerStorageKey, 'cache-owner');
         }
         document.querySelectorAll(`.${containerClass}`).forEach((el) => el.remove());
         document.querySelectorAll<HTMLElement>(`[data-${toKebab(TAGGED_ATTR)}]`).forEach((el) => {

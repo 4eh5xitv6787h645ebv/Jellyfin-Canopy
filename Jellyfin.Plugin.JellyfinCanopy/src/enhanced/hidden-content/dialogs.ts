@@ -200,9 +200,15 @@ function isConfirmationSuppressed(context: IdentityContext | null): boolean {
     if (settings.showHideConfirmation === false) return true;
     // The legacy unscoped value must never flow into an authenticated session.
     // Removing it is safer than guessing which server/user originally owned it.
-    if (context) localStorage.removeItem(SUPPRESS_STORAGE_KEY);
-    const until = localStorage.getItem(suppressionStorageKey(context));
-    if (until && new Date(until) > new Date()) return true;
+    if (context) JC.storage.local.remove('hidden-content', SUPPRESS_STORAGE_KEY, 'legacy-suppression');
+    const key = suppressionStorageKey(context);
+    const stored = JC.storage.local.read('hidden-content', key, 'suppression-expiry');
+    if (stored.state === 'Valid') {
+        const until = Date.parse(stored.value);
+        if (Number.isFinite(until) && until > Date.now()) return true;
+        if (!Number.isFinite(until)) JC.storage.local.quarantine('hidden-content', key, 'suppression-expiry');
+        else JC.storage.local.remove('hidden-content', key, 'suppression-expiry');
+    }
     return false;
 }
 
@@ -381,7 +387,7 @@ function createStandardConfirmButtons(closeDialog: () => void, onConfirm: () => 
         }
         if (suppress15Check.checked) {
             const until = new Date(Date.now() + SUPPRESS_DURATION_MS).toISOString();
-            localStorage.setItem(suppressionStorageKey(fence.context), until);
+            JC.storage.local.write('hidden-content', suppressionStorageKey(fence.context), until, 'suppression-expiry');
         }
         closeDialog();
         onConfirm();

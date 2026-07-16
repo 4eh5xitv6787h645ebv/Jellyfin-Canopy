@@ -9,12 +9,12 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 1436,
-        "totalLines": 1759
+        "coveredLines": 1438,
+        "totalLines": 1762
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "A clean GitHub Actions Node 22/V8 run on 2026-07-16 measured 1436 covered lines across the 1759-line core scope after adding the shared document-relative Jellyfin SPA route builders. Focused V8 evidence exercised every new executable line, including encoded parameters, invalid routes, and the parameter-free path. One line permits only negligible instrumentation variance."
+        "rationale": "Two clean local Node 22/V8 runs on 2026-07-16 each passed 956 tests and measured the identical 1762-line core scope at 1438 covered lines after issue #130 routed tag-renderer storage through the fault-containing browser-storage adapter. The three-line scope increase is reviewed: two new executable lines are covered and one recovery branch remains outside the existing tag-renderer tests. The existing one-line tolerance is unchanged and permits only negligible instrumentation variance."
       }
     },
     "server": {

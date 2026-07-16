@@ -40,7 +40,8 @@ export function wireLanguageControls(ctx: PanelContext): void {
         const scopedLanguageKey = `jc-display-language:${context.serverId}:${context.userId}`;
 
         // Get saved language from localStorage as well
-        const localStorageLang = localStorage.getItem(scopedLanguageKey);
+        const storedLanguage = JC.storage.local.read('settings-language', scopedLanguageKey, 'scoped-language');
+        const localStorageLang = storedLanguage.state === 'Valid' ? storedLanguage.value : null;
         const savedLanguage = (JC.currentSettings as any).displayLanguage || localStorageLang || '';
         let acknowledgedDisplayLanguage = String(savedLanguage);
 
@@ -166,12 +167,12 @@ export function wireLanguageControls(ctx: PanelContext): void {
 
             // Save to localStorage (use the same code)
             if (fullCultureCode) {
-                localStorage.setItem(scopedLanguageKey, fullCultureCode);
-                localStorage.setItem(languageKey, fullCultureCode);
+                JC.storage.local.write('settings-language', scopedLanguageKey, fullCultureCode, 'scoped-language');
+                JC.storage.local.write('settings-language', languageKey, fullCultureCode, 'compatibility-language');
             } else {
                 // Set empty value instead of removing key
-                localStorage.setItem(scopedLanguageKey, '');
-                localStorage.setItem(languageKey, '');
+                JC.storage.local.write('settings-language', scopedLanguageKey, '', 'scoped-language');
+                JC.storage.local.write('settings-language', languageKey, '', 'compatibility-language');
             }
 
             if (newLang && !translationExists) {
@@ -192,16 +193,23 @@ export function wireLanguageControls(ctx: PanelContext): void {
             const CACHE_PREFIX = 'JC_translation_';
             const CACHE_TIMESTAMP_PREFIX = 'JC_translation_ts_';
 
-            for (let i = 0; i < localStorage.length; i++) {
-                const key = localStorage.key(i);
+            const storedKeys = JC.storage.local.keys('settings-language', 'translation-cache-prefix');
+            for (const key of storedKeys.value || []) {
                 if (key && (key.startsWith(CACHE_PREFIX) || key.startsWith(CACHE_TIMESTAMP_PREFIX))) {
                     cacheKeys.push(key);
                 }
             }
 
-            cacheKeys.forEach(key => localStorage.removeItem(key));
+            let clearedCount = 0;
+            for (const key of cacheKeys) {
+                if (JC.storage.local.remove(
+                    'settings-language', key, 'translation-cache-entry',
+                ).state === 'Valid') {
+                    clearedCount += 1;
+                }
+            }
 
-            toast(JC.t!('toast_translation_cache_cleared', { count: cacheKeys.length }));
+            toast(JC.t!('toast_translation_cache_cleared', { count: Number(clearedCount) || 0 }));
             scheduleReload(context, 2000);
             resetAutoCloseTimer();
         });
