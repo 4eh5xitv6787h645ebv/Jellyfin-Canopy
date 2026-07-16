@@ -144,13 +144,6 @@ Most install problems come down to a missed restart, a stale browser cache, or a
 2. Verify **Jellyfin Canopy** is listed under **Installed**.
 3. Check that it's enabled (not disabled).
 
-**Run the startup task:**
-
-1. Go to **Dashboard** → **Scheduled Tasks**.
-2. Under **Jellyfin Canopy**, find the task **Jellyfin Canopy Startup**.
-3. Run it manually (click the **▶︎** button).
-4. Refresh your browser (++ctrl+f5++).
-
 **Clear your browser cache:**
 
 1. Open the clear-cache dialog — Windows/Linux: ++ctrl+shift+delete++; macOS: ++command+shift+delete++.
@@ -192,72 +185,33 @@ If an update didn't take, do a clean reinstall:
 
 ### Permission issues
 
-!!! note "Applies only to the legacy on-disk rewrite"
+#### Default Jellyfin 12 permission contract
 
-    On Jellyfin 12, the plugin injects its client script at request time via built-in middleware and does **not** write to `index.html` on disk, so these permission errors do not occur by default. This section applies only if an admin has disabled the script-injection middleware to fall back to the legacy on-disk `index.html` rewrite, which requires a writable web folder. This is not a toggle in the plugin config page — it can only be enabled by setting `DisableScriptInjectionMiddleware` to `true` in the plugin's configuration XML (default `false`).
+Jellyfin Canopy's default script and branding middleware work at request time. They do **not** need write access to Jellyfin's web or installation tree on Docker, Linux, or Windows. Leave `DisableScriptInjectionMiddleware` and `DisableBrandingMiddleware` at their default value, `false`; do not change ownership or permissions on Jellyfin binaries to install Canopy.
 
-If you see an error like this in a log file:
+Uploaded branding is the relevant configuration write here. Canopy stores it in the `custom_branding` directory beside its plugin configuration, under Jellyfin's existing configuration owner. In the official container that is `/config/plugins/configurations/Jellyfin.Plugin.JellyfinCanopy/custom_branding`; native paths follow the Jellyfin configuration directory selected by that installation. Canopy never needs the branding directory to be moved into `jellyfin-web`.
 
-```text
-Access to the path '/jellyfin/jellyfin-web/index.html' is denied.
-```
+If a log reports access denied for `jellyfin-web/index.html`, first open `Jellyfin.Plugin.JellyfinCanopy.xml` in Jellyfin's plugin-configurations directory and confirm `DisableScriptInjectionMiddleware` is `false`, then restart Jellyfin and force-refresh the browser. Canopy can also make one best-effort attempt to remove a stale on-disk Canopy tag left by an earlier legacy setup; an `Error during cleanup of old script` is non-fatal, and the narrow fix is to restore that exact package-owned `index.html`. For any other error with the flag at `false`, identify the component from the surrounding log lines instead of granting Canopy broader access.
 
-The common solution is to install the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) (recommended), or apply a platform-specific permission fix below.
+#### Optional plugins that modify jellyfin-web
 
-#### Docker
+[File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation), [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs), and [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) are separate third-party components. Canopy does not use them on Jellyfin 12. If you choose a component that modifies `jellyfin-web`, use that component's Jellyfin-12 documentation for its exact target, service principal, permissions, backup, and rollback. A permission error from one of those components is not a reason to make the whole Jellyfin install writable.
 
-A common error looks like this:
+#### Optional legacy on-disk fallback
 
-```text title="Bash"
-System.UnauthorizedAccessException: Access to the path '/jellyfin/jellyfin-web/index.html' is denied.
-```
+Setting `DisableScriptInjectionMiddleware` to `true` is an advanced compatibility escape hatch. It makes the **Jellyfin Canopy Startup** task rewrite the exact `index.html` reported by Jellyfin's resolved web path. The crash-safe writer reads that file, creates and writes a temporary sibling, then atomically replaces the destination. The service principal therefore needs directory traversal plus create/delete/rename access only in the immediate `jellyfin-web` directory; it does not need access to the rest of the installation tree.
 
-If you are **^^not^^ using the [file-transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) plugin**, you'll need to manually map the `index.html` file:
+Before enabling this fallback:
 
-1. Copy the `index.html` file out of your container:
+1. Record the exact `index.html` path from Canopy's log; paths differ by package and image.
+2. Identify the actual Jellyfin service principal: the container's configured UID/GID, the `User=` in the Linux service unit, or **Log On As** in Windows Services. Do not assume a username such as `jellyfin` or `NETWORK SERVICE`.
+3. Back up that exact file outside the installation tree and record its owner, mode, or ACL.
+4. Add only the file and immediate-directory access described above for that principal. Preserve the package owner and all unrelated entries. If your platform cannot express that narrow access, keep the request-time middleware enabled.
+5. Restart Jellyfin, run **Jellyfin Canopy Startup** once, and confirm the log names the same file.
 
-    ```bash title="Bash"
-    docker cp jellyfin:/jellyfin/jellyfin-web/index.html /path/to/your/jellyfin/config/index.html
-    ```
+The legacy fallback is a poor fit for immutable containers: a bind-mounted `index.html` cannot be replaced reliably by the required temporary-sibling rename. Keep the middleware enabled rather than making the image writable. Recreating the container from its original image removes any accidental image-layer changes.
 
-2. Add a volume mapping:
-
-    ```bash title="Docker Run"
-    -v /path/to/your/jellyfin/config/index.html:/jellyfin/jellyfin-web/index.html
-    ```
-
-    or in Compose:
-
-    ```yaml title="Docker Compose"
-    services:
-      jellyfin:
-        volumes:
-          # volume mapping
-          - /path/to/your/jellyfin/config:/config
-          - /path/to/your/jellyfin/config/index.html:/jellyfin/jellyfin-web/index.html
-    ```
-
-!!! warning
-
-    This method is not recommended and won't survive a `jellyfin-web` upgrade. The recommended method for Docker:
-
-    1. Install the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation).
-    2. Follow the standard installation process.
-
-#### Windows
-
-1. Navigate to your Jellyfin installation folder (usually `C:\Program Files\Jellyfin\Server`).
-2. Right-click the folder → **Properties** → **Security**.
-3. Grant `NETWORK SERVICE` **Read** and **Write** permissions.
-4. Apply to all subfolders and files.
-5. Restart the Jellyfin service.
-
-#### Linux
-
-```bash title="Bash"
-sudo chown -R jellyfin:jellyfin /usr/lib/jellyfin/
-sudo chmod -R 755 /usr/lib/jellyfin/
-```
+`index.html` is package-owned and can be replaced by a Jellyfin or `jellyfin-web` upgrade. Before an upgrade, set `DisableScriptInjectionMiddleware` back to `false`, restart, restore the backed-up file (or reinstall/verify the owning package), and remove only the temporary ACL entries you added. Those same steps are the rollback procedure if the fallback fails. Never preserve a modified `index.html` across versions.
 
 ### Admin config page tabs not switching
 

@@ -29,11 +29,13 @@ Everything lives on the **Extras** tab, in the **Custom Image Assets** section:
 
 **Image guidance:** PNG or SVG are recommended, logos look best with a transparent background, and each image should use dimensions appropriate to its asset type — keep file sizes reasonable for performance.
 
-Uploaded files are stored alongside the plugin configuration, so they survive Jellyfin server and web updates:
+Uploaded files are stored beneath the directory that contains Canopy's plugin configuration, so they use Jellyfin's existing configuration owner and survive server and web updates without making the web tree writable. For the official container the resolved path is:
 
 ```text
-/plugins/configurations/Jellyfin.Plugin.JellyfinCanopy/custom_branding/
+/config/plugins/configurations/Jellyfin.Plugin.JellyfinCanopy/custom_branding/
 ```
+
+Native installations can place the Jellyfin configuration directory elsewhere; Canopy derives the location from its own configuration file rather than assuming an installation path.
 
 !!! info "Turning the branding middleware off"
     The branding middleware is on by default. If it ever conflicts with another plugin, or you want to fall back to Jellyfin's stock assets, an admin can set the advanced [`DisableBrandingMiddleware`](#advanced-kill-switches) kill-switch (default off). When it is on, the plugin stops serving your uploaded images and Jellyfin's built-in assets are used instead.
@@ -173,7 +175,7 @@ The splash screen override replaces the image Jellyfin shows while it loads, so 
 | **Enable Splash Screen Override** | Enables the custom splash screen |
 | **Splash Screen Image URL** | Full URL or relative path to the image. Defaults to `/web/assets/img/banner-light.png` |
 
-To use your own image, place it somewhere accessible from the web root — for example, drop it in the Jellyfin web directory and reference it as `/web/custom/splash.png` — then save and refresh. Use a PNG, JPG, or SVG sized for full-screen display, and pick something that holds up responsively across screen sizes.
+To use your own image, provide an HTTPS URL already served by your reverse proxy, object store, or another trusted static host, then save and refresh. Do not copy the image into Jellyfin's package-owned web directory. Use a PNG, JPG, or SVG sized for full-screen display, and pick something that holds up responsively across screen sizes.
 
 ## Icons
 
