@@ -12,10 +12,13 @@ on:
         required: false
         type: boolean
         default: false
+    secrets:
+      REPOSITORY_POLICY_TOKEN:
+        description: Fine-grained token scoped to this repository with Administration read and write
+        required: true
   schedule:
     # Run every day at 2:00 AM UTC
     - cron: '0 2 * * *'
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,10 +32,11 @@ jobs:
     if: github.event_name == 'schedule' || inputs.verify_repository_policy
     runs-on: ubuntu-latest
     permissions:
-      # GitHub omits ruleset bypass actors unless the caller has repository
-      # write access. This trusted main/tag job executes no repository writes;
-      # write scope is used only to make the complete policy readable.
-      contents: write
+      # Contents permission does not grant access to complete ruleset actor
+      # evidence. Keep the built-in token read-only and give only the verifier
+      # step the separately scoped repository secret below.
+      actions: read
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -55,6 +59,7 @@ jobs:
       - name: Verify live release policy matches the committed contract
         env:
           GH_TOKEN: ${{ github.token }}
+          RULESET_TOKEN: ${{ secrets.REPOSITORY_POLICY_TOKEN }}
         run: node scripts/release/verify-repository-policy.js
 
   # Scan the FULL git history for committed secrets. TruffleHog runs with --json

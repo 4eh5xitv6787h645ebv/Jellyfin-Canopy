@@ -110,10 +110,13 @@ jobs:
     uses: ./.github/workflows/security-scan.yml
     with:
       verify_repository_policy: true
+    secrets:
+      REPOSITORY_POLICY_TOKEN: ${{ secrets.REPOSITORY_POLICY_TOKEN }}
     permissions:
-      # The called policy-verifier job needs write-level repository identity
-      # so GitHub returns bypass actors; its other jobs stay contents:read.
-      contents: write
+      # The built-in token stays read-only. The called verifier receives its
+      # separately scoped ruleset token through the explicit secret mapping.
+      actions: read
+      contents: read
 
   release:
     name: Build, test, package & publish
