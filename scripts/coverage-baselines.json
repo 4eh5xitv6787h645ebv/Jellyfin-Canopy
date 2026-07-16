@@ -9,12 +9,12 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 1438,
+        "coveredLines": 1439,
         "totalLines": 1762
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Two clean local Node 22/V8 runs on 2026-07-16 each passed 959 tests and measured the identical 1762-line core scope at 1438 covered lines after the independently reviewed issue #130 correction. The reviewed high-water is unchanged: routing tag-renderer storage through the fault-containing browser-storage adapter added three executable core lines, two covered and one recovery branch outside the existing tag-renderer tests; the follow-up registered-activation, canonical-integer, and pre-auth-diagnostic fixes live in the classic loader and test harness and therefore do not alter this core scope. The existing one-line tolerance is unchanged and permits only negligible instrumentation variance."
+        "rationale": "Two clean local Node 22/V8 runs on 2026-07-16 each passed 970 tests and measured the unchanged 1762-line core scope at 1439 covered lines. The deterministic issue #87 viewshow regression now drives bookmark detail-request retirement through the real lifecycle and covers the existing dom-observer replacement diagnostic; no production core line was added. The reviewed high-water therefore advances by one covered line. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     },
     "server": {
