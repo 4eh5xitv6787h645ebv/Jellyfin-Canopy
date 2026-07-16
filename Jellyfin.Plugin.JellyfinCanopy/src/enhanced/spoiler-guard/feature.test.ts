@@ -173,6 +173,9 @@ describe('spoiler guard lazy feature', () => {
 
     it('activates once, cleans exactly, and re-enables with stable method identities', async () => {
         const before = counts();
+        const dispatch = vi.spyOn(window, 'dispatchEvent');
+        const readyCount = (): number => dispatch.mock.calls
+            .filter(([event]) => event.type === 'jc:spoiler-guard-ready').length;
         const first = testScope(1);
         activeScopes.push(first);
         await activate(first.scope);
@@ -187,7 +190,8 @@ describe('spoiler guard lazy feature', () => {
         expect(document.getElementById('jc-spoiler-guard-css')).not.toBeNull();
         expect(document.cookie).toContain('jc-spoiler-uid=');
         expect(apiPlugin).toHaveBeenCalledTimes(1);
-        expect(counts()).toEqual({ resets: before.resets + 1, live: before.live + 2 });
+        expect(readyCount()).toBe(1);
+        expect(counts()).toEqual({ resets: before.resets + 1, live: before.live + 1 });
 
         facade?.init();
         facade?.init();
@@ -203,6 +207,8 @@ describe('spoiler guard lazy feature', () => {
         const second = testScope(2);
         activeScopes.push(second);
         await activate(second.scope);
+        expect(apiPlugin).toHaveBeenCalledTimes(2);
+        expect(readyCount()).toBe(2);
         expect(JC.spoilerGuard).toBe(facade);
         expect(Reflect.get(JC.spoilerGuard!, 'init')).toBe(methods?.init);
         expect(Reflect.get(JC.spoilerGuard!, 'isEnabledFor')).toBe(methods?.enabled);

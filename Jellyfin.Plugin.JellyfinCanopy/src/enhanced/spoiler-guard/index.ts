@@ -6,7 +6,6 @@
 
 import { JC } from '../../globals';
 import { createStableMethodFacade } from '../../core/feature-loader';
-import { on, LIVE } from '../../core/live';
 import { addSpoilerBlurButton, resetSpoilerDetailControls } from './detail-button';
 import {
     loadState, resetState, whenLoaded, isLoadOk,
@@ -25,8 +24,6 @@ import { installWatchedRefresh, resetWatchedRefresh } from './watched-refresh';
 import { resetSpoilerSettingsControls } from './settings-tab';
 import { resetSpoilerSeerrControls } from './seerr-toggle';
 import type { IdentityContext, SpoilerGuardApi } from '../../types/jc';
-
-const logPrefix = '🪼 Jellyfin Canopy [SpoilerGuard]:';
 
 let activeEpoch: number | null = null;
 let watchedCleanup: (() => void) | null = null;
@@ -112,25 +109,14 @@ const stableSpoilerGuard = createStableMethodFacade<SpoilerGuardApi>({
     setUserPrefs: inactiveError,
 });
 
-/** Publish the stable facade and install activation-owned live config work. */
+/** Publish the stable facade for one loader-owned activation. */
 export function installSpoilerGuard(): () => void {
     const uninstall = stableSpoilerGuard.install(spoilerGuardApi);
     JC.spoilerGuard = stableSpoilerGuard.facade;
-    const offConfig = on(LIVE.CONFIG_CHANGED, () => {
-        try {
-            resetSpoilerGuardRuntime();
-            if (JC.pluginConfig?.SpoilerBlurEnabled === true) {
-                void initializeRuntime();
-            }
-        } catch (error) {
-            console.warn(`${logPrefix} re-init on config change failed:`, error);
-        }
-    });
     let disposed = false;
     return () => {
         if (disposed) return;
         disposed = true;
-        offConfig();
         resetSpoilerGuardRuntime();
         uninstall();
     };
