@@ -14,9 +14,32 @@
 //      502), the app still boots clean (window.JellyfinCanopy.initialized),
 //      Seerr surfaces stay absent, and there are zero real console errors
 //      beyond the deliberately-induced request failures.
-import { test, expect, loginAs, assertNoRuntimeErrors, type Role } from './fixtures/auth';
+import {
+    test,
+    expect,
+    loginAs,
+    showRoute,
+    assertNoRuntimeErrors,
+    type Role,
+} from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+/** Enter an applicable route and wait for the lazy Seerr surfaces this spec probes. */
+async function openSearchAndWaitForSeerrFacades(
+    page: import('playwright/test').Page,
+): Promise<void> {
+    await showRoute(page, '/search');
+    await page.waitForFunction(
+        () => {
+            const jc = (window as any).JellyfinCanopy;
+            return typeof jc?.seerrAPI?.resolveSeerrBaseUrl === 'function'
+                && typeof jc?.seerrUI?.updateSeerrResults === 'function';
+        },
+        undefined,
+        { timeout: 60_000 }
+    );
+}
 
 /** Read the resolved Seerr link base the injected client would use for deep links. */
 async function resolveSeerrBase(page: import('playwright/test').Page): Promise<string> {
@@ -30,6 +53,7 @@ test.describe('Seerr/arr split internal/external URLs', () => {
     for (const role of ['admin', 'user'] as Role[]) {
         test(`[${role}] Seerr link base falls back to the internal URL when no external URL is set`, async ({ page, consoleErrors }) => {
             await loginAs(page, role, consoleErrors);
+            await openSearchAndWaitForSeerrFacades(page);
 
             const { baseUrl, resolved } = await page.evaluate(() => {
                 const cfg = (window as any).JellyfinCanopy?.pluginConfig || {};
@@ -57,6 +81,7 @@ test.describe('Seerr/arr split internal/external URLs', () => {
 
     test('[admin] a configured external URL becomes the browser link base', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
+        await openSearchAndWaitForSeerrFacades(page);
 
         // The server projects the external URL into SeerrBaseUrl. Simulate that
         // projection client-side and confirm the resolver honours it verbatim (no
@@ -74,6 +99,7 @@ test.describe('Seerr/arr split internal/external URLs', () => {
 
     test('[admin] a matching URL mapping wins over the external URL', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
+        await openSearchAndWaitForSeerrFacades(page);
 
         const resolved = await page.evaluate(() => {
             const JC = (window as any).JellyfinCanopy;
@@ -90,6 +116,7 @@ test.describe('Seerr/arr split internal/external URLs', () => {
 
     test('[admin] the internal/external split reaches the client config contract', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
+        await openSearchAndWaitForSeerrFacades(page);
 
         const contract = await page.evaluate(() => {
             const cfg = (window as any).JellyfinCanopy?.pluginConfig || {};
@@ -150,7 +177,8 @@ test.describe('Seerr resilience: a bad/down Seerr never breaks the UI (591)', ()
             // triggers the host's documented querySelector race and obscures the
             // Seerr resilience signal this test owns.
             await page.waitForSelector('#indexPage .card', { timeout: 60_000 });
-            await page.evaluate(() => { void (window as any).Emby?.Page?.show?.('/search.html?query=test'); });
+            await openSearchAndWaitForSeerrFacades(page);
+            await showRoute(page, '/search.html?query=test');
             await page.waitForTimeout(2500);
 
             // Seerr surfaces must be absent, never a broken/half-rendered section.

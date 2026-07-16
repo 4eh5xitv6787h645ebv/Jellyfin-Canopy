@@ -7,7 +7,14 @@
 //
 // It also asserts the collection request surface (showCollectionRequestModal)
 // is present, and that the whole flow produces no runtime errors.
-import { test, expect, loginAs, assertNoRuntimeErrors, type Role } from './fixtures/auth';
+import {
+    test,
+    expect,
+    loginAs,
+    showRoute,
+    assertNoRuntimeErrors,
+    type Role,
+} from './fixtures/auth';
 import { seerrReady } from './fixtures/seerr';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -22,6 +29,24 @@ interface UserStatus {
     series4kEnabled?: boolean;
     canRequest4kMovie?: boolean;
     canRequest4kTv?: boolean;
+}
+
+/** Enter an applicable route and wait for every lazy facade this spec probes. */
+async function openSearchAndWaitForRequestFacades(
+    page: import('playwright/test').Page,
+): Promise<void> {
+    await showRoute(page, '/search');
+    await page.waitForFunction(
+        () => {
+            const jc = (window as any).JellyfinCanopy;
+            return typeof jc?.seerrAPI?.checkUserStatus === 'function'
+                && typeof jc?.seerrAPI?.canRequest4k === 'function'
+                && typeof jc?.seerrUI?.configureRequestButton === 'function'
+                && typeof jc?.seerrUI?.showCollectionRequestModal === 'function';
+        },
+        undefined,
+        { timeout: 60_000 }
+    );
 }
 
 async function fetchUserStatus(page: any): Promise<UserStatus> {
@@ -61,6 +86,7 @@ for (const role of ['admin', 'user'] as Role[]) {
     test.describe(`Seerr 4K & collection requests — ${role}`, () => {
         test(`4K option is gated on Seerr capability + permission, not the admin toggle (${role})`, async ({ page, consoleErrors }) => {
             await loginAs(page, role, consoleErrors);
+            await openSearchAndWaitForRequestFacades(page);
             test.skip(!(await seerrReady(page)), SEERR_OFF);
 
             // The shared gate and the collection modal are present on the facade.

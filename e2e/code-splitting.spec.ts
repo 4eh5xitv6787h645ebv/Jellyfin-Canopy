@@ -182,6 +182,14 @@ test.describe('manifest-owned code splitting', () => {
             });
         });
         page.on('request', (browserRequest) => {
+            if (browserRequest.isNavigationRequest()
+                && browserRequest.frame() === page.mainFrame()) {
+                // loginAs may replace the document while establishing the
+                // authenticated session. Keep the graph assertion scoped to
+                // the final document instead of retaining pre-login attempts.
+                bootAttempts.length = 0;
+                childAttempts.length = 0;
+            }
             if (isAssetRequest(browserRequest.url(), boot)) {
                 bootAttempts.push(requestAttempt(browserRequest.url()));
             }
