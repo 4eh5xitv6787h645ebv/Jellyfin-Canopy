@@ -2,7 +2,7 @@
 //
 // Out-of-band loader: compiled to its own dist/splashscreen.js IIFE and served
 // separately (js/plugin.js loads it early, before initialize()). It is NOT part
-// of jc.bundle.js — it must run before the main bundle so the splash covers the
+// of the authenticated ESM runtime — it must run first so the splash covers the
 // whole boot.
 //
 // Attaches JC.initializeSplashScreen / JC.hideSplashScreen to the shared

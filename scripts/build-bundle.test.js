@@ -29,7 +29,8 @@ test('production build is byte-deterministic with sorted, resolving dynamic inve
     assert.deepEqual(first.manifest, second.manifest);
     assert.match(first.manifest.buildId, /^[0-9a-f]{64}$/);
     assert.deepEqual(Object.keys(first.manifest.files), Object.keys(first.manifest.files).sort());
-    assert.equal(first.manifest.entries.compatibility.path, 'jc.bundle.js');
+    assert.equal(first.manifest.entries.compatibility, undefined);
+    assert.equal(first.manifest.files['jc.bundle.js'], undefined);
     assert.equal(first.manifest.entries.boot.path, 'entries/boot.js');
     assert.equal(first.manifest.entries['settings-launcher'].role, 'feature');
     assert.ok(first.manifest.files[first.manifest.entries['settings-launcher'].path].dynamicImports.length > 0);
@@ -112,8 +113,6 @@ test('output, request, and byte budgets fail closed', () => {
         bootGzipBytes: 1,
         bootRawBytes: 1,
         bootRequests: 1,
-        compatibilityGzipBytes: 1,
-        compatibilityRawBytes: 1,
         esmEntryCount: 1,
         esmOutputCount: 1,
         featureClosures: { feature: { gzipBytes: 1, rawBytes: 1, requests: 1 } },

@@ -2,7 +2,7 @@
 //
 // Out-of-band loader: compiled to its own dist/translations.js IIFE and served
 // separately (js/plugin.js fetches it before the component stage / pre-login).
-// It is NOT part of jc.bundle.js — it must be individually fetchable so the
+// It is not part of the authenticated ESM graph — it must be individually fetchable so the
 // loader can pull translations before the main bundle exists.
 //
 // Attaches JC.loadTranslations to the shared namespace. Behaviour is identical

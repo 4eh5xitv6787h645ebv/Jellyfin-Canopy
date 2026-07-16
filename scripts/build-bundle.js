@@ -4,9 +4,8 @@
 /**
  * Deterministically builds the embedded client distribution.
  *
- * jc.bundle.js remains the classic compatibility entry until the runtime is
- * migrated feature-by-feature. The three pre-login/bootstrap scripts also
- * remain standalone IIFEs. New entries use ESM with splitting enabled and a
+ * The three pre-login/bootstrap scripts remain standalone IIFEs. Authenticated
+ * boot and features use ESM with splitting enabled and a
  * content-addressed chunks/ directory. A complete build is published with one
  * directory swap, so a failed build cannot mix old and new chunks.
  */
@@ -140,16 +139,6 @@ function commonOptions(devMode) {
     };
 }
 
-function compatibilityOptions(devMode = false, outDir = OUT_DIR) {
-    return {
-        ...commonOptions(devMode),
-        entryPoints: [path.join(SRC_ROOT, 'main.ts')],
-        format: 'iife',
-        outfile: path.join(outDir, 'jc.bundle.js'),
-        banner: { js: `/* Jellyfin Canopy - generated ${devMode ? 'DEV ' : ''}compatibility bundle. Do not edit. */` },
-    };
-}
-
 function bootstrapOptions(devMode = false, outDir = OUT_DIR) {
     return {
         ...commonOptions(devMode),
@@ -231,7 +220,6 @@ function kindFor(relativePath) {
     if (relativePath.endsWith('.map')) return 'source-map';
     if (relativePath.startsWith('chunks/')) return 'chunk';
     if (relativePath.startsWith('entries/')) return 'module-entry';
-    if (relativePath === 'jc.bundle.js') return 'compatibility-entry';
     return 'bootstrap-entry';
 }
 
@@ -264,9 +252,7 @@ function validateArtifacts(artifacts, metadata) {
 }
 
 function buildEntries(metadata) {
-    const entries = {
-        compatibility: { kind: 'classic', path: 'jc.bundle.js', role: 'compatibility' },
-    };
+    const entries = {};
     for (const name of Object.keys(BOOTSTRAP_ENTRIES).sort()) {
         entries[name] = { kind: 'classic', path: `${name}.js`, role: 'bootstrap' };
     }
@@ -323,8 +309,6 @@ function calculateBudgetMetrics(entries, files) {
         bootGzipBytes: sum(bootFiles, 'gzipBytes'),
         bootRawBytes: sum(bootFiles, 'bytes'),
         bootRequests: bootFiles.length,
-        compatibilityGzipBytes: files['jc.bundle.js'].gzipBytes,
-        compatibilityRawBytes: files['jc.bundle.js'].bytes,
         esmEntryCount: esmEntries.length,
         esmOutputCount: esmOutputs.length,
         featureClosures,
@@ -347,8 +331,6 @@ function assertBudgets(metrics, budget) {
         ['boot requests', metrics.bootRequests, budget.limits.maxBootRequests],
         ['boot raw bytes', metrics.bootRawBytes, budget.limits.maxBootRawBytes],
         ['boot gzip bytes', metrics.bootGzipBytes, budget.limits.maxBootGzipBytes],
-        ['compatibility raw bytes', metrics.compatibilityRawBytes, budget.limits.maxCompatibilityRawBytes],
-        ['compatibility gzip bytes', metrics.compatibilityGzipBytes, budget.limits.maxCompatibilityGzipBytes],
         ['sourcemap raw bytes', metrics.sourceMapRawBytes, budget.limits.maxSourceMapRawBytes],
         ['total raw bytes', metrics.totalRawBytes, budget.limits.maxTotalRawBytes],
     ];
@@ -412,7 +394,6 @@ function createClientManifest(artifacts, metadata, budget) {
 async function createBuildArtifacts({ devMode = false, outDir = OUT_DIR, budget } = {}) {
     const resolvedBudget = budget || JSON.parse(fs.readFileSync(BUDGET_PATH, 'utf8'));
     const results = await Promise.all([
-        esbuild.build(compatibilityOptions(devMode, outDir)),
         esbuild.build(bootstrapOptions(devMode, outDir)),
         esbuild.build(esmOptions(devMode, outDir)),
     ]);
@@ -460,8 +441,6 @@ function report(manifest, devMode) {
     console.log(
         `Built ${Object.keys(manifest.files).length + 1} deterministic dist files${devMode ? ' (dev)' : ''}\n`
         + `  build: ${manifest.buildId}\n`
-        + `  compatibility: ${kb(manifest.budgets.compatibilityRawBytes)} raw / `
-        + `${kb(manifest.budgets.compatibilityGzipBytes)} gzip\n`
         + `  ESM boot: ${manifest.budgets.bootRequests} request(s), `
         + `${kb(manifest.budgets.bootRawBytes)} raw / ${kb(manifest.budgets.bootGzipBytes)} gzip`,
     );

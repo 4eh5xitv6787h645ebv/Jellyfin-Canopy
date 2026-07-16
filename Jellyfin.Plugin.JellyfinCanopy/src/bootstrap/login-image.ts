@@ -2,7 +2,7 @@
 //
 // Out-of-band loader: compiled to its own dist/login-image.js IIFE and served
 // separately (js/plugin.js loads it pre-login, config-gated on EnableLoginImage).
-// It is NOT part of jc.bundle.js — it runs on the login page before the user is
+// It is not part of the authenticated ESM graph — it runs on the login page before the user is
 // authenticated and before the main bundle loads.
 //
 // Attaches JC.initializeLoginImage to the shared namespace. Behaviour is

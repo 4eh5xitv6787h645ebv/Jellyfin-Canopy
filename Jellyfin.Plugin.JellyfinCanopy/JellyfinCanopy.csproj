@@ -76,8 +76,8 @@
     <EmbeddedResource Include="..\css\ratings.css" Link="Assets\ratings.css" LogicalName="Jellyfin.Plugin.JellyfinCanopy.Assets.ratings.css"/>
   </ItemGroup>
 
-  <!-- Production client bundle: js/** compiled by esbuild into dist/jc.bundle.js
-       (scripts/build-bundle.js) on every build, then embedded so ConfigController
+  <!-- Production client modules compiled by esbuild into the manifest-owned dist/
+       inventory (scripts/build-bundle.js) on every build, then embedded so ConfigController
        can serve it at /JellyfinCanopy/dist/. dist/ is generated output — never
        committed (gitignored) — so the EmbeddedResource items are added INSIDE the
        target (after the files exist) rather than via a static glob, which would

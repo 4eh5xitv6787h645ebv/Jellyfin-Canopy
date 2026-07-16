@@ -154,7 +154,7 @@ jobs:
       - name: Type check (opt-in @ts-check files)
         run: npm run typecheck
 
-      # Builds dist/jc.bundle.js the same way the csproj BuildClientBundle target
+      # Builds the manifest-owned dist inventory the same way the csproj BuildClientBundle target
       # does on every dotnet build — catches bundle breakage (a bad entry in
       # allComponentScripts, an esbuild-incompatible construct) at PR time.
       - name: Client bundle (esbuild)

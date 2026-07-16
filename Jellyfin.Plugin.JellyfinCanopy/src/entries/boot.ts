@@ -1,5 +1,7 @@
 // Boot-critical platform only. Feature implementations remain outside this
 // graph and are imported through their manifest descriptors on demand.
+import type { JellyfinCanopyPublicApi } from '../facade';
+import type { JEGlobal } from '../types/jc';
 import '../core/navigation';
 import '../core/layout';
 import '../core/lifecycle';
@@ -24,6 +26,10 @@ import {
     type ClientRuntime,
     type ClientRuntimeOptions,
 } from '../core/client-runtime';
+
+type FrozenPublicApi = JEGlobal extends JellyfinCanopyPublicApi ? true : never;
+const publicApiContractIsFrozen: FrozenPublicApi = true;
+void publicApiContractIsFrozen;
 
 let descriptorsRegistered = false;
 
