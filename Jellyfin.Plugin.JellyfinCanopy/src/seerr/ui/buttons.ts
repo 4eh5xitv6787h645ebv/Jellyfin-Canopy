@@ -32,6 +32,13 @@ interface CapabilityStatus {
     userFound: boolean;
 }
 
+// The API cache owns its own config generation, but a status promise can
+// settle after validating generation B and before this module's fulfillment
+// handler runs. Fence the rendered continuation as well so a synchronous
+// config-C event cannot be followed by a stale B repaint in the next
+// microtask.
+let renderedCapabilityRefreshGeneration = 0;
+
 /**
  * Rebuild request controls already owned by the current identity. A 4K arrow
  * is a snapshot of both config and user-status, so leaving that node in place
@@ -79,12 +86,14 @@ export function reconcileRenderedCapabilityControls(status: CapabilityStatus): v
 }
 
 function refreshRenderedCapabilitiesForConfig(): void {
+    const refreshGeneration = ++renderedCapabilityRefreshGeneration;
     const identity = JC.identity.capture();
     if (!identity || !JC.identity.isCurrent(identity)) return;
     // Fail closed synchronously while the replacement source/status resolves.
     reconcileRenderedCapabilityControls({ active: false, userFound: false });
     void JC.seerrAPI!.checkUserStatus().then((status) => {
-        if (!JC.identity.isCurrent(identity)) return;
+        if (refreshGeneration !== renderedCapabilityRefreshGeneration
+            || !JC.identity.isCurrent(identity)) return;
         reconcileRenderedCapabilityControls(status);
     }).catch(() => {
         // Cancellation means a newer identity/config/navigation owns the next

@@ -3,7 +3,7 @@ import { JC } from '../../globals';
 
 describe('rendered Seerr 4K controls across config generations', () => {
     let capable = true;
-    let resolveStatus!: (status: { active: boolean; userFound: boolean }) => void;
+    let statusResolvers: Array<(status: { active: boolean; userFound: boolean }) => void>;
 
     beforeAll(async () => {
         document.body.replaceChildren();
@@ -28,9 +28,10 @@ describe('rendered Seerr 4K controls across config generations', () => {
         capable = true;
         JC.pluginConfig.SeerrEnable4KRequests = true;
         JC.pluginConfig.SeerrEnable4KTvRequests = true;
+        statusResolvers = [];
         JC.seerrAPI = {
             canRequest4k: () => capable,
-            checkUserStatus: vi.fn(() => new Promise((resolve) => { resolveStatus = resolve; })),
+            checkUserStatus: vi.fn(() => new Promise((resolve) => { statusResolvers.push(resolve); })),
         } as unknown as NonNullable<typeof JC.seerrAPI>;
     });
 
@@ -59,7 +60,9 @@ describe('rendered Seerr 4K controls across config generations', () => {
     }
 
     async function settle(status: { active: boolean; userFound: boolean }): Promise<void> {
-        resolveStatus(status);
+        const resolveStatus = statusResolvers.shift();
+        expect(resolveStatus).toBeTypeOf('function');
+        resolveStatus!(status);
         await Promise.resolve();
         await Promise.resolve();
     }
@@ -83,6 +86,32 @@ describe('rendered Seerr 4K controls across config generations', () => {
         window.dispatchEvent(new CustomEvent('jc:config-changed'));
         expect(has4k(movie)).toBe(false);
         expect(has4k(tv)).toBe(false);
+        await settle({ active: true, userFound: true });
+        expect(has4k(movie)).toBe(true);
+        expect(has4k(tv)).toBe(true);
+    });
+
+    it('does not let a settled prior generation repaint after the next config event', async () => {
+        const movie = renderCard('movie');
+        const tv = renderCard('tv');
+
+        window.dispatchEvent(new CustomEvent('jc:config-changed'));
+        expect(has4k(movie)).toBe(false);
+        expect(has4k(tv)).toBe(false);
+
+        // Resolve B, but dispatch C in the same turn before B's fulfillment
+        // microtask can repaint. C must remain the sole render owner.
+        const resolveB = statusResolvers.shift();
+        expect(resolveB).toBeTypeOf('function');
+        resolveB!({ active: true, userFound: true });
+        window.dispatchEvent(new CustomEvent('jc:config-changed'));
+        expect(has4k(movie)).toBe(false);
+        expect(has4k(tv)).toBe(false);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(has4k(movie)).toBe(false);
+        expect(has4k(tv)).toBe(false);
+
         await settle({ active: true, userFound: true });
         expect(has4k(movie)).toBe(true);
         expect(has4k(tv)).toBe(true);
