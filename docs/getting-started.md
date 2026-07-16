@@ -208,21 +208,21 @@ Do not wait for a success log to identify the path: the successful legacy-rewrit
 Run this Bash block from an account with `sudo`. It reads the real systemd service user, then takes the web directory from the running process's `--webdir` argument or `JELLYFIN_WEB_DIR` environment. Only when neither is present does it accept one unambiguous `index.html` from the installed `jellyfin-web` package.
 
 ```bash
+set -Eeuo pipefail
+
 service_name=jellyfin
 service_user="$(systemctl show "$service_name" --property=User --value)"
 service_pid="$(systemctl show "$service_name" --property=MainPID --value)"
 [ -n "$service_user" ] || service_user=root
 case "$service_pid" in ''|0|*[!0-9]*) echo "Jellyfin must be running for safe path discovery" >&2; exit 1;; esac
 
-web_dir=
-expect_web_dir=false
-while IFS= read -r -d '' argument; do
-    if [ "$expect_web_dir" = true ]; then web_dir="$argument"; expect_web_dir=false; continue; fi
-    case "$argument" in
-        --webdir=*) web_dir="${argument#--webdir=}" ;;
-        --webdir) expect_web_dir=true ;;
-    esac
-done < <(sudo cat "/proc/$service_pid/cmdline")
+web_dir="$(sudo awk '
+    BEGIN { RS = "\0" }
+    expect_web_dir { print; found = 1; exit }
+    $0 == "--webdir" { expect_web_dir = 1; next }
+    index($0, "--webdir=") == 1 { print substr($0, 10); found = 1; exit }
+    END { if (expect_web_dir && !found) exit 2 }
+' "/proc/$service_pid/cmdline")"
 
 if [ -z "$web_dir" ]; then
     web_dir="$(sudo awk 'BEGIN { RS="\0" } /^JELLYFIN_WEB_DIR=/ { sub(/^JELLYFIN_WEB_DIR=/, ""); print; exit }' "/proc/$service_pid/environ")"
@@ -246,29 +246,60 @@ backup_dir="$HOME/jellyfin-canopy-index-backup-$(date +%Y%m%dT%H%M%S)"
 install -d -m 0700 -- "$backup_dir"
 sudo cp --preserve=all -- "$index_path" "$backup_dir/index.html.original"
 sudo getfacl --absolute-names -- "$index_path" "$index_dir" > "$backup_dir/access.acl"
+sudo test -s "$backup_dir/index.html.original"
+test -s "$backup_dir/access.acl"
+sudo cmp --silent -- "$index_path" "$backup_dir/index.html.original"
+sudo setfacl --test --restore="$backup_dir/access.acl" >/dev/null
 sudo stat -c '%U:%G %a %n' -- "$index_path" "$index_dir"
 printf 'Service principal: %s\nResolved index: %s\nRollback data: %s\n' "$service_user" "$index_path" "$backup_dir"
 read -r -p 'Review those values, then type YES to add the narrow ACLs: ' confirmation
 [ "$confirmation" = YES ] || { echo "No permissions changed" >&2; exit 1; }
 
+restore_after_partial_grant() {
+    local original_status="$1"
+    local restore_failed=0
+    trap - ERR INT TERM
+    set +e
+    sudo cp --preserve=all -- "$backup_dir/index.html.original" "$index_path" || restore_failed=1
+    sudo setfacl --restore="$backup_dir/access.acl" || restore_failed=1
+    set -e
+    if [ "$restore_failed" -ne 0 ]; then
+        echo "CRITICAL: an ACL grant failed and automatic restoration was incomplete; keep legacy mode disabled" >&2
+        exit 1
+    fi
+    echo "ACL grant failed; original index.html and ACLs were restored" >&2
+    exit "$original_status"
+}
+trap 'restore_after_partial_grant $?' ERR
+trap 'restore_after_partial_grant 130' INT
+trap 'restore_after_partial_grant 143' TERM
 sudo setfacl -m "u:${service_user}:r" -- "$index_path"
 sudo setfacl -m "u:${service_user}:rwx" -- "$index_dir"
+trap - ERR INT TERM
 ```
 
-`getfacl` and `setfacl` must be available. The file ACE permits the initial read. The non-inherited directory ACE permits the service to create and write the temporary sibling, replace `index.html`, and delete a leftover temporary file. Directory `rwx` also permits manipulating other immediate children, which is the unavoidable Linux directory boundary for an atomic sibling rename; it is not applied recursively.
+`getfacl` and `setfacl` must be available. The block stops before mutation unless the content copy is byte-identical and the saved ACL document passes `setfacl --test`. If either narrow grant fails, its error/signal trap restores both the original content and both ACLs before exiting. The file ACE permits the initial read. The non-inherited directory ACE permits the service to create and write the temporary sibling, replace `index.html`, and delete a leftover temporary file. Directory `rwx` also permits manipulating other immediate children, which is the unavoidable Linux directory boundary for an atomic sibling rename; it is not applied recursively.
 
 Keep the printed backup directory. To roll back, disable the legacy setting first and run:
 
 ```bash
+set -Eeuo pipefail
+
 read -r -p 'Paste the exact Rollback data path: ' backup_dir
 [ -f "$backup_dir/access.acl" ] && [ -f "$backup_dir/index.html.original" ] || { echo "Invalid rollback directory" >&2; exit 1; }
+sudo test -s "$backup_dir/index.html.original"
+test -s "$backup_dir/access.acl"
+sudo setfacl --test --restore="$backup_dir/access.acl" >/dev/null
 index_path="$(awk '/^# file: / { print substr($0, 9); exit }' "$backup_dir/access.acl")"
-sudo systemctl stop jellyfin
-trap 'sudo systemctl start jellyfin' EXIT
+[ -n "$index_path" ] || { echo "Rollback ACL data does not name index.html" >&2; exit 1; }
+was_running=false
+if sudo systemctl is-active --quiet jellyfin; then
+    was_running=true
+    sudo systemctl stop jellyfin
+fi
 sudo cp --preserve=all -- "$backup_dir/index.html.original" "$index_path"
 sudo setfacl --restore="$backup_dir/access.acl"
-sudo systemctl start jellyfin
-trap - EXIT
+if [ "$was_running" = true ]; then sudo systemctl start jellyfin; fi
 ```
 
 ##### Windows native service
@@ -310,39 +341,73 @@ if ($Confirmation -cne 'YES') { throw 'No permissions changed.' }
 
 $WasRunning = $Service.State -eq 'Running'
 if ($WasRunning) { Stop-Service -Name $Service.Name -ErrorAction Stop }
+$SafeToRestart = $true
 try {
-    Copy-Item -LiteralPath $IndexPath -Destination (Join-Path $BackupDirectory 'index.html.original') -ErrorAction Stop
+    $BackupPath = Join-Path $BackupDirectory 'index.html.original'
+    $StatePath = Join-Path $BackupDirectory 'state.json'
+    Copy-Item -LiteralPath $IndexPath -Destination $BackupPath -ErrorAction Stop
+    if ((Get-FileHash -LiteralPath $IndexPath).Hash -ne (Get-FileHash -LiteralPath $BackupPath).Hash) {
+        throw 'The index.html content backup did not verify.'
+    }
+    $IndexSddl = (Get-Acl -LiteralPath $IndexPath).Sddl
+    $DirectorySddl = (Get-Acl -LiteralPath $IndexDirectory).Sddl
     [ordered]@{
         IndexPath = $IndexPath
         IndexDirectory = $IndexDirectory
         ServiceName = $Service.Name
         Principal = $Principal
-        IndexSddl = (Get-Acl -LiteralPath $IndexPath).Sddl
-        DirectorySddl = (Get-Acl -LiteralPath $IndexDirectory).Sddl
-    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $BackupDirectory 'state.json') -Encoding utf8
+        WasRunning = $WasRunning
+        IndexSddl = $IndexSddl
+        DirectorySddl = $DirectorySddl
+    } | ConvertTo-Json | Set-Content -LiteralPath $StatePath -Encoding utf8
+    $VerifiedState = Get-Content -LiteralPath $StatePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if ($VerifiedState.IndexPath -ne $IndexPath -or $VerifiedState.IndexSddl -ne $IndexSddl `
+        -or $VerifiedState.DirectorySddl -ne $DirectorySddl -or $VerifiedState.WasRunning -isnot [bool]) {
+        throw 'The ACL rollback state did not verify.'
+    }
 
-    $FileAcl = Get-Acl -LiteralPath $IndexPath
-    $FileRule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-        $Principal, [System.Security.AccessControl.FileSystemRights]::Read,
-        [System.Security.AccessControl.InheritanceFlags]::None,
-        [System.Security.AccessControl.PropagationFlags]::None,
-        [System.Security.AccessControl.AccessControlType]::Allow)
-    $FileAcl.AddAccessRule($FileRule)
-    Set-Acl -LiteralPath $IndexPath -AclObject $FileAcl
+    $SafeToRestart = $false
+    try {
+        $FileAcl = Get-Acl -LiteralPath $IndexPath
+        $FileRule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+            $Principal, [System.Security.AccessControl.FileSystemRights]::Read,
+            [System.Security.AccessControl.InheritanceFlags]::None,
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow)
+        $FileAcl.AddAccessRule($FileRule)
+        Set-Acl -LiteralPath $IndexPath -AclObject $FileAcl -ErrorAction Stop
 
-    $DirectoryRights = [System.Security.AccessControl.FileSystemRights]::ReadAndExecute `
-        -bor [System.Security.AccessControl.FileSystemRights]::Write `
-        -bor [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
-    $DirectoryAcl = Get-Acl -LiteralPath $IndexDirectory
-    $DirectoryRule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-        $Principal, $DirectoryRights,
-        [System.Security.AccessControl.InheritanceFlags]::None,
-        [System.Security.AccessControl.PropagationFlags]::None,
-        [System.Security.AccessControl.AccessControlType]::Allow)
-    $DirectoryAcl.AddAccessRule($DirectoryRule)
-    Set-Acl -LiteralPath $IndexDirectory -AclObject $DirectoryAcl
+        $DirectoryRights = [System.Security.AccessControl.FileSystemRights]::ReadAndExecute `
+            -bor [System.Security.AccessControl.FileSystemRights]::Write `
+            -bor [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
+        $DirectoryAcl = Get-Acl -LiteralPath $IndexDirectory
+        $DirectoryRule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+            $Principal, $DirectoryRights,
+            [System.Security.AccessControl.InheritanceFlags]::None,
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow)
+        $DirectoryAcl.AddAccessRule($DirectoryRule)
+        Set-Acl -LiteralPath $IndexDirectory -AclObject $DirectoryAcl -ErrorAction Stop
+        $SafeToRestart = $true
+    } catch {
+        $GrantFailure = $_
+        try {
+            Copy-Item -LiteralPath $BackupPath -Destination $IndexPath -Force -ErrorAction Stop
+            $FileAcl = Get-Acl -LiteralPath $IndexPath
+            $FileAcl.SetSecurityDescriptorSddlForm($IndexSddl)
+            Set-Acl -LiteralPath $IndexPath -AclObject $FileAcl -ErrorAction Stop
+            $DirectoryAcl = Get-Acl -LiteralPath $IndexDirectory
+            $DirectoryAcl.SetSecurityDescriptorSddlForm($DirectorySddl)
+            Set-Acl -LiteralPath $IndexDirectory -AclObject $DirectoryAcl -ErrorAction Stop
+            $SafeToRestart = $true
+        } catch {
+            Write-Error 'ACL grant failed and automatic restoration was incomplete; keep legacy mode disabled.'
+            throw
+        }
+        throw $GrantFailure
+    }
 } finally {
-    if ($WasRunning) { Start-Service -Name $Service.Name }
+    if ($WasRunning -and $SafeToRestart) { Start-Service -Name $Service.Name }
 }
 ```
 
@@ -351,19 +416,33 @@ The file rule is read-only. The non-inherited parent-directory rule supplies the
 ```powershell
 $BackupDirectory = Read-Host 'Paste the exact Rollback data path printed by the grant block'
 $State = Get-Content -LiteralPath (Join-Path $BackupDirectory 'state.json') -Raw | ConvertFrom-Json
-Stop-Service -Name $State.ServiceName -ErrorAction Stop
+if ($State.WasRunning -isnot [bool]) { throw 'Rollback data does not contain the original service state.' }
+$WasRunning = [bool]$State.WasRunning
+$Service = Get-Service -Name $State.ServiceName -ErrorAction Stop
+if ($Service.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Running) {
+    Stop-Service -Name $State.ServiceName -ErrorAction Stop
+}
+$RestoreSucceeded = $false
 try {
     Copy-Item -LiteralPath (Join-Path $BackupDirectory 'index.html.original') -Destination $State.IndexPath -Force -ErrorAction Stop
     $FileAcl = Get-Acl -LiteralPath $State.IndexPath
     $FileAcl.SetSecurityDescriptorSddlForm($State.IndexSddl)
-    Set-Acl -LiteralPath $State.IndexPath -AclObject $FileAcl
+    Set-Acl -LiteralPath $State.IndexPath -AclObject $FileAcl -ErrorAction Stop
     $DirectoryAcl = Get-Acl -LiteralPath $State.IndexDirectory
     $DirectoryAcl.SetSecurityDescriptorSddlForm($State.DirectorySddl)
-    Set-Acl -LiteralPath $State.IndexDirectory -AclObject $DirectoryAcl
+    Set-Acl -LiteralPath $State.IndexDirectory -AclObject $DirectoryAcl -ErrorAction Stop
+    if ((Get-FileHash -LiteralPath $State.IndexPath).Hash -ne (Get-FileHash -LiteralPath (Join-Path $BackupDirectory 'index.html.original')).Hash `
+        -or (Get-Acl -LiteralPath $State.IndexPath).Sddl -ne $State.IndexSddl `
+        -or (Get-Acl -LiteralPath $State.IndexDirectory).Sddl -ne $State.DirectorySddl) {
+        throw 'Restored content or ACL verification failed.'
+    }
+    $RestoreSucceeded = $true
 } finally {
-    Start-Service -Name $State.ServiceName
+    if ($RestoreSucceeded -and $WasRunning) { Start-Service -Name $State.ServiceName }
 }
 ```
+
+`WasRunning` is captured before the grant block stops anything. Rollback stops a currently running service while it restores, but starts it again only after content and both ACLs verify successfully **and** that saved value was `true`; a service that was originally stopped remains stopped.
 
 ##### Docker and other immutable containers
 

@@ -18,8 +18,16 @@ const UNSAFE_GUIDANCE = [
         pattern: /\b(?:chown|chmod)\b[^\n]*(?:\s-R\b|\s--recursive\b)[^\n]*(?:jellyfin|web)/giu,
     },
     {
+        name: 'recursive Linux ACL grant on a Jellyfin package tree',
+        pattern: /\bsetfacl\b(?=[^\n]*(?:\s--recursive\b|\s-[^\s]*R[^\s]*))(?=[^\n]*(?:\s--(?:modify|modify-file|set|set-file)\b|\s-[a-z]*[mM][a-z]*\b))(?=[^\n]*(?:\bjellyfin-web\b|\/(?:usr\/(?:lib|share)|opt|app)\/jellyfin(?:\/|$)|\/jellyfin\/(?:jellyfin-web|web)(?:\/|$)))[^\n]*/giu,
+    },
+    {
         name: 'recursive Windows permission inheritance',
         pattern: /apply\s+(?:the change\s+)?to\s+all\s+subfolders\s+and\s+files/giu,
+    },
+    {
+        name: 'recursive Windows ACL grant on a Jellyfin package tree',
+        pattern: /\bicacls\b(?=[^\n]*\/grant(?::r)?\b)(?=[^\n]*\/t\b)(?=[^\n]*(?:program files[\\/]+jellyfin|jellyfin-web|[\\/]jellyfin[\\/]+server\b))[^\n]*/giu,
     },
     {
         name: 'broad write grant on the Jellyfin install folder',
@@ -50,7 +58,7 @@ function lineNumber(source, index) {
 function collectGuidanceFiles(root = ROOT) {
     const files = [];
     const excludedDirectories = new Set(['.git', 'bin', 'coverage', 'node_modules', 'obj', 'site']);
-    const guidanceExtensions = new Set(['.md', '.sh', '.yaml', '.yml']);
+    const guidanceExtensions = new Set(['.bash', '.bat', '.cmd', '.md', '.ps1', '.sh', '.yaml', '.yml']);
     const visit = (directory) => {
         for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
             if (entry.isDirectory() && excludedDirectories.has(entry.name)) continue;
@@ -171,7 +179,9 @@ function checkDocumentationContract(root = ROOT) {
         ['docs/getting-started.md', /creates and writes a temporary sibling, then atomically replaces the destination/, 'explain the exact legacy directory operations'],
         ['docs/getting-started.md', /Do not wait for a success log to identify the path/, 'use deterministic legacy-path discovery instead of a nonexistent success-path log'],
         ['docs/getting-started.md', /systemctl show[\s\S]*setfacl -m/, 'provide concrete Linux service discovery and narrow ACL commands'],
+        ['docs/getting-started.md', /set -Eeuo pipefail[\s\S]*cmp --silent[\s\S]*setfacl --test --restore[\s\S]*restore_after_partial_grant/, 'make Linux backup verification and partial-grant rollback fail closed'],
         ['docs/getting-started.md', /Get-CimInstance Win32_Service[\s\S]*FileSystemAccessRule/, 'provide concrete Windows service discovery and narrow ACL commands'],
+        ['docs/getting-started.md', /WasRunning = \$WasRunning[\s\S]*\$RestoreSucceeded = \$false[\s\S]*\$RestoreSucceeded -and \$WasRunning/, 'preserve the original Windows service state through successful rollback'],
         ['docs/getting-started.md', /Docker has no supported legacy fallback/, 'prohibit unsupported container copy and bind-mount workarounds'],
         ['docs/getting-started.md', /best-effort attempt to remove a stale on-disk Canopy tag/, 'explain the non-fatal migration cleanup attempt'],
         ['docs/getting-started.md', /`index\.html` is package-owned/, 'explain upgrade and package ownership semantics'],
