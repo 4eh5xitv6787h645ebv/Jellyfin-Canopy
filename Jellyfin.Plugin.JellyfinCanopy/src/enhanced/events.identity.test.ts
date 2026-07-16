@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
 
+let installEnhancedEvents: typeof import('./events').installEnhancedEvents;
+
 describe('enhanced event process lifecycle', () => {
     beforeAll(async () => {
         window.Events = { on: vi.fn() } as unknown as JellyfinEvents;
-        await import('./events');
+        ({ installEnhancedEvents } = await import('./events'));
     });
 
     afterAll(() => {
@@ -44,6 +46,9 @@ describe('enhanced event process lifecycle', () => {
         surface.handleLongPressCancel = aCancel;
 
         const addListener = vi.spyOn(document, 'addEventListener');
+        const removeListener = vi.spyOn(document, 'removeEventListener');
+        const disposeA = installEnhancedEvents();
+        const keyListenerIdentity = JC.keyListener;
         JC.initializeCanopyScript!();
         const keydownInstallCount = addListener.mock.calls.filter(([type]) => type === 'keydown').length;
         JC.initializeCanopyScript!();
@@ -65,6 +70,7 @@ describe('enhanced event process lifecycle', () => {
         JC.identity.transition('events-server-b', 'events-user-b', 'enhanced-events-test');
         expect(aCancel).toHaveBeenCalledTimes(1);
         expect(panelCleanup).toHaveBeenCalledTimes(1);
+        expect(removeListener.mock.calls.some(([type]) => type === 'keydown')).toBe(true);
 
         const bDown = vi.fn();
         surface.handleLongPressDown = bDown;
@@ -76,7 +82,16 @@ describe('enhanced event process lifecycle', () => {
 
         document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
         expect(aDown).toHaveBeenCalledTimes(1);
+        expect(bDown).not.toHaveBeenCalled();
+
+        disposeA();
+        const disposeB = installEnhancedEvents();
+        JC.initializeCanopyScript!();
+        expect(JC.keyListener).toBe(keyListenerIdentity);
+        document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
         expect(bDown).toHaveBeenCalledTimes(1);
+        disposeB();
         addListener.mockRestore();
+        removeListener.mockRestore();
     });
 });

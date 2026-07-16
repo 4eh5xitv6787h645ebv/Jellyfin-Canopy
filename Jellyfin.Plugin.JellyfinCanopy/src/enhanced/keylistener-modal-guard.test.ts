@@ -8,6 +8,7 @@ import '../core/ui-kit'; // real toast/escapeHtml so the control case runs clean
 
 describe('keyListener modal guard (INT-1)', () => {
     let keyListener: EventListener;
+    let disposeEvents: (() => void) | undefined;
 
     beforeEach(async () => {
         vi.resetModules();
@@ -18,7 +19,8 @@ describe('keyListener modal guard (INT-1)', () => {
         // The listener falls through to a video-page section after the global
         // shortcut chain; stub so the control case doesn't throw on it.
         JC.isVideoPage = () => false;
-        await import('./events');
+        const events = await import('./events');
+        disposeEvents = events.installEnhancedEvents();
         keyListener = (window.JellyfinCanopy as unknown as { keyListener: EventListener }).keyListener;
         document.addEventListener('keydown', keyListener);
         window.location.hash = '#/start';
@@ -27,6 +29,8 @@ describe('keyListener modal guard (INT-1)', () => {
 
     afterEach(() => {
         document.removeEventListener('keydown', keyListener);
+        disposeEvents?.();
+        disposeEvents = undefined;
         document.body.className = '';
     });
 
