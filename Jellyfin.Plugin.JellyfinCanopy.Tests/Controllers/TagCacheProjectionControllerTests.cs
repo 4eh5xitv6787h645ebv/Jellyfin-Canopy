@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Security.Claims;
 using System.Text.Json;
@@ -60,7 +61,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
-        public void LegacySinceOnlyRequest_GetsFullPersonalizedSnapshot_WhileCursorClientGetsDelta()
+        public void LegacySinceOnlyRequest_GetsFullSnapshot_WhileProjectionAwareTimestampClientGetsDelta()
         {
             using var harness = new Harness();
             var itemId = Guid.NewGuid().ToString("N");
@@ -80,8 +81,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.Equal(1, legacy.GetProperty("count").GetInt32());
             Assert.True(legacy.GetProperty("items").TryGetProperty(itemId, out _));
 
-            // A new client carrying both cursor halves keeps the real content delta;
-            // the old entry is correctly excluded by ?since=50.
+            // The immediately preceding projection-aware client still carries a
+            // timestamp rather than a content cursor. Keep that bounded migration
+            // shape until its next full load installs the revision protocol.
             var current = harness.Projection.GetDelta(
                 harness.User.Id,
                 clientEpoch: null,
@@ -131,6 +133,73 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.Equal(1, payload.GetProperty("projectionRevision").GetInt64());
         }
 
+        [Fact]
+        public void RemovalOnlyContentDelta_ReturnsAuthorizedTombstoneAndLaterRevision()
+        {
+            using var harness = new Harness();
+            var itemId = Guid.NewGuid().ToString("N");
+            harness.Cache.SeedUserAccessCacheForTest(harness.User.Id.ToString("N"), itemId);
+            harness.Cache.SeedEntryForTest(itemId, new TagCacheEntry { Type = "Movie" });
+
+            var full = Payload(harness.Controller.GetTagCache(harness.User.Id));
+            var projectionEpoch = full.GetProperty("projectionEpoch").GetString();
+            var projectionRevision = full.GetProperty("projectionRevision").GetInt64();
+            var contentEpoch = full.GetProperty("contentEpoch").GetString();
+            var contentRevision = full.GetProperty("contentRevision").GetInt64();
+            Assert.True(full.GetProperty("items").TryGetProperty(itemId, out _));
+
+            harness.Cache.PublishRemovalForTest(itemId);
+            var delta = Payload(harness.Controller.GetTagCache(
+                harness.User.Id,
+                contentEpoch: contentEpoch,
+                contentRevision: contentRevision,
+                projectionEpoch: projectionEpoch,
+                projectionRevision: projectionRevision));
+
+            Assert.False(delta.GetProperty("reset").GetBoolean());
+            Assert.Equal(contentRevision + 1, delta.GetProperty("contentRevision").GetInt64());
+            Assert.Equal(new[] { itemId }, delta.GetProperty("removedIds").EnumerateArray().Select(static id => id.GetString()));
+            Assert.Equal(0, delta.GetProperty("count").GetInt32());
+            Assert.Empty(delta.GetProperty("items").EnumerateObject());
+        }
+
+        [Fact]
+        public void ProjectionOnlyRow_EstablishesAuthorizationForLaterContentTombstone()
+        {
+            using var harness = new Harness();
+            var movie = new StubMovie { Id = Guid.NewGuid() };
+            var itemId = movie.Id.ToString("N");
+            harness.Cache.SeedUserAccessCacheForTest(harness.User.Id.ToString("N"));
+
+            var full = Payload(harness.Controller.GetTagCache(harness.User.Id));
+            harness.Library.GetItemByIdUserHook = (id, user) =>
+                id == movie.Id && ReferenceEquals(user, harness.User) ? movie : null;
+            harness.Cache.SeedEntryForTest(itemId, new TagCacheEntry { Type = "Movie" });
+            harness.UserData.RaiseUserDataSaved(
+                harness.User.Id,
+                movie,
+                MediaBrowser.Model.Entities.UserDataSaveReason.TogglePlayed);
+
+            var projected = Payload(harness.Controller.GetTagCache(
+                harness.User.Id,
+                projectionEpoch: full.GetProperty("projectionEpoch").GetString(),
+                projectionRevision: full.GetProperty("projectionRevision").GetInt64(),
+                projectionOnly: true));
+            Assert.True(projected.GetProperty("items").TryGetProperty(itemId, out _));
+
+            harness.Cache.PublishRemovalForTest(itemId);
+            var removed = Payload(harness.Controller.GetTagCache(
+                harness.User.Id,
+                contentEpoch: full.GetProperty("contentEpoch").GetString(),
+                contentRevision: full.GetProperty("contentRevision").GetInt64(),
+                projectionEpoch: projected.GetProperty("projectionEpoch").GetString(),
+                projectionRevision: projected.GetProperty("projectionRevision").GetInt64()));
+
+            Assert.Equal(
+                new[] { itemId },
+                removed.GetProperty("removedIds").EnumerateArray().Select(static id => id.GetString()));
+        }
+
         private static JsonElement Payload(IActionResult result)
         {
             var ok = Assert.IsType<OkObjectResult>(result);
@@ -152,7 +221,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
                 User = new User("projection-controller", "Provider", "PasswordProvider");
                 var users = new StubUserManager(User);
-                var library = new CountingLibraryManager();
+                Library = new CountingLibraryManager();
                 UserData = new StubUserDataManager();
                 var appPaths = new StubAppPaths(_tempDir);
                 var config = new PluginConfiguration
@@ -174,12 +243,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     NullLogger<RequestIdentityService>.Instance);
                 var resolver = new SpoilerUserResolver(
                     userConfig,
-                    library,
+                    Library,
                     NullLogger<SpoilerUserResolver>.Instance,
                     identity);
 
                 Cache = new TagCacheService(
-                    library,
+                    Library,
                     appPaths,
                     NullLogger<TagCacheService>.Instance);
                 _projection = new TagCacheProjectionRevisionService(
@@ -193,7 +262,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     new SeerrCache(configProvider),
                     configProvider,
                     Cache,
-                    library,
+                    Library,
                     UserData,
                     resolver,
                     userConfig,
@@ -212,6 +281,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             public User User { get; }
 
             public TagCacheService Cache { get; }
+
+            public CountingLibraryManager Library { get; }
 
             public TagCacheProjectionRevisionService Projection { get; }
 

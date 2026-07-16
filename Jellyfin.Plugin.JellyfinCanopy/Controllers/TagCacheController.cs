@@ -86,6 +86,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         public IActionResult GetTagCache(
             Guid userId,
             [FromQuery] long? since = null,
+            [FromQuery] string? contentEpoch = null,
+            [FromQuery] long? contentRevision = null,
             [FromQuery] string? projectionEpoch = null,
             [FromQuery] long? projectionRevision = null,
             [FromQuery] bool projectionOnly = false)
@@ -108,12 +110,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             // user's spoiler policy and revision journal.
             var effectiveUserId = user.Id;
 
-            // Capture the shared-content cursor BEFORE selecting any cache rows.
-            // A reconcile can atomically swap the cache (or a flush can mutate it)
-            // while this request is being projected. Returning a later timestamp
-            // with an earlier row snapshot would make the client's next ?since=
-            // request permanently skip the intervening content change. An earlier
-            // cursor may cause one harmless duplicate delta; it cannot lose data.
+            // Retain the legacy cache metadata for older clients and diagnostics.
+            // Current ordering is owned independently by contentEpoch/revision in
+            // TagCacheService; wall-clock timestamp no longer decides delta order.
             var contentVersion = _tagCacheService.Version;
             var contentTimestamp = _tagCacheService.LastModified;
 
@@ -138,6 +137,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return ProjectionResetResponse(
                     effectiveUserId,
                     projection,
+                    _tagCacheService.GetCurrentContentControl(),
                     contentVersion,
                     contentTimestamp);
             }
@@ -146,10 +146,46 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             // They cannot prove which watched-state journal revisions they already
             // hold, so the backward-safe answer is one full personalized snapshot.
             // New clients always send epoch+revision and retain the bounded delta.
-            var contentSince = legacySinceOnly ? null : since;
-            var items = projectionOnly
-                ? new Dictionary<string, Model.TagCacheEntry>()
-                : _tagCacheService.GetCacheForUser(user, contentSince);
+            Services.TagCacheService.ContentDelta content;
+            if (projectionOnly)
+            {
+                content = _tagCacheService.GetCurrentContentControl();
+            }
+            else if (contentEpoch != null || contentRevision.HasValue)
+            {
+                content = _tagCacheService.GetContentDeltaForUser(user, contentEpoch, contentRevision);
+            }
+            else if (since.HasValue && !legacySinceOnly)
+            {
+                // Compatibility for the immediately preceding projection-aware
+                // bundle: retain its timestamp delta while teaching it the new
+                // content cursor in this response. Current clients send the exact
+                // epoch/revision pair and never take this full-cache-scan path.
+                content = _tagCacheService.GetCurrentContentControl();
+                content = new Services.TagCacheService.ContentDelta(
+                    content.Epoch,
+                    content.Revision,
+                    resetRequired: false,
+                    _tagCacheService.GetCacheForUser(user, since),
+                    Array.Empty<string>(),
+                    journalRowsVisited: 0);
+            }
+            else
+            {
+                content = _tagCacheService.GetFullContentForUser(user);
+            }
+
+            if (content.ResetRequired)
+            {
+                return ContentResetResponse(
+                    effectiveUserId,
+                    projection,
+                    content,
+                    contentVersion,
+                    contentTimestamp);
+            }
+
+            var items = content.Items;
             var projectionIds = new HashSet<string>(projection.ItemIds, StringComparer.Ordinal);
             ReplaceProjectionEntries(items, user, projection.ItemIds);
 
@@ -178,6 +214,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     return ProjectionResetResponse(
                         effectiveUserId,
                         afterStrip,
+                        content,
                         contentVersion,
                         contentTimestamp);
                 }
@@ -208,9 +245,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return ProjectionResetResponse(
                     effectiveUserId,
                     latest,
+                    content,
                     contentVersion,
                     contentTimestamp);
             }
+
+            // Projection-only requests can introduce a row that was not part of
+            // the client's last content snapshot (for example, a newly-added item
+            // whose watched state changed first). Record the final emitted ids so
+            // a later content deletion may return an authorized tombstone. Keep
+            // upserts and removals disjoint if access changed during projection
+            // stabilization; the final personalized row wins this response.
+            _tagCacheService.PublishServedContentForUser(user, items.Keys);
+            var removedIds = content.RemovedIds
+                .Where(itemId => !items.ContainsKey(itemId))
+                .ToArray();
 
             return Ok(new
             {
@@ -218,6 +267,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 timestamp = contentTimestamp,
                 count = items.Count,
                 items,
+                contentEpoch = content.Epoch,
+                contentRevision = content.Revision,
+                contentReset = false,
+                removedIds,
                 projectionUserId = effectiveUserId.ToString("N"),
                 projectionEpoch = projection.Epoch,
                 projectionRevision = projection.Revision,
@@ -230,6 +283,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         private IActionResult ProjectionResetResponse(
             Guid userId,
             Services.TagCacheProjectionRevisionService.ProjectionDelta projection,
+            Services.TagCacheService.ContentDelta content,
             long contentVersion,
             long contentTimestamp)
         {
@@ -239,10 +293,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 timestamp = contentTimestamp,
                 count = 0,
                 items = new Dictionary<string, Model.TagCacheEntry>(),
+                contentEpoch = content.Epoch,
+                contentRevision = content.Revision,
+                contentReset = false,
+                removedIds = Array.Empty<string>(),
                 projectionUserId = userId.ToString("N"),
                 projectionEpoch = projection.Epoch,
                 projectionRevision = projection.Revision,
                 projectionReset = true,
+                reset = true,
+                projectionIds = Array.Empty<string>()
+            });
+        }
+
+        private IActionResult ContentResetResponse(
+            Guid userId,
+            Services.TagCacheProjectionRevisionService.ProjectionDelta projection,
+            Services.TagCacheService.ContentDelta content,
+            long contentVersion,
+            long contentTimestamp)
+        {
+            return Ok(new
+            {
+                version = contentVersion,
+                timestamp = contentTimestamp,
+                count = 0,
+                items = new Dictionary<string, Model.TagCacheEntry>(),
+                contentEpoch = content.Epoch,
+                contentRevision = content.Revision,
+                contentReset = true,
+                removedIds = Array.Empty<string>(),
+                projectionUserId = userId.ToString("N"),
+                projectionEpoch = projection.Epoch,
+                projectionRevision = projection.Revision,
+                projectionReset = false,
                 reset = true,
                 projectionIds = Array.Empty<string>()
             });

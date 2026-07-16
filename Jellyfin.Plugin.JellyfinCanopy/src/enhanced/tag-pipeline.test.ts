@@ -9,11 +9,14 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
 import { getItemCached } from './helpers';
 import {
+    applyContentResponse,
+    decideContentResponse,
     decideProjectionResponse,
     extractUserDataChangedIds,
     isListViewRow,
     normalizeProjectionKey,
     readProjectionIdentity,
+    readContentIdentity,
     TagProjectionDependencyIndex,
 } from './tag-pipeline';
 
@@ -175,6 +178,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
                 return Promise.resolve({
                     version: 1,
                     timestamp: 100,
+                    contentEpoch: 'content-process-1',
+                    contentRevision: 1,
                     items: {
                         [episode]: { Type: 'Episode', SeriesId: series, SeasonNumber: 2, label: 'episode' },
                         [siblingEpisode]: { Type: 'Episode', SeriesId: series, SeasonNumber: 2, label: 'sibling' },
@@ -265,6 +270,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
         requestResolvers[0]({
             version: 1,
             timestamp: 100,
+            contentEpoch: 'content-process-1',
+            contentRevision: 1,
             items: {
                 [episode]: { Type: 'Episode', SeriesId: series, SeasonNumber: 2 },
                 [season]: { Type: 'Season', SeriesId: series, SeasonNumber: 2 },
@@ -281,6 +288,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
         requestResolvers[1]({
             version: 1,
             timestamp: 100,
+            contentEpoch: 'content-process-1',
+            contentRevision: 1,
             items: {
                 [episode]: { Type: 'Episode', SeriesId: series, SeasonNumber: 2 },
                 [siblingEpisode]: { Type: 'Episode', SeriesId: series, SeasonNumber: 2 },
@@ -320,6 +329,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
         const ajax = vi.spyOn(ApiClient, 'ajax').mockResolvedValue({
             version: 1,
             timestamp: 100,
+            contentEpoch: 'owner-content-process',
+            contentRevision: 1,
             items: { [itemId]: { Type: 'Movie', label: 'owner-a-secret' } },
             projectionUserId: userA,
             projectionEpoch: 'owner-process',
@@ -388,6 +399,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
                 return Promise.resolve({
                     version: 1,
                     timestamp: 100,
+                    contentEpoch: 'helper-content-process',
+                    contentRevision: 1,
                     items: { [itemId]: { Type: 'Movie' } },
                     projectionUserId: userA,
                     projectionEpoch: 'helper-process',
@@ -400,6 +413,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
                 return Promise.resolve({
                     version: 1,
                     timestamp: 100,
+                    contentEpoch: 'helper-content-process',
+                    contentRevision: 1,
                     items: {},
                     projectionUserId: userA,
                     projectionEpoch: 'helper-process',
@@ -468,6 +483,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
                 return Promise.resolve({
                     version: 1,
                     timestamp: 100,
+                    contentEpoch: 'nav-content-process',
+                    contentRevision: 1,
                     items: { [itemId]: { label: 'initial' } },
                     projectionUserId: userA,
                     projectionEpoch: 'nav-process',
@@ -482,6 +499,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
                 return Promise.resolve({
                     version: 1,
                     timestamp: 200,
+                    contentEpoch: 'nav-content-process',
+                    contentRevision: 1,
                     items: { [itemId]: { label: 'watched-secret' } },
                     projectionUserId: userA,
                     projectionEpoch: 'nav-process',
@@ -543,8 +562,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
         expect(document.querySelector('.navigation-projection-secret')).toBeNull();
 
         await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(3));
-        expect(urls[2]).toContain('since=100');
-        expect(urls[2]).not.toContain('since=200');
+        expect(urls[2]).toContain('contentEpoch=nav-content-process');
+        expect(urls[2]).toContain('contentRevision=1');
 
         // A second navigation supersedes the first validation. Its gate must not
         // be released by nav A's delayed but otherwise valid r2 response.
@@ -553,12 +572,14 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
         mountCard();
         JC.tagPipeline!.scheduleScan?.();
         await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(4));
-        expect(urls[3]).toContain('since=100');
+        expect(urls[3]).toContain('contentRevision=1');
 
         const watchedPaints = projectedLabels.filter((label) => label === 'watched-secret').length;
         navigationResolvers[0]({
             version: 1,
             timestamp: 225,
+            contentEpoch: 'nav-content-process',
+            contentRevision: 2,
             items: {},
             projectionUserId: userA,
             projectionEpoch: 'nav-process',
@@ -573,6 +594,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
         navigationResolvers[1]({
             version: 1,
             timestamp: 250,
+            contentEpoch: 'nav-content-process',
+            contentRevision: 3,
             items: { [itemId]: { label: 'stripped' } },
             projectionUserId: userA,
             projectionEpoch: 'nav-process',
@@ -738,6 +761,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
             .mockResolvedValueOnce({
                 version: 1,
                 timestamp: 2,
+                contentEpoch: 'content-process-b',
+                contentRevision: 1,
                 items: { [itemId]: { Type: 'Movie', label: 'owner-b' } },
                 projectionUserId: userB,
                 projectionEpoch: 'process-b',
@@ -791,6 +816,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
         resolveA({
             version: 1,
             timestamp: 1,
+            contentEpoch: 'content-process-a',
+            contentRevision: 1,
             items: { [itemId]: { Type: 'Movie', label: 'owner-a' } },
             projectionUserId: userA,
             projectionEpoch: 'process-a',
@@ -815,5 +842,62 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
         ajax.mockRestore();
         currentUser.mockRestore();
         document.body.innerHTML = '';
+    });
+});
+
+describe('revisioned tag-cache content protocol (issue 72)', () => {
+    const id = '11111111111111111111111111111111';
+    const response = (
+        revision: number,
+        items: Record<string, unknown> = {},
+        removedIds: string[] = [],
+        contentReset = false,
+    ) => ({ contentEpoch: 'content-process-1', contentRevision: revision, items, removedIds, contentReset });
+
+    it('applies a removal-only delta and advances the cursor with zero upserts', () => {
+        const full = applyContentResponse(null, new Map(), response(5, { [id]: { label: 'stale' } }), true);
+        const removed = applyContentResponse(full.identity, full.entries, response(6, {}, [id]), false);
+
+        expect(removed.decision).toBe('apply');
+        expect(removed.entries.has(id)).toBe(false);
+        expect(removed.identity).toEqual({ epoch: 'content-process-1', revision: 6 });
+        expect(removed.changedIds).toEqual([id]);
+    });
+
+    it('publishes an authoritative full empty snapshot over an old non-empty map', () => {
+        const old = new Map([[id, { label: 'stale' }]]);
+        const empty = applyContentResponse(null, old, response(9), true);
+
+        expect(empty.decision).toBe('apply');
+        expect(empty.entries.size).toBe(0);
+        expect(empty.changedIds).toEqual([id]);
+        expect(empty.identity?.revision).toBe(9);
+    });
+
+    it('is deterministic in both N/N+1 completion orders and never resurrects stale rows', () => {
+        const initial = readContentIdentity(response(9))!;
+        const n = response(10, { [id]: { label: 'N' } });
+        const nPlusOne = response(11, {}, [id]);
+
+        const inOrderN = applyContentResponse(initial, new Map(), n, false);
+        const inOrderNPlusOne = applyContentResponse(inOrderN.identity, inOrderN.entries, nPlusOne, false);
+        expect(inOrderNPlusOne.entries.has(id)).toBe(false);
+        expect(inOrderNPlusOne.identity?.revision).toBe(11);
+
+        const newerFirst = applyContentResponse(initial, new Map(), nPlusOne, false);
+        const olderLast = applyContentResponse(newerFirst.identity, newerFirst.entries, n, false);
+        expect(olderLast.decision).toBe('ignore');
+        expect(olderLast.entries).toBe(newerFirst.entries);
+        expect(olderLast.entries.has(id)).toBe(false);
+        expect(olderLast.identity?.revision).toBe(11);
+    });
+
+    it('requires reset for an epoch change or explicit server journal gap', () => {
+        const current = readContentIdentity(response(20));
+        expect(decideContentResponse(current, {
+            ...response(1),
+            contentEpoch: 'content-process-2',
+        })).toBe('reset');
+        expect(decideContentResponse(current, response(21, {}, [], true))).toBe('reset');
     });
 });
