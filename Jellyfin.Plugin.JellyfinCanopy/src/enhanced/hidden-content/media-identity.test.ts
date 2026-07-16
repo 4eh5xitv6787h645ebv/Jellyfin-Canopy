@@ -21,6 +21,7 @@ import {
     isHiddenByTmdbId,
     isHiddenMedia,
     resetFromUserConfig,
+    resolveLegacyIdentity,
     unhideItem,
 } from './data';
 
@@ -139,7 +140,20 @@ describe('versioned hidden-content media identity', () => {
         expect(isHiddenByTmdbId(552, 'movie')).toBe(false);
         expect(getAllHiddenItems()).toEqual(expect.arrayContaining([
             expect.objectContaining({ _key: 'tmdb-550', _identityStatus: 'legacy-unresolved' }),
+            expect.objectContaining({ _key: 'future', _identityStatus: 'unsupported' }),
         ]));
+
+        const future = getAllHiddenItems().find((item) => item._key === 'future')!;
+        const futureCard = createItemCard(future);
+        expect(futureCard.querySelector('.jc-hidden-item-meta')?.textContent).toContain('Unsupported identity');
+        expect(futureCard.querySelector('.jc-hidden-item-identity-resolution')).toBeNull();
+        expect(resolveLegacyIdentity('future', 'tv')).toBe(false);
+        expect(getHiddenData().items.future.identity).toEqual({
+            version: 2,
+            provider: 'tmdb',
+            mediaType: 'movie',
+            id: '552',
+        });
 
         const unresolved = getAllHiddenItems().find((item) => item._key === 'tmdb-550')!;
         const card = createItemCard(unresolved);

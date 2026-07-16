@@ -9,7 +9,7 @@ import type { IdentityContext } from '../../types/jc';
 import { toast } from '../../core/ui-kit';
 import { getHiddenData } from './data';
 import type { HiddenItem } from './data';
-import { identityFromSource } from './media-identity';
+import { hiddenIdentityStatus } from './media-identity';
 
 let saveTimeout: number | null = null;
 let pendingDebounceContext: IdentityContext | null = null;
@@ -127,9 +127,7 @@ export async function fetchUserHiddenItemsForAdmin(targetUserId: string): Promis
         return Object.entries(items).map(([key, item]) => ({
             ...item,
             _key: key,
-            _identityStatus: identityFromSource(item)
-                ? 'resolved'
-                : (item.tmdbId ? 'legacy-unresolved' : 'local-only'),
+            _identityStatus: hiddenIdentityStatus(item),
             _identityReadOnly: true,
         }));
     } catch (e: any) {

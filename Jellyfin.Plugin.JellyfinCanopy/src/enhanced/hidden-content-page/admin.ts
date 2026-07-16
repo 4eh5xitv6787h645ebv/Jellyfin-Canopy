@@ -516,18 +516,21 @@ export function openAdminAddModal(): void {
         if (!isModalCurrent() || token !== searchToken) return;
 
         const normalized: any[] = [];
-        const seenTmdb = new Set<string>();
+        const seenProviderIdentities = new Set<string>();
         for (const r of libItems) {
             const tmdb = (r.ProviderIds && (r.ProviderIds.Tmdb || r.ProviderIds.tmdb)) || '';
-            if (tmdb) seenTmdb.add(String(tmdb));
+            const identity = createTmdbIdentity(tmdb, r.Type);
+            if (identity) seenProviderIdentities.add(hiddenIdentityKey(identity));
             normalized.push({ source: 'library', itemId: r.Id, name: r.Name, type: r.Type,
                 tmdbId: tmdb ? String(tmdb) : '', posterPath: '', year: r.ProductionYear || '' });
         }
         for (const r of seerrItems) {
             if (r.mediaType !== 'movie' && r.mediaType !== 'tv') continue; // skip people
             const tmdb = String(r.id);
-            if (seenTmdb.has(tmdb)) continue; // already shown from the library
-            seenTmdb.add(tmdb);
+            const identity = createTmdbIdentity(tmdb, r.mediaType);
+            const identityKey = identity && hiddenIdentityKey(identity);
+            if (identityKey && seenProviderIdentities.has(identityKey)) continue; // already shown from the library
+            if (identityKey) seenProviderIdentities.add(identityKey);
             normalized.push({ source: 'seerr', itemId: '', name: r.title || r.name || '',
                 type: r.mediaType === 'tv' ? 'Series' : 'Movie', tmdbId: tmdb,
                 posterPath: r.posterPath || r.poster_path || '',

@@ -7,6 +7,7 @@ export interface HiddenContentIdentity {
 }
 
 export type HiddenMediaType = HiddenContentIdentity['mediaType'];
+export type HiddenIdentityStatus = 'resolved' | 'legacy-unresolved' | 'unsupported' | 'local-only';
 
 export interface HiddenIdentitySource {
     identity?: Partial<HiddenContentIdentity> | null;
@@ -65,6 +66,13 @@ export function identityFromSource(source: HiddenIdentitySource | null | undefin
         return null;
     }
     return createTmdbIdentity(source.tmdbId, source.mediaType || source.type);
+}
+
+/** Classifies management rows without treating unknown explicit schemas as legacy. */
+export function hiddenIdentityStatus(source: HiddenIdentitySource | null | undefined): HiddenIdentityStatus {
+    if (identityFromSource(source)) return 'resolved';
+    if (source?.identity) return 'unsupported';
+    return source?.tmdbId ? 'legacy-unresolved' : 'local-only';
 }
 
 export function hiddenIdentityKey(identity: HiddenContentIdentity): string {

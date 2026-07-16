@@ -6,6 +6,7 @@ import { createGroupCard } from './cards';
 import { state } from './state';
 
 const originalApi = JC.core.api;
+const originalSeerrApi = JC.seerrAPI;
 
 function startSession(serverId = 'server-a', userId = 'user-a'): IdentityContext {
     JC.identity.transition('', '', 'test-logout');
@@ -24,6 +25,7 @@ describe('hidden-content page identity lifecycle', () => {
     afterEach(() => {
         JC.identity.transition('', '', 'test-cleanup');
         JC.core.api = originalApi;
+        JC.seerrAPI = originalSeerrApi;
         vi.restoreAllMocks();
         vi.useRealTimers();
         document.body.innerHTML = '';
@@ -109,5 +111,41 @@ describe('hidden-content page identity lifecycle', () => {
 
         expect(fetch).toHaveBeenCalledTimes(1);
         expect(document.body.textContent).not.toContain('A result');
+    });
+
+    it('keeps movie and TV admin search results with the same TMDB number', async () => {
+        JC.core.api = {
+            fetch: vi.fn().mockResolvedValue({
+                Items: [{
+                    Id: 'jf-movie-550',
+                    Name: 'Library Movie 550',
+                    Type: 'Movie',
+                    ProviderIds: { Tmdb: '550' },
+                }],
+            }),
+        } as unknown as NonNullable<typeof JC.core.api>;
+        JC.seerrAPI = {
+            search: vi.fn().mockResolvedValue({
+                results: [
+                    { id: 550, mediaType: 'movie', title: 'Movie 550' },
+                    { id: 550, mediaType: 'tv', name: 'TV 550' },
+                ],
+            }),
+        } as unknown as NonNullable<typeof JC.seerrAPI>;
+        state.selectedAdminUserId = 'target-a';
+        state.adminUserName = 'Target A';
+        state.adminItems = [];
+
+        openAdminAddModal();
+        const input = document.querySelector<HTMLInputElement>('.jc-hidden-admin-add-overlay input')!;
+        input.value = '550';
+        input.dispatchEvent(new Event('input'));
+        await vi.advanceTimersByTimeAsync(300);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const names = [...document.querySelectorAll('.jc-hidden-admin-add-overlay .jc-hidden-item-name')]
+            .map((element) => element.textContent);
+        expect(names).toEqual(['Library Movie 550', 'TV 550']);
     });
 });

@@ -243,7 +243,9 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
         _scope === 'nextup'           ? JC.t!('hidden_content_scope_nextup_label') :
         _scope === 'homesections'     ? JC.t!('hidden_content_scope_homesections_label') :
         '';
-    const identityText = item._identityStatus === 'legacy-unresolved' ? 'Legacy identity — review required' : '';
+    const identityText = item._identityStatus === 'legacy-unresolved'
+        ? 'Legacy identity — review required'
+        : (item._identityStatus === 'unsupported' ? 'Unsupported identity — update required' : '');
     metaDiv.textContent = [item.type, identityText, _scopeText, hiddenDate].filter(Boolean).join(' · ');
     info.appendChild(metaDiv);
 

@@ -16,10 +16,11 @@ import { refreshNativeCardVisibility, restoreNativeCardsForIds } from './filter'
 import {
     createTmdbIdentity,
     hiddenIdentityKey,
+    hiddenIdentityStatus,
     identityFromSource,
     normalizeHiddenMediaType,
 } from './media-identity';
-import type { HiddenContentIdentity, HiddenMediaType } from './media-identity';
+import type { HiddenContentIdentity, HiddenIdentityStatus, HiddenMediaType } from './media-identity';
 
 // ============================================================
 // Shared shapes
@@ -42,7 +43,7 @@ export interface HiddenItem {
     /** Storage key attached by getAllHiddenItems / admin fetches. */
     _key?: string;
     /** Derived management state; never persisted. */
-    _identityStatus?: 'resolved' | 'legacy-unresolved' | 'local-only';
+    _identityStatus?: HiddenIdentityStatus;
     /** Cross-user admin rows can be reviewed but not resolved in the current user's store. */
     _identityReadOnly?: boolean;
     [key: string]: unknown;
@@ -593,9 +594,7 @@ export function getAllHiddenItems(): HiddenItem[] {
     return Object.entries(items).map(([key, item]) => ({
         ...item,
         _key: key,
-        _identityStatus: identityFromSource(item)
-            ? 'resolved'
-            : (item.tmdbId ? 'legacy-unresolved' : 'local-only'),
+        _identityStatus: hiddenIdentityStatus(item),
     }));
 }
 
@@ -603,7 +602,7 @@ export function getAllHiddenItems(): HiddenItem[] {
 export function resolveLegacyIdentity(storageKey: string, mediaType: HiddenMediaType): boolean {
     const data = getHiddenData();
     const item = data.items[storageKey];
-    if (!item?.tmdbId || identityFromSource(item)) return false;
+    if (!item?.tmdbId || item.identity || identityFromSource(item)) return false;
     const normalizedType = normalizeHiddenMediaType(mediaType);
     const identity = createTmdbIdentity(item.tmdbId, normalizedType);
     if (!identity) return false;
