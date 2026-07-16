@@ -24,8 +24,39 @@ declare module '../types/jc' {
 }
 
 const logPrefix = '🪼 Jellyfin Canopy: Issue Reporter:';
+const ISSUE_ENRICHMENT_CONCURRENCY = 6;
 const issueReporter = {} as SeerrIssueReporterApi;
 const escapeHtml = JC.escapeHtml;
+
+/**
+ * Preserve the complete title-owned ordering while bounding authenticated
+ * issue-detail reads. A large title relation must not become an equally large
+ * burst of concurrent Seerr identity/proxy work.
+ */
+export async function enrichIssuesForDisplay(
+    issues: any[],
+    fetchIssue: (id: any) => Promise<any>,
+    shouldContinue: () => boolean = () => true,
+): Promise<any[]> {
+    const enriched = new Array(issues.length);
+    let nextIndex = 0;
+    const workerCount = Math.min(ISSUE_ENRICHMENT_CONCURRENCY, issues.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+        while (nextIndex < issues.length && shouldContinue()) {
+            const index = nextIndex++;
+            if (!shouldContinue()) return;
+            const issue = issues[index];
+            try {
+                enriched[index] = await fetchIssue(issue.id) || issue;
+            } catch (_: any) {
+                enriched[index] = issue;
+            }
+            if (!shouldContinue()) return;
+        }
+    });
+    await Promise.all(workers);
+    return enriched;
+}
 
 // Cache for user permission to report
 let cachedUserCanReport: string | null = null;
@@ -315,7 +346,7 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
 
         try {
             if (loadingEl) loadingEl.textContent = JC.t!('seerr_loading_issues');
-            const res = await JC.seerrAPI!.fetchIssuesForMedia(tmdbId, mediaType, { take: 50, filter: 'all' });
+            const res = await JC.seerrAPI!.fetchIssuesForMedia(tmdbId, mediaType, { all: true, filter: 'all' });
             if (!isReporterIdentityCurrent(context) || !modalElement.isConnected) return;
             let issues = res?.results || [];
 
@@ -324,12 +355,11 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
                 return;
             }
 
-            const enriched = await Promise.all(issues.map(async (issue: any) => {
-                try {
-                    const full = await JC.seerrAPI!.fetchIssueById(issue.id);
-                    return full || issue;
-                } catch (_: any) { return issue; }
-            }));
+            const enriched = await enrichIssuesForDisplay(
+                issues,
+                issueId => JC.seerrAPI!.fetchIssueById(issueId),
+                () => isReporterIdentityCurrent(context) && modalElement.isConnected,
+            );
             if (!isReporterIdentityCurrent(context) || !modalElement.isConnected) return;
 
             issues = enriched;
@@ -860,12 +890,18 @@ issueReporter.applyIssueIndicator = async function (button, tmdbId, mediaType, p
     if (!context || !JC.identity.isCurrent(context)) return;
     ownReporterElement(button, context);
     try {
-        const result = prefetched
+        const prefetchedResult = prefetched
             ? await prefetched
-            : await JC.seerrAPI!.fetchIssuesForMedia(tmdbId, mediaType, { take: 50, filter: 'open' });
+            : await JC.seerrAPI!.fetchIssuesForMedia(tmdbId, mediaType, { take: 1, filter: 'open' });
+        if (prefetchedResult?.state === 'failed') {
+            throw prefetchedResult.error;
+        }
+        const result = prefetchedResult?.state === 'complete'
+            ? prefetchedResult.value
+            : prefetchedResult;
         if (!isReporterIdentityCurrent(context) || !button.isConnected) return;
-        const openIssues = result?.results || [];
-        if (openIssues.length === 0) return;
+        const openIssueCount = Number(result?.pageInfo?.results);
+        if (!Number.isSafeInteger(openIssueCount) || openIssueCount <= 0) return;
 
         // Inject CSS once per page load
         if (!document.getElementById('jc-issue-indicator-style')) {
@@ -891,13 +927,13 @@ issueReporter.applyIssueIndicator = async function (button, tmdbId, mediaType, p
 
         const badge = document.createElement('span');
         badge.className = 'seerr-issue-count-badge';
-        badge.textContent = openIssues.length > 9 ? '9+' : String(openIssues.length);
+        badge.textContent = openIssueCount > 9 ? '9+' : String(openIssueCount);
         button.appendChild(badge);
 
         const issuesLabel = JC.t!('seerr_existing_issues') || 'Issues';
         const openLabel = JC.t!('seerr_issue_open') || 'Open';
         const reportLabel = JC.t!('seerr_report_issue_button') || 'Report issue';
-        const tooltipText = `${openIssues.length} ${openLabel} ${issuesLabel} - ${reportLabel}`;
+        const tooltipText = `${openIssueCount} ${openLabel} ${issuesLabel} - ${reportLabel}`;
         button.title = tooltipText;
         button.setAttribute('aria-label', tooltipText);
     } catch (e: any) {
@@ -1131,7 +1167,10 @@ issueReporter.tryAddButton = async function () {
         // inserts — one visual change instead of button-then-badge. (The badge
         // is an absolute overlay either way, so a late badge never reflows.)
         const prefetchedIssues = JC.pluginConfig?.SeerrShowIssueIndicator
-            ? JC.seerrAPI!.fetchIssuesForMedia(tmdbId, mediaType, { take: 50, filter: 'open' }).catch(() => null)
+            ? JC.seerrAPI!.fetchIssuesForMedia(tmdbId, mediaType, { take: 1, filter: 'open' }).then(
+                value => ({ state: 'complete', value }),
+                error => ({ state: 'failed', error }),
+            )
             : null;
 
         // Find the appropriate container for the button - check multiple locations

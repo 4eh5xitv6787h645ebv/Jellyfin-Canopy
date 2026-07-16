@@ -53,6 +53,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 _hcCache[userIdN] = (HideContext.Empty, DateTime.UtcNow);
         }
 
+        // Test seam for exercising the real MVC action-filter route without
+        // coupling a response-contract regression to filesystem persistence.
+        internal static void SeedRequestPolicyForTest(HttpContext httpContext, UserHiddenContent policy)
+        {
+            ArgumentNullException.ThrowIfNull(httpContext);
+            ArgumentNullException.ThrowIfNull(policy);
+            httpContext.Items[CacheKey] = HideContext.Build(policy);
+        }
+
         // Test seam: whether a cache entry currently exists for a user.
         internal static bool IsCachedForTest(string userIdN)
             => !string.IsNullOrEmpty(userIdN) && _hcCache.ContainsKey(userIdN);
@@ -322,21 +331,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 WarnShapeMismatchOnce(logger, surface, nameof(FilterQueryResult), executed.Result);
                 return;
             }
-            var items = qr.Items;
-            if (items is null || items.Count == 0) return;
+            var filtered = FilterQueryResultCore(qr, hide, surface, out var dropped);
+            if (dropped > 0) or.Value = filtered;
+            PostPaginationFilterContract.MarkResponse(executed.HttpContext.Response, dropped);
+        }
+
+        private static QueryResult<BaseItemDto> FilterQueryResultCore(
+            QueryResult<BaseItemDto> result,
+            HideContext hide,
+            string surface,
+            out int dropped)
+        {
+            var items = result.Items;
+            if (items is null || items.Count == 0)
+            {
+                dropped = 0;
+                return result;
+            }
 
             var kept = new List<BaseItemDto>(items.Count);
-            var dropped = 0;
+            dropped = 0;
             foreach (var item in items)
             {
                 if (IsHidden(item, hide, surface)) { dropped++; continue; }
                 kept.Add(item);
             }
-            if (dropped == 0) return;
+            if (dropped == 0) return result;
 
-            or.Value = new QueryResult<BaseItemDto>(
-                qr.StartIndex,
-                Math.Max(0, qr.TotalRecordCount - dropped),
+            return new QueryResult<BaseItemDto>(
+                result.StartIndex,
+                PostPaginationFilterContract.NavigationTotal(result.TotalRecordCount, dropped),
                 kept);
         }
 
@@ -382,9 +406,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 WarnShapeMismatchOnce(logger, surface, nameof(FilterSearchHints), executed.Result);
                 return;
             }
-            var hints = sh.SearchHints;
-            if (hints is null || hints.Count == 0) return;
-
             or.Value = FilterSearchHintsCore(
                 sh,
                 hide,
@@ -392,7 +413,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 logger,
                 hierarchyResolver,
                 userId,
-                cancellationToken);
+                cancellationToken,
+                out var removedFromPage);
+            PostPaginationFilterContract.MarkResponse(executed.HttpContext.Response, removedFromPage);
         }
 
         private static SearchHintResult FilterSearchHintsCore(
@@ -402,8 +425,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             ILogger<HiddenContentResponseFilter> logger,
             HiddenContentHierarchyResolver hierarchyResolver,
             Guid userId,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            out int removedFromPage)
         {
+            removedFromPage = 0;
             var hints = result.SearchHints;
             if (hints is null || hints.Count == 0) return result;
 
@@ -436,7 +461,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             $"HC SearchHint hierarchy resolution failed ({warningKey}); dropping the complete hint payload for this request so no partial policy result is published.");
                     }
 
-                    return new SearchHintResult(new List<SearchHint>(), 0);
+                    removedFromPage = hints.Count;
+                    return new SearchHintResult(
+                        new List<SearchHint>(),
+                        PostPaginationFilterContract.NavigationTotal(result.TotalRecordCount, removedFromPage));
                 }
 
                 seriesByItemId = resolution.SeriesByItemId;
@@ -470,10 +498,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
             if (dropped == 0) return result;
 
-            // #151 owns pre-pagination filtering/backfill and globally honest
-            // totals. Preserve the existing page-local subtraction here; this
-            // issue changes only hierarchy privacy decisions.
-            return new SearchHintResult(kept, Math.Max(0, result.TotalRecordCount - dropped));
+            removedFromPage = dropped;
+            return new SearchHintResult(
+                kept,
+                PostPaginationFilterContract.NavigationTotal(result.TotalRecordCount, dropped));
         }
 
         private static bool IsDescendantHint(SearchHint hint)
@@ -493,7 +521,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 _logger,
                 _hierarchyResolver,
                 userId,
-                cancellationToken);
+                cancellationToken,
+                out _);
+
+        internal QueryResult<BaseItemDto> FilterQueryResultForTest(
+            QueryResult<BaseItemDto> result,
+            UserHiddenContent policy,
+            string surface = "library")
+            => FilterQueryResultCore(
+                result,
+                HideContext.Build(policy),
+                surface,
+                out _);
 
         private static bool IsHidden(BaseItemDto item, HideContext hide, string surface)
         {
