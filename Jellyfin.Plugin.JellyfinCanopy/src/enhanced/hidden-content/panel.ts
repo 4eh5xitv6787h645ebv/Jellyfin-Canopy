@@ -45,7 +45,7 @@ function cancelPanelTimeout(handle: number): void {
     panelTimeouts.delete(handle);
 }
 
-function resetPanelUi(): void {
+export function resetPanelUi(): void {
     panelGeneration += 1;
     activeManagementClose?.();
     activeManagementClose = null;
@@ -53,8 +53,6 @@ function resetPanelUi(): void {
     panelTimeouts.clear();
     document.querySelectorAll('.jc-hidden-management-overlay').forEach((node) => node.remove());
 }
-
-JC.identity?.registerReset?.('hidden-content-management-panel', resetPanelUi);
 
 // ============================================================
 // Management panel (overlay)

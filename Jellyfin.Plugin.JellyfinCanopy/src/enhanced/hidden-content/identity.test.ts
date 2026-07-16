@@ -3,8 +3,11 @@ import { JC } from '../../globals';
 import type { IdentityContext } from '../../types/jc';
 import { loadUserFileCaseTransform } from '../../test/plugin-loader-harness';
 import { getHiddenData, hiddenIdSet, refresh, resetFromUserConfig, updateSettings } from './data';
+import { hiddenContentRuntimeFeature } from '../../entries/hidden-content-runtime';
+import { createTestFeatureScope, type TestFeatureScope } from '../../test/feature-scope';
 
 const originalTransformUserFileCase = JC.transformUserFileCase;
+let featureScope: TestFeatureScope | null = null;
 
 function startSession(userId = 'test-user-id'): IdentityContext {
     JC.identity.transition('', '', 'test-logout');
@@ -26,9 +29,13 @@ describe('hidden-content identity fencing', () => {
         const context = startSession();
         vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue('test-user-id');
         installHiddenData(context, { a: { itemId: 'item-a' } });
+        featureScope = createTestFeatureScope();
+        void hiddenContentRuntimeFeature.activate(featureScope.scope);
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        await featureScope?.dispose();
+        featureScope = null;
         JC.transformUserFileCase = originalTransformUserFileCase;
         vi.useRealTimers();
         vi.restoreAllMocks();

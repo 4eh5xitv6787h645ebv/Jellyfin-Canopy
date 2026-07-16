@@ -5,6 +5,15 @@ import { addLibraryHideButtons } from './buttons';
 import { confirmAndHide, showUndoToast } from './dialogs';
 import { getHiddenData, resetFromUserConfig } from './data';
 import { showManagementPanel } from './panel';
+import { hiddenContentRuntimeFeature } from '../../entries/hidden-content-runtime';
+import { createTestFeatureScope, type TestFeatureScope } from '../../test/feature-scope';
+
+let featureScope: TestFeatureScope | null = null;
+
+function activateFeature(): void {
+    featureScope = createTestFeatureScope();
+    void hiddenContentRuntimeFeature.activate(featureScope.scope);
+}
 
 function startSession(serverId = 'server-a', userId = 'user-a'): IdentityContext {
     JC.identity.transition('', '', 'test-logout');
@@ -30,7 +39,9 @@ describe('hidden-content identity-owned UI', () => {
         vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue('usera');
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        await featureScope?.dispose();
+        featureScope = null;
         JC.identity.transition('', '', 'test-cleanup');
         vi.restoreAllMocks();
         vi.useRealTimers();
@@ -41,6 +52,7 @@ describe('hidden-content identity-owned UI', () => {
     it('scopes temporary confirmation suppression by both server and user', () => {
         const ownerA = startSession('server-a', 'user-a');
         installHiddenData(ownerA, {}, { showHideConfirmation: true });
+        activateFeature();
         localStorage.setItem('jc_hide_confirm_suppressed_until', new Date(Date.now() + 60_000).toISOString());
 
         confirmAndHide({ itemId: 'a', name: 'A' });
@@ -70,6 +82,7 @@ describe('hidden-content identity-owned UI', () => {
             showButtonCast: false,
             experimentalHideCollections: true,
         });
+        activateFeature();
 
         showUndoToast('A', 'item-a');
         showManagementPanel();

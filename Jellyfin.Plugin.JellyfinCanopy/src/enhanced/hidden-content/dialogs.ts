@@ -81,7 +81,7 @@ function cancelDialogFrame(handle: number | null): void {
     dialogFrames.delete(handle);
 }
 
-function resetDialogUi(): void {
+export function resetDialogUi(): void {
     dialogGeneration += 1;
     activeUndoClose?.();
     activeConfirmClose?.();
@@ -93,8 +93,6 @@ function resetDialogUi(): void {
     dialogFrames.clear();
     document.querySelectorAll('.jc-undo-toast, .jc-hide-confirm-overlay').forEach((node) => node.remove());
 }
-
-JC.identity?.registerReset?.('hidden-content-dialogs', resetDialogUi);
 
 function suppressionStorageKey(context: IdentityContext | null): string {
     if (!context) return SUPPRESS_STORAGE_KEY;

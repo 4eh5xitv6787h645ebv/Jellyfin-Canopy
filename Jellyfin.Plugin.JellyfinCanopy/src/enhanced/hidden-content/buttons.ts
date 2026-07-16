@@ -38,12 +38,10 @@ function removeButtonsAndRestorePosition(): void {
     });
 }
 
-function resetButtonUi(): void {
+export function resetButtonUi(): void {
     buttonGeneration += 1;
     removeButtonsAndRestorePosition();
 }
-
-JC.identity?.registerReset?.('hidden-content-buttons', resetButtonUi);
 
 // ============================================================
 // Library hide buttons
