@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as ts from 'typescript';
 import { JC } from '../globals';
 
 afterEach(() => vi.restoreAllMocks());
@@ -21,4 +22,17 @@ describe('Seerr lazy entry evaluation', () => {
             expect(fetchRequest).not.toHaveBeenCalled();
         });
     }
+
+    it('keeps the compatibility Seerr barrel free of runtime imports', () => {
+        const path = decodeURIComponent(new URL('../seerr/index.ts', import.meta.url).pathname);
+        const source = ts.createSourceFile(
+            path,
+            ts.sys.readFile(path) ?? '',
+            ts.ScriptTarget.Latest,
+            true,
+        );
+        const runtimeImports = source.statements.filter((statement) =>
+            ts.isImportDeclaration(statement) && !statement.importClause?.isTypeOnly);
+        expect(runtimeImports).toEqual([]);
+    });
 });

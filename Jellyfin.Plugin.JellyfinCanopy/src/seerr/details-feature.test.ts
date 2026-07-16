@@ -55,7 +55,7 @@ beforeEach(() => {
             value.install.mockImplementation(() => value.cleanup);
         }
     }
-    JC.seerrIssueReporter = { initialize: mocks.initializeReporter } as NonNullable<typeof JC.seerrIssueReporter>;
+    JC.seerrIssueReporter = { initialize: mocks.initializeReporter } as unknown as NonNullable<typeof JC.seerrIssueReporter>;
 });
 
 describe('Seerr details activation', () => {
