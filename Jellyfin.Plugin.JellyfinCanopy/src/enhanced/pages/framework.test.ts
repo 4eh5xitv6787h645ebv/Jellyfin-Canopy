@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import '../../core/lifecycle';
 import '../../core/navigation';
+import '../../core/dom-observer';
 import { registerPage, resolvePage, orderedPages } from './registry';
 import { initFallbackHost, adoptedPageId, drain, lateAdoptIfOnPage } from './fallback-host';
 

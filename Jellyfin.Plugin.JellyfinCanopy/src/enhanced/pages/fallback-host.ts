@@ -19,7 +19,6 @@
 //    handler applies — rewrite it during adoption, then verify on a frame.
 
 import { JC } from '../../globals';
-import { onBodyMutation } from '../../core/dom-observer';
 import type { PageDescriptor } from './types';
 import { resolvePage, pageAvailable } from './registry';
 import { PAGE_NAV_ATTR } from './router-bridge';
@@ -329,8 +328,13 @@ export function initFallbackHost(): void {
     navigation.onViewBeforeShow((element) => handleViewBeforeShow(element));
     navigation.onNavigate(() => handleNavigate());
     if (!fallbackMountSubscribed) {
-        fallbackMountSubscribed = true;
-        onBodyMutation('jc-pages-fallback-host', handleFallbackMount);
+        const dom = JC.core.dom;
+        if (dom) {
+            dom.onBodyMutation('jc-pages-fallback-host', handleFallbackMount);
+            fallbackMountSubscribed = true;
+        } else {
+            console.error(`${logPrefix} core DOM observer missing; deferred fallback adoption disabled`);
+        }
     }
     lateAdoptIfOnPage();
 }
