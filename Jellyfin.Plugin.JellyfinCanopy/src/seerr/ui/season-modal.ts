@@ -380,7 +380,26 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
     }
 };
 
-JC.identity.registerReset('seerr-season-modal', cancelSeasonModalRefresh);
+let uninstallIdentityReset: (() => void) | null = null;
+
+export function installSeerrSeasonModal(): () => void {
+    uninstallIdentityReset ??= JC.identity.registerReset(
+        'seerr-season-modal',
+        cancelSeasonModalRefresh,
+    );
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        uninstallIdentityReset?.();
+        uninstallIdentityReset = null;
+        cancelSeasonModalRefresh();
+        document.querySelectorAll('.seerr-season-modal').forEach((modal) => modal.remove());
+    };
+}
+
+
+installSeerrSeasonModal();
 
 function invalidateSeasonRequestState(seasonListElement: any): void {
     if (!seasonListElement) return;

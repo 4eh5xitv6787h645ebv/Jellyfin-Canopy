@@ -197,7 +197,7 @@ async function resolveFeeds({ id: studioId, signal }: { id: string; signal: Abor
     };
 }
 
-const discovery = JC.discoveryBase!.createDiscovery({
+export const networkDiscovery = JC.discoveryBase!.createDiscovery({
     key: 'network',
     mode: 'dual-feed',
     logLabel: 'Network Discovery',
@@ -212,5 +212,3 @@ const discovery = JC.discoveryBase!.createDiscovery({
         ? `/JellyfinCanopy/seerr/discover/tv/network/${id}`
         : `/JellyfinCanopy/seerr/discover/movies/studio/${id}`
 });
-
-discovery.start();

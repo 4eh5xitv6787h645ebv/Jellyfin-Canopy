@@ -38,8 +38,15 @@ declare module '../../types/jc' {
     }
 }
 
-/** The public UI surface, published on JC.seerrUI. */
-export const ui: SeerrUI = (JC.seerrUI = JC.seerrUI || {});
+/** Stable public UI surface; publication belongs to feature activation. */
+export const ui: SeerrUI = {};
+
+export function installSeerrUiFacade(): () => void {
+    JC.seerrUI = ui;
+    return () => undefined;
+}
+
+installSeerrUiFacade();
 
 /** The shared internal bag, private to the ui-* family. */
 export const internal: SeerrUiInternal = {

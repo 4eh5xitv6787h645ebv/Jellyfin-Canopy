@@ -430,4 +430,23 @@ internal.configureCollectionButton = configureCollectionButton;
 internal.configureTvShowButton = configureTvShowButton;
 internal.configureMovieButton = configureMovieButton;
 
-window.addEventListener('jc:config-changed', refreshRenderedCapabilitiesForConfig);
+let configListenerInstalled = false;
+
+export function installSeerrButtons(): () => void {
+    if (!configListenerInstalled) {
+        window.addEventListener('jc:config-changed', refreshRenderedCapabilitiesForConfig);
+        configListenerInstalled = true;
+    }
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        if (configListenerInstalled) {
+            window.removeEventListener('jc:config-changed', refreshRenderedCapabilitiesForConfig);
+            configListenerInstalled = false;
+        }
+    };
+}
+
+
+installSeerrButtons();

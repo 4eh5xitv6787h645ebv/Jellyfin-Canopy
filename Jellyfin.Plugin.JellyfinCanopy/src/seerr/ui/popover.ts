@@ -355,7 +355,7 @@ internal.hide4KPopup = hide4KPopup;
 internal.show4KPopup = show4KPopup;
 internal.addDownloadProgressHover = addDownloadProgressHover;
 
-JC.identity.registerReset('seerr-popovers', () => {
+export function resetSeerrPopovers(): void {
     for (const timer of popupTimers) clearTimeout(timer);
     popupTimers.clear();
     hoverPopoverElement()?.remove();
@@ -363,4 +363,21 @@ JC.identity.registerReset('seerr-popovers', () => {
     state.seerrHoverPopover = null;
     state.active4KPopup = null;
     state.seerrHoverLock = false;
-});
+}
+
+let uninstallIdentityReset: (() => void) | null = null;
+
+export function installSeerrPopovers(): () => void {
+    uninstallIdentityReset ??= JC.identity.registerReset('seerr-popovers', resetSeerrPopovers);
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        uninstallIdentityReset?.();
+        uninstallIdentityReset = null;
+        resetSeerrPopovers();
+    };
+}
+
+
+installSeerrPopovers();

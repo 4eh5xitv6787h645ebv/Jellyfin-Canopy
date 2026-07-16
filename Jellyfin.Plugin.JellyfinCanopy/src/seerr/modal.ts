@@ -341,11 +341,30 @@ modal.closeAll = function(): void {
     for (const active of [...activeModals]) active.destroy();
 };
 
-JC.identity.registerReset('seerr-request-modal', modal.closeAll);
-// Advanced movie/TV/collection modals snapshot the 4K gate in their markup.
-// Close them at a config boundary so no prior-source action remains clickable;
-// reopening after the replacement status settles renders the current gate.
-window.addEventListener('jc:config-changed', modal.closeAll);
+let uninstallIdentityReset: (() => void) | null = null;
+let configListenerInstalled = false;
 
-// Expose the modal module on the global JC object
-JC.seerrModal = modal;
+export function installSeerrModal(): () => void {
+    JC.seerrModal = modal;
+    uninstallIdentityReset ??= JC.identity.registerReset('seerr-request-modal', modal.closeAll);
+    // Advanced modals snapshot the 4K gate. Retire them at config boundaries.
+    if (!configListenerInstalled) {
+        window.addEventListener('jc:config-changed', modal.closeAll);
+        configListenerInstalled = true;
+    }
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        uninstallIdentityReset?.();
+        uninstallIdentityReset = null;
+        if (configListenerInstalled) {
+            window.removeEventListener('jc:config-changed', modal.closeAll);
+            configListenerInstalled = false;
+        }
+        modal.closeAll();
+    };
+}
+
+
+installSeerrModal();

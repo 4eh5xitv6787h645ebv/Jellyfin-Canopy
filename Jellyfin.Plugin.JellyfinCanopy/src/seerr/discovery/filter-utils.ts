@@ -54,10 +54,10 @@ const FILTER_MODES = {
 const runtimeFilterModes = new Map<string, string>();
 const runtimeSortModes = new Map<string, string>();
 
-JC.identity.registerReset('seerr-discovery-filter', () => {
+function resetDiscoveryFilterState(): void {
     runtimeFilterModes.clear();
     runtimeSortModes.clear();
-});
+}
 
 const SORT_OPTIONS = [
     { value: '', label: 'Popular' },
@@ -642,11 +642,8 @@ function injectFilterStyles() {
     document.head.appendChild(style);
 }
 
-// Inject styles on load
-injectFilterStyles();
-
-// Export utilities
-JC.discoveryFilter = {
+// Stable facade populated at module evaluation, published by activation.
+export const discoveryFilter: DiscoveryFilterApi = {
     MODES: FILTER_MODES,
     SORT_OPTIONS,
     getFilterMode,
@@ -671,3 +668,26 @@ JC.discoveryFilter = {
     cleanupScrollObserver,
     applyFilterVisibility
 };
+
+let uninstallIdentityReset: (() => void) | null = null;
+
+export function installDiscoveryFilter(): () => void {
+    JC.discoveryFilter = discoveryFilter;
+    injectFilterStyles();
+    uninstallIdentityReset ??= JC.identity.registerReset(
+        'seerr-discovery-filter',
+        resetDiscoveryFilterState,
+    );
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        uninstallIdentityReset?.();
+        uninstallIdentityReset = null;
+        resetDiscoveryFilterState();
+        document.getElementById('seerr-filter-styles')?.remove();
+    };
+}
+
+
+installDiscoveryFilter();

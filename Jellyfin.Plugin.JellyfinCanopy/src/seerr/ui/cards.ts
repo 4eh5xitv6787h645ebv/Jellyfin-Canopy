@@ -435,10 +435,27 @@ ui.createSeerrCard = createSeerrCard;
 
 internal.createSeerrCard = createSeerrCard;
 
-JC.identity.registerReset('seerr-cards', () => {
+export function resetSeerrCards(): void {
     for (const timer of cardTimers) clearTimeout(timer);
     cardTimers.clear();
     for (const cleanup of [...outsideOverviewCleanups]) cleanup();
     outsideOverviewCleanups.clear();
     document.querySelectorAll('.seerr-card[data-jc-identity-owned="true"]').forEach((card) => card.remove());
-});
+}
+
+let uninstallIdentityReset: (() => void) | null = null;
+
+export function installSeerrCards(): () => void {
+    uninstallIdentityReset ??= JC.identity.registerReset('seerr-cards', resetSeerrCards);
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        uninstallIdentityReset?.();
+        uninstallIdentityReset = null;
+        resetSeerrCards();
+    };
+}
+
+
+installSeerrCards();

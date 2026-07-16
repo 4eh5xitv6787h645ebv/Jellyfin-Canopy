@@ -49,11 +49,12 @@ function markCardRequested(tmdbId: any, mediaType: any, is4k: any = false) {
     }
 }
 
-document.addEventListener('seerr-media-requested', (e: any) => {
-    const { tmdbId, mediaType, is4k } = e.detail || {};
+function handleMediaRequested(e: Event): void {
+    const requestEvent = e as CustomEvent<any>;
+    const { tmdbId, mediaType, is4k } = requestEvent.detail || {};
     if (!tmdbId || !mediaType) return;
     markCardRequested(String(tmdbId), mediaType, is4k);
-});
+}
 
 // ================================
 // UI MANAGEMENT FUNCTIONS
@@ -185,7 +186,6 @@ export function resetSeerrResultsIdentity(): void {
 }
 
 ui.resetResultsIdentity = resetSeerrResultsIdentity;
-JC.identity.registerReset('seerr-results-placement', resetSeerrResultsIdentity);
 
 /**
  * Renders Seerr search results into the search page with improved placement logic.
@@ -458,3 +458,32 @@ ui.updateSeerrResults = function (newResults: any, isSeerrActive: any, seerrUser
 internal.markCardRequested = markCardRequested;
 internal.analyzeSeasonStatuses = analyzeSeasonStatuses;
 internal.createSeerrSection = createSeerrSection;
+
+let uninstallIdentityReset: (() => void) | null = null;
+let requestListenerInstalled = false;
+
+export function installSeerrResults(): () => void {
+    uninstallIdentityReset ??= JC.identity.registerReset(
+        'seerr-results-placement',
+        resetSeerrResultsIdentity,
+    );
+    if (!requestListenerInstalled) {
+        document.addEventListener('seerr-media-requested', handleMediaRequested);
+        requestListenerInstalled = true;
+    }
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        uninstallIdentityReset?.();
+        uninstallIdentityReset = null;
+        if (requestListenerInstalled) {
+            document.removeEventListener('seerr-media-requested', handleMediaRequested);
+            requestListenerInstalled = false;
+        }
+        resetSeerrResultsIdentity();
+    };
+}
+
+
+installSeerrResults();

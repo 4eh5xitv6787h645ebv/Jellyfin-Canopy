@@ -39,7 +39,7 @@ declare module '../types/jc' {
     }
 }
 
-const seerrStatus = {} as SeerrStatusApi;
+export const seerrStatus = {} as SeerrStatusApi;
 
 // ── Seerr API enums ──────────────────────────────────────────────────────
 
@@ -278,4 +278,15 @@ seerrStatus.getChipConfig = function(displayStatus) {
     }
 };
 
-JC.seerrStatus = seerrStatus;
+/** Publish the immutable status singleton only when the Seerr foundation activates. */
+export function installSeerrStatus(): () => void {
+    JC.seerrStatus = seerrStatus;
+    // Keep the stable public identity installed after disposal. Disabled cold
+    // sessions never import this module; warm reactivation reuses the same
+    // object and method identities.
+    return () => undefined;
+}
+
+// Compatibility for direct module consumers; lazy entries only import this
+// module from inside activate(), so production cold evaluation stays pure.
+installSeerrStatus();

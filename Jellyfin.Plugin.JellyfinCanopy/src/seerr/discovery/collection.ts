@@ -213,7 +213,7 @@ async function renderCollectionDiscovery({ id: itemId, signal, waitForPageReady 
     return true;
 }
 
-const discovery = JC.discoveryBase!.createDiscovery({
+export const collectionDiscovery = JC.discoveryBase!.createDiscovery({
     key: 'collection',
     mode: 'one-shot',
     logLabel: 'Collection Discovery',
@@ -221,5 +221,3 @@ const discovery = JC.discoveryBase!.createDiscovery({
     getIdFromUrl: JC.discoveryBase!.idFromDetailUrl,
     renderOneShot: renderCollectionDiscovery
 });
-
-discovery.start();

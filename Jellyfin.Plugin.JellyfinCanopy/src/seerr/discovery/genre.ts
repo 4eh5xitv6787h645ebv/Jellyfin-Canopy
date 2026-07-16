@@ -147,7 +147,7 @@ async function resolveFeeds({ id: genreId, signal }: { id: string; signal: Abort
     };
 }
 
-const discovery = JC.discoveryBase!.createDiscovery({
+export const genreDiscovery = JC.discoveryBase!.createDiscovery({
     key: 'genre',
     mode: 'dual-feed',
     logLabel: 'Genre Discovery',
@@ -158,5 +158,3 @@ const discovery = JC.discoveryBase!.createDiscovery({
         ? `/JellyfinCanopy/seerr/discover/tv/genre/${id}`
         : `/JellyfinCanopy/seerr/discover/movies/genre/${id}`
 });
-
-discovery.start();

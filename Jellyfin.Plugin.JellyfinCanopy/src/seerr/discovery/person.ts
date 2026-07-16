@@ -195,7 +195,7 @@ async function resolveItems({ id: itemId, signal }: { id: string; signal: AbortS
     };
 }
 
-const discovery = JC.discoveryBase!.createDiscovery({
+export const personDiscovery = JC.discoveryBase!.createDiscovery({
     key: 'person',
     mode: 'client-paged',
     logLabel: 'Person Discovery',
@@ -204,5 +204,3 @@ const discovery = JC.discoveryBase!.createDiscovery({
     pageSize: 40,
     resolveItems
 });
-
-discovery.start();

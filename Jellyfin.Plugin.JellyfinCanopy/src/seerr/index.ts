@@ -1,9 +1,5 @@
-// src/seerr/index.ts
-// their required execution order. Owned by the seerr conversion wave; main.ts
-// imports this barrel once, so conversions never edit main.ts itself.
-// Relative order mirrors the former js/plugin.js allComponentScripts seerr
-// block; unconverted files still ride in via the legacy array appended by
-// scripts/build-bundle.js.
+// Compatibility-bundle order. Lazy production entries import their feature
+// coordinators directly; this barrel preserves synchronous classic startup.
 import './seerr-status';
 import './request-manager';
 import './api';
@@ -14,11 +10,11 @@ import './issue-reporter';
 import './seamless-scroll';
 import './discovery/filter-utils';
 import './discovery/base';
-import './discovery/network';
-import './discovery/person';
-import './discovery/genre';
-import './discovery/tag';
-import './discovery/collection';
+import { networkDiscovery } from './discovery/network';
+import { personDiscovery } from './discovery/person';
+import { genreDiscovery } from './discovery/genre';
+import { tagDiscovery } from './discovery/tag';
+import { collectionDiscovery } from './discovery/collection';
 import './hss-discovery-handler';
 import './more-info-modal/styles';
 import './more-info-modal/data';
@@ -38,3 +34,9 @@ import './ui/quota';
 import './ui/results';
 import './ui/request-modals';
 import './ui/season-modal';
+
+networkDiscovery.start();
+personDiscovery.start();
+genreDiscovery.start();
+tagDiscovery.start();
+collectionDiscovery.start();

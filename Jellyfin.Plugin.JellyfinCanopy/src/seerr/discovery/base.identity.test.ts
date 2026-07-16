@@ -12,6 +12,10 @@ describe('Seerr discovery controller identity lifecycle', () => {
         document.body.innerHTML = '';
         JC.identity.transition('server-a', 'user-a', 'discovery-base-test-start');
         JC.pluginConfig = {};
+        JC.core.navigation = {
+            onNavigate: () => () => undefined,
+            onViewPage: () => () => undefined,
+        } as unknown as NonNullable<typeof JC.core.navigation>;
     });
 
     it('removes A synchronously, drops held A, and renders B on activation', async () => {
@@ -35,6 +39,7 @@ describe('Seerr discovery controller identity lifecycle', () => {
                 return true;
             }),
         });
+        controller.start();
 
         const staleSection = document.createElement('div');
         staleSection.className = 'seerr-identity-test-discovery-section';
@@ -52,5 +57,6 @@ describe('Seerr discovery controller identity lifecycle', () => {
         await JC.identity.activate(contextB);
         await vi.waitFor(() => expect(call).toBe(2));
         await vi.waitFor(() => expect(document.body.textContent).toContain('account-b'));
+        controller.dispose();
     });
 });
