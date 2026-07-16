@@ -135,6 +135,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             }
             void save.then(saved => { if (saved) toast(toastMessage); });
             if (id === 'randomButtonToggle') (JC as any).addRandomButton();
+            if (id === 'hideFavoritesTabToggle') (JC as any).applyHideFavoritesTab?.();
             if (id === 'showWatchProgressToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-watchProgress').forEach(el => el.remove());
             if (id === 'showFileSizesToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-fileSize').forEach(el => el.remove());
             if (id === 'showAudioLanguagesToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-audioLanguage').forEach(el => el.remove());
@@ -170,6 +171,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     addSettingToggleListener('showFileSizesToggle', 'showFileSizes', 'feature_file_size_display');
     addSettingToggleListener('showAudioLanguagesToggle', 'showAudioLanguages', 'feature_audio_language_display');
     addSettingToggleListener('removeContinueWatchingToggle', 'removeContinueWatchingEnabled', 'feature_remove_continue_watching');
+    addSettingToggleListener('hideFavoritesTabToggle', 'hideFavoritesTab', 'feature_hide_favorites_tab');
     addSettingToggleListener('qualityTagsToggle', 'qualityTagsEnabled', 'feature_quality_tags', true);
     // Show or hide the nested category section when the master quality-tags toggle changes
     const qualityMasterToggle = document.getElementById('qualityTagsToggle') as HTMLInputElement | null;

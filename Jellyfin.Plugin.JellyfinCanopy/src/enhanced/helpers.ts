@@ -349,6 +349,18 @@ export function addCSS(id: string, css: string): void {
     JC.core.ui!.injectCss(id, css);
 }
 
+/**
+ * Whether the current route is the Home page (the `#/home` view that owns the
+ * native Home/Favorites tab strip). Shared by native-tabs (custom tab injection)
+ * and hide-favorites-tab so both agree on exactly which routes count as "home",
+ * including the `?tab=N` param-only variants.
+ */
+export function isOnHomePage(): boolean {
+    const hash = window.location.hash;
+    return hash === '' || hash === '#/home' || hash === '#/home.html'
+        || hash.indexOf('#/home?') !== -1 || hash.indexOf('#/home.html?') !== -1;
+}
+
 export interface ExternalLinkOptions {
     /** Text content. */
     text?: string;

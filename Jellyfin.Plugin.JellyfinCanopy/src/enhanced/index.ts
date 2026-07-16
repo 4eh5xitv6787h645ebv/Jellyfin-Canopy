@@ -19,6 +19,7 @@ import './features/release-dates';
 import './features/details-page';
 import './features/remove-home';
 import './features/remove-multiselect';
+import './features/hide-favorites-tab';
 import './events';
 import './playback';
 // hidden-content modules — order matters: -data owns the store + lookup sets the

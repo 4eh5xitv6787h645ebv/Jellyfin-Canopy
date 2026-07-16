@@ -7,7 +7,7 @@ const TOGGLE_IDS = [
     'autoPauseToggle', 'autoResumeToggle', 'autoPipToggle', 'autoSkipIntroToggle',
     'autoSkipOutroToggle', 'randomButtonToggle', 'randomUnwatchedOnly',
     'showWatchProgressToggle', 'showFileSizesToggle', 'showAudioLanguagesToggle',
-    'removeContinueWatchingToggle', 'qualityTagsToggle', 'genreTagsToggle',
+    'removeContinueWatchingToggle', 'hideFavoritesTabToggle', 'qualityTagsToggle', 'genreTagsToggle',
     'pauseScreenToggle', 'languageTagsToggle', 'ratingTagsToggle', 'peopleTagsToggle',
     'tagsHideOnHoverToggle', 'disableCustomSubtitleStyles', 'longPress2xEnabled'
 ];
