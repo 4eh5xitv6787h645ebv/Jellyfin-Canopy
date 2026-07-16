@@ -81,4 +81,57 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
             && JC.currentSettings?.hideFavoritesTab === true,
         isApplicable: (state) => homeRoute(state.routeKey),
     },
+    {
+        id: 'calendar-page',
+        entry: 'calendar-page',
+        scope: 'navigation',
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.CalendarPageEnabled === true,
+        isApplicable: (state) => /#\/calendar(?:[?#]|$)/i.test(state.routeKey),
+    },
+    {
+        id: 'requests-page',
+        entry: 'requests-page',
+        scope: 'navigation',
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.DownloadsPageEnabled === true,
+        isApplicable: (state) => /#\/downloads(?:[?#]|$)/i.test(state.routeKey),
+    },
+    {
+        id: 'hidden-content-page',
+        entry: 'hidden-content-page',
+        scope: 'navigation',
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.HiddenContentEnabled === true,
+        isApplicable: (state) => /#\/hidden-content(?:[?#]|$)/i.test(state.routeKey),
+    },
+    {
+        id: 'bookmarks-page',
+        entry: 'bookmarks-page',
+        scope: 'navigation',
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.BookmarksEnabled === true,
+        isApplicable: (state) => /#\/bookmarks(?:[?#]|$)/i.test(state.routeKey),
+    },
+    {
+        id: 'theme-selector',
+        entry: 'theme-selector',
+        scope: 'identity',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.ThemeSelectorEnabled === true,
+        isApplicable: () => true,
+    },
+    {
+        id: 'colored-ratings',
+        entry: 'colored-ratings',
+        scope: 'navigation',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.ColoredRatingsEnabled === true,
+        isApplicable: (state) => {
+            const route = state.routeKey.toLowerCase();
+            return route.includes('details') || route.includes('/video') || route.includes('#/video');
+        },
+    },
 ]);

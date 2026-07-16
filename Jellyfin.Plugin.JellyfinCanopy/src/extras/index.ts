@@ -3,8 +3,5 @@
 // Owned by the extras conversion wave; main.ts imports this barrel once, so
 // conversions never edit main.ts itself. login-image.js stays out-of-band
 // (loaded pre-login, config-gated) and is deliberately NOT imported here.
-import './colored-activity-icons';
-import './colored-ratings';
-import './plugin-icons';
-import './theme-selector';
-import './active-streams';
+// Every extras owner is a manifest-backed lazy entry. Keep this compatibility
+// barrel import-pure so it cannot pull disabled features into cold boot.

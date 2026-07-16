@@ -1856,35 +1856,12 @@
         );
         activateFeature(context, 'pause-screen', typeof JC.initializePauseScreen === 'function', JC.initializePauseScreen);
         activateFeature(context, 'bookmarks', typeof JC.initializeBookmarks === 'function', JC.initializeBookmarks);
-        activateFeature(context, 'quality-tags', JC.currentSettings?.qualityTagsEnabled, JC.initializeQualityTags);
-        activateFeature(context, 'genre-tags', JC.currentSettings?.genreTagsEnabled, JC.initializeGenreTags);
-        activateFeature(context, 'rating-tags', JC.currentSettings?.ratingTagsEnabled, JC.initializeRatingTags);
-        activateFeature(context, 'user-review-tags', JC.pluginConfig?.ShowUserReviews && JC.pluginConfig?.ShowUserRatingOnPosters && JC.currentSettings?.ratingTagsEnabled, JC.initializeUserReviewTags);
         activateFeature(context, 'arr-links', JC.pluginConfig?.ArrLinksEnabled, JC.initializeArrLinksScript);
         activateFeature(context, 'arr-tag-links', JC.pluginConfig?.ArrTagsShowAsLinks, JC.initializeArrTagLinksScript);
         activateFeature(context, 'letterboxd-links', JC.pluginConfig?.LetterboxdEnabled, JC.initializeLetterboxdLinksScript);
         activateFeature(context, 'reviews', JC.pluginConfig?.ShowReviews || JC.pluginConfig?.ShowUserReviews, JC.initializeReviewsScript);
-        activateFeature(context, 'language-tags', JC.currentSettings?.languageTagsEnabled, JC.initializeLanguageTags);
-        activateFeature(context, 'people-tags', JC.currentSettings?.peopleTagsEnabled, JC.initializePeopleTags);
-        activateFeature(
-            context,
-            'tag-pipeline',
-            typeof JC.tagPipeline?.initialize === 'function',
-            () => JC.tagPipeline.initialize()
-        );
         activateFeature(context, 'osd-rating', typeof JC.initializeOsdRating === 'function', JC.initializeOsdRating);
         activateFeature(context, 'hidden-content', JC.pluginConfig?.HiddenContentEnabled, JC.initializeHiddenContent);
-        activateFeature(context, 'colored-ratings', JC.pluginConfig?.ColoredRatingsEnabled, JC.initializeColoredRatings);
-        activateFeature(context, 'theme-selector', JC.pluginConfig?.ThemeSelectorEnabled, JC.initializeThemeSelector);
-        activateFeature(context, 'activity-icons', JC.pluginConfig?.ColoredActivityIconsEnabled, JC.initializeActivityIcons);
-        activateFeature(context, 'plugin-icons', JC.pluginConfig?.PluginIconsEnabled, JC.initializePluginIcons);
-        activateFeature(
-            context,
-            'active-streams',
-            JC.pluginConfig?.ActiveStreamsEnabled && typeof JC.activeStreams?.initialize === 'function',
-            () => JC.activeStreams.initialize()
-        );
-        activateFeature(context, 'pages-framework', typeof JC.initializePagesFramework === 'function', JC.initializePagesFramework);
     }
 
     async function runInitialization(context, client, scope) {

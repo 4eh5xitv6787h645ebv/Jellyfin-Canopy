@@ -9,6 +9,7 @@ import '../core/identity';
 import '../core/live';
 import '../core/live-config';
 import '../enhanced/config';
+import '../enhanced/pages';
 import {
     builtInFeatureDescriptors,
 } from './feature-catalog';

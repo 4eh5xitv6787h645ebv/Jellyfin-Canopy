@@ -35,10 +35,17 @@ const BOOTSTRAP_ENTRIES = Object.freeze({
 const ESM_ENTRIES = Object.freeze({
     'active-streams': path.join(SRC_ROOT, 'entries', 'active-streams.ts'),
     'activity-icons': path.join(SRC_ROOT, 'entries', 'activity-icons.ts'),
+    'bookmarks-page': path.join(SRC_ROOT, 'entries', 'bookmarks-page.ts'),
     boot: path.join(SRC_ROOT, 'entries', 'boot.ts'),
+    'calendar-page': path.join(SRC_ROOT, 'entries', 'calendar-page.ts'),
     'card-tags': path.join(SRC_ROOT, 'tags', 'feature.ts'),
+    'colored-ratings': path.join(SRC_ROOT, 'extras', 'colored-ratings.feature.ts'),
+    'discovery-library': path.join(SRC_ROOT, 'entries', 'discovery-library.ts'),
+    'hidden-content-page': path.join(SRC_ROOT, 'entries', 'hidden-content-page.ts'),
     'hide-favorites-tab': path.join(SRC_ROOT, 'entries', 'hide-favorites-tab.ts'),
     'plugin-icons': path.join(SRC_ROOT, 'entries', 'plugin-icons.ts'),
+    'requests-page': path.join(SRC_ROOT, 'entries', 'requests-page.ts'),
+    'theme-selector': path.join(SRC_ROOT, 'extras', 'theme-selector.feature.ts'),
 });
 
 function sha256(bytes) {
