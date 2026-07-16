@@ -44,6 +44,7 @@ const ESM_ENTRIES = Object.freeze({
     'details-enhancements': path.join(SRC_ROOT, 'enhanced', 'features', 'details.feature.ts'),
     'discovery-library': path.join(SRC_ROOT, 'entries', 'discovery-library.ts'),
     elsewhere: path.join(SRC_ROOT, 'elsewhere', 'elsewhere.feature.ts'),
+    'enhanced-events': path.join(SRC_ROOT, 'entries', 'enhanced-events.ts'),
     'hidden-content-runtime': path.join(SRC_ROOT, 'entries', 'hidden-content-runtime.ts'),
     'hidden-content-page': path.join(SRC_ROOT, 'entries', 'hidden-content-page.ts'),
     'hide-favorites-tab': path.join(SRC_ROOT, 'entries', 'hide-favorites-tab.ts'),

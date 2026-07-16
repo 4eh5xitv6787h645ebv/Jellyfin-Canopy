@@ -23,6 +23,16 @@ beforeEach(() => {
 });
 
 describe('built-in detail integration catalog', () => {
+    it('activates the event shell after its settings-launcher dependency', () => {
+        const settingsIndex = builtInFeatureDescriptors.findIndex((item) => item.id === 'settings-launcher');
+        const eventsIndex = builtInFeatureDescriptors.findIndex((item) => item.id === 'enhanced-events');
+        expect(settingsIndex).toBeGreaterThanOrEqual(0);
+        expect(eventsIndex).toBeGreaterThan(settingsIndex);
+        expect(descriptor('enhanced-events').dependsOn).toEqual(['settings-launcher']);
+        expect(descriptor('enhanced-events').isEnabled(state)).toBe(true);
+        expect(descriptor('enhanced-events').isEnabled({ ...state, identity: null })).toBe(false);
+    });
+
     it('orders bookmark runtime before its dependent management page', () => {
         const runtimeIndex = builtInFeatureDescriptors.findIndex((item) => item.id === 'bookmarks-runtime');
         const pageIndex = builtInFeatureDescriptors.findIndex((item) => item.id === 'bookmarks-page');
@@ -85,6 +95,9 @@ describe('built-in detail integration catalog', () => {
         expect(descriptor('letterboxd-links').isEnabled(state)).toBe(true);
         expect(descriptor('details-enhancements').isEnabled(state)).toBe(false);
         JC.pluginConfig.HiddenContentEnabled = true;
+        expect(descriptor('details-enhancements').isEnabled(state)).toBe(true);
+        JC.pluginConfig.HiddenContentEnabled = false;
+        JC.pluginConfig.SpoilerBlurEnabled = true;
         expect(descriptor('details-enhancements').isEnabled(state)).toBe(true);
     });
 });

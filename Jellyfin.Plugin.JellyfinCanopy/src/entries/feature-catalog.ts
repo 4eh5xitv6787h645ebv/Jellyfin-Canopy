@@ -75,6 +75,14 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         isApplicable: () => true,
     },
     {
+        id: 'enhanced-events',
+        entry: 'enhanced-events',
+        scope: 'identity',
+        dependsOn: ['settings-launcher'],
+        isEnabled: (state) => Boolean(state.identity),
+        isApplicable: () => true,
+    },
+    {
         id: 'native-tabs',
         entry: 'native-tabs',
         scope: 'identity',
@@ -269,6 +277,7 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
             || JC.currentSettings?.showAudioLanguages === true
             || (JC.pluginConfig?.ShowReleaseDates === true && JC.pluginConfig?.TmdbEnabled === true)
             || JC.pluginConfig?.HiddenContentEnabled === true
+            || JC.pluginConfig?.SpoilerBlurEnabled === true
         ),
         isApplicable: (state) => detailsRoute(state.routeKey),
     },

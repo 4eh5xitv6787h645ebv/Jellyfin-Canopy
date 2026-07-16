@@ -431,64 +431,6 @@ describe('plugin.js loader guards', () => {
         expect(diagnostics.snapshot()).toMatchObject({ epoch: 2, degraded: false, entries: [] });
     });
 
-    it('contains sync/async legacy activation failures and still reaches the boot marker', async () => {
-        const recordSource = extractFunctionSource('recordFeatureFailure');
-        const oneSource = extractFunctionSource('activateFeature');
-        const allSource = extractFunctionSource('activateFeatures');
-        expect(recordSource, 'recordFeatureFailure not found').toBeTruthy();
-        expect(oneSource, 'activateFeature not found').toBeTruthy();
-        expect(allSource, 'activateFeatures not found').toBeTruthy();
-        const later = vi.fn();
-        const records: Array<Record<string, unknown>> = [];
-        const context = { serverId: 'server', userId: 'user', epoch: 3 };
-        const jc: Record<string, unknown> = {
-            pluginConfig: {},
-            currentSettings: {},
-            initializeCanopyScript: () => { throw new Error('corrupt owned cache'); },
-            initializeBookmarks: later,
-            initializePagesFramework: () => Promise.reject(new Error('late feature failure')),
-        };
-        const identity = { isCurrent: () => true };
-        const activate = eval(
-            `(function(JC, identity, bootDiagnostics, requireCurrentIdentity) {`
-            + recordSource + oneSource + allSource
-            + `; return function(context) {
-                activateFeature(context, 'canopy', true, JC.initializeCanopyScript);
-                activateFeature(context, 'bookmarks', true, JC.initializeBookmarks);
-                activateFeature(context, 'pages-framework', true, JC.initializePagesFramework);
-            }; })`,
-        ) as (
-            jc: Record<string, unknown>,
-            identity: { isCurrent(context: IdentityContext): boolean },
-            diagnostics: { record(entry: Record<string, unknown>): void },
-            requireCurrent: (context: IdentityContext) => void,
-        ) => (context: IdentityContext) => void;
-        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
-        expect(() => activate(jc, identity, { record: (entry) => records.push(entry) }, () => undefined)(context))
-            .not.toThrow();
-        jc.initialized = true; // the next runInitialization statement remains reachable
-        await Promise.resolve();
-        await Promise.resolve();
-        expect(later).toHaveBeenCalledTimes(1);
-        expect(jc.initialized).toBe(true);
-        expect(records).toEqual([
-            expect.objectContaining({
-                feature: 'canopy', phase: 'feature-initialization', state: 'FeatureFailure',
-            }),
-            expect.objectContaining({
-                feature: 'pages-framework', phase: 'feature-initialization', state: 'FeatureFailure',
-            }),
-        ]);
-        expect(error).toHaveBeenCalledTimes(2);
-        expect(allSource).not.toContain('initializeBookmarks');
-        expect(allSource).not.toContain('initializePagesFramework');
-
-        const run = extractFunctionSource('runInitialization') || '';
-        expect(run.indexOf('activateFeatures(context)')).toBeGreaterThanOrEqual(0);
-        expect(run.indexOf('JC.initialized = true')).toBeGreaterThan(run.indexOf('activateFeatures(context)'));
-    });
-
     it('completes the real loader marker, event, splash, and shell after a registered owner fails', async () => {
         const loaderDocument = document.implementation.createHTMLDocument('loader-containment');
         const local = memoryStorage();
@@ -553,7 +495,6 @@ describe('plugin.js loader guards', () => {
                 const jc = fakeWindow.JellyfinCanopy as LoaderGlobal;
                 jc.loadSettings = () => ({ displayLanguage: '' });
                 jc.initializeShortcuts = vi.fn();
-                jc.initializeCanopyScript = legacyActivation;
                 jc.identity.registerActivate('registered-owner', registeredFailure);
                 jc.identity.registerActivate('registered-later', laterRegisteredActivation);
                 return Promise.resolve({ initializeClientRuntime: () => runtime });
@@ -636,7 +577,7 @@ describe('plugin.js loader guards', () => {
             `http://loader.test/JellyfinCanopy/dist/${'a'.repeat(64)}/entries/boot.js?attempt=0`,
         ]);
         expect([...loaderDocument.scripts].some((script) => script.src.includes('/dist/jc.bundle.js'))).toBe(false);
-        expect(legacyActivation).toHaveBeenCalledTimes(1);
+        expect(legacyActivation).not.toHaveBeenCalled();
         expect(laterRegisteredActivation).toHaveBeenCalledTimes(1);
         expect(jc.initialized).toBe(true);
         expect(event.detail).toEqual({ serverId: 'loaderserver', userId: 'loaderuser', epoch: 1 });
@@ -656,12 +597,12 @@ describe('plugin.js loader guards', () => {
             expect.any(Error),
         );
 
-        // The failed registered participant remains retryable without replaying
-        // the already-completed legacy tier or disturbing the boot marker.
+        // The failed registered participant remains retryable without invoking
+        // the retired compatibility activation or disturbing the boot marker.
         await expect(jc.identity.activate(event.detail)).resolves.toBeUndefined();
         await expect(jc.identity.activate(event.detail)).resolves.toBeUndefined();
         expect(registeredFailure).toHaveBeenCalledTimes(2);
-        expect(legacyActivation).toHaveBeenCalledTimes(1);
+        expect(legacyActivation).not.toHaveBeenCalled();
         expect(jc.initialized).toBe(true);
     });
 

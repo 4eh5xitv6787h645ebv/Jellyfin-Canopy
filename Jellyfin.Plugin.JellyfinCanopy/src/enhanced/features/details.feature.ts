@@ -7,7 +7,8 @@ export function isDetailsEnhancementsEnabled(): boolean {
         || JC.currentSettings?.showFileSizes === true
         || JC.currentSettings?.showAudioLanguages === true
         || (JC.pluginConfig?.ShowReleaseDates === true && JC.pluginConfig?.TmdbEnabled === true)
-        || JC.pluginConfig?.HiddenContentEnabled === true;
+        || JC.pluginConfig?.HiddenContentEnabled === true
+        || JC.pluginConfig?.SpoilerBlurEnabled === true;
 }
 
 export function isDetailsRoute(routeKey: string): boolean {

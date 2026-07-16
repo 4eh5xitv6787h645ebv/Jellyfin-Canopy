@@ -1822,31 +1822,6 @@
         console.error(`🪼 Jellyfin Canopy: feature "${name}" initialized in degraded mode`, error);
     }
 
-    /** Contain one feature owner without downgrading identity/auth/config failures. */
-    function activateFeature(context, name, enabled, initializer) {
-        if (!enabled || typeof initializer !== 'function') return;
-        requireCurrentIdentity(context);
-        try {
-            // Preserve the historical root-namespace receiver for feature
-            // methods that consult `this`; nested owners use explicit wrappers.
-            const produced = initializer.call(JC);
-            if (produced && typeof produced.then === 'function') {
-                Promise.resolve(produced).catch((error) => {
-                    recordFeatureFailure(context, name, error);
-                });
-            }
-        } catch (error) {
-            if (error?.name === 'IdentityChangedError' || !identity.isCurrent(context)) throw error;
-            recordFeatureFailure(context, name, error);
-        }
-        requireCurrentIdentity(context);
-    }
-
-    /** Stage-6 activation. Old-epoch teardown always ran before these gates. */
-    function activateFeatures(context) {
-        activateFeature(context, 'canopy', typeof JC.initializeCanopyScript === 'function', JC.initializeCanopyScript);
-    }
-
     async function runInitialization(context, client, scope) {
         try {
             requireCurrentIdentity(context);
@@ -1958,7 +1933,7 @@
             installCacheUnloadOnce();
 
             // Boot participants that self-wire (live socket, identity caches)
-            // activate once per epoch before the legacy Stage-6 feature calls.
+            // activate once per epoch before loader-owned feature descriptors.
             await identity.activate(context);
             requireCurrentIdentity(context);
             if (!clientRuntime || typeof clientRuntime.configurationPublished !== 'function') {
@@ -1966,9 +1941,6 @@
             }
             await clientRuntime.configurationPublished(context);
             requireCurrentIdentity(context);
-            activateFeatures(context);
-            requireCurrentIdentity(context);
-
             initializedEpoch = context.epoch;
             JC.initialized = true;
             document.dispatchEvent(new CustomEvent('jc:identityactivated', { detail: context }));

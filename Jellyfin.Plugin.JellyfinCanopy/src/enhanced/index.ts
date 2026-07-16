@@ -9,7 +9,8 @@ import './config';
 import './helpers';
 import './icons';
 // Detail-page and home-action families are loader-owned ESM entries.
-import './events';
+// Shortcut, visibility and dynamic-event handling are loader-owned by the
+// enhanced-events entry.
 // Playback, subtitles, hidden-content filtering and management are loader-owned ESM entries.
 import './themer';
 // The lightweight settings launcher is loader owned; the large panel graph is
