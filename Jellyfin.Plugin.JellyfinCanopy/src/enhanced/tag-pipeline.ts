@@ -33,6 +33,7 @@ const logPrefix = '🪼 Jellyfin Canopy [TagPipeline]:';
 let serverCache: Map<string, any> | null = null; // Map<itemId, TagCacheEntry> loaded from server
 let serverCacheVersion = 0;
 let serverCacheTimestamp = 0;
+let serverContent: TagContentIdentity | null = null;
 let serverProjection: TagProjectionIdentity | null = null;
 let serverCacheLoadGeneration = 0;
 let tagCacheOwnerUserId: string | null = null;
@@ -44,7 +45,14 @@ export interface TagProjectionIdentity {
     revision: number;
 }
 
+/** Identity of the shared tag-cache content journal in one server process. */
+export interface TagContentIdentity {
+    epoch: string;
+    revision: number;
+}
+
 export type ProjectionResponseDecision = 'apply' | 'ignore' | 'reset';
+export type ContentResponseDecision = 'apply' | 'ignore' | 'reset';
 
 /** Normalize Jellyfin ids/cache keys for stable comparisons across dashed/N forms. */
 export function normalizeProjectionKey(value: unknown): string | null {
@@ -62,6 +70,74 @@ export function readProjectionIdentity(response: any): TagProjectionIdentity | n
     const revision = Number(response?.projectionRevision);
     if (!userId || !epoch || !Number.isSafeInteger(revision) || revision < 0) return null;
     return { userId, epoch, revision };
+}
+
+/** Parse the server-owned content epoch/revision carried by every response. */
+export function readContentIdentity(response: any): TagContentIdentity | null {
+    const epoch = typeof response?.contentEpoch === 'string' ? response.contentEpoch.trim() : '';
+    const revision = Number(response?.contentRevision);
+    if (!epoch || !Number.isSafeInteger(revision) || revision < 0) return null;
+    return { epoch, revision };
+}
+
+/** Apply only monotonic content responses from the currently loaded epoch. */
+export function decideContentResponse(
+    current: TagContentIdentity | null,
+    response: any,
+): ContentResponseDecision {
+    const incoming = readContentIdentity(response);
+    if (!incoming) return 'ignore';
+    if (response?.contentReset === true || response?.reset === true) return 'reset';
+    if (!current || incoming.epoch !== current.epoch) return 'reset';
+    if (incoming.revision < current.revision) return 'ignore';
+    return 'apply';
+}
+
+export interface ContentApplyResult {
+    decision: ContentResponseDecision;
+    identity: TagContentIdentity | null;
+    entries: Map<string, any>;
+    changedIds: string[];
+}
+
+/**
+ * Pure owner of full/delta map publication. Full snapshots replace the map even
+ * when empty; deltas delete tombstones before merging upserts; stale responses
+ * return the original map reference and cannot move the cursor backwards.
+ */
+export function applyContentResponse(
+    currentIdentity: TagContentIdentity | null,
+    currentEntries: Map<string, any>,
+    response: any,
+    fullSnapshot: boolean,
+): ContentApplyResult {
+    const incoming = readContentIdentity(response);
+    const decision: ContentResponseDecision = fullSnapshot
+        ? (!incoming || response?.contentReset === true || response?.reset === true ? 'reset' : 'apply')
+        : decideContentResponse(currentIdentity, response);
+    if (decision !== 'apply' || !incoming) {
+        return { decision, identity: currentIdentity, entries: currentEntries, changedIds: [] };
+    }
+
+    const next = fullSnapshot ? new Map<string, any>() : new Map(currentEntries);
+    const changed = new Set<string>();
+    for (const id of normalizeIdList(response?.removedIds)) {
+        next.delete(id);
+        changed.add(id);
+    }
+    if (response?.items && typeof response.items === 'object') {
+        for (const [rawId, entry] of Object.entries(response.items)) {
+            const id = normalizeProjectionKey(rawId);
+            if (!id) continue;
+            next.set(id, entry);
+            changed.add(id);
+        }
+    }
+
+    if (fullSnapshot) {
+        for (const id of currentEntries.keys()) changed.add(id);
+    }
+    return { decision, identity: incoming, entries: next, changedIds: [...changed] };
 }
 
 /**
@@ -516,10 +592,16 @@ async function loadServerCache(): Promise<void> {
                 // publication so a watched flip during bundle download cannot
                 // install a stale full snapshot.
                 try {
+                    const prefetchedContent = readContentIdentity(resp);
+                    if (!prefetchedContent) {
+                        resp = null;
+                        throw new Error('prefetch content cursor missing');
+                    }
                     const params = new URLSearchParams({
+                        contentEpoch: prefetchedContent.epoch,
+                        contentRevision: String(prefetchedContent.revision),
                         projectionEpoch: prefetchedIdentity.epoch,
                         projectionRevision: String(prefetchedIdentity.revision),
-                        projectionOnly: 'true',
                     });
                     const validation: any = await ApiClient.ajax({
                         type: 'GET',
@@ -530,7 +612,11 @@ async function loadServerCache(): Promise<void> {
                     if (decideProjectionResponse(prefetchedIdentity, validation, requestedUserId) !== 'apply'
                         || !validatedIdentity
                         || validatedIdentity.revision !== prefetchedIdentity.revision
-                        || normalizeIdList(validation?.projectionIds).length > 0) {
+                        || normalizeIdList(validation?.projectionIds).length > 0
+                        || decideContentResponse(prefetchedContent, validation) !== 'apply'
+                        || readContentIdentity(validation)?.revision !== prefetchedContent.revision
+                        || normalizeIdList(validation?.removedIds).length > 0
+                        || (validation?.items && Object.keys(validation.items).length > 0)) {
                         resp = null;
                     }
                 } catch {
@@ -553,18 +639,18 @@ async function loadServerCache(): Promise<void> {
         if (normalizeProjectionKey(ApiClient.getCurrentUserId()) !== requestedUserKey) return;
 
         const identity = readProjectionIdentity(resp);
-        if (!identity || identity.userId !== requestedUserKey) {
+        const contentIdentity = readContentIdentity(resp);
+        if (!identity || identity.userId !== requestedUserKey || !contentIdentity) {
             console.warn(`${logPrefix} Server cache response lacked the expected per-user projection identity`);
             return;
         }
 
-        const entries = new Map<string, any>();
-        if (resp?.items && typeof resp.items === 'object') {
-            for (const [rawId, entry] of Object.entries(resp.items)) {
-                const id = normalizeProjectionKey(rawId);
-                if (id) entries.set(id, entry);
-            }
+        const appliedContent = applyContentResponse(null, new Map<string, any>(), resp, true);
+        if (appliedContent.decision !== 'apply') {
+            console.warn(`${logPrefix} Server cache response requested an immediate content reset`);
+            return;
         }
+        const entries = appliedContent.entries;
         // Drop every unscoped local/hot/DOM value before publishing the first
         // owner-bound snapshot. Renderer isTagged() must not preserve pre-load
         // or previous-account overlays over the authoritative projection.
@@ -575,6 +661,7 @@ async function loadServerCache(): Promise<void> {
         serverCache = entries; // an authoritative empty cache is still a loaded cache
         serverCacheVersion = Number(resp?.version) || 0;
         serverCacheTimestamp = Number(resp?.timestamp) || 0;
+        serverContent = contentIdentity;
         serverProjection = identity;
         tagCacheOwnerUserId = identity.userId;
         projectionResetPending = false;
@@ -582,7 +669,7 @@ async function loadServerCache(): Promise<void> {
         forceFreshProjectionIds.clear();
         console.log(
             `${logPrefix} Server cache loaded: ${serverCache.size} items ` +
-            `(v${serverCacheVersion}, projection ${identity.revision})`,
+            `(content ${contentIdentity.revision}, projection ${identity.revision})`,
         );
     } catch (err) {
         console.warn(`${logPrefix} Failed to load server cache, using batch fallback:`, err);
@@ -615,17 +702,20 @@ async function refreshServerCache(projectionOnly = false): Promise<void> {
         }
         return;
     }
-    if (!serverProjection) return;
-    // An empty/not-yet-built shared cache has no content timestamp. Navigation
-    // still has to validate the privacy cursor, but must not turn that into a
-    // full-cache request, so use the bounded journal-only shape in this case.
-    const requestProjectionOnly = projectionOnly || !serverCacheTimestamp;
+    if (!serverProjection || !serverContent) return;
+    // A valid empty snapshot still owns a content epoch/revision, so ordinary
+    // navigation can request its bounded delta without a wall-clock timestamp.
+    const requestProjectionOnly = projectionOnly;
 
     const requestGeneration = projectionRequestGeneration;
     const requestProjection = { ...serverProjection };
+    const requestContent = { ...serverContent };
     try {
         const params = new URLSearchParams();
-        if (!requestProjectionOnly) params.set('since', String(serverCacheTimestamp));
+        if (!requestProjectionOnly) {
+            params.set('contentEpoch', requestContent.epoch);
+            params.set('contentRevision', String(requestContent.revision));
+        }
         params.set('projectionEpoch', requestProjection.epoch);
         params.set('projectionRevision', String(requestProjection.revision));
         if (requestProjectionOnly) params.set('projectionOnly', 'true');
@@ -666,10 +756,13 @@ async function refreshServerCache(projectionOnly = false): Promise<void> {
             return;
         }
 
-        // A shared-cache removal/full rebuild still uses the existing version
-        // signal. Do this before mutating any projected rows.
-        if (Number(resp?.version) !== serverCacheVersion) {
-            console.log(`${logPrefix} Cache version changed, reloading full cache`);
+        const appliedContent = requestProjectionOnly
+            ? null
+            : applyContentResponse(serverContent, serverCache, resp, false);
+        const contentDecision = appliedContent?.decision ?? 'apply';
+        if (contentDecision === 'ignore') return;
+        if (contentDecision === 'reset') {
+            console.log(`${logPrefix} Content epoch/journal reset, reloading one full snapshot`);
             resetServerProjection(true);
             await loadServerCache();
             if (serverCache) {
@@ -681,6 +774,7 @@ async function refreshServerCache(projectionOnly = false): Promise<void> {
 
         const incomingIdentity = readProjectionIdentity(resp)!;
         const projectionIds = normalizeIdList(resp?.projectionIds);
+        const removedIds = requestProjectionOnly ? [] : normalizeIdList(resp?.removedIds);
         const newEntries: Array<[string, any]> = [];
         if (resp?.items && typeof resp.items === 'object') {
             for (const [rawId, entry] of Object.entries(resp.items)) {
@@ -691,7 +785,8 @@ async function refreshServerCache(projectionOnly = false): Promise<void> {
 
         // projectionIds are authoritative invalidations/tombstones. Delete first,
         // then merge only the rows the current per-user projection returned.
-        for (const id of projectionIds) {
+        if (appliedContent) serverCache = appliedContent.entries;
+        for (const id of [...projectionIds, ...removedIds]) {
             serverCache.delete(id);
             projectionDependencyIndex.remove(id);
         }
@@ -700,7 +795,11 @@ async function refreshServerCache(projectionOnly = false): Promise<void> {
             projectionDependencyIndex.replace(id, entry);
         }
 
-        const changedIds = new Set<string>(projectionIds);
+        const changedIds = new Set<string>([
+            ...projectionIds,
+            ...removedIds,
+            ...(appliedContent?.changedIds ?? []),
+        ]);
         for (const [id] of newEntries) changedIds.add(id);
         // If a native push named an id but the journal returned no cache row
         // (deleted/inaccessible), it remains an authoritative tombstone.
@@ -709,6 +808,10 @@ async function refreshServerCache(projectionOnly = false): Promise<void> {
         }
 
         serverProjection = incomingIdentity;
+        if (!requestProjectionOnly) {
+            serverContent = readContentIdentity(resp)!;
+            serverCacheVersion = Number(resp?.version) || serverCacheVersion;
+        }
         // A projection-only response carries the shared cache timestamp for
         // context, but did not request/apply that shared content delta. Advancing
         // the cursor here would make the next normal refresh skip unrelated
@@ -727,7 +830,8 @@ async function refreshServerCache(projectionOnly = false): Promise<void> {
         runScan();
         console.log(
             `${logPrefix} Server cache projection updated: ${newEntries.length} rows, ` +
-            `${projectionIds.length} invalidations (revision ${incomingIdentity.revision})`,
+            `${projectionIds.length + removedIds.length} invalidations ` +
+            `(content ${serverContent?.revision ?? 0}, projection ${incomingIdentity.revision})`,
         );
     } catch (err) {
         // Fail closed: ids synchronously blanked for this request stay pending and
@@ -1057,6 +1161,7 @@ function resetServerProjection(clearDom: boolean): void {
     serverCache = null;
     serverCacheVersion = 0;
     serverCacheTimestamp = 0;
+    serverContent = null;
     serverProjection = null;
     tagCacheOwnerUserId = null;
     projectionDependencyIndex.clear();

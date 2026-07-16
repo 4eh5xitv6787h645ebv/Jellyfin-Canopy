@@ -28,6 +28,78 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly IApplicationPaths _applicationPaths;
         private readonly ILogger<TagCacheService> _logger;
         private volatile ConcurrentDictionary<string, TagCacheEntry> _cache = new();
+        private readonly object _contentGate = new();
+        private readonly string _contentEpoch = Guid.NewGuid().ToString("N");
+        private readonly ContentChange?[] _contentJournal;
+        private int _contentJournalStart;
+        private int _contentJournalCount;
+        private long _contentRevision;
+        private long _servedContentIdsVisited;
+        internal const int DefaultContentJournalCapacity = 4096;
+
+        private sealed class ContentChange
+        {
+            public ContentChange(long revision, string itemId, bool removed)
+            {
+                Revision = revision;
+                ItemId = itemId;
+                Removed = removed;
+            }
+
+            public long Revision { get; }
+
+            public string ItemId { get; }
+
+            public bool Removed { get; }
+        }
+
+        private sealed class ServedContentState
+        {
+            // This is deliberately an "ever served in this process epoch" set. A
+            // later device/request must not erase the proof an older browser needs
+            // to receive a tombstone. The outer cache supplies the hard memory/TTL
+            // bound; an evicted state receives resetRequired rather than raw ids.
+            public HashSet<string> VisibleIds { get; } = new(StringComparer.Ordinal);
+        }
+
+        internal sealed class ContentDelta
+        {
+            public ContentDelta(
+                string epoch,
+                long revision,
+                bool resetRequired,
+                Dictionary<string, TagCacheEntry> items,
+                string[] removedIds,
+                int journalRowsVisited)
+            {
+                Epoch = epoch;
+                Revision = revision;
+                ResetRequired = resetRequired;
+                Items = items;
+                RemovedIds = removedIds;
+                JournalRowsVisited = journalRowsVisited;
+            }
+
+            public string Epoch { get; }
+
+            public long Revision { get; }
+
+            public bool ResetRequired { get; }
+
+            public Dictionary<string, TagCacheEntry> Items { get; }
+
+            public string[] RemovedIds { get; }
+
+            public int JournalRowsVisited { get; }
+        }
+
+        private static readonly TimeSpan ServedContentStateTtl = TimeSpan.FromHours(24);
+        private readonly BoundedTtlCache<string, ServedContentState> _servedContentStates = new(
+            maximumEntries: 2_048,
+            maximumWeight: 2_000_000,
+            weight: static (key, state) => key.Length + state.VisibleIds.Count,
+            comparer: StringComparer.Ordinal,
+            defaultTtl: () => ServedContentStateTtl);
         private readonly object _saveLock = new();
         private long _version;
         private long _lastModified;
@@ -104,15 +176,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         };
 
         public TagCacheService(ILibraryManager libraryManager, IApplicationPaths applicationPaths, ILogger<TagCacheService> logger)
+            : this(libraryManager, applicationPaths, logger, DefaultContentJournalCapacity)
         {
+        }
+
+        internal TagCacheService(
+            ILibraryManager libraryManager,
+            IApplicationPaths applicationPaths,
+            ILogger<TagCacheService> logger,
+            int contentJournalCapacity)
+        {
+            if (contentJournalCapacity <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(contentJournalCapacity));
+            }
+
             _libraryManager = libraryManager;
             _applicationPaths = applicationPaths;
             _logger = logger;
+            _contentJournal = new ContentChange[contentJournalCapacity];
         }
 
         public long Version => Interlocked.Read(ref _version);
         public long LastModified => Interlocked.Read(ref _lastModified);
         public int Count => _cache.Count;
+        internal string ContentEpoch => _contentEpoch;
+        internal long ContentRevision => Interlocked.Read(ref _contentRevision);
+        internal long ServedContentIdsVisited => Interlocked.Read(ref _servedContentIdsVisited);
+        internal void SetLegacyTimestampForTest(long timestamp)
+            => Interlocked.Exchange(ref _lastModified, timestamp);
 
         // Test seams for the user-access cache invalidation contract (Tests has InternalsVisibleTo).
         internal int UserAccessCacheCount => _userAccessCache.Count;
@@ -137,9 +229,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             long version,
             long lastModified)
         {
-            _cache = new ConcurrentDictionary<string, TagCacheEntry>(entries, StringComparer.Ordinal);
-            Interlocked.Exchange(ref _version, version);
-            Interlocked.Exchange(ref _lastModified, lastModified);
+            lock (_contentGate)
+            {
+                _cache = new ConcurrentDictionary<string, TagCacheEntry>(entries, StringComparer.Ordinal);
+                Interlocked.Exchange(ref _version, version);
+                Interlocked.Exchange(ref _lastModified, lastModified);
+            }
+        }
+
+        internal void PublishUpsertForTest(string key, TagCacheEntry entry)
+        {
+            lock (_contentGate)
+            {
+                _cache[key] = entry;
+                RecordContentChangeLocked(key, removed: false);
+            }
+        }
+
+        internal void PublishRemovalForTest(string key)
+        {
+            lock (_contentGate)
+            {
+                _cache.TryRemove(key, out _);
+                RecordContentChangeLocked(key, removed: true);
+            }
         }
 
         // Read the live cache entry for a key (or null). Lets reconcile tests assert reference
@@ -221,6 +334,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                 var newCache = new ConcurrentDictionary<string, TagCacheEntry>();
                 var changed = false; // an add or a genuine content change (drives the ?since= delta)
+                var contentUpserts = new List<string>();
                 var processed = 0;
 
                 foreach (var item in allItems)
@@ -276,6 +390,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             else
                             {
                                 changed = true;
+                                contentUpserts.Add(key);
                             }
                             newCache[key] = entry;
                         }
@@ -288,19 +403,34 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     }
                 }
 
-                // A key that was cached but is no longer in the library is a removal — the one
-                // transition the incremental ?since= delta cannot express (it carries no tombstone),
-                // so it is the sole trigger for a client full reload via a Version bump.
-                var removed = false;
+                // Keep the legacy Version bump below for older cached bundles. Current
+                // clients receive each key through the revision journal as a tombstone.
+                var removedIds = new List<string>();
                 foreach (var key in oldCache.Keys)
                 {
-                    if (!newCache.ContainsKey(key)) { removed = true; break; }
+                    if (!newCache.ContainsKey(key)) removedIds.Add(key);
                 }
+                var removed = removedIds.Count > 0;
 
                 OnBeforeSwapForTest?.Invoke();
 
-                // Atomic reference swap — readers see old or new cache, never partial.
-                _cache = newCache;
+                // Publish the dictionary swap and every externally visible mutation
+                // under the same gate as the monotonic journal. A delta reader can
+                // therefore observe old state/old revision or new state/new revision,
+                // never a cursor that skips the swap.
+                lock (_contentGate)
+                {
+                    _cache = newCache;
+                    foreach (var key in contentUpserts.OrderBy(static key => key, StringComparer.Ordinal))
+                    {
+                        RecordContentChangeLocked(key, removed: false);
+                    }
+
+                    foreach (var key in removedIds.OrderBy(static key => key, StringComparer.Ordinal))
+                    {
+                        RecordContentChangeLocked(key, removed: true);
+                    }
+                }
 
                 if (changed || removed)
                 {
@@ -315,8 +445,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
 
                 // Apply events queued while we were reconciling onto the freshly-published cache, so
-                // the swap can't strand a change that arrived mid-reconcile. A removal here bumps
-                // Version too (same client-reload contract).
+                // the swap can't strand a change that arrived mid-reconcile. A removal is journaled
+                // and also bumps the backward-compatibility Version signal.
                 if (ApplyPendingBatch(_pending.Drain(), out var drainRemoved))
                 {
                     Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -491,9 +621,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 if (ApplyPendingBatch(_pending.Drain(), out var removed))
                 {
                     Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                    // A removal is the client's only full-reload trigger: the ?since= delta carries
-                    // no tombstone, so bump Version so already-loaded clients drop the stale key.
-                    // ScheduleDebouncedSave persists the bumped version.
+                    // Current clients consume the tombstone journal. Retain Version
+                    // for an older cached bundle whose ?since= shape cannot delete.
                     if (removed) Interlocked.Increment(ref _version);
                     ScheduleDebouncedSave();
                 }
@@ -567,10 +696,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         /// <summary>
         /// Apply a drained pending batch via the standard rebuild/remove delegates, additionally
-        /// reporting whether any entry was actually removed from the cache. A removal is the only
-        /// transition the client's ?since= delta can't express (no tombstone), so callers bump
-        /// <see cref="Version"/> on it to force a client full reload. Wrapping the remove delegate
-        /// keeps <see cref="ApplyBatch"/>'s tested signature untouched.
+        /// reporting whether any entry was actually removed from the cache. The remove delegate
+        /// publishes a journal tombstone; callers additionally bump the legacy <see cref="Version"/>
+        /// signal for cached pre-journal clients. Wrapping it keeps <see cref="ApplyBatch"/>'s
+        /// tested signature untouched.
         /// </summary>
         private bool ApplyPendingBatch(IReadOnlyList<(Guid Id, bool Removed)> batch, out bool removedFromCache)
         {
@@ -607,15 +736,221 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 entry.StreamData = existing.StreamData;
                 entry.AudioLanguages = existing.AudioLanguages;
             }
-            _cache[key] = entry;
+            lock (_contentGate)
+            {
+                _cache[key] = entry;
+                RecordContentChangeLocked(key, removed: false);
+            }
             return true;
         }
 
         private bool RemoveEntry(Guid id)
         {
             var key = id.ToString("N").ToLowerInvariant();
-            return _cache.TryRemove(key, out _);
+            lock (_contentGate)
+            {
+                if (!_cache.TryRemove(key, out _))
+                {
+                    return false;
+                }
+
+                RecordContentChangeLocked(key, removed: true);
+                return true;
+            }
         }
+
+        private void RecordContentChangeLocked(string itemId, bool removed)
+        {
+            var revision = checked(++_contentRevision);
+            var change = new ContentChange(revision, itemId, removed);
+            if (_contentJournalCount < _contentJournal.Length)
+            {
+                var index = (_contentJournalStart + _contentJournalCount) % _contentJournal.Length;
+                _contentJournal[index] = change;
+                _contentJournalCount++;
+                return;
+            }
+
+            _contentJournal[_contentJournalStart] = change;
+            _contentJournalStart = (_contentJournalStart + 1) % _contentJournal.Length;
+        }
+
+        private void PublishServedState(string userKey, IEnumerable<string> visibleIds)
+        {
+            if (!_servedContentStates.TryGetValue(userKey, out var state))
+            {
+                state = new ServedContentState();
+            }
+
+            // Mutate the process-private state under _contentGate, then re-set it
+            // so BoundedTtlCache reweighs/evicts in O(1). Copying the existing set
+            // here would turn every one-row delta into O(all ids ever served).
+            foreach (var visibleId in visibleIds)
+            {
+                Interlocked.Increment(ref _servedContentIdsVisited);
+                state.VisibleIds.Add(visibleId);
+            }
+
+            _servedContentStates.Set(userKey, state, ServedContentStateTtl);
+        }
+
+        /// <summary>
+        /// Record every row actually emitted by the controller, including rows
+        /// introduced by a projection-only response. Content-journal tombstones
+        /// may disclose an id only after this process has served that id to the
+        /// same authenticated user.
+        /// </summary>
+        internal void PublishServedContentForUser(JUser user, IEnumerable<string> visibleIds)
+        {
+            ArgumentNullException.ThrowIfNull(user);
+            ArgumentNullException.ThrowIfNull(visibleIds);
+            lock (_contentGate)
+            {
+                PublishServedState(user.Id.ToString("N"), visibleIds);
+            }
+        }
+
+        /// <summary>
+        /// Return one authoritative personalized snapshot and establish the
+        /// server-side authorization proof used to filter later tombstones. The
+        /// revision is captured before row selection: a concurrent mutation can
+        /// cause one harmless duplicate in the next delta, never a skipped row.
+        /// </summary>
+        internal ContentDelta GetFullContentForUser(JUser user)
+        {
+            ArgumentNullException.ThrowIfNull(user);
+            long revision;
+            lock (_contentGate)
+            {
+                revision = _contentRevision;
+            }
+
+            var items = GetCacheForUser(user);
+            lock (_contentGate)
+            {
+                PublishServedState(user.Id.ToString("N"), items.Keys);
+            }
+            return new ContentDelta(
+                _contentEpoch,
+                revision,
+                resetRequired: false,
+                items,
+                Array.Empty<string>(),
+                journalRowsVisited: 0);
+        }
+
+        /// <summary>
+        /// Return only content mutations after a process-local monotonic cursor.
+        /// The fixed-size ring permits direct O(changes) suffix access; it never
+        /// scans the shared cache. Missing authorization history, an epoch change,
+        /// a future revision, or a journal gap fails closed with resetRequired.
+        /// </summary>
+        internal ContentDelta GetContentDeltaForUser(
+            JUser user,
+            string? clientEpoch,
+            long? clientRevision)
+        {
+            ArgumentNullException.ThrowIfNull(user);
+            var userKey = user.Id.ToString("N");
+
+            lock (_contentGate)
+            {
+                var currentRevision = _contentRevision;
+                if (string.IsNullOrWhiteSpace(clientEpoch)
+                    || !clientRevision.HasValue
+                    || !string.Equals(clientEpoch, _contentEpoch, StringComparison.Ordinal)
+                    || clientRevision.Value < 0
+                    || clientRevision.Value > currentRevision
+                    || !_servedContentStates.TryGetValue(userKey, out var served))
+                {
+                    return ContentResetLocked(currentRevision);
+                }
+
+                var requestedRevision = clientRevision.Value;
+                if (requestedRevision == currentRevision)
+                {
+                    return new ContentDelta(
+                        _contentEpoch,
+                        currentRevision,
+                        resetRequired: false,
+                        new Dictionary<string, TagCacheEntry>(StringComparer.Ordinal),
+                        Array.Empty<string>(),
+                        journalRowsVisited: 0);
+                }
+
+                var earliestRetained = currentRevision - _contentJournalCount + 1;
+                if (_contentJournalCount == 0 || requestedRevision < earliestRetained - 1)
+                {
+                    return ContentResetLocked(currentRevision);
+                }
+
+                // Each revision maps to exactly one ring row, so start directly at
+                // requested+1 instead of walking retained history. Last mutation
+                // wins when one id appears repeatedly in the requested suffix.
+                var finalChanges = new Dictionary<string, bool>(StringComparer.Ordinal);
+                var firstOffset = checked((int)(requestedRevision + 1 - earliestRetained));
+                var rowsVisited = 0;
+                for (var offset = firstOffset; offset < _contentJournalCount; offset++)
+                {
+                    var index = (_contentJournalStart + offset) % _contentJournal.Length;
+                    var change = _contentJournal[index]
+                        ?? throw new InvalidOperationException("Tag-cache content journal contains an empty retained row.");
+                    finalChanges[change.ItemId] = change.Removed;
+                    rowsVisited++;
+                }
+
+                var candidateUpserts = finalChanges
+                    .Where(static pair => !pair.Value)
+                    .Select(static pair => pair.Key)
+                    .ToArray();
+                var items = GetCacheEntriesForUserByIds(user, candidateUpserts);
+                var removedIds = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var (itemId, removed) in finalChanges)
+                {
+                    // A content deletion and a now-inaccessible upsert are both
+                    // tombstones, but only when this authenticated user was actually
+                    // served that id earlier in this process epoch. Raw hidden ids
+                    // never cross the endpoint; evicted proof forces a reset above.
+                    if ((removed || !items.ContainsKey(itemId))
+                        && served.VisibleIds.Contains(itemId))
+                    {
+                        removedIds.Add(itemId);
+                    }
+                }
+
+                PublishServedState(userKey, items.Keys);
+                return new ContentDelta(
+                    _contentEpoch,
+                    currentRevision,
+                    resetRequired: false,
+                    items,
+                    removedIds.OrderBy(static id => id, StringComparer.Ordinal).ToArray(),
+                    rowsVisited);
+            }
+        }
+
+        internal ContentDelta GetCurrentContentControl()
+        {
+            lock (_contentGate)
+            {
+                return new ContentDelta(
+                    _contentEpoch,
+                    _contentRevision,
+                    resetRequired: false,
+                    new Dictionary<string, TagCacheEntry>(StringComparer.Ordinal),
+                    Array.Empty<string>(),
+                    journalRowsVisited: 0);
+            }
+        }
+
+        private ContentDelta ContentResetLocked(long currentRevision)
+            => new(
+                _contentEpoch,
+                currentRevision,
+                resetRequired: true,
+                new Dictionary<string, TagCacheEntry>(StringComparer.Ordinal),
+                Array.Empty<string>(),
+                journalRowsVisited: 0);
 
         /// <summary>
         /// Get cache entries filtered by a user's library access.
