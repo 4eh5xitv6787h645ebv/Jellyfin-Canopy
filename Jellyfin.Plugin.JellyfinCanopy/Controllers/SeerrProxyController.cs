@@ -52,9 +52,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     [ApiController]
     public class SeerrProxyController : JellyfinCanopyControllerBase
     {
+        private const int MaximumTitleIssueRows = 1_000;
+
         private readonly ISeerrClient _seerr;
         private readonly ISeerrParentalFilter _parentalFilter;
         private readonly SpoilerPendingService _spoilerPending;
+
+        internal Action? BeforeIssueProjectionPublishForTest { get; set; }
 
         public SeerrProxyController(
             IHttpClientFactory httpClientFactory,
@@ -1450,38 +1454,39 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpGet("seerr/issue")]
         [Authorize]
         public async Task<IActionResult> GetSeerrIssues(
-            [FromQuery] int? mediaId,
+            [FromQuery] int? mediaId = null,
+            [FromQuery] int? tmdbId = null,
+            [FromQuery] string? mediaType = null,
             [FromQuery] int take = 20,
             [FromQuery] int skip = 0,
             [FromQuery] string? filter = "all",
             [FromQuery] string? sort = "added")
         {
-            take = Math.Clamp(take, 1, 200);
             skip = Math.Max(0, skip);
-
-            var queryParts = new List<string>
+            var normalizedMediaType = NormalizeIssueMediaType(mediaType);
+            var hasTitleTarget = tmdbId.HasValue || !string.IsNullOrWhiteSpace(mediaType);
+            take = Math.Clamp(take, 1, hasTitleTarget ? MaximumTitleIssueRows : 200);
+            if (mediaId.HasValue
+                || (hasTitleTarget && (tmdbId is not > 0 || normalizedMediaType == null)))
             {
-                $"take={take}",
-                $"skip={skip}"
-            };
-
-            if (mediaId.HasValue && mediaId.Value > 0)
-            {
-                queryParts.Add($"mediaId={mediaId.Value}");
+                return BadRequest(new
+                {
+                    error = true,
+                    code = mediaId.HasValue ? "unsupported_media_id_filter" : "invalid_issue_target",
+                    message = mediaId.HasValue
+                        ? "Seerr does not support mediaId filtering. Use a positive tmdbId with mediaType movie/tv."
+                        : "Issue filtering requires a positive tmdbId with mediaType movie/tv."
+                });
             }
 
-            if (!string.IsNullOrWhiteSpace(filter))
-            {
-                queryParts.Add($"filter={Uri.EscapeDataString(filter)}");
-            }
-
-            if (!string.IsNullOrWhiteSpace(sort))
-            {
-                queryParts.Add($"sort={Uri.EscapeDataString(sort)}");
-            }
-
-            var queryString = string.Join("&", queryParts);
-            var apiPath = string.IsNullOrWhiteSpace(queryString) ? "/api/v1/issue" : $"/api/v1/issue?{queryString}";
+            var filterValue = string.Equals(filter?.Trim(), "open", StringComparison.OrdinalIgnoreCase)
+                ? "open"
+                : string.Equals(filter?.Trim(), "resolved", StringComparison.OrdinalIgnoreCase)
+                    ? "resolved"
+                    : "all";
+            var sortValue = string.Equals(sort?.Trim(), "modified", StringComparison.OrdinalIgnoreCase)
+                ? "modified"
+                : "added";
 
             var integration = SeerrIntegrationPolicy.Capture(_configProvider);
             var config = integration.Configuration;
@@ -1538,6 +1543,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
 
             var seerrUser = resolution.User!;
+            if (!caller.IsAdmin
+                && !SeerrPermissionHelper.HasPermission(seerrUser.Permissions, SeerrPermission.ADMIN)
+                && !SeerrPermissionHelper.HasAnyPermission(
+                    seerrUser.Permissions,
+                    SeerrPermission.VIEW_ISSUES | SeerrPermission.MANAGE_ISSUES))
+            {
+                return StatusCode(403, new
+                {
+                    error = true,
+                    code = "no_issue_view_permission",
+                    message = "You do not have permission to view issues in Seerr."
+                });
+            }
+
             var normalizedSource = SeerrSourceToken.NormalizeSourceUrl(seerrUser.SourceUrl);
             var configuredSource = configuredUrls.FirstOrDefault(url => string.Equals(
                 url,
@@ -1560,10 +1579,66 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 Permissions = seerrUser.Permissions,
                 SourceUrl = configuredSource,
             };
-            var result = await _seerr.ProxyRequestAsync(
-                apiPath,
-                HttpMethod.Get,
-                null,
+
+            // The generic downloads-page list remains an ordinary Seerr-owned
+            // page. Seerr does not support mediaId filtering on this endpoint,
+            // so never pretend that parameter scopes the upstream query.
+            if (!hasTitleTarget)
+            {
+                var queryParts = new List<string>
+                {
+                    $"take={take}",
+                    $"skip={skip}",
+                    $"filter={Uri.EscapeDataString(filterValue)}",
+                    $"sort={Uri.EscapeDataString(sortValue)}",
+                };
+                var apiPath = $"/api/v1/issue?{string.Join("&", queryParts)}";
+                var genericResult = await _seerr.ProxyRequestAsync(
+                    apiPath,
+                    HttpMethod.Get,
+                    null,
+                    caller,
+                    pinnedUser,
+                    HttpContext.RequestAborted).ConfigureAwait(false);
+                if (!IsConfigurationCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
+                var decorated = DecorateIssueResult(
+                    genericResult,
+                    apiKey,
+                    caller.JellyfinUserId,
+                    configuredSource);
+                BeforeIssueProjectionPublishForTest?.Invoke();
+                return IsConfigurationCurrent() ? decorated : ConfigurationChanged();
+            }
+
+            // A targeted list is owned by Seerr's supported media detail query:
+            // Media.getMedia(tmdbId, type) loads its complete `issues` relation.
+            // Keep Canopy's stricter issue-view gate above and run the title's
+            // parental authorization before asking Seerr for any detail.
+            var blocked = await _parentalFilter.IsBlockedAsync(
+                normalizedMediaType!,
+                tmdbId!.Value,
+                caller).ConfigureAwait(false);
+            if (!IsConfigurationCurrent())
+            {
+                return ConfigurationChanged();
+            }
+            if (blocked)
+            {
+                return StatusCode(403, new
+                {
+                    error = true,
+                    code = "parental_blocked",
+                    message = "This title is unavailable for the current account."
+                });
+            }
+
+            var detailResult = await _seerr.ProxyFreshMediaDetailAsync(
+                tmdbId.Value,
+                normalizedMediaType!,
                 caller,
                 pinnedUser,
                 HttpContext.RequestAborted).ConfigureAwait(false);
@@ -1572,6 +1647,145 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return ConfigurationChanged();
             }
 
+            if (detailResult is not ContentResult detailContent
+                || detailContent.StatusCode is < 200 or >= 300
+                || string.IsNullOrWhiteSpace(detailContent.Content))
+            {
+                return detailResult;
+            }
+
+            JsonObject? detail;
+            try
+            {
+                detail = JsonNode.Parse(detailContent.Content) as JsonObject;
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Seerr media detail was not valid JSON; no issue projection was published.");
+                return InvalidIssueRelation();
+            }
+
+            if (detail == null)
+            {
+                return InvalidIssueRelation();
+            }
+
+            // Seerr collapses both authoritative absence and repository failures
+            // to an omitted mediaInfo. Because those states are indistinguishable,
+            // missing ownership cannot truthfully prove an exact empty issue set.
+            if (!detail.TryGetPropertyValue("mediaInfo", out var mediaInfoNode)
+                || mediaInfoNode == null)
+            {
+                return InvalidIssueRelation();
+            }
+
+            if (mediaInfoNode is not JsonObject mediaInfo
+                || !TryReadPositiveInt(mediaInfo["id"], out var ownerId)
+                || !JsonPositiveIntEquals(mediaInfo["tmdbId"], tmdbId.Value)
+                || !string.Equals(
+                    (string?)mediaInfo["mediaType"],
+                    normalizedMediaType,
+                    StringComparison.OrdinalIgnoreCase)
+                || mediaInfo["issues"] is not JsonArray relation
+                || relation.Count > MaximumTitleIssueRows)
+            {
+                return InvalidIssueRelation();
+            }
+
+            var seenIds = new HashSet<int>();
+            var rows = new List<(JsonObject Row, int Id, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt)>();
+            foreach (var node in relation)
+            {
+                if (node is not JsonObject row
+                    || !TryReadPositiveInt(row["id"], out var issueId)
+                    || !seenIds.Add(issueId)
+                    || !TryReadInt(row["status"], out var status)
+                    || status is not (1 or 2)
+                    || !TryReadTimestamp(row["createdAt"], out var createdAt)
+                    || !TryReadTimestamp(row["updatedAt"], out var updatedAt)
+                    || !IssueOwnerIsConsistent(row["media"], ownerId, tmdbId.Value, normalizedMediaType!))
+                {
+                    return InvalidIssueRelation();
+                }
+
+                if ((filterValue == "open" && status != 1)
+                    || (filterValue == "resolved" && status != 2))
+                {
+                    continue;
+                }
+
+                rows.Add((row, issueId, createdAt, updatedAt));
+            }
+
+            var orderedRows = sortValue == "modified"
+                ? rows.OrderByDescending(row => row.UpdatedAt).ThenByDescending(row => row.Id)
+                : rows.OrderByDescending(row => row.CreatedAt).ThenByDescending(row => row.Id);
+            var matchingRows = orderedRows.Select(row => row.Row).ToArray();
+            var projected = BuildExactTitleIssueResult(
+                matchingRows,
+                take,
+                skip,
+                apiKey,
+                caller.JellyfinUserId,
+                configuredSource);
+            BeforeIssueProjectionPublishForTest?.Invoke();
+            return IsConfigurationCurrent() ? projected : ConfigurationChanged();
+
+            IActionResult InvalidIssueRelation() => StatusCode(502, new
+            {
+                error = true,
+                code = "issue_relation_incomplete",
+                message = "Seerr did not return a complete title issue relation. No partial result was published."
+            });
+        }
+
+        private IActionResult BuildExactTitleIssueResult(
+            IReadOnlyList<JsonObject> matchingRows,
+            int take,
+            int skip,
+            string apiKey,
+            string callerId,
+            string configuredSource)
+        {
+            var pagedRows = new JsonArray();
+            foreach (var row in matchingRows.Skip(skip).Take(take))
+            {
+                pagedRows.Add(row.DeepClone());
+            }
+
+            var body = new JsonObject
+            {
+                ["pageInfo"] = new JsonObject
+                {
+                    ["pages"] = (int)Math.Ceiling(matchingRows.Count / (double)take),
+                    ["pageSize"] = take,
+                    ["results"] = matchingRows.Count,
+                    ["page"] = ((long)skip / take) + 1L,
+                },
+                ["results"] = pagedRows,
+                [PostPaginationFilterContract.JsonPropertyName] = new JsonObject
+                {
+                    ["contract"] = "media-relation-owner",
+                    ["totalExact"] = true,
+                },
+            };
+            if (!TryDecorateIssueAvatarTokens(
+                body,
+                apiKey,
+                callerId,
+                configuredSource))
+            {
+                return StatusCode(502, new { error = true, code = "upstream_response_invalid", message = "Seerr returned an invalid issue list." });
+            }
+            return Content(body.ToJsonString(), "application/json");
+        }
+
+        private IActionResult DecorateIssueResult(
+            IActionResult result,
+            string apiKey,
+            string callerId,
+            string configuredSource)
+        {
             if (result is not ContentResult contentResult || string.IsNullOrWhiteSpace(contentResult.Content))
             {
                 return result;
@@ -1588,22 +1802,108 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return StatusCode(502, new { error = true, code = "upstream_response_invalid", message = "Seerr returned an invalid issue list." });
             }
 
-            if (body == null || !TryDecorateIssueAvatarTokens(
-                body,
-                apiKey,
-                caller.JellyfinUserId,
-                configuredSource))
+            if (body == null || !TryDecorateIssueAvatarTokens(body, apiKey, callerId, configuredSource))
             {
                 return StatusCode(502, new { error = true, code = "upstream_response_invalid", message = "Seerr returned an invalid issue list." });
             }
 
-            if (!IsConfigurationCurrent())
-            {
-                return ConfigurationChanged();
-            }
-
             contentResult.Content = body.ToJsonString();
             return contentResult;
+        }
+
+        private static string? NormalizeIssueMediaType(string? mediaType)
+        {
+            var normalized = mediaType?.Trim().ToLowerInvariant();
+            return normalized is "movie" or "tv" ? normalized : null;
+        }
+
+        private static bool IssueOwnerIsConsistent(
+            JsonNode? mediaNode,
+            int ownerId,
+            int tmdbId,
+            string mediaType)
+        {
+            // The owner relation is authoritative. Some Seerr serializers omit
+            // the issue's eager back-reference to avoid a cycle; if present it
+            // must agree with that owner in every identity domain.
+            if (mediaNode == null)
+            {
+                return true;
+            }
+            if (mediaNode is not JsonObject media)
+            {
+                return false;
+            }
+            return JsonPositiveIntEquals(media["id"], ownerId)
+                && JsonPositiveIntEquals(media["tmdbId"], tmdbId)
+                && string.Equals((string?)media["mediaType"], mediaType, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool JsonPositiveIntEquals(JsonNode? node, int expected)
+        {
+            if (node is not JsonValue value || expected <= 0)
+            {
+                return false;
+            }
+
+            if (value.TryGetValue<int>(out var numeric))
+            {
+                return numeric == expected;
+            }
+
+            return value.TryGetValue<string>(out var text)
+                && int.TryParse(
+                    text,
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var parsed)
+                && parsed == expected;
+        }
+
+        private static bool TryReadPositiveInt(JsonNode? node, out int value)
+        {
+            value = 0;
+            if (node is not JsonValue jsonValue)
+            {
+                return false;
+            }
+            if (jsonValue.TryGetValue<int>(out value))
+            {
+                return value > 0;
+            }
+            return jsonValue.TryGetValue<string>(out var text)
+                && int.TryParse(
+                    text,
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out value)
+                && value > 0;
+        }
+
+        private static bool TryReadInt(JsonNode? node, out int value)
+        {
+            value = 0;
+            return node is JsonValue jsonValue
+                && (jsonValue.TryGetValue<int>(out value)
+                    || (jsonValue.TryGetValue<string>(out var text)
+                        && int.TryParse(
+                            text,
+                            System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            out value)));
+        }
+
+        private static bool TryReadTimestamp(JsonNode? node, out DateTimeOffset value)
+        {
+            value = default;
+            return node is JsonValue jsonValue
+                && jsonValue.TryGetValue<string>(out var text)
+                && DateTimeOffset.TryParse(
+                    text,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal
+                        | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                    out value);
         }
 
         internal static bool TryDecorateIssueAvatarTokens(

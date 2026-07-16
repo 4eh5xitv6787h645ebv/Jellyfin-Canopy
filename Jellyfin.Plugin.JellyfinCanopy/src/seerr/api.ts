@@ -812,31 +812,70 @@ api.requestTvSeasons = async function(tmdbId, seasonNumbers, advancedSettings = 
  */
 api.fetchIssuesForMedia = async function(tmdbId, mediaType, options = {}) {
     const context = captureIdentity();
-    const { take = 20, skip = 0, filter = 'open', sort = 'added' } = options;
+    const { take = 20, skip = 0, filter = 'open', sort = 'added', all = false } = options;
     try {
+        const normalizedMediaType = String(mediaType || '').toLowerCase();
+        const canonicalTmdbId = Number(tmdbId);
+        if ((normalizedMediaType !== 'movie' && normalizedMediaType !== 'tv')
+            || !Number.isSafeInteger(canonicalTmdbId)
+            || canonicalTmdbId <= 0) {
+            return {
+                pageInfo: { pages: 0, pageSize: 20, results: 0, page: 1 },
+                results: [],
+                jellyfinCanopyPagination: { contract: 'media-relation-owner', totalExact: true }
+            };
+        }
+
+        const canonicalTake = all
+            ? 1000
+            : Number.isSafeInteger(Number(take))
+                ? Math.min(200, Math.max(1, Number(take)))
+                : 20;
+        const canonicalSkip = all
+            ? 0
+            : Number.isSafeInteger(Number(skip))
+            ? Math.max(0, Number(skip))
+            : 0;
+        const canonicalFilter = filter === 'open' || filter === 'resolved' ? filter : 'all';
+        const canonicalSort = sort === 'modified' ? 'modified' : 'added';
+
         const query = new URLSearchParams({
-            take: String(take),
-            skip: String(skip),
-            filter,
-            sort
+            tmdbId: String(canonicalTmdbId),
+            mediaType: normalizedMediaType,
+            take: String(canonicalTake),
+            skip: String(canonicalSkip),
+            filter: canonicalFilter,
+            sort: canonicalSort
         });
 
         const res = await get(`/issue?${query.toString()}`);
         assertCurrentIdentity(context);
-        const issues = res && Array.isArray(res.results) ? res.results : [];
-
-        const filtered = issues.filter((issue: any) => {
-            const media = issue.media || {};
-            const tmdbMatch = media.tmdbId && Number(media.tmdbId) === Number(tmdbId);
-            const typeMatch = (media.mediaType || '').toLowerCase() === (mediaType || '').toLowerCase();
-            return tmdbMatch && typeMatch;
-        });
-
-        return { ...res, results: filtered };
+        const pageInfo = res?.pageInfo;
+        const contract = res?.jellyfinCanopyPagination;
+        const expectedRows = Math.min(
+            canonicalTake,
+            Math.max(0, Number(pageInfo?.results) - canonicalSkip),
+        );
+        if (!res
+            || !Array.isArray(res.results)
+            || !Number.isSafeInteger(pageInfo?.pages)
+            || pageInfo.pages < 0
+            || pageInfo.pageSize !== canonicalTake
+            || !Number.isSafeInteger(pageInfo.results)
+            || pageInfo.results < 0
+            || pageInfo.page !== Math.floor(canonicalSkip / canonicalTake) + 1
+            || pageInfo.pages !== Math.ceil(pageInfo.results / canonicalTake)
+            || res.results.length !== expectedRows
+            || (all && pageInfo.pages > 1)
+            || contract?.contract !== 'media-relation-owner'
+            || contract?.totalExact !== true) {
+            throw new Error('Canopy returned an incomplete title issue projection');
+        }
+        return res;
     } catch (error: any) {
         assertCurrentIdentity(context);
         console.error(`${logPrefix} Failed to fetch issues for ${mediaType} ${tmdbId}:`, error);
-        return { results: [] };
+        throw error;
     }
 };
 

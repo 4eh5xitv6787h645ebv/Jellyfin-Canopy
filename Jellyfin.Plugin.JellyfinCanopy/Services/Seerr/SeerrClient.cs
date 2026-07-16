@@ -1614,6 +1614,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 bypassResponseCache: true);
         }
 
+        public Task<IActionResult> ProxyFreshMediaDetailAsync(
+            int tmdbId,
+            string mediaType,
+            SeerrCaller caller,
+            SeerrUser resolvedUser,
+            CancellationToken cancellationToken = default)
+        {
+            var normalizedType = mediaType?.Trim().ToLowerInvariant();
+            if (tmdbId <= 0 || normalizedType is not ("movie" or "tv"))
+            {
+                return Task.FromResult<IActionResult>(
+                    new BadRequestObjectResult(new
+                    {
+                        error = true,
+                        code = "invalid_media_target",
+                        message = "A positive TMDB ID and media type movie/tv are required."
+                    }));
+            }
+
+            return ProxyRequestAsyncCore(
+                $"/api/v1/{normalizedType}/{tmdbId}",
+                HttpMethod.Get,
+                content: null,
+                caller,
+                resolvedUser,
+                cancellationToken,
+                bypassResponseCache: true,
+                requireIssueViewPermission: true);
+        }
+
         private async Task<IActionResult> ProxyRequestAsyncCore(
             string apiPath,
             HttpMethod method,
@@ -1621,7 +1651,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             SeerrCaller caller,
             SeerrUser? resolvedUser,
             CancellationToken cancellationToken,
-            bool bypassResponseCache = false)
+            bool bypassResponseCache = false,
+            bool requireIssueViewPermission = false)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var integration = SeerrIntegrationPolicy.Capture(_configProvider);
@@ -1853,7 +1884,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                         // The /api/v1/issue/{id} path was previously not gated by this
                         // check.— non-admin without VIEW_ISSUES could
                         // fetch any issue by id by guessing.
-                        if (method == HttpMethod.Get && (apiPath.StartsWith("/api/v1/issue?", StringComparison.OrdinalIgnoreCase)
+                        if (method == HttpMethod.Get && (requireIssueViewPermission
+                            || apiPath.StartsWith("/api/v1/issue?", StringComparison.OrdinalIgnoreCase)
                             || apiPath.StartsWith("/api/v1/issue/", StringComparison.OrdinalIgnoreCase)
                             || string.Equals(apiPath, "/api/v1/issue", StringComparison.OrdinalIgnoreCase)))
                         {

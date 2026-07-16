@@ -200,6 +200,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         }
 
         /// <summary>
+        /// Reads one movie/TV detail document from an already-resolved source
+        /// without consulting or publishing the ordinary response cache. This
+        /// is used when a caller projects mutable media-owned relations such as
+        /// issues and therefore cannot accept a metadata-cache TTL.
+        /// </summary>
+        Task<IActionResult> ProxyFreshMediaDetailAsync(
+            int tmdbId,
+            string mediaType,
+            SeerrCaller caller,
+            SeerrUser resolvedUser,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ProxyRequestAsync(
+                $"/api/v1/{mediaType}/{tmdbId}",
+                HttpMethod.Get,
+                null,
+                caller,
+                resolvedUser,
+                cancellationToken);
+        }
+
+        /// <summary>
         /// Proxies a user-scoped request using an already-resolved Seerr user.
         /// Production keeps the instance-local user id on
         /// <see cref="SeerrUser.SourceUrl"/> and must not resolve or fail over to

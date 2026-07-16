@@ -8,6 +8,7 @@ using Jellyfin.Data.Enums;
 using Jellyfin.Data.Events;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using MediaBrowser.Controller.Library;
@@ -520,7 +521,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
         }
 
         [Fact]
-        public async Task ListFilter_DecrementsPageInfoCounts_WhenRowsRemoved()
+        public async Task ListFilter_PreservesPageInfoNavigationUpperBound_WhenRowsRemoved()
         {
             const string body = @"{ ""results"": [
                 { ""id"": 100, ""mediaType"": ""movie"" },
@@ -531,12 +532,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
 
             Assert.Equal(new[] { 100 }, Ids(result, "results")); // R-rated 200 removed
             var pageInfo = (System.Text.Json.Nodes.JsonObject)result["pageInfo"]!;
-            Assert.Equal(1, (int)pageInfo["results"]!);          // 2 - 1 removed
-            Assert.Equal(1, (int)pageInfo["pages"]!);            // ceil(1 / pageSize 1)
+            Assert.Equal(2, (int)pageInfo["results"]!);
+            Assert.Equal(2, (int)pageInfo["pages"]!);
+            var contract = Assert.IsType<System.Text.Json.Nodes.JsonObject>(
+                result[PostPaginationFilterContract.JsonPropertyName]);
+            Assert.Equal(PostPaginationFilterContract.ContractName, (string)contract["contract"]!);
+            Assert.False((bool)contract["totalExact"]!);
+            Assert.Equal(1, (int)contract["removedFromPage"]!);
         }
 
         [Fact]
-        public async Task ListFilter_DecrementsTopLevelTotals_WhenRowsRemoved()
+        public async Task ListFilter_PreservesTopLevelNavigationUpperBound_WhenRowsRemoved()
         {
             const string body = @"{ ""results"": [
                 { ""id"": 100, ""mediaType"": ""movie"" },
@@ -546,8 +552,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
             var result = await RunAsync(body, "/api/v1/search?query=x", maxScore: 13, maxSub: 0, block: Array.Empty<UnratedItem>());
 
             Assert.Equal(new[] { 100 }, Ids(result, "results"));
-            Assert.Equal(1, (int)result["totalResults"]!); // 2 - 1 removed
-            Assert.Equal(1, (int)result["totalPages"]!);   // recomputed from surviving results
+            Assert.Equal(2, (int)result["totalResults"]!);
+            Assert.Equal(2, (int)result["totalPages"]!);
+            Assert.NotNull(result[PostPaginationFilterContract.JsonPropertyName]);
         }
 
         [Fact]

@@ -112,6 +112,83 @@ public class SeerrPublicScopeHeaderTests
     }
 
     [Fact]
+    public async Task FreshPinnedMediaDetail_BypassesCacheWithoutLosingSourceOrUserAffinity()
+    {
+        var (client, handler) = NewClient();
+        var binding = $"{{\"id\":42,\"jellyfinUserId\":\"{UserId}\"}}";
+        handler.AddResponse("/api/v1/user/42", binding);
+        handler.AddResponse("/api/v1/user/42", binding);
+        handler.AddResponse("/api/v1/user/42", binding);
+        var caller = new SeerrCaller(UserId, IsAdmin: true);
+        var pinned = new SeerrUser
+        {
+            Id = 42,
+            JellyfinUserId = UserId,
+            SourceUrl = "http://seerr:5055",
+        };
+
+        var first = Assert.IsType<ContentResult>(await client.ProxyRequestAsync(
+            "/api/v1/movie/123",
+            HttpMethod.Get,
+            null,
+            caller,
+            pinned));
+        handler.AddResponse("/api/v1/movie/123", "{\"version\":2}");
+
+        var fresh = Assert.IsType<ContentResult>(await client.ProxyFreshMediaDetailAsync(
+            123,
+            "movie",
+            caller,
+            pinned));
+        var cachedAgain = Assert.IsType<ContentResult>(await client.ProxyRequestAsync(
+            "/api/v1/movie/123",
+            HttpMethod.Get,
+            null,
+            caller,
+            pinned));
+
+        Assert.Equal("{}", first.Content);
+        Assert.Contains("\"version\":2", fresh.Content);
+        Assert.Equal("{}", cachedAgain.Content);
+        var requests = handler.Requests
+            .Where(request => request.RequestUri!.AbsolutePath == "/api/v1/movie/123")
+            .ToList();
+        Assert.Equal(2, requests.Count);
+        Assert.All(requests, request => Assert.Equal(
+            "42",
+            Assert.Single(request.Headers.GetValues("X-Api-User"))));
+    }
+
+    [Fact]
+    public async Task FreshPinnedMediaDetail_RejectsPermissionRevokedByFreshBindingBeforeDispatch()
+    {
+        var (client, handler) = NewClient();
+        handler.AddResponse(
+            "/api/v1/user/42",
+            $"{{\"id\":42,\"jellyfinUserId\":\"{UserId}\",\"permissions\":0}}");
+        var caller = new SeerrCaller(UserId, IsAdmin: false);
+        var pinned = new SeerrUser
+        {
+            Id = 42,
+            JellyfinUserId = UserId,
+            Permissions = SeerrPermission.VIEW_ISSUES,
+            SourceUrl = "http://seerr:5055",
+        };
+
+        var result = Assert.IsType<ObjectResult>(await client.ProxyFreshMediaDetailAsync(
+            123,
+            "movie",
+            caller,
+            pinned));
+
+        Assert.Equal(403, result.StatusCode);
+        Assert.Contains("no_issue_view_permission", System.Text.Json.JsonSerializer.Serialize(result.Value));
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.RequestUri!.AbsolutePath == "/api/v1/movie/123");
+    }
+
+    [Fact]
     public async Task PersonCombinedCredits_RemainsUserScopedAndCarriesXApiUser()
     {
         var (client, handler) = NewClient();

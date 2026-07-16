@@ -83,7 +83,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 user.Id);
 
             Assert.Empty(result.SearchHints);
-            Assert.Equal(0, result.TotalRecordCount);
+            Assert.Equal(3, result.TotalRecordCount);
             Assert.Equal(1, queryCount);
         }
 
@@ -180,7 +180,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 user.Id);
 
             Assert.Empty(result.SearchHints);
-            Assert.Equal(0, result.TotalRecordCount);
+            Assert.Equal(2, result.TotalRecordCount);
         }
 
         [Fact]
@@ -207,6 +207,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 user.Id);
 
             Assert.Empty(result.SearchHints);
+            Assert.Equal(hints.Length, result.TotalRecordCount);
             Assert.Equal(0, queryCount);
         }
 
@@ -329,7 +330,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 user.Id);
 
             Assert.Empty(result.SearchHints);
-            Assert.Equal(0, result.TotalRecordCount);
+            Assert.Equal(2, result.TotalRecordCount);
             Assert.Equal(0, queryCount);
         }
 
@@ -359,7 +360,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 cancelled.Token);
 
             Assert.Empty(result.SearchHints);
-            Assert.Equal(0, result.TotalRecordCount);
+            Assert.Equal(2, result.TotalRecordCount);
             Assert.Equal(0, queryCount);
         }
 
@@ -418,7 +419,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 cancelled.Token);
 
             Assert.Empty(result.SearchHints);
-            Assert.Equal(0, result.TotalRecordCount);
+            Assert.Equal(2, result.TotalRecordCount);
         }
 
         [Fact]

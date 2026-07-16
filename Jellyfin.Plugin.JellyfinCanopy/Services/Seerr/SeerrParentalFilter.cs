@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Globalization;
@@ -502,80 +503,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 }
             }
 
-            // Keep paginators honest: when rows are dropped, decrement the count fields
-            // so the client's totals/page math reflect what it actually received. Only
-            // top-level result-count containers carry these; parts/credits lists have
-            // none, so this is a no-op there.
-            if (removed > 0)
-            {
-                DecrementListCounts(root, removed);
-            }
+            // This filter runs after Seerr selected the upstream page. An exact
+            // filtered total cannot be inferred from this slice, so preserve the
+            // upstream counts as a navigable upper bound and state that contract.
+            PostPaginationFilterContract.MarkJson(root, removed);
 
             return root.ToJsonString();
-        }
-
-        // Decrements the result/page counters (both the Seerr `pageInfo` shape and the
-        // TMDB-style top-level `totalResults`/`totalPages`) by the number of rows the
-        // filter removed, recomputing page counts from the surviving results.
-        private static void DecrementListCounts(JsonObject root, int removed)
-        {
-            if (root["pageInfo"] is JsonObject pageInfo)
-            {
-                AdjustCounts(pageInfo, "results", "pages", ReadIntOrNull(pageInfo, "pageSize"), removed);
-            }
-
-            AdjustCounts(root, "totalResults", "totalPages", null, removed);
-        }
-
-        private static void AdjustCounts(JsonObject obj, string resultsField, string pagesField, int? pageSize, int removed)
-        {
-            if (!TryReadInt(obj, resultsField, out var oldResults))
-            {
-                return;
-            }
-
-            var newResults = Math.Max(0, oldResults - removed);
-            obj[resultsField] = newResults;
-
-            if (!TryReadInt(obj, pagesField, out var oldPages) || oldPages <= 0)
-            {
-                return;
-            }
-
-            // Prefer an explicit page size; otherwise infer it from the pre-adjustment
-            // results/pages so the recomputed page count stays internally consistent.
-            var effectivePageSize = pageSize is > 0
-                ? pageSize.Value
-                : (int)Math.Ceiling(oldResults / (double)oldPages);
-            if (effectivePageSize <= 0)
-            {
-                return;
-            }
-
-            obj[pagesField] = (int)Math.Ceiling(newResults / (double)effectivePageSize);
-        }
-
-        private static int? ReadIntOrNull(JsonObject obj, string field)
-            => TryReadInt(obj, field, out var value) ? value : null;
-
-        private static bool TryReadInt(JsonObject obj, string field, out int value)
-        {
-            value = 0;
-            var node = obj[field];
-            if (node is null || node.GetValueKind() != JsonValueKind.Number)
-            {
-                return false;
-            }
-
-            try
-            {
-                value = node.GetValue<int>();
-                return true;
-            }
-            catch (Exception)
-            {
-                return false;
-            }
         }
 
         private async Task<Dictionary<string, TitleSignature?>> ResolveScoresAsync(
