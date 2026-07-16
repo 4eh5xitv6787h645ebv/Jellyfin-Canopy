@@ -13,11 +13,27 @@ vi.mock('./feed', () => ({
 vi.mock('./data', () => ({
     fetchGenres: vi.fn(() => Promise.resolve(new Map([[28, 'Action']]))),
 }));
-vi.mock('./customize', () => ({ openCustomize: vi.fn() }));
+vi.mock('./customize', () => ({
+    openCustomize: vi.fn(),
+}));
 vi.mock('../enhanced/helpers', () => ({
     getHeaderRightContainer: () => document.querySelector<HTMLElement>('.headerRight'),
 }));
-vi.mock('../core/navigation', () => ({ onNavigate: () => () => undefined }));
+vi.mock('../core/navigation', () => ({
+    navDedupKey: () => 'discovery-config-test-navigation',
+    queryElementsById: (id: string) =>
+        Array.from(document.querySelectorAll<HTMLElement>(`[id="${id}"]`)),
+    resolveCurrentViewRoot: (id: string) => {
+        const root = document.querySelector<HTMLElement>(`[id="${id}"]:not(.hide)`);
+        return root ? {
+            root,
+            navigationKey: 'discovery-config-test-navigation',
+            showSequence: 1,
+        } : null;
+    },
+    onNavigate: () => () => undefined,
+    onViewPage: () => () => undefined,
+}));
 vi.mock('../core/ui-kit', () => ({ injectCss: vi.fn() }));
 
 let initLibraryTab: () => void;

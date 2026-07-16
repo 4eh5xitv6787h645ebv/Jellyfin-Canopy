@@ -44,10 +44,15 @@ function buildItems(mt: DiscoveryMediaType, genres: Map<number, string>): Item[]
  * Opens the customize modal. `genres` names/offers genre rows; `onSave(ids | null)` fires with the
  * new row-id list (or null when reset to defaults) so the caller can re-render the feed.
  */
-export function openCustomize(mt: DiscoveryMediaType, genres: Map<number, string>, onSave: (ids: string[] | null) => void): void {
+export function openCustomize(
+    mt: DiscoveryMediaType,
+    genres: Map<number, string>,
+    onSave: (ids: string[] | null) => void,
+    onClose: () => void = () => undefined
+): (() => void) | null {
     if (activeClose) activeClose();
     const context = JC.identity.capture();
-    if (!context) return;
+    if (!context) return null;
     const items = buildItems(mt, genres);
 
     const overlay = document.createElement('div');
@@ -132,10 +137,14 @@ export function openCustomize(mt: DiscoveryMediaType, genres: Map<number, string
     dialog.appendChild(buttons);
 
     let a11y: ModalA11yHandle | null = null;
+    let closed = false;
     const close = (): void => {
+        if (closed) return;
+        closed = true;
         if (activeClose === close) activeClose = null;
         a11y?.release();
         overlay.remove();
+        onClose();
     };
     activeClose = close;
     cancel.addEventListener('click', close);
@@ -158,6 +167,7 @@ export function openCustomize(mt: DiscoveryMediaType, genres: Map<number, string
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
     a11y = installModalA11y(dialog, { labelledBy: 'jc-discovery-customize-title', initialFocus: save, onEscape: close });
+    return close;
 }
 
 /** Close the activation-owned customization surface, if present. */

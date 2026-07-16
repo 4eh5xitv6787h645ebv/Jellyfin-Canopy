@@ -54,7 +54,9 @@ export const seerrFeatureDescriptors: readonly ClientFeatureDescriptor[] = Objec
     {
         id: 'discovery-library',
         entry: 'discovery-library',
-        scope: 'navigation',
+        // Movie-library query switches intentionally reuse the same React root
+        // without viewshow; keep placement ownership alive across that seam.
+        scope: 'identity',
         dependsOn: ['seerr-core'],
         restartOnConfigChange: true,
         isEnabled: (state) => Boolean(state.identity)
