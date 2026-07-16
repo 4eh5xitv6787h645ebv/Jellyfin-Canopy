@@ -5,6 +5,7 @@ import {
     installSettingsLauncher,
 } from '../enhanced/settings-panel/entry-points';
 import { injectGlobalStyles } from '../enhanced/settings-panel/styles';
+import { publishSubtitlePresets } from '../enhanced/subtitle-presets';
 
 export function isSettingsLauncherEnabled(state: FeatureLoaderState): boolean {
     return Boolean(state.identity);
@@ -19,6 +20,7 @@ export const settingsLauncherFeature: FeatureModule = Object.freeze({
             return;
         }
         scope.track(dispose);
+        publishSubtitlePresets();
         injectGlobalStyles();
         addPluginMenuButton();
         addUserPreferencesLink();

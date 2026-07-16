@@ -1,5 +1,14 @@
 import type { ClientFeatureDescriptor } from '../core/client-runtime';
 import { JC } from '../globals';
+import {
+    isBookmarksRuntimeApplicable,
+    isBookmarksRuntimeEnabled,
+    isOsdRatingEnabled,
+    isPauseScreenEnabled,
+    isPlaybackControlsEnabled,
+    isSubtitleStylesEnabled,
+    isVideoPlaybackRoute,
+} from './playback-policy';
 
 function cardTagsEnabled(): boolean {
     const settings = JC.currentSettings;
@@ -56,6 +65,13 @@ function arrSearchEnabled(): boolean {
  * absent from the boot graph.
  */
 export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Object.freeze([
+    {
+        id: 'settings-launcher',
+        entry: 'settings-launcher',
+        scope: 'identity',
+        isEnabled: (state) => Boolean(state.identity),
+        isApplicable: () => true,
+    },
     {
         id: 'card-tags',
         entry: 'card-tags',
@@ -156,12 +172,52 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         isApplicable: (state) => /#\/hidden-content(?:[?#]|$)/i.test(state.routeKey),
     },
     {
+        id: 'bookmarks-runtime',
+        entry: 'bookmarks-runtime',
+        scope: 'navigation',
+        restartOnConfigChange: true,
+        isEnabled: isBookmarksRuntimeEnabled,
+        isApplicable: isBookmarksRuntimeApplicable,
+    },
+    {
         id: 'bookmarks-page',
         entry: 'bookmarks-page',
         scope: 'navigation',
+        dependsOn: ['bookmarks-runtime'],
         isEnabled: (state) => Boolean(state.identity)
             && JC.pluginConfig?.BookmarksEnabled === true,
         isApplicable: (state) => /#\/bookmarks(?:[?#]|$)/i.test(state.routeKey),
+    },
+    {
+        id: 'playback-controls',
+        entry: 'playback-controls',
+        scope: 'navigation',
+        isEnabled: isPlaybackControlsEnabled,
+        isApplicable: isVideoPlaybackRoute,
+    },
+    {
+        id: 'subtitle-styles',
+        entry: 'subtitle-styles',
+        scope: 'navigation',
+        restartOnConfigChange: true,
+        isEnabled: isSubtitleStylesEnabled,
+        isApplicable: isVideoPlaybackRoute,
+    },
+    {
+        id: 'osd-rating',
+        entry: 'osd-rating',
+        scope: 'navigation',
+        restartOnConfigChange: true,
+        isEnabled: isOsdRatingEnabled,
+        isApplicable: isVideoPlaybackRoute,
+    },
+    {
+        id: 'pause-screen',
+        entry: 'pause-screen',
+        scope: 'navigation',
+        restartOnConfigChange: true,
+        isEnabled: isPauseScreenEnabled,
+        isApplicable: isVideoPlaybackRoute,
     },
     {
         id: 'theme-selector',

@@ -23,6 +23,14 @@ beforeEach(() => {
 });
 
 describe('built-in detail integration catalog', () => {
+    it('orders bookmark runtime before its dependent management page', () => {
+        const runtimeIndex = builtInFeatureDescriptors.findIndex((item) => item.id === 'bookmarks-runtime');
+        const pageIndex = builtInFeatureDescriptors.findIndex((item) => item.id === 'bookmarks-page');
+        expect(runtimeIndex).toBeGreaterThanOrEqual(0);
+        expect(runtimeIndex).toBeLessThan(pageIndex);
+        expect(descriptor('bookmarks-page').dependsOn).toEqual(['bookmarks-runtime']);
+    });
+
     it('keeps every detail integration off non-detail routes and before identity', () => {
         for (const id of ['details-enhancements', 'elsewhere', 'reviews', 'arr-detail-links', 'letterboxd-links']) {
             const item = descriptor(id);

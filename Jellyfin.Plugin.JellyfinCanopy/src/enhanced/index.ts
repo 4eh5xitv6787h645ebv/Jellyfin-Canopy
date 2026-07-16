@@ -13,27 +13,11 @@ import './icons';
 // Detail-page and home-action families are loader-owned ESM entries.
 import './features/hide-favorites-tab';
 import './events';
-import './playback';
-// Hidden-content filtering and management are loader-owned ESM entries.
-import './subtitles';
+// Playback, subtitles, hidden-content filtering and management are loader-owned ESM entries.
 import './themer';
 // spoiler-guard — loads after tag-pipeline (uses invalidateServerCache) and
 // before the settings panel (which wires its per-user override section).
 import './spoiler-guard/index';
-// ui modules — order matters: -release-notes exports GITHUB_REPO + the release-
-// notes panel the template/settings wiring import; ui-panel hosts
-// JC.showEnhancedPanel and orchestrates the buildPanelHtml/wire* pieces last.
-import './settings-panel/styles';
-import './settings-panel/entry-points';
-import './settings-panel/release-notes';
-import './settings-panel/template';
-import './settings-panel/shortcut-editor';
-import './settings-panel/settings';
-import './settings-panel/hidden-content-tab';
-import './settings-panel/language';
-import './settings-panel/panel';
-import './bookmarks/bookmarks';
-// Bookmark playback remains eager; bookmark management is a route-only ESM
-// entry and therefore absent from the cold-home graph.
-import './osd-rating';
-import './pausescreen';
+// The lightweight settings launcher is loader owned; the large panel graph is
+// a user-gesture dynamic import and remains absent from normal navigation.
+// Bookmark playback and management are separate route-owned ESM entries.

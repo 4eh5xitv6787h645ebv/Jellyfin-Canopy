@@ -1853,9 +1853,6 @@
                 && typeof JC.seerrIssueReporter?.initialize === 'function',
             () => JC.seerrIssueReporter.initialize()
         );
-        activateFeature(context, 'pause-screen', typeof JC.initializePauseScreen === 'function', JC.initializePauseScreen);
-        activateFeature(context, 'bookmarks', typeof JC.initializeBookmarks === 'function', JC.initializeBookmarks);
-        activateFeature(context, 'osd-rating', typeof JC.initializeOsdRating === 'function', JC.initializeOsdRating);
     }
 
     async function runInitialization(context, client, scope) {

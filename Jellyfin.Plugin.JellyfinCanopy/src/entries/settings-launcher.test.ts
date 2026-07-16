@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     dispose: vi.fn(),
     injectStyles: vi.fn(),
     install: vi.fn(),
+    publishPresets: vi.fn(),
 }));
 
 vi.mock('../enhanced/settings-panel/entry-points', () => ({
@@ -17,6 +18,9 @@ vi.mock('../enhanced/settings-panel/entry-points', () => ({
 }));
 vi.mock('../enhanced/settings-panel/styles', () => ({
     injectGlobalStyles: mocks.injectStyles,
+}));
+vi.mock('../enhanced/subtitle-presets', () => ({
+    publishSubtitlePresets: mocks.publishPresets,
 }));
 
 import { isSettingsLauncherEnabled, settingsLauncherFeature } from './settings-launcher';
@@ -50,6 +54,7 @@ describe('settings launcher lazy feature', () => {
         await settingsLauncherFeature.activate(harness.scope);
         expect(mocks.install).toHaveBeenCalledTimes(1);
         expect(mocks.injectStyles).toHaveBeenCalledTimes(1);
+        expect(mocks.publishPresets).toHaveBeenCalledTimes(1);
         expect(mocks.addMenu).toHaveBeenCalledTimes(1);
         expect(mocks.addPreferences).toHaveBeenCalledTimes(1);
         await harness.dispose();

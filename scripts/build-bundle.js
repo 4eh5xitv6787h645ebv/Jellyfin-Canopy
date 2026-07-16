@@ -36,6 +36,7 @@ const ESM_ENTRIES = Object.freeze({
     'active-streams': path.join(SRC_ROOT, 'entries', 'active-streams.ts'),
     'activity-icons': path.join(SRC_ROOT, 'entries', 'activity-icons.ts'),
     'bookmarks-page': path.join(SRC_ROOT, 'entries', 'bookmarks-page.ts'),
+    'bookmarks-runtime': path.join(SRC_ROOT, 'entries', 'bookmarks-runtime.ts'),
     boot: path.join(SRC_ROOT, 'entries', 'boot.ts'),
     'calendar-page': path.join(SRC_ROOT, 'entries', 'calendar-page.ts'),
     'card-tags': path.join(SRC_ROOT, 'tags', 'feature.ts'),
@@ -47,6 +48,9 @@ const ESM_ENTRIES = Object.freeze({
     'hidden-content-page': path.join(SRC_ROOT, 'entries', 'hidden-content-page.ts'),
     'hide-favorites-tab': path.join(SRC_ROOT, 'entries', 'hide-favorites-tab.ts'),
     'plugin-icons': path.join(SRC_ROOT, 'entries', 'plugin-icons.ts'),
+    'osd-rating': path.join(SRC_ROOT, 'entries', 'osd-rating.ts'),
+    'pause-screen': path.join(SRC_ROOT, 'entries', 'pause-screen.ts'),
+    'playback-controls': path.join(SRC_ROOT, 'entries', 'playback-controls.ts'),
     'arr-detail-links': path.join(SRC_ROOT, 'arr', 'links.feature.ts'),
     'arr-search': path.join(SRC_ROOT, 'arr', 'search', 'feature.ts'),
     'letterboxd-links': path.join(SRC_ROOT, 'others', 'letterboxd-links.feature.ts'),
@@ -54,6 +58,8 @@ const ESM_ENTRIES = Object.freeze({
     'random-button': path.join(SRC_ROOT, 'entries', 'random-button.ts'),
     'remove-home-actions': path.join(SRC_ROOT, 'entries', 'remove-home-actions.ts'),
     reviews: path.join(SRC_ROOT, 'elsewhere', 'reviews.feature.ts'),
+    'settings-launcher': path.join(SRC_ROOT, 'entries', 'settings-launcher.ts'),
+    'subtitle-styles': path.join(SRC_ROOT, 'entries', 'subtitle-styles.ts'),
     'theme-selector': path.join(SRC_ROOT, 'extras', 'theme-selector.feature.ts'),
 });
 
@@ -286,13 +292,20 @@ function calculateBudgetMetrics(entries, files) {
     const bootFiles = [...new Set(bootPaths.flatMap((entry) => closure(entry, files)))];
     const sum = (names, field) => names.reduce((total, name) => total + files[name][field], 0);
     const featureClosures = {};
+    const featureExpandedClosures = {};
     for (const [name, entry] of Object.entries(entries)) {
         if (entry.role !== 'feature') continue;
         const names = closure(entry.path, files);
+        const expandedNames = closure(entry.path, files, true);
         featureClosures[name] = {
             gzipBytes: sum(names, 'gzipBytes'),
             rawBytes: sum(names, 'bytes'),
             requests: names.length,
+        };
+        featureExpandedClosures[name] = {
+            gzipBytes: sum(expandedNames, 'gzipBytes'),
+            rawBytes: sum(expandedNames, 'bytes'),
+            requests: expandedNames.length,
         };
     }
     const esmOutputs = Object.keys(files).filter((name) => name.endsWith('.js')
@@ -308,6 +321,7 @@ function calculateBudgetMetrics(entries, files) {
         esmEntryCount: esmEntries.length,
         esmOutputCount: esmOutputs.length,
         featureClosures,
+        featureExpandedClosures,
         largestEsmOutputBytes: Math.max(0, ...esmOutputs.map((name) => files[name].bytes)),
         outputCount: allNames.length + 1,
         sourceMapRawBytes: sum(sourceMaps, 'bytes'),
@@ -340,6 +354,13 @@ function assertBudgets(metrics, budget) {
             || feature.rawBytes > budget.limits.maxFeatureRawBytes
             || feature.gzipBytes > budget.limits.maxFeatureGzipBytes) {
             throw new Error(`feature ${name} closure budget exceeded`);
+        }
+    }
+    for (const [name, feature] of Object.entries(metrics.featureExpandedClosures)) {
+        if (feature.requests > budget.limits.maxFeatureExpandedRequests
+            || feature.rawBytes > budget.limits.maxFeatureExpandedRawBytes
+            || feature.gzipBytes > budget.limits.maxFeatureExpandedGzipBytes) {
+            throw new Error(`feature ${name} expanded closure budget exceeded`);
         }
     }
 }

@@ -27,12 +27,12 @@ describe('playback feature activation ownership', () => {
         window.history.replaceState(null, '', '/web/index.html#/home');
     });
 
-    it('rejects stale scopes before publishing or tracking anything', () => {
+    it('rejects stale scopes before publishing or tracking anything', async () => {
         const activators = [activatePlayback, activateSubtitles, activateOsdRating, activatePauseScreen, activateBookmarks];
         for (const activate of activators) {
             const feature = createTestFeatureScope();
             feature.setCurrent(false);
-            activate(feature.scope);
+            await activate(feature.scope);
             expect(feature.cleanups).toHaveLength(0);
         }
     });
@@ -45,7 +45,7 @@ describe('playback feature activation ownership', () => {
         let checks = 0;
         feature.scope.isCurrent = () => ++checks === 1;
 
-        activatePlayback(feature.scope);
+        await activatePlayback(feature.scope);
         expect(feature.cleanups).toHaveLength(0);
         JC.adjustPlaybackSpeed?.('increase');
         expect(video.playbackRate).toBe(1);
@@ -54,13 +54,13 @@ describe('playback feature activation ownership', () => {
     it('retains frozen facade identity while delegates activate, dispose twice, and reactivate', async () => {
         const firstPlayback = createTestFeatureScope();
         active.push(firstPlayback);
-        activatePlayback(firstPlayback.scope);
+        await activatePlayback(firstPlayback.scope);
         const adjust = JC.adjustPlaybackSpeed;
         expect(typeof adjust).toBe('function');
 
         const firstBookmarks = createTestFeatureScope();
         active.push(firstBookmarks);
-        activateBookmarks(firstBookmarks.scope);
+        await activateBookmarks(firstBookmarks.scope);
         const bookmarks = JC.bookmarks;
         expect(Object.isFrozen(bookmarks)).toBe(true);
 
@@ -71,10 +71,10 @@ describe('playback feature activation ownership', () => {
 
         const secondPlayback = createTestFeatureScope();
         active.push(secondPlayback);
-        activatePlayback(secondPlayback.scope);
+        await activatePlayback(secondPlayback.scope);
         const secondBookmarks = createTestFeatureScope();
         active.push(secondBookmarks);
-        activateBookmarks(secondBookmarks.scope);
+        await activateBookmarks(secondBookmarks.scope);
 
         expect(JC.adjustPlaybackSpeed).toBe(adjust);
         expect(JC.bookmarks).toBe(bookmarks);

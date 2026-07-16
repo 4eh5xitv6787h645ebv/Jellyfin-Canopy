@@ -30,7 +30,12 @@ test('production build is byte-deterministic with sorted, resolving dynamic inve
     assert.deepEqual(Object.keys(first.manifest.files), Object.keys(first.manifest.files).sort());
     assert.equal(first.manifest.entries.compatibility.path, 'jc.bundle.js');
     assert.equal(first.manifest.entries.boot.path, 'entries/boot.js');
-    assert.equal(first.manifest.entries['feature-foundation'].role, 'feature');
+    assert.equal(first.manifest.entries['settings-launcher'].role, 'feature');
+    assert.ok(first.manifest.files[first.manifest.entries['settings-launcher'].path].dynamicImports.length > 0);
+    assert.ok(
+        first.manifest.budgets.featureExpandedClosures['settings-launcher'].rawBytes
+        > first.manifest.budgets.featureClosures['settings-launcher'].rawBytes,
+    );
     assert.ok(Object.keys(first.manifest.files).some((name) => /^chunks\/chunk-[A-Z0-9]+\.js$/.test(name)));
     assert.deepEqual(
         Object.values(first.manifest.entries).filter((entry) => entry.role === 'bootstrap').length,
@@ -49,7 +54,9 @@ test('ESM foundation has stable split-entry and content-addressed chunk naming',
     assert.equal(options.splitting, true);
     assert.equal(options.entryNames, 'entries/[name]');
     assert.equal(options.chunkNames, 'chunks/[name]-[hash]');
-    assert.deepEqual(Object.keys(options.entryPoints), ['boot', 'feature-foundation']);
+    assert.ok(Object.keys(options.entryPoints).length > 2);
+    assert.match(options.entryPoints.boot, /entries[/\\]boot\.ts$/);
+    assert.match(options.entryPoints['settings-launcher'], /entries[/\\]settings-launcher\.ts$/);
 });
 
 test('generated JavaScript links portable adjacent external sourcemaps', async () => {
@@ -109,6 +116,7 @@ test('output, request, and byte budgets fail closed', () => {
         esmEntryCount: 1,
         esmOutputCount: 1,
         featureClosures: { feature: { gzipBytes: 1, rawBytes: 1, requests: 1 } },
+        featureExpandedClosures: { feature: { gzipBytes: 1, rawBytes: 1, requests: 1 } },
         largestEsmOutputBytes: 1,
         outputCount: 1,
         sourceMapRawBytes: 1,
@@ -127,4 +135,7 @@ test('output, request, and byte budgets fail closed', () => {
     const featureConstrained = JSON.parse(JSON.stringify(budget));
     featureConstrained.limits.maxFeatureRequests = 0;
     assert.throws(() => assertBudgets(metrics, featureConstrained), /feature feature closure budget exceeded/);
+    const expandedConstrained = JSON.parse(JSON.stringify(budget));
+    expandedConstrained.limits.maxFeatureExpandedRequests = 0;
+    assert.throws(() => assertBudgets(metrics, expandedConstrained), /feature feature expanded closure budget exceeded/);
 });
