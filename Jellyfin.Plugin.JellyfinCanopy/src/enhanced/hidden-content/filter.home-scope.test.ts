@@ -7,7 +7,12 @@
 // stays visible (page-scope hiding correctly stays off).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
-import { clearFilterIdentityState, filterAllNativeCards, setupNativeObserver } from './filter';
+import {
+    clearFilterIdentityState,
+    filterAllNativeCards,
+    refreshNativeCardVisibility,
+    setupNativeObserver,
+} from './filter';
 import { resetFromUserConfig, shouldProcessNativeSurface } from './data';
 
 type HiddenItems = Record<string, { itemId: string; hideScope: string }>;
@@ -214,6 +219,29 @@ describe('home Continue-Watching filtering independent of Filter Library (ENH-2)
         section.querySelector('a')!.setAttribute('href', '#/list?type=movies');
         await vi.waitFor(() => expect(card('ROUTE').classList.contains('jc-hidden')).toBe(false));
         expect(card('ROUTE').dataset.jcHiddenScopeSignature).toBe('ordinary');
+    });
+
+    it('enrols route observers when filtering activates after the title link appeared', async () => {
+        setHiddenContent(
+            { enabled: true, filterLibrary: false, filterContinueWatching: false, filterNextUp: false },
+            {},
+        );
+        setupNativeObserver();
+        const section = document.createElement('div');
+        section.className = 'section';
+        section.innerHTML = '<a class="sectionTitleTextButton" href="#/list?type=nextup">任意</a><div class="card" data-id="ACTIVATE"></div>';
+        document.body.appendChild(section);
+        await Promise.resolve();
+
+        setHiddenContent(
+            { enabled: true, filterLibrary: false, filterContinueWatching: false, filterNextUp: true },
+            { ACTIVATE: { itemId: 'ACTIVATE', hideScope: 'nextup' } },
+        );
+        refreshNativeCardVisibility();
+        await vi.waitFor(() => expect(card('ACTIVATE').classList.contains('jc-hidden')).toBe(true));
+
+        section.querySelector('a')!.setAttribute('href', '#/list?type=movies');
+        await vi.waitFor(() => expect(card('ACTIVATE').classList.contains('jc-hidden')).toBe(false));
     });
 
     it('invalidates TV slot mapping when Jellyfin removes the section10 sentinel', async () => {

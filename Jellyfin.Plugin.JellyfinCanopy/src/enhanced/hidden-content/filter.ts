@@ -583,6 +583,10 @@ export function refreshNativeCardVisibility(): void {
         return;
     }
     const fence = captureFilterFence();
+    // A stable title link may have appeared while filtering/buttons were off,
+    // when the structural fast path intentionally did no work. Enrol those
+    // sections before this activation pass so later in-place href reuse is seen.
+    syncHomeSectionObservers(fence);
     requestAnimationFrame(() => {
         if (!isFilterFenceCurrent(fence)) return;
         filterAllNativeCards();
