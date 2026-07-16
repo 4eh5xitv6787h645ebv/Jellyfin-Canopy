@@ -162,6 +162,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 PublicUser("ShowWatchProgress", c => c.ShowWatchProgress, nameof(UserSettings.ShowWatchProgress)),
                 PublicUser("ShowFileSizes", c => c.ShowFileSizes, nameof(UserSettings.ShowFileSizes)),
                 PublicUser("RemoveContinueWatchingEnabled", c => c.RemoveContinueWatchingEnabled, nameof(UserSettings.RemoveContinueWatchingEnabled)),
+                PublicUser("HideFavoritesTab", c => c.HideFavoritesTab, nameof(UserSettings.HideFavoritesTab)),
                 PublicUser("ShowAudioLanguages", c => c.ShowAudioLanguages, nameof(UserSettings.ShowAudioLanguages)),
                 // Per-user shortcut overrides live in shortcuts.json (UserShortcuts), not UserSettings.
                 Public("Shortcuts", c => c.Shortcuts),

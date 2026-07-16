@@ -50,6 +50,7 @@
   "RatingTagsPosition": "bottom-right",
   "ShowRatingInPlayer": true,
   "RemoveContinueWatchingEnabled": false,
+  "HideFavoritesTab": false,
   "LastOpenedTab": "élsewhere-映画 \"tab\" c:\\path",
   "ReviewsExpandedByDefault": false,
   "DisplayLanguage": "français",

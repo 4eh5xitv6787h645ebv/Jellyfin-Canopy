@@ -65,6 +65,7 @@
   "HelpPanelAutocloseDelay": 15000,
   "HiddenContentAdmin": true,
   "HiddenContentEnabled": false,
+  "HideFavoritesTab": false,
   "HideReviewsFromDisabledUsers": true,
   "HideReviewsFromHiddenUsers": true,
   "IGNORE_PROVIDERS": "",

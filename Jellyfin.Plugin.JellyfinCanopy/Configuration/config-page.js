@@ -3728,6 +3728,7 @@
 
             // Display
             feat('Remove from Continue Watching', bool('removeContinueWatchingEnabled'), 'display', 'Enabled');
+            feat('Hide Favorites Tab', bool('hideFavoritesTab'), 'display', 'Enabled');
             var tagCount = ['qualityTagsEnabled','genreTagsEnabled','languageTagsEnabled','ratingTagsEnabled','peopleTagsEnabled'].filter(bool).length;
             feat('Media Tags', tagCount > 0, 'display', tagCount + ' tag type(s) enabled');
             feat('Random Button', bool('randomButtonEnabled'), 'display', 'Enabled');

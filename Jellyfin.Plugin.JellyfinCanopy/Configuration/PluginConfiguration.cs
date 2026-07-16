@@ -68,6 +68,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             WatchProgressTimeFormat = "hours";
             ShowFileSizes = false;
             RemoveContinueWatchingEnabled = false;
+            HideFavoritesTab = false;
             ShowAudioLanguages = true;
             ShowReviews = false;
             ShowUserReviews = false;
@@ -402,6 +403,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string WatchProgressTimeFormat { get; set; }
         public bool ShowFileSizes { get; set; }
         public bool RemoveContinueWatchingEnabled { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the native Home-page "Favorites" tab
+        /// is hidden. Admin default for the per-user <see cref="UserSettings.HideFavoritesTab"/> override.
+        /// </summary>
+        public bool HideFavoritesTab { get; set; }
         public bool ShowAudioLanguages { get; set; }
         public bool ShowReviews { get; set; }
         public bool ShowUserReviews { get; set; }
