@@ -146,8 +146,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             if (string.IsNullOrWhiteSpace(path))
                 return null;
 
-            var trimmed = path.TrimEnd('/');
-            var lastSlash = trimmed.LastIndexOf('/');
+            var trimmed = path.TrimEnd('/', '\\');
+            if (trimmed.Length == 0 && (path[0] == '/' || path[0] == '\\'))
+                return path[0].ToString();
+            if (trimmed.Length == 2 && path.Length >= 3 && path[1] == ':'
+                && (path[2] == '/' || path[2] == '\\'))
+                return path.Substring(0, 3);
+            var lastSlash = Math.Max(trimmed.LastIndexOf('/'), trimmed.LastIndexOf('\\'));
+            if (lastSlash == 0)
+                return trimmed.Substring(0, 1);
+            if (lastSlash == 2 && trimmed.Length >= 3 && trimmed[1] == ':')
+                return trimmed.Substring(0, 3);
             if (lastSlash <= 0)
                 return trimmed;
 

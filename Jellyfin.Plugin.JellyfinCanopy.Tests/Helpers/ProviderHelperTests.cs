@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
+using Jellyfin.Plugin.JellyfinCanopy.Data;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
 using Xunit;
 
@@ -80,6 +81,50 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
             Assert.Equal(smaller, resultB);
             // Repeated calls are stable.
             Assert.Equal(resultA, ProviderHelper.GetBestItemId(providers, mapA));
+        }
+
+        [Fact]
+        public void CandidateLookup_SelectsAccessibleSecondEditionAndCorrectType()
+        {
+            var inaccessibleMovie = Guid.Parse("11111111-1111-1111-1111-111111111111");
+            var accessibleMovie = Guid.Parse("22222222-2222-2222-2222-222222222222");
+            var collidingSeries = Guid.Parse("33333333-3333-3333-3333-333333333333");
+            var providers = new[] { ("Tmdb", "42") };
+            var map = new Dictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>>
+            {
+                [("Tmdb", "42")] = new[]
+                {
+                    new ItemLookupCandidate(inaccessibleMovie, ItemLookupKind.Movie),
+                    new ItemLookupCandidate(collidingSeries, ItemLookupKind.Series),
+                    new ItemLookupCandidate(accessibleMovie, ItemLookupKind.Movie),
+                }
+            };
+            IReadOnlySet<Guid> accessible = new HashSet<Guid> { accessibleMovie, collidingSeries };
+
+            var selected = ProviderHelper.GetBestItemId(
+                providers, map, ItemLookupKind.Movie, accessible);
+
+            Assert.Equal(accessibleMovie, selected);
+            Assert.True(ProviderHelper.HasCandidate(providers, map, ItemLookupKind.Movie));
+        }
+
+        [Fact]
+        public void CandidateLookup_IsIndependentOfCandidateOrdering()
+        {
+            var smaller = Guid.Parse("11111111-1111-1111-1111-111111111111");
+            var larger = Guid.Parse("22222222-2222-2222-2222-222222222222");
+            var providers = new[] { ("Tmdb", "42") };
+
+            Dictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>> Map(params Guid[] ids)
+                => new()
+                {
+                    [("Tmdb", "42")] = ids
+                        .Select(id => new ItemLookupCandidate(id, ItemLookupKind.Movie))
+                        .ToList()
+                };
+
+            Assert.Equal(smaller, ProviderHelper.GetBestItemId(providers, Map(larger, smaller), ItemLookupKind.Movie));
+            Assert.Equal(smaller, ProviderHelper.GetBestItemId(providers, Map(smaller, larger), ItemLookupKind.Movie));
         }
     }
 }

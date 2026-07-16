@@ -1,4 +1,5 @@
 using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
+using Jellyfin.Plugin.JellyfinCanopy.Data;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
 {
@@ -33,6 +34,50 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
             // ThenBy(Guid) gives a total order so the same input always yields the same item id.
             return scoreMap.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key).First().Key;
         }
+
+        /// <summary>
+        /// Chooses the strongest type-correct match while preserving duplicate Jellyfin editions.
+        /// An optional allow-list projects the candidates through the current user's access policy.
+        /// </summary>
+        public static Guid? GetBestItemId(
+            IEnumerable<(string Provider, string Value)> providers,
+            Dictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>> itemMap,
+            ItemLookupKind expectedKind,
+            IReadOnlySet<Guid>? allowedItemIds = null,
+            Func<ItemLookupCandidate, bool>? candidateFilter = null)
+        {
+            var scoreMap = new Dictionary<Guid, int>();
+
+            foreach (var (provider, value) in providers)
+            {
+                if (string.IsNullOrWhiteSpace(value)
+                    || !itemMap.TryGetValue((provider, value), out var candidates))
+                    continue;
+
+                foreach (var candidate in candidates)
+                {
+                    if (candidate.Kind != expectedKind
+                        || (allowedItemIds != null && !allowedItemIds.Contains(candidate.ItemId))
+                        || (candidateFilter != null && !candidateFilter(candidate)))
+                        continue;
+
+                    scoreMap[candidate.ItemId] = scoreMap.GetValueOrDefault(candidate.ItemId) + 1;
+                }
+            }
+
+            return scoreMap.Count == 0
+                ? null
+                : scoreMap.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key).First().Key;
+        }
+
+        public static bool HasCandidate(
+            IEnumerable<(string Provider, string Value)> providers,
+            Dictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>> itemMap,
+            ItemLookupKind expectedKind,
+            Func<ItemLookupCandidate, bool>? candidateFilter = null)
+            => providers.Any(pair => itemMap.TryGetValue(pair, out var candidates)
+                && candidates.Any(candidate => candidate.Kind == expectedKind
+                    && (candidateFilter == null || candidateFilter(candidate))));
 
         public static List<(string Provider, string Value)> GetProviders(ArrItem e) 
             => GetProviders(e, includeNormal: true, includeEpisode: false);

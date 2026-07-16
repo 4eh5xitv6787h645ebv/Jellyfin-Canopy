@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Querying;
 
@@ -39,12 +41,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Data
         }
 
         /// <inheritdoc />
-        public Dictionary<(string Provider, string Value), Guid> GetItemIdsByProvidersBatch(
+        public Dictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>> GetItemCandidatesByProvidersBatch(
             IReadOnlyCollection<(string Provider, string Value)> providers)
         {
             var pairs = NormalizePairs(providers);
             if (pairs.Count == 0)
-                return new Dictionary<(string, string), Guid>();
+                return new Dictionary<(string, string), IReadOnlyList<ItemLookupCandidate>>();
 
             // One supported query resolves the whole batch; matched items are
             // mapped back to their (Provider, Value) pairs in memory.
@@ -55,6 +57,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Data
             }
 
             return MapProviderPairs(matchedItems.Values, pairs);
+        }
+
+        /// <inheritdoc />
+        public IReadOnlySet<Guid> GetAccessibleItemIdsBatch(IReadOnlyCollection<Guid> itemIds, JUser user)
+        {
+            if (itemIds.Count == 0)
+                return new HashSet<Guid>();
+
+            var query = UserAccessQuery.BuildItemIds(_libraryManager, user, itemIds);
+            return _libraryManager.GetItemIds(query).ToHashSet();
         }
 
         /// <summary>
@@ -118,16 +130,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Data
         }
 
         /// <summary>
-        /// Maps each requested (Provider, Value) pair to the first matched item that
-        /// carries exactly that provider id. Comparison is ordinal (case-sensitive) on
-        /// both key and value, matching the server's BINARY-collation storage.
+        /// Maps each requested (Provider, Value) pair to every matched item carrying that
+        /// exact provider id. Comparison is ordinal (case-sensitive) on both key and value,
+        /// matching the server's BINARY-collation storage. Preserving every edition lets a
+        /// user-scoped caller choose an accessible, type-correct candidate deterministically.
         /// </summary>
-        internal static Dictionary<(string Provider, string Value), Guid> MapProviderPairs(
+        internal static Dictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>> MapProviderPairs(
             IEnumerable<BaseItem> items,
             IReadOnlyCollection<(string Provider, string Value)> pairs)
         {
             var requested = new HashSet<(string, string)>(pairs);
-            var map = new Dictionary<(string Provider, string Value), Guid>();
+            var map = new Dictionary<(string Provider, string Value), List<ItemLookupCandidate>>();
 
             foreach (var item in items)
             {
@@ -140,12 +153,34 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Data
                         continue;
 
                     var key = (kv.Key, kv.Value);
-                    if (requested.Contains(key) && !map.ContainsKey(key))
-                        map[key] = item.Id;
+                    if (!requested.Contains(key))
+                        continue;
+
+                    if (!map.TryGetValue(key, out var candidates))
+                    {
+                        candidates = new List<ItemLookupCandidate>();
+                        map[key] = candidates;
+                    }
+
+                    if (candidates.All(candidate => candidate.ItemId != item.Id))
+                        candidates.Add(new ItemLookupCandidate(item.Id, GetItemKind(item), item.Path));
                 }
             }
 
-            return map;
+            return map.ToDictionary(
+                pair => pair.Key,
+                pair => (IReadOnlyList<ItemLookupCandidate>)pair.Value
+                    .OrderBy(candidate => candidate.ItemId)
+                    .ToList());
         }
+
+        internal static ItemLookupKind GetItemKind(BaseItem item)
+            => item switch
+            {
+                Movie => ItemLookupKind.Movie,
+                Series => ItemLookupKind.Series,
+                Episode => ItemLookupKind.Episode,
+                _ => ItemLookupKind.Other
+            };
     }
 }
