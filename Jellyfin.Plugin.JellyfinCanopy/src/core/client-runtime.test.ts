@@ -16,7 +16,7 @@ const manifest: ClientManifest = {
         boot: { kind: 'module', path: 'entries/boot.js', role: 'boot' },
         calendar: { kind: 'module', path: 'entries/calendar.js', role: 'feature' },
         requests: { kind: 'module', path: 'entries/requests.js', role: 'feature' },
-        compatibility: { kind: 'classic', path: 'jc.bundle.js', role: 'compatibility' },
+        splashscreen: { kind: 'classic', path: 'splashscreen.js', role: 'bootstrap' },
     },
 };
 
@@ -66,8 +66,8 @@ describe('client feature runtime', () => {
         ])).toThrow('Unknown feature manifest entry: missing');
         expect(runtime.diagnostics().registered).toBe(0);
         expect(() => runtime!.registerFeatureDescriptors([
-            descriptor('classic', 'compatibility'),
-        ])).toThrow('Manifest entry is not a feature module: compatibility');
+            descriptor('classic', 'splashscreen'),
+        ])).toThrow('Manifest entry is not a feature module: splashscreen');
         expect(runtime.diagnostics().registered).toBe(0);
         expect(() => runtime!.registerFeatureDescriptors([
             { ...descriptor('calendar'), dependsOn: ['not-registered'] },

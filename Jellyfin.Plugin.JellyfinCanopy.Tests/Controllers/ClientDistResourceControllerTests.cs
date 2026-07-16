@@ -305,6 +305,35 @@ public sealed class ClientDistResourceControllerTests
             ClientDistResourceCatalog.Create(fixture.ManifestBytes, resources));
     }
 
+    [Fact]
+    public void Catalog_RejectsRetiredCompatibilityEntry()
+    {
+        var fixture = CreateFixture();
+        var manifest = JsonNode.Parse(fixture.ManifestBytes)!.AsObject();
+        var files = manifest["files"]!.AsObject();
+        var entries = manifest["entries"]!.AsObject();
+        files["jc.bundle.js"] = JsonSerializer.SerializeToNode(FileDescriptor(
+            BootBytes,
+            "compatibility-entry",
+            ClientDistResourceCatalog.JavaScriptContentType));
+        entries["compatibility"] = new JsonObject
+        {
+            ["kind"] = "classic",
+            ["path"] = "jc.bundle.js",
+            ["role"] = "compatibility",
+        };
+        var resources = fixture.Resources.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value,
+            StringComparer.Ordinal);
+        resources["jc.bundle.js"] = BootBytes;
+        var mutatedManifest = JsonSerializer.SerializeToUtf8Bytes(manifest);
+        resources[ClientDistResourceCatalog.ManifestPath] = mutatedManifest;
+
+        Assert.Throws<InvalidOperationException>(() =>
+            ClientDistResourceCatalog.Create(mutatedManifest, resources));
+    }
+
     private static Fixture CreateFixture()
     {
         var files = new SortedDictionary<string, object>(StringComparer.Ordinal)

@@ -512,13 +512,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return string.Equals(kind, "module-entry", StringComparison.Ordinal);
             }
 
-            return kind is "compatibility-entry" or "bootstrap-entry";
+            return kind == "bootstrap-entry";
         }
 
         private static bool IsValidEntryContract(string? role, string? kind)
             => role switch
             {
-                "compatibility" or "bootstrap" => kind == "classic",
+                "bootstrap" => kind == "classic",
                 "boot" or "feature" => kind == "module",
                 _ => false,
             };
@@ -526,7 +526,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         private static bool EntryMatchesFileKind(string role, string? fileKind)
             => role switch
             {
-                "compatibility" => fileKind == "compatibility-entry",
                 "bootstrap" => fileKind == "bootstrap-entry",
                 "boot" or "feature" => fileKind == "module-entry",
                 _ => false,

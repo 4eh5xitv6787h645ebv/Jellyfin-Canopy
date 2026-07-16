@@ -97,6 +97,37 @@ test('atomic publication removes stale nested chunks and writes the exact invent
     }
 });
 
+test('post-swap backup cleanup cannot turn a successful publication into a failure', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jc-publish-cleanup-'));
+    const outDir = path.join(root, 'dist');
+    const originalRmSync = fs.rmSync;
+    const originalWarn = console.warn;
+    let rejectedBackupCleanup = false;
+    try {
+        fs.mkdirSync(outDir, { recursive: true });
+        fs.writeFileSync(path.join(outDir, 'old.js'), 'old');
+        fs.rmSync = (target, options) => {
+            if (!rejectedBackupCleanup && String(target).includes('.dist-backup-')) {
+                rejectedBackupCleanup = true;
+                throw new Error('simulated backup cleanup failure');
+            }
+            return originalRmSync(target, options);
+        };
+        console.warn = () => {};
+        assert.doesNotThrow(() => publishArtifacts(new Map([
+            ['client-manifest.json', Buffer.from('{}\n')],
+            ['entries/boot.js', Buffer.from('export {};')],
+        ]), outDir));
+        assert.equal(rejectedBackupCleanup, true);
+        assert.equal(fs.readFileSync(path.join(outDir, 'entries', 'boot.js'), 'utf8'), 'export {};');
+        assert.equal(fs.existsSync(path.join(outDir, 'old.js')), false);
+    } finally {
+        fs.rmSync = originalRmSync;
+        console.warn = originalWarn;
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('path safety and whole-source census reject traversal and missing production modules', () => {
     for (const unsafe of ['', '../x.js', '/x.js', 'a\\b.js', 'a//b.js', './a.js']) {
         assert.throws(() => assertSafeRelativePath(unsafe), /unsafe distribution path/);
@@ -138,6 +169,19 @@ test('output, request, and byte budgets fail closed', () => {
     const expandedConstrained = JSON.parse(JSON.stringify(budget));
     expandedConstrained.limits.maxFeatureExpandedRequests = 0;
     assert.throws(() => assertBudgets(metrics, expandedConstrained), /feature feature expanded closure budget exceeded/);
+
+    for (const key of [
+        'maxFeatureRequests',
+        'maxFeatureRawBytes',
+        'maxFeatureGzipBytes',
+        'maxFeatureExpandedRequests',
+        'maxFeatureExpandedRawBytes',
+        'maxFeatureExpandedGzipBytes',
+    ]) {
+        const missing = JSON.parse(JSON.stringify(budget));
+        delete missing.limits[key];
+        assert.throws(() => assertBudgets(metrics, missing), /bundle budget is missing feature/);
+    }
 
     assert.doesNotThrow(() => assertPublishedBudgets(1, 1, budget));
     const manifestConstrained = JSON.parse(JSON.stringify(budget));

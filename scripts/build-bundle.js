@@ -331,6 +331,12 @@ function assertBudgets(metrics, budget) {
         ['boot requests', metrics.bootRequests, budget.limits.maxBootRequests],
         ['boot raw bytes', metrics.bootRawBytes, budget.limits.maxBootRawBytes],
         ['boot gzip bytes', metrics.bootGzipBytes, budget.limits.maxBootGzipBytes],
+        ['feature requests', 0, budget.limits.maxFeatureRequests],
+        ['feature raw bytes', 0, budget.limits.maxFeatureRawBytes],
+        ['feature gzip bytes', 0, budget.limits.maxFeatureGzipBytes],
+        ['feature expanded requests', 0, budget.limits.maxFeatureExpandedRequests],
+        ['feature expanded raw bytes', 0, budget.limits.maxFeatureExpandedRawBytes],
+        ['feature expanded gzip bytes', 0, budget.limits.maxFeatureExpandedGzipBytes],
         ['sourcemap raw bytes', metrics.sourceMapRawBytes, budget.limits.maxSourceMapRawBytes],
         ['total raw bytes', metrics.totalRawBytes, budget.limits.maxTotalRawBytes],
     ];
@@ -414,6 +420,14 @@ function publishArtifacts(artifacts, outDir = OUT_DIR) {
     const backup = path.join(parent, `.dist-backup-${nonce}`);
     fs.mkdirSync(staging, { recursive: false });
     let movedOld = false;
+    let published = false;
+    const removeTreeBestEffort = (target) => {
+        try {
+            fs.rmSync(target, { recursive: true, force: true });
+        } catch (error) {
+            console.warn(`Bundle cleanup retained ${path.basename(target)}: ${error.message}`);
+        }
+    };
     try {
         for (const [name, bytes] of [...artifacts.entries()].sort(([left], [right]) => left.localeCompare(right))) {
             assertSafeRelativePath(name);
@@ -426,13 +440,23 @@ function publishArtifacts(artifacts, outDir = OUT_DIR) {
             movedOld = true;
         }
         fs.renameSync(staging, outDir);
-        if (movedOld) fs.rmSync(backup, { recursive: true, force: true });
+        published = true;
+        if (movedOld) removeTreeBestEffort(backup);
     } catch (error) {
-        fs.rmSync(staging, { recursive: true, force: true });
-        if (movedOld && !fs.existsSync(outDir)) fs.renameSync(backup, outDir);
+        removeTreeBestEffort(staging);
+        if (movedOld && !fs.existsSync(outDir)) {
+            try {
+                fs.renameSync(backup, outDir);
+            } catch (restoreError) {
+                throw new AggregateError(
+                    [error, restoreError],
+                    `bundle publication failed and the previous dist remains at ${backup}`,
+                );
+            }
+        }
         throw error;
     } finally {
-        fs.rmSync(backup, { recursive: true, force: true });
+        if (published) removeTreeBestEffort(backup);
     }
 }
 

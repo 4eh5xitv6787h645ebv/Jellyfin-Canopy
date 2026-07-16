@@ -12,7 +12,7 @@ import {
 export interface ClientManifestEntry {
     readonly kind: 'classic' | 'module';
     readonly path: string;
-    readonly role: 'compatibility' | 'bootstrap' | 'boot' | 'feature';
+    readonly role: 'bootstrap' | 'boot' | 'feature';
 }
 
 export interface ClientManifest {

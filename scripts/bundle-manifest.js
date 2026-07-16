@@ -88,7 +88,7 @@ function validateClientManifest(client, dist, diskNames) {
     for (const [logicalName, entry] of Object.entries(client.entries)) {
         if (!/^[a-z0-9][a-z0-9-]*$/.test(logicalName) || !entry || typeof entry !== 'object'
             || !['classic', 'module'].includes(entry.kind)
-            || !['boot', 'bootstrap', 'compatibility', 'feature'].includes(entry.role)) {
+            || !['boot', 'bootstrap', 'feature'].includes(entry.role)) {
             throw new Error(`client manifest logical entry is invalid: ${logicalName}`);
         }
         assertSafeRelativePath(entry.path);

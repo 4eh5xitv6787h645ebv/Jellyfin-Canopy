@@ -97,6 +97,34 @@ test('unsafe and unresolved manifest imports are rejected', () => {
     }
 });
 
+test('retired compatibility entries are rejected even when their bytes are internally consistent', () => {
+    const { root, dist } = fixture();
+    try {
+        const compatibilityBytes = Buffer.from('window.JellyfinCanopy = {};\n');
+        fs.writeFileSync(path.join(dist, 'jc.bundle.js'), compatibilityBytes);
+        writeClientManifest(dist, (client) => {
+            client.files['jc.bundle.js'] = {
+                bytes: compatibilityBytes.length,
+                contentType: 'text/javascript; charset=utf-8',
+                dynamicImports: [],
+                entryPoint: 'Jellyfin.Plugin.JellyfinCanopy/src/main.ts',
+                gzipBytes: compatibilityBytes.length,
+                imports: [],
+                kind: 'compatibility-entry',
+                sha256: sha256(compatibilityBytes),
+            };
+            client.entries.compatibility = {
+                kind: 'classic',
+                path: 'jc.bundle.js',
+                role: 'compatibility',
+            };
+        });
+        assert.throws(() => createManifest(root), /client manifest logical entry is invalid: compatibility/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('distribution symlinks are rejected instead of followed', () => {
     const { root, dist } = fixture();
     try {
