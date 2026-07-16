@@ -1,8 +1,12 @@
 import type { FeatureLoaderState, FeatureModule, FeatureScope } from '../core/feature-loader';
+import { LIVE } from '../core/live';
 import { resetButtonUi } from '../enhanced/hidden-content/buttons';
 import { clearIdentityData } from '../enhanced/hidden-content/data';
 import { resetDialogUi } from '../enhanced/hidden-content/dialogs';
-import { clearFilterIdentityState } from '../enhanced/hidden-content/filter';
+import {
+    clearFilterIdentityState,
+    invalidateParentSeriesAssociations,
+} from '../enhanced/hidden-content/filter';
 import {
     initializeHiddenContent,
     installHiddenContent,
@@ -46,6 +50,9 @@ export const hiddenContentRuntimeFeature: FeatureModule = Object.freeze({
         cleanups.push(clearFilterIdentityState);
         cleanups.push(() => document.getElementById('jc-hidden-content')?.remove());
         cleanups.push(installPersistenceLifecycle());
+        if (JC.core.live) {
+            cleanups.push(JC.core.live.on(LIVE.LIBRARY_CHANGED, invalidateParentSeriesAssociations));
+        }
         cleanups.push(JC.identity.registerReset('hidden-content-runtime', dispose));
 
         if (!scope.isCurrent()) {

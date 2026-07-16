@@ -15,18 +15,47 @@ import { onBodyMutation } from '../../core/dom-observer';
 import type { BodySubscriberHandle, IdentityContext } from '../../types/jc';
 import { hiddenIdSet, getSettings, shouldFilterSurface, shouldProcessNativeSurface, getHiddenData, getHiddenCount } from './data';
 import { addLibraryHideButtons } from './buttons';
+import {
+    PARENT_SERIES_ABSENCE_TTL_MS,
+    ParentSeriesCache,
+} from './parent-series-cache';
 
-const parentSeriesCache = new Map<string, string | null>();
-const parentSeriesRequestMap = new Map<string, Promise<string | null>>();
+const parentSeriesCache = new ParentSeriesCache();
 let sectionSurfaceCache = new WeakMap<Element, string | null>();
 let filterGeneration = 0;
+let parentSeriesGeneration = 0;
 let viewPageUnsubscribe: (() => void) | null = null;
 let bodyMutationHandle: BodySubscriberHandle | null = null;
 const detailRescanHandles = new Set<number>();
+let parentInvalidationFrameHandle: number | null = null;
+let parentRetryHandle: number | null = null;
+let parentOverflowRetryHandle: number | null = null;
+let parentOverflowRetryAttempts = 0;
+const parentRetryEntries = new Map<HTMLElement, { dueAt: number }>();
+let parentRetryAttempts = new WeakMap<HTMLElement, number>();
+const parentBatchOwners = new Map<string, symbol>();
+let activeParentBatchRequests = 0;
+
+const PARENT_RETRY_DELAY_MS = 500;
+const PARENT_RETRY_MAX_ATTEMPTS = 3;
+const PARENT_RETRY_MAX_CARDS = 1_000;
+const PARENT_OVERFLOW_RETRY_MAX_ATTEMPTS = 3;
+const PARENT_BATCH_SIZE = 50;
+const PARENT_BATCH_MAX_ACTIVE_REQUESTS = 4;
+const PARENT_BATCH_MAX_PENDING_IDS = 1_000;
 
 interface FilterFence {
     generation: number;
     context: IdentityContext | null;
+}
+
+interface ParentSeriesItemResponse {
+    Id?: string;
+    SeriesId?: string | null;
+}
+
+interface ParentSeriesBatchResponse {
+    Items?: ParentSeriesItemResponse[];
 }
 
 function captureFilterFence(): FilterFence {
@@ -43,8 +72,8 @@ let filterFrameHandle: number | null = null;
 
 export function clearFilterIdentityState(): void {
     filterGeneration += 1;
+    parentSeriesGeneration += 1;
     parentSeriesCache.clear();
-    parentSeriesRequestMap.clear();
     sectionSurfaceCache = new WeakMap<Element, string | null>();
     viewPageUnsubscribe?.();
     viewPageUnsubscribe = null;
@@ -54,8 +83,18 @@ export function clearFilterIdentityState(): void {
     detailRescanHandles.clear();
     if (filterDebounceHandle !== null) clearTimeout(filterDebounceHandle);
     if (filterFrameHandle !== null) cancelAnimationFrame(filterFrameHandle);
+    if (parentInvalidationFrameHandle !== null) cancelAnimationFrame(parentInvalidationFrameHandle);
+    if (parentRetryHandle !== null) clearTimeout(parentRetryHandle);
+    if (parentOverflowRetryHandle !== null) clearTimeout(parentOverflowRetryHandle);
     filterDebounceHandle = null;
     filterFrameHandle = null;
+    parentInvalidationFrameHandle = null;
+    parentRetryHandle = null;
+    parentOverflowRetryHandle = null;
+    parentOverflowRetryAttempts = 0;
+    parentRetryEntries.clear();
+    parentRetryAttempts = new WeakMap<HTMLElement, number>();
+    parentBatchOwners.clear();
 
     // Remove only visibility markers owned by this feature. Other users of the
     // generic jc-hidden class are left untouched.
@@ -67,6 +106,107 @@ export function clearFilterIdentityState(): void {
     document.querySelectorAll<HTMLElement>(`[${PROCESSED_ATTR}]`).forEach((card) => {
         card.removeAttribute(PROCESSED_ATTR);
     });
+}
+
+function armParentRetryTimer(): void {
+    if (parentRetryHandle !== null || parentRetryEntries.size === 0) return;
+    let earliest = Number.POSITIVE_INFINITY;
+    for (const entry of parentRetryEntries.values()) earliest = Math.min(earliest, entry.dueAt);
+    const delay = Math.max(0, earliest - Date.now());
+    const fence = captureFilterFence();
+    parentRetryHandle = window.setTimeout(() => {
+        parentRetryHandle = null;
+        if (!isFilterFenceCurrent(fence)) return;
+        const now = Date.now();
+        let retryReady = false;
+        for (const [card, entry] of [...parentRetryEntries]) {
+            if (!card.isConnected) {
+                parentRetryEntries.delete(card);
+                continue;
+            }
+            if (entry.dueAt > now) continue;
+            parentRetryEntries.delete(card);
+            card.removeAttribute(PROCESSED_ATTR);
+            retryReady = true;
+        }
+        if (retryReady) filterNativeCards();
+        armParentRetryTimer();
+    }, delay);
+}
+
+/**
+ * Queue one bounded whole-surface pass when a per-card table is saturated.
+ * This keeps memory capped without making overflow cards permanently sticky.
+ */
+function scheduleParentOverflowRetry(): void {
+    if (parentOverflowRetryHandle !== null
+        || parentOverflowRetryAttempts >= PARENT_OVERFLOW_RETRY_MAX_ATTEMPTS) return;
+    parentOverflowRetryAttempts += 1;
+    const fence = captureFilterFence();
+    parentOverflowRetryHandle = window.setTimeout(() => {
+        parentOverflowRetryHandle = null;
+        if (isFilterFenceCurrent(fence)) filterAllNativeCards();
+    }, PARENT_RETRY_DELAY_MS);
+}
+
+/** Coalesce bounded, navigation-owned retries for transient/incomplete lookups. */
+function scheduleParentRetry(card: HTMLElement, delayMs = PARENT_RETRY_DELAY_MS): void {
+    if (!card.isConnected) return;
+    const prior = parentRetryEntries.get(card);
+    const dueAt = Date.now() + Math.max(0, delayMs);
+    if (prior) {
+        // Repeated scans before the queued retry fires are the same attempt.
+        // Preserve the earliest deadline instead of consuming the retry cap or
+        // postponing an authoritative-absence revalidation indefinitely.
+        prior.dueAt = Math.min(prior.dueAt, dueAt);
+        if (parentRetryHandle !== null) clearTimeout(parentRetryHandle);
+        parentRetryHandle = null;
+        armParentRetryTimer();
+        return;
+    }
+    const attempts = (parentRetryAttempts.get(card) || 0) + 1;
+    if (attempts > PARENT_RETRY_MAX_ATTEMPTS) {
+        parentRetryEntries.delete(card);
+        return;
+    }
+    if (parentRetryEntries.size >= PARENT_RETRY_MAX_CARDS) {
+        scheduleParentOverflowRetry();
+        return;
+    }
+    card.removeAttribute(PROCESSED_ATTR);
+    parentRetryAttempts.set(card, attempts);
+    parentRetryEntries.set(card, {
+        dueAt,
+    });
+    // A newly queued transient retry may be earlier than an existing 30-second
+    // absence revalidation; always re-arm against the true earliest deadline.
+    if (parentRetryHandle !== null) clearTimeout(parentRetryHandle);
+    parentRetryHandle = null;
+    armParentRetryTimer();
+}
+
+function clearParentRetry(card: HTMLElement): void {
+    parentRetryEntries.delete(card);
+    parentRetryAttempts.delete(card);
+}
+
+function parentBatchKey(context: IdentityContext, itemId: string): string {
+    return `${encodeURIComponent(context.serverId)}:${encodeURIComponent(context.userId)}:${context.epoch}:${encodeURIComponent(itemId)}`;
+}
+
+/** Apply one authoritative parent result without dropping ownership mid-flight. */
+function applyResolvedParentVisibility(card: HTMLElement, seriesId: string | null): void {
+    if (!card.isConnected) return;
+    if (seriesId && hiddenIdSet.has(seriesId)) {
+        card.classList.add('jc-hidden');
+        card.setAttribute(HIDDEN_PARENT_ATTR, seriesId);
+        card.removeAttribute(HIDDEN_DIRECT_ATTR);
+        return;
+    }
+    if (card.hasAttribute(HIDDEN_PARENT_ATTR)) {
+        card.classList.remove('jc-hidden');
+        card.removeAttribute(HIDDEN_PARENT_ATTR);
+    }
 }
 
 /** Delay for first detail-page rescan (async episode loading). */
@@ -88,45 +228,28 @@ const CARD_SEL_NEW = '.card[data-id]:not([data-jc-hidden-checked]), .card[data-i
 
 /**
  * Fetches the parent series ID for an episode/season item from the API.
- * Results are cached in `parentSeriesCache`; in-flight requests are
- * de-duplicated via `parentSeriesRequestMap`.
+ * Results are kept in the bounded, identity-scoped parent-Series cache;
+ * in-flight requests are de-duplicated by that cache as well.
  * @param itemId Jellyfin item ID (episode or season).
  * @returns The series ID, or `null` if unavailable.
  */
 async function getParentSeriesId(itemId: string): Promise<string | null> {
-    if (parentSeriesCache.has(itemId)) {
-        return parentSeriesCache.get(itemId)!;
-    }
-    if (parentSeriesRequestMap.has(itemId)) {
-        return parentSeriesRequestMap.get(itemId)!;
-    }
     const fence = captureFilterFence();
-    const request = (async () => {
-        try {
-            const userId = fence.context?.userId || ApiClient.getCurrentUserId();
-            const item: any = await ApiClient.ajax({
-                type: 'GET',
-                url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl(`/Users/${userId}/Items/${itemId}`, { Fields: 'SeriesId' }),
-                dataType: 'json'
-            });
-            if (!isFilterFenceCurrent(fence)) return null;
-            const seriesId = item?.SeriesId || null;
-            parentSeriesCache.set(itemId, seriesId);
-            return seriesId;
-        } catch (e) {
-            if (!isFilterFenceCurrent(fence)) return null;
-            console.warn('🪼 Jellyfin Canopy: Failed to fetch parent series for', itemId, e);
-            parentSeriesCache.set(itemId, null);
-            return null;
-        }
-    })();
-    parentSeriesRequestMap.set(itemId, request);
-    void request.finally(() => {
-        if (parentSeriesRequestMap.get(itemId) === request) {
-            parentSeriesRequestMap.delete(itemId);
-        }
-    });
-    return request;
+    const parentGeneration = parentSeriesGeneration;
+    const isCurrent = (): boolean => isFilterFenceCurrent(fence)
+        && parentGeneration === parentSeriesGeneration;
+    if (!fence.context) return null;
+    return parentSeriesCache.resolve(fence.context, itemId, async () => {
+        const item = await ApiClient.ajax({
+            type: 'GET',
+            url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl(`/Users/${fence.context!.userId}/Items/${itemId}`, { Fields: 'SeriesId' }),
+            dataType: 'json'
+        }) as ParentSeriesItemResponse | null;
+        if (!isCurrent()) return undefined;
+        // A returned item with no SeriesId is authoritative but short-lived.
+        // Transport/authorization/abort failures reject and remain retryable.
+        return item?.SeriesId || null;
+    }, isCurrent);
 }
 
 // ============================================================
@@ -218,21 +341,23 @@ function checkAndHideByParentSeries(card: HTMLElement, itemId: string): void {
     if (hiddenIdSet.size === 0) return;
 
     const fence = captureFilterFence();
+    const parentGeneration = parentSeriesGeneration;
     getParentSeriesId(itemId).then((seriesId) => {
-        if (!isFilterFenceCurrent(fence)) return;
-        if (!seriesId) return;
+        if (!isFilterFenceCurrent(fence) || parentGeneration !== parentSeriesGeneration) return;
+        if (!seriesId) {
+            applyResolvedParentVisibility(card, null);
+            scheduleParentRetry(card, PARENT_SERIES_ABSENCE_TTL_MS);
+            return;
+        }
         if (!card.isConnected) return;
+        clearParentRetry(card);
         if (!getSettings().enabled || !shouldFilterSurface(getCurrentNativeSurface())) return;
 
-        if (hiddenIdSet.has(seriesId)) {
-            card.classList.add('jc-hidden');
-            card.setAttribute(HIDDEN_PARENT_ATTR, seriesId);
-            card.removeAttribute(HIDDEN_DIRECT_ATTR);
-        } else if (card.getAttribute(HIDDEN_PARENT_ATTR) === seriesId && card.classList.contains('jc-hidden')) {
-            card.classList.remove('jc-hidden');
-            card.removeAttribute(HIDDEN_PARENT_ATTR);
-        }
+        applyResolvedParentVisibility(card, seriesId);
     }).catch((e) => {
+        // PERF(R9): a transient failure must leave this card eligible for the
+        // next bounded observer/navigation pass instead of becoming sticky.
+        scheduleParentRetry(card);
         console.warn('🪼 Jellyfin Canopy: Parent series check failed for', itemId, e);
     });
 }
@@ -247,31 +372,49 @@ async function batchCheckParentSeries(cardEntries: Array<{ card: HTMLElement; it
     if (!getSettings().enabled || !shouldFilterSurface(getCurrentNativeSurface())) return;
     if (hiddenIdSet.size === 0) return;
     const fence = captureFilterFence();
+    const parentGeneration = parentSeriesGeneration;
+    const isCurrent = (): boolean => isFilterFenceCurrent(fence)
+        && parentGeneration === parentSeriesGeneration;
 
     // Separate cached from uncached
     const cached: Array<{ card: HTMLElement; itemId: string; seriesId: string | null }> = [];
-    const uncached: Array<{ card: HTMLElement; itemId: string }> = [];
+    const uncached: Array<{ card: HTMLElement; itemId: string; batchKey: string }> = [];
+    if (!fence.context) return;
+    const batchOwner = Symbol('hidden-parent-batch');
     for (let i = 0; i < cardEntries.length; i++) {
         const entry = cardEntries[i];
-        if (parentSeriesCache.has(entry.itemId)) {
-            cached.push({ ...entry, seriesId: parentSeriesCache.get(entry.itemId)! });
-        } else {
-            uncached.push(entry);
+        const seriesId = parentSeriesCache.get(fence.context, entry.itemId);
+        if (seriesId !== undefined) {
+            cached.push({ ...entry, seriesId });
+            continue;
         }
+        const batchKey = parentBatchKey(fence.context, entry.itemId);
+        if (parentBatchOwners.has(batchKey)) {
+            scheduleParentRetry(entry.card);
+            continue;
+        }
+        if (parentBatchOwners.size >= PARENT_BATCH_MAX_PENDING_IDS) {
+            scheduleParentOverflowRetry();
+            continue;
+        }
+        parentBatchOwners.set(batchKey, batchOwner);
+        uncached.push({ ...entry, batchKey });
     }
 
     // Process cached entries immediately
     if (cached.length > 0) {
         requestAnimationFrame(() => {
-            if (!isFilterFenceCurrent(fence)) return;
+            if (!isCurrent()) return;
             for (let i = 0; i < cached.length; i++) {
                 const { card, seriesId } = cached[i];
-                if (!card.isConnected || !seriesId) continue;
-                if (hiddenIdSet.has(seriesId)) {
-                    card.classList.add('jc-hidden');
-                    card.setAttribute(HIDDEN_PARENT_ATTR, seriesId);
-                    card.removeAttribute(HIDDEN_DIRECT_ATTR);
+                if (!card.isConnected) continue;
+                if (!seriesId) {
+                    applyResolvedParentVisibility(card, null);
+                    scheduleParentRetry(card, PARENT_SERIES_ABSENCE_TTL_MS);
+                    continue;
                 }
+                clearParentRetry(card);
+                applyResolvedParentVisibility(card, seriesId);
             }
         });
     }
@@ -279,59 +422,120 @@ async function batchCheckParentSeries(cardEntries: Array<{ card: HTMLElement; it
     // Fetch uncached entries in batches of 50
     if (uncached.length === 0) return;
 
-    const BATCH_SIZE = 50;
     const userId = fence.context?.userId || ApiClient.getCurrentUserId();
 
-    for (let start = 0; start < uncached.length; start += BATCH_SIZE) {
-        const chunk = uncached.slice(start, start + BATCH_SIZE);
-        const ids = chunk.map(e => e.itemId).join(',');
+    try {
+        for (let start = 0; start < uncached.length; start += PARENT_BATCH_SIZE) {
+            const chunk = uncached.slice(start, start + PARENT_BATCH_SIZE);
+            const ids = chunk.map(e => e.itemId).join(',');
 
-        try {
-            const result: any = await ApiClient.ajax({
-                type: 'GET',
-                url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl(`/Users/${userId}/Items`, { Ids: ids, Fields: 'SeriesId' }),
-                dataType: 'json'
-            });
-            if (!isFilterFenceCurrent(fence)) return;
-
-            const itemsById = new Map<string, string | null>();
-            const responseItems = result?.Items || [];
-            for (let i = 0; i < responseItems.length; i++) {
-                const item = responseItems[i];
-                itemsById.set(item.Id, item.SeriesId || null);
-                parentSeriesCache.set(item.Id, item.SeriesId || null);
-            }
-
-            // Also cache items that weren't in the response (deleted, etc.)
-            for (let i = 0; i < chunk.length; i++) {
-                if (!itemsById.has(chunk[i].itemId)) {
-                    parentSeriesCache.set(chunk[i].itemId, null);
+            try {
+                if (activeParentBatchRequests >= PARENT_BATCH_MAX_ACTIVE_REQUESTS) {
+                    for (const entry of chunk) scheduleParentRetry(entry.card);
+                    continue;
                 }
-            }
+                activeParentBatchRequests += 1;
+                let result: ParentSeriesBatchResponse | null;
+                try {
+                    result = await ApiClient.ajax({
+                        type: 'GET',
+                        url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl(`/Users/${userId}/Items`, { Ids: ids, Fields: 'SeriesId' }),
+                        dataType: 'json'
+                    }) as ParentSeriesBatchResponse | null;
+                } finally {
+                    activeParentBatchRequests -= 1;
+                }
+                if (!isCurrent()) return;
 
-            // Batch apply hiding
-            requestAnimationFrame(() => {
-                if (!isFilterFenceCurrent(fence)) return;
+                const itemsById = new Map<string, string | null>();
+                const responseItems: ParentSeriesItemResponse[] = result?.Items || [];
+                for (let i = 0; i < responseItems.length; i++) {
+                    const item = responseItems[i];
+                    if (!item?.Id) continue;
+                    itemsById.set(item.Id, item.SeriesId || null);
+                    parentSeriesCache.set(fence.context, item.Id, item.SeriesId || null);
+                }
+
+                // An omitted row is not authoritative absence. Leave it retryable
+                // and remove the processed marker so a later scan can recover.
                 for (let i = 0; i < chunk.length; i++) {
-                    const { card, itemId } = chunk[i];
-                    if (!card.isConnected) continue;
-                    const seriesId = parentSeriesCache.get(itemId);
-                    if (seriesId && hiddenIdSet.has(seriesId)) {
-                        card.classList.add('jc-hidden');
-                        card.setAttribute(HIDDEN_PARENT_ATTR, seriesId);
-                        card.removeAttribute(HIDDEN_DIRECT_ATTR);
+                    if (!itemsById.has(chunk[i].itemId)) {
+                        scheduleParentRetry(chunk[i].card);
                     }
                 }
-            });
-        } catch (e) {
-            if (!isFilterFenceCurrent(fence)) return;
-            console.warn('🪼 Jellyfin Canopy: Batch parent series check failed', e);
-            // Fall back to individual lookups for this chunk
-            for (let i = 0; i < chunk.length; i++) {
-                checkAndHideByParentSeries(chunk[i].card, chunk[i].itemId);
+
+                // Batch apply hiding
+                requestAnimationFrame(() => {
+                    if (!isCurrent()) return;
+                    for (let i = 0; i < chunk.length; i++) {
+                        const { card, itemId } = chunk[i];
+                        if (!card.isConnected) continue;
+                        const seriesId = itemsById.get(itemId);
+                        if (seriesId === null) {
+                            applyResolvedParentVisibility(card, null);
+                            scheduleParentRetry(card, PARENT_SERIES_ABSENCE_TTL_MS);
+                            continue;
+                        }
+                        if (seriesId) {
+                            clearParentRetry(card);
+                            applyResolvedParentVisibility(card, seriesId);
+                        }
+                    }
+                });
+            } catch (e) {
+                if (!isCurrent()) return;
+                console.warn('🪼 Jellyfin Canopy: Batch parent series check failed', e);
+                // Fall back to individual lookups for this chunk.
+                for (let i = 0; i < chunk.length; i++) {
+                    scheduleParentRetry(chunk[i].card);
+                    checkAndHideByParentSeries(chunk[i].card, chunk[i].itemId);
+                }
+            }
+        }
+    } finally {
+        for (const entry of uncached) {
+            if (parentBatchOwners.get(entry.batchKey) === batchOwner) {
+                parentBatchOwners.delete(entry.batchKey);
             }
         }
     }
+}
+
+/**
+ * Library association changes retire every cached parent mapping for the
+ * current identity and re-check visible Episode/Season cards. A broad clear is
+ * intentional: Jellyfin can report only the changed parent, not every child
+ * whose SeriesId projection changed.
+ */
+export function invalidateParentSeriesAssociations(): void {
+    const context = JC.identity?.capture?.() || null;
+    if (!context) return;
+    parentSeriesGeneration += 1;
+    parentSeriesCache.invalidate(context);
+    if (parentRetryHandle !== null) clearTimeout(parentRetryHandle);
+    if (parentOverflowRetryHandle !== null) clearTimeout(parentOverflowRetryHandle);
+    parentRetryHandle = null;
+    parentOverflowRetryHandle = null;
+    parentOverflowRetryAttempts = 0;
+    parentRetryEntries.clear();
+    parentRetryAttempts = new WeakMap<HTMLElement, number>();
+    parentBatchOwners.clear();
+
+    document.querySelectorAll<HTMLElement>(CARD_SEL).forEach((card) => {
+        if (card.getAttribute(HIDDEN_PARENT_ATTR) && card.classList.contains('jc-hidden')) {
+            card.classList.remove('jc-hidden');
+        }
+        card.removeAttribute(HIDDEN_PARENT_ATTR);
+        const cardType = card.dataset.type || '';
+        if (cardType === 'Episode' || cardType === 'Season') card.removeAttribute(PROCESSED_ATTR);
+    });
+
+    if (parentInvalidationFrameHandle !== null) cancelAnimationFrame(parentInvalidationFrameHandle);
+    const fence = captureFilterFence();
+    parentInvalidationFrameHandle = requestAnimationFrame(() => {
+        parentInvalidationFrameHandle = null;
+        if (isFilterFenceCurrent(fence)) filterNativeCards();
+    });
 }
 
 /**
@@ -409,7 +613,6 @@ export function filterNativeCards(syncApply = false): void {
         if (card.hasAttribute('data-imagetype')) continue;
         const itemId = getCardItemId(card);
         card.setAttribute(PROCESSED_ATTR, '1');
-        card.removeAttribute(HIDDEN_PARENT_ATTR);
         if (!itemId) continue;
 
         // Check scope-aware hiding for cards in Next Up / Continue Watching sections
@@ -418,6 +621,8 @@ export function filterNativeCards(syncApply = false): void {
             if (shouldFilterSurface(cardSurface) && isHiddenOnSurface(itemId, cardSurface)) {
                 toHide.push(card);
                 card.setAttribute(HIDDEN_DIRECT_ATTR, '1');
+                card.removeAttribute(HIDDEN_PARENT_ATTR);
+                clearParentRetry(card);
                 continue;
             }
         }
@@ -425,6 +630,8 @@ export function filterNativeCards(syncApply = false): void {
         if (pageFilterable && hiddenIdSet.has(itemId)) {
             toHide.push(card);
             card.setAttribute(HIDDEN_DIRECT_ATTR, '1');
+            card.removeAttribute(HIDDEN_PARENT_ATTR);
+            clearParentRetry(card);
         } else {
             if (card.getAttribute(HIDDEN_DIRECT_ATTR) === '1' && card.classList.contains('jc-hidden')) {
                 toShow.push(card);
@@ -479,7 +686,6 @@ export function filterAllNativeCards(): void {
         const card = cards[i];
         const itemId = getCardItemId(card);
         card.setAttribute(PROCESSED_ATTR, '1');
-        card.removeAttribute(HIDDEN_PARENT_ATTR);
         if (!itemId) continue;
 
         const cardSurface = getCardSurface(card);
@@ -487,6 +693,8 @@ export function filterAllNativeCards(): void {
         if (cardSurface && shouldFilterSurface(cardSurface) && isHiddenOnSurface(itemId, cardSurface)) {
             toHide.push(card);
             card.setAttribute(HIDDEN_DIRECT_ATTR, '1');
+            card.removeAttribute(HIDDEN_PARENT_ATTR);
+            clearParentRetry(card);
             hiddenByScope = true;
         }
 
@@ -494,8 +702,10 @@ export function filterAllNativeCards(): void {
             if (pageFilterable && hiddenIdSet.has(itemId)) {
                 toHide.push(card);
                 card.setAttribute(HIDDEN_DIRECT_ATTR, '1');
+                card.removeAttribute(HIDDEN_PARENT_ATTR);
+                clearParentRetry(card);
             } else {
-                if (card.classList.contains('jc-hidden')) {
+                if (card.getAttribute(HIDDEN_DIRECT_ATTR) === '1' && card.classList.contains('jc-hidden')) {
                     toShow.push(card);
                     card.removeAttribute(HIDDEN_DIRECT_ATTR);
                 }
