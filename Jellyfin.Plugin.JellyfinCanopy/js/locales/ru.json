@@ -342,7 +342,7 @@
   "panel_settings_language_display": "Язык интерфейса",
   "panel_settings_language_display_desc": "Выберите язык интерфейса Jellyfin Canopy. Изменения вступают в силу после обновления страницы.",
   "panel_settings_language_clear_cache": "Очистить кеш переводов",
-  "panel_settings_language_clear_cache_desc": "Удаляет все кешированные переводы. Полезно для получения недавно обновленного перевода с Github.",
+  "panel_settings_language_clear_cache_desc": "Удаляет кешированные переводы и заново загружает языковой файл, поставляемый с установленным плагином.",
   "toast_language_changed": "{{icon:language}} Язык изменён! Обновление страницы…",
   "toast_translation_cache_cleared": "{{icon:trash}} Кэш переводов очищен! Удалено {count} сохранённых переводов. Обновление…",
   "bookmark_add_title": "Добавить в закладки",

@@ -343,7 +343,7 @@
   "panel_settings_language_display": "Weergavetaal",
   "panel_settings_language_display_desc": "Select the language for Jellyfin Canopy interface. Changes take effect after page refresh.",
   "panel_settings_language_clear_cache": "Vertaalcache wissen",
-  "panel_settings_language_clear_cache_desc": "Verwijdert alle opgeslagen vertalingen. Handig om een recent bijgewerkte vertaling van GitHub op te halen.",
+  "panel_settings_language_clear_cache_desc": "Verwijdert vertalingen uit de cache en laadt de met de geïnstalleerde plugin meegeleverde taalversie opnieuw.",
   "toast_language_changed": "{{icon:language}} Taal gewijzigd! Pagina wordt vernieuwd…",
   "toast_translation_cache_cleared": "{{icon:trash}} Vertaalcache gewist! {count} opgeslagen vertaling(en) verwijderd. Vernieuwen…",
   "bookmark_add_title": "Bladwijzer toevoegen",

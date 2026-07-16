@@ -343,7 +343,7 @@
   "panel_settings_language_display": "Megjelenítési nyelv",
   "panel_settings_language_display_desc": "Válassza ki a Jellyfin Canopy felület nyelvét. A módosítások az oldal frissítése után lépnek életbe.",
   "panel_settings_language_clear_cache": "Fordítási gyorsítótár törlése",
-  "panel_settings_language_clear_cache_desc": "Eltávolítja az összes gyorsítótárazott fordítást. Hasznos egy nemrég frissített fordítás letöltéséhez a Githubról.",
+  "panel_settings_language_clear_cache_desc": "Eltávolítja a gyorsítótárazott fordításokat, és újratölti a telepített bővítményben található területi beállítást.",
   "toast_language_changed": "{{icon:language}} Nyelv megváltoztatva! Oldal frissítése…",
   "toast_translation_cache_cleared": "{{icon:trash}} Fordítási gyorsítótár törölve! {count} gyorsítótárazott fordítás eltávolítva. Újratöltés…",
   "bookmark_add_title": "Könyvjelző hozzáadása",

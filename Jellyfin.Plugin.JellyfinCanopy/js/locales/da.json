@@ -343,7 +343,7 @@
   "panel_settings_language_display": "Visningssprog",
   "panel_settings_language_display_desc": "Vælg sproget til Jellyfin Canopy-grænsefladen. Ændringer træder i kraft efter sideopdatering.",
   "panel_settings_language_clear_cache": "Ryd oversættelsescache",
-  "panel_settings_language_clear_cache_desc": "Fjerner alle cachede oversættelser. Nyttigt til at hente en nyligt opdateret oversættelse fra Github.",
+  "panel_settings_language_clear_cache_desc": "Fjerner cachelagrede oversættelser og genindlæser den sprogversion, der følger med det installerede plugin.",
   "toast_language_changed": "{{icon:language}} Sprog ændret! Opdaterer side…",
   "toast_translation_cache_cleared": "{{icon:trash}} Oversættelsescache ryddet! {count} cachede oversættelse(r) fjernet. Opdaterer…",
   "bookmark_add_title": "Tilføj bogmærke",

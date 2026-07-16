@@ -408,9 +408,23 @@ Extra keys and extra placeholders (present in the locale but not in `en.json`) s
 
 ### How translations reach users
 
-Translations are synced from repository updates (merged locale-file PRs) and cached for 24 hours. A merged locale is available immediately after merge — no plugin update is needed.
+Translations ship inside the plugin. After a locale-file pull request merges,
+the change reaches users only in a plugin build that contains that commit and
+only after that build is installed on their server. This is true for both edits
+to an existing locale and additions to `locale-manifest.json`; merging alone
+does not change a running installation.
 
 The language selector lists the available translations by asking the plugin's own server endpoint (`/JellyfinCanopy/locales`) which locale files ship with the installed build. The browser does **not** call GitHub to discover languages, so the list is correct on isolated networks and is never affected by GitHub's anonymous rate limits. A newly-merged locale file becomes selectable once it's part of an installed plugin build.
+
+By default, the browser loads those bundled locale files first and can work
+without GitHub. Only when the third-party asset cache is explicitly disabled
+may a failed bundled-locale request fall back to the Canopy repository on
+GitHub; that fallback is not the source for the language selector and is not a
+deployment mechanism. Browser entries are cached for 24 hours and keyed by the
+installed plugin version. Installing a new version retires the old version's
+entries. The **Refresh Translation Cache** scheduled task can tell clients to
+discard their current cached entries, but it cannot add or update locale files
+that are absent from the installed plugin.
 
 ## Community and support
 

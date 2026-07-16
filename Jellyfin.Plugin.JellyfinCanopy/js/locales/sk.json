@@ -343,7 +343,7 @@
   "panel_settings_language_display": "Jazyk zobrazenia",
   "panel_settings_language_display_desc": "Vyberte jazyk pre rozhranie Jellyfin Canopy. Zmeny sa prejavia po obnovení stránky.",
   "panel_settings_language_clear_cache": "Vymazať cache prekladov",
-  "panel_settings_language_clear_cache_desc": "Odstráni všetky cacheované preklady. Užitočné na získanie nedávno aktualizovaného prekladu z Githubu.",
+  "panel_settings_language_clear_cache_desc": "Odstráni preklady z vyrovnávacej pamäte a znova načíta lokalizáciu dodanú s nainštalovaným pluginom.",
   "toast_language_changed": "{{icon:language}} Jazyk zmenený! Obnovujem stránku…",
   "toast_translation_cache_cleared": "{{icon:trash}} Cache prekladov vymazaná! Odstránených {count} cacheovaných prekladov. Obnovujem…",
   "bookmark_add_title": "Pridať záložku",

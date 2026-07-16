@@ -343,7 +343,7 @@
   "panel_settings_language_display": "Visningsspråk",
   "panel_settings_language_display_desc": "Velg språk for Jellyfin Canopy-grensesnittet. Endringer trer i kraft etter at siden er oppdatert.",
   "panel_settings_language_clear_cache": "Tøm oversettelsesbuffer",
-  "panel_settings_language_clear_cache_desc": "Fjerner alle bufrede oversettelser. Nyttig for å hente en nylig oppdatert oversettelse fra Github.",
+  "panel_settings_language_clear_cache_desc": "Fjerner bufrede oversettelser og laster inn språkversjonen som følger med den installerte tilleggsmodulen på nytt.",
   "toast_language_changed": "{{icon:language}} Språk endret! Oppdaterer siden…",
   "toast_translation_cache_cleared": "{{icon:trash}} Oversettelsesbuffer tømt! {count} bufrede oversettelse(r) fjernet. Oppdaterer…",
   "bookmark_add_title": "Legg til bokmerke",

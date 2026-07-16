@@ -342,7 +342,7 @@
   "panel_settings_language_display": "Język wyświetlania",
   "panel_settings_language_display_desc": "Wybierz język interfejsu Jellyfin Canopy. Zmiany wchodzą w życie po odświeżeniu strony.",
   "panel_settings_language_clear_cache": "Wyczyść pamięć podręczną tłumaczeń",
-  "panel_settings_language_clear_cache_desc": "Usuwa wszystkie zapisane tłumaczenia. Przydatne do pobrania niedawno zaktualizowanego tłumaczenia z Github.",
+  "panel_settings_language_clear_cache_desc": "Usuwa tłumaczenia z pamięci podręcznej i ponownie wczytuje wersję językową dołączoną do zainstalowanej wtyczki.",
   "toast_language_changed": "{{icon:language}} Język zmieniony! Odświeżanie strony…",
   "toast_translation_cache_cleared": "{{icon:trash}} Pamięć podręczna tłumaczeń wyczyszczona! Usunięto {count} tłumaczenie(ń). Odświeżanie…",
   "bookmark_add_title": "Dodaj zakładkę",

@@ -35,8 +35,6 @@ const CODE_DIRS = [
     path.join(__dirname, '../Jellyfin.Plugin.JellyfinCanopy/src'),
     path.join(__dirname, '../Jellyfin.Plugin.JellyfinCanopy/js'),
 ];
-const WEBLATE_URL = 'https://hosted.weblate.org/projects/jellyfincanopy/';
-
 // ANSI color codes for terminal output
 const colors = {
     reset: '\x1b[0m',
@@ -498,7 +496,7 @@ function createTranslationTemplate(lang) {
         }
         logSuccess(`Created translation template: ${filePath}`);
         logInfo(`Now edit ${lang}.json and translate the English values to ${lang.toUpperCase()}`);
-        logInfo(`Preferred workflow for contributors is Weblate: ${WEBLATE_URL}`);
+        logInfo('Run npm run validate-translations, then open a pull request in the Jellyfin Canopy repository.');
     } catch (error) {
         if (error.code === 'EEXIST') {
             logError(`Translation file ${lang}.json already exists!`);
@@ -612,7 +610,7 @@ ${colors.cyan}Commands:${colors.reset}
 
 ${colors.cyan}Examples:${colors.reset}
     # Preferred translator workflow
-    Translate in Weblate: ${WEBLATE_URL}
+    Edit the locale JSON file, run npm run validate-translations, and open a pull request
 
   # Validate all translations
   node scripts/validate-translations.js validate

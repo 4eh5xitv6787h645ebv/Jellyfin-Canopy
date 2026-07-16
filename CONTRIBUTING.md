@@ -18,6 +18,11 @@ You can contribute code through:
 
 Help make Jellyfin Canopy accessible to more users by contributing translations. Locale JSON files live in `Jellyfin.Plugin.JellyfinCanopy/js/locales/` (one per language, `en.json` is the base). The exact supported list lives only in [`locale-manifest.json`](Jellyfin.Plugin.JellyfinCanopy/locale-manifest.json). To add or update a language, edit the relevant file and open a pull request; `npm run validate-translations` must pass, and all registered locales must stay in sync with `en.json`.
 
+Locale changes reach users in the plugin build that contains them. Merging a
+translation pull request does not update an already-installed plugin; both edits
+to existing locales and newly registered locales require a subsequent plugin
+update on the server.
+
 See [Translate Jellyfin Canopy](docs/help.md#translate-jellyfin-canopy) for the complete contribution guide.
 
 ### Issue triage and inactivity
