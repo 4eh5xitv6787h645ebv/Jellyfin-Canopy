@@ -86,8 +86,8 @@ for (const role of ['admin', 'user'] as Role[]) {
     test.describe(`Seerr 4K & collection requests — ${role}`, () => {
         test(`4K option is gated on Seerr capability + permission, not the admin toggle (${role})`, async ({ page, consoleErrors }) => {
             await loginAs(page, role, consoleErrors);
-            await openSearchAndWaitForRequestFacades(page);
             test.skip(!(await seerrReady(page)), SEERR_OFF);
+            await openSearchAndWaitForRequestFacades(page);
 
             // The shared gate and the collection modal are present on the facade.
             const surface = await page.evaluate(() => {
