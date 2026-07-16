@@ -6,6 +6,7 @@
 // identical; the JC.internals.features pieces are now real module exports.)
 
 import { JC } from '../../globals';
+import { createStableMethodFacade } from '../../core/feature-loader';
 // Shared action-sheet platform helpers live in core (used by Remove, multi-select Remove and arr
 // Search) — one source, so a positioning/close bug is fixed once for every injector.
 import {
@@ -61,7 +62,7 @@ const REMOVE_CONTEXT_TTL_MS = 5000;
  * A localized section-title text check is kept as a last-resort fallback.
  * @param el A `.card` element, or any element inside/representing one.
  */
-JC.detectCardSurface = function (el: any): 'continuewatching' | 'nextup' | null {
+export function detectCardSurface(el: any): 'continuewatching' | 'nextup' | null {
     if (!el) return null;
     const card = (typeof el.closest === 'function' ? el.closest('.card') : null) || el;
     const section = typeof card.closest === 'function'
@@ -84,7 +85,7 @@ JC.detectCardSurface = function (el: any): 'continuewatching' | 'nextup' | null 
         if (title.includes('continue watching')) return 'continuewatching';
     }
     return null;
-};
+}
 
 /**
  * Optimistically hides the just-removed card. Prefers hiding the exact card the user
@@ -103,7 +104,7 @@ function optimisticHideRemovedCard(itemId: string, surface: string, card?: HTMLE
         }
         // Fallback (card re-rendered/detached): hide matching cards on the same surface only.
         document.querySelectorAll<HTMLElement>(`.card[data-id="${CSS.escape(itemId)}"]`).forEach(c => {
-            if (JC.detectCardSurface!(c) === surface) {
+            if (detectCardSurface(c) === surface) {
                 c.style.display = 'none';
                 c.dataset.jcHomeRemoved = '1';
             }
@@ -199,8 +200,6 @@ export function hideEmptyHomeSections(): void {
         console.warn('🪼 Jellyfin Canopy: hideEmptyHomeSections failed', err);
     }
 }
-JC.hideEmptyHomeSections = hideEmptyHomeSections;
-
 /**
  * Creates the surface-specific "Remove from …" button for the per-item action sheet,
  * rendered to match the sheet's native items. The bound item + surface are stamped onto
@@ -265,7 +264,7 @@ function createRemoveButton(context: IdentityContext, scroller: HTMLElement, ite
  *     non-item sheets (sort menus, OSD audio/subtitle pickers, multi-select) are skipped.
  * The context is consumed once handled so a later sheet can't reuse it.
  */
-JC.addRemoveButton = (): void => {
+export function addRemoveButton(): void {
     const context = JC.identity.capture();
     if (!context) return;
     if (!JC.currentSettings!.removeContinueWatchingEnabled) return;
@@ -305,9 +304,9 @@ JC.addRemoveButton = (): void => {
     // Consume the context: one menu-open yields one button; later observer fires (or an
     // unrelated sheet opened within the TTL) must not re-inject from this same context.
     JC.state!.removeContext = null;
-};
+}
 
-JC.identity.registerReset('remove-home', () => {
+export function resetRemoveHome(): void {
     document.querySelectorAll('[data-id="remove-continue-watching"]').forEach((node) => node.remove());
     document.querySelectorAll<HTMLElement>('[data-jc-home-removed="1"]').forEach((card) => {
         card.style.removeProperty('display');
@@ -317,4 +316,32 @@ JC.identity.registerReset('remove-home', () => {
         section.style.removeProperty('display');
         delete section.dataset.jcHomeSectionHidden;
     });
+}
+
+const removeHomeApi = {
+    add: addRemoveButton,
+    detect: detectCardSurface,
+    hideEmpty: hideEmptyHomeSections,
+};
+const stableRemoveHome = createStableMethodFacade<typeof removeHomeApi>({
+    add() {},
+    detect: () => null,
+    hideEmpty() {},
 });
+
+/** Publish frozen compatibility methods for one loader-owned activation. */
+export function installRemoveHome(): () => void {
+    const uninstall = stableRemoveHome.install(removeHomeApi);
+    JC.addRemoveButton = stableRemoveHome.facade.add;
+    JC.detectCardSurface = stableRemoveHome.facade.detect;
+    JC.hideEmptyHomeSections = stableRemoveHome.facade.hideEmpty;
+    const unregisterReset = JC.identity.registerReset('remove-home', resetRemoveHome);
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetRemoveHome();
+        unregisterReset();
+        uninstall();
+    };
+}

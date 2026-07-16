@@ -4,6 +4,7 @@
 // (Converted from js/enhanced/features-random-button.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
+import { createStableMethodFacade } from '../../core/feature-loader';
 import { toast } from '../../core/ui-kit';
 import { getHeaderRightContainer } from '../helpers';
 import { insertHeaderTrayButton, HeaderTrayOrder } from '../header-tray';
@@ -185,7 +186,7 @@ let randomButtonHandle: { run(): void; remove(): void } | null = null;
  * Re-injection across React re-renders and the player round trip is handled by
  * JC.core.dom.ensureInjected; disabling removes it.
  */
-JC.addRandomButton = (): void => {
+export function addRandomButton(): void {
     const context = JC.identity.capture();
     if (!context) return;
     if (!JC.currentSettings!.randomButtonEnabled) {
@@ -224,13 +225,30 @@ JC.addRandomButton = (): void => {
         },
         { headerTray: true, prePaint: true }
     );
-};
+}
 
-JC.identity.registerReset('random-button', () => {
+export function resetRandomButton(): void {
     for (const timer of randomResetTimers) clearTimeout(timer);
     randomResetTimers.clear();
     randomButtonHandle?.remove();
     randomButtonHandle = null;
     document.getElementById('randomItemButtonContainer')?.remove();
-});
-JC.identity.registerActivate('random-button', () => { JC.addRandomButton?.(); });
+}
+
+const randomButtonApi = { add: addRandomButton };
+const stableRandomButton = createStableMethodFacade<typeof randomButtonApi>({ add() {} });
+
+/** Publish the frozen compatibility method for one loader-owned activation. */
+export function installRandomButton(): () => void {
+    const uninstall = stableRandomButton.install(randomButtonApi);
+    JC.addRandomButton = stableRandomButton.facade.add;
+    const unregisterReset = JC.identity.registerReset('random-button', resetRandomButton);
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetRandomButton();
+        unregisterReset();
+        uninstall();
+    };
+}
