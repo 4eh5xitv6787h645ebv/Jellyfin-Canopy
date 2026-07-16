@@ -54,9 +54,9 @@ beforeEach(() => {
 });
 
 describe('Seerr core activation', () => {
-    it('installs the complete Discovery prerequisite and tears it down once', async () => {
+    it('installs the complete Discovery prerequisite and tears it down once', () => {
         const test = harness();
-        await activateSeerrCore(test.scope);
+        activateSeerrCore(test.scope);
         expect(Object.values(mocks).every(({ install }) => install.mock.calls.length === 1)).toBe(true);
         expect(test.cleanups).toHaveLength(1);
         test.cleanups[0]();
@@ -64,10 +64,10 @@ describe('Seerr core activation', () => {
         expect(Object.values(mocks).every(({ cleanup }) => cleanup.mock.calls.length === 1)).toBe(true);
     });
 
-    it('rejects a stale scope and rolls the implementation back', async () => {
+    it('rejects a stale scope and rolls the implementation back', () => {
         const test = harness();
         test.current.value = false;
-        await activateSeerrCore(test.scope);
+        activateSeerrCore(test.scope);
         expect(mocks.status.cleanup).toHaveBeenCalledTimes(1);
         expect(mocks.request.install).toHaveBeenCalledTimes(1);
         expect(test.cleanups).toHaveLength(0);

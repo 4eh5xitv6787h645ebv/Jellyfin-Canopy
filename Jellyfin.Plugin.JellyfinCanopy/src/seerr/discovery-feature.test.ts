@@ -38,9 +38,9 @@ function harness(current = true): { scope: FeatureScope; cleanups: Array<() => v
 beforeEach(() => vi.clearAllMocks());
 
 describe('Seerr route discovery activation', () => {
-    it('starts every controller and disposes each exactly once', async () => {
+    it('starts every controller and disposes each exactly once', () => {
         const test = harness();
-        await activateSeerrDiscovery(test.scope);
+        activateSeerrDiscovery(test.scope);
         for (const controller of Object.values(mocks)) expect(controller.start).toHaveBeenCalledTimes(1);
         expect(test.cleanups).toHaveLength(1);
         test.cleanups[0]();
@@ -48,8 +48,8 @@ describe('Seerr route discovery activation', () => {
         for (const controller of Object.values(mocks)) expect(controller.dispose).toHaveBeenCalledTimes(1);
     });
 
-    it('does not import-owned start work for a stale activation', async () => {
-        await activateSeerrDiscovery(harness(false).scope);
+    it('does not import-owned start work for a stale activation', () => {
+        activateSeerrDiscovery(harness(false).scope);
         for (const controller of Object.values(mocks)) expect(controller.start).not.toHaveBeenCalled();
     });
 });

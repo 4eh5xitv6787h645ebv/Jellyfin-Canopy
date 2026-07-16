@@ -47,9 +47,9 @@ beforeEach(() => {
 });
 
 describe('Seerr Search activation', () => {
-    it('installs before initialize and owns exact cleanup', async () => {
+    it('installs before initialize and owns exact cleanup', () => {
         const test = scope();
-        await activateSeerrSearch(test.value);
+        activateSeerrSearch(test.value);
         expect(mocks.search.install).toHaveBeenCalledTimes(1);
         expect(mocks.search.initialize).toHaveBeenCalledTimes(1);
         expect(mocks.search.install.mock.invocationCallOrder[0])
@@ -60,9 +60,9 @@ describe('Seerr Search activation', () => {
         for (const value of Object.values(mocks)) expect(value.cleanup).toHaveBeenCalledTimes(1);
     });
 
-    it('rolls back an implementation evaluated for a stale scope', async () => {
+    it('rolls back an implementation evaluated for a stale scope', () => {
         const test = scope(false);
-        await activateSeerrSearch(test.value);
+        activateSeerrSearch(test.value);
         expect(mocks.modal.install).toHaveBeenCalledTimes(1);
         expect(mocks.modal.cleanup).toHaveBeenCalledTimes(1);
         expect(mocks.search.initialize).not.toHaveBeenCalled();
