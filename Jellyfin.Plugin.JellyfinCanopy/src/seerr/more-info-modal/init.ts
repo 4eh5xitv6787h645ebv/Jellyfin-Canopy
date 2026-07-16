@@ -25,8 +25,7 @@ interface MoreInfoModalApi {
     checkForUnrequestedSeasons?: (data: any) => Promise<boolean>;
 }
 
-const moreInfoModal = (JC.seerrMoreInfo || {}) as MoreInfoModalApi;
-JC.seerrMoreInfo = moreInfoModal;
+const moreInfoModal = {} as MoreInfoModalApi;
 import { internal } from './internal';
 const state: {
     currentModal: MoreInfoModalElement | null;
@@ -304,24 +303,49 @@ if (target) {
 }
 }
 
-// Close modal on page navigation
-document.addEventListener('viewshow', function () {
+function retireMoreInfoModal(): void {
+    state.openGeneration += 1;
+    moreInfoModal.close(true);
+}
+
+function closeMoreInfoOnView(): void {
     if (state.currentModal) {
         moreInfoModal.close();
     }
-});
+}
 
-JC.identity.registerReset('seerr-more-info-modal', () => {
-    state.openGeneration += 1;
-    moreInfoModal.close(true);
-});
+let unregisterIdentityReset: (() => void) | null = null;
+let listenersInstalled = false;
 
-window.addEventListener('jc:config-changed', () => {
-    state.openGeneration += 1;
-    moreInfoModal.close(true);
-});
+export function installSeerrMoreInfo(): () => void {
+    JC.seerrMoreInfo = moreInfoModal;
+    unregisterIdentityReset ??= JC.identity.registerReset(
+        'seerr-more-info-modal',
+        retireMoreInfoModal,
+    );
+    if (!listenersInstalled) {
+        document.addEventListener('viewshow', closeMoreInfoOnView);
+        window.addEventListener('jc:config-changed', retireMoreInfoModal);
+        listenersInstalled = true;
+    }
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        unregisterIdentityReset?.();
+        unregisterIdentityReset = null;
+        if (listenersInstalled) {
+            document.removeEventListener('viewshow', closeMoreInfoOnView);
+            window.removeEventListener('jc:config-changed', retireMoreInfoModal);
+            listenersInstalled = false;
+        }
+        retireMoreInfoModal();
+    };
+}
 
 // Expose helpers used by other modules (e.g., item-details.js for the
 // Series page "Request More" button) so the unrequested-seasons check
 // logic does not need to be duplicated.
 moreInfoModal.checkForUnrequestedSeasons = internal.checkForUnrequestedSeasons;
+
+installSeerrMoreInfo();

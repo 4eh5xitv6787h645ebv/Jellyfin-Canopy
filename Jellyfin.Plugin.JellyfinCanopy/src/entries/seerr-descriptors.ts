@@ -34,6 +34,15 @@ export const seerrFeatureDescriptors: readonly ClientFeatureDescriptor[] = Objec
         isApplicable: (state) => /#\/search(?:[/?#]|$)/i.test(state.routeKey),
     },
     {
+        id: 'seerr-details',
+        entry: 'seerr-details',
+        scope: 'navigation',
+        dependsOn: ['seerr-core'],
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity) && enabled(),
+        isApplicable: (state) => /#\/details(?:[/?#]|$)/i.test(state.routeKey),
+    },
+    {
         id: 'seerr-discovery',
         entry: 'seerr-discovery',
         scope: 'navigation',

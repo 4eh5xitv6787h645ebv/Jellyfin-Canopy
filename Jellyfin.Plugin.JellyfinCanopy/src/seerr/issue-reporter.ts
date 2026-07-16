@@ -64,6 +64,7 @@ let cachedUserCanReportEpoch: number | null = null;
 let reporterListenerInstalled = false;
 let reporterViewGeneration = 0;
 let reporterInitialTimer: number | null = null;
+let unregisterIdentityReset: (() => void) | null = null;
 
 function captureReporterIdentity(): IdentityContext {
     const context = JC.identity.capture();
@@ -1306,10 +1307,7 @@ issueReporter.initialize = function () {
 
     if (!reporterListenerInstalled) {
         reporterListenerInstalled = true;
-        document.addEventListener('viewshow', () => {
-            const current = JC.identity.capture();
-            if (current) void handleReporterView(current);
-        });
+        document.addEventListener('viewshow', handleReporterViewShow);
     }
 
     if (reporterInitialTimer !== null) clearTimeout(reporterInitialTimer);
@@ -1321,6 +1319,29 @@ issueReporter.initialize = function () {
     console.log(`${logPrefix} ✓ Initialized issue reporter with one viewshow listener`);
 };
 
-// Expose the module on the global JC object
-JC.seerrIssueReporter = issueReporter;
-JC.identity.registerReset('seerr-issue-reporter', resetIssueReporterIdentity);
+function handleReporterViewShow(): void {
+    const current = JC.identity.capture();
+    if (current) void handleReporterView(current);
+}
+
+export function installSeerrIssueReporter(): () => void {
+    JC.seerrIssueReporter = issueReporter;
+    unregisterIdentityReset ??= JC.identity.registerReset(
+        'seerr-issue-reporter',
+        resetIssueReporterIdentity,
+    );
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        unregisterIdentityReset?.();
+        unregisterIdentityReset = null;
+        if (reporterListenerInstalled) {
+            document.removeEventListener('viewshow', handleReporterViewShow);
+            reporterListenerInstalled = false;
+        }
+        resetIssueReporterIdentity();
+    };
+}
+
+installSeerrIssueReporter();

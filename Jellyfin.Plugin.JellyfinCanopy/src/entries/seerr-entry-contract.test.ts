@@ -4,7 +4,7 @@ import { JC } from '../globals';
 afterEach(() => vi.restoreAllMocks());
 
 describe('Seerr lazy entry evaluation', () => {
-    for (const entry of ['./seerr-core', './seerr-search', './seerr-discovery'] as const) {
+    for (const entry of ['./seerr-core', './seerr-search', './seerr-details', './seerr-discovery'] as const) {
         it(`${entry} performs no DOM, listener, request, or identity registration`, async () => {
             const createElement = vi.spyOn(document, 'createElement');
             const documentListener = vi.spyOn(document, 'addEventListener');

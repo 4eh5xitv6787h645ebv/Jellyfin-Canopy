@@ -26,6 +26,7 @@ describe('Seerr descriptor fragment', () => {
         expect(seerrFeatureDescriptors.map(({ id, dependsOn }) => ({ id, dependsOn }))).toEqual([
             { id: 'seerr-core', dependsOn: undefined },
             { id: 'seerr-search', dependsOn: ['seerr-core'] },
+            { id: 'seerr-details', dependsOn: ['seerr-core'] },
             { id: 'seerr-discovery', dependsOn: ['seerr-core'] },
             { id: 'discovery-library', dependsOn: ['seerr-core'] },
         ]);
@@ -36,7 +37,7 @@ describe('Seerr descriptor fragment', () => {
 
     it('keeps disabled and off-route closures ineligible', () => {
         const search = seerrFeatureDescriptors[1];
-        const discovery = seerrFeatureDescriptors[3];
+        const discovery = seerrFeatureDescriptors[4];
         expect(search.isApplicable(state('/web/#/home'))).toBe(false);
         expect(discovery.isApplicable(state('/web/#/home'))).toBe(false);
 
