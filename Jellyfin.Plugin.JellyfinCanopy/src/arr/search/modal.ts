@@ -129,6 +129,6 @@ export function createArrModal(opts: { title: string; subtitle?: string; icon?: 
     return handle;
 }
 
-JC.identity.registerReset('arr-search-modals', () => {
+export function closeArrSearchModals(): void {
     for (const modal of Array.from(openModals)) modal.close();
-});
+}

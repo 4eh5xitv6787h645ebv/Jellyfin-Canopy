@@ -5,6 +5,7 @@
 
 import { assetUrl } from '../core/asset-urls';
 import { createObserver } from '../core/dom-observer';
+import { createStableMethodFacade } from '../core/feature-loader';
 import { resolveArrLinkBase } from './url-resolve';
 import { JC } from './arr-globals';
 import type { ExternalLinkOptions } from './arr-globals';
@@ -84,7 +85,7 @@ function removeArrLinksUi(): void {
     });
 }
 
-function resetArrLinks(): void {
+export function resetArrLinks(): void {
     arrLinksGeneration++;
     if (arrLinksTimer) clearTimeout(arrLinksTimer);
     arrLinksTimer = null;
@@ -115,7 +116,7 @@ function waitForRetry(context: IdentityContext, expectedGeneration: number, dela
     });
 }
 
-JC.initializeArrLinksScript = async function () {
+async function initializeArrLinks(): Promise<void> {
     const logPrefix = '🪼 Jellyfin Canopy: Arr Links:';
 
     resetArrLinks();
@@ -873,6 +874,25 @@ JC.initializeArrLinksScript = async function () {
     } catch (err) {
         console.error(`${logPrefix} Failed to initialize`, err);
     }
-};
+}
 
-JC.identity.registerReset('arr-links', resetArrLinks);
+const arrLinksApi = { initialize: initializeArrLinks };
+const stableArrLinks = createStableMethodFacade<typeof arrLinksApi>({
+    initialize: () => Promise.resolve(),
+});
+
+export function installArrLinks(): () => void {
+    const uninstall = stableArrLinks.install(arrLinksApi);
+    JC.initializeArrLinksScript = stableArrLinks.facade.initialize;
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetArrLinks();
+        uninstall();
+    };
+}
+
+export function initializeArrLinksFeature(): Promise<void> {
+    return arrLinksApi.initialize();
+}

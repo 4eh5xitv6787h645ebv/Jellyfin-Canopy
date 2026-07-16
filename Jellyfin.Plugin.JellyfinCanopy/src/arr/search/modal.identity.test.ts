@@ -1,16 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
-import { createArrModal } from './modal';
+import { closeArrSearchModals, createArrModal } from './modal';
 
 describe('arr modal identity ownership', () => {
+    let unregisterReset: (() => void) | undefined;
+
     beforeEach(() => {
         document.body.innerHTML = '';
+        unregisterReset = JC.identity.registerReset(
+            'arr-modal-identity-test',
+            closeArrSearchModals,
+        );
         JC.identity.transition('test-server-id', 'test-user-id', 'arr-modal-test-start');
         JC.t = (key: string) => key;
     });
 
     afterEach(() => {
         JC.identity.transition('test-server-id', 'test-user-id', 'arr-modal-test-cleanup');
+        unregisterReset?.();
+        unregisterReset = undefined;
+        closeArrSearchModals();
         document.body.innerHTML = '';
     });
 

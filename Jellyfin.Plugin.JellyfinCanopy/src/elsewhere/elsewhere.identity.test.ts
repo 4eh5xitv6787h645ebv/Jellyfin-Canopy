@@ -1,15 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
 import '../enhanced/config';
-import './elsewhere';
+import { installElsewhere, resetElsewhereIdentity } from './elsewhere';
 
 const realSaveUserSettings = JC.saveUserSettings!;
 const realCoreApi = JC.core.api;
 
 describe('Elsewhere account ownership', () => {
+    let disposeInstall: (() => void) | undefined;
+    let unregisterReset: (() => void) | undefined;
+
     beforeEach(() => {
         vi.useFakeTimers();
         document.body.innerHTML = '';
+        disposeInstall = installElsewhere();
+        unregisterReset = JC.identity.registerReset(
+            'elsewhere-identity-test',
+            resetElsewhereIdentity,
+        );
         JC.identity.transition('', '', 'test-logout');
         const context = JC.identity.transition('test-server-id', 'test-user-id', 'test-login')!;
         const elsewhere = JC.identity.own({ Region: 'US', Regions: [], Services: [] }, context);
@@ -30,6 +38,12 @@ describe('Elsewhere account ownership', () => {
     });
 
     afterEach(() => {
+        JC.identity.transition('', '', 'elsewhere-identity-test-cleanup');
+        unregisterReset?.();
+        unregisterReset = undefined;
+        disposeInstall?.();
+        disposeInstall = undefined;
+        resetElsewhereIdentity();
         JC.saveUserSettings = realSaveUserSettings;
         JC.core.api = realCoreApi;
         vi.useRealTimers();

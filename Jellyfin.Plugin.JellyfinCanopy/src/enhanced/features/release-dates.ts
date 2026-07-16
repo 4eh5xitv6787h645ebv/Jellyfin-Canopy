@@ -5,7 +5,7 @@
 // identical; the JC.internals.features pieces are now real module exports.)
 
 import { JC } from '../../globals';
-import { ensureMaterialSymbolsFont } from '../../core/ui-kit';
+import { ensureMaterialSymbolsFont, removeCss } from '../../core/ui-kit';
 import { createBoundedCache } from '../../core/bounded-cache';
 import { addCSS, getItemCached } from '../helpers';
 import type { IdentityContext } from '../../types/jc';
@@ -380,7 +380,7 @@ function renderReleaseDateChip(context: IdentityContext, container: HTMLElement,
     container.appendChild(chip);
 }
 
-JC.identity.registerReset('release-dates', () => {
+export function resetReleaseDates(): void {
     for (const timer of retryTimers) clearTimeout(timer);
     retryTimers.clear();
     if (typeof cancelIdleCallback !== 'undefined') {
@@ -389,4 +389,6 @@ JC.identity.registerReset('release-dates', () => {
     idleCallbacks.clear();
     releaseDateCache.clear();
     document.querySelectorAll('.mediaInfoItem-releaseDate').forEach((node) => node.remove());
-});
+    removeCss('jc-release-date-symbols');
+    releaseDateIconFontInjected = false;
+}

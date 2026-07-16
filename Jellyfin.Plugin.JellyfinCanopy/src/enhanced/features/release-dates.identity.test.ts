@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import type { ApiApi } from '../../types/jc';
-import { displayReleaseDate } from './release-dates';
+import { displayReleaseDate, resetReleaseDates } from './release-dates';
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
     let resolve!: (value: T) => void;
@@ -19,13 +19,29 @@ function tmdbRelease(date: string): unknown {
 }
 
 describe('release-date identity ownership', () => {
+    let unregisterReset: (() => void) | undefined;
+
     beforeEach(() => {
         document.body.innerHTML = '';
+        unregisterReset = JC.identity.registerReset(
+            'release-dates-identity-test',
+            resetReleaseDates,
+        );
         JC.identity.transition('test-server-id', 'user-a', 'release-date-test-start');
         JC.pluginConfig = { DEFAULT_REGION: 'US' };
         JC.t = (key: string) => key;
         JC.escapeHtml = (value: unknown) => typeof value === 'string' ? value : '';
         ApiClient.getItem = vi.fn().mockResolvedValue({ Type: 'Movie', ProviderIds: { Tmdb: '42' } });
+    });
+
+    afterEach(() => {
+        JC.identity.transition('', '', 'release-date-test-cleanup');
+        unregisterReset?.();
+        unregisterReset = undefined;
+        resetReleaseDates();
+        JC.core.api = undefined;
+        vi.restoreAllMocks();
+        document.body.innerHTML = '';
     });
 
     it('drops a held A response and refetches instead of replaying it for B', async () => {

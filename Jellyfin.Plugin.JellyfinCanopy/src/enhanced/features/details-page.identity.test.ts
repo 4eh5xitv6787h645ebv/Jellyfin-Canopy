@@ -1,6 +1,11 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import { recordDetailsViewShown, resetDetailsViewTrackingForTests } from '../../core/details-view';
+import {
+    initializeDetailsPage,
+    installDetailsPage,
+    resetDetailsPage,
+} from './details-page';
 
 async function flushPromises(): Promise<void> {
     await Promise.resolve();
@@ -24,14 +29,20 @@ function mountDetailsPage(itemId: string): HTMLElement {
 }
 
 describe('details-page identity dispatcher', () => {
-    beforeAll(async () => {
-        await import('./details-page');
-    });
+    let disposeInstall: (() => void) | undefined;
+    let unregisterReset: (() => void) | undefined;
+    let unregisterActivate: (() => void) | undefined;
 
     beforeEach(() => {
         vi.useFakeTimers();
         document.body.innerHTML = '';
         resetDetailsViewTrackingForTests();
+        disposeInstall = installDetailsPage();
+        unregisterReset = JC.identity.registerReset('details-page-identity-test', resetDetailsPage);
+        unregisterActivate = JC.identity.registerActivate(
+            'details-page-identity-test',
+            initializeDetailsPage,
+        );
         JC.identity.transition('page-server-a', 'page-user-a', 'details-page-test');
         JC.currentSettings = {};
         JC.pluginConfig = {};
@@ -41,6 +52,13 @@ describe('details-page identity dispatcher', () => {
 
     afterEach(() => {
         JC.identity.transition('', '', 'details-page-test-cleanup');
+        unregisterActivate?.();
+        unregisterActivate = undefined;
+        unregisterReset?.();
+        unregisterReset = undefined;
+        disposeInstall?.();
+        disposeInstall = undefined;
+        resetDetailsPage();
         vi.restoreAllMocks();
         vi.clearAllTimers();
         vi.useRealTimers();

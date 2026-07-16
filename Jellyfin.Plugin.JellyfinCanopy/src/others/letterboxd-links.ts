@@ -4,6 +4,7 @@ import { JC as JEBase } from '../globals';
 import { assetUrl } from '../core/asset-urls';
 import { isDetailsPageVisible } from '../core/details-view';
 import { onBodyMutation } from '../core/dom-observer';
+import { createStableMethodFacade } from '../core/feature-loader';
 import { onNavigate, onViewPage } from '../core/navigation';
 import type { IdentityContext, JELegacyHelpers, PluginConfig } from '../types/jc';
 
@@ -42,7 +43,7 @@ function removeLetterboxdLinks(): void {
     });
 }
 
-function resetLetterboxd(): void {
+export function resetLetterboxd(): void {
     letterboxdGeneration++;
     letterboxdBodySubscription?.unsubscribe();
     letterboxdBodySubscription = null;
@@ -57,6 +58,7 @@ function resetLetterboxd(): void {
     }
     letterboxdIdleJobs.clear();
     removeLetterboxdLinks();
+    document.getElementById('letterboxd-links-styles')?.remove();
 }
 
 function isActive(context: IdentityContext, expectedGeneration: number): boolean {
@@ -64,7 +66,7 @@ function isActive(context: IdentityContext, expectedGeneration: number): boolean
 }
 
 // eslint-disable-next-line @typescript-eslint/require-await -- public initializer kept async to preserve its Promise-returning contract
-JC.initializeLetterboxdLinksScript = async function () {
+async function initializeLetterboxdLinks(): Promise<void> {
     const logPrefix = '🪼 Jellyfin Canopy: Letterboxd Links:';
 
     resetLetterboxd();
@@ -341,6 +343,25 @@ JC.initializeLetterboxdLinksScript = async function () {
     } catch (err) {
         console.error(`${logPrefix} Failed to initialize`, err);
     }
-};
+}
 
-JC.identity.registerReset('letterboxd-links', resetLetterboxd);
+const letterboxdApi = { initialize: initializeLetterboxdLinks };
+const stableLetterboxd = createStableMethodFacade<typeof letterboxdApi>({
+    initialize: () => Promise.resolve(),
+});
+
+export function installLetterboxdLinks(): () => void {
+    const uninstall = stableLetterboxd.install(letterboxdApi);
+    JC.initializeLetterboxdLinksScript = stableLetterboxd.facade.initialize;
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetLetterboxd();
+        uninstall();
+    };
+}
+
+export function initializeLetterboxdLinksFeature(): Promise<void> {
+    return letterboxdApi.initialize();
+}

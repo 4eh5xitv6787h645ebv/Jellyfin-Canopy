@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
-import { displayAudioLanguages, displayWatchProgress } from './details-media-info';
+import {
+    displayAudioLanguages,
+    displayWatchProgress,
+    resetDetailsMediaInfo,
+} from './details-media-info';
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
     let resolve!: (value: T) => void;
@@ -22,9 +26,15 @@ function mountContainer(): HTMLElement {
 }
 
 describe('details media-info identity lifecycle', () => {
+    let unregisterReset: (() => void) | undefined;
+
     beforeEach(() => {
         vi.useFakeTimers();
         document.body.innerHTML = '';
+        unregisterReset = JC.identity.registerReset(
+            'details-media-info-identity-test',
+            resetDetailsMediaInfo,
+        );
         JC.identity.transition('details-server-a', 'details-user-a', 'details-media-test');
         JC.currentSettings = { watchProgressMode: 'percentage' };
         JC.t = (key: string) => key;
@@ -32,6 +42,9 @@ describe('details media-info identity lifecycle', () => {
 
     afterEach(() => {
         JC.identity.transition('', '', 'details-media-test-cleanup');
+        unregisterReset?.();
+        unregisterReset = undefined;
+        resetDetailsMediaInfo();
         JC.core.api = undefined;
         vi.restoreAllMocks();
         vi.clearAllTimers();

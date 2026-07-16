@@ -10,8 +10,13 @@ import { getVisibleDetailsPage, isDetailsPageVisible } from '../../core/details-
 import { onBodyMutation } from '../../core/dom-observer';
 import { onNavigate, onViewPage } from '../../core/navigation';
 import { getItemCached } from '../helpers';
-import { displayWatchProgress, displayItemSize, displayAudioLanguages } from './details-media-info';
-import { displayReleaseDate } from './release-dates';
+import {
+    displayWatchProgress,
+    displayItemSize,
+    displayAudioLanguages,
+    resetDetailsMediaInfo,
+} from './details-media-info';
+import { displayReleaseDate, resetReleaseDates } from './release-dates';
 import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -415,14 +420,7 @@ function scheduleHandleItemDetails(context = JC.identity.capture()): void {
 // HIDDEN one — so this gate went permanently dead after two details visits
 // and the wipe-recovery re-inject pass (host renderMiscInfo innerHTML-wipes
 // the chips when item data arrives) never ran.
-onBodyMutation('item-details-info', () => {
-    if (!isDetailsPageVisible()) return;
-    scheduleHandleItemDetails();
-});
-onNavigate(() => { scheduleHandleItemDetails(); });
-onViewPage(() => { scheduleHandleItemDetails(); });
-
-JC.identity.registerReset('details-page', () => {
+export function resetDetailsPage(): void {
     detailsDispatchGeneration++;
     if (detailsDispatchTimer !== null) {
         clearTimeout(detailsDispatchTimer);
@@ -435,5 +433,29 @@ JC.identity.registerReset('details-page', () => {
     for (const timer of itemTypeRetryTimers) clearTimeout(timer);
     itemTypeRetryTimers.clear();
     document.querySelectorAll('.jc-detail-hide-btn').forEach((node) => node.remove());
-});
-JC.identity.registerActivate('details-page', (context) => { scheduleHandleItemDetails(context); });
+    resetDetailsMediaInfo();
+    resetReleaseDates();
+}
+
+/** Install detail-page observation for one lazy-feature activation. */
+export function installDetailsPage(): () => void {
+    const body = onBodyMutation('item-details-info', () => {
+        if (!isDetailsPageVisible()) return;
+        scheduleHandleItemDetails();
+    });
+    const offNavigate = onNavigate(() => { scheduleHandleItemDetails(); });
+    const offView = onViewPage(() => { scheduleHandleItemDetails(); });
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        body.unsubscribe();
+        offNavigate();
+        offView();
+        resetDetailsPage();
+    };
+}
+
+export function initializeDetailsPage(context = JC.identity.capture()): void {
+    if (context) scheduleHandleItemDetails(context);
+}
