@@ -87,6 +87,19 @@ ruleset details, bypass actors, required checks, environment reviewers/admin
 bypass, and tag deployment policies with that declaration. The daily Security
 Scan runs it from reviewed `main`, and every release runs it again on the exact
 tag SHA. API denial or any missing/weakened/different control is blocking.
+GitHub's ordinary ruleset-detail response can omit bypass actors without
+marking the response incomplete, so the verifier also reads a stable current
+ruleset-history version and fails closed if complete evidence is unavailable.
+
+The workflow requires an Actions repository secret named
+`REPOSITORY_POLICY_TOKEN`. Create it from a fine-grained personal access token
+limited to this repository with only **Administration: Read and write** (plus
+GitHub's automatic Metadata read permission), set an expiry/rotation owner, and
+do not add Contents or Actions access. Administration write is unavoidable:
+GitHub requires it for both ruleset-history endpoints, even though this verifier
+performs only reads. Ordinary policy and environment reads use the separate,
+ephemeral `GITHUB_TOKEN` with `actions: read` and `contents: read`; the external
+token enters only the verifier step as `RULESET_TOKEN`.
 
 ## Emergency procedure
 
@@ -151,8 +164,9 @@ The release tools are dependency-free Node and can be run locally:
   required checks, default-branch PR protection, release-tag creation and
   immutability, and the approval environment.
 - `node scripts/release/verify-repository-policy.js` — compares that source of
-  truth with GitHub's live ruleset and environment APIs; requires an
-  authenticated `GH_TOKEN` that can read full ruleset bypass details.
+  truth with GitHub's live ruleset and environment APIs; requires read-only
+  `GH_TOKEN` plus `RULESET_TOKEN` with repository Administration read/write so
+  stable current history supplies complete bypass-actor evidence.
 
 - `node scripts/release/validate-manifest.js manifest.json` — validates the
   manifest: JSON shape, required fields, 4-part versions, MD5 checksum and
