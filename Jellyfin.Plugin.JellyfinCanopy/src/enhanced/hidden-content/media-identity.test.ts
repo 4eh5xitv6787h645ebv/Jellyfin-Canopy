@@ -20,6 +20,7 @@ import {
     hideItem,
     isHiddenByTmdbId,
     isHiddenMedia,
+    markScopedHidden,
     resetFromUserConfig,
     resolveLegacyIdentity,
     unhideItem,
@@ -75,6 +76,41 @@ describe('versioned hidden-content media identity', () => {
         ], 'discovery')).toEqual([{ id: 550, mediaType: 'movie' }]);
     });
 
+    it('rejects unsupported or mismatched explicit identities and persists valid pairs atomically', () => {
+        hideItem({
+            itemId: 'jf-mismatch',
+            name: 'Mismatched',
+            type: 'Movie',
+            tmdbId: 550,
+            identity: { version: 1, provider: 'tmdb', mediaType: 'movie', id: '551' },
+        });
+        hideItem({
+            itemId: 'jf-future',
+            name: 'Future',
+            type: 'Movie',
+            tmdbId: 552,
+            identity: {
+                version: 2,
+                provider: 'tmdb',
+                mediaType: 'movie',
+                id: '552',
+            } as unknown as HiddenItem['identity'],
+        });
+        expect(getHiddenData().items).toEqual({});
+
+        hideItem({
+            itemId: 'jf-valid',
+            name: 'Valid',
+            type: 'Movie',
+            identity: { version: 1, provider: 'tmdb', mediaType: 'movie', id: '551' },
+        });
+        expect(getHiddenData().items['jf-valid']).toEqual(expect.objectContaining({
+            itemId: 'jf-valid',
+            tmdbId: '551',
+            identity: { version: 1, provider: 'tmdb', mediaType: 'movie', id: '551' },
+        }));
+    });
+
     it('uses the same exact comparator for cards, requests, calendar and management', () => {
         hideItem({ itemId: 'jf-movie-550', name: 'Movie 550', type: 'Movie', tmdbId: 550 });
 
@@ -99,6 +135,23 @@ describe('versioned hidden-content media identity', () => {
         ]);
     });
 
+    it('preserves distinct exact Jellyfin ids that share one provider identity', () => {
+        hideItem({ itemId: 'jf-1', name: 'Edition one', type: 'Movie', tmdbId: 550 });
+        hideItem({ itemId: 'jf-2', name: 'Edition two', type: 'Movie', tmdbId: 550 });
+
+        expect(Object.keys(getHiddenData().items).sort()).toEqual(['jf-1', 'jf-2']);
+        expect(getHiddenData().items['jf-1'].itemId).toBe('jf-1');
+        expect(getHiddenData().items['jf-2'].itemId).toBe('jf-2');
+        expect(isHiddenMedia({ itemId: 'jf-1' })).toBe(true);
+        expect(isHiddenMedia({ itemId: 'jf-2' })).toBe(true);
+
+        unhideItem('jf-1');
+        expect(Object.keys(getHiddenData().items)).toEqual(['jf-2']);
+        expect(isHiddenMedia({ itemId: 'jf-1' })).toBe(false);
+        expect(isHiddenMedia({ itemId: 'jf-2' })).toBe(true);
+        expect(isHiddenByTmdbId(550, 'movie')).toBe(true);
+    });
+
     it('never cross-hides same-title media of another type, year, or provider id', () => {
         hideItem({ name: 'The Same Title', type: 'Movie', tmdbId: 700 });
         const events = [
@@ -119,6 +172,7 @@ describe('versioned hidden-content media identity', () => {
                 name: 'Future identity',
                 type: 'Movie',
                 tmdbId: '552',
+                posterPath: '/future.jpg',
                 hideScope: 'global',
                 identity: { version: 2, provider: 'tmdb', mediaType: 'movie', id: '552' } as unknown as HiddenItem['identity'],
             },
@@ -144,9 +198,35 @@ describe('versioned hidden-content media identity', () => {
         ]));
 
         const future = getAllHiddenItems().find((item) => item._key === 'future')!;
+        const open = vi.fn();
+        const fetchMovieDetails = vi.fn();
+        const search = vi.fn();
+        (JC as any).seerrMoreInfo = { open };
+        (JC as any).seerrAPI = { fetchMovieDetails, search };
         const futureCard = createItemCard(future);
         expect(futureCard.querySelector('.jc-hidden-item-meta')?.textContent).toContain('Unsupported identity');
         expect(futureCard.querySelector('.jc-hidden-item-identity-resolution')).toBeNull();
+        expect(futureCard.querySelector('img')).toBeNull();
+        expect(futureCard.innerHTML).not.toContain('image.tmdb.org');
+        for (const selector of ['.jc-hidden-item-poster-link', '.jc-hidden-item-name']) {
+            const link = futureCard.querySelector<HTMLAnchorElement>(selector)!;
+            expect(link.getAttribute('href')).toBeNull();
+            expect(link.dataset.tmdbId).toBeUndefined();
+            expect(link.dataset.mediaType).toBeUndefined();
+            link.click();
+        }
+        expect(open).not.toHaveBeenCalled();
+
+        const exactFutureCard = createItemCard({ ...future, itemId: 'jf-future' });
+        const exactFutureImage = exactFutureCard.querySelector<HTMLImageElement>('.jc-hidden-item-poster')!;
+        expect(exactFutureImage.src).not.toContain('image.tmdb.org');
+        exactFutureImage.dispatchEvent(new Event('error'));
+        expect(fetchMovieDetails).not.toHaveBeenCalled();
+        expect(search).not.toHaveBeenCalled();
+        expect(exactFutureCard.dataset.jellyfinRemoved).toBeUndefined();
+        expect(exactFutureCard.dataset.resolvedTmdbId).toBeUndefined();
+        exactFutureCard.querySelector<HTMLAnchorElement>('.jc-hidden-item-name')!.click();
+        expect(open).not.toHaveBeenCalled();
         expect(resolveLegacyIdentity('future', 'tv')).toBe(false);
         expect(getHiddenData().items.future.identity).toEqual({
             version: 2,
@@ -180,5 +260,74 @@ describe('versioned hidden-content media identity', () => {
         expect(getHiddenData().items.legacy.identity).toBeUndefined();
         expect(isHiddenMedia({ tmdbId: 550, mediaType: 'movie' })).toBe(false);
         expect(isHiddenMedia({ tmdbId: 550, mediaType: 'tv' })).toBe(false);
+    });
+
+    it('atomically prefers alternate typed metadata over conflicting canonical legacy metadata', () => {
+        const dashed = '11111111-2222-3333-4444-555555555555';
+        const compact = dashed.replace(/-/g, '');
+        install({
+            [dashed]: {
+                itemId: dashed,
+                name: 'Legacy Movie 550',
+                type: '',
+                tmdbId: '550',
+                hideScope: 'continuewatching',
+            },
+            [compact]: {
+                itemId: compact,
+                name: 'Movie 551',
+                type: 'Movie',
+                tmdbId: '551',
+                identity: { version: 1, provider: 'tmdb', mediaType: 'movie', id: '551' },
+                hideScope: 'nextup',
+            },
+        });
+
+        markScopedHidden(dashed, 'continuewatching');
+
+        expect(Object.keys(getHiddenData().items)).toEqual([dashed]);
+        expect(getHiddenData().items[dashed]).toEqual(expect.objectContaining({
+            itemId: dashed,
+            tmdbId: '551',
+            identity: { version: 1, provider: 'tmdb', mediaType: 'movie', id: '551' },
+            hideScope: 'homesections',
+        }));
+    });
+
+    it('deduplicates a resolved provider-only legacy row without removing distinct exact ids', () => {
+        install({
+            legacy: { name: 'Legacy 550', tmdbId: '550', hideScope: 'global' },
+            'jf-1': {
+                itemId: 'jf-1',
+                name: 'Edition one',
+                type: 'Movie',
+                tmdbId: '550',
+                identity: { version: 1, provider: 'tmdb', mediaType: 'movie', id: '550' },
+                hideScope: 'nextup',
+            },
+            'jf-2': {
+                itemId: 'jf-2',
+                name: 'Edition two',
+                type: 'Movie',
+                tmdbId: '550',
+                identity: { version: 1, provider: 'tmdb', mediaType: 'movie', id: '550' },
+                hideScope: 'continuewatching',
+            },
+        });
+
+        expect(resolveLegacyIdentity('legacy', 'movie')).toBe(true);
+        expect(Object.keys(getHiddenData().items).sort()).toEqual(['jf-1', 'jf-2']);
+        expect(getHiddenData().items['jf-1'].hideScope).toBe('global');
+
+        unhideItem('jf-1');
+        expect(isHiddenByTmdbId(550, 'movie')).toBe(false);
+        expect(getHiddenData().items['jf-2']).toEqual(expect.objectContaining({
+            itemId: 'jf-2',
+            hideScope: 'continuewatching',
+        }));
+
+        unhideItem('jf-2');
+        expect(isHiddenByTmdbId(550, 'movie')).toBe(false);
+        expect(Object.keys(getHiddenData().items)).toEqual([]);
     });
 });

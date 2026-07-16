@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import type { IdentityContext } from '../../types/jc';
+import { loadUserFileCaseTransform } from '../../test/plugin-loader-harness';
 import { getHiddenData, hiddenIdSet, refresh, resetFromUserConfig, updateSettings } from './data';
 
 const originalTransformUserFileCase = JC.transformUserFileCase;
@@ -189,5 +190,50 @@ describe('hidden-content identity fencing', () => {
         expect(Object.keys(sent.Items)).toEqual(['Movie-A', 'movie-a', '映画-1']);
         expect(sent.Items['Movie-A'].ItemId).toBe('upper');
         expect(sent.Settings.FilterSearch).toBe(true);
+    });
+
+    it('migrates and saves hazardous opaque keys through the real schema bridge', async () => {
+        const transformUserFileCase = loadUserFileCaseTransform();
+        JC.transformUserFileCase = transformUserFileCase;
+        const wire = JSON.parse(`{
+            "Items": {
+                "__proto__": { "ItemId": "proto-id", "Type": "Movie", "TmdbId": "550" },
+                "constructor": { "ItemId": "constructor-id", "Type": "Series", "TmdbId": "551" },
+                "toString": { "ItemId": "to-string-id", "Type": "Movie", "TmdbId": "552" }
+            },
+            "Settings": { "Enabled": true }
+        }`) as unknown;
+        const transformed = transformUserFileCase(
+            'hidden-content.json',
+            wire,
+            'load',
+        ) as { items: Record<string, { itemId?: string; identity?: { id?: string } }>; settings: Record<string, unknown> };
+        const context = JC.identity.capture()!;
+        const hiddenContent = JC.identity.own(transformed, context);
+        JC.userConfig = JC.identity.own({ hiddenContent }, context);
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockResolvedValue({});
+
+        resetFromUserConfig();
+
+        const items = getHiddenData().items;
+        expect(Object.getPrototypeOf(items)).toBeNull();
+        expect(Object.keys(items)).toEqual(['__proto__', 'constructor', 'toString']);
+        expect(items['__proto__'].itemId).toBe('proto-id');
+        expect(items['__proto__'].identity?.id).toBe('550');
+        expect(items['constructor'].identity?.id).toBe('551');
+        expect(items['toString'].identity?.id).toBe('552');
+
+        await vi.advanceTimersByTimeAsync(500);
+
+        expect(ajax).toHaveBeenCalledTimes(1);
+        const request = ajax.mock.calls[0][0] as { data: string };
+        const sent = JSON.parse(request.data) as {
+            Items: Record<string, { ItemId?: string; Identity?: { Id?: string } }>;
+        };
+        expect(Object.keys(sent.Items)).toEqual(['__proto__', 'constructor', 'toString']);
+        expect(sent.Items['__proto__'].ItemId).toBe('proto-id');
+        expect(sent.Items['__proto__'].Identity?.Id).toBe('550');
+        expect(sent.Items['constructor'].Identity?.Id).toBe('551');
+        expect(sent.Items['toString'].Identity?.Id).toBe('552');
     });
 });

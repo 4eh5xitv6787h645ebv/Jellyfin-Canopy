@@ -479,6 +479,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     {
                         if (it == null) continue;
                         var identity = ResolveIdentity(it);
+                        // An explicit identity is authoritative. Unknown versions and malformed
+                        // values must not be silently downgraded to an exact-only or legacy row.
+                        if (it.Identity != null && identity == null) continue;
                         // Exact local identity wins. Provider-only rows use the same
                         // versioned key as the browser; ambiguous legacy rows are refused.
                         var key = !string.IsNullOrEmpty(it.ItemId)
@@ -486,7 +489,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                             : (identity != null ? $"hc1:tmdb:{identity.MediaType}:{identity.Id}" : null);
                         if (string.IsNullOrEmpty(key) || key.Length > 256) continue;
                         if (cfg.Items.ContainsKey(key)) continue; // never clobber the user's own hide
-                        if (identity != null && cfg.Items.Values.Any(existing =>
+                        if (identity != null && string.IsNullOrEmpty(it.ItemId) && cfg.Items.Values.Any(existing =>
                         {
                             if (existing == null) return false;
                             var current = ResolveIdentity(existing);
@@ -629,6 +632,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             int? seasonNumber = null;
             int? episodeNumber = null;
             string typeName = jfItem.GetType().Name;
+            var tmdbId = jfItem.ProviderIds.TryGetValue("Tmdb", out var providerTmdbId)
+                ? providerTmdbId
+                : string.Empty;
+            var mediaType = string.Equals(typeName, "Movie", StringComparison.Ordinal) ? "movie"
+                : (string.Equals(typeName, "Series", StringComparison.Ordinal) ? "tv" : null);
+            HiddenContentIdentity? providerIdentity = null;
+            if (mediaType != null
+                && !string.IsNullOrEmpty(tmdbId)
+                && tmdbId.Length <= 32
+                && tmdbId.All(static c => c >= '0' && c <= '9')
+                && tmdbId.Any(static c => c != '0'))
+            {
+                providerIdentity = new HiddenContentIdentity
+                {
+                    Version = 1,
+                    Provider = "tmdb",
+                    MediaType = mediaType,
+                    Id = tmdbId
+                };
+            }
 
             if (jfItem is MediaBrowser.Controller.Entities.TV.Episode ep)
             {
@@ -643,7 +666,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 ItemId = itemGuid.ToString(),
                 Name = jfItem.Name ?? string.Empty,
                 Type = typeName,
-                TmdbId = string.Empty,
+                TmdbId = providerIdentity?.Id ?? string.Empty,
+                Identity = providerIdentity,
                 HiddenAt = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
                 PosterPath = string.Empty,
                 SeriesId = seriesId ?? string.Empty,
@@ -678,6 +702,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         // Merge with existing entries (under either hyphenated or N-format key) — pick the wider scope.
                         h.Items.TryGetValue(key, out var hyphenEntry);
                         h.Items.TryGetValue(keyN, out var nEntry);
+
+                        // Reconcile provider metadata as one atomic pair. A stored typed identity
+                        // outranks fresh library metadata, which outranks an untyped legacy TMDB id.
+                        // This prevents one GUID variant's legacy id from masking the other's typed
+                        // identity or producing a mismatched Identity/TmdbId pair.
+                        var identityEntry = hyphenEntry?.Identity != null
+                            ? hyphenEntry
+                            : (nEntry?.Identity != null ? nEntry : null);
+                        if (identityEntry?.Identity != null)
+                        {
+                            entry.Identity = new HiddenContentIdentity
+                            {
+                                Version = identityEntry.Identity.Version,
+                                Provider = identityEntry.Identity.Provider ?? string.Empty,
+                                MediaType = identityEntry.Identity.MediaType ?? string.Empty,
+                                Id = identityEntry.Identity.Id ?? string.Empty
+                            };
+                            var supportedTmdbIdentity = entry.Identity.Version == 1
+                                && string.Equals(entry.Identity.Provider, "tmdb", StringComparison.Ordinal)
+                                && (string.Equals(entry.Identity.MediaType, "movie", StringComparison.Ordinal)
+                                    || string.Equals(entry.Identity.MediaType, "tv", StringComparison.Ordinal))
+                                && entry.Identity.Id.Length <= 32
+                                && entry.Identity.Id.All(static c => c >= '0' && c <= '9')
+                                && entry.Identity.Id.Any(static c => c != '0');
+                            entry.TmdbId = supportedTmdbIdentity
+                                ? entry.Identity.Id
+                                : (identityEntry.TmdbId ?? string.Empty);
+                        }
+                        else if (providerIdentity == null)
+                        {
+                            entry.TmdbId = !string.IsNullOrEmpty(hyphenEntry?.TmdbId)
+                                ? hyphenEntry.TmdbId
+                                : (nEntry?.TmdbId ?? string.Empty);
+                        }
 
                         var existingScope = WiderScope(
                             hyphenEntry?.HideScope,

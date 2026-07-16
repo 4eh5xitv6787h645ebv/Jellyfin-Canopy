@@ -94,7 +94,7 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
 
     const hasJellyfinId = !!item.itemId;
     const hasTmdbId = !!item.tmdbId;
-    const hasResolvedTmdbId = hasTmdbId && item._identityStatus !== 'legacy-unresolved';
+    const hasResolvedTmdbId = hasTmdbId && item._identityStatus === 'resolved';
     const mediaType = identityFromSource(item)?.mediaType || (item.type === 'Series' ? 'tv' : 'movie');
 
     // Clickable poster area that navigates to item detail
@@ -108,7 +108,7 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
         posterLink.dataset.mediaType = mediaType;
     }
 
-    if (item.posterPath) {
+    if (item.posterPath && hasResolvedTmdbId) {
         const img = document.createElement('img');
         img.className = 'jc-hidden-item-poster';
         img.src = `https://image.tmdb.org/t/p/w${POSTER_MAX_WIDTH}${item.posterPath}`;
@@ -153,7 +153,8 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
                 }).catch(function() {
                     if (isPanelFenceCurrent(fence)) self.style.display = 'none';
                 });
-            } else if (item.type !== 'Person' && item.name && (JC as any).seerrAPI && (JC as any).seerrMoreInfo) {
+            } else if (item._identityStatus !== 'unsupported'
+                && item.type !== 'Person' && item.name && (JC as any).seerrAPI && (JC as any).seerrMoreInfo) {
                 // No TMDB id stored and the Jellyfin media is gone — resolve via a Seerr search
                 // so the card opens the more-info modal instead of a blank poster + dead link.
                 self.style.display = 'none';

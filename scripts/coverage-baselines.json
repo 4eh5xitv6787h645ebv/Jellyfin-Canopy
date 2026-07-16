@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 18168,
-        "totalLines": 26709
+        "coveredLines": 18321,
+        "totalLines": 26765
       },
       "tolerance": {
         "missingCoveredLines": 2,
-        "rationale": "Two clean local .NET 10.0.9/Coverlet integration runs on 2026-07-16 each passed 1595 tests and measured the identical 26709-line assembly scope at 18168 covered lines. Issue #121 adds the validated, cloned v1 hidden-content provider identity and typed admin mutation owner while retaining exact Jellyfin item keys. Deterministic regressions cover movie 550 and TV 550 coexisting, typed legacy deduplication, refusal of new ambiguous bare TMDB rows, exact local identity retention, and unhide-one isolation. The reviewed high-water advances to 18168 covered lines; the existing two-line tolerance is unchanged and remains the previously reviewed narrow Coverlet instrumentation allowance."
+        "rationale": "Two clean post-rebase local .NET 10.0.9/Coverlet integration runs on 2026-07-16 each passed 1606 tests and measured the identical 26765-line assembly scope at 18321 and 18320 covered lines. Issue #121 adds validated v1 hidden-content provider identities while retaining exact Jellyfin keys; its review successor rejects unsupported explicit admin identities, preserves distinct exact rows sharing one provider identity, deduplicates only merge-compatible legacy rows, and reconciles typed identity plus TMDB metadata as one atomic pair across canonical/compact scoped-hide variants and fresh library metadata. Unsupported future/non-TMDB scoped metadata remains an opaque Identity/TmdbId pair rather than being reinterpreted. Deterministic regressions cover conflicting legacy 550 versus typed/fresh 551 metadata, future IMDb metadata beside TMDB 550, same-TMDB exact rows, typed legacy deduplication, ambiguous-row refusal, and unhide isolation. Relative to main's reviewed 18049/26648 issue #84 baseline, the reviewed assembly scope grows by 117 instrumented lines and the high-water advances to 18321 covered lines while preserving opaque-key/null-prototype protections. The existing two-line tolerance is unchanged and covers the reproduced one-line Coverlet variance; coverage-baseline.test.js retains the negative boundaries."
       }
     }
   }

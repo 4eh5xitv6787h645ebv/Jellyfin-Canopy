@@ -386,7 +386,8 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
                     if (!isCurrent()) return;
                     const unhideKey = JC.hiddenContent?.getHiddenStorageKey(mediaCandidate);
                     if (unhideKey) JC.hiddenContent?.unhideItem(unhideKey);
-                    setHideState();
+                    if (JC.hiddenContent?.isHiddenMedia(mediaCandidate)) setHiddenState();
+                    else setHideState();
                 };
             }
 

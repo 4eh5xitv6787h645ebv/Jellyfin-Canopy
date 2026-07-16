@@ -19,6 +19,7 @@ import {
     hiddenIdentityStatus,
     identityFromSource,
     normalizeHiddenMediaType,
+    sameHiddenIdentity,
 } from './media-identity';
 import type { HiddenContentIdentity, HiddenIdentityStatus, HiddenMediaType } from './media-identity';
 
@@ -91,7 +92,9 @@ function emptyHiddenData(): HiddenContentData {
 
 function upgradeSafeLegacyIdentities(data: HiddenContentData): { data: HiddenContentData; changed: boolean } {
     let changed = false;
-    const items: Record<string, HiddenItem> = {};
+    // Storage keys are opaque user data. A normal object plus assignment would
+    // invoke Object.prototype.__proto__ and silently lose that tracked row.
+    const items = { __proto__: null } as unknown as HiddenContentData['items'];
     for (const [key, item] of Object.entries(data.items || {})) {
         const identity = identityFromSource(item);
         if (!item.identity && identity) {
@@ -342,6 +345,44 @@ function widestScope(a: string, b: string | undefined): string {
     return ra >= rb ? la : lb;
 }
 
+/** Merge duplicate storage rows without discarding exact ids or typed provider metadata. */
+function mergeHiddenRows(preferred: HiddenItem, additional: HiddenItem): HiddenItem {
+    const merged: HiddenItem = { ...additional, ...preferred };
+    merged.itemId = preferred.itemId || additional.itemId || '';
+    merged.name = preferred.name || additional.name || '';
+    merged.type = preferred.type || additional.type || '';
+    // Select identity + TMDB as one pair. Explicit typed metadata outranks a
+    // derivable legacy row, so one GUID variant cannot contribute identity 551
+    // while another contributes a stale TMDB 550.
+    const identitySource = preferred.identity
+        ? preferred
+        : (additional.identity ? additional : null);
+    const explicitIdentity = identitySource ? identityFromSource(identitySource) : null;
+    if (explicitIdentity) {
+        merged.identity = { ...explicitIdentity };
+        merged.tmdbId = explicitIdentity.id;
+    } else if (identitySource?.identity) {
+        // Preserve unsupported explicit schemas atomically; never reinterpret
+        // them as legacy metadata during a scoped-key collapse.
+        merged.identity = { ...identitySource.identity };
+        merged.tmdbId = identitySource.tmdbId || '';
+    } else {
+        const derivedIdentity = identityFromSource(preferred) || identityFromSource(additional);
+        merged.identity = derivedIdentity ? { ...derivedIdentity } : undefined;
+        merged.tmdbId = derivedIdentity?.id || preferred.tmdbId || additional.tmdbId || '';
+    }
+    merged.hiddenAt = !preferred.hiddenAt
+        ? (additional.hiddenAt || '')
+        : (!additional.hiddenAt || preferred.hiddenAt <= additional.hiddenAt ? preferred.hiddenAt : additional.hiddenAt);
+    merged.posterPath = preferred.posterPath || additional.posterPath || '';
+    merged.seriesId = preferred.seriesId || additional.seriesId || '';
+    merged.seriesName = preferred.seriesName || additional.seriesName || '';
+    merged.seasonNumber = preferred.seasonNumber ?? additional.seasonNumber ?? null;
+    merged.episodeNumber = preferred.episodeNumber ?? additional.episodeNumber ?? null;
+    merged.hideScope = widestScope(preferred.hideScope || '', additional.hideScope) || 'global';
+    return merged;
+}
+
 // Local-cache mirror of a server-side hide write — preserves existing metadata + merges scopes via mergeCwScope.
 // Looks up under hyphenated AND N-format keys (server canonical is hyphenated; some callers pass N-format from data-id).
 export function markScopedHidden(itemId: string, scope?: string): void {
@@ -369,18 +410,16 @@ export function markScopedHidden(itemId: string, scope?: string): void {
         if (!v?.hiddenAt) continue;
         if (!earliestHiddenAt || v.hiddenAt < earliestHiddenAt) earliestHiddenAt = v.hiddenAt;
     }
+    const reconciled = variants.reduce<HiddenItem | null>(
+        (current, variant) => current ? mergeHiddenRows(current, variant) : { ...variant },
+        null,
+    );
     const merged: HiddenItem = {
+        ...(reconciled || {}),
         itemId,
-        name: existing?.name || '',
-        type: existing?.type || '',
-        tmdbId: existing?.tmdbId || '',
         hiddenAt: earliestHiddenAt || new Date().toISOString(),
-        posterPath: existing?.posterPath || '',
-        seriesId: existing?.seriesId || '',
-        seriesName: existing?.seriesName || '',
-        seasonNumber: existing?.seasonNumber ?? null,
-        episodeNumber: existing?.episodeNumber ?? null,
         hideScope: finalScope,
+        ...(reconciled?.identity ? { identity: { ...reconciled.identity } } : {}),
     };
     const nextItems = { ...items, [itemId]: merged };
     if (hyphenated !== itemId) delete nextItems[hyphenated];
@@ -496,18 +535,27 @@ export interface HideItemParams {
  */
 export function hideItem({ itemId, name, type, tmdbId, identity: suppliedIdentity, posterPath, seriesId, seriesName, seasonNumber, episodeNumber, hideScope }: HideItemParams): void {
     const data = getHiddenData();
-    const identity = identityFromSource({ identity: suppliedIdentity, tmdbId, type });
+    const explicitIdentity = suppliedIdentity
+        ? identityFromSource({ identity: suppliedIdentity })
+        : null;
+    if (suppliedIdentity && (!explicitIdentity
+        || (tmdbId != null && String(tmdbId).trim() !== explicitIdentity.id))) return;
+    const identity = explicitIdentity || identityFromSource({ tmdbId, type });
     if (!itemId && !identity) return;
-    const existingIdentityKey = identity && Object.entries(data.items).find(([, item]) => {
+    const existingIdentityEntry = identity && Object.entries(data.items).find(([, item]) => {
         const current = identityFromSource(item);
-        return current && hiddenIdentityKey(current) === hiddenIdentityKey(identity);
-    })?.[0];
+        return current
+            && hiddenIdentityKey(current) === hiddenIdentityKey(identity)
+            && (!itemId || !item.itemId || item.itemId === itemId);
+    });
+    const existingIdentityKey = existingIdentityEntry?.[0];
+    const existingIdentityItem = existingIdentityEntry?.[1];
     const key = existingIdentityKey || itemId || hiddenIdentityKey(identity!);
     const newItem: HiddenItem = {
-        itemId: itemId || '',
+        itemId: itemId || existingIdentityItem?.itemId || '',
         name: name || '',
         type: type || '',
-        tmdbId: tmdbId ? String(tmdbId) : '',
+        tmdbId: identity?.id || (tmdbId ? String(tmdbId) : ''),
         ...(identity ? { identity } : {}),
         hiddenAt: new Date().toISOString(),
         posterPath: posterPath || '',
@@ -611,7 +659,22 @@ export function resolveLegacyIdentity(storageKey: string, mediaType: HiddenMedia
         identity,
         type: normalizedType === 'tv' ? 'Series' : 'Movie',
     };
-    if (!commitHiddenData({ ...data, items: { ...data.items, [storageKey]: nextItem } }, data)) return false;
+    const nextItems = { ...data.items, [storageKey]: nextItem };
+    const matchingEntries = Object.entries(nextItems).filter(([key, candidate]) =>
+        key !== storageKey && sameHiddenIdentity(identityFromSource(candidate), identity));
+    const candidates = [[storageKey, nextItem], ...matchingEntries] as Array<[string, HiddenItem]>;
+    const survivor = candidates.find(([, candidate]) => !!candidate.itemId) || candidates[0];
+    let merged: HiddenItem = { ...survivor[1], identity: { ...identity } };
+    for (const [key, candidate] of candidates) {
+        if (key === survivor[0]) continue;
+        const mergeable = !candidate.itemId || !merged.itemId || candidate.itemId === merged.itemId;
+        if (!mergeable) continue;
+        merged = mergeHiddenRows(merged, candidate);
+        merged.identity = { ...identity };
+        delete nextItems[key];
+    }
+    nextItems[survivor[0]] = merged;
+    if (!commitHiddenData({ ...data, items: nextItems }, data)) return false;
     rebuildSets();
     debouncedSave();
     emitChange();
