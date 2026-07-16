@@ -140,9 +140,9 @@ function showConfirmDialog(context: IdentityContext): Promise<boolean> {
     });
 }
 
-JC.identity.registerReset('spoiler-disable-confirms', () => {
+export function resetSpoilerDisableConfirms(): void {
     for (const open of Array.from(openConfirms)) open.finish(false);
     // Defensive cleanup for an overlay removed from the registry by hostile
     // host DOM churn before its completion callback ran.
     document.querySelectorAll('.jc-spoiler-confirm-overlay').forEach((node) => node.remove());
-});
+}

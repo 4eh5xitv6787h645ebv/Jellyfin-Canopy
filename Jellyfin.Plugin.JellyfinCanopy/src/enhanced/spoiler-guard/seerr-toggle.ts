@@ -7,8 +7,6 @@
 // library" and promotes Series/Movies itself, so the UI doesn't special-case it.
 
 import { JC } from '../../globals';
-import { isTmdbEnabled, enableForTmdb, disableForTmdb, whenLoaded } from './state';
-import { confirmDisableSpoiler } from './dialog';
 
 const logPrefix = '🪼 Jellyfin Canopy [SpoilerGuard]:';
 
@@ -23,6 +21,8 @@ export function buildSeerrPendingToggle(data: any, mediaType: string): HTMLButto
     const context = JC.identity.capture();
     if (!context || !JC.identity.isCurrent(context)) return null;
     if (JC.pluginConfig?.SpoilerBlurEnabled !== true) return null;
+    if (!JC.spoilerGuard) return null;
+    const spoilerGuard = JC.spoilerGuard;
     if (mediaType !== 'tv' && mediaType !== 'movie') return null;
     const tmdbId = data?.id;
     if (!tmdbId) return null;
@@ -54,7 +54,7 @@ export function buildSeerrPendingToggle(data: any, mediaType: string): HTMLButto
 
     function refreshLabel(): void {
         if (!isOwnedButton()) return;
-        const enabled = isTmdbEnabled(mediaType, String(tmdbId), jellyfinMediaId);
+        const enabled = spoilerGuard.isTmdbEnabled(mediaType, String(tmdbId), jellyfinMediaId);
         const label = enabled ? JC.t!('spoiler_blur_pending_button_on') : JC.t!('spoiler_blur_pending_button_off');
         btn.classList.toggle('jc-spoiler-pending-on', enabled);
         btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
@@ -66,7 +66,7 @@ export function buildSeerrPendingToggle(data: any, mediaType: string): HTMLButto
     // Cold-load fix: state may load after the modal mounts, so an initial
     // refreshLabel could read empty sets. whenLoaded resolves immediately if
     // already loaded, else awaits the in-flight load.
-    whenLoaded().then(() => {
+    spoilerGuard.whenLoaded().then(() => {
         if (isOwnedButton()) refreshLabel();
     }).catch(() => { /* refresh best-effort */ });
 
@@ -76,17 +76,17 @@ export function buildSeerrPendingToggle(data: any, mediaType: string): HTMLButto
         if (!isOwnedButton(true)) return;
         if (btn.disabled) return;
         btn.disabled = true;
-        const wasEnabled = isTmdbEnabled(mediaType, String(tmdbId), jellyfinMediaId);
+        const wasEnabled = spoilerGuard.isTmdbEnabled(mediaType, String(tmdbId), jellyfinMediaId);
         void (async () => {
             try {
                 if (wasEnabled) {
-                    const proceed = await confirmDisableSpoiler(context);
+                    const proceed = await spoilerGuard.confirmDisableSpoiler();
                     if (!isOwnedButton(true) || !proceed) return;
-                    await disableForTmdb(mediaType, String(tmdbId));
+                    await spoilerGuard.disableForTmdb(mediaType, String(tmdbId));
                     if (!isOwnedButton(true)) return;
                     JC.toast?.(JC.t!('spoiler_blur_pending_disabled_toast'));
                 } else {
-                    await enableForTmdb(mediaType, String(tmdbId), displayName);
+                    await spoilerGuard.enableForTmdb(mediaType, String(tmdbId), displayName);
                     if (!isOwnedButton(true)) return;
                     JC.toast?.(JC.t!('spoiler_blur_pending_enabled_toast'));
                 }
@@ -106,6 +106,6 @@ export function buildSeerrPendingToggle(data: any, mediaType: string): HTMLButto
     return btn;
 }
 
-JC.identity.registerReset('spoiler-seerr-controls', () => {
+export function resetSpoilerSeerrControls(): void {
     document.querySelectorAll('.jc-spoiler-pending-btn').forEach((node) => node.remove());
-});
+}

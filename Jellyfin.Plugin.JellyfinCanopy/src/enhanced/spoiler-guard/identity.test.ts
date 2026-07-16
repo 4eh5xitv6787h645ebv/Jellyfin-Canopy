@@ -6,7 +6,14 @@ import {
 } from './identity';
 
 describe('spoiler identity cookie ownership', () => {
+    let unregisterReset: (() => void) | undefined;
+    let unregisterActivate: (() => void) | undefined;
+
     afterEach(() => {
+        unregisterActivate?.();
+        unregisterActivate = undefined;
+        unregisterReset?.();
+        unregisterReset = undefined;
         resetIdentityCookie();
         vi.restoreAllMocks();
         vi.useRealTimers();
@@ -18,6 +25,11 @@ describe('spoiler identity cookie ownership', () => {
         const original = JC.identity.capture()!;
 
         resetIdentityCookie();
+        unregisterReset = JC.identity.registerReset('spoiler-cookie-test', resetIdentityCookie);
+        unregisterActivate = JC.identity.registerActivate(
+            'spoiler-cookie-test',
+            primeIdentityCookieEarly,
+        );
         primeIdentityCookieEarly(original);
         expect(document.cookie).toContain(`jc-spoiler-uid=${original.userId}`);
 

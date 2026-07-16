@@ -15,7 +15,6 @@
 // overlays are refreshed independently by core/live-rows → tag-pipeline's
 // bounded per-user projection journal; this module owns image URLs only.
 
-import { register } from '../../core/lifecycle';
 import { on, LIVE } from '../../core/live';
 import { refreshSpoilerableImages } from './image-refresh';
 import { hasAnyState } from './state';
@@ -25,8 +24,7 @@ import type { IdentityContext } from '../../types/jc';
 const REFRESH_DEBOUNCE_MS = 200;
 
 let debounceTimer: number | null = null;
-let liveUnsubscribe: (() => void) | null = null;
-const handle = register('spoiler-guard-watched');
+let watchedCleanup: (() => void) | null = null;
 
 /** Debounced image-only refresh (coalesces a burst of season-mark events). */
 function scheduleRefresh(context: IdentityContext): void {
@@ -42,27 +40,34 @@ function scheduleRefresh(context: IdentityContext): void {
 /**
  * Subscribe to USER_DATA_CHANGED and refresh images when the user has any
  * Spoiler Guard state (cheap gate: no guarded items ⇒ nothing to reveal/blur).
- * The unsubscribe + pending timer are tracked on a lifecycle handle so a hard
- * reset tears them down cleanly.
+ * The returned disposer owns both the subscription and pending timer; the
+ * lazy feature activation invokes it on config, identity, and scope teardown.
  */
-export function installWatchedRefresh(): void {
-    if (liveUnsubscribe) return;
+export function installWatchedRefresh(): () => void {
+    if (watchedCleanup) return watchedCleanup;
     const context = JC.identity.capture();
-    if (!context || !JC.identity.isCurrent(context)) return;
-    liveUnsubscribe = on(LIVE.USER_DATA_CHANGED, () => {
+    if (!context || !JC.identity.isCurrent(context)) return () => undefined;
+    const liveUnsubscribe = on(LIVE.USER_DATA_CHANGED, () => {
         if (!JC.identity.isCurrent(context)) return;
         if (!hasAnyState()) return;
         scheduleRefresh(context);
     });
+    let disposed = false;
+    const cleanup = (): void => {
+        if (disposed) return;
+        disposed = true;
+        liveUnsubscribe();
+        if (debounceTimer !== null) {
+            clearTimeout(debounceTimer);
+            debounceTimer = null;
+        }
+        if (watchedCleanup === cleanup) watchedCleanup = null;
+    };
+    watchedCleanup = cleanup;
+    return cleanup;
 }
 
-// Persistent hook registered once even though the reusable lifecycle handle is
-// torn down for every identity. Activation calls installWatchedRefresh again.
-handle.onTeardown(() => {
-    if (liveUnsubscribe) {
-        liveUnsubscribe();
-        liveUnsubscribe = null;
-    }
-    if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
-});
-JC.identity.registerReset('spoiler-guard-watched', () => handle.teardown());
+/** Dispose the activation-owned subscription and any pending refresh. */
+export function resetWatchedRefresh(): void {
+    watchedCleanup?.();
+}

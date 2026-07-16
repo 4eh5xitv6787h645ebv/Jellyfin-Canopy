@@ -1,82 +1,75 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
+import { emit, getHandlerCount, LIVE } from '../../core/live';
+import {
+    initializeSpoilerGuard,
+    installSpoilerGuard,
+    resetSpoilerGuardRuntime,
+} from './index';
 
-const mocks = vi.hoisted(() => ({
-    loadState: vi.fn(() => Promise.resolve()),
-    resetState: vi.fn(),
-    installWatchedRefresh: vi.fn(),
-    setIdentityCookie: vi.fn(),
-    primeIdentityCookieEarly: vi.fn(),
-    liveHandler: null as (() => void) | null,
-}));
+describe('spoiler guard activation ownership', () => {
+    const originalApi = JC.core.api;
+    let disposeInstall: (() => void) | undefined;
+    let apiPlugin = vi.fn();
 
-vi.mock('./state', () => ({
-    loadState: mocks.loadState,
-    resetState: mocks.resetState,
-    whenLoaded: vi.fn(),
-    isLoadOk: vi.fn(),
-    isEnabledFor: vi.fn(),
-    isMovieEnabledFor: vi.fn(),
-    isCollectionEnabledFor: vi.fn(),
-    hasEnabledCollections: vi.fn(),
-    fetchMovieScope: vi.fn(),
-    enableForSeries: vi.fn(),
-    disableForSeries: vi.fn(),
-    enableForMovie: vi.fn(),
-    disableForMovie: vi.fn(),
-    enableForCollection: vi.fn(),
-    disableForCollection: vi.fn(),
-    isTmdbEnabled: vi.fn(),
-    enableForTmdb: vi.fn(),
-    disableForTmdb: vi.fn(),
-    getUserPrefs: vi.fn(),
-    setUserPrefs: vi.fn(),
-}));
-vi.mock('./identity', () => ({
-    setIdentityCookie: mocks.setIdentityCookie,
-    primeIdentityCookieEarly: mocks.primeIdentityCookieEarly,
-}));
-vi.mock('./watched-refresh', () => ({ installWatchedRefresh: mocks.installWatchedRefresh }));
-vi.mock('./detail-button', () => ({ addSpoilerBlurButton: vi.fn() }));
-vi.mock('./dialog', () => ({ confirmDisableSpoiler: vi.fn() }));
-vi.mock('./styles', () => ({ injectSpoilerGuardCss: vi.fn() }));
-vi.mock('../../core/live', () => ({
-    LIVE: { CONFIG_CHANGED: 'config-changed' },
-    on: vi.fn((_type: string, handler: () => void) => {
-        mocks.liveHandler = handler;
-        return vi.fn();
-    }),
-}));
-
-describe('spoiler guard identity activation', () => {
     beforeEach(() => {
-        vi.resetModules();
-        mocks.loadState.mockClear();
-        mocks.resetState.mockClear();
-        mocks.installWatchedRefresh.mockClear();
-        mocks.setIdentityCookie.mockClear();
-        mocks.primeIdentityCookieEarly.mockClear();
-        mocks.liveHandler = null;
+        vi.useFakeTimers();
+        document.body.innerHTML = '';
+        JC.identity.transition('', '', 'spoiler-index-test-reset');
+        JC.identity.transition('spoiler-server-a', 'spoiler-user-a', 'spoiler-index-test-start');
         JC.pluginConfig = { SpoilerBlurEnabled: true };
+        apiPlugin = vi.fn().mockResolvedValue({ Series: {}, Movies: {}, Collections: {} });
+        JC.core.api = { plugin: apiPlugin } as unknown as NonNullable<typeof JC.core.api>;
     });
 
-    it('loads once per epoch and remains dormant when B has the feature disabled', async () => {
-        const original = JC.identity.capture()!;
-        await import('./index');
-        expect(mocks.loadState).toHaveBeenCalledTimes(1);
+    afterEach(() => {
+        disposeInstall?.();
+        disposeInstall = undefined;
+        resetSpoilerGuardRuntime();
+        JC.core.api = originalApi;
+        JC.spoilerGuard = undefined;
+        JC.identity.transition('', '', 'spoiler-index-test-cleanup');
+        vi.clearAllTimers();
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+        document.body.innerHTML = '';
+    });
 
-        const next = JC.identity.transition('server-b', 'user-b', 'spoiler-index-test')!;
+    it('loads once per epoch and hot-disables/re-enables through a stable facade', async () => {
+        const beforeConfigHandlers = getHandlerCount(LIVE.CONFIG_CHANGED);
+        disposeInstall = installSpoilerGuard();
+        const facade = JC.spoilerGuard;
+        const initMethod = facade ? Reflect.get(facade, 'init') : undefined;
+
+        await initializeSpoilerGuard();
+        await initializeSpoilerGuard();
+        expect(apiPlugin).toHaveBeenCalledTimes(1);
+        expect(getHandlerCount(LIVE.CONFIG_CHANGED)).toBe(beforeConfigHandlers + 1);
+        expect(document.getElementById('jc-spoiler-guard-css')).not.toBeNull();
+
         JC.pluginConfig = { SpoilerBlurEnabled: false };
-        await JC.identity.activate(next);
-        await JC.identity.activate(next);
-        expect(mocks.loadState).toHaveBeenCalledTimes(1);
+        emit(LIVE.CONFIG_CHANGED, {});
+        expect(document.getElementById('jc-spoiler-guard-css')).toBeNull();
+
+        JC.identity.transition('spoiler-server-b', 'spoiler-user-b', 'spoiler-index-test-switch');
+        await initializeSpoilerGuard();
+        expect(apiPlugin).toHaveBeenCalledTimes(1);
 
         JC.pluginConfig = { SpoilerBlurEnabled: true };
-        mocks.liveHandler?.();
-        expect(mocks.resetState).toHaveBeenCalledTimes(1);
-        expect(mocks.loadState).toHaveBeenCalledTimes(2);
-        expect(mocks.installWatchedRefresh).toHaveBeenCalledTimes(2);
+        emit(LIVE.CONFIG_CHANGED, {});
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(apiPlugin).toHaveBeenCalledTimes(2);
+        expect(JC.spoilerGuard).toBe(facade);
+        expect(Reflect.get(JC.spoilerGuard!, 'init')).toBe(initMethod);
 
-        JC.identity.transition(original.serverId, original.userId, 'spoiler-index-test-restore');
+        disposeInstall();
+        disposeInstall = undefined;
+        expect(getHandlerCount(LIVE.CONFIG_CHANGED)).toBe(beforeConfigHandlers);
+        expect(document.getElementById('jc-spoiler-guard-css')).toBeNull();
+
+        disposeInstall = installSpoilerGuard();
+        expect(JC.spoilerGuard).toBe(facade);
+        expect(Reflect.get(JC.spoilerGuard!, 'init')).toBe(initMethod);
     });
 });

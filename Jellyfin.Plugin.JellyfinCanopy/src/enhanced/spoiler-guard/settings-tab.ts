@@ -8,7 +8,7 @@
 // opt-out (pref=false). SkipDisableConfirm is the exception: a direct boolean.
 
 import { JC } from '../../globals';
-import { whenLoaded, isLoadOk, getUserPrefs, setUserPrefs, type SpoilerUserPrefs } from './state';
+import type { SpoilerUserPrefs } from './state';
 import type { IdentityContext } from '../../types/jc';
 
 interface SettingsBinding {
@@ -29,6 +29,8 @@ export function wireSpoilerGuardListeners(resetAutoCloseTimer: () => void): void
     const context = JC.identity.capture();
     if (!context || !JC.identity.isCurrent(context)) return;
     if (JC.pluginConfig?.SpoilerBlurEnabled !== true) return;
+    const spoilerGuard = JC.spoilerGuard;
+    if (!spoilerGuard) return;
 
     // A normally-closed settings panel removes its DOM without notifying this
     // module. Prune that prior binding before wiring the next panel so the
@@ -55,17 +57,17 @@ export function wireSpoilerGuardListeners(resetAutoCloseTimer: () => void): void
             // Avoid the cold-load race: don't write from the in-memory cache
             // until loadState() populated it, or an early toggle POSTs an
             // empty-cache payload that silently clobbers stored prefs.
-            await whenLoaded();
+            await spoilerGuard.whenLoaded();
             if (!isLive(changedBox)) return;
             // Refuse to save when the initial GET failed — the cache is empty
             // and writing from it would clobber stored prefs.
-            if (!isLoadOk()) {
+            if (!spoilerGuard.isLoadOk()) {
                 throw new Error('Initial Spoiler Guard load failed; refusing to overwrite stored prefs.');
             }
             // Build the payload from the authoritative cache, then overlay ONLY
             // the box just clicked — a full-DOM read is unsafe if the panel
             // rendered before load resolved.
-            const current: SpoilerUserPrefs = getUserPrefs();
+            const current: SpoilerUserPrefs = spoilerGuard.getUserPrefs();
             const k = changedBox.dataset.pref!;
             if (k === 'SkipDisableConfirm') {
                 current[k] = changedBox.checked;
@@ -75,7 +77,7 @@ export function wireSpoilerGuardListeners(resetAutoCloseTimer: () => void): void
                 current[k] = changedBox.checked ? null : false;
             }
             if (!isLive(changedBox)) return;
-            await setUserPrefs(current);
+            await spoilerGuard.setUserPrefs(current);
             if (!isLive(changedBox)) return;
             // The server cache is a projection of these per-user preferences.
             // A rescan cannot restore ratings/tags stripped from its existing
@@ -132,13 +134,13 @@ export function wireSpoilerGuardListeners(resetAutoCloseTimer: () => void): void
     // the section rather than show editable-but-wrong checkboxes.
     void (async () => {
         try {
-            await whenLoaded();
+            await spoilerGuard.whenLoaded();
             if (!isLive()) return;
-            if (!isLoadOk()) {
+            if (!spoilerGuard.isLoadOk()) {
                 setBoxesDisabled(true);
                 return;
             }
-            const loaded = getUserPrefs();
+            const loaded = spoilerGuard.getUserPrefs();
             for (const b of boxes) {
                 if (!isLive(b)) return;
                 const k = b.dataset.pref!;
@@ -152,6 +154,6 @@ export function wireSpoilerGuardListeners(resetAutoCloseTimer: () => void): void
     })();
 }
 
-JC.identity.registerReset('spoiler-settings-controls', () => {
+export function resetSpoilerSettingsControls(): void {
     for (const binding of Array.from(settingsBindings)) binding.cleanup();
-});
+}
