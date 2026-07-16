@@ -75,6 +75,15 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         isApplicable: () => true,
     },
     {
+        id: 'spoiler-guard',
+        entry: 'spoiler-guard',
+        scope: 'identity',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.SpoilerBlurEnabled === true,
+        isApplicable: () => true,
+    },
+    {
         id: 'card-tags',
         entry: 'card-tags',
         scope: 'identity',

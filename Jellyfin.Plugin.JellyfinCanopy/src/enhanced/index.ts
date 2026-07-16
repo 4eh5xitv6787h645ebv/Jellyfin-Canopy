@@ -13,9 +13,6 @@ import './icons';
 import './events';
 // Playback, subtitles, hidden-content filtering and management are loader-owned ESM entries.
 import './themer';
-// spoiler-guard — loads after tag-pipeline (uses invalidateServerCache) and
-// before the settings panel (which wires its per-user override section).
-import './spoiler-guard/index';
 // The lightweight settings launcher is loader owned; the large panel graph is
 // a user-gesture dynamic import and remains absent from normal navigation.
 // Bookmark playback and management are separate route-owned ESM entries.

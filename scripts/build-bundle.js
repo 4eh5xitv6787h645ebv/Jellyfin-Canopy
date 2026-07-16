@@ -64,6 +64,7 @@ const ESM_ENTRIES = Object.freeze({
     'seerr-discovery': path.join(SRC_ROOT, 'entries', 'seerr-discovery.ts'),
     'seerr-search': path.join(SRC_ROOT, 'entries', 'seerr-search.ts'),
     'subtitle-styles': path.join(SRC_ROOT, 'entries', 'subtitle-styles.ts'),
+    'spoiler-guard': path.join(SRC_ROOT, 'enhanced', 'spoiler-guard', 'feature.ts'),
     'theme-selector': path.join(SRC_ROOT, 'extras', 'theme-selector.feature.ts'),
 });
 
