@@ -486,6 +486,14 @@ Clean up the home screen without losing anything: this adds a lightweight, **non
 
 **Enable it:** Enhanced Panel (press `?`) → **Settings** → **Add Remove from Continue Watching & Next Up Buttons**.
 
+### Hiding the Favorites tab
+
+Don't use the Home page's **Favorites** tab? You can remove it. This hides the native **Favorites** tab (the one next to **Home** at the top of the Home page) so the Home page opens straight to your main feed. It only hides that tab — your favorites are still saved, still marked with the star, and still reachable everywhere else (the sidebar, search, and item pages). The change is scoped to the Home page, so the second tab on library pages is never affected. It applies on both the modern and legacy layouts.
+
+**Enable it (per-user):** Enhanced Panel (press `?`) → **Settings** → **UI** → **Hide the Favorites Tab**. The change takes effect immediately, without a reload.
+
+**Admin default** (**Dashboard** → **Plugins** → **Jellyfin Canopy** → **Display** tab → **Hide the Home "Favorites" tab**): sets the starting value for new users, who can still override it in their own settings.
+
 ### The Random button
 
 Not sure what to watch? A **Play Random** button in the Jellyfin header opens a random title from the libraries you can access, in a single click. It complements the `R` [Play Random Item](#advanced-keyboard-shortcuts) shortcut with an always-visible control.
