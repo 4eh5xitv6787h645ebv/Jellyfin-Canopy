@@ -267,7 +267,7 @@ describe('generation-aware feature loader', () => {
 
     it('pauses a retry while hidden and resumes its full backoff when visible', async () => {
         vi.useFakeTimers();
-        let hidden = true;
+        let hidden = false;
         vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => hidden ? 'hidden' : 'visible');
         const test = harness();
         const importer = vi.fn((request: FeatureImportRequest): Promise<FeatureModule> => request.attempt === 0
@@ -276,6 +276,9 @@ describe('generation-aware feature loader', () => {
         test.loader.register(registration('visibility-retry', importer));
 
         await expect(test.loader.activate('visibility-retry')).resolves.toMatchObject({ status: 'failed' });
+        await vi.advanceTimersByTimeAsync(125);
+        hidden = true;
+        document.dispatchEvent(new Event('visibilitychange'));
         await vi.advanceTimersByTimeAsync(60_000);
         expect(importer).toHaveBeenCalledTimes(1);
 

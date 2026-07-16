@@ -359,13 +359,19 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
         armRetry(owner);
     };
 
-    const resumeVisibleRetries = (): void => {
-        if (!documentVisible()) return;
+    const handleVisibilityChange = (): void => {
+        if (!documentVisible()) {
+            for (const owner of retryOwners.values()) {
+                if (owner.timer !== null) clearTimeout(owner.timer);
+                owner.timer = null;
+            }
+            return;
+        }
         for (const owner of retryOwners.values()) {
             if (owner.timer === null) armRetry(owner);
         }
     };
-    visibilityDocument?.addEventListener('visibilitychange', resumeVisibleRetries);
+    visibilityDocument?.addEventListener('visibilitychange', handleVisibilityChange);
 
     const runCleanup = async (
         featureId: string,
@@ -666,7 +672,7 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
                 return;
             }
             loaderDisposed = true;
-            visibilityDocument?.removeEventListener('visibilitychange', resumeVisibleRetries);
+            visibilityDocument?.removeEventListener('visibilitychange', handleVisibilityChange);
             for (const featureId of [...retryOwners.keys()]) cancelRetry(featureId);
             const disposals = [...activeFeatures.keys()].map((featureId) => deactivateActive(featureId));
             await Promise.all(disposals);
