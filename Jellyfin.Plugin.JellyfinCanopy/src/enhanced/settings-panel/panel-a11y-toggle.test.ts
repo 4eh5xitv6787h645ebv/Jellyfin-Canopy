@@ -27,9 +27,14 @@ vi.mock('./settings', () => ({
     wireMiscSettingsControls: () => undefined,
 }));
 vi.mock('./hidden-content-tab', () => ({ wireHiddenContentListeners: () => undefined }));
-vi.mock('./language', () => ({ wireLanguageControls: () => undefined }));
+vi.mock('./language', () => ({
+    resetLanguageControls: () => undefined,
+    wireLanguageControls: () => undefined,
+}));
 
 const jc = (): Record<string, any> => JC;
+let showPanel: (() => Promise<void>) | null = null;
+let resetPanel: (() => void) | null = null;
 
 describe('settings panel toggle-close releases the modal-a11y handle', () => {
     beforeEach(async () => {
@@ -45,10 +50,15 @@ describe('settings panel toggle-close releases the modal-a11y handle', () => {
         (window.JellyfinCanopy as any).toCamelCase = (x: unknown) => x;
         document.body.innerHTML = '';
         document.body.className = '';
-        await import('./panel');
+        const panel = await import('./panel');
+        showPanel = panel.showEnhancedPanel;
+        resetPanel = panel.resetSettingsPanel;
     });
 
     afterEach(() => {
+        resetPanel?.();
+        showPanel = null;
+        resetPanel = null;
         document.body.innerHTML = '';
         document.body.className = '';
         vi.restoreAllMocks();
@@ -58,13 +68,13 @@ describe('settings panel toggle-close releases the modal-a11y handle', () => {
         const removeSpy = vi.spyOn(document, 'removeEventListener');
 
         // Open the panel.
-        await jc().showEnhancedPanel();
+        await showPanel!();
         expect(document.getElementById('jellyfin-canopy-panel')).not.toBeNull();
         expect(isAnyModalOpen()).toBe(true);
         expect(document.body.classList.contains('jc-modal-open')).toBe(true);
 
         // Toggle-close: a second invocation while the panel is open removes it.
-        await jc().showEnhancedPanel();
+        await showPanel!();
 
         // Panel gone AND the a11y gate released — shortcuts are live again.
         expect(document.getElementById('jellyfin-canopy-panel')).toBeNull();
@@ -81,7 +91,7 @@ describe('settings panel toggle-close releases the modal-a11y handle', () => {
         // synthetic `{ type, key }` object. closeHelp used to call
         // `ev.stopPropagation()` unconditionally, which threw on that plain
         // object and aborted the close — so Escape never dismissed the panel.
-        await jc().showEnhancedPanel();
+        await showPanel!();
         expect(document.getElementById('jellyfin-canopy-panel')).not.toBeNull();
         expect(isAnyModalOpen()).toBe(true);
 

@@ -10,7 +10,7 @@ import { ensureMaterialSymbolsFont } from '../../core/ui-kit';
 /**
  * Injects custom CSS for plugin features.
  */
-JC.injectGlobalStyles = (): void => {
+export function injectGlobalStyles(): void {
     // Shared icon font: ONE @font-face for all features, woff2 served from the
     // local asset cache (see core/asset-urls.ts) instead of fonts.gstatic.com.
     ensureMaterialSymbolsFont();
@@ -243,4 +243,8 @@ JC.injectGlobalStyles = (): void => {
             }
         `;
     document.head.appendChild(style);
-};
+}
+
+export function resetGlobalStyles(): void {
+    document.getElementById('jellyfin-canopy-styles')?.remove();
+}

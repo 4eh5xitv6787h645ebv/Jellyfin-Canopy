@@ -15,7 +15,7 @@ vi.mock('./template', () => ({
 vi.mock('./shortcut-editor', () => ({ wireShortcutEditor: vi.fn() }));
 vi.mock('./hidden-content-tab', () => ({ wireHiddenContentListeners: vi.fn() }));
 vi.mock('../spoiler-guard/settings-tab', () => ({ wireSpoilerGuardListeners: vi.fn() }));
-vi.mock('./language', () => ({ wireLanguageControls: vi.fn() }));
+vi.mock('./language', () => ({ resetLanguageControls: vi.fn(), wireLanguageControls: vi.fn() }));
 vi.mock('./settings', () => ({
     wireMiscSettingsControls: vi.fn(),
     wireSettingsListeners: (ctx: { help: HTMLElement }) => {
@@ -32,6 +32,8 @@ vi.mock('./settings', () => ({
 const originalApi = JC.core.api;
 const originalSave = JC.saveUserSettings;
 const originalLoad = JC.loadSettings;
+let showPanel: (() => Promise<void>) | null = null;
+let unregisterReset: (() => void) | null = null;
 
 describe('settings panel retained descendant ownership', () => {
     beforeEach(async () => {
@@ -60,7 +62,9 @@ describe('settings panel retained descendant ownership', () => {
                 blur: '0px', textColor: '#fff', logo: '',
             }),
         };
-        await import('./panel');
+        const panel = await import('./panel');
+        showPanel = panel.showEnhancedPanel;
+        unregisterReset = JC.identity.registerReset('settings-panel-test', panel.resetSettingsPanel);
     });
 
     afterEach(() => {
@@ -68,11 +72,14 @@ describe('settings panel retained descendant ownership', () => {
         JC.core.api = originalApi;
         JC.saveUserSettings = originalSave;
         JC.loadSettings = originalLoad;
+        unregisterReset?.();
+        unregisterReset = null;
+        showPanel = null;
         vi.restoreAllMocks();
     });
 
     it('keeps an A toggle inert after normal identity cleanup and B activation', async () => {
-        await JC.showEnhancedPanel!();
+        await showPanel!();
         const stalePanel = document.getElementById('jellyfin-canopy-panel')!;
         const staleToggle = stalePanel.querySelector<HTMLInputElement>('#retainedSettingsToggle')!;
         expect(staleToggle).not.toBeNull();

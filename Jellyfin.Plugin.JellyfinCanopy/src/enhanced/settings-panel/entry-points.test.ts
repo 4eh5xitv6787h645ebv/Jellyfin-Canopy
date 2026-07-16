@@ -2,12 +2,12 @@
 // observer-free JC.addUserPreferencesLink gating (PERF(R3) fix: the old
 // implementation created a NEW body-wide attribute MutationObserver on every
 // call made off the preferences page, and never disconnected them).
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { JC } from '../../globals';
 import { resetViewRootTrackingForTests } from '../../core/view-root';
-import './entry-points';
+import { addUserPreferencesLink, resetSettingsLauncher } from './entry-points';
 
-const addLink = (): void => (JC as unknown as { addUserPreferencesLink: () => void }).addUserPreferencesLink();
+const addLink = (): void => addUserPreferencesLink();
 
 function buildPrefsPage(hidden = false): HTMLElement {
     const page = document.createElement('div');
@@ -24,6 +24,10 @@ describe('JC.addUserPreferencesLink', () => {
     beforeEach(() => {
         document.body.innerHTML = '';
         resetViewRootTrackingForTests();
+    });
+
+    afterEach(() => {
+        resetSettingsLauncher();
     });
 
     it('creates no observers and no link when off the preferences page', () => {

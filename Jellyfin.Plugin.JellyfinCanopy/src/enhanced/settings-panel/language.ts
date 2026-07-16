@@ -216,7 +216,7 @@ export function wireLanguageControls(ctx: PanelContext): void {
     }
 }
 
-JC.identity.registerReset('settings-language', () => {
+export function resetLanguageControls(): void {
     for (const timer of reloadTimers) clearTimeout(timer);
     reloadTimers.clear();
-});
+}
