@@ -32,7 +32,9 @@ export function activate(scope: FeatureScope): void {
     };
     activeDispose = dispose;
     scope.track(dispose);
-    cleanups.push(installDetailsPage());
+    // `scope.isCurrent` fences delayed Spoiler-state readiness against the
+    // loader's identity, config and navigation generations.
+    cleanups.push(installDetailsPage(() => scope.isCurrent()));
     cleanups.push(JC.identity.registerReset('details-enhancements-feature', dispose));
     if (!scope.isCurrent()) { dispose(); return; }
     initializeDetailsPage();

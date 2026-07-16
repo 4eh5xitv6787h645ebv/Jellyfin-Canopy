@@ -40,6 +40,25 @@ const ITEM_TYPE_FETCH_MAX_ATTEMPTS = 4;
 let detailsDispatchTimer: number | null = null;
 let detailsDispatchGeneration = 0;
 
+interface DetailsPageInstallation {
+    readonly isCurrent: () => boolean;
+}
+
+interface SpoilerReadinessRetry {
+    readonly installation: DetailsPageInstallation;
+    readonly generation: number;
+    readonly context: IdentityContext;
+    readonly itemId: string;
+    readonly itemType: string;
+    readonly page: Element;
+}
+
+let activeInstallation: DetailsPageInstallation | null = null;
+let spoilerReadinessGeneration = 0;
+let pendingSpoilerReadiness: SpoilerReadinessRetry | null = null;
+let completedSpoilerReadiness: SpoilerReadinessRetry | null = null;
+const SPOILER_GUARD_READY_EVENT = 'jc:spoiler-guard-ready';
+
 // Types that support file size and watch progress
 const FEATURES_SUPPORTED_TYPES = ['Episode', 'Season', 'Series', 'Movie', 'BoxSet', 'Playlist'];
 // Types that support audio languages (excludes BoxSet and Playlist)
@@ -47,6 +66,88 @@ const AUDIO_LANGUAGES_SUPPORTED_TYPES = ['Episode', 'Season', 'Series', 'Movie']
 
 // Types that support hiding
 const HIDE_SUPPORTED_TYPES = ['Movie', 'Series', 'Episode', 'Season'];
+
+function sameSpoilerReadinessTarget(
+    retry: SpoilerReadinessRetry,
+    installation: DetailsPageInstallation,
+    context: IdentityContext,
+    itemId: string,
+    itemType: string,
+    page: Element,
+): boolean {
+    return retry.installation === installation
+        && retry.generation === spoilerReadinessGeneration
+        && retry.context.serverId === context.serverId
+        && retry.context.userId === context.userId
+        && retry.context.epoch === context.epoch
+        && retry.itemId === itemId
+        && retry.itemType === itemType
+        && retry.page === page;
+}
+
+function clearSpoilerReadiness(): void {
+    spoilerReadinessGeneration++;
+    pendingSpoilerReadiness = null;
+    completedSpoilerReadiness = null;
+}
+
+/**
+ * Remember the current details target until Spoiler Guard publishes readiness.
+ * This deliberately does not consult the public facade: during first load it
+ * may be absent, and after a warm disable its stable methods use inert fallback
+ * delegates until the new activation installs the real implementation.
+ */
+function armSpoilerReadinessRetry(
+    context: IdentityContext,
+    itemId: string,
+    itemType: string,
+    page: Element,
+): void {
+    const installation = activeInstallation;
+    if (!installation || !installation.isCurrent()) return;
+    if (pendingSpoilerReadiness
+        && sameSpoilerReadinessTarget(pendingSpoilerReadiness, installation, context, itemId, itemType, page)) return;
+    if (completedSpoilerReadiness
+        && sameSpoilerReadinessTarget(completedSpoilerReadiness, installation, context, itemId, itemType, page)) return;
+
+    const retry: SpoilerReadinessRetry = {
+        installation,
+        generation: spoilerReadinessGeneration,
+        context,
+        itemId,
+        itemType,
+        page,
+    };
+    pendingSpoilerReadiness = retry;
+}
+
+/** Consume the one readiness signal emitted after Spoiler state settles. */
+function handleSpoilerGuardReady(event: Event): void {
+    const retry = pendingSpoilerReadiness;
+    if (!retry) return;
+    const detail = (event as CustomEvent<{
+        serverId?: string;
+        userId?: string;
+        identityEpoch?: number;
+    }>).detail;
+    if (!detail
+        || detail.serverId !== retry.context.serverId
+        || detail.userId !== retry.context.userId
+        || detail.identityEpoch !== retry.context.epoch) return;
+
+    pendingSpoilerReadiness = null;
+    completedSpoilerReadiness = retry;
+    if (retry.generation !== spoilerReadinessGeneration
+        || activeInstallation !== retry.installation
+        || !retry.installation.isCurrent()
+        || !JC.identity.isCurrent(retry.context)
+        || JC.pluginConfig?.SpoilerBlurEnabled !== true
+        || lastDetailsItemId !== retry.itemId
+        || lastDetailsItemType !== retry.itemType) return;
+    const current = getVisibleDetailsPage();
+    if (!current || current.page !== retry.page || current.itemId !== retry.itemId) return;
+    JC.spoilerGuard?.addSpoilerBlurButton?.(retry.itemId, retry.page, retry.itemType);
+}
 
 /**
  * Adds a "Hide" button to the item detail page action buttons area.
@@ -290,6 +391,7 @@ function runHandleItemDetails(context: IdentityContext): void {
 
         // Reset cache when navigating to a new item
         if (lastDetailsItemId !== itemId) {
+            clearSpoilerReadiness();
             lastDetailsItemId = itemId;
             lastDetailsItemType = null;
             itemTypeFetchInProgress = null;
@@ -369,9 +471,12 @@ function runHandleItemDetails(context: IdentityContext): void {
         // the server filter), Movie (blurs its own poster/backdrop until Played),
         // and Collection/BoxSet (protects every movie inside) detail pages.
         // Rides this existing dispatcher — no new observer (R3).
-        if ((lastDetailsItemType === 'Series' || lastDetailsItemType === 'Movie' || lastDetailsItemType === 'BoxSet')
-            && JC.spoilerGuard?.addSpoilerBlurButton) {
-            JC.spoilerGuard.addSpoilerBlurButton(itemId, visiblePage, lastDetailsItemType);
+        if (lastDetailsItemType === 'Series' || lastDetailsItemType === 'Movie' || lastDetailsItemType === 'BoxSet') {
+            JC.spoilerGuard?.addSpoilerBlurButton?.(itemId, visiblePage, lastDetailsItemType);
+            if (JC.pluginConfig?.SpoilerBlurEnabled === true
+                && !visiblePage.querySelector('.jc-spoiler-blur-btn')) {
+                armSpoilerReadinessRetry(context, itemId, lastDetailsItemType, visiblePage);
+            }
         }
 
         // Skip unsupported item types for media features
@@ -422,6 +527,7 @@ function scheduleHandleItemDetails(context = JC.identity.capture()): void {
 // the chips when item data arrives) never ran.
 export function resetDetailsPage(): void {
     detailsDispatchGeneration++;
+    clearSpoilerReadiness();
     if (detailsDispatchTimer !== null) {
         clearTimeout(detailsDispatchTimer);
         detailsDispatchTimer = null;
@@ -438,20 +544,25 @@ export function resetDetailsPage(): void {
 }
 
 /** Install detail-page observation for one lazy-feature activation. */
-export function installDetailsPage(): () => void {
+export function installDetailsPage(isCurrent: () => boolean = () => true): () => void {
+    const installation: DetailsPageInstallation = { isCurrent };
+    activeInstallation = installation;
     const body = onBodyMutation('item-details-info', () => {
         if (!isDetailsPageVisible()) return;
         scheduleHandleItemDetails();
     });
     const offNavigate = onNavigate(() => { scheduleHandleItemDetails(); });
     const offView = onViewPage(() => { scheduleHandleItemDetails(); });
+    window.addEventListener(SPOILER_GUARD_READY_EVENT, handleSpoilerGuardReady);
     let disposed = false;
     return () => {
         if (disposed) return;
         disposed = true;
+        if (activeInstallation === installation) activeInstallation = null;
         body.unsubscribe();
         offNavigate();
         offView();
+        window.removeEventListener(SPOILER_GUARD_READY_EVENT, handleSpoilerGuardReady);
         resetDetailsPage();
     };
 }

@@ -125,6 +125,7 @@ describe('spoiler guard lazy feature', () => {
 
     it('tears down when its generation becomes stale during the state load', async () => {
         const before = counts();
+        const dispatch = vi.spyOn(window, 'dispatchEvent');
         const held = deferred<unknown>();
         const plugin = vi.fn().mockReturnValue(held.promise);
         JC.core.api = { plugin } as unknown as NonNullable<typeof JC.core.api>;
@@ -142,6 +143,32 @@ describe('spoiler guard lazy feature', () => {
         expect(document.cookie).not.toContain('jc-spoiler-uid=');
         expect(JC.spoilerGuard?.isEnabledFor('aaaa')).toBe(false);
         expect(vi.getTimerCount()).toBe(0);
+        expect(dispatch.mock.calls.some(([event]) => event.type === 'jc:spoiler-guard-ready')).toBe(false);
+    });
+
+    it('publishes identity-scoped readiness only after the state load settles', async () => {
+        const held = deferred<unknown>();
+        const plugin = vi.fn().mockReturnValue(held.promise);
+        JC.core.api = { plugin } as unknown as NonNullable<typeof JC.core.api>;
+        const scope = testScope();
+        activeScopes.push(scope);
+        const dispatch = vi.spyOn(window, 'dispatchEvent');
+
+        const pending = activate(scope.scope);
+        await vi.waitFor(() => expect(plugin).toHaveBeenCalledTimes(1));
+        expect(dispatch.mock.calls.some(([event]) => event.type === 'jc:spoiler-guard-ready')).toBe(false);
+
+        held.resolve({ Series: {}, Movies: {}, Collections: {}, PendingTmdb: {}, Prefs: {} });
+        await pending;
+
+        const ready = dispatch.mock.calls
+            .map(([event]) => event)
+            .find((event) => event.type === 'jc:spoiler-guard-ready') as CustomEvent | undefined;
+        expect(ready?.detail).toEqual({
+            serverId: scope.scope.serverId,
+            userId: scope.scope.userId,
+            identityEpoch: scope.scope.identityEpoch,
+        });
     });
 
     it('activates once, cleans exactly, and re-enables with stable method identities', async () => {

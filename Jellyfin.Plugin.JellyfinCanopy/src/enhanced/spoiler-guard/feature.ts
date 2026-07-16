@@ -3,6 +3,7 @@ import type { FeatureModule, FeatureScope } from '../../core/feature-loader';
 import { initializeSpoilerGuard, installSpoilerGuard } from './index';
 
 let activeDispose: (() => void) | null = null;
+const SPOILER_GUARD_READY_EVENT = 'jc:spoiler-guard-ready';
 
 export async function activate(scope: FeatureScope): Promise<void> {
     if (!scope.isCurrent()) return;
@@ -23,7 +24,21 @@ export async function activate(scope: FeatureScope): Promise<void> {
     cleanups.push(JC.identity.registerReset('spoiler-guard-feature', dispose));
     if (!scope.isCurrent()) { dispose(); return; }
     await initializeSpoilerGuard();
-    if (!scope.isCurrent()) dispose();
+    if (!scope.isCurrent()) {
+        dispose();
+        return;
+    }
+    // The details dispatcher may have evaluated before this feature published
+    // its facade, or while the stable facade still used inactive delegates.
+    // Signal only after the identity-owned state load settles; consumers fence
+    // the event with their own config/navigation scope and exact page target.
+    window.dispatchEvent(new CustomEvent(SPOILER_GUARD_READY_EVENT, {
+        detail: {
+            serverId: scope.serverId,
+            userId: scope.userId,
+            identityEpoch: scope.identityEpoch,
+        },
+    }));
 }
 
 export const spoilerGuardFeature: FeatureModule = { activate };
